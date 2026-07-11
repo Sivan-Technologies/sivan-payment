@@ -8,7 +8,7 @@ Sivan Payments uses two isolated lanes:
 Vercel: sivan-payments-user-test                  Vercel: sivan-payments-user-live
 Vercel: sivan-payments-admin-test                 Vercel: sivan-payments-admin-live
         ↓                                                 ↓
-Render: sivan-payments-api-test                   Render: sivan-payments-api-live
+Render Free Web Service: sivan-payments-api-test                   Render Free Web Service: sivan-payments-api-live
         ↓                                                 ↓
 Neon Database: Sivan Test                         Neon Database: Sivan Live
 Bridge Sandbox                                    Bridge Production
@@ -195,3 +195,18 @@ https://sivan-payments-api-live.onrender.com/health
 6. Configure Bridge sandbox webhook.
 7. Test full TEST lane.
 8. Deploy live lane only after TEST works.
+
+
+## Render free plan note
+
+The Blueprint uses:
+
+```yaml
+plan: free
+```
+
+for the API services so Render should not require a paid instance type.
+
+For production money movement, upgrade the LIVE API service to a paid Render plan before serving real users. Free services can sleep, cold-start, and are not ideal for payment webhooks.
+
+If Render still asks for payment, deploy only the TEST API first by temporarily removing or commenting out the LIVE service from `render.yaml`, then add LIVE later when ready.

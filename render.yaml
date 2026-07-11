@@ -2,7 +2,7 @@ services:
   - type: web
     name: sivan-payments-api-test
     runtime: node
-    plan: starter
+    plan: free
     rootDir: .
     buildCommand: npm install && npm run build
     preDeployCommand: npm run db:migrate
@@ -48,7 +48,7 @@ services:
   - type: web
     name: sivan-payments-api-live
     runtime: node
-    plan: starter
+    plan: free
     rootDir: .
     buildCommand: npm install && npm run build
     preDeployCommand: npm run db:migrate
