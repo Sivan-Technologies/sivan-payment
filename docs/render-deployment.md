@@ -210,3 +210,56 @@ for the API services so Render should not require a paid instance type. Render f
 For production money movement, upgrade the LIVE API service to a paid Render plan before serving real users. Free services can sleep, cold-start, and are not ideal for payment webhooks.
 
 If Render still asks for payment, deploy only the TEST API first by temporarily removing or commenting out the LIVE service from `render.yaml`, then add LIVE later when ready.
+
+
+## Frontend environment separation
+
+The two Vercel frontends have separate env files and separate Vercel project settings.
+
+User frontend env files:
+
+```text
+frontend/.env.example
+frontend/.env.test.example
+frontend/.env.live.example
+```
+
+Admin frontend env files:
+
+```text
+frontend-admin/.env.example
+frontend-admin/.env.test.example
+frontend-admin/.env.live.example
+```
+
+In Vercel, configure each project separately:
+
+### User TEST
+
+```env
+VITE_APP_ENV=test
+VITE_API_BASE_URL=https://sivan-payments-api-test.onrender.com
+```
+
+### User LIVE
+
+```env
+VITE_APP_ENV=live
+VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
+```
+
+### Admin TEST
+
+```env
+VITE_APP_ENV=test
+VITE_API_BASE_URL=https://sivan-payments-api-test.onrender.com
+```
+
+### Admin LIVE
+
+```env
+VITE_APP_ENV=live
+VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
+```
+
+Never expose `ADMIN_API_KEY` as a `VITE_` variable. `VITE_` variables are public in the browser bundle.

@@ -70,3 +70,30 @@ npm run build
 ```env
 SIVAN_OFFRAMP_FEE_PERCENT=1.25
 ```
+
+
+## Environment files
+
+The user frontend has its own environment files:
+
+```text
+frontend/.env.example        # local
+frontend/.env.test.example   # Vercel test lane
+frontend/.env.live.example   # Vercel live lane
+```
+
+Only variables prefixed with `VITE_` are exposed to the browser.
+
+For Vercel TEST:
+
+```env
+VITE_APP_ENV=test
+VITE_API_BASE_URL=https://sivan-payments-api-test.onrender.com
+```
+
+For Vercel LIVE:
+
+```env
+VITE_APP_ENV=live
+VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
+```
