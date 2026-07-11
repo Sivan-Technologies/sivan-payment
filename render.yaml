@@ -11,6 +11,12 @@ services:
     envVars:
       - key: APP_ENV
         value: staging
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: staging
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
@@ -66,6 +72,12 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER

@@ -4,6 +4,7 @@ import rawBody from 'fastify-raw-body';
 import { env } from './config/env.js';
 import { registerRoutes } from './api/routes.js';
 import { AppError } from './shared/errors.js';
+import { captureError } from './monitoring/sentry.js';
 import { verifyUserJwt } from './auth/jwt.js';
 
 export async function buildApp() {
@@ -52,12 +53,16 @@ export async function buildApp() {
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {
+      if (error.statusCode >= 500) {
+        captureError(error, { requestId: request.id, url: request.url, method: request.method, code: error.code, details: error.details });
+      }
       request.log.warn({ error: error.message, code: error.code, details: error.details });
       return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, details: error.details } });
     }
 
     const err = error as Error & { statusCode?: number };
     const statusCode = err.statusCode ?? 500;
+    captureError(err, { requestId: request.id, url: request.url, method: request.method });
     request.log.error(err);
     return reply.code(statusCode).send({
       error: {

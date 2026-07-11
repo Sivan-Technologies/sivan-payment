@@ -324,3 +324,46 @@ Important:
 - `AUTH_DEV_SHOW_OTP=true` returns the OTP in API responses and should only be used in test/staging.
 - `AUTH_DEV_SHOW_OTP=false` must be used in live.
 - Verify your sending domain in Resend before using a production `EMAIL_FROM` address.
+
+
+## Error monitoring
+
+Sivan Payments supports Sentry-compatible error monitoring for the backend and both frontends.
+
+### Backend Render env
+
+```env
+SENTRY_DSN=<backend_sentry_dsn>
+SENTRY_ENVIRONMENT=staging   # or production
+SENTRY_TRACES_SAMPLE_RATE=0  # increase later if you want tracing
+```
+
+Backend captures:
+
+- unhandled rejections
+- uncaught exceptions
+- server listen failures
+- unexpected 5xx request errors
+
+### Vercel user/admin frontend env
+
+```env
+VITE_SENTRY_DSN=<frontend_sentry_dsn>
+VITE_SENTRY_ENVIRONMENT=test  # or live
+VITE_SENTRY_TRACES_SAMPLE_RATE=0
+```
+
+Frontend captures React render/runtime errors through a Sentry ErrorBoundary.
+
+Recommended Sentry projects:
+
+```text
+sivan-payments-api-test
+sivan-payments-api-live
+sivan-payments-user-test
+sivan-payments-user-live
+sivan-payments-admin-test
+sivan-payments-admin-live
+```
+
+You can also use fewer projects and separate by environment if preferred.

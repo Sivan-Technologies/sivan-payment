@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@fastify/cors": "latest",
+    "@sentry/node": "^10.65.0",
     "dotenv": "latest",
     "fastify": "latest",
     "fastify-raw-body": "latest",
