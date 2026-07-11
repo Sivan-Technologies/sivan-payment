@@ -1,0 +1,90 @@
+services:
+  - type: web
+    name: sivan-payments-api-test
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm install && npm run build && npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: staging
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PROVIDER
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      # Add your Vercel frontend URLs here after deploying frontend/admin to Vercel.
+      # Example: https://sivan-payments-user-test.vercel.app,https://sivan-payments-admin-test.vercel.app
+      - key: CORS_ORIGIN
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: BRIDGE_MOCK_MODE
+        value: "false"
+      - key: DEFAULT_OFFRAMP_PROVIDER
+        value: bridge
+      - key: BRIDGE_BASE_URL
+        value: https://api.sandbox.bridge.xyz/v0
+      - key: BRIDGE_API_KEY
+        sync: false
+      - key: BRIDGE_WEBHOOK_PUBLIC_KEY
+        sync: false
+      - key: WEBHOOK_MAX_AGE_MS
+        value: "600000"
+      - key: SIVAN_OFFRAMP_FEE_PERCENT
+        value: "1.25"
+      - key: BRIDGE_OFFRAMP_COST_PERCENT
+        value: "0.5"
+      - key: BRIDGE_KYC_COST_USD
+        value: "2"
+      - key: BRIDGE_KYB_COST_USD
+        value: "10"
+
+  - type: web
+    name: sivan-payments-api-live
+    runtime: node
+    plan: free
+    rootDir: .
+    buildCommand: npm install && npm run build && npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PROVIDER
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      # Add your Vercel frontend URLs here after deploying frontend/admin to Vercel.
+      # Example: https://sivan-payments-user-live.vercel.app,https://sivan-payments-admin-live.vercel.app
+      - key: CORS_ORIGIN
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: BRIDGE_MOCK_MODE
+        value: "false"
+      - key: DEFAULT_OFFRAMP_PROVIDER
+        value: bridge
+      - key: BRIDGE_BASE_URL
+        value: https://api.bridge.xyz/v0
+      - key: BRIDGE_API_KEY
+        sync: false
+      - key: BRIDGE_WEBHOOK_PUBLIC_KEY
+        sync: false
+      - key: WEBHOOK_MAX_AGE_MS
+        value: "600000"
+      - key: SIVAN_OFFRAMP_FEE_PERCENT
+        value: "1.25"
+      - key: BRIDGE_OFFRAMP_COST_PERCENT
+        value: "0.5"
+      - key: BRIDGE_KYC_COST_USD
+        value: "2"
+      - key: BRIDGE_KYB_COST_USD
+        value: "10"

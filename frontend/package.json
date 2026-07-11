@@ -1,0 +1,27 @@
+{
+  "name": "sivan-payments-user",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Premium React + TypeScript user frontend for Sivan Payments.",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "typecheck": "tsc -b --pretty"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
