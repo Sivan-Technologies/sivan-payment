@@ -111,6 +111,17 @@ export interface WithdrawalRecord {
   completedAt?: string;
 }
 
+export interface AuthChallengeRecord {
+  id: string;
+  email: string;
+  codeHash: string;
+  intent: 'signup' | 'signin';
+  fullName?: string;
+  expiresAt: string;
+  consumedAt?: string;
+  createdAt: string;
+}
+
 export interface WebhookEventRecord {
   id: string;
   provider: string;
@@ -130,4 +141,5 @@ export interface DatabaseShape {
   liquidationAddresses: LiquidationAddressRecord[];
   withdrawals: WithdrawalRecord[];
   webhookEvents: WebhookEventRecord[];
+  authChallenges: AuthChallengeRecord[];
 }

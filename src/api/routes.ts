@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { authRoutes } from '../auth/auth.routes.js';
 import { usersRoutes } from '../users/users.routes.js';
 import { customersRoutes } from '../customers/customers.routes.js';
 import { externalAccountsRoutes } from '../offramp/api/external-accounts.routes.js';
@@ -11,7 +12,8 @@ import { providersRoutes } from '../providers/providers.routes.js';
 import { adminRoutes } from '../admin/admin.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
-  app.get('/health', async () => ({ status: 'ok', service: 'sivan-offramp' }));
+  app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
+  await authRoutes(app);
   await usersRoutes(app);
   await customersRoutes(app);
   await externalAccountsRoutes(app);

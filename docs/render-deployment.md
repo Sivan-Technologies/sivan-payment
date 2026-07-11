@@ -69,6 +69,11 @@ DATABASE_PROVIDER=postgres
 DATABASE_URL=<TEST_NEON_DATABASE_URL>
 CORS_ORIGIN=<VERCEL_USER_TEST_URL>,<VERCEL_ADMIN_TEST_URL>
 ADMIN_API_KEY=<strong random test admin key>
+USER_JWT_SECRET=<strong random user JWT secret>
+USER_JWT_EXPIRES_MINUTES=60
+AUTH_OTP_EXPIRES_MINUTES=10
+AUTH_DEV_SHOW_OTP=true
+AUTH_REQUIRE_USER=true
 BRIDGE_MOCK_MODE=false
 BRIDGE_BASE_URL=https://api.sandbox.bridge.xyz/v0
 BRIDGE_API_KEY=<BRIDGE_SANDBOX_KEY>
@@ -89,6 +94,11 @@ DATABASE_PROVIDER=postgres
 DATABASE_URL=<LIVE_NEON_DATABASE_URL>
 CORS_ORIGIN=<VERCEL_USER_LIVE_URL>,<VERCEL_ADMIN_LIVE_URL>
 ADMIN_API_KEY=<separate strong random live admin key>
+USER_JWT_SECRET=<separate strong random live user JWT secret>
+USER_JWT_EXPIRES_MINUTES=60
+AUTH_OTP_EXPIRES_MINUTES=10
+AUTH_DEV_SHOW_OTP=false
+AUTH_REQUIRE_USER=true
 BRIDGE_MOCK_MODE=false
 BRIDGE_BASE_URL=https://api.bridge.xyz/v0
 BRIDGE_API_KEY=<BRIDGE_LIVE_KEY>
@@ -263,3 +273,28 @@ VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
 ```
 
 Never expose `ADMIN_API_KEY` as a `VITE_` variable. `VITE_` variables are public in the browser bundle.
+
+
+## User authentication
+
+The user frontend now uses passwordless email login.
+
+Backend env vars:
+
+```env
+USER_JWT_SECRET=<strong random secret, different per lane>
+USER_JWT_EXPIRES_MINUTES=60
+AUTH_OTP_EXPIRES_MINUTES=10
+AUTH_DEV_SHOW_OTP=true   # test only; set false in live
+AUTH_REQUIRE_USER=true
+```
+
+In TEST, `AUTH_DEV_SHOW_OTP=true` returns the OTP in the API response so the flow can be tested before email delivery is connected.
+
+In LIVE, set:
+
+```env
+AUTH_DEV_SHOW_OTP=false
+```
+
+and connect a real email provider before onboarding real users.

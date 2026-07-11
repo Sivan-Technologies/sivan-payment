@@ -17,10 +17,12 @@ async function main() {
   if (!address || typeof address === 'string') throw new Error('Could not resolve test server address');
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
+  let authToken = '';
+
   async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
     const res = await fetch(`${baseUrl}${url}`, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body)
     });
     const json: any = await res.json().catch(() => ({}));
@@ -55,12 +57,21 @@ async function main() {
     assert(economicsResponse.data.costs.onboardingCost === '2.00', 'unit economics includes one-time KYC cost when requested');
 
     const email = `e2e+${Date.now()}@sivan.test`;
-    const userResponse = await request<any>('POST', '/api/users', {
+    const authStartResponse = await request<any>('POST', '/api/auth/email/start', {
       email,
-      fullName: 'Ada Lovelace'
+      fullName: 'Ada Lovelace',
+      intent: 'signup'
     });
-    const user = userResponse.data;
-    assert(Boolean(user.id), 'user signup created a user');
+    assert(Boolean(authStartResponse.data.devCode), 'passwordless signup generated a test OTP');
+
+    const authVerifyResponse = await request<any>('POST', '/api/auth/email/verify', {
+      email,
+      code: authStartResponse.data.devCode
+    });
+    authToken = authVerifyResponse.data.token;
+    const user = authVerifyResponse.data.user;
+    assert(Boolean(user.id), 'passwordless signup verified and created a user');
+    assert(Boolean(authToken), 'passwordless auth returned a JWT');
 
     const customerResponse = await request<any>('POST', '/api/customers/kyc-link', {
       userId: user.id,

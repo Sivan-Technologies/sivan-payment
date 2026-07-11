@@ -178,3 +178,33 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .progress-item span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 999px; border: 1px solid var(--border); color: var(--soft); }
 .progress-item.done { color: var(--text); }
 .progress-item.done span { background: rgba(116,221,190,.16); border-color: var(--border-strong); color: var(--green); }
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(7, 9, 13, 0.45);
+}
+.auth-tabs button {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 10px;
+  padding: 11px 12px;
+  font-weight: 900;
+}
+.auth-tabs button.active {
+  color: #06130f;
+  background: linear-gradient(135deg, var(--green), var(--green-strong));
+}
+.dev-code {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: rgba(116, 221, 190, 0.08);
+  color: var(--soft);
+}
+.dev-code strong { color: var(--green); letter-spacing: .18em; }

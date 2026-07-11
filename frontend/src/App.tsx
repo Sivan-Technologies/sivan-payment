@@ -66,6 +66,10 @@ export default function App() {
   const [view, setView] = useState<ViewKey>('overview');
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000', []);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
+  const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [devCode, setDevCode] = useState<string | undefined>();
   const [user, setUser] = useState<UserRecord | null>(() => readStorage<UserRecord | null>('sivan.user', null));
   const [customer, setCustomer] = useState<CustomerRecord | null>(() => readStorage<CustomerRecord | null>('sivan.customer', null));
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
@@ -76,10 +80,26 @@ export default function App() {
 
   const pageTitle = useMemo(() => views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
-  const hasUser = Boolean(user?.id);
+  const hasUser = Boolean(user?.id && authToken);
   const isVerified = customer?.kycStatus === 'kyc_approved';
   const hasBank = accounts.length > 0;
   const activeStep = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank' : 'Ready to withdraw';
+
+  const logout = useCallback((message = 'You have been signed out.') => {
+    setAuthToken('');
+    setUser(null);
+    setCustomer(null);
+    setAccounts([]);
+    setWithdrawals([]);
+    setDepositResult(null);
+    localStorage.removeItem('sivan.authToken');
+    localStorage.removeItem('sivan.user');
+    localStorage.removeItem('sivan.customer');
+    localStorage.removeItem('sivan.accounts');
+    setView('overview');
+    setToast({ message, type: 'success' });
+    window.setTimeout(() => setToast(null), 4200);
+  }, []);
 
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -91,15 +111,22 @@ export default function App() {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         ...(options.headers || {})
       }
     });
     const json = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (response.status === 401 && authToken) logout('Session expired. Please sign in again.');
       throw new Error(json?.error?.message || 'Something went wrong. Please try again.');
     }
     return (json.data ?? json) as T;
-  }, [apiBase]);
+  }, [apiBase, authToken, logout]);
+
+  useEffect(() => {
+    if (authToken) localStorage.setItem('sivan.authToken', authToken);
+    else localStorage.removeItem('sivan.authToken');
+  }, [authToken]);
 
   useEffect(() => {
     if (user) localStorage.setItem('sivan.user', JSON.stringify(user));
@@ -115,8 +142,26 @@ export default function App() {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
   }, [accounts]);
 
+  useEffect(() => {
+    if (!authToken) return;
+    const timeoutMs = 30 * 60 * 1000;
+    const updateActivity = () => localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
+    const checkActivity = () => {
+      const last = Number(localStorage.getItem('sivan.lastActivityAt') || Date.now());
+      if (Date.now() - last > timeoutMs) logout('Signed out after 30 minutes of inactivity.');
+    };
+    updateActivity();
+    const events = ['click', 'keydown', 'mousemove', 'touchstart'];
+    events.forEach((event) => window.addEventListener(event, updateActivity, { passive: true }));
+    const interval = window.setInterval(checkActivity, 60_000);
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, updateActivity));
+      window.clearInterval(interval);
+    };
+  }, [authToken, logout]);
+
   const loadUserData = useCallback(async () => {
-    if (!user?.id) return;
+    if (!user?.id || !authToken) return;
     const [customerResult, accountsResult, withdrawalsResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
@@ -125,7 +170,7 @@ export default function App() {
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
-  }, [api, user?.id]);
+  }, [api, user?.id, authToken]);
 
   const loadFee = useCallback(async () => {
     const fee = await api<FeePolicy>('/api/fees/offramp').catch(() => null);
@@ -137,28 +182,53 @@ export default function App() {
     void loadUserData();
   }, [loadFee, loadUserData]);
 
-  async function handleSignup(event: FormEvent<HTMLFormElement>) {
+  async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     try {
       const body = getForm(event.currentTarget);
-      const created = await api<UserRecord>('/api/users', {
+      const result = await api<{ message: string; expiresAt: string; devCode?: string }>('/api/auth/email/start', {
         method: 'POST',
-        body: JSON.stringify({ email: body.email, fullName: body.fullName })
+        body: JSON.stringify({
+          email: body.email,
+          fullName: authTab === 'signup' ? body.fullName : undefined,
+          intent: authTab
+        })
       });
-      setUser(created);
-      setCustomer(null);
-      setAccounts([]);
-      setWithdrawals([]);
-      setDepositResult(null);
-      notify('Account created. Next, verify your identity to enable withdrawals.');
-      setView('kyc');
+      setPendingEmail(body.email);
+      setDevCode(result.devCode);
+      notify(authTab === 'signup' ? 'Verification code sent. Enter it to create your account.' : 'Login code sent. Enter it to continue.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
       setLoading(false);
     }
   }
+
+  async function handleEmailAuthVerify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    try {
+      const body = getForm(event.currentTarget);
+      const result = await api<{ token: string; user: UserRecord; expiresInMinutes: number }>('/api/auth/email/verify', {
+        method: 'POST',
+        body: JSON.stringify({ email: pendingEmail, code: body.code })
+      });
+      setAuthToken(result.token);
+      setUser(result.user);
+      setPendingEmail('');
+      setDevCode(undefined);
+      localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
+      notify(authTab === 'signup' ? 'Account verified. Continue your setup.' : 'Welcome back.');
+      setView('overview');
+      window.setTimeout(() => void loadUserData(), 0);
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
 
   async function handleKyc(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -298,7 +368,7 @@ export default function App() {
           </div>
           <div className="top-actions">
             <div className="status-pill ok"><span /> Secure test lane</div>
-            <button className="secondary-btn" onClick={loadUserData} disabled={loading}>{loading ? 'Please wait...' : 'Refresh'}</button>
+            {hasUser && <button className="ghost-btn" onClick={() => logout('Signed out successfully.')}>Logout</button>}<button className="secondary-btn" onClick={loadUserData} disabled={loading}>{loading ? 'Please wait...' : 'Refresh'}</button>
           </div>
         </header>
 
@@ -342,23 +412,37 @@ export default function App() {
         {view === 'signup' && (
           <section className="form-layout">
             <article className="panel form-panel">
-              <p className="eyebrow">Step 1</p>
-              <h3>Create your account</h3>
-              <p className="muted">Use your email to start. You can add payout details after verification.</p>
-              <form className="form" onSubmit={handleSignup}>
-                <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
-                <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>
-                <button className="primary-btn" disabled={loading}>{loading ? 'Creating...' : 'Create account'}</button>
-              </form>
+              <p className="eyebrow">Secure access</p>
+              <h3>{authTab === 'signup' ? 'Create your account' : 'Welcome back'}</h3>
+              <p className="muted">Use passwordless email access. We will send a short verification code.</p>
+              <div className="auth-tabs">
+                <button className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); setPendingEmail(''); setDevCode(undefined); }}>Create account</button>
+                <button className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); setPendingEmail(''); setDevCode(undefined); }}>Sign in</button>
+              </div>
+              {!pendingEmail ? (
+                <form className="form" onSubmit={handleEmailAuthStart}>
+                  <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
+                  {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>}
+                  <button className="primary-btn" disabled={loading}>{loading ? 'Sending...' : authTab === 'signup' ? 'Send verification code' : 'Send login code'}</button>
+                </form>
+              ) : (
+                <form className="form" onSubmit={handleEmailAuthVerify}>
+                  <label>Verification code<input name="code" inputMode="numeric" placeholder="6-digit code" required /></label>
+                  {devCode && <div className="dev-code">Test code: <strong>{devCode}</strong></div>}
+                  <button className="primary-btn" disabled={loading}>{loading ? 'Checking...' : 'Continue'}</button>
+                  <button type="button" className="ghost-btn" onClick={() => { setPendingEmail(''); setDevCode(undefined); }}>Use another email</button>
+                </form>
+              )}
             </article>
             <article className="premium-card">
               <span className="orb" />
-              <h3>Built for simple global payouts.</h3>
-              <p>No crypto exchange steps. No confusing provider language. Just a clear withdrawal path from USDC to bank.</p>
-              <ul><li>Guided setup</li><li>Secure verification</li><li>Bank payout tracking</li></ul>
+              <h3>Fast access, no passwords.</h3>
+              <p>Sign in securely with your email today. WhatsApp sign-in will be added for existing escrow users later.</p>
+              <ul><li>Passwordless login</li><li>Auto logout after inactivity</li><li>Web and WhatsApp-ready identity</li></ul>
             </article>
           </section>
         )}
+
 
         {view === 'kyc' && (
           <section className="panel-grid two">

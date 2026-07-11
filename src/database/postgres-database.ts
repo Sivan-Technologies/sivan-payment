@@ -10,7 +10,8 @@ import type {
   SourceCurrency,
   UserRecord,
   WebhookEventRecord,
-  WithdrawalRecord
+  WithdrawalRecord,
+  AuthChallengeRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -64,6 +65,7 @@ export class PostgresDatabase {
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
       const withdrawals = await client.query('select * from payments_withdrawals order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
+      const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -71,7 +73,8 @@ export class PostgresDatabase {
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
-        webhookEvents: webhookEvents.rows.map(mapWebhookEvent)
+        webhookEvents: webhookEvents.rows.map(mapWebhookEvent),
+        authChallenges: authChallenges.rows.map(mapAuthChallenge)
       };
     } finally {
       client.release();
@@ -95,6 +98,7 @@ export class PostgresDatabase {
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
       for (const withdrawal of data.withdrawals) await upsertWithdrawal(client, withdrawal);
       for (const event of data.webhookEvents) await upsertWebhookEvent(client, event);
+      for (const challenge of data.authChallenges ?? []) await upsertAuthChallenge(client, challenge);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -298,6 +302,29 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapAuthChallenge(row: any): AuthChallengeRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    codeHash: row.code_hash,
+    intent: row.intent,
+    fullName: str(row.full_name),
+    expiresAt: iso(row.expires_at),
+    consumedAt: optionalIso(row.consumed_at),
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertAuthChallenge(client: pg.PoolClient, item: AuthChallengeRecord) {
+  await client.query(
+    `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at`,
+    [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt]
+  );
+}
 
 function inferPrimaryChannel(email?: string, whatsappNumber?: string): 'email' | 'whatsapp' | 'both' {
   if (email && whatsappNumber) return 'both';
