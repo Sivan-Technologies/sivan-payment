@@ -1,22 +1,35 @@
-# Render Deployment Guide — Sivan Payments Dual Lanes
+# Render + Vercel Deployment Guide — Sivan Payments Dual Lanes
 
 Sivan Payments uses two isolated lanes:
 
 ```text
 [ TEST LANE ]                                      [ LIVE LANE ]
 
-sivan-payments-user-test                          sivan-payments-user-live
-sivan-payments-admin-test                         sivan-payments-admin-live
+Vercel: sivan-payments-user-test                  Vercel: sivan-payments-user-live
+Vercel: sivan-payments-admin-test                 Vercel: sivan-payments-admin-live
         ↓                                                 ↓
-sivan-payments-api-test                           sivan-payments-api-live
+Render: sivan-payments-api-test                   Render: sivan-payments-api-live
         ↓                                                 ↓
 Neon Database: Sivan Test                         Neon Database: Sivan Live
 Bridge Sandbox                                    Bridge Production
 ```
 
-The Neon database previously configured first is the **TEST** database. The second Neon URL is the **LIVE** database.
+The backend API is deployed on **Render**.
 
-## What has been applied
+The user frontend and admin frontend are deployed on **Vercel**.
+
+## Backend Render Blueprint
+
+The root `render.yaml` now deploys only backend API services:
+
+```text
+sivan-payments-api-test
+sivan-payments-api-live
+```
+
+Frontend services are intentionally not in `render.yaml` because they are deployed separately on Vercel.
+
+## Database migrations
 
 The same migrations have been applied to both Neon databases:
 
@@ -25,7 +38,7 @@ database/migrations/001_create_payments_tables.sql
 database/migrations/002_evolve_users_hybrid_identity.sql
 ```
 
-Both lanes now have:
+Both lanes have:
 
 ```text
 payments_customers
@@ -38,7 +51,7 @@ payments_reconciliation_findings
 payments_onboarding_costs
 ```
 
-The central `users` table now supports hybrid identity:
+The central `users` table supports hybrid identity:
 
 ```text
 whatsapp_number optional
@@ -48,79 +61,93 @@ email_verified_at
 whatsapp_verified_at
 ```
 
-with the constraint that at least one of `email` or `whatsapp_number` must exist.
-
-## Render services
-
-The `render.yaml` blueprint creates six services:
-
-```text
-sivan-payments-api-test
-sivan-payments-api-live
-sivan-payments-user-test
-sivan-payments-user-live
-sivan-payments-admin-test
-sivan-payments-admin-live
-```
-
-## Required environment variables
-
-### API TEST
+## Render API TEST env vars
 
 ```env
 APP_ENV=staging
 DATABASE_PROVIDER=postgres
 DATABASE_URL=<TEST_NEON_DATABASE_URL>
-ADMIN_API_KEY=<strong random admin key>
+CORS_ORIGIN=<VERCEL_USER_TEST_URL>,<VERCEL_ADMIN_TEST_URL>
+ADMIN_API_KEY=<strong random test admin key>
 BRIDGE_MOCK_MODE=false
 BRIDGE_BASE_URL=https://api.sandbox.bridge.xyz/v0
 BRIDGE_API_KEY=<BRIDGE_SANDBOX_KEY>
 BRIDGE_WEBHOOK_PUBLIC_KEY=<BRIDGE_SANDBOX_WEBHOOK_PUBLIC_KEY>
+DEFAULT_OFFRAMP_PROVIDER=bridge
 SIVAN_OFFRAMP_FEE_PERCENT=1.25
 BRIDGE_OFFRAMP_COST_PERCENT=0.5
 BRIDGE_KYC_COST_USD=2
 BRIDGE_KYB_COST_USD=10
+WEBHOOK_MAX_AGE_MS=600000
 ```
 
-### API LIVE
+## Render API LIVE env vars
 
 ```env
 APP_ENV=production
 DATABASE_PROVIDER=postgres
 DATABASE_URL=<LIVE_NEON_DATABASE_URL>
-ADMIN_API_KEY=<separate strong random production admin key>
+CORS_ORIGIN=<VERCEL_USER_LIVE_URL>,<VERCEL_ADMIN_LIVE_URL>
+ADMIN_API_KEY=<separate strong random live admin key>
 BRIDGE_MOCK_MODE=false
 BRIDGE_BASE_URL=https://api.bridge.xyz/v0
 BRIDGE_API_KEY=<BRIDGE_LIVE_KEY>
 BRIDGE_WEBHOOK_PUBLIC_KEY=<BRIDGE_LIVE_WEBHOOK_PUBLIC_KEY>
+DEFAULT_OFFRAMP_PROVIDER=bridge
 SIVAN_OFFRAMP_FEE_PERCENT=1.25
 BRIDGE_OFFRAMP_COST_PERCENT=0.5
 BRIDGE_KYC_COST_USD=2
 BRIDGE_KYB_COST_USD=10
+WEBHOOK_MAX_AGE_MS=600000
 ```
 
-## Frontend API base URL
+## Vercel user frontend
 
-Both frontends now read:
-
-```env
-VITE_API_BASE_URL
-```
-
-Render blueprint sets:
+Create a Vercel project from the same repo.
 
 ```text
-User TEST  → https://sivan-payments-api-test.onrender.com
-Admin TEST → https://sivan-payments-api-test.onrender.com
-User LIVE  → https://sivan-payments-api-live.onrender.com
-Admin LIVE → https://sivan-payments-api-live.onrender.com
+Root Directory: frontend
+Framework: Vite
+Build Command: npm run build
+Output Directory: dist
 ```
 
-## Admin API key
+TEST env:
 
-Admin endpoints under `/api/admin/*` are protected when `ADMIN_API_KEY` is set.
+```env
+VITE_API_BASE_URL=https://sivan-payments-api-test.onrender.com
+```
 
-The admin frontend does **not** bake this key into the static bundle. Enter the key in the admin UI sidebar. It is stored locally in the admin user's browser and sent as:
+LIVE env:
+
+```env
+VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
+```
+
+## Vercel admin frontend
+
+Create another Vercel project from the same repo.
+
+```text
+Root Directory: frontend-admin
+Framework: Vite
+Build Command: npm run build
+Output Directory: dist
+```
+
+TEST env:
+
+```env
+VITE_API_BASE_URL=https://sivan-payments-api-test.onrender.com
+```
+
+LIVE env:
+
+```env
+VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
+```
+
+The admin frontend does not bake `ADMIN_API_KEY` into the static build. Enter the admin key in the admin UI sidebar. It is stored locally and sent as:
 
 ```http
 x-admin-api-key: <key>
@@ -130,13 +157,19 @@ x-admin-api-key: <key>
 
 Create separate Bridge webhook endpoints per lane.
 
-### TEST
+TEST:
 
 ```text
 https://sivan-payments-api-test.onrender.com/api/webhooks/bridge
 ```
 
-Use Bridge sandbox and subscribe to:
+LIVE:
+
+```text
+https://sivan-payments-api-live.onrender.com/api/webhooks/bridge
+```
+
+Subscribe to:
 
 ```text
 customer
@@ -145,24 +178,6 @@ external_account
 liquidation_address.drain
 ```
 
-### LIVE
-
-```text
-https://sivan-payments-api-live.onrender.com/api/webhooks/bridge
-```
-
-Use Bridge production and subscribe to the same categories.
-
-## Deployment order
-
-1. Deploy `sivan-payments-api-test`.
-2. Confirm `/health`.
-3. Confirm migrations run.
-4. Configure Bridge sandbox webhook.
-5. Deploy `sivan-payments-user-test` and `sivan-payments-admin-test`.
-6. Test complete sandbox flow.
-7. Deploy live lane only after test lane works.
-
 ## Health checks
 
 ```text
@@ -170,12 +185,13 @@ https://sivan-payments-api-test.onrender.com/health
 https://sivan-payments-api-live.onrender.com/health
 ```
 
-## Production caution
+## Deployment order
 
-Do not expose live admin without:
-
-- strong `ADMIN_API_KEY`
-- 2FA or proper auth provider as next step
-- RBAC
-- audit logs
-- restricted team access
+1. Deploy `sivan-payments-api-test` on Render.
+2. Confirm `/health`.
+3. Confirm migrations run.
+4. Deploy `frontend` and `frontend-admin` to Vercel test projects.
+5. Update Render `CORS_ORIGIN` with both Vercel test URLs.
+6. Configure Bridge sandbox webhook.
+7. Test full TEST lane.
+8. Deploy live lane only after TEST works.

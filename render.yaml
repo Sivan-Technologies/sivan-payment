@@ -18,8 +18,10 @@ services:
         value: postgres
       - key: DATABASE_URL
         sync: false
+      # Add your Vercel frontend URLs here after deploying frontend/admin to Vercel.
+      # Example: https://sivan-payments-user-test.vercel.app,https://sivan-payments-admin-test.vercel.app
       - key: CORS_ORIGIN
-        value: https://sivan-payments-user-test.onrender.com,https://sivan-payments-admin-test.onrender.com
+        sync: false
       - key: ADMIN_API_KEY
         sync: false
       - key: BRIDGE_MOCK_MODE
@@ -62,8 +64,10 @@ services:
         value: postgres
       - key: DATABASE_URL
         sync: false
+      # Add your Vercel frontend URLs here after deploying frontend/admin to Vercel.
+      # Example: https://sivan-payments-user-live.vercel.app,https://sivan-payments-admin-live.vercel.app
       - key: CORS_ORIGIN
-        value: https://sivan-payments-user-live.onrender.com,https://sivan-payments-admin-live.onrender.com
+        sync: false
       - key: ADMIN_API_KEY
         sync: false
       - key: BRIDGE_MOCK_MODE
@@ -86,63 +90,3 @@ services:
         value: "2"
       - key: BRIDGE_KYB_COST_USD
         value: "10"
-
-  - type: web
-    name: sivan-payments-user-test
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    autoDeploy: true
-    envVars:
-      - key: VITE_API_BASE_URL
-        value: https://sivan-payments-api-test.onrender.com
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-
-  - type: web
-    name: sivan-payments-user-live
-    runtime: static
-    rootDir: frontend
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    autoDeploy: false
-    envVars:
-      - key: VITE_API_BASE_URL
-        value: https://sivan-payments-api-live.onrender.com
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-
-  - type: web
-    name: sivan-payments-admin-test
-    runtime: static
-    rootDir: frontend-admin
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    autoDeploy: true
-    envVars:
-      - key: VITE_API_BASE_URL
-        value: https://sivan-payments-api-test.onrender.com
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-
-  - type: web
-    name: sivan-payments-admin-live
-    runtime: static
-    rootDir: frontend-admin
-    buildCommand: npm install && npm run build
-    staticPublishPath: dist
-    autoDeploy: false
-    envVars:
-      - key: VITE_API_BASE_URL
-        value: https://sivan-payments-api-live.onrender.com
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
