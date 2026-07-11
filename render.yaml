@@ -87,8 +87,9 @@ services:
       - key: BRIDGE_KYB_COST_USD
         value: "10"
 
-  - type: static_site
+  - type: web
     name: sivan-payments-user-test
+    runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
@@ -101,8 +102,9 @@ services:
         source: /*
         destination: /index.html
 
-  - type: static_site
+  - type: web
     name: sivan-payments-user-live
+    runtime: static
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
@@ -115,8 +117,9 @@ services:
         source: /*
         destination: /index.html
 
-  - type: static_site
+  - type: web
     name: sivan-payments-admin-test
+    runtime: static
     rootDir: frontend-admin
     buildCommand: npm install && npm run build
     staticPublishPath: dist
@@ -129,8 +132,9 @@ services:
         source: /*
         destination: /index.html
 
-  - type: static_site
+  - type: web
     name: sivan-payments-admin-live
+    runtime: static
     rootDir: frontend-admin
     buildCommand: npm install && npm run build
     staticPublishPath: dist
