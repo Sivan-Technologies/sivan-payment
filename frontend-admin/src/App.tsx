@@ -200,7 +200,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark">S</div><div><p className="eyebrow">Sivan</p><h1>Admin</h1></div></div>
+        <div className="brand"><img className="brand-logo" src="/asset/sivan-logo.png" alt="Sivan logo" /><div><p className="eyebrow">Sivan</p><h1>Admin</h1></div></div>
         <nav className="nav">{nav.map((item) => <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => setView(item.key)}><span>{item.icon}</span>{item.label}</button>)}</nav>
         <div className="api-card"><label>API base</label><input value={apiDraft} onChange={(event) => setApiDraft(event.target.value)} /><button className="ghost-btn" onClick={() => { setApiBase(apiDraft.replace(/\/$/, '')); notify('Admin API URL saved.'); }}>Save API URL</button><label>Admin API key</label><input type="password" value={adminApiKeyDraft} onChange={(event) => setAdminApiKeyDraft(event.target.value)} placeholder="Required when backend ADMIN_API_KEY is set" /><button className="ghost-btn" onClick={() => { setAdminApiKey(adminApiKeyDraft); notify('Admin API key saved locally.'); }}>Save Admin Key</button><p className="hint">Internal admin only. Do not expose without auth, RBAC, 2FA, and audit logging.</p></div>
       </aside>

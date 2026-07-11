@@ -268,7 +268,7 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">S</div>
+          <img className="brand-logo" src="/asset/sivan-logo.png" alt="Sivan logo" />
           <div>
             <p className="eyebrow">Sivan</p>
             <h1>Off-Ramp</h1>
