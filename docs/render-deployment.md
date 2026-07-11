@@ -298,3 +298,29 @@ AUTH_DEV_SHOW_OTP=false
 ```
 
 and connect a real email provider before onboarding real users.
+
+## Email provider for passwordless login
+
+The user frontend uses passwordless email OTP login.
+
+For local/test without real email delivery:
+
+```env
+EMAIL_PROVIDER=console
+AUTH_DEV_SHOW_OTP=true
+```
+
+For production email delivery with Resend:
+
+```env
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=<resend_api_key>
+EMAIL_FROM="Sivan <no-reply@your-domain.com>"
+AUTH_DEV_SHOW_OTP=false
+```
+
+Important:
+
+- `AUTH_DEV_SHOW_OTP=true` returns the OTP in API responses and should only be used in test/staging.
+- `AUTH_DEV_SHOW_OTP=false` must be used in live.
+- Verify your sending domain in Resend before using a production `EMAIL_FROM` address.

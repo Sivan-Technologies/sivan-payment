@@ -7,6 +7,7 @@ import { id, nowIso } from '../shared/id.js';
 import { createUser, getUserByEmail } from '../users/users.service.js';
 import { signUserJwt } from './jwt.js';
 import { createAuditLog } from '../audit/audit.service.js';
+import { buildOtpEmail, sendEmail } from '../notifications/email.service.js';
 
 export const startEmailAuthSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
@@ -55,10 +56,30 @@ export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>
     return challenge;
   });
 
-  // Email provider integration goes here. For now, test/staging returns the OTP if enabled.
+  const email = buildOtpEmail({
+    code,
+    expiresInMinutes: env.AUTH_OTP_EXPIRES_MINUTES,
+    intent: input.intent
+  });
+  const delivery = await sendEmail({
+    to: input.email,
+    subject: email.subject,
+    text: email.text,
+    html: email.html
+  });
+
+  await createAuditLog({
+    actorType: 'system',
+    action: 'auth.otp_sent',
+    resourceType: 'auth_challenge',
+    resourceId: challenge.id,
+    metadata: { email: input.email, intent: input.intent, provider: delivery.provider, deliveryId: delivery.id }
+  });
+
   return {
     message: 'Verification code sent',
     expiresAt,
+    deliveryProvider: delivery.provider,
     devCode: env.AUTH_DEV_SHOW_OTP ? code : undefined
   };
 }

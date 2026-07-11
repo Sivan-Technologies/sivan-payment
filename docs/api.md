@@ -285,3 +285,56 @@ Example response:
   }
 }
 ```
+
+## Passwordless email auth
+
+Start email login/signup:
+
+```http
+POST /api/auth/email/start
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "fullName": "Ada Lovelace",
+  "intent": "signup"
+}
+```
+
+For sign in:
+
+```json
+{
+  "email": "user@example.com",
+  "intent": "signin"
+}
+```
+
+Verify code:
+
+```http
+POST /api/auth/email/verify
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "code": "123456"
+}
+```
+
+Response includes a user JWT:
+
+```json
+{
+  "data": {
+    "token": "...",
+    "user": { "id": "usr_xxx" }
+  }
+}
+```
+
+Protected user APIs require:
+
+```http
+Authorization: Bearer <token>
+```
