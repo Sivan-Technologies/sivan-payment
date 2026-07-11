@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+build/
+coverage/
+frontend/dist/
+frontend-admin/dist/
+
+# env/secrets
+.env
+.env.local
+.env.*.local
+
+# local data
+.data/
+*.log
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# TypeScript build info / generated config artifacts
+*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend-admin/vite.config.js
+frontend-admin/vite.config.d.ts

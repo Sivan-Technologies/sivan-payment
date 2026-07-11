@@ -1,0 +1,94 @@
+import type { Chain, Currency, SourceCurrency } from '../database/types.js';
+
+export interface ProviderCustomer {
+  id: string;
+  status?: string;
+  raw: unknown;
+}
+
+export interface ProviderKycLink {
+  id: string;
+  customerId: string;
+  fullName?: string;
+  email: string;
+  kycLink: string;
+  tosLink?: string;
+  kycStatus: string;
+  tosStatus?: string;
+  raw: unknown;
+}
+
+export interface ProviderExternalAccount {
+  id: string;
+  customerId: string;
+  currency: Currency;
+  accountType: string;
+  active?: boolean;
+  bankName?: string;
+  accountName?: string;
+  accountOwnerName: string;
+  last4?: string;
+  verificationStatus?: string;
+  raw: unknown;
+}
+
+export interface ProviderLiquidationAddress {
+  id: string;
+  customerId: string;
+  address: string;
+  memolessAddress?: string;
+  chain: Chain;
+  currency: SourceCurrency;
+  destinationCurrency: Currency;
+  destinationPaymentRail: string;
+  state?: string;
+  raw: unknown;
+}
+
+export interface CreateKycLinkInput {
+  email: string;
+  fullName: string;
+  type: 'individual' | 'business';
+  redirectUri?: string;
+  endorsements?: string[];
+  idempotencyKey: string;
+}
+
+export interface CreateCustomerInput {
+  payload: Record<string, unknown>;
+  idempotencyKey: string;
+}
+
+export interface CreateExternalAccountInput {
+  customerId: string;
+  payload: Record<string, unknown>;
+  idempotencyKey: string;
+}
+
+export interface CreateLiquidationAddressInput {
+  customerId: string;
+  sourceCurrency: SourceCurrency;
+  sourceChain: Chain;
+  externalAccountId: string;
+  destinationCurrency: Currency;
+  destinationPaymentRail: string;
+  destinationReference?: string;
+  returnAddress?: string;
+  returnInstructions?: unknown;
+  customDeveloperFeePercent?: string;
+  idempotencyKey: string;
+}
+
+export interface OfframpProvider {
+  name: string;
+  createCustomer(input: CreateCustomerInput): Promise<ProviderCustomer>;
+  createKycLink(input: CreateKycLinkInput): Promise<ProviderKycLink>;
+  getKycLink(kycLinkId: string): Promise<ProviderKycLink>;
+  getHostedKycLink(customerId: string, redirectUri?: string, endorsement?: string): Promise<{ url: string; raw: unknown }>;
+  createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount>;
+  simulateSandboxKycApproval?(customerId: string, idempotencyKey: string): Promise<unknown>;
+  verifyExternalAccount(customerId: string, externalAccountId: string): Promise<unknown>;
+  createLiquidationAddress(input: CreateLiquidationAddressInput): Promise<ProviderLiquidationAddress>;
+  getLiquidationAddressDrains(customerId: string, liquidationAddressId: string): Promise<unknown[]>;
+  verifyWebhookSignature(rawBody: Buffer, signatureHeader?: string): boolean;
+}

@@ -1,0 +1,36 @@
+{
+  "name": "sivan-payments",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sivan payments engine: off-ramp MVP with on-ramp module placeholder and provider abstraction.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx scripts/seed.ts",
+    "test:webhook-signature": "tsx scripts/test-webhook-signature.ts",
+    "e2e:local": "tsx scripts/e2e-local.ts",
+    "bridge:smoke": "tsx scripts/bridge-smoke.ts",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "render:build": "npm install && npm run build"
+  },
+  "dependencies": {
+    "@fastify/cors": "latest",
+    "dotenv": "latest",
+    "fastify": "latest",
+    "fastify-raw-body": "latest",
+    "pg": "^8.22.0",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/pg": "^8.20.0",
+    "tsx": "latest",
+    "typescript": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,144 @@
+services:
+  - type: web
+    name: sivan-payments-api-test
+    runtime: node
+    plan: starter
+    rootDir: .
+    buildCommand: npm install && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: staging
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PROVIDER
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        value: https://sivan-payments-user-test.onrender.com,https://sivan-payments-admin-test.onrender.com
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: BRIDGE_MOCK_MODE
+        value: "false"
+      - key: DEFAULT_OFFRAMP_PROVIDER
+        value: bridge
+      - key: BRIDGE_BASE_URL
+        value: https://api.sandbox.bridge.xyz/v0
+      - key: BRIDGE_API_KEY
+        sync: false
+      - key: BRIDGE_WEBHOOK_PUBLIC_KEY
+        sync: false
+      - key: WEBHOOK_MAX_AGE_MS
+        value: "600000"
+      - key: SIVAN_OFFRAMP_FEE_PERCENT
+        value: "1.25"
+      - key: BRIDGE_OFFRAMP_COST_PERCENT
+        value: "0.5"
+      - key: BRIDGE_KYC_COST_USD
+        value: "2"
+      - key: BRIDGE_KYB_COST_USD
+        value: "10"
+
+  - type: web
+    name: sivan-payments-api-live
+    runtime: node
+    plan: starter
+    rootDir: .
+    buildCommand: npm install && npm run build
+    preDeployCommand: npm run db:migrate
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PROVIDER
+        value: postgres
+      - key: DATABASE_URL
+        sync: false
+      - key: CORS_ORIGIN
+        value: https://sivan-payments-user-live.onrender.com,https://sivan-payments-admin-live.onrender.com
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: BRIDGE_MOCK_MODE
+        value: "false"
+      - key: DEFAULT_OFFRAMP_PROVIDER
+        value: bridge
+      - key: BRIDGE_BASE_URL
+        value: https://api.bridge.xyz/v0
+      - key: BRIDGE_API_KEY
+        sync: false
+      - key: BRIDGE_WEBHOOK_PUBLIC_KEY
+        sync: false
+      - key: WEBHOOK_MAX_AGE_MS
+        value: "600000"
+      - key: SIVAN_OFFRAMP_FEE_PERCENT
+        value: "1.25"
+      - key: BRIDGE_OFFRAMP_COST_PERCENT
+        value: "0.5"
+      - key: BRIDGE_KYC_COST_USD
+        value: "2"
+      - key: BRIDGE_KYB_COST_USD
+        value: "10"
+
+  - type: static_site
+    name: sivan-payments-user-test
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://sivan-payments-api-test.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  - type: static_site
+    name: sivan-payments-user-live
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeploy: false
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://sivan-payments-api-live.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  - type: static_site
+    name: sivan-payments-admin-test
+    rootDir: frontend-admin
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://sivan-payments-api-test.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  - type: static_site
+    name: sivan-payments-admin-live
+    rootDir: frontend-admin
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeploy: false
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://sivan-payments-api-live.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
