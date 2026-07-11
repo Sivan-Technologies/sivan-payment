@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'reconciliation' | 'providers' | 'webhooks' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'reconciliation' | 'providers' | 'webhooks' | 'audit' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
@@ -259,4 +259,31 @@ export interface AdminAnalytics {
   windows: AdminAnalyticsWindow[];
   users: AdminAnalyticsUser[];
   recentActivities: AdminAnalyticsActivity[];
+}
+
+
+export interface AdminAuditLog {
+  id: string;
+  actorType: string;
+  actorId?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  severity: 'info' | 'warning' | 'error';
+  ipAddress?: string;
+  userAgent?: string;
+  metadata?: unknown;
+  createdAt: string;
+}
+
+export interface AdminReconciliationRun {
+  id: string;
+  provider?: string;
+  dryRun: boolean;
+  status: 'completed' | 'failed';
+  summary?: any;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+  findings: ReconciliationFinding[];
 }

@@ -11,7 +11,10 @@ const emptyDb = (): DatabaseShape => ({
   liquidationAddresses: [],
   withdrawals: [],
   webhookEvents: [],
-  authChallenges: []
+  authChallenges: [],
+  auditLogs: [],
+  reconciliationRuns: [],
+  reconciliationFindings: []
 });
 
 export class JsonDatabase {

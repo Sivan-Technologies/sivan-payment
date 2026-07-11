@@ -111,6 +111,48 @@ export interface WithdrawalRecord {
   completedAt?: string;
 }
 
+
+export interface AuditLogRecord {
+  id: string;
+  actorType: 'system' | 'user' | 'admin' | 'provider';
+  actorId?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  severity: 'info' | 'warning' | 'error';
+  ipAddress?: string;
+  userAgent?: string;
+  metadata?: unknown;
+  createdAt: string;
+}
+
+export interface ReconciliationRunRecord {
+  id: string;
+  provider?: string;
+  dryRun: boolean;
+  status: 'completed' | 'failed';
+  summary?: unknown;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface ReconciliationFindingRecord {
+  id: string;
+  runId: string;
+  provider?: string;
+  severity: 'info' | 'warning' | 'error';
+  findingType: string;
+  withdrawalId?: string;
+  liquidationAddressId?: string;
+  providerDrainId?: string;
+  message: string;
+  expected?: unknown;
+  actual?: unknown;
+  status: 'open' | 'resolved' | 'ignored';
+  createdAt: string;
+}
+
 export interface AuthChallengeRecord {
   id: string;
   email: string;
@@ -142,4 +184,7 @@ export interface DatabaseShape {
   withdrawals: WithdrawalRecord[];
   webhookEvents: WebhookEventRecord[];
   authChallenges: AuthChallengeRecord[];
+  auditLogs: AuditLogRecord[];
+  reconciliationRuns: ReconciliationRunRecord[];
+  reconciliationFindings: ReconciliationFindingRecord[];
 }

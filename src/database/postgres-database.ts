@@ -11,7 +11,10 @@ import type {
   UserRecord,
   WebhookEventRecord,
   WithdrawalRecord,
-  AuthChallengeRecord
+  AuthChallengeRecord,
+  AuditLogRecord,
+  ReconciliationRunRecord,
+  ReconciliationFindingRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -66,6 +69,9 @@ export class PostgresDatabase {
       const withdrawals = await client.query('select * from payments_withdrawals order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
       const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
+      const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
+      const reconciliationRuns = await client.query('select * from payments_reconciliation_runs order by started_at asc');
+      const reconciliationFindings = await client.query('select * from payments_reconciliation_findings order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -74,7 +80,10 @@ export class PostgresDatabase {
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
         webhookEvents: webhookEvents.rows.map(mapWebhookEvent),
-        authChallenges: authChallenges.rows.map(mapAuthChallenge)
+        authChallenges: authChallenges.rows.map(mapAuthChallenge),
+        auditLogs: auditLogs.rows.map(mapAuditLog),
+        reconciliationRuns: reconciliationRuns.rows.map(mapReconciliationRun),
+        reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding)
       };
     } finally {
       client.release();
@@ -99,6 +108,9 @@ export class PostgresDatabase {
       for (const withdrawal of data.withdrawals) await upsertWithdrawal(client, withdrawal);
       for (const event of data.webhookEvents) await upsertWebhookEvent(client, event);
       for (const challenge of data.authChallenges ?? []) await upsertAuthChallenge(client, challenge);
+      for (const auditLog of data.auditLogs ?? []) await upsertAuditLog(client, auditLog);
+      for (const run of data.reconciliationRuns ?? []) await upsertReconciliationRun(client, run);
+      for (const finding of data.reconciliationFindings ?? []) await upsertReconciliationFinding(client, finding);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -302,6 +314,81 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapAuditLog(row: any): AuditLogRecord {
+  return {
+    id: row.id,
+    actorType: row.actor_type,
+    actorId: str(row.actor_id),
+    action: row.action,
+    resourceType: str(row.resource_type),
+    resourceId: str(row.resource_id),
+    severity: row.severity,
+    ipAddress: str(row.ip_address),
+    userAgent: str(row.user_agent),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at)
+  };
+}
+
+function mapReconciliationRun(row: any): ReconciliationRunRecord {
+  return {
+    id: row.id,
+    provider: str(row.provider),
+    dryRun: row.dry_run,
+    status: row.status,
+    summary: row.summary,
+    error: str(row.error),
+    startedAt: iso(row.started_at),
+    completedAt: optionalIso(row.completed_at)
+  };
+}
+
+function mapReconciliationFinding(row: any): ReconciliationFindingRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    provider: str(row.provider),
+    severity: row.severity,
+    findingType: row.finding_type,
+    withdrawalId: str(row.withdrawal_id),
+    liquidationAddressId: str(row.liquidation_address_id),
+    providerDrainId: str(row.provider_drain_id),
+    message: row.message,
+    expected: row.expected,
+    actual: row.actual,
+    status: row.status,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertAuditLog(client: pg.PoolClient, item: AuditLogRecord) {
+  await client.query(
+    `insert into payments_audit_logs (id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do nothing`,
+    [item.id, item.actorType, item.actorId, item.action, item.resourceType, item.resourceId, item.severity, item.ipAddress, item.userAgent, item.metadata ?? null, item.createdAt]
+  );
+}
+
+async function upsertReconciliationRun(client: pg.PoolClient, item: ReconciliationRunRecord) {
+  await client.query(
+    `insert into payments_reconciliation_runs (id, provider, dry_run, status, summary, error, started_at, completed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       provider=excluded.provider, dry_run=excluded.dry_run, status=excluded.status, summary=excluded.summary, error=excluded.error, completed_at=excluded.completed_at`,
+    [item.id, item.provider, item.dryRun, item.status, item.summary ?? null, item.error, item.startedAt, item.completedAt]
+  );
+}
+
+async function upsertReconciliationFinding(client: pg.PoolClient, item: ReconciliationFindingRecord) {
+  await client.query(
+    `insert into payments_reconciliation_findings (id, run_id, provider, severity, finding_type, withdrawal_id, liquidation_address_id, provider_drain_id, message, expected, actual, status, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     on conflict (id) do update set status=excluded.status`,
+    [item.id, item.runId, item.provider, item.severity, item.findingType, item.withdrawalId, item.liquidationAddressId, item.providerDrainId, item.message, item.expected ?? null, item.actual ?? null, item.status, item.createdAt]
+  );
+}
 
 function mapAuthChallenge(row: any): AuthChallengeRecord {
   return {

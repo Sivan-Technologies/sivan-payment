@@ -6,6 +6,7 @@ import { getLiquidationAddressFeePercent } from './fees.service.js';
 import { getOfframpProvider, routeOfframpProvider } from '../../providers/provider-registry.js';
 import { badRequest, notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
+import { createAuditLog } from '../../audit/audit.service.js';
 
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
@@ -64,7 +65,7 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
   });
 
   const now = nowIso();
-  return db.mutate((mutable) => {
+  const result = await db.mutate((mutable) => {
     const la = {
       id: id('la'),
       userId: input.userId,
@@ -115,6 +116,22 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
       }
     };
   });
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: input.userId,
+    action: 'withdrawal.created',
+    resourceType: 'payments_withdrawal',
+    resourceId: result.withdrawal.id,
+    metadata: {
+      provider: provider.name,
+      destinationCurrency: input.destinationCurrency,
+      sourceChain: input.sourceChain,
+      feePercent: customDeveloperFeePercent
+    }
+  });
+
+  return result;
 }
 
 export async function listWithdrawals(userId: string) {

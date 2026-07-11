@@ -65,3 +65,20 @@ export async function listAdminWebhookEvents() {
   const data = await db.read();
   return data.webhookEvents.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
+
+
+export async function listAdminAuditLogs() {
+  const data = await db.read();
+  return (data.auditLogs ?? []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function listAdminReconciliationRuns() {
+  const data = await db.read();
+  return (data.reconciliationRuns ?? [])
+    .slice()
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+    .map((run) => ({
+      ...run,
+      findings: (data.reconciliationFindings ?? []).filter((finding) => finding.runId === run.id)
+    }));
+}

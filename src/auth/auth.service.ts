@@ -6,6 +6,7 @@ import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { createUser, getUserByEmail } from '../users/users.service.js';
 import { signUserJwt } from './jwt.js';
+import { createAuditLog } from '../audit/audit.service.js';
 
 export const startEmailAuthSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
@@ -92,6 +93,15 @@ export async function verifyEmailAuth(input: z.infer<typeof verifyEmailAuthSchem
 
   const freshUser = await getUserByEmail(input.email);
   if (!freshUser) throw notFound('Account');
+  await createAuditLog({
+    actorType: 'user',
+    actorId: freshUser.id,
+    action: challenge.intent === 'signup' ? 'auth.signup_verified' : 'auth.signin_verified',
+    resourceType: 'user',
+    resourceId: freshUser.id,
+    metadata: { email: input.email }
+  });
+
   return {
     token: signUserJwt({ userId: freshUser.id, email: freshUser.email }),
     expiresInMinutes: env.USER_JWT_EXPIRES_MINUTES,

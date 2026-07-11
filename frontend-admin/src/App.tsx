@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   AdminAnalytics,
+  AdminAuditLog,
+  AdminReconciliationRun,
   AdminOverview,
   AdminUser,
   AdminViewKey,
@@ -20,6 +22,7 @@ const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
   { key: 'reconciliation', icon: '⟳', label: 'Reconciliation' },
   { key: 'providers', icon: '◈', label: 'Providers' },
   { key: 'webhooks', icon: '☷', label: 'Webhooks' },
+  { key: 'audit', icon: '▤', label: 'Audit' },
   { key: 'economics', icon: '◎', label: 'Economics' },
   { key: 'settings', icon: '⚙', label: 'Settings' }
 ];
@@ -62,6 +65,8 @@ export default function App() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [withdrawals, setWithdrawals] = useState<AdminWithdrawal[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookEventRecord[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
+  const [reconciliationRuns, setReconciliationRuns] = useState<AdminReconciliationRun[]>([]);
   const [providers, setProviders] = useState<ProviderCapability[]>([]);
   const [routingDecision, setRoutingDecision] = useState<RoutingDecision | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
@@ -97,12 +102,14 @@ export default function App() {
     setLoading(true);
     try {
       await checkApi();
-      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, providersResult] = await Promise.allSettled([
+      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
         api<AdminUser[]>('/api/admin/users'),
         api<AdminWithdrawal[]>('/api/admin/withdrawals'),
         api<WebhookEventRecord[]>('/api/admin/webhooks'),
+        api<AdminAuditLog[]>('/api/admin/audit-logs'),
+        api<AdminReconciliationRun[]>('/api/admin/reconciliation/runs'),
         api<ProviderCapability[]>('/api/providers/offramp/capabilities')
       ]);
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
@@ -110,6 +117,8 @@ export default function App() {
       if (usersResult.status === 'fulfilled') setUsers(usersResult.value);
       if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
       if (webhooksResult.status === 'fulfilled') setWebhooks(webhooksResult.value);
+      if (auditLogsResult.status === 'fulfilled') setAuditLogs(auditLogsResult.value);
+      if (reconciliationRunsResult.status === 'fulfilled') setReconciliationRuns(reconciliationRunsResult.value);
       if (providersResult.status === 'fulfilled') setProviders(providersResult.value);
     } catch (error) {
       notify((error as Error).message, 'error');
@@ -217,6 +226,7 @@ export default function App() {
         {view === 'reconciliation' && <Reconciliation onRun={runReconciliation} result={reconciliation} loading={loading} />}
         {view === 'providers' && <Providers providers={providers} routingDecision={routingDecision} onRoute={testRoute} />}
         {view === 'webhooks' && <Webhooks webhooks={webhooks} />}
+        {view === 'audit' && <Audit auditLogs={auditLogs} reconciliationRuns={reconciliationRuns} />}
         {view === 'economics' && <Economics overview={overview} estimate={estimate} onEstimate={runEconomicsEstimate} />}
         {view === 'settings' && <Settings apiBase={apiBase} />}
       </main>
@@ -313,6 +323,22 @@ function Reconciliation({ onRun, result, loading }: { onRun: (event: FormEvent<H
 
 function Providers({ providers, routingDecision, onRoute }: { providers: ProviderCapability[]; routingDecision: RoutingDecision | null; onRoute: (event: FormEvent<HTMLFormElement>) => void }) {
   return <section className="panel-grid two"><article className="panel"><div className="panel-head"><div><p className="eyebrow">Routing catalog</p><h3>Provider capabilities</h3></div></div>{!providers.length ? <Empty>No providers configured.</Empty> : <div className="list">{providers.map((provider) => <div className="list-item" key={provider.name}><strong>{provider.name}</strong><Badge value={provider.available ? 'active' : 'inactive'} /><small>Rails: {provider.destinationPaymentRails.join(', ')}</small><small>Currencies: {provider.destinationCurrencies.join(', ')}</small><small>Reliability: {provider.reliability} · Speed: {provider.speed} · Priority: {provider.priority}</small></div>)}</div>}</article><article className="panel form-panel"><p className="eyebrow">Router</p><h3>Test provider selection</h3><form className="form" onSubmit={onRoute}><label>Source chain<select name="sourceChain" defaultValue="ethereum"><option value="ethereum">Ethereum</option><option value="base">Base</option><option value="polygon">Polygon</option><option value="solana">Solana</option></select></label><label>Destination currency<select name="destinationCurrency" defaultValue="usd"><option value="usd">USD</option><option value="gbp">GBP</option><option value="eur">EUR</option></select></label><label>Country<input name="destinationCountry" defaultValue="USA" /></label><label>Rail<input name="destinationPaymentRail" defaultValue="ach" /></label><label>Compliance model<select name="complianceModel" defaultValue="first_party_withdrawal"><option value="first_party_withdrawal">First-party withdrawal</option><option value="third_party_payout">Third-party payout</option><option value="b2b_supplier_payout">B2B supplier payout</option></select></label><label>Required speed<select name="requiredSpeed" defaultValue="standard"><option value="standard">Standard</option><option value="same_day">Same day</option><option value="instant">Instant</option></select></label><button className="primary-btn">Route provider</button></form>{routingDecision && <div className="estimate-box"><Kv label="Selected" value={routingDecision.providerName} /><Kv label="Reason" value={routingDecision.reason} /></div>}</article></section>;
+}
+
+
+function Audit({ auditLogs, reconciliationRuns }: { auditLogs: AdminAuditLog[]; reconciliationRuns: AdminReconciliationRun[] }) {
+  return (
+    <section className="panel-grid two">
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Audit trail</p><h3>Admin and user actions</h3></div></div>
+        {!auditLogs.length ? <Empty>No audit logs found.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Resource</th><th>Severity</th></tr></thead><tbody>{auditLogs.slice(0, 200).map((log) => <tr key={log.id}><td>{new Date(log.createdAt).toLocaleString()}</td><td>{log.actorType}{log.actorId ? ` · ${log.actorId}` : ''}</td><td>{log.action}</td><td>{log.resourceType || '—'}{log.resourceId ? ` · ${log.resourceId}` : ''}</td><td><Badge value={log.severity} /></td></tr>)}</tbody></table></div>}
+      </article>
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Reconciliation history</p><h3>Persisted runs</h3></div></div>
+        {!reconciliationRuns.length ? <Empty>No reconciliation runs found.</Empty> : <div className="list">{reconciliationRuns.slice(0, 100).map((run) => <div className="list-item" key={run.id}><strong>{run.dryRun ? 'Dry-run' : 'Live run'} · {run.id}</strong><Badge value={run.status} /><small>{new Date(run.startedAt).toLocaleString()} · Findings: {run.findings.length}</small><small>Summary: {JSON.stringify(run.summary ?? {})}</small></div>)}</div>}
+      </article>
+    </section>
+  );
 }
 
 function Webhooks({ webhooks }: { webhooks: WebhookEventRecord[] }) {
