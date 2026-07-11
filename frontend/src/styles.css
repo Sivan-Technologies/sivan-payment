@@ -172,3 +172,9 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   .topbar, .top-actions, .panel-head { align-items: stretch; flex-direction: column; }
   .split { grid-template-columns: 1fr; }
 }
+.user-card h3 { margin: 6px 0 8px; font-size: 20px; letter-spacing: -0.03em; }
+.progress-list { display: grid; gap: 8px; margin-top: 14px; }
+.progress-item { display: flex; align-items: center; gap: 10px; color: var(--muted); font-weight: 800; font-size: 13px; }
+.progress-item span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 999px; border: 1px solid var(--border); color: var(--soft); }
+.progress-item.done { color: var(--text); }
+.progress-item.done span { background: rgba(116,221,190,.16); border-color: var(--border-strong); color: var(--green); }
