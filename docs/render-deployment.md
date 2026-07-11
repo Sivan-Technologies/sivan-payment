@@ -189,7 +189,7 @@ https://sivan-payments-api-live.onrender.com/health
 
 1. Deploy `sivan-payments-api-test` on Render.
 2. Confirm `/health`.
-3. Confirm migrations run.
+3. Confirm migrations run during the Render build step.
 4. Deploy `frontend` and `frontend-admin` to Vercel test projects.
 5. Update Render `CORS_ORIGIN` with both Vercel test URLs.
 6. Configure Bridge sandbox webhook.
@@ -205,7 +205,7 @@ The Blueprint uses:
 plan: free
 ```
 
-for the API services so Render should not require a paid instance type.
+for the API services so Render should not require a paid instance type. Render free services do not support `preDeployCommand`, so database migrations are run inside the backend `buildCommand` instead.
 
 For production money movement, upgrade the LIVE API service to a paid Render plan before serving real users. Free services can sleep, cold-start, and are not ideal for payment webhooks.
 
