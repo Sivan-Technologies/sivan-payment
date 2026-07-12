@@ -23,6 +23,7 @@
     "fastify": "latest",
     "fastify-raw-body": "latest",
     "pg": "^8.22.0",
+    "resend": "^6.17.2",
     "zod": "latest"
   },
   "devDependencies": {

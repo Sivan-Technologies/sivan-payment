@@ -1,3 +1,4 @@
+import { Resend } from 'resend';
 import { env } from '../config/env.js';
 
 export interface SendEmailInput {
@@ -23,27 +24,20 @@ export async function sendEmail(input: SendEmailInput) {
       throw new Error('RESEND_API_KEY is required when EMAIL_PROVIDER=resend');
     }
 
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        from: env.EMAIL_FROM,
-        to: [input.to],
-        subject: input.subject,
-        text: input.text,
-        html: input.html
-      })
+    const resend = new Resend(env.RESEND_API_KEY);
+    const { data, error } = await resend.emails.send({
+      from: env.EMAIL_FROM,
+      to: input.to,
+      subject: input.subject,
+      text: input.text,
+      html: input.html
     });
 
-    const data: any = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`Resend email failed: ${data?.message || response.statusText}`);
+    if (error) {
+      throw new Error(`Resend email failed: ${error.message}`);
     }
 
-    return { provider: 'resend', id: data.id, raw: data };
+    return { provider: 'resend', id: data?.id, raw: data };
   }
 
   throw new Error(`Unsupported EMAIL_PROVIDER: ${env.EMAIL_PROVIDER}`);

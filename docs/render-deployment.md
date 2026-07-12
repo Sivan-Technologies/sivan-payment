@@ -367,3 +367,13 @@ sivan-payments-admin-live
 ```
 
 You can also use fewer projects and separate by environment if preferred.
+
+## Official Resend sender
+
+The verified production sender is:
+
+```env
+EMAIL_FROM="Sivan <no-reply@sivantech.online>"
+```
+
+The backend email provider uses the official Resend SDK.
