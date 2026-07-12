@@ -269,11 +269,12 @@ export default function App() {
     try {
       const data = getForm(event.currentTarget);
       const isUsd = data.currency === 'usd';
-      const body = {
+      const isGbp = data.currency === 'gbp';
+      const body: Record<string, unknown> = {
         userId: user.id,
         currency: data.currency,
-        accountType: isUsd ? 'us' : 'gb',
-        paymentRail: isUsd ? 'ach' : 'faster_payments',
+        accountType: isUsd ? 'us' : isGbp ? 'gb' : 'iban',
+        paymentRail: isUsd ? 'ach' : isGbp ? 'faster_payments' : 'sepa',
         bankName: data.bankName,
         accountName: `${data.accountOwnerName} account`,
         accountOwnerName: data.accountOwnerName,
@@ -282,11 +283,17 @@ export default function App() {
         lastName: data.lastName,
         address: isUsd
           ? { street_line_1: data.street || '923 Folsom Street', country: 'USA', state: data.state || 'CA', city: data.city || 'San Francisco', postal_code: data.postalCode || '94107' }
-          : { street_line_1: data.street || '1 King Street', country: 'GBR', city: data.city || 'London', postal_code: data.postalCode || 'SW1A 1AA' },
-        account: isUsd
-          ? { routing_number: data.routingNumber, account_number: data.accountNumber, checking_or_savings: 'checking' }
-          : { sort_code: data.sortCode, account_number: data.gbAccountNumber }
+          : isGbp
+            ? { street_line_1: data.street || '1 King Street', country: 'GBR', city: data.city || 'London', postal_code: data.postalCode || 'SW1A 1AA' }
+            : { street_line_1: data.street || '2 Rue de la Paix', country: data.ibanCountry || 'FRA', city: data.city || 'Paris', postal_code: data.postalCode || '75002' }
       };
+      if (isUsd) {
+        body.account = { routing_number: data.routingNumber, account_number: data.accountNumber, checking_or_savings: 'checking' };
+      } else if (isGbp) {
+        body.account = { sort_code: data.sortCode, account_number: data.gbAccountNumber };
+      } else {
+        body.iban = { account_number: data.ibanAccountNumber, bic: data.bic || undefined, country: data.ibanCountry || 'FRA' };
+      }
       const account = await api<ExternalAccountRecord>('/api/external-accounts', { method: 'POST', body: JSON.stringify(body) });
       setAccounts((existing) => [account, ...existing.filter((item) => item.id !== account.id)]);
       notify('Bank account added. You can now create a withdrawal.');
@@ -519,7 +526,39 @@ function Kv({ label, value }: { label: string; value?: string | number | null })
 function BankForm({ onSubmit, loading, isVerified }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean }) {
   const [currency, setCurrency] = useState('usd');
   if (!isVerified) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Complete verification before adding a bank account.</Empty></article>;
-  return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><p className="muted">Your payout must go to a bank account you own.</p><form className="form" onSubmit={onSubmit}><label>Payout currency<select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value)}><option value="usd">USD — US bank account</option><option value="gbp">GBP — UK bank account</option></select></label><label>Bank name<input name="bankName" defaultValue={currency === 'usd' ? 'Lead Bank' : 'Example UK Bank'} required /></label><label>Account owner name<input name="accountOwnerName" defaultValue="Ada Lovelace" required /></label><div className="split"><label>First name<input name="firstName" defaultValue="Ada" /></label><label>Last name<input name="lastName" defaultValue="Lovelace" /></label></div>{currency === 'usd' ? <><label>Routing number<input name="routingNumber" defaultValue="101019644" /></label><label>Account number<input name="accountNumber" defaultValue="215268129123" /></label></> : <><label>Sort code<input name="sortCode" defaultValue="123456" /></label><label>Account number<input name="gbAccountNumber" defaultValue="12345678" /></label></>}<button className="primary-btn" disabled={loading}>{loading ? 'Adding...' : 'Add bank account'}</button></form></article>;
+  const isUsd = currency === 'usd';
+  const isGbp = currency === 'gbp';
+  return (
+    <article className="panel form-panel">
+      <p className="eyebrow">Step 3</p>
+      <h3>Add your bank</h3>
+      <p className="muted">Your payout must go to a bank account you own. EUR payouts use SEPA bank details.</p>
+      <form className="form" onSubmit={onSubmit}>
+        <label>Payout currency
+          <select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value)}>
+            <option value="usd">USD — US bank account</option>
+            <option value="gbp">GBP — UK bank account</option>
+            <option value="eur">EUR — SEPA / IBAN</option>
+          </select>
+        </label>
+        <label>Bank name<input name="bankName" defaultValue={isUsd ? 'Lead Bank' : isGbp ? 'Example UK Bank' : 'Example SEPA Bank'} required /></label>
+        <label>Account owner name<input name="accountOwnerName" defaultValue="Ada Lovelace" required /></label>
+        <div className="split"><label>First name<input name="firstName" defaultValue="Ada" /></label><label>Last name<input name="lastName" defaultValue="Lovelace" /></label></div>
+        {isUsd ? <>
+          <label>Routing number<input name="routingNumber" defaultValue="101019644" /></label>
+          <label>Account number<input name="accountNumber" defaultValue="215268129123" /></label>
+        </> : isGbp ? <>
+          <label>Sort code<input name="sortCode" defaultValue="123456" /></label>
+          <label>Account number<input name="gbAccountNumber" defaultValue="12345678" /></label>
+        </> : <>
+          <label>IBAN<input name="ibanAccountNumber" placeholder="FR7630006000011234567890189" required /></label>
+          <label>BIC / SWIFT<input name="bic" placeholder="AGRIFRPP" /></label>
+          <label>Bank country<input name="ibanCountry" defaultValue="FRA" maxLength={3} /></label>
+        </>}
+        <button className="primary-btn" disabled={loading}>{loading ? 'Adding...' : 'Add bank account'}</button>
+      </form>
+    </article>
+  );
 }
 
 function BankList({ accounts }: { accounts: ExternalAccountRecord[] }) {

@@ -13,7 +13,7 @@ export const createWithdrawalSchema = z.object({
   externalAccountId: z.string().min(1),
   sourceCurrency: z.literal('usdc').default('usdc'),
   sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism']).default('ethereum'),
-  destinationCurrency: z.enum(['usd', 'gbp']),
+  destinationCurrency: z.enum(['usd', 'gbp', 'eur']),
   destinationPaymentRail: z.string().optional(),
   destinationReference: z.string().optional(),
   returnAddress: z.string().optional(),
@@ -169,5 +169,6 @@ export async function syncWithdrawalDrains(withdrawalId: string) {
 
 function defaultRail(currency: Currency): string {
   if (currency === 'gbp') return 'faster_payments';
+  if (currency === 'eur') return 'sepa';
   return 'ach';
 }

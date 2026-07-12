@@ -338,3 +338,56 @@ Protected user APIs require:
 ```http
 Authorization: Bearer <token>
 ```
+
+## EUR / SEPA support
+
+Sivan Payments supports EUR off-ramp setup through IBAN external accounts.
+
+Create EUR external account:
+
+```http
+POST /api/external-accounts
+Content-Type: application/json
+Authorization: Bearer <user_jwt>
+
+{
+  "userId": "usr_xxx",
+  "currency": "eur",
+  "accountType": "iban",
+  "paymentRail": "sepa",
+  "bankName": "Example SEPA Bank",
+  "accountName": "Ada EUR Account",
+  "accountOwnerName": "Ada Lovelace",
+  "accountOwnerType": "individual",
+  "firstName": "Ada",
+  "lastName": "Lovelace",
+  "address": {
+    "street_line_1": "2 Rue de la Paix",
+    "country": "FRA",
+    "city": "Paris",
+    "postal_code": "75002"
+  },
+  "iban": {
+    "account_number": "FR7630006000011234567890189",
+    "bic": "AGRIFRPP",
+    "country": "FRA"
+  }
+}
+```
+
+Create EUR withdrawal:
+
+```json
+{
+  "userId": "usr_xxx",
+  "externalAccountId": "ea_xxx",
+  "sourceCurrency": "usdc",
+  "sourceChain": "ethereum",
+  "destinationCurrency": "eur",
+  "returnAddress": "0x0000000000000000000000000000000000000000"
+}
+```
+
+Default EUR payment rail is `sepa`.
+
+Important: Bridge may require a `sepa` endorsement or additional KYC/proof-of-address for EUR/SEPA access. Request or refresh the relevant endorsement before enabling EUR for production users.

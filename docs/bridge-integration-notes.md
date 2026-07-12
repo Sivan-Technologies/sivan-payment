@@ -254,3 +254,14 @@ Example route request:
 ```
 
 For MVP, this returns Bridge. Later we can add more providers to `providerCapabilities` and implement their provider classes.
+
+## EUR / SEPA expansion
+
+EUR support is now added at the Sivan Payments layer:
+
+- External account type: `iban`
+- Destination currency: `eur`
+- Default payout rail: `sepa`
+- Source currency remains `usdc`
+
+Bridge may require the customer to have the `sepa` endorsement before using EUR rails. For production, make sure users going through EUR onboarding request or refresh the required Bridge endorsement and complete any required proof-of-address checks.
