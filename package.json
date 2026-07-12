@@ -14,7 +14,8 @@
     "e2e:local": "tsx scripts/e2e-local.ts",
     "bridge:smoke": "tsx scripts/bridge-smoke.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
-    "render:build": "npm install && npm run build"
+    "render:build": "npm install && npm run build",
+    "test:controls": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-controls.json tsx scripts/test-controls.ts"
   },
   "dependencies": {
     "@fastify/cors": "latest",
