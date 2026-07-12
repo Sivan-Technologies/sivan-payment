@@ -17,12 +17,12 @@ import type {
 
 const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '◆', label: 'Command' },
+  { key: 'controls', icon: '◌', label: 'Controls' },
   { key: 'analytics', icon: '▧', label: 'Analytics' },
   { key: 'users', icon: '👥', label: 'Users' },
   { key: 'withdrawals', icon: '↗', label: 'Withdrawals' },
   { key: 'reconciliation', icon: '⟳', label: 'Reconciliation' },
   { key: 'providers', icon: '◈', label: 'Providers' },
-  { key: 'controls', icon: '◌', label: 'Controls' },
   { key: 'webhooks', icon: '☷', label: 'Webhooks' },
   { key: 'audit', icon: '▤', label: 'Audit' },
   { key: 'economics', icon: '◎', label: 'Economics' },
@@ -146,6 +146,12 @@ export default function App() {
   }, [refreshAdmin]);
 
   useEffect(() => {
+    const openControls = () => setView('controls');
+    window.addEventListener('sivan-admin-open-controls', openControls);
+    return () => window.removeEventListener('sivan-admin-open-controls', openControls);
+  }, []);
+
+  useEffect(() => {
     if (view !== 'analytics') return;
     const interval = window.setInterval(() => void refreshAdmin(), 60_000);
     const onFocus = () => void refreshAdmin();
@@ -257,7 +263,24 @@ function Stat({ label, value, helper }: { label: string; value: string | number;
 
 function Overview({ overview, withdrawals }: { overview: AdminOverview | null; withdrawals: AdminWithdrawal[] }) {
   if (!overview) return <Empty>No admin overview loaded.</Empty>;
-  return <section><div className="hero-card glass"><div><p className="eyebrow">Operational overview</p><h3>Monitor money movement, provider health, and onboarding economics.</h3><p className="muted">This dashboard is the internal command center for Sivan off-ramp operations.</p></div><div className="flow-card"><div className="flow-node">Users</div><div className="flow-line" /><div className="flow-node">KYC/KYB</div><div className="flow-line" /><div className="flow-node">USDC deposits</div><div className="flow-line" /><div className="flow-node accent">Bank payouts</div></div></div><div className="stats-grid"><Stat label="Users" value={overview.counts.users} helper="Total signed up" /><Stat label="Withdrawals" value={overview.counts.withdrawals} helper="All statuses" /><Stat label="Webhook events" value={overview.counts.webhookEvents} helper="Stored events" /><Stat label="Unrecovered KYC" value={`$${overview.metrics.recovery.unrecoveredOnboardingCostUsd}`} helper="Estimated" /></div><div className="panel-grid two"><EconomicsSummary overview={overview} /><Withdrawals withdrawals={withdrawals.slice(0, 5)} compact /></div></section>;
+  return <section><div className="hero-card glass"><div><p className="eyebrow">Operational overview</p><h3>Monitor money movement, provider health, and onboarding economics.</h3><p className="muted">This dashboard is the internal command center for Sivan off-ramp operations.</p></div><div className="flow-card"><div className="flow-node">Users</div><div className="flow-line" /><div className="flow-node">KYC/KYB</div><div className="flow-line" /><div className="flow-node">USDC deposits</div><div className="flow-line" /><div className="flow-node accent">Bank payouts</div></div></div><div className="stats-grid"><Stat label="Users" value={overview.counts.users} helper="Total signed up" /><Stat label="Withdrawals" value={overview.counts.withdrawals} helper="All statuses" /><Stat label="Webhook events" value={overview.counts.webhookEvents} helper="Stored events" /><Stat label="Unrecovered KYC" value={`$${overview.metrics.recovery.unrecoveredOnboardingCostUsd}`} helper="Estimated" /></div><div className="panel-grid two"><ControlsQuickCard overview={overview} onOpenControls={() => window.dispatchEvent(new CustomEvent('sivan-admin-open-controls'))} /><EconomicsSummary overview={overview} /></div><div className="panel-grid"><Withdrawals withdrawals={withdrawals.slice(0, 5)} compact /></div></section>;
+}
+
+
+function ControlsQuickCard({ overview, onOpenControls }: { overview: AdminOverview; onOpenControls: () => void }) {
+  const metrics = overview.metrics;
+  return (
+    <article className="panel control-highlight">
+      <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Manage USD, GBP, and EUR availability</h3></div></div>
+      <p className="muted">Turn payout currencies on/off from one place. Disabled rails are hidden from the user app and blocked by the backend.</p>
+      <div className="details-box">
+        <Kv label="Current configured fee" value={`${metrics.recovery.sivanOfframpFeePercent}%`} />
+        <Kv label="Control scope" value="Frontend + Backend enforcement" />
+        <Kv label="Available currencies" value="USD / GBP / EUR" />
+      </div>
+      <button className="primary-btn" onClick={onOpenControls}>Open Controls</button>
+    </article>
+  );
 }
 
 function EconomicsSummary({ overview }: { overview: AdminOverview }) {

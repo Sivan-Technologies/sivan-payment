@@ -194,3 +194,7 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .switch.on { background: rgba(116,221,190,.22); border-color: var(--border-strong); }
 .switch.on span { transform: translateX(21px); background: var(--green); }
 .switch:disabled { opacity: .6; cursor: wait; }
+.sidebar { overflow-y: auto; }
+.nav { padding-bottom: 8px; }
+.control-highlight { border-color: var(--border-strong); }
+.control-highlight .primary-btn { width: 100%; margin-top: 14px; }
