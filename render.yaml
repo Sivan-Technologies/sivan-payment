@@ -39,6 +39,12 @@ services:
         value: "true"
       - key: AUTH_REQUIRE_USER
         value: "true"
+      - key: EMAIL_PROVIDER
+        value: console
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "Sivan <no-reply@sivan.local>"
       - key: BRIDGE_MOCK_MODE
         value: "false"
       - key: DEFAULT_OFFRAMP_PROVIDER
@@ -97,9 +103,15 @@ services:
       - key: AUTH_OTP_EXPIRES_MINUTES
         value: "10"
       - key: AUTH_DEV_SHOW_OTP
-        value: "true"
+        value: "false"
       - key: AUTH_REQUIRE_USER
         value: "true"
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
       - key: BRIDGE_MOCK_MODE
         value: "false"
       - key: DEFAULT_OFFRAMP_PROVIDER
