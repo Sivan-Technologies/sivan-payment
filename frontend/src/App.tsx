@@ -522,7 +522,7 @@ export default function App() {
 
         {view === 'banks' && (
           <section className="panel-grid two">
-            <BankForm onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} />
+            <BankForm onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} />
             <article className="panel">
               <div className="panel-head"><h3>Your bank accounts</h3><button className="ghost-btn small" onClick={loadUserData}>Refresh</button></div>
               <BankList accounts={accounts} />
@@ -572,7 +572,7 @@ function Kv({ label, value }: { label: string; value?: string | number | null })
   return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>;
 }
 
-function BankForm({ onSubmit, loading, isVerified, controls }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[] }) {
+function BankForm({ onSubmit, loading, isVerified, controls, canCreatePaymentActions }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean }) {
   const [currency, setCurrency] = useState<'usd' | 'gbp' | 'eur'>((controls[0]?.currency ?? 'usd') as 'usd' | 'gbp' | 'eur');
   useEffect(() => {
     if (controls.length && !controls.some((control) => control.currency === currency)) {
