@@ -40,6 +40,7 @@ const envSchema = z.object({
   BRIDGE_OFFRAMP_COST_PERCENT: z.coerce.number().min(0).max(100).default(0.5),
   BRIDGE_KYC_COST_USD: z.coerce.number().min(0).default(2),
   BRIDGE_KYB_COST_USD: z.coerce.number().min(0).default(10),
+  CUSTOMER_ACQUISITION_COST_USD: z.coerce.number().min(0).default(0),
   DATABASE_PROVIDER: z.enum(['json', 'postgres']).default('json'),
   DATABASE_URL: z.string().optional().default(''),
   DATABASE_FILE: z.string().default('.data/sivan-offramp.json')

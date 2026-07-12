@@ -248,6 +248,29 @@ export interface AdminAnalyticsUser extends UserRecord {
   kycStatus: string;
 }
 
+export interface AdminProfitabilityMetrics {
+  averageLifetimeVolumePerUserUsd: string;
+  averageLifetimeVolumePerTransactingUserUsd: string;
+  kycCostRecoveryPerKycUserUsd: string;
+  withdrawalVolumePerUserUsd: string;
+  withdrawalVolumePerTransactingUserUsd: string;
+  repeatWithdrawalRatePercent: string;
+  averageWithdrawalSizeUsd: string;
+  failedWithdrawalRatePercent: string;
+  providerCostUsd: string;
+  bridgeVariableCostUsd: string;
+  onboardingCostUsd: string;
+  sivanFeeRevenueUsd: string;
+  netMarginBeforeCacUsd: string;
+  customerAcquisitionCostPerUserUsd: string;
+  customerAcquisitionCostTotalUsd: string;
+  netMarginAfterCacUsd: string;
+  transactingUsers: number;
+  repeatUsers: number;
+  completedWithdrawalCount: number;
+  failedWithdrawalCount: number;
+}
+
 export interface AdminAnalytics {
   generatedAt: string;
   definitions: Record<string, string>;
@@ -256,6 +279,7 @@ export interface AdminAnalytics {
     activities: number;
     activityCounts: Record<string, number>;
   };
+  profitability: AdminProfitabilityMetrics;
   windows: AdminAnalyticsWindow[];
   users: AdminAnalyticsUser[];
   recentActivities: AdminAnalyticsActivity[];

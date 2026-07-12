@@ -65,6 +65,8 @@ services:
         value: "2"
       - key: BRIDGE_KYB_COST_USD
         value: "10"
+      - key: CUSTOMER_ACQUISITION_COST_USD
+        value: "0"
 
   - type: web
     name: sivan-payments-api-live
@@ -132,3 +134,5 @@ services:
         value: "2"
       - key: BRIDGE_KYB_COST_USD
         value: "10"
+      - key: CUSTOMER_ACQUISITION_COST_USD
+        value: "0"

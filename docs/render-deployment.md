@@ -399,3 +399,29 @@ Disabled currencies are:
 - hidden from the user frontend,
 - blocked when creating new external accounts,
 - blocked when creating new withdrawals.
+
+## Admin profitability analytics
+
+The admin Analytics tab tracks unit economics in near real time. The frontend refreshes admin data every 30 seconds and when the browser window regains focus.
+
+Metrics include:
+
+```text
+Average lifetime volume per user
+Average lifetime volume per transacting user
+KYC cost recovery per KYC user
+Withdrawal volume per user
+Withdrawal volume per transacting user
+Repeat withdrawal rate
+Average withdrawal size
+Failed withdrawal rate
+Provider cost
+Bridge variable cost
+Onboarding cost
+Sivan fee revenue
+Net margin before CAC
+Customer acquisition cost
+Net margin after CAC
+```
+
+`CUSTOMER_ACQUISITION_COST_USD` controls the assumed CAC per signed-up user. Default is `0` until Sivan has reliable acquisition cost data.

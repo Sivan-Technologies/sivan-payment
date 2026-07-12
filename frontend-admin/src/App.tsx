@@ -145,6 +145,16 @@ export default function App() {
     void refreshAdmin();
   }, [refreshAdmin]);
 
+  useEffect(() => {
+    const interval = window.setInterval(() => void refreshAdmin(), 30000);
+    const onFocus = () => void refreshAdmin();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [refreshAdmin]);
+
   async function runReconciliation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -276,9 +286,16 @@ function Analytics({ analytics }: { analytics: AdminAnalytics | null }) {
 
       <div className="stats-grid">
         <Stat label="Total users" value={analytics.totals.users} helper="All signed up users" />
-        <Stat label="Tracked activities" value={analytics.totals.activities} helper="All activity events" />
+        <Stat label="Tracked activities" value={analytics.totals.activities} helper="Auto-refreshes every 30 seconds" />
         <Stat label="7D active" value={latestWindow?.activeUsers ?? 0} helper="Users active in 7 days" />
         <Stat label="7D returning" value={latestWindow?.returningUsers ?? 0} helper="Had prior activity" />
+      </div>
+
+      <div className="stats-grid">
+        <Stat label="Avg lifetime volume/user" value={`$${analytics.profitability.averageLifetimeVolumePerUserUsd}`} helper="Completed volume / all users" />
+        <Stat label="Avg withdrawal size" value={`$${analytics.profitability.averageWithdrawalSizeUsd}`} helper="Completed withdrawals" />
+        <Stat label="Repeat withdrawal rate" value={`${analytics.profitability.repeatWithdrawalRatePercent}%`} helper={`${analytics.profitability.repeatUsers} repeat users`} />
+        <Stat label="Failed withdrawal rate" value={`${analytics.profitability.failedWithdrawalRatePercent}%`} helper={`${analytics.profitability.failedWithdrawalCount} failed/cancelled`} />
       </div>
 
       <div className="panel-grid two">
@@ -296,6 +313,31 @@ function Analytics({ analytics }: { analytics: AdminAnalytics | null }) {
           <div className="panel-head"><div><p className="eyebrow">Definitions</p><h3>How to read it</h3></div></div>
           <div className="details-box">
             {Object.entries(analytics.definitions).map(([key, value]) => <Kv key={key} label={key} value={value} />)}
+          </div>
+        </article>
+      </div>
+
+      <div className="panel-grid two">
+        <article className="panel">
+          <div className="panel-head"><div><p className="eyebrow">Profitability</p><h3>Unit economics tracking</h3></div></div>
+          <div className="details-box">
+            <Kv label="Average lifetime volume / user" value={`$${analytics.profitability.averageLifetimeVolumePerUserUsd}`} />
+            <Kv label="Average lifetime volume / transacting user" value={`$${analytics.profitability.averageLifetimeVolumePerTransactingUserUsd}`} />
+            <Kv label="Withdrawal volume / user" value={`$${analytics.profitability.withdrawalVolumePerUserUsd}`} />
+            <Kv label="Withdrawal volume / transacting user" value={`$${analytics.profitability.withdrawalVolumePerTransactingUserUsd}`} />
+            <Kv label="KYC cost recovery / KYC user" value={`$${analytics.profitability.kycCostRecoveryPerKycUserUsd}`} />
+          </div>
+        </article>
+        <article className="panel">
+          <div className="panel-head"><div><p className="eyebrow">Margin</p><h3>Revenue, cost, and net margin</h3></div></div>
+          <div className="details-box">
+            <Kv label="Sivan fee revenue" value={`$${analytics.profitability.sivanFeeRevenueUsd}`} />
+            <Kv label="Provider cost" value={`$${analytics.profitability.providerCostUsd}`} />
+            <Kv label="Bridge variable cost" value={`$${analytics.profitability.bridgeVariableCostUsd}`} />
+            <Kv label="Onboarding cost" value={`$${analytics.profitability.onboardingCostUsd}`} />
+            <Kv label="Customer acquisition cost" value={`$${analytics.profitability.customerAcquisitionCostTotalUsd}`} />
+            <Kv label="Net margin before CAC" value={`$${analytics.profitability.netMarginBeforeCacUsd}`} />
+            <Kv label="Net margin after CAC" value={`$${analytics.profitability.netMarginAfterCacUsd}`} />
           </div>
         </article>
       </div>
