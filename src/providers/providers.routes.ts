@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../shared/validation.js';
+import { badRequest } from '../shared/errors.js';
 import { providerCapabilities } from './provider-routing.js';
 import { routeOfframpProvider } from './provider-registry.js';
 
@@ -23,6 +24,10 @@ export async function providersRoutes(app: FastifyInstance) {
 
   app.post('/api/providers/offramp/route', async (request) => {
     const body = parseBody(routeOfframpProviderSchema, request.body);
-    return { data: routeOfframpProvider(body) };
+    try {
+      return { data: routeOfframpProvider(body) };
+    } catch (error) {
+      throw badRequest(error instanceof Error ? error.message : 'No off-ramp provider available for this route');
+    }
   });
 }
