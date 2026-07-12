@@ -174,19 +174,34 @@ export default function App() {
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
   }, [api, user?.id, authToken]);
 
-  const loadFee = useCallback(async () => {
-    const [fee, controls] = await Promise.all([
-      api<FeePolicy>('/api/fees/offramp').catch(() => null),
-      api<PaymentControl[]>('/api/offramp/controls').catch(() => [])
-    ]);
-    if (fee) setFeePolicy(fee);
+  const loadControls = useCallback(async () => {
+    const controls = await api<PaymentControl[]>('/api/offramp/controls').catch(() => []);
     setPaymentControls(controls);
+    return controls;
+  }, [api]);
+
+  const loadFee = useCallback(async () => {
+    const fee = await api<FeePolicy>('/api/fees/offramp').catch(() => null);
+    if (fee) setFeePolicy(fee);
   }, [api]);
 
   useEffect(() => {
     void loadFee();
+    void loadControls();
     void loadUserData();
-  }, [loadFee, loadUserData]);
+  }, [loadFee, loadControls, loadUserData]);
+
+  useEffect(() => {
+    const refreshControls = () => void loadControls();
+    const interval = window.setInterval(refreshControls, 15000);
+    window.addEventListener('focus', refreshControls);
+    document.addEventListener('visibilitychange', refreshControls);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshControls);
+      document.removeEventListener('visibilitychange', refreshControls);
+    };
+  }, [loadControls]);
 
   async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -274,7 +289,9 @@ export default function App() {
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
-      if (!enabledControls.some((control) => control.currency === data.currency)) throw new Error(`${data.currency.toUpperCase()} withdrawals are currently unavailable.`);
+      const latestControls = await loadControls();
+      const latestEnabledControls = latestControls.filter((control) => control.enabled);
+      if (!latestEnabledControls.some((control) => control.currency === data.currency)) throw new Error(`${data.currency.toUpperCase()} withdrawals are currently unavailable.`);
       const isUsd = data.currency === 'usd';
       const isGbp = data.currency === 'gbp';
       const body: Record<string, unknown> = {
@@ -320,7 +337,8 @@ export default function App() {
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
-      const enabledCurrencySet = new Set(enabledControls.map((control) => control.currency));
+      const latestControls = await loadControls();
+      const enabledCurrencySet = new Set(latestControls.filter((control) => control.enabled).map((control) => control.currency));
       const selectedAccount = accounts.find((account) => account.id === data.externalAccountId && enabledCurrencySet.has(account.currency)) || accounts.find((account) => enabledCurrencySet.has(account.currency));
       if (!selectedAccount) throw new Error('Choose a bank account first.');
       const result = await api<DepositResponse>('/api/withdrawals', {

@@ -349,24 +349,25 @@ function Audit({ auditLogs, reconciliationRuns }: { auditLogs: AdminAuditLog[]; 
 
 
 function Controls({ controls, api, onUpdated, notify }: { controls: PaymentControl[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void }) {
-  const [draft, setDraft] = useState<Record<string, boolean>>({});
+  const [savingCurrency, setSavingCurrency] = useState<string | null>(null);
 
-  useEffect(() => {
-    const next: Record<string, boolean> = {};
-    for (const control of controls) next[control.currency] = control.enabled;
-    setDraft(next);
-  }, [controls]);
-
-  async function saveControls() {
+  async function toggleCurrency(currency: string, enabled: boolean) {
+    setSavingCurrency(currency);
     try {
+      const nextControls = controls.map((control) => ({
+        currency: control.currency,
+        enabled: control.currency === currency ? enabled : control.enabled
+      }));
       await api('/api/admin/offramp/controls', {
         method: 'PUT',
-        body: JSON.stringify({ controls: Object.entries(draft).map(([currency, enabled]) => ({ currency, enabled })) })
+        body: JSON.stringify({ controls: nextControls })
       });
-      notify('Payment rail controls updated.');
+      notify(`${currency.toUpperCase()} ${enabled ? 'enabled' : 'disabled'} across the system.`);
       await onUpdated();
     } catch (error) {
       notify((error as Error).message, 'error');
+    } finally {
+      setSavingCurrency(null);
     }
   }
 
@@ -374,17 +375,15 @@ function Controls({ controls, api, onUpdated, notify }: { controls: PaymentContr
     <section className="panel-grid two">
       <article className="panel">
         <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
-        <p className="muted">Turning a currency off hides it from the user frontend and blocks new bank accounts/withdrawals for that rail.</p>
-        {!controls.length ? <Empty>No controls loaded.</Empty> : <div className="list">{controls.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={draft[control.currency] ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="toggle-row"><input type="checkbox" checked={Boolean(draft[control.currency])} onChange={(event) => setDraft((current) => ({ ...current, [control.currency]: event.target.checked }))} /> Enabled</label></div>)}</div>}
-        <button className="primary-btn" onClick={saveControls}>Save controls</button>
+        <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>
+        {!controls.length ? <Empty>No controls loaded.</Empty> : <div className="list">{controls.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="switch-row"><span>{savingCurrency === control.currency ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingCurrency)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleCurrency(control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
       </article>
       <article className="panel">
-        <div className="panel-head"><div><p className="eyebrow">Current user impact</p><h3>Frontend behavior</h3></div></div>
+        <div className="panel-head"><div><p className="eyebrow">System-wide effect</p><h3>What happens instantly</h3></div></div>
         <div className="details-box">
-          <Kv label="USD" value={draft.usd ? 'Visible and enabled' : 'Hidden and blocked'} />
-          <Kv label="GBP" value={draft.gbp ? 'Visible and enabled' : 'Hidden and blocked'} />
-          <Kv label="EUR" value={draft.eur ? 'Visible and enabled' : 'Hidden and blocked'} />
+          {controls.map((control) => <Kv key={control.currency} label={control.currency.toUpperCase()} value={control.enabled ? 'Visible in user app and enabled by API' : 'Hidden in user app and blocked by API'} />)}
           <Kv label="Safety" value="At least one currency must remain enabled" />
+          <Kv label="Refresh" value="User app refreshes controls on focus and every 15 seconds" />
         </div>
       </article>
     </section>
