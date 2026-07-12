@@ -17,6 +17,20 @@ services:
         value: staging
       - key: SENTRY_TRACES_SAMPLE_RATE
         value: "0"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_DEFAULT_MAX_PER_MINUTE
+        value: "120"
+      - key: RATE_LIMIT_ADMIN_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_AUTH_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_AUTH_START_MAX
+        value: "5"
+      - key: RATE_LIMIT_AUTH_VERIFY_MAX
+        value: "20"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
@@ -86,6 +100,20 @@ services:
         value: production
       - key: SENTRY_TRACES_SAMPLE_RATE
         value: "0"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_DEFAULT_MAX_PER_MINUTE
+        value: "120"
+      - key: RATE_LIMIT_ADMIN_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_AUTH_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_AUTH_START_MAX
+        value: "5"
+      - key: RATE_LIMIT_AUTH_VERIFY_MAX
+        value: "20"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER

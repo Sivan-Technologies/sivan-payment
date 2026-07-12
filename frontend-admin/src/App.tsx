@@ -426,7 +426,7 @@ function Controls({ controls, api, onUpdated, notify }: { controls: PaymentContr
         <div className="details-box">
           {controls.map((control) => <Kv key={control.currency} label={control.currency.toUpperCase()} value={control.enabled ? 'Visible in user app and enabled by API' : 'Hidden in user app and blocked by API'} />)}
           <Kv label="Safety" value="At least one currency must remain enabled" />
-          <Kv label="Refresh" value="User app refreshes controls on focus and every 15 seconds" />
+          <Kv label="Refresh" value="User app refreshes controls on focus and every 60 seconds while visible" />
         </div>
       </article>
     </section>

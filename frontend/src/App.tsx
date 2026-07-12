@@ -192,8 +192,10 @@ export default function App() {
   }, [loadFee, loadControls, loadUserData]);
 
   useEffect(() => {
-    const refreshControls = () => void loadControls();
-    const interval = window.setInterval(refreshControls, 15000);
+    const refreshControls = () => {
+      if (document.visibilityState === 'visible') void loadControls();
+    };
+    const interval = window.setInterval(refreshControls, 60_000);
     window.addEventListener('focus', refreshControls);
     document.addEventListener('visibilitychange', refreshControls);
     return () => {

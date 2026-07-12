@@ -402,7 +402,7 @@ Disabled currencies are:
 
 ## Admin profitability analytics
 
-The admin Analytics tab tracks unit economics in near real time. To avoid exhausting backend/API limits, automatic polling only runs while the Analytics tab is open, every 60 seconds, and when the browser window regains focus. Other admin tabs refresh on initial load, tab navigation, and manual Refresh.
+The admin Analytics tab tracks unit economics in near real time. To avoid exhausting backend/API limits, automatic polling only runs while the Analytics tab is open, every 60 seconds, and when the browser window regains focus. Other admin tabs refresh on initial load, tab navigation, manual Refresh, and after explicit admin actions.
 
 Metrics include:
 
@@ -465,3 +465,16 @@ A rate-limited request returns:
 ```
 
 For multi-instance production scale, replace the in-memory limiter with Redis/Upstash-backed rate limiting.
+
+
+## Frontend polling policy
+
+To avoid unnecessary backend load:
+
+- User frontend loads rail controls on startup.
+- User frontend refreshes rail controls only when the page is visible, every 60 seconds, and on window focus/visibility changes.
+- User frontend also rechecks controls immediately before creating a bank account or withdrawal.
+- Admin frontend auto-polls only on the Analytics tab, every 60 seconds, and on window focus.
+- Other admin tabs refresh on initial load, manual Refresh, tab navigation, and after explicit admin actions.
+
+This prevents global polling across all tabs and keeps request volume well below the configured rate limits.
