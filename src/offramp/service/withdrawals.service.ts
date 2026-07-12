@@ -7,12 +7,12 @@ import { getOfframpProvider, routeOfframpProvider } from '../../providers/provid
 import { badRequest, notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
-import { requireCurrencyEnabled } from '../../controls/payment-controls.service.js';
+import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled } from '../../controls/payment-controls.service.js';
 
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
   externalAccountId: z.string().min(1),
-  sourceCurrency: z.literal('usdc').default('usdc'),
+  sourceCurrency: z.enum(['usdc', 'usdt']).default('usdc'),
   sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism']).default('ethereum'),
   destinationCurrency: z.enum(['usd', 'gbp', 'eur']),
   destinationPaymentRail: z.string().optional(),
@@ -23,6 +23,8 @@ export const createWithdrawalSchema = z.object({
 
 export async function createWithdrawal(input: z.infer<typeof createWithdrawalSchema>) {
   await requireCurrencyEnabled(input.destinationCurrency);
+  await requireSourceAssetEnabled(input.sourceCurrency);
+  await requireSourceNetworkEnabled(input.sourceChain as Chain);
   const externalAccount = await getExternalAccount(input.externalAccountId);
   if (externalAccount.userId !== input.userId) throw notFound('External account');
   if (!['active', 'verified'].includes(externalAccount.status)) {

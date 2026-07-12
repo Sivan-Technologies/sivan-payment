@@ -8,6 +8,7 @@ import type {
   AdminViewKey,
   AdminWithdrawal,
   EconomicsEstimate,
+  OfframpControls,
   PaymentControl,
   ProviderCapability,
   ReconciliationResult,
@@ -75,7 +76,7 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [reconciliationRuns, setReconciliationRuns] = useState<AdminReconciliationRun[]>([]);
   const [providers, setProviders] = useState<ProviderCapability[]>([]);
-  const [paymentControls, setPaymentControls] = useState<PaymentControl[]>([]);
+  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [routingDecision, setRoutingDecision] = useState<RoutingDecision | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
   const [estimate, setEstimate] = useState<EconomicsEstimate | null>(null);
@@ -120,7 +121,7 @@ export default function App() {
         api<AdminAuditLog[]>('/api/admin/audit-logs'),
         api<AdminReconciliationRun[]>('/api/admin/reconciliation/runs'),
         api<ProviderCapability[]>('/api/providers/offramp/capabilities'),
-        api<PaymentControl[]>('/api/admin/offramp/controls')
+        api<OfframpControls>('/api/admin/offramp/controls')
       ]);
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
       if (analyticsResult.status === 'fulfilled') setAnalytics(analyticsResult.value);
@@ -422,26 +423,30 @@ function Audit({ auditLogs, reconciliationRuns }: { auditLogs: AdminAuditLog[]; 
 }
 
 
-function Controls({ controls, api, onUpdated, notify, hasAdminKey, error }: { controls: PaymentControl[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void; hasAdminKey: boolean; error: string | null }) {
-  const [savingCurrency, setSavingCurrency] = useState<string | null>(null);
+function Controls({ controls, api, onUpdated, notify, hasAdminKey, error }: { controls: OfframpControls; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void; hasAdminKey: boolean; error: string | null }) {
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const payoutCurrencies = controls.payoutCurrencies ?? [];
+  const sourceAssets = controls.sourceAssets ?? [];
+  const sourceNetworks = controls.sourceNetworks ?? [];
+  const hasAnyControls = payoutCurrencies.length > 0 || sourceAssets.length > 0 || sourceNetworks.length > 0;
 
-  async function toggleCurrency(currency: string, enabled: boolean) {
-    setSavingCurrency(currency);
+  async function toggleControl(group: 'payout' | 'asset' | 'network', key: string, enabled: boolean) {
+    setSavingKey(`${group}:${key}`);
     try {
-      const nextControls = controls.map((control) => ({
-        currency: control.currency,
-        enabled: control.currency === currency ? enabled : control.enabled
-      }));
       await api('/api/admin/offramp/controls', {
         method: 'PUT',
-        body: JSON.stringify({ controls: nextControls })
+        body: JSON.stringify({
+          payoutCurrencies: payoutCurrencies.map((control) => ({ currency: control.currency, enabled: group === 'payout' && control.currency === key ? enabled : control.enabled })),
+          sourceAssets: sourceAssets.map((control) => ({ asset: control.asset, enabled: group === 'asset' && control.asset === key ? enabled : control.enabled })),
+          sourceNetworks: sourceNetworks.map((control) => ({ network: control.network, enabled: group === 'network' && control.network === key ? enabled : control.enabled }))
+        })
       });
-      notify(`${currency.toUpperCase()} ${enabled ? 'enabled' : 'disabled'} across the system.`);
+      notify(`${key.toUpperCase()} ${enabled ? 'enabled' : 'disabled'} across the system.`);
       await onUpdated();
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
-      setSavingCurrency(null);
+      setSavingKey(null);
     }
   }
 
@@ -450,13 +455,23 @@ function Controls({ controls, api, onUpdated, notify, hasAdminKey, error }: { co
       <article className="panel">
         <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
         <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>
-        {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !controls.length ? <Empty>No controls loaded. Click Refresh or confirm the backend is on the latest deployment.</Empty> : <div className="list">{controls.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="switch-row"><span>{savingCurrency === control.currency ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingCurrency)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleCurrency(control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
+        {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !hasAnyControls ? <Empty>No controls loaded. Click Refresh or confirm the backend is on the latest deployment.</Empty> : <div className="list">{payoutCurrencies.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="switch-row"><span>{savingKey === `payout:${control.currency}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('payout', control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
+      </article>
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Deposit asset controls</p><h3>Enable or disable USDC / USDT</h3></div></div>
+        {!hasAnyControls ? <Empty>No asset controls loaded.</Empty> : <div className="list">{sourceAssets.map((control) => <div className="list-item" key={control.asset}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Controls which stablecoins users can send to deposit addresses.</small><label className="switch-row"><span>{savingKey === `asset:${control.asset}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('asset', control.asset, !control.enabled)}><span /></button></label></div>)}</div>}
+      </article>
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Network controls</p><h3>Enable or disable supported networks</h3></div></div>
+        {!hasAnyControls ? <Empty>No network controls loaded.</Empty> : <div className="list">{sourceNetworks.map((control) => <div className="list-item" key={control.network}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Use this for phased rollout or maintenance windows.</small><label className="switch-row"><span>{savingKey === `network:${control.network}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('network', control.network, !control.enabled)}><span /></button></label></div>)}</div>}
       </article>
       <article className="panel">
         <div className="panel-head"><div><p className="eyebrow">System-wide effect</p><h3>What happens instantly</h3></div></div>
         <div className="details-box">
-          {controls.map((control) => <Kv key={control.currency} label={control.currency.toUpperCase()} value={control.enabled ? 'Visible in user app and enabled by API' : 'Hidden in user app and blocked by API'} />)}
-          <Kv label="Safety" value="At least one currency must remain enabled" />
+          <Kv label="Payout currencies" value={payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency.toUpperCase()).join(', ') || 'None'} />
+          <Kv label="Deposit assets" value={sourceAssets.filter((control) => control.enabled).map((control) => control.asset.toUpperCase()).join(', ') || 'None'} />
+          <Kv label="Deposit networks" value={sourceNetworks.filter((control) => control.enabled).map((control) => control.label).join(', ') || 'None'} />
+          <Kv label="Safety" value="At least one payout currency, asset, and network must remain enabled" />
           <Kv label="Refresh" value="User app refreshes controls on focus and every 60 seconds while visible" />
         </div>
       </article>

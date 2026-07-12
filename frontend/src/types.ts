@@ -145,3 +145,26 @@ export interface PaymentControl {
   updatedBy?: string;
   updatedAt: string;
 }
+
+export interface AssetControl {
+  asset: 'usdc' | 'usdt';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface NetworkControl {
+  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism';
+  enabled: boolean;
+  label: string;
+  sortOrder: number;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface OfframpControls {
+  payoutCurrencies: PaymentControl[];
+  sourceAssets: AssetControl[];
+  sourceNetworks: NetworkControl[];
+}

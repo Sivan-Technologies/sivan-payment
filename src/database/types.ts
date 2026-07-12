@@ -1,5 +1,5 @@
 export type Currency = 'usd' | 'gbp' | 'eur';
-export type SourceCurrency = 'usdc';
+export type SourceCurrency = 'usdc' | 'usdt';
 export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
 export type ExternalAccountStatus = 'created' | 'active' | 'verification_pending' | 'verified' | 'verification_failed' | 'deactivated';
@@ -14,6 +14,24 @@ export type WithdrawalStatus =
   | 'cancelled'
   | 'requires_action';
 
+
+
+export interface AssetControlRecord {
+  asset: SourceCurrency;
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface NetworkControlRecord {
+  network: Chain;
+  enabled: boolean;
+  label: string;
+  sortOrder: number;
+  updatedBy?: string;
+  updatedAt: string;
+}
 
 export interface PaymentControlRecord {
   currency: Currency;
@@ -199,4 +217,6 @@ export interface DatabaseShape {
   reconciliationRuns: ReconciliationRunRecord[];
   reconciliationFindings: ReconciliationFindingRecord[];
   paymentControls: PaymentControlRecord[];
+  assetControls: AssetControlRecord[];
+  networkControls: NetworkControlRecord[];
 }

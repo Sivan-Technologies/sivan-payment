@@ -1007,3 +1007,45 @@ more detailed operational alerts
 WhatsApp sign-in for existing escrow users
 ```
 
+
+## 22. Asset and Network Controls
+
+Admin can control three groups independently:
+
+```text
+Payout currencies: USD, GBP, EUR
+Deposit assets: USDC, USDT
+Deposit networks: Base, Polygon, Ethereum, Solana, Arbitrum, Optimism
+```
+
+This lets Sivan gradually enable phases:
+
+```text
+Phase 1: USDC on Base, Polygon, Ethereum
+Phase 2: Solana, Arbitrum, Optimism
+Phase 3: USDT if Bridge/provider support is confirmed
+```
+
+If a network is down or under maintenance, admin can toggle it off immediately.
+
+Frontend behavior:
+
+```text
+User app hides disabled assets and networks.
+User app refreshes controls on focus and every 60 seconds while visible.
+User app rechecks controls before creating bank accounts and withdrawals.
+```
+
+Backend behavior:
+
+```text
+Disabled payout currency blocks external account creation and withdrawal creation.
+Disabled source asset blocks withdrawal creation.
+Disabled source network blocks withdrawal creation.
+```
+
+User warning:
+
+```text
+Only send the selected asset on the selected network. Sending another token or using another network may cause loss or delays.
+```

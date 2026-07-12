@@ -425,3 +425,77 @@ Content-Type: application/json
 ```
 
 At least one payout currency must remain enabled.
+
+## Source asset and network controls
+
+Admin controls now cover three groups:
+
+```text
+Payout currencies: USD, GBP, EUR
+Deposit assets: USDC, USDT
+Deposit networks: Base, Polygon, Ethereum, Solana, Arbitrum, Optimism
+```
+
+Public controls response:
+
+```http
+GET /api/offramp/controls
+```
+
+Example response shape:
+
+```json
+{
+  "data": {
+    "payoutCurrencies": [
+      { "currency": "usd", "enabled": true }
+    ],
+    "sourceAssets": [
+      { "asset": "usdc", "enabled": true },
+      { "asset": "usdt", "enabled": false }
+    ],
+    "sourceNetworks": [
+      { "network": "base", "enabled": true },
+      { "network": "ethereum", "enabled": true }
+    ]
+  }
+}
+```
+
+Admin update:
+
+```http
+PUT /api/admin/offramp/controls
+x-admin-api-key: <admin_key>
+Content-Type: application/json
+
+{
+  "payoutCurrencies": [
+    { "currency": "usd", "enabled": true },
+    { "currency": "gbp", "enabled": true },
+    { "currency": "eur", "enabled": false }
+  ],
+  "sourceAssets": [
+    { "asset": "usdc", "enabled": true },
+    { "asset": "usdt", "enabled": false }
+  ],
+  "sourceNetworks": [
+    { "network": "base", "enabled": true },
+    { "network": "polygon", "enabled": true },
+    { "network": "ethereum", "enabled": true },
+    { "network": "solana", "enabled": false },
+    { "network": "arbitrum", "enabled": false },
+    { "network": "optimism", "enabled": false }
+  ]
+}
+```
+
+Safety rules:
+
+```text
+At least one payout currency must remain enabled.
+At least one deposit asset must remain enabled.
+At least one deposit network must remain enabled.
+```
+
+The backend blocks disabled assets/networks/currencies even if a user tries to submit them manually.

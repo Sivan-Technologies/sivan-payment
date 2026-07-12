@@ -48,7 +48,7 @@ export const providerCapabilities: ProviderCapability[] = [
   {
     name: 'bridge',
     available: true,
-    sourceCurrencies: ['usdc'],
+    sourceCurrencies: ['usdc', 'usdt'],
     sourceChains: ['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism'],
     destinationCurrencies: ['usd', 'gbp', 'eur'],
     destinationCountries: 'global',

@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, FeePolicy, PaymentControl, UserRecord, ViewKey, WithdrawalRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, UserRecord, ViewKey, WithdrawalRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '◇', label: 'Home' },
@@ -75,7 +75,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
-  const [paymentControls, setPaymentControls] = useState<PaymentControl[]>([]);
+  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -85,7 +85,9 @@ export default function App() {
   const isVerified = customer?.kycStatus === 'kyc_approved';
   const hasBank = accounts.length > 0;
   const activeStep = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank' : 'Ready to withdraw';
-  const enabledControls = paymentControls.filter((control) => control.enabled);
+  const enabledControls = paymentControls.payoutCurrencies.filter((control) => control.enabled);
+  const enabledAssets = paymentControls.sourceAssets.filter((control) => control.enabled);
+  const enabledNetworks = paymentControls.sourceNetworks.filter((control) => control.enabled);
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -175,7 +177,7 @@ export default function App() {
   }, [api, user?.id, authToken]);
 
   const loadControls = useCallback(async () => {
-    const controls = await api<PaymentControl[]>('/api/offramp/controls').catch(() => []);
+    const controls = await api<OfframpControls>('/api/offramp/controls').catch(() => ({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] }));
     setPaymentControls(controls);
     return controls;
   }, [api]);
@@ -292,7 +294,7 @@ export default function App() {
     try {
       const data = getForm(event.currentTarget);
       const latestControls = await loadControls();
-      const latestEnabledControls = latestControls.filter((control) => control.enabled);
+      const latestEnabledControls = latestControls.payoutCurrencies.filter((control) => control.enabled);
       if (!latestEnabledControls.some((control) => control.currency === data.currency)) throw new Error(`${data.currency.toUpperCase()} withdrawals are currently unavailable.`);
       const isUsd = data.currency === 'usd';
       const isGbp = data.currency === 'gbp';
@@ -340,7 +342,11 @@ export default function App() {
     try {
       const data = getForm(event.currentTarget);
       const latestControls = await loadControls();
-      const enabledCurrencySet = new Set(latestControls.filter((control) => control.enabled).map((control) => control.currency));
+      const enabledCurrencySet = new Set(latestControls.payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency));
+      const enabledAssetSet = new Set(latestControls.sourceAssets.filter((control) => control.enabled).map((control) => control.asset));
+      const enabledNetworkSet = new Set(latestControls.sourceNetworks.filter((control) => control.enabled).map((control) => control.network));
+      if (!enabledAssetSet.has(data.sourceCurrency as 'usdc' | 'usdt')) throw new Error(`${data.sourceCurrency.toUpperCase()} deposits are currently unavailable.`);
+      if (!enabledNetworkSet.has(data.sourceChain as any)) throw new Error(`${data.sourceChain} deposits are currently unavailable.`);
       const selectedAccount = accounts.find((account) => account.id === data.externalAccountId && enabledCurrencySet.has(account.currency)) || accounts.find((account) => enabledCurrencySet.has(account.currency));
       if (!selectedAccount) throw new Error('Choose a bank account first.');
       const result = await api<DepositResponse>('/api/withdrawals', {
@@ -348,7 +354,7 @@ export default function App() {
         body: JSON.stringify({
           userId: user.id,
           externalAccountId: selectedAccount.id,
-          sourceCurrency: 'usdc',
+          sourceCurrency: data.sourceCurrency,
           sourceChain: data.sourceChain,
           destinationCurrency: selectedAccount.currency,
           returnAddress: data.returnAddress
@@ -516,10 +522,11 @@ export default function App() {
               <p className="eyebrow">Step 4</p>
               <h3>Withdraw USDC</h3>
               <p className="muted">Choose a verified bank account and get a USDC deposit address.</p>
-              {!accounts.some((account) => enabledControls.some((control) => control.currency === account.currency)) ? <Empty>Add an enabled bank account first.</Empty> : (
+              {!accounts.some((account) => enabledControls.some((control) => control.currency === account.currency)) ? <Empty>Add an enabled bank account first.</Empty> : !enabledAssets.length || !enabledNetworks.length ? <Empty>Deposits are temporarily unavailable.</Empty> : (
                 <form className="form" onSubmit={handleWithdraw}>
                   <label>Bank account<select name="externalAccountId" defaultValue={primaryAccount?.id}>{accounts.filter((account) => enabledControls.some((control) => control.currency === account.currency)).map((account) => <option key={account.id} value={account.id}>{account.bankName || 'Bank account'} · {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select></label>
-                  <label>USDC network<select name="sourceChain" defaultValue="ethereum"><option value="ethereum">Ethereum</option><option value="base">Base</option><option value="polygon">Polygon</option><option value="solana">Solana</option><option value="arbitrum">Arbitrum</option><option value="optimism">Optimism</option></select></label>
+                  <label>Deposit asset<select name="sourceCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'}>{enabledAssets.map((asset) => <option key={asset.asset} value={asset.asset}>{asset.label}</option>)}</select></label>
+                  <label>Deposit network<select name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'}>{enabledNetworks.map((network) => <option key={network.network} value={network.network}>{network.label}</option>)}</select></label>
                   <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
                   <button className="primary-btn" disabled={loading}>{loading ? 'Creating...' : 'Get deposit address'}</button>
                 </form>
@@ -600,7 +607,7 @@ function BankList({ accounts }: { accounts: ExternalAccountRecord[] }) {
 
 function DepositCard({ result }: { result: DepositResponse | null }) {
   if (!result) return <article className="deposit-card"><p className="eyebrow">Deposit address</p><h3>Ready when you are</h3><p className="muted">Create a withdrawal to receive a USDC deposit address. You will see the network, fee, and payout currency before sending.</p></article>;
-  return <article className="deposit-card"><p className="eyebrow">Send USDC</p><h3>Deposit address created</h3><p className="muted">Send USDC on {result.deposit.chain} to this address. We will convert it and send {result.withdrawal.destinationCurrency.toUpperCase()} to your selected bank account.</p><div className="deposit-address">{result.deposit.address}</div><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></article>;
+  return <article className="deposit-card"><p className="eyebrow">Send USDC</p><h3>Deposit address created</h3><p className="muted">Only send {result.deposit.currency.toUpperCase()} on the selected {result.deposit.chain} network. Sending another token or using another network may cause loss or delays.</p><p className="muted">We will convert it and send {result.withdrawal.destinationCurrency.toUpperCase()} to your selected bank account.</p><div className="deposit-address">{result.deposit.address}</div><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></article>;
 }
 
 function WithdrawalsList({ withdrawals, compact = false }: { withdrawals: WithdrawalRecord[]; compact?: boolean }) {
@@ -608,5 +615,5 @@ function WithdrawalsList({ withdrawals, compact = false }: { withdrawals: Withdr
 }
 
 function UserGuidePanel() {
-  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">How it works</p><h3>A simple withdrawal flow</h3></div></div><div className="details-box"><Kv label="1" value="Create your Sivan account" /><Kv label="2" value="Complete verification" /><Kv label="3" value="Add your bank account" /><Kv label="4" value="Send USDC to your deposit address" /><Kv label="5" value="Receive USD/GBP in your bank account" /></div></article>;
+  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">How it works</p><h3>A simple withdrawal flow</h3></div></div><div className="details-box"><Kv label="1" value="Create your Sivan account" /><Kv label="2" value="Complete verification" /><Kv label="3" value="Add your bank account" /><Kv label="4" value="Send the selected stablecoin to your deposit address" /><Kv label="5" value="Receive USD/GBP in your bank account" /></div></article>;
 }

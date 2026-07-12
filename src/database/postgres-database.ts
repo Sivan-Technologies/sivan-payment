@@ -15,7 +15,9 @@ import type {
   AuditLogRecord,
   ReconciliationRunRecord,
   ReconciliationFindingRecord,
-  PaymentControlRecord
+  PaymentControlRecord,
+  AssetControlRecord,
+  NetworkControlRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -74,6 +76,8 @@ export class PostgresDatabase {
       const reconciliationRuns = await client.query('select * from payments_reconciliation_runs order by started_at asc');
       const reconciliationFindings = await client.query('select * from payments_reconciliation_findings order by created_at asc');
       const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
+      const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
+      const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -86,7 +90,9 @@ export class PostgresDatabase {
         auditLogs: auditLogs.rows.map(mapAuditLog),
         reconciliationRuns: reconciliationRuns.rows.map(mapReconciliationRun),
         reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding),
-        paymentControls: paymentControls.rows.map(mapPaymentControl)
+        paymentControls: paymentControls.rows.map(mapPaymentControl),
+        assetControls: assetControls.rows.map(mapAssetControl),
+        networkControls: networkControls.rows.map(mapNetworkControl)
       };
     } finally {
       client.release();
@@ -115,6 +121,8 @@ export class PostgresDatabase {
       for (const run of data.reconciliationRuns ?? []) await upsertReconciliationRun(client, run);
       for (const finding of data.reconciliationFindings ?? []) await upsertReconciliationFinding(client, finding);
       for (const control of data.paymentControls ?? []) await upsertPaymentControl(client, control);
+      for (const control of data.assetControls ?? []) await upsertAssetControl(client, control);
+      for (const control of data.networkControls ?? []) await upsertNetworkControl(client, control);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -318,6 +326,54 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapAssetControl(row: any): AssetControlRecord {
+  return {
+    asset: row.asset,
+    enabled: row.enabled,
+    label: row.label,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapNetworkControl(row: any): NetworkControlRecord {
+  return {
+    network: row.network,
+    enabled: row.enabled,
+    label: row.label,
+    sortOrder: Number(row.sort_order ?? 100),
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertAssetControl(client: pg.PoolClient, item: AssetControlRecord) {
+  await client.query(
+    `insert into payments_asset_controls (asset, enabled, label, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5)
+     on conflict (asset) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.asset, item.enabled, item.label, item.updatedBy, item.updatedAt]
+  );
+}
+
+async function upsertNetworkControl(client: pg.PoolClient, item: NetworkControlRecord) {
+  await client.query(
+    `insert into payments_network_controls (network, enabled, label, sort_order, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6)
+     on conflict (network) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       sort_order=excluded.sort_order,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.network, item.enabled, item.label, item.sortOrder, item.updatedBy, item.updatedAt]
+  );
+}
 
 function mapPaymentControl(row: any): PaymentControlRecord {
   return {
