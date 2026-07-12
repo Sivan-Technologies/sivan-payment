@@ -8,6 +8,7 @@ import type {
   AdminViewKey,
   AdminWithdrawal,
   EconomicsEstimate,
+  PaymentControl,
   ProviderCapability,
   ReconciliationResult,
   RoutingDecision,
@@ -21,6 +22,7 @@ const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
   { key: 'withdrawals', icon: '↗', label: 'Withdrawals' },
   { key: 'reconciliation', icon: '⟳', label: 'Reconciliation' },
   { key: 'providers', icon: '◈', label: 'Providers' },
+  { key: 'controls', icon: '◌', label: 'Controls' },
   { key: 'webhooks', icon: '☷', label: 'Webhooks' },
   { key: 'audit', icon: '▤', label: 'Audit' },
   { key: 'economics', icon: '◎', label: 'Economics' },
@@ -68,6 +70,7 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [reconciliationRuns, setReconciliationRuns] = useState<AdminReconciliationRun[]>([]);
   const [providers, setProviders] = useState<ProviderCapability[]>([]);
+  const [paymentControls, setPaymentControls] = useState<PaymentControl[]>([]);
   const [routingDecision, setRoutingDecision] = useState<RoutingDecision | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
   const [estimate, setEstimate] = useState<EconomicsEstimate | null>(null);
@@ -102,7 +105,7 @@ export default function App() {
     setLoading(true);
     try {
       await checkApi();
-      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult] = await Promise.allSettled([
+      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
         api<AdminUser[]>('/api/admin/users'),
@@ -110,7 +113,8 @@ export default function App() {
         api<WebhookEventRecord[]>('/api/admin/webhooks'),
         api<AdminAuditLog[]>('/api/admin/audit-logs'),
         api<AdminReconciliationRun[]>('/api/admin/reconciliation/runs'),
-        api<ProviderCapability[]>('/api/providers/offramp/capabilities')
+        api<ProviderCapability[]>('/api/providers/offramp/capabilities'),
+        api<PaymentControl[]>('/api/admin/offramp/controls')
       ]);
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
       if (analyticsResult.status === 'fulfilled') setAnalytics(analyticsResult.value);
@@ -120,6 +124,7 @@ export default function App() {
       if (auditLogsResult.status === 'fulfilled') setAuditLogs(auditLogsResult.value);
       if (reconciliationRunsResult.status === 'fulfilled') setReconciliationRuns(reconciliationRunsResult.value);
       if (providersResult.status === 'fulfilled') setProviders(providersResult.value);
+      if (controlsResult.status === 'fulfilled') setPaymentControls(controlsResult.value);
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -225,6 +230,7 @@ export default function App() {
         {view === 'withdrawals' && <Withdrawals withdrawals={withdrawals} />}
         {view === 'reconciliation' && <Reconciliation onRun={runReconciliation} result={reconciliation} loading={loading} />}
         {view === 'providers' && <Providers providers={providers} routingDecision={routingDecision} onRoute={testRoute} />}
+        {view === 'controls' && <Controls controls={paymentControls} api={api} onUpdated={refreshAdmin} notify={notify} />}
         {view === 'webhooks' && <Webhooks webhooks={webhooks} />}
         {view === 'audit' && <Audit auditLogs={auditLogs} reconciliationRuns={reconciliationRuns} />}
         {view === 'economics' && <Economics overview={overview} estimate={estimate} onEstimate={runEconomicsEstimate} />}
@@ -336,6 +342,50 @@ function Audit({ auditLogs, reconciliationRuns }: { auditLogs: AdminAuditLog[]; 
       <article className="panel">
         <div className="panel-head"><div><p className="eyebrow">Reconciliation history</p><h3>Persisted runs</h3></div></div>
         {!reconciliationRuns.length ? <Empty>No reconciliation runs found.</Empty> : <div className="list">{reconciliationRuns.slice(0, 100).map((run) => <div className="list-item" key={run.id}><strong>{run.dryRun ? 'Dry-run' : 'Live run'} · {run.id}</strong><Badge value={run.status} /><small>{new Date(run.startedAt).toLocaleString()} · Findings: {run.findings.length}</small><small>Summary: {JSON.stringify(run.summary ?? {})}</small></div>)}</div>}
+      </article>
+    </section>
+  );
+}
+
+
+function Controls({ controls, api, onUpdated, notify }: { controls: PaymentControl[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void }) {
+  const [draft, setDraft] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const next: Record<string, boolean> = {};
+    for (const control of controls) next[control.currency] = control.enabled;
+    setDraft(next);
+  }, [controls]);
+
+  async function saveControls() {
+    try {
+      await api('/api/admin/offramp/controls', {
+        method: 'PUT',
+        body: JSON.stringify({ controls: Object.entries(draft).map(([currency, enabled]) => ({ currency, enabled })) })
+      });
+      notify('Payment rail controls updated.');
+      await onUpdated();
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    }
+  }
+
+  return (
+    <section className="panel-grid two">
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
+        <p className="muted">Turning a currency off hides it from the user frontend and blocks new bank accounts/withdrawals for that rail.</p>
+        {!controls.length ? <Empty>No controls loaded.</Empty> : <div className="list">{controls.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={draft[control.currency] ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="toggle-row"><input type="checkbox" checked={Boolean(draft[control.currency])} onChange={(event) => setDraft((current) => ({ ...current, [control.currency]: event.target.checked }))} /> Enabled</label></div>)}</div>}
+        <button className="primary-btn" onClick={saveControls}>Save controls</button>
+      </article>
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Current user impact</p><h3>Frontend behavior</h3></div></div>
+        <div className="details-box">
+          <Kv label="USD" value={draft.usd ? 'Visible and enabled' : 'Hidden and blocked'} />
+          <Kv label="GBP" value={draft.gbp ? 'Visible and enabled' : 'Hidden and blocked'} />
+          <Kv label="EUR" value={draft.eur ? 'Visible and enabled' : 'Hidden and blocked'} />
+          <Kv label="Safety" value="At least one currency must remain enabled" />
+        </div>
       </article>
     </section>
   );

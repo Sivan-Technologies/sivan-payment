@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'reconciliation' | 'providers' | 'webhooks' | 'audit' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'audit' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
@@ -286,4 +286,15 @@ export interface AdminReconciliationRun {
   startedAt: string;
   completedAt?: string;
   findings: ReconciliationFinding[];
+}
+
+
+export interface PaymentControl {
+  currency: 'usd' | 'gbp' | 'eur';
+  enabled: boolean;
+  label: string;
+  accountType: 'us' | 'gb' | 'iban';
+  defaultPaymentRail: string;
+  updatedBy?: string;
+  updatedAt: string;
 }

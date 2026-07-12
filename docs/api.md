@@ -391,3 +391,37 @@ Create EUR withdrawal:
 Default EUR payment rail is `sepa`.
 
 Important: Bridge may require a `sepa` endorsement or additional KYC/proof-of-address for EUR/SEPA access. Request or refresh the relevant endorsement before enabling EUR for production users.
+
+## Payment rail controls
+
+Admins can turn payout currencies on or off. Disabled currencies are hidden from the user frontend and blocked by backend validation.
+
+Public controls used by user frontend:
+
+```http
+GET /api/offramp/controls
+```
+
+Admin controls:
+
+```http
+GET /api/admin/offramp/controls
+```
+
+Update controls:
+
+```http
+PUT /api/admin/offramp/controls
+x-admin-api-key: <admin_key>
+Content-Type: application/json
+
+{
+  "controls": [
+    { "currency": "usd", "enabled": true },
+    { "currency": "gbp", "enabled": true },
+    { "currency": "eur", "enabled": false }
+  ]
+}
+```
+
+At least one payout currency must remain enabled.

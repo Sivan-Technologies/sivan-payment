@@ -10,6 +10,7 @@ import { feesRoutes } from '../offramp/api/fees.routes.js';
 import { metricsRoutes } from '../metrics/metrics.routes.js';
 import { providersRoutes } from '../providers/providers.routes.js';
 import { adminRoutes } from '../admin/admin.routes.js';
+import { paymentControlsRoutes } from '../controls/payment-controls.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -22,6 +23,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await feesRoutes(app);
   await metricsRoutes(app);
   await providersRoutes(app);
+  await paymentControlsRoutes(app);
   await adminRoutes(app);
   await webhooksRoutes(app);
 }

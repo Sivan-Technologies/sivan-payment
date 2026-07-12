@@ -377,3 +377,25 @@ EMAIL_FROM="Sivan <no-reply@sivantech.online>"
 ```
 
 The backend email provider uses the official Resend SDK.
+
+## Admin payment rail controls
+
+The admin dashboard has a **Controls** tab for enabling/disabling payout currencies:
+
+```text
+USD
+GBP
+EUR
+```
+
+These controls are persisted in:
+
+```text
+payments_control_settings
+```
+
+Disabled currencies are:
+
+- hidden from the user frontend,
+- blocked when creating new external accounts,
+- blocked when creating new withdrawals.

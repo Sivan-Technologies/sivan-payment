@@ -14,6 +14,17 @@ export type WithdrawalStatus =
   | 'cancelled'
   | 'requires_action';
 
+
+export interface PaymentControlRecord {
+  currency: Currency;
+  enabled: boolean;
+  label: string;
+  accountType: 'us' | 'gb' | 'iban';
+  defaultPaymentRail: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
 export interface UserRecord {
   id: string;
   email: string;
@@ -187,4 +198,5 @@ export interface DatabaseShape {
   auditLogs: AuditLogRecord[];
   reconciliationRuns: ReconciliationRunRecord[];
   reconciliationFindings: ReconciliationFindingRecord[];
+  paymentControls: PaymentControlRecord[];
 }

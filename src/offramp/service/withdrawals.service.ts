@@ -7,6 +7,7 @@ import { getOfframpProvider, routeOfframpProvider } from '../../providers/provid
 import { badRequest, notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
+import { requireCurrencyEnabled } from '../../controls/payment-controls.service.js';
 
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
@@ -21,6 +22,7 @@ export const createWithdrawalSchema = z.object({
 });
 
 export async function createWithdrawal(input: z.infer<typeof createWithdrawalSchema>) {
+  await requireCurrencyEnabled(input.destinationCurrency);
   const externalAccount = await getExternalAccount(input.externalAccountId);
   if (externalAccount.userId !== input.userId) throw notFound('External account');
   if (!['active', 'verified'].includes(externalAccount.status)) {

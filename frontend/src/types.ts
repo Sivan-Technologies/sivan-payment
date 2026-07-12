@@ -134,3 +134,14 @@ export interface DepositResponse {
     currency: string;
   };
 }
+
+
+export interface PaymentControl {
+  currency: 'usd' | 'gbp' | 'eur';
+  enabled: boolean;
+  label: string;
+  accountType: 'us' | 'gb' | 'iban';
+  defaultPaymentRail: string;
+  updatedBy?: string;
+  updatedAt: string;
+}

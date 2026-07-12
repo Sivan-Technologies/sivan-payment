@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, FeePolicy, UserRecord, ViewKey, WithdrawalRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, FeePolicy, PaymentControl, UserRecord, ViewKey, WithdrawalRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '◇', label: 'Home' },
@@ -75,6 +75,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
+  const [paymentControls, setPaymentControls] = useState<PaymentControl[]>([]);
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -84,6 +85,7 @@ export default function App() {
   const isVerified = customer?.kycStatus === 'kyc_approved';
   const hasBank = accounts.length > 0;
   const activeStep = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank' : 'Ready to withdraw';
+  const enabledControls = paymentControls.filter((control) => control.enabled);
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -173,8 +175,12 @@ export default function App() {
   }, [api, user?.id, authToken]);
 
   const loadFee = useCallback(async () => {
-    const fee = await api<FeePolicy>('/api/fees/offramp').catch(() => null);
+    const [fee, controls] = await Promise.all([
+      api<FeePolicy>('/api/fees/offramp').catch(() => null),
+      api<PaymentControl[]>('/api/offramp/controls').catch(() => [])
+    ]);
     if (fee) setFeePolicy(fee);
+    setPaymentControls(controls);
   }, [api]);
 
   useEffect(() => {
@@ -268,6 +274,7 @@ export default function App() {
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
+      if (!enabledControls.some((control) => control.currency === data.currency)) throw new Error(`${data.currency.toUpperCase()} withdrawals are currently unavailable.`);
       const isUsd = data.currency === 'usd';
       const isGbp = data.currency === 'gbp';
       const body: Record<string, unknown> = {
@@ -313,7 +320,8 @@ export default function App() {
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
-      const selectedAccount = accounts.find((account) => account.id === data.externalAccountId) || primaryAccount;
+      const enabledCurrencySet = new Set(enabledControls.map((control) => control.currency));
+      const selectedAccount = accounts.find((account) => account.id === data.externalAccountId && enabledCurrencySet.has(account.currency)) || accounts.find((account) => enabledCurrencySet.has(account.currency));
       if (!selectedAccount) throw new Error('Choose a bank account first.');
       const result = await api<DepositResponse>('/api/withdrawals', {
         method: 'POST',
@@ -406,7 +414,7 @@ export default function App() {
               <Stat label="Account" value={hasUser ? 'Created' : 'Not started'} helper={user?.email || 'Start with your email'} />
               <Stat label="Verification" value={friendlyStatus(customer?.kycStatus)} helper="Required for withdrawals" />
               <Stat label="Bank accounts" value={String(accounts.length)} helper="Verified payout destinations" />
-              <Stat label="Withdrawal fee" value={feePolicy ? `${feePolicy.percent}%` : '—'} helper="Shown before you deposit" />
+              <Stat label="Available rails" value={enabledControls.map((c) => c.currency.toUpperCase()).join(', ') || '—'} helper={feePolicy ? `${feePolicy.percent}% fee before deposit` : 'Shown before you deposit'} />
             </div>
 
             <div className="panel-grid two">
@@ -474,7 +482,7 @@ export default function App() {
 
         {view === 'banks' && (
           <section className="panel-grid two">
-            <BankForm onSubmit={handleBank} loading={loading} isVerified={isVerified} />
+            <BankForm onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} />
             <article className="panel">
               <div className="panel-head"><h3>Your bank accounts</h3><button className="ghost-btn small" onClick={loadUserData}>Refresh</button></div>
               <BankList accounts={accounts} />
@@ -488,9 +496,9 @@ export default function App() {
               <p className="eyebrow">Step 4</p>
               <h3>Withdraw USDC</h3>
               <p className="muted">Choose a verified bank account and get a USDC deposit address.</p>
-              {!hasBank ? <Empty>Add a bank account first.</Empty> : (
+              {!accounts.some((account) => enabledControls.some((control) => control.currency === account.currency)) ? <Empty>Add an enabled bank account first.</Empty> : (
                 <form className="form" onSubmit={handleWithdraw}>
-                  <label>Bank account<select name="externalAccountId" defaultValue={primaryAccount?.id}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.bankName || 'Bank account'} · {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select></label>
+                  <label>Bank account<select name="externalAccountId" defaultValue={primaryAccount?.id}>{accounts.filter((account) => enabledControls.some((control) => control.currency === account.currency)).map((account) => <option key={account.id} value={account.id}>{account.bankName || 'Bank account'} · {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select></label>
                   <label>USDC network<select name="sourceChain" defaultValue="ethereum"><option value="ethereum">Ethereum</option><option value="base">Base</option><option value="polygon">Polygon</option><option value="solana">Solana</option><option value="arbitrum">Arbitrum</option><option value="optimism">Optimism</option></select></label>
                   <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
                   <button className="primary-btn" disabled={loading}>{loading ? 'Creating...' : 'Get deposit address'}</button>
@@ -523,22 +531,26 @@ function Kv({ label, value }: { label: string; value?: string | number | null })
   return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>;
 }
 
-function BankForm({ onSubmit, loading, isVerified }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean }) {
-  const [currency, setCurrency] = useState('usd');
+function BankForm({ onSubmit, loading, isVerified, controls }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[] }) {
+  const [currency, setCurrency] = useState<'usd' | 'gbp' | 'eur'>((controls[0]?.currency ?? 'usd') as 'usd' | 'gbp' | 'eur');
+  useEffect(() => {
+    if (controls.length && !controls.some((control) => control.currency === currency)) {
+      setCurrency(controls[0].currency);
+    }
+  }, [controls, currency]);
   if (!isVerified) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Complete verification before adding a bank account.</Empty></article>;
+  if (!controls.length) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Bank payouts are temporarily unavailable.</Empty></article>;
   const isUsd = currency === 'usd';
   const isGbp = currency === 'gbp';
   return (
     <article className="panel form-panel">
       <p className="eyebrow">Step 3</p>
       <h3>Add your bank</h3>
-      <p className="muted">Your payout must go to a bank account you own. EUR payouts use SEPA bank details.</p>
+      <p className="muted">Your payout must go to a bank account you own. Available payout currencies are controlled by Sivan.</p>
       <form className="form" onSubmit={onSubmit}>
         <label>Payout currency
-          <select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value)}>
-            <option value="usd">USD — US bank account</option>
-            <option value="gbp">GBP — UK bank account</option>
-            <option value="eur">EUR — SEPA / IBAN</option>
+          <select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value as 'usd' | 'gbp' | 'eur')}>
+            {controls.map((control) => <option key={control.currency} value={control.currency}>{control.label}</option>)}
           </select>
         </label>
         <label>Bank name<input name="bankName" defaultValue={isUsd ? 'Lead Bank' : isGbp ? 'Example UK Bank' : 'Example SEPA Bank'} required /></label>

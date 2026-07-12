@@ -14,7 +14,8 @@ import type {
   AuthChallengeRecord,
   AuditLogRecord,
   ReconciliationRunRecord,
-  ReconciliationFindingRecord
+  ReconciliationFindingRecord,
+  PaymentControlRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -72,6 +73,7 @@ export class PostgresDatabase {
       const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
       const reconciliationRuns = await client.query('select * from payments_reconciliation_runs order by started_at asc');
       const reconciliationFindings = await client.query('select * from payments_reconciliation_findings order by created_at asc');
+      const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -83,7 +85,8 @@ export class PostgresDatabase {
         authChallenges: authChallenges.rows.map(mapAuthChallenge),
         auditLogs: auditLogs.rows.map(mapAuditLog),
         reconciliationRuns: reconciliationRuns.rows.map(mapReconciliationRun),
-        reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding)
+        reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding),
+        paymentControls: paymentControls.rows.map(mapPaymentControl)
       };
     } finally {
       client.release();
@@ -111,6 +114,7 @@ export class PostgresDatabase {
       for (const auditLog of data.auditLogs ?? []) await upsertAuditLog(client, auditLog);
       for (const run of data.reconciliationRuns ?? []) await upsertReconciliationRun(client, run);
       for (const finding of data.reconciliationFindings ?? []) await upsertReconciliationFinding(client, finding);
+      for (const control of data.paymentControls ?? []) await upsertPaymentControl(client, control);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -314,6 +318,33 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapPaymentControl(row: any): PaymentControlRecord {
+  return {
+    currency: row.currency,
+    enabled: row.enabled,
+    label: row.label,
+    accountType: row.account_type,
+    defaultPaymentRail: row.default_payment_rail,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertPaymentControl(client: pg.PoolClient, item: PaymentControlRecord) {
+  await client.query(
+    `insert into payments_control_settings (currency, enabled, label, account_type, default_payment_rail, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7)
+     on conflict (currency) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       account_type=excluded.account_type,
+       default_payment_rail=excluded.default_payment_rail,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.currency, item.enabled, item.label, item.accountType, item.defaultPaymentRail, item.updatedBy, item.updatedAt]
+  );
+}
 
 function mapAuditLog(row: any): AuditLogRecord {
   return {
