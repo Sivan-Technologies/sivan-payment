@@ -11,6 +11,7 @@ import { metricsRoutes } from '../metrics/metrics.routes.js';
 import { providersRoutes } from '../providers/providers.routes.js';
 import { adminRoutes } from '../admin/admin.routes.js';
 import { paymentControlsRoutes } from '../controls/payment-controls.routes.js';
+import { systemStatusRoutes } from '../system/system-status.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -24,6 +25,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await metricsRoutes(app);
   await providersRoutes(app);
   await paymentControlsRoutes(app);
+  await systemStatusRoutes(app);
   await adminRoutes(app);
   await webhooksRoutes(app);
 }

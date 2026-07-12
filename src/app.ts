@@ -7,6 +7,7 @@ import { AppError } from './shared/errors.js';
 import { captureError } from './monitoring/sentry.js';
 import { verifyUserJwt } from './auth/jwt.js';
 import { checkRateLimit } from './shared/rate-limit.js';
+import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './system/system-status.service.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
@@ -45,6 +46,20 @@ export async function buildApp() {
           code: 'rate_limited',
           message: 'Too many requests. Please try again later.',
           retryAfterSeconds: decision.retryAfterSeconds
+        }
+      });
+    }
+  });
+
+  app.addHook('preHandler', async (request, reply) => {
+    const status = await getSystemStatus();
+    if (isUserMutationBlocked(status.mode, request.method, request.url)) {
+      return reply.code(503).send({
+        error: {
+          code: 'system_unavailable',
+          mode: status.mode,
+          message: systemStatusMessage(status),
+          estimatedResumeAt: status.estimatedResumeAt
         }
       });
     }

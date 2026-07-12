@@ -168,3 +168,13 @@ export interface OfframpControls {
   sourceAssets: AssetControl[];
   sourceNetworks: NetworkControl[];
 }
+
+
+export interface SystemStatus {
+  id: 'global';
+  mode: 'active' | 'maintenance' | 'paused';
+  message?: string;
+  estimatedResumeAt?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}

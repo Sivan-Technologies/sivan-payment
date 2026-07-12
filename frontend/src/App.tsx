@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, UserRecord, ViewKey, WithdrawalRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '◇', label: 'Home' },
@@ -76,6 +76,7 @@ export default function App() {
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -84,6 +85,10 @@ export default function App() {
   const hasUser = Boolean(user?.id && authToken);
   const isVerified = customer?.kycStatus === 'kyc_approved';
   const hasBank = accounts.length > 0;
+  const systemPaused = systemStatus.mode === 'paused';
+  const systemMaintenance = systemStatus.mode === 'maintenance';
+  const canStartKyc = !systemPaused;
+  const canCreatePaymentActions = systemStatus.mode === 'active';
   const activeStep = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank' : 'Ready to withdraw';
   const enabledControls = paymentControls.payoutCurrencies.filter((control) => control.enabled);
   const enabledAssets = paymentControls.sourceAssets.filter((control) => control.enabled);
@@ -177,8 +182,12 @@ export default function App() {
   }, [api, user?.id, authToken]);
 
   const loadControls = useCallback(async () => {
-    const controls = await api<OfframpControls>('/api/offramp/controls').catch(() => ({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] }));
+    const [controls, status] = await Promise.all([
+      api<OfframpControls>('/api/offramp/controls').catch(() => ({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] })),
+      api<SystemStatus>('/api/system/status').catch(() => systemStatus)
+    ]);
     setPaymentControls(controls);
+    setSystemStatus(status);
     return controls;
   }, [api]);
 
@@ -258,6 +267,7 @@ export default function App() {
   async function handleKyc(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
+    if (!canStartKyc) return notify(systemStatus.message || 'Verification is temporarily paused.', 'error');
     setLoading(true);
     try {
       const body = getForm(event.currentTarget);
@@ -290,6 +300,7 @@ export default function App() {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
     if (!isVerified) return notify('Please complete verification before adding a bank account.', 'error');
+    if (!canCreatePaymentActions) return notify(systemStatus.message || 'New bank accounts are temporarily unavailable.', 'error');
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
@@ -338,6 +349,7 @@ export default function App() {
     if (!user?.id) return notify('Create your account first.', 'error');
     if (!isVerified) return notify('Please complete verification first.', 'error');
     if (!accounts.length) return notify('Add a bank account first.', 'error');
+    if (!canCreatePaymentActions) return notify(systemStatus.message || 'New withdrawals are temporarily unavailable.', 'error');
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
@@ -414,6 +426,8 @@ export default function App() {
         </header>
 
         {toast && <section className={`toast ${toast.type === 'error' ? 'error' : ''}`}>{toast.message}</section>}
+
+        {systemStatus.mode !== 'active' && <section className="maintenance-banner"><strong>{systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</strong><span>{systemStatus.message || (systemStatus.mode === 'maintenance' ? 'New withdrawals are temporarily unavailable while maintenance is in progress.' : 'New payment actions are temporarily paused.')}</span>{systemStatus.estimatedResumeAt && <small>Estimated resume: {new Date(systemStatus.estimatedResumeAt).toLocaleString()}</small>}</section>}
 
         {view === 'overview' && (
           <section className="view active">
@@ -495,7 +509,7 @@ export default function App() {
                 <form className="form" onSubmit={handleKyc}>
                   <label>Account type<select name="type" defaultValue="individual"><option value="individual">Individual</option><option value="business">Business</option></select></label>
                   <input name="redirectUri" type="hidden" value="https://sivan-payments-user-test.vercel.app/verification-complete" />
-                  <button className="primary-btn" disabled={loading}>{loading ? 'Starting...' : 'Start verification'}</button>
+                  <button className="primary-btn" disabled={loading || !canStartKyc}>{loading ? 'Starting...' : canStartKyc ? 'Start verification' : 'Verification paused'}</button>
                 </form>
               )}
             </article>
@@ -528,7 +542,7 @@ export default function App() {
                   <label>Deposit asset<select name="sourceCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'}>{enabledAssets.map((asset) => <option key={asset.asset} value={asset.asset}>{asset.label}</option>)}</select></label>
                   <label>Deposit network<select name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'}>{enabledNetworks.map((network) => <option key={network.network} value={network.network}>{network.label}</option>)}</select></label>
                   <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
-                  <button className="primary-btn" disabled={loading}>{loading ? 'Creating...' : 'Get deposit address'}</button>
+                  <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Creating...' : canCreatePaymentActions ? 'Get deposit address' : 'Withdrawals paused'}</button>
                 </form>
               )}
             </article>
@@ -594,7 +608,7 @@ function BankForm({ onSubmit, loading, isVerified, controls }: { onSubmit: (even
           <label>BIC / SWIFT<input name="bic" placeholder="AGRIFRPP" /></label>
           <label>Bank country<input name="ibanCountry" defaultValue="FRA" maxLength={3} /></label>
         </>}
-        <button className="primary-btn" disabled={loading}>{loading ? 'Adding...' : 'Add bank account'}</button>
+        <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Adding...' : canCreatePaymentActions ? 'Add bank account' : 'Temporarily unavailable'}</button>
       </form>
     </article>
   );

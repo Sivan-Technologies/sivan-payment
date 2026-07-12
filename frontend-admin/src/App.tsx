@@ -12,6 +12,7 @@ import type {
   PaymentControl,
   ProviderCapability,
   ReconciliationResult,
+  SystemStatus,
   RoutingDecision,
   WebhookEventRecord
 } from './types';
@@ -77,6 +78,7 @@ export default function App() {
   const [reconciliationRuns, setReconciliationRuns] = useState<AdminReconciliationRun[]>([]);
   const [providers, setProviders] = useState<ProviderCapability[]>([]);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [routingDecision, setRoutingDecision] = useState<RoutingDecision | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
   const [estimate, setEstimate] = useState<EconomicsEstimate | null>(null);
@@ -112,7 +114,7 @@ export default function App() {
     setAdminError(null);
     try {
       await checkApi();
-      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult] = await Promise.allSettled([
+      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
         api<AdminUser[]>('/api/admin/users'),
@@ -121,7 +123,8 @@ export default function App() {
         api<AdminAuditLog[]>('/api/admin/audit-logs'),
         api<AdminReconciliationRun[]>('/api/admin/reconciliation/runs'),
         api<ProviderCapability[]>('/api/providers/offramp/capabilities'),
-        api<OfframpControls>('/api/admin/offramp/controls')
+        api<OfframpControls>('/api/admin/offramp/controls'),
+        api<SystemStatus>('/api/admin/system/status')
       ]);
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
       if (analyticsResult.status === 'fulfilled') setAnalytics(analyticsResult.value);
@@ -132,6 +135,7 @@ export default function App() {
       if (reconciliationRunsResult.status === 'fulfilled') setReconciliationRuns(reconciliationRunsResult.value);
       if (providersResult.status === 'fulfilled') setProviders(providersResult.value);
       if (controlsResult.status === 'fulfilled') setPaymentControls(controlsResult.value);
+      if (systemStatusResult.status === 'fulfilled') setSystemStatus(systemStatusResult.value);
       if (controlsResult.status === 'rejected') setAdminError(errorMessage(controlsResult.reason));
       if (overviewResult.status === 'rejected') setAdminError(errorMessage(overviewResult.reason));
     } catch (error) {
@@ -256,7 +260,7 @@ export default function App() {
         {view === 'withdrawals' && <Withdrawals withdrawals={withdrawals} />}
         {view === 'reconciliation' && <Reconciliation onRun={runReconciliation} result={reconciliation} loading={loading} />}
         {view === 'providers' && <Providers providers={providers} routingDecision={routingDecision} onRoute={testRoute} />}
-        {view === 'controls' && <Controls controls={paymentControls} api={api} onUpdated={refreshAdmin} notify={notify} hasAdminKey={Boolean(adminApiKey)} error={adminError} />}
+        {view === 'controls' && <Controls controls={paymentControls} systemStatus={systemStatus} api={api} onUpdated={refreshAdmin} notify={notify} hasAdminKey={Boolean(adminApiKey)} error={adminError} />}
         {view === 'webhooks' && <Webhooks webhooks={webhooks} />}
         {view === 'audit' && <Audit auditLogs={auditLogs} reconciliationRuns={reconciliationRuns} />}
         {view === 'economics' && <Economics overview={overview} estimate={estimate} onEstimate={runEconomicsEstimate} />}
@@ -423,8 +427,31 @@ function Audit({ auditLogs, reconciliationRuns }: { auditLogs: AdminAuditLog[]; 
 }
 
 
-function Controls({ controls, api, onUpdated, notify, hasAdminKey, error }: { controls: OfframpControls; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void; hasAdminKey: boolean; error: string | null }) {
+function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey, error }: { controls: OfframpControls; systemStatus: SystemStatus; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void; hasAdminKey: boolean; error: string | null }) {
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [statusDraft, setStatusDraft] = useState(systemStatus.mode);
+  const [statusMessage, setStatusMessage] = useState(systemStatus.message || '');
+  useEffect(() => {
+    setStatusDraft(systemStatus.mode);
+    setStatusMessage(systemStatus.message || '');
+  }, [systemStatus]);
+
+  async function updateSystemMode() {
+    setSavingKey('system');
+    try {
+      await api('/api/admin/system/status', {
+        method: 'PUT',
+        body: JSON.stringify({ mode: statusDraft, message: statusMessage || undefined })
+      });
+      notify(`System mode updated to ${statusDraft}.`);
+      await onUpdated();
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
   const payoutCurrencies = controls.payoutCurrencies ?? [];
   const sourceAssets = controls.sourceAssets ?? [];
   const sourceNetworks = controls.sourceNetworks ?? [];
@@ -452,6 +479,15 @@ function Controls({ controls, api, onUpdated, notify, hasAdminKey, error }: { co
 
   return (
     <section className="panel-grid two">
+      <article className="panel control-highlight">
+        <div className="panel-head"><div><p className="eyebrow">System mode</p><h3>Pause or maintain the entire system</h3></div></div>
+        <p className="muted">Use maintenance or paused mode during provider outages, migrations, or major upgrades. Webhooks, admin, and history remain available.</p>
+        <div className="form">
+          <label>Mode<select value={statusDraft} onChange={(event) => setStatusDraft(event.target.value as SystemStatus['mode'])}><option value="active">Active</option><option value="maintenance">Maintenance</option><option value="paused">Paused</option></select></label>
+          <label>User-facing message<input value={statusMessage} onChange={(event) => setStatusMessage(event.target.value)} placeholder="Optional maintenance message" /></label>
+          <button className="primary-btn" disabled={savingKey === 'system'} onClick={updateSystemMode}>{savingKey === 'system' ? 'Updating...' : 'Update system mode'}</button>
+        </div>
+      </article>
       <article className="panel">
         <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
         <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>

@@ -16,6 +16,16 @@ export type WithdrawalStatus =
 
 
 
+
+export interface SystemStatusRecord {
+  id: 'global';
+  mode: 'active' | 'maintenance' | 'paused';
+  message?: string;
+  estimatedResumeAt?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
 export interface AssetControlRecord {
   asset: SourceCurrency;
   enabled: boolean;
@@ -219,4 +229,5 @@ export interface DatabaseShape {
   paymentControls: PaymentControlRecord[];
   assetControls: AssetControlRecord[];
   networkControls: NetworkControlRecord[];
+  systemStatus: SystemStatusRecord[];
 }

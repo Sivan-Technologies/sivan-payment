@@ -17,7 +17,8 @@ import type {
   ReconciliationFindingRecord,
   PaymentControlRecord,
   AssetControlRecord,
-  NetworkControlRecord
+  NetworkControlRecord,
+  SystemStatusRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -78,6 +79,7 @@ export class PostgresDatabase {
       const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
       const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
+      const systemStatus = await client.query('select * from payments_system_status order by id asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -92,7 +94,8 @@ export class PostgresDatabase {
         reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding),
         paymentControls: paymentControls.rows.map(mapPaymentControl),
         assetControls: assetControls.rows.map(mapAssetControl),
-        networkControls: networkControls.rows.map(mapNetworkControl)
+        networkControls: networkControls.rows.map(mapNetworkControl),
+        systemStatus: systemStatus.rows.map(mapSystemStatus)
       };
     } finally {
       client.release();
@@ -123,6 +126,7 @@ export class PostgresDatabase {
       for (const control of data.paymentControls ?? []) await upsertPaymentControl(client, control);
       for (const control of data.assetControls ?? []) await upsertAssetControl(client, control);
       for (const control of data.networkControls ?? []) await upsertNetworkControl(client, control);
+      for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -326,6 +330,31 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapSystemStatus(row: any): SystemStatusRecord {
+  return {
+    id: 'global',
+    mode: row.mode,
+    message: str(row.message),
+    estimatedResumeAt: optionalIso(row.estimated_resume_at),
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertSystemStatus(client: pg.PoolClient, item: SystemStatusRecord) {
+  await client.query(
+    `insert into payments_system_status (id, mode, message, estimated_resume_at, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6)
+     on conflict (id) do update set
+       mode=excluded.mode,
+       message=excluded.message,
+       estimated_resume_at=excluded.estimated_resume_at,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.id, item.mode, item.message, item.estimatedResumeAt, item.updatedBy, item.updatedAt]
+  );
+}
 
 function mapAssetControl(row: any): AssetControlRecord {
   return {
