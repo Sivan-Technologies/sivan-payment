@@ -33,6 +33,10 @@ function getForm(form: HTMLFormElement) {
   return Object.fromEntries(new FormData(form).entries()) as Record<string, string>;
 }
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error || 'Request failed');
+}
+
 function statusClass(status?: string) {
   if (!status) return 'pending';
   if (['completed', 'active', 'verified', 'approved', 'kyc_approved', 'processed'].includes(status)) return 'success';
@@ -61,6 +65,7 @@ export default function App() {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [adminError, setAdminError] = useState<string | null>(null);
 
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null);
@@ -103,6 +108,7 @@ export default function App() {
 
   const refreshAdmin = useCallback(async () => {
     setLoading(true);
+    setAdminError(null);
     try {
       await checkApi();
       const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult] = await Promise.allSettled([
@@ -125,6 +131,8 @@ export default function App() {
       if (reconciliationRunsResult.status === 'fulfilled') setReconciliationRuns(reconciliationRunsResult.value);
       if (providersResult.status === 'fulfilled') setProviders(providersResult.value);
       if (controlsResult.status === 'fulfilled') setPaymentControls(controlsResult.value);
+      if (controlsResult.status === 'rejected') setAdminError(errorMessage(controlsResult.reason));
+      if (overviewResult.status === 'rejected') setAdminError(errorMessage(overviewResult.reason));
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -233,7 +241,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand"><img className="brand-logo" src="/asset/sivan-logo.png" alt="Sivan logo" /><div><p className="eyebrow">Sivan</p><h1>Admin</h1></div></div>
         <nav className="nav">{nav.map((item) => <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => setView(item.key)}><span>{item.icon}</span>{item.label}</button>)}</nav>
-        <div className="api-card"><label>API base</label><input value={apiDraft} onChange={(event) => setApiDraft(event.target.value)} /><button className="ghost-btn" onClick={() => { setApiBase(apiDraft.replace(/\/$/, '')); notify('Admin API URL saved.'); }}>Save API URL</button><label>Admin API key</label><input type="password" value={adminApiKeyDraft} onChange={(event) => setAdminApiKeyDraft(event.target.value)} placeholder="Required when backend ADMIN_API_KEY is set" /><button className="ghost-btn" onClick={() => { setAdminApiKey(adminApiKeyDraft); notify('Admin API key saved locally.'); }}>Save Admin Key</button><p className="hint">Internal admin only. Do not expose without auth, RBAC, 2FA, and audit logging.</p></div>
+        <div className="api-card"><label>API base</label><input value={apiDraft} onChange={(event) => setApiDraft(event.target.value)} /><button className="ghost-btn" onClick={() => { setApiBase(apiDraft.replace(/\/$/, '')); notify('Admin API URL saved.'); }}>Save API URL</button><label>Admin API key</label><input type="password" value={adminApiKeyDraft} onChange={(event) => setAdminApiKeyDraft(event.target.value)} placeholder="Required when backend ADMIN_API_KEY is set" /><button className="ghost-btn" onClick={() => { setAdminApiKey(adminApiKeyDraft); notify('Admin API key saved locally.'); }}>Save Admin Key</button><p className="hint">Save the Admin API key, then click Refresh. API connected only checks public health; controls require the admin key.</p></div>
       </aside>
 
       <main className="main">
@@ -247,7 +255,7 @@ export default function App() {
         {view === 'withdrawals' && <Withdrawals withdrawals={withdrawals} />}
         {view === 'reconciliation' && <Reconciliation onRun={runReconciliation} result={reconciliation} loading={loading} />}
         {view === 'providers' && <Providers providers={providers} routingDecision={routingDecision} onRoute={testRoute} />}
-        {view === 'controls' && <Controls controls={paymentControls} api={api} onUpdated={refreshAdmin} notify={notify} />}
+        {view === 'controls' && <Controls controls={paymentControls} api={api} onUpdated={refreshAdmin} notify={notify} hasAdminKey={Boolean(adminApiKey)} error={adminError} />}
         {view === 'webhooks' && <Webhooks webhooks={webhooks} />}
         {view === 'audit' && <Audit auditLogs={auditLogs} reconciliationRuns={reconciliationRuns} />}
         {view === 'economics' && <Economics overview={overview} estimate={estimate} onEstimate={runEconomicsEstimate} />}
@@ -414,7 +422,7 @@ function Audit({ auditLogs, reconciliationRuns }: { auditLogs: AdminAuditLog[]; 
 }
 
 
-function Controls({ controls, api, onUpdated, notify }: { controls: PaymentControl[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void }) {
+function Controls({ controls, api, onUpdated, notify, hasAdminKey, error }: { controls: PaymentControl[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void; hasAdminKey: boolean; error: string | null }) {
   const [savingCurrency, setSavingCurrency] = useState<string | null>(null);
 
   async function toggleCurrency(currency: string, enabled: boolean) {
@@ -442,7 +450,7 @@ function Controls({ controls, api, onUpdated, notify }: { controls: PaymentContr
       <article className="panel">
         <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
         <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>
-        {!controls.length ? <Empty>No controls loaded.</Empty> : <div className="list">{controls.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="switch-row"><span>{savingCurrency === control.currency ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingCurrency)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleCurrency(control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
+        {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !controls.length ? <Empty>No controls loaded. Click Refresh or confirm the backend is on the latest deployment.</Empty> : <div className="list">{controls.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="switch-row"><span>{savingCurrency === control.currency ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingCurrency)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleCurrency(control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
       </article>
       <article className="panel">
         <div className="panel-head"><div><p className="eyebrow">System-wide effect</p><h3>What happens instantly</h3></div></div>
