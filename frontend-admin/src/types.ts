@@ -332,7 +332,7 @@ export interface AssetControl {
 }
 
 export interface NetworkControl {
-  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism';
+  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
   enabled: boolean;
   label: string;
   sortOrder: number;

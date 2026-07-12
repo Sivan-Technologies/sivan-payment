@@ -1,6 +1,6 @@
 export type Currency = 'usd' | 'gbp' | 'eur';
 export type SourceCurrency = 'usdc' | 'usdt';
-export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism';
+export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
 export type ExternalAccountStatus = 'created' | 'active' | 'verification_pending' | 'verified' | 'verification_failed' | 'deactivated';
 export type WithdrawalStatus =

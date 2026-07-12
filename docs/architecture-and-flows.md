@@ -1015,14 +1015,14 @@ Admin can control three groups independently:
 ```text
 Payout currencies: USD, GBP, EUR
 Deposit assets: USDC, USDT
-Deposit networks: Base, Polygon, Ethereum, Solana, Arbitrum, Optimism
+Deposit networks: Base, Polygon, Ethereum, Solana, Arbitrum, Avalanche C-Chain
 ```
 
 This lets Sivan gradually enable phases:
 
 ```text
 Phase 1: USDC on Base, Polygon, Ethereum
-Phase 2: Solana, Arbitrum, Optimism
+Phase 2: Solana, Arbitrum, Avalanche C-Chain
 Phase 3: USDT if Bridge/provider support is confirmed
 ```
 
@@ -1049,3 +1049,20 @@ User warning:
 ```text
 Only send the selected asset on the selected network. Sending another token or using another network may cause loss or delays.
 ```
+
+
+### Avalanche C-Chain note
+
+Avalanche C-Chain is represented internally and for Bridge as:
+
+```text
+avalanche_c_chain
+```
+
+The user-facing label is:
+
+```text
+Avalanche C-Chain
+```
+
+Optimism has been removed from the supported network list and replaced with Avalanche C-Chain.

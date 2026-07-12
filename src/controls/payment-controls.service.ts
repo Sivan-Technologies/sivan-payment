@@ -22,7 +22,7 @@ export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
   { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'optimism', enabled: true, label: 'Optimism', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
+  { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
 ];
 
 export const updatePaymentControlsSchema = z.object({
@@ -35,7 +35,7 @@ export const updatePaymentControlsSchema = z.object({
     enabled: z.boolean()
   })).optional(),
   sourceNetworks: z.array(z.object({
-    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism']),
+    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain']),
     enabled: z.boolean()
   })).optional(),
   // Legacy support for older admin frontend payloads.

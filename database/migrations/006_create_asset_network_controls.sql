@@ -28,5 +28,5 @@ values
   ('ethereum', true, 'Ethereum', 30, 'system', now()),
   ('solana', true, 'Solana', 40, 'system', now()),
   ('arbitrum', true, 'Arbitrum', 50, 'system', now()),
-  ('optimism', true, 'Optimism', 60, 'system', now())
+  ('avalanche_c_chain', true, 'Avalanche C-Chain', 60, 'system', now())
 on conflict (network) do nothing;

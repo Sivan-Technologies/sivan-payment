@@ -433,7 +433,7 @@ Admin controls now cover three groups:
 ```text
 Payout currencies: USD, GBP, EUR
 Deposit assets: USDC, USDT
-Deposit networks: Base, Polygon, Ethereum, Solana, Arbitrum, Optimism
+Deposit networks: Base, Polygon, Ethereum, Solana, Arbitrum, Avalanche C-Chain
 ```
 
 Public controls response:
@@ -485,7 +485,7 @@ Content-Type: application/json
     { "network": "ethereum", "enabled": true },
     { "network": "solana", "enabled": false },
     { "network": "arbitrum", "enabled": false },
-    { "network": "optimism", "enabled": false }
+    { "network": "avalanche_c_chain", "enabled": false }
   ]
 }
 ```

@@ -6,7 +6,7 @@ import { env } from '../src/config/env.js';
 type Method = 'GET' | 'POST' | 'PUT';
 type Currency = 'usd' | 'gbp' | 'eur';
 type Asset = 'usdc' | 'usdt';
-type Network = 'base' | 'polygon' | 'ethereum' | 'solana' | 'arbitrum' | 'optimism';
+type Network = 'base' | 'polygon' | 'ethereum' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(`Assertion failed: ${message}`);
@@ -124,7 +124,7 @@ async function main() {
     assert(true, 'USDC withdrawal succeeds after re-enable');
     await updateControls({ sourceAssets: [{ asset: 'usdt', enabled: false }] });
 
-    for (const network of ['base', 'polygon', 'ethereum', 'solana', 'arbitrum', 'optimism'] as Network[]) {
+    for (const network of ['base', 'polygon', 'ethereum', 'solana', 'arbitrum', 'avalanche_c_chain'] as Network[]) {
       await updateControls({ sourceNetworks: [{ network, enabled: false }] });
       await createWithdrawal(user.id, accounts.usd.id, 'usdc', network, 'usd', 400);
       assert(true, `${network} withdrawal blocked while network disabled`);
@@ -137,7 +137,7 @@ async function main() {
     assert(true, 'cannot disable all payout currencies');
     await updateControls({ sourceAssets: [{ asset: 'usdc', enabled: false }, { asset: 'usdt', enabled: false }] }, 400);
     assert(true, 'cannot disable all deposit assets');
-    await updateControls({ sourceNetworks: ['base', 'polygon', 'ethereum', 'solana', 'arbitrum', 'optimism'].map((network) => ({ network, enabled: false })) }, 400);
+    await updateControls({ sourceNetworks: ['base', 'polygon', 'ethereum', 'solana', 'arbitrum', 'avalanche_c_chain'].map((network) => ({ network, enabled: false })) }, 400);
     assert(true, 'cannot disable all deposit networks');
 
     console.log('\n✅ Control system full test passed');
