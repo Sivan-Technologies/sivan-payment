@@ -478,39 +478,48 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
   }
 
   return (
-    <section className="panel-grid two">
-      <article className="panel control-highlight">
-        <div className="panel-head"><div><p className="eyebrow">System mode</p><h3>Pause or maintain the entire system</h3></div></div>
-        <p className="muted">Use maintenance or paused mode during provider outages, migrations, or major upgrades. Webhooks, admin, and history remain available.</p>
-        <div className="form">
+    <section className="controls-layout">
+      <article className="panel control-status-card">
+        <div className="control-status-copy">
+          <p className="eyebrow">System mode</p>
+          <h3>Pause or maintain the entire system</h3>
+          <p className="muted">Use maintenance or paused mode during provider outages, migrations, or major upgrades. Webhooks, admin, and history remain available.</p>
+        </div>
+        <div className="system-mode-form">
           <label>Mode<select value={statusDraft} onChange={(event) => setStatusDraft(event.target.value as SystemStatus['mode'])}><option value="active">Active</option><option value="maintenance">Maintenance</option><option value="paused">Paused</option></select></label>
-          <label>User-facing message<input value={statusMessage} onChange={(event) => setStatusMessage(event.target.value)} placeholder="Optional maintenance message" /></label>
-          <button className="primary-btn" disabled={savingKey === 'system'} onClick={updateSystemMode}>{savingKey === 'system' ? 'Updating...' : 'Update system mode'}</button>
+          <label>Message<input value={statusMessage} onChange={(event) => setStatusMessage(event.target.value)} placeholder="Optional maintenance message" /></label>
+          <button className="primary-btn" disabled={savingKey === 'system'} onClick={updateSystemMode}>{savingKey === 'system' ? 'Updating...' : 'Update mode'}</button>
         </div>
       </article>
-      <article className="panel">
-        <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
-        <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>
-        {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !hasAnyControls ? <Empty>No controls loaded. Click Refresh or confirm the backend is on the latest deployment.</Empty> : <div className="list">{payoutCurrencies.map((control) => <div className="list-item" key={control.currency}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small><label className="switch-row"><span>{savingKey === `payout:${control.currency}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('payout', control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
-      </article>
-      <article className="panel">
-        <div className="panel-head"><div><p className="eyebrow">Deposit asset controls</p><h3>Enable or disable USDC / USDT</h3></div></div>
-        {!hasAnyControls ? <Empty>No asset controls loaded.</Empty> : <div className="list">{sourceAssets.map((control) => <div className="list-item" key={control.asset}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Controls which stablecoins users can send to deposit addresses.</small><label className="switch-row"><span>{savingKey === `asset:${control.asset}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('asset', control.asset, !control.enabled)}><span /></button></label></div>)}</div>}
-      </article>
-      <article className="panel">
-        <div className="panel-head"><div><p className="eyebrow">Network controls</p><h3>Enable or disable supported networks</h3></div></div>
-        {!hasAnyControls ? <Empty>No network controls loaded.</Empty> : <div className="list">{sourceNetworks.map((control) => <div className="list-item" key={control.network}><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Use this for phased rollout or maintenance windows.</small><label className="switch-row"><span>{savingKey === `network:${control.network}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('network', control.network, !control.enabled)}><span /></button></label></div>)}</div>}
-      </article>
-      <article className="panel">
-        <div className="panel-head"><div><p className="eyebrow">System-wide effect</p><h3>What happens instantly</h3></div></div>
-        <div className="details-box">
-          <Kv label="Payout currencies" value={payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency.toUpperCase()).join(', ') || 'None'} />
-          <Kv label="Deposit assets" value={sourceAssets.filter((control) => control.enabled).map((control) => control.asset.toUpperCase()).join(', ') || 'None'} />
-          <Kv label="Deposit networks" value={sourceNetworks.filter((control) => control.enabled).map((control) => control.label).join(', ') || 'None'} />
-          <Kv label="Safety" value="At least one payout currency, asset, and network must remain enabled" />
-          <Kv label="Refresh" value="User app refreshes controls on focus and every 60 seconds while visible" />
-        </div>
-      </article>
+
+      <div className="panel-grid two controls-grid">
+        <article className="panel control-panel">
+          <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
+          <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>
+          {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !hasAnyControls ? <Empty>No controls loaded. Click Refresh or confirm the backend is on the latest deployment.</Empty> : <div className="compact-control-list">{payoutCurrencies.map((control) => <div className="control-row" key={control.currency}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small></div><label className="switch-row"><span>{savingKey === `payout:${control.currency}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('payout', control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
+        </article>
+
+        <article className="panel control-panel">
+          <div className="panel-head"><div><p className="eyebrow">Deposit asset controls</p><h3>Enable or disable USDC / USDT</h3></div></div>
+          {!hasAnyControls ? <Empty>No asset controls loaded.</Empty> : <div className="compact-control-list">{sourceAssets.map((control) => <div className="control-row" key={control.asset}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Controls which stablecoins users can send to deposit addresses.</small></div><label className="switch-row"><span>{savingKey === `asset:${control.asset}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('asset', control.asset, !control.enabled)}><span /></button></label></div>)}</div>}
+        </article>
+
+        <article className="panel control-panel network-panel">
+          <div className="panel-head"><div><p className="eyebrow">Network controls</p><h3>Enable or disable supported networks</h3></div></div>
+          {!hasAnyControls ? <Empty>No network controls loaded.</Empty> : <div className="network-control-grid">{sourceNetworks.map((control) => <div className="control-row" key={control.network}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Use this for phased rollout or maintenance windows.</small></div><label className="switch-row"><span>{savingKey === `network:${control.network}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('network', control.network, !control.enabled)}><span /></button></label></div>)}</div>}
+        </article>
+
+        <article className="panel control-panel effect-panel">
+          <div className="panel-head"><div><p className="eyebrow">System-wide effect</p><h3>What happens instantly</h3></div></div>
+          <div className="details-box">
+            <Kv label="Payout currencies" value={payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency.toUpperCase()).join(', ') || 'None'} />
+            <Kv label="Deposit assets" value={sourceAssets.filter((control) => control.enabled).map((control) => control.asset.toUpperCase()).join(', ') || 'None'} />
+            <Kv label="Deposit networks" value={sourceNetworks.filter((control) => control.enabled).map((control) => control.label).join(', ') || 'None'} />
+            <Kv label="Safety" value="At least one payout currency, asset, and network must remain enabled" />
+            <Kv label="Refresh" value="User app refreshes controls on focus and every 60 seconds while visible" />
+          </div>
+        </article>
+      </div>
     </section>
   );
 }
