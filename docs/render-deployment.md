@@ -402,7 +402,7 @@ Disabled currencies are:
 
 ## Admin profitability analytics
 
-The admin Analytics tab tracks unit economics in near real time. The frontend refreshes admin data every 30 seconds and when the browser window regains focus.
+The admin Analytics tab tracks unit economics in near real time. To avoid exhausting backend/API limits, automatic polling only runs while the Analytics tab is open, every 60 seconds, and when the browser window regains focus. Other admin tabs refresh on initial load, tab navigation, and manual Refresh.
 
 Metrics include:
 
@@ -425,3 +425,43 @@ Net margin after CAC
 ```
 
 `CUSTOMER_ACQUISITION_COST_USD` controls the assumed CAC per signed-up user. Default is `0` until Sivan has reliable acquisition cost data.
+
+
+## Rate limiting
+
+The backend has in-memory rate limiting enabled by default:
+
+```env
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_DEFAULT_MAX_PER_MINUTE=120
+RATE_LIMIT_ADMIN_MAX_PER_MINUTE=300
+RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE=300
+RATE_LIMIT_AUTH_WINDOW_MS=900000
+RATE_LIMIT_AUTH_START_MAX=5
+RATE_LIMIT_AUTH_VERIFY_MAX=20
+```
+
+Current policies:
+
+- `POST /api/auth/email/start`: 5 attempts per 15 minutes per IP/email.
+- `POST /api/auth/email/verify`: 20 attempts per 15 minutes per IP/email.
+- `/api/admin/*`: 300 requests per minute.
+- `/api/webhooks/bridge`: 300 requests per minute.
+- Default API routes: 120 requests per minute.
+
+Responses include:
+
+```text
+X-RateLimit-Limit
+X-RateLimit-Remaining
+X-RateLimit-Reset
+Retry-After
+```
+
+A rate-limited request returns:
+
+```text
+429 rate_limited
+```
+
+For multi-instance production scale, replace the in-memory limiter with Redis/Upstash-backed rate limiting.

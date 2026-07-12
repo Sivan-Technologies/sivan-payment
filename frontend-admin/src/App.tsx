@@ -146,14 +146,15 @@ export default function App() {
   }, [refreshAdmin]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => void refreshAdmin(), 30000);
+    if (view !== 'analytics') return;
+    const interval = window.setInterval(() => void refreshAdmin(), 60_000);
     const onFocus = () => void refreshAdmin();
     window.addEventListener('focus', onFocus);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener('focus', onFocus);
     };
-  }, [refreshAdmin]);
+  }, [refreshAdmin, view]);
 
   async function runReconciliation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -286,7 +287,7 @@ function Analytics({ analytics }: { analytics: AdminAnalytics | null }) {
 
       <div className="stats-grid">
         <Stat label="Total users" value={analytics.totals.users} helper="All signed up users" />
-        <Stat label="Tracked activities" value={analytics.totals.activities} helper="Auto-refreshes every 30 seconds" />
+        <Stat label="Tracked activities" value={analytics.totals.activities} helper="Auto-refreshes on this tab every 60 seconds" />
         <Stat label="7D active" value={latestWindow?.activeUsers ?? 0} helper="Users active in 7 days" />
         <Stat label="7D returning" value={latestWindow?.returningUsers ?? 0} helper="Had prior activity" />
       </div>

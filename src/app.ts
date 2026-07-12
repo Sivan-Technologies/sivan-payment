@@ -6,9 +6,10 @@ import { registerRoutes } from './api/routes.js';
 import { AppError } from './shared/errors.js';
 import { captureError } from './monitoring/sentry.js';
 import { verifyUserJwt } from './auth/jwt.js';
+import { checkRateLimit } from './shared/rate-limit.js';
 
 export async function buildApp() {
-  const app = Fastify({ logger: { level: env.LOG_LEVEL } });
+  const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
 
   await app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
@@ -20,6 +21,33 @@ export async function buildApp() {
     encoding: false,
     runFirst: true,
     routes: ['/api/webhooks/bridge']
+  });
+
+  app.addHook('preHandler', async (request, reply) => {
+    const body = request.body as Record<string, unknown> | undefined;
+    const decision = checkRateLimit({
+      ip: request.ip,
+      method: request.method,
+      url: request.url,
+      email: typeof body?.email === 'string' ? body.email : undefined
+    });
+
+    if (!decision) return;
+
+    reply.header('X-RateLimit-Limit', String(decision.limit));
+    reply.header('X-RateLimit-Remaining', String(decision.remaining));
+    reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
+
+    if (!decision.allowed) {
+      reply.header('Retry-After', String(decision.retryAfterSeconds));
+      return reply.code(429).send({
+        error: {
+          code: 'rate_limited',
+          message: 'Too many requests. Please try again later.',
+          retryAfterSeconds: decision.retryAfterSeconds
+        }
+      });
+    }
   });
 
   app.addHook('preHandler', async (request, reply) => {
