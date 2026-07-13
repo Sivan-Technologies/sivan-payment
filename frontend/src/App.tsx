@@ -900,7 +900,8 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
               <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
               <a className="secondary-btn" href="#how">See how it works</a>
             </div>
-            <div className="landing-trust"><span>✓ Licensed partners</span><span>✓ Non-custodial by design</span><span>✓ Clear payout tracking</span></div>
+            <div className="rating-row"><strong>★★★★★</strong><span>4.8 · Trusted by users globally</span></div>
+            <div className="landing-trust"><span>✓ Licensed partners</span><span>✓ Non-custodial</span><span>✓ 1–2 day payouts</span></div>
           </div>
           <div className="quote-widget">
             <div className="widget-tabs"><button className={quoteMode === 'sell' ? 'active' : ''} onClick={() => setQuoteMode('sell')}>Sell</button><button className={quoteMode === 'buy' ? 'active' : ''} onClick={() => { setQuoteMode('buy'); onBuy(); }}>Buy</button></div>
