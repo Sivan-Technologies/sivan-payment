@@ -478,7 +478,7 @@ export default function App() {
         } else {
           window.open(nextVerificationUrl, '_blank', 'noopener,noreferrer');
         }
-        notify('Verification opened in a new tab. Keep this page open and return here when you finish.');
+        notify(created.tosStatus === 'approved' ? 'Verification opened in a new tab. Keep this page open and return here when you finish.' : 'Verification opened in a new tab. If Terms remains pending, accept it from the verification status card when you return.');
       } else {
         verificationWindow?.close();
         notify('Verification started. Return here after completing the secure verification steps.');
@@ -883,8 +883,10 @@ function Stat({ label, value, helper }: { label: string; value: string; helper: 
 
 function CustomerDetails({ customer }: { customer: CustomerRecord }) {
   const verificationLink = customer.hostedKycLink || customer.kycLink;
+  const termsLink = customer.tosLink;
   const approved = customer.kycStatus === 'kyc_approved';
   const underReview = customer.kycStatus === 'kyc_under_review';
+  const termsApproved = customer.tosStatus === 'approved';
   const actionLabel = approved ? 'Verification complete' : underReview ? 'Review in progress' : 'Open secure verification page';
   return (
     <div className="details-box verification-details">
@@ -901,6 +903,17 @@ function CustomerDetails({ customer }: { customer: CustomerRecord }) {
           <a className="secondary-btn" href={verificationLink} target="_blank" rel="noreferrer">{actionLabel}</a>
         </div>
       )}
+      {termsLink && !termsApproved && (
+        <div className="verification-link-card terms-card">
+          <div>
+            <span>Terms required</span>
+            <strong>Accept terms to finish verification</strong>
+            <small>Bridge is still reporting Terms as pending. Complete this step, then return here and the status will refresh automatically.</small>
+          </div>
+          <a className="secondary-btn" href={termsLink} target="_blank" rel="noreferrer">Accept terms</a>
+        </div>
+      )}
+      {!approved && !underReview && !termsApproved && <div className="verification-note">If you already finished the identity check, Terms may still be pending. Accept the terms above and allow Bridge a few moments for post-processing.</div>}
       {underReview && <div className="verification-note success-note">Your verification is under review. We will update your account as soon as it is approved.</div>}
       {approved && <div className="verification-note success-note">You are verified. You can now add a bank account and withdraw stablecoins.</div>}
     </div>
