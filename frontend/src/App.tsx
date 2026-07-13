@@ -63,6 +63,36 @@ function shortRef(value?: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+const fallbackSourceAssets: AssetControl[] = [
+  { asset: 'usdc', enabled: true, label: 'USDC', updatedAt: new Date().toISOString() },
+  { asset: 'usdt', enabled: false, label: 'USDT', updatedAt: new Date().toISOString() }
+];
+
+const fallbackSourceNetworks: NetworkControl[] = [
+  { network: 'base', enabled: true, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: true, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
+];
+
+function normalizeOfframpControls(value: unknown): OfframpControls {
+  const data = value as Partial<OfframpControls> | PaymentControl[] | undefined;
+  if (Array.isArray(data)) {
+    return {
+      payoutCurrencies: data,
+      sourceAssets: fallbackSourceAssets,
+      sourceNetworks: fallbackSourceNetworks
+    };
+  }
+  return {
+    payoutCurrencies: data?.payoutCurrencies ?? [],
+    sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
+    sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks
+  };
+}
+
 function initials(nameOrEmail?: string) {
   const value = nameOrEmail || 'User';
   const parts = value.includes('@') ? [value[0]] : value.trim().split(/\s+/);
@@ -115,9 +145,9 @@ export default function App() {
     setMobileMenuOpen(false);
     setUserMenuOpen(false);
   };
-  const enabledControls = paymentControls.payoutCurrencies.filter((control) => control.enabled);
-  const enabledAssets = paymentControls.sourceAssets.filter((control) => control.enabled);
-  const enabledNetworks = paymentControls.sourceNetworks.filter((control) => control.enabled);
+  const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
+  const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
+  const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -208,7 +238,7 @@ export default function App() {
 
   const loadControls = useCallback(async () => {
     const [controls, status] = await Promise.all([
-      api<OfframpControls>('/api/offramp/controls').catch(() => ({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] })),
+      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ payoutCurrencies: [], sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks })),
       api<SystemStatus>('/api/system/status').catch(() => systemStatus)
     ]);
     setPaymentControls(controls);

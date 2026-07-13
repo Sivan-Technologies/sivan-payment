@@ -58,6 +58,32 @@ function Kv({ label, value }: { label: string; value?: string | number | null })
   return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>;
 }
 
+const fallbackSourceAssets: any[] = [
+  { asset: 'usdc', enabled: true, label: 'USDC', updatedAt: new Date().toISOString() },
+  { asset: 'usdt', enabled: false, label: 'USDT', updatedAt: new Date().toISOString() }
+];
+
+const fallbackSourceNetworks: any[] = [
+  { network: 'base', enabled: true, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: true, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
+];
+
+function normalizeOfframpControls(value: unknown): any {
+  const data = value as any;
+  if (Array.isArray(data)) {
+    return { payoutCurrencies: data, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks };
+  }
+  return {
+    payoutCurrencies: data?.payoutCurrencies ?? [],
+    sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
+    sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks
+  };
+}
+
 export default function App() {
   const [view, setView] = useState<AdminViewKey>('overview');
   const [apiBase, setApiBase] = useState(() => localStorage.getItem('sivan.admin.apiBase') || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000');
@@ -123,7 +149,7 @@ export default function App() {
         api<AdminAuditLog[]>('/api/admin/audit-logs'),
         api<AdminReconciliationRun[]>('/api/admin/reconciliation/runs'),
         api<ProviderCapability[]>('/api/providers/offramp/capabilities'),
-        api<OfframpControls>('/api/admin/offramp/controls'),
+        api<unknown>('/api/admin/offramp/controls'),
         api<SystemStatus>('/api/admin/system/status')
       ]);
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
@@ -134,7 +160,7 @@ export default function App() {
       if (auditLogsResult.status === 'fulfilled') setAuditLogs(auditLogsResult.value);
       if (reconciliationRunsResult.status === 'fulfilled') setReconciliationRuns(reconciliationRunsResult.value);
       if (providersResult.status === 'fulfilled') setProviders(providersResult.value);
-      if (controlsResult.status === 'fulfilled') setPaymentControls(controlsResult.value);
+      if (controlsResult.status === 'fulfilled') setPaymentControls(normalizeOfframpControls(controlsResult.value));
       if (systemStatusResult.status === 'fulfilled') setSystemStatus(systemStatusResult.value);
       if (controlsResult.status === 'rejected') setAdminError(errorMessage(controlsResult.reason));
       if (overviewResult.status === 'rejected') setAdminError(errorMessage(overviewResult.reason));
@@ -452,9 +478,10 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
     }
   }
 
-  const payoutCurrencies = controls.payoutCurrencies ?? [];
-  const sourceAssets = controls.sourceAssets ?? [];
-  const sourceNetworks = controls.sourceNetworks ?? [];
+  const normalizedControls = normalizeOfframpControls(controls);
+  const payoutCurrencies = normalizedControls.payoutCurrencies ?? [];
+  const sourceAssets = normalizedControls.sourceAssets ?? [];
+  const sourceNetworks = normalizedControls.sourceNetworks ?? [];
   const hasAnyControls = payoutCurrencies.length > 0 || sourceAssets.length > 0 || sourceNetworks.length > 0;
 
   async function toggleControl(group: 'payout' | 'asset' | 'network', key: string, enabled: boolean) {
@@ -463,9 +490,9 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
       await api('/api/admin/offramp/controls', {
         method: 'PUT',
         body: JSON.stringify({
-          payoutCurrencies: payoutCurrencies.map((control) => ({ currency: control.currency, enabled: group === 'payout' && control.currency === key ? enabled : control.enabled })),
-          sourceAssets: sourceAssets.map((control) => ({ asset: control.asset, enabled: group === 'asset' && control.asset === key ? enabled : control.enabled })),
-          sourceNetworks: sourceNetworks.map((control) => ({ network: control.network, enabled: group === 'network' && control.network === key ? enabled : control.enabled }))
+          payoutCurrencies: payoutCurrencies.map((control: any) => ({ currency: control.currency, enabled: group === 'payout' && control.currency === key ? enabled : control.enabled })),
+          sourceAssets: sourceAssets.map((control: any) => ({ asset: control.asset, enabled: group === 'asset' && control.asset === key ? enabled : control.enabled })),
+          sourceNetworks: sourceNetworks.map((control: any) => ({ network: control.network, enabled: group === 'network' && control.network === key ? enabled : control.enabled }))
         })
       });
       notify(`${key.toUpperCase()} ${enabled ? 'enabled' : 'disabled'} across the system.`);
@@ -496,25 +523,25 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
         <article className="panel control-panel">
           <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
           <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>
-          {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !hasAnyControls ? <Empty>No controls loaded. Click Refresh or confirm the backend is on the latest deployment.</Empty> : <div className="compact-control-list">{payoutCurrencies.map((control) => <div className="control-row" key={control.currency}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small></div><label className="switch-row"><span>{savingKey === `payout:${control.currency}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('payout', control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
+          {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !hasAnyControls ? <Empty>No controls loaded. Click Refresh or confirm the backend is on the latest deployment.</Empty> : <div className="compact-control-list">{payoutCurrencies.map((control: any) => <div className="control-row" key={control.currency}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Account type: {control.accountType} · Default rail: {control.defaultPaymentRail}</small></div><label className="switch-row"><span>{savingKey === `payout:${control.currency}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('payout', control.currency, !control.enabled)}><span /></button></label></div>)}</div>}
         </article>
 
         <article className="panel control-panel">
           <div className="panel-head"><div><p className="eyebrow">Deposit asset controls</p><h3>Enable or disable USDC / USDT</h3></div></div>
-          {!hasAnyControls ? <Empty>No asset controls loaded.</Empty> : <div className="compact-control-list">{sourceAssets.map((control) => <div className="control-row" key={control.asset}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Controls which stablecoins users can send to deposit addresses.</small></div><label className="switch-row"><span>{savingKey === `asset:${control.asset}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('asset', control.asset, !control.enabled)}><span /></button></label></div>)}</div>}
+          {!hasAnyControls ? <Empty>No asset controls loaded.</Empty> : <div className="compact-control-list">{sourceAssets.map((control: any) => <div className="control-row" key={control.asset}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Controls which stablecoins users can send to deposit addresses.</small></div><label className="switch-row"><span>{savingKey === `asset:${control.asset}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('asset', control.asset, !control.enabled)}><span /></button></label></div>)}</div>}
         </article>
 
         <article className="panel control-panel network-panel">
           <div className="panel-head"><div><p className="eyebrow">Network controls</p><h3>Enable or disable supported networks</h3></div></div>
-          {!hasAnyControls ? <Empty>No network controls loaded.</Empty> : <div className="network-control-grid">{sourceNetworks.map((control) => <div className="control-row" key={control.network}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Use this for phased rollout or maintenance windows.</small></div><label className="switch-row"><span>{savingKey === `network:${control.network}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('network', control.network, !control.enabled)}><span /></button></label></div>)}</div>}
+          {!hasAnyControls ? <Empty>No network controls loaded.</Empty> : <div className="network-control-grid">{sourceNetworks.map((control: any) => <div className="control-row" key={control.network}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>Use this for phased rollout or maintenance windows.</small></div><label className="switch-row"><span>{savingKey === `network:${control.network}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('network', control.network, !control.enabled)}><span /></button></label></div>)}</div>}
         </article>
 
         <article className="panel control-panel effect-panel">
           <div className="panel-head"><div><p className="eyebrow">System-wide effect</p><h3>What happens instantly</h3></div></div>
           <div className="details-box">
-            <Kv label="Payout currencies" value={payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency.toUpperCase()).join(', ') || 'None'} />
-            <Kv label="Deposit assets" value={sourceAssets.filter((control) => control.enabled).map((control) => control.asset.toUpperCase()).join(', ') || 'None'} />
-            <Kv label="Deposit networks" value={sourceNetworks.filter((control) => control.enabled).map((control) => control.label).join(', ') || 'None'} />
+            <Kv label="Payout currencies" value={payoutCurrencies.filter((control: any) => control.enabled).map((control: any) => control.currency.toUpperCase()).join(', ') || 'None'} />
+            <Kv label="Deposit assets" value={sourceAssets.filter((control: any) => control.enabled).map((control: any) => control.asset.toUpperCase()).join(', ') || 'None'} />
+            <Kv label="Deposit networks" value={sourceNetworks.filter((control: any) => control.enabled).map((control: any) => control.label).join(', ') || 'None'} />
             <Kv label="Safety" value="At least one payout currency, asset, and network must remain enabled" />
             <Kv label="Refresh" value="User app refreshes controls on focus and every 60 seconds while visible" />
           </div>
