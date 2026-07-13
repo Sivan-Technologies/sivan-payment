@@ -114,7 +114,10 @@ export default function App() {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
   const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
   const [pendingEmail, setPendingEmail] = useState('');
+  const [pendingFullName, setPendingFullName] = useState('');
   const [devCode, setDevCode] = useState<string | undefined>();
+  const [resendAvailableAt, setResendAvailableAt] = useState(0);
+  const [timeNow, setTimeNow] = useState(Date.now());
   const [user, setUser] = useState<UserRecord | null>(() => readStorage<UserRecord | null>('sivan.user', null));
   const [customer, setCustomer] = useState<CustomerRecord | null>(() => readStorage<CustomerRecord | null>('sivan.customer', null));
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
@@ -148,6 +151,7 @@ export default function App() {
   const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
+  const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -168,6 +172,14 @@ export default function App() {
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 4800);
+  }, []);
+
+  const resetPendingEmail = useCallback(() => {
+    setPendingEmail('');
+    setPendingFullName('');
+    setOtpCode('');
+    setDevCode(undefined);
+    setResendAvailableAt(0);
   }, []);
 
   const api = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -271,6 +283,13 @@ export default function App() {
     };
   }, [loadControls]);
 
+  useEffect(() => {
+    if (!pendingEmail || !resendAvailableAt) return;
+    const interval = window.setInterval(() => setTimeNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [pendingEmail, resendAvailableAt]);
+
+
   async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -285,8 +304,37 @@ export default function App() {
         })
       });
       setPendingEmail(body.email);
+      setPendingFullName(body.fullName || '');
+      setOtpCode('');
       setDevCode(result.devCode);
+      setResendAvailableAt(Date.now() + 30_000);
+      setTimeNow(Date.now());
       notify(authTab === 'signup' ? 'Verification code sent. Enter it to create your account.' : 'Login code sent. Enter it to continue.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  async function handleResendCode() {
+    if (!pendingEmail || resendSeconds > 0) return;
+    setLoading(true);
+    try {
+      const result = await api<{ message: string; expiresAt: string; devCode?: string }>('/api/auth/email/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: pendingEmail,
+          fullName: authTab === 'signup' ? pendingFullName : undefined,
+          intent: authTab
+        })
+      });
+      setOtpCode('');
+      setDevCode(result.devCode);
+      setResendAvailableAt(Date.now() + 30_000);
+      setTimeNow(Date.now());
+      notify('A new verification code has been sent.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -542,8 +590,8 @@ export default function App() {
               <h3>{authTab === 'signup' ? 'Create your account' : 'Welcome back'}</h3>
               <p className="muted">Use passwordless email access. We will send a short verification code.</p>
               <div className="auth-tabs">
-                <button className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); setPendingEmail(''); setOtpCode(''); setDevCode(undefined); }}>Create account</button>
-                <button className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); setPendingEmail(''); setOtpCode(''); setDevCode(undefined); }}>Sign in</button>
+                <button className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); }}>Create account</button>
+                <button className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); }}>Sign in</button>
               </div>
               {!pendingEmail ? (
                 <form className="form" onSubmit={handleEmailAuthStart}>
@@ -553,10 +601,15 @@ export default function App() {
                 </form>
               ) : (
                 <form className="form" onSubmit={handleEmailAuthVerify}>
+                  <div className="email-confirmation">
+                    <span>Code sent to</span>
+                    <strong>{pendingEmail}</strong>
+                    <button type="button" onClick={resetPendingEmail}>Change email</button>
+                  </div>
                   <OtpInput value={otpCode} onChange={setOtpCode} />
                   {devCode && <div className="dev-code">Test code: <strong>{devCode}</strong></div>}
-                  <button className="primary-btn" disabled={loading}>{loading ? 'Checking...' : 'Continue'}</button>
-                  <button type="button" className="ghost-btn" onClick={() => { setPendingEmail(''); setOtpCode(''); setDevCode(undefined); }}>Use another email</button>
+                  <button className="primary-btn" disabled={loading || otpCode.length < 6}>{loading ? 'Checking...' : 'Continue'}</button>
+                  <button type="button" className="ghost-btn" disabled={loading || resendSeconds > 0} onClick={handleResendCode}>{resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : 'Resend code'}</button>
                 </form>
               )}
             </article>

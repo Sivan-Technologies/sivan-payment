@@ -369,3 +369,15 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .qr-wrap { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 14px; align-items: center; }
 .qr-wrap img { width: 120px; height: 120px; border-radius: 12px; background: white; padding: 8px; }
 @media (max-width: 900px) { .status-strip { grid-template-columns: 1fr; } .qr-wrap { grid-template-columns: 1fr; } .qr-wrap img { width: 150px; height: 150px; justify-self: center; } }
+.email-confirmation {
+  display: grid;
+  gap: 4px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,.035);
+}
+.email-confirmation span { color: var(--soft); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.email-confirmation strong { color: var(--text); overflow-wrap: anywhere; }
+.email-confirmation button { width: fit-content; border: 0; background: transparent; color: var(--green); padding: 0; font-weight: 900; }
+.ghost-btn:disabled { opacity: .55; cursor: not-allowed; transform: none; filter: none; }
