@@ -158,6 +158,25 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .kv { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .kv span { color: var(--soft); }
 .kv strong { color: var(--text); text-align: right; overflow-wrap: anywhere; }
+.form-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(255,255,255,.035); }
+.verification-details { display: grid; gap: 0; }
+.verification-link-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid rgba(116,221,190,.24);
+  background: rgba(116,221,190,.08);
+  border-radius: var(--radius);
+}
+.verification-link-card span { display: block; color: var(--soft); font-size: 13px; font-weight: 800; }
+.verification-link-card strong { display: block; color: var(--text); margin-top: 3px; }
+.verification-link-card small { display: block; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+.verification-link-card .secondary-btn { text-decoration: none; white-space: nowrap; text-align: center; }
+.verification-note { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--soft); background: rgba(255,255,255,.04); line-height: 1.55; }
+.success-note { border-color: rgba(116,221,190,.28); background: rgba(116,221,190,.08); }
 .toast { position: fixed; right: 28px; bottom: 28px; z-index: 20; max-width: 460px; padding: 16px 18px; border-radius: var(--radius); background: rgba(8, 12, 24, 0.94); border: 1px solid var(--border); box-shadow: var(--shadow); color: var(--text); }
 .toast.error { border-color: rgba(255,122,154,.4); }
 @media (max-width: 1080px) {
@@ -170,7 +189,8 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   .main, .sidebar { padding: 18px; }
   .nav { grid-template-columns: 1fr; }
   .topbar, .top-actions, .panel-head { align-items: stretch; flex-direction: column; }
-  .split { grid-template-columns: 1fr; }
+  .split, .verification-link-card { grid-template-columns: 1fr; }
+  .verification-link-card .secondary-btn { width: 100%; }
 }
 .user-card h3 { margin: 6px 0 8px; font-size: 20px; letter-spacing: -0.03em; }
 .progress-list { display: grid; gap: 8px; margin-top: 14px; }

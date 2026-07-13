@@ -489,7 +489,8 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
   const payoutCurrencies = normalizedControls.payoutCurrencies ?? [];
   const sourceAssets = normalizedControls.sourceAssets ?? [];
   const sourceNetworks = normalizedControls.sourceNetworks ?? [];
-  const hasAnyControls = payoutCurrencies.length > 0 || sourceAssets.length > 0 || sourceNetworks.length > 0;
+  const hasCustomerTypeControls = customerTypes.length > 0;
+  const hasAnyControls = hasCustomerTypeControls || payoutCurrencies.length > 0 || sourceAssets.length > 0 || sourceNetworks.length > 0;
 
   async function toggleControl(group: 'customer' | 'payout' | 'asset' | 'network', key: string, enabled: boolean) {
     setSavingKey(`${group}:${key}`);
@@ -528,6 +529,12 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
       </article>
 
       <div className="panel-grid two controls-grid">
+        <article className="panel control-panel control-highlight">
+          <div className="panel-head"><div><p className="eyebrow">Customer type controls</p><h3>Enable or disable Individual / Business onboarding</h3></div></div>
+          <p className="muted">Business stays visible but disabled in the user verification form until you enable it here. Changes are saved to the backend and the user app refreshes automatically.</p>
+          {!hasAdminKey ? <Empty>Enter and save your Admin API key in the sidebar, then click Refresh to load controls.</Empty> : error ? <Empty>{error}</Empty> : !hasCustomerTypeControls ? <Empty>No customer type controls loaded. Confirm the backend is on the latest deployment.</Empty> : <div className="compact-control-list">{customerTypes.map((control: any) => <div className="control-row" key={control.customerType}><div><strong>{control.label}</strong><Badge value={control.enabled ? 'active' : 'disabled'} /><small>{control.customerType === 'business' ? 'Business/KYB onboarding. Disabled by default until operations enables it.' : 'Individual/KYC onboarding for standard users.'}</small></div><label className="switch-row"><span>{savingKey === `customer:${control.customerType}` ? 'Updating...' : control.enabled ? 'Enabled' : 'Disabled'}</span><button type="button" disabled={Boolean(savingKey)} className={`switch ${control.enabled ? 'on' : ''}`} aria-pressed={control.enabled} onClick={() => toggleControl('customer', control.customerType, !control.enabled)}><span /></button></label></div>)}</div>}
+        </article>
+
         <article className="panel control-panel">
           <div className="panel-head"><div><p className="eyebrow">Rail controls</p><h3>Enable or disable payout currencies</h3></div></div>
           <p className="muted">Toggle a currency off to hide it from the user app and block new bank accounts/withdrawals for that rail immediately.</p>
@@ -551,8 +558,8 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
           <Kv label="Payout currencies" value={payoutCurrencies.filter((control: any) => control.enabled).map((control: any) => control.currency.toUpperCase()).join(', ') || 'None'} />
             <Kv label="Deposit assets" value={sourceAssets.filter((control: any) => control.enabled).map((control: any) => control.asset.toUpperCase()).join(', ') || 'None'} />
             <Kv label="Deposit networks" value={sourceNetworks.filter((control: any) => control.enabled).map((control: any) => control.label).join(', ') || 'None'} />
-            <Kv label="Safety" value="At least one payout currency, asset, and network must remain enabled" />
-            <Kv label="Refresh" value="User app refreshes controls on focus and every 60 seconds while visible" />
+            <Kv label="Safety" value="At least one customer type, payout currency, asset, and network must remain enabled" />
+            <Kv label="Refresh" value="User app refreshes controls on focus and every 10 seconds while visible" />
           </div>
         </article>
       </div>

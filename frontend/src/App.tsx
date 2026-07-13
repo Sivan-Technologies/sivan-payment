@@ -29,9 +29,14 @@ function statusClass(status?: string) {
 
 function friendlyStatus(status?: string) {
   const map: Record<string, string> = {
+    created: 'Started',
+    kyc_not_started: 'Not started',
     kyc_approved: 'Verified',
     kyc_under_review: 'Under review',
-    kyc_incomplete: 'Incomplete',
+    kyc_incomplete: 'Action required',
+    kyc_rejected: 'Verification failed',
+    pending: 'Pending',
+    approved: 'Approved',
     pending_deposit: 'Waiting for USDC',
     deposit_received: 'Deposit received',
     payout_processing: 'Sending to bank',
@@ -160,6 +165,22 @@ export default function App() {
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
   const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
+  const verificationRedirectUri = useMemo(() => `${window.location.origin}/?verification=complete`, []);
+  const verificationUrl = customer?.hostedKycLink || customer?.kycLink;
+  const kycStatus = customer?.kycStatus;
+  const kycApproved = kycStatus === 'kyc_approved';
+  const kycUnderReview = kycStatus === 'kyc_under_review';
+  const kycFailed = ['kyc_rejected', 'failed', 'cancelled'].includes(kycStatus ?? '');
+  const kycAlreadyStarted = Boolean(customer?.id && (verificationUrl || !['kyc_not_started', 'kyc_rejected', 'failed', 'cancelled'].includes(kycStatus ?? '')));
+  const kycActionLabel = loading
+    ? kycAlreadyStarted ? 'Opening...' : 'Starting...'
+    : !canStartKyc ? 'Verification paused'
+      : kycApproved ? 'Verified'
+        : kycUnderReview ? 'Under review'
+          : kycAlreadyStarted ? 'Continue verification'
+            : kycFailed ? 'Restart verification'
+              : 'Start verification';
+  const canSubmitKyc = hasUser && canStartKyc && !loading && !kycApproved && !kycUnderReview;
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -281,7 +302,7 @@ export default function App() {
     const refreshControls = () => {
       if (document.visibilityState === 'visible') void loadControls();
     };
-    const interval = window.setInterval(refreshControls, 60_000);
+    const interval = window.setInterval(refreshControls, 10_000);
     window.addEventListener('focus', refreshControls);
     document.addEventListener('visibilitychange', refreshControls);
     return () => {
@@ -296,6 +317,17 @@ export default function App() {
     const interval = window.setInterval(() => setTimeNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
   }, [pendingEmail, resendAvailableAt]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('verification') !== 'complete') return;
+    setView('kyc');
+    if (user?.id && authToken) {
+      void loadUserData();
+      notify('Welcome back. We are checking your verification status.');
+    }
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }, [authToken, loadUserData, notify, user?.id]);
 
 
   async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
@@ -380,19 +412,48 @@ export default function App() {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
     if (!canStartKyc) return notify(systemStatus.message || 'Verification is temporarily paused.', 'error');
+    if (kycApproved) return notify('Your identity is already verified.');
+    if (kycUnderReview) return notify('Verification is under review. We will update this page once it is complete.');
     const formBeforeLoading = getForm(event.currentTarget);
-    if (!enabledCustomerTypes.some((control) => control.customerType === formBeforeLoading.type)) return notify(`${formBeforeLoading.type === 'business' ? 'Business' : 'Individual'} verification is currently unavailable.`, 'error');
+    const verificationWindow = window.open('', '_blank');
+    if (verificationWindow) {
+      verificationWindow.document.title = 'Opening Sivan verification';
+      verificationWindow.document.body.style.background = '#07090d';
+      verificationWindow.document.body.style.color = '#eef3f7';
+      verificationWindow.document.body.style.fontFamily = 'Inter, system-ui, sans-serif';
+      verificationWindow.document.body.style.padding = '32px';
+      verificationWindow.document.body.innerHTML = '<h2>Opening secure verification…</h2><p>Please keep this tab open.</p>';
+    }
     setLoading(true);
     try {
+      const latestControls = await loadControls();
+      const latestEnabledCustomerTypes = (latestControls.customerTypes ?? fallbackCustomerTypes).filter((control) => control.enabled);
+      if (!latestEnabledCustomerTypes.some((control) => control.customerType === formBeforeLoading.type)) {
+        verificationWindow?.close();
+        return notify(`${formBeforeLoading.type === 'business' ? 'Business' : 'Individual'} verification is currently unavailable.`, 'error');
+      }
       const body = formBeforeLoading;
       const created = await api<CustomerRecord>('/api/customers/kyc-link', {
         method: 'POST',
         body: JSON.stringify({ userId: user.id, type: body.type, redirectUri: body.redirectUri || undefined })
       });
       setCustomer(created);
-      notify('Verification started. Complete verification to unlock withdrawals.');
-      setView('banks');
+      const nextVerificationUrl = created.hostedKycLink || created.kycLink;
+      if (nextVerificationUrl) {
+        if (verificationWindow) {
+          verificationWindow.opener = null;
+          verificationWindow.location.assign(nextVerificationUrl);
+        } else {
+          window.open(nextVerificationUrl, '_blank', 'noopener,noreferrer');
+        }
+        notify('Verification opened in a new tab. Keep this page open and return here when you finish.');
+      } else {
+        verificationWindow?.close();
+        notify('Verification started. Return here after completing the secure verification steps.');
+      }
+      setView('kyc');
     } catch (error) {
+      verificationWindow?.close();
       notify((error as Error).message, 'error');
     } finally {
       setLoading(false);
@@ -640,10 +701,11 @@ export default function App() {
               <h3>Verify your identity</h3>
               <p className="muted">Verification helps protect your account and enables bank withdrawals.</p>
               {!hasUser ? <Empty>Create your account first.</Empty> : (
-                <form className="form" onSubmit={handleKyc}>
-                  <label>Account type<select name="type" defaultValue="individual">{(paymentControls.customerTypes ?? fallbackCustomerTypes).map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — currently unavailable' : ''}</option>)}</select></label>
-                  <input name="redirectUri" type="hidden" value="https://sivan-payments-user-test.vercel.app/verification-complete" />
-                  <button className="primary-btn" disabled={loading || !canStartKyc}>{loading ? 'Starting...' : canStartKyc ? 'Start verification' : 'Verification paused'}</button>
+                <form className="form" onSubmit={handleKyc} key={customer?.id || 'new-verification'}>
+                  <label>Account type<select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{(paymentControls.customerTypes ?? fallbackCustomerTypes).map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — currently unavailable' : ''}</option>)}</select></label>
+                  {customer?.id && !kycFailed && <p className="form-note">Your verification has already started. Continue with the same account type, or contact support if you need to change it.</p>}
+                  <input name="redirectUri" type="hidden" value={verificationRedirectUri} />
+                  <button className="primary-btn" disabled={!canSubmitKyc}>{kycActionLabel}</button>
                 </form>
               )}
             </article>
@@ -795,7 +857,29 @@ function Stat({ label, value, helper }: { label: string; value: string; helper: 
 }
 
 function CustomerDetails({ customer }: { customer: CustomerRecord }) {
-  return <div className="details-box"><Kv label="Status" value={friendlyStatus(customer.kycStatus)} /><Kv label="Account type" value={customer.customerType || 'individual'} /><Kv label="Terms" value={customer.tosStatus || 'Pending'} />{customer.kycLink && <Kv label="Verification link" value={customer.kycLink} />}</div>;
+  const verificationLink = customer.hostedKycLink || customer.kycLink;
+  const approved = customer.kycStatus === 'kyc_approved';
+  const underReview = customer.kycStatus === 'kyc_under_review';
+  const actionLabel = approved ? 'Verification complete' : underReview ? 'Review in progress' : 'Open secure verification page';
+  return (
+    <div className="details-box verification-details">
+      <Kv label="Status" value={friendlyStatus(customer.kycStatus)} />
+      <Kv label="Account type" value={customer.customerType === 'business' ? 'Business' : 'Individual'} />
+      <Kv label="Terms" value={customer.tosStatus ? friendlyStatus(customer.tosStatus) : 'Pending'} />
+      {verificationLink && !approved && !underReview && (
+        <div className="verification-link-card">
+          <div>
+            <span>Secure verification page</span>
+            <strong>Ready to continue</strong>
+            <small>Opens in a new tab. Your long secure link is hidden so this page stays clean.</small>
+          </div>
+          <a className="secondary-btn" href={verificationLink} target="_blank" rel="noreferrer">{actionLabel}</a>
+        </div>
+      )}
+      {underReview && <div className="verification-note success-note">Your verification is under review. We will update your account as soon as it is approved.</div>}
+      {approved && <div className="verification-note success-note">You are verified. You can now add a bank account and withdraw stablecoins.</div>}
+    </div>
+  );
 }
 
 function Kv({ label, value }: { label: string; value?: string | number | null }) {
