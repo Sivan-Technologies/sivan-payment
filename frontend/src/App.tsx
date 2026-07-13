@@ -165,7 +165,7 @@ export default function App() {
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
   const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
-  const verificationRedirectUri = useMemo(() => `${window.location.origin}/?verification=complete`, []);
+  const verificationRedirectUri = useMemo(() => `${window.location.origin}/verification-complete`, []);
   const verificationUrl = customer?.hostedKycLink || customer?.kycLink;
   const kycStatus = customer?.kycStatus;
   const kycApproved = kycStatus === 'kyc_approved';
@@ -320,13 +320,16 @@ export default function App() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('verification') !== 'complete') return;
+    const returnedFromVerification = window.location.pathname === '/verification-complete' || params.get('verification') === 'complete';
+    if (!returnedFromVerification) return;
     setView('kyc');
     if (user?.id && authToken) {
       void loadUserData();
       notify('Welcome back. We are checking your verification status.');
+    } else {
+      notify('Verification returned. Sign in to refresh your status.');
     }
-    window.history.replaceState({}, document.title, window.location.pathname);
+    window.history.replaceState({}, document.title, '/');
   }, [authToken, loadUserData, notify, user?.id]);
 
 
