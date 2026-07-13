@@ -886,7 +886,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
         <nav>
           <a href="#features">Features</a>
           <a href="#how">How it works</a>
-          <a href="#fees">Fees</a>
+          <a href="#start">Start</a>
           <a href="#faq">FAQ</a>
           <a href="#business">Business</a>
           <button className="ghost-btn" onClick={onDashboard}>Sign in</button>
@@ -962,7 +962,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
           <div className="faq-list">{faqItems.map((item, index) => <div className={`faq-item ${openFaq === index ? 'open' : ''}`} key={item.q}><button onClick={() => setOpenFaq(openFaq === index ? null : index)}><strong>{item.q}</strong><span>⌄</span></button>{openFaq === index && <p>{item.a}</p>}</div>)}</div>
         </section>
 
-        <section className="landing-section final-cta-section" id="fees">
+        <section className="landing-section final-cta-section" id="start">
           <div className="final-cta-card"><p className="eyebrow center">Get started</p><h2>Your first transaction in about five minutes.</h2><p>Move between crypto and your bank with a few taps. No exchange account, no order books, no hassle.</p><button className="primary-btn" onClick={onGetStarted}>Create free account →</button><small>Already have an account? <button onClick={onDashboard}>Sign in</button></small></div>
         </section>
       </main>
@@ -993,7 +993,7 @@ function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () =
           <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
           <div className="footer-badges"><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
         </div>
-        <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Fees & rails', href: '#fees' }]} />
+        <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
         <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
         <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'FAQ', href: '#faq' }, { label: 'Safety', href: '#safety' }, { label: 'Sivan website', href: 'https://www.sivantech.online/' }]} />
         <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: 'https://www.sivantech.online/' }, { label: 'Privacy Policy', href: 'https://www.sivantech.online/' }, { label: 'Risk disclosure', href: '#safety' }]} />
