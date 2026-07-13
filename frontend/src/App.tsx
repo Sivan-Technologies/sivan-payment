@@ -918,6 +918,38 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
           <div className="safety-panel"><strong>Safety rule</strong><p>Always send only the selected token on the selected network. Sending another token or using the wrong network can permanently lose funds and may not be recoverable.</p><small>{appEnv === 'test' ? '⚠ Test environment — no real money moves' : isLiveEnv ? '● Live environment' : 'Local environment'}</small></div>
         </section>
       </main>
+
+      <LandingFooter onDashboard={onDashboard} onGetStarted={onGetStarted} onBuy={onBuy} />
+    </div>
+  );
+}
+
+function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () => void; onGetStarted: () => void; onBuy: () => void }) {
+  return (
+    <footer className="landing-footer">
+      <div className="footer-grid">
+        <div className="footer-brand-col">
+          <div className="footer-brand"><img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong></div>
+          <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
+          <div className="footer-badges"><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
+        </div>
+        <FooterCol title="Product" links={[{ label: 'Stablecoin to bank', action: onGetStarted }, { label: 'Open dashboard', action: onDashboard }, { label: 'Buy stablecoins', action: onBuy }, { label: 'Supported rails', href: '#rails' }]} />
+        <FooterCol title="Company" links={[{ label: 'Sivan website', href: 'https://www.sivantech.online/' }, { label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Support', href: 'mailto:support@sivantech.online' }]} />
+        <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'Safety', href: '#safety' }, { label: 'Verification', action: onGetStarted }, { label: 'System status', action: onDashboard }]} />
+        <FooterCol title="Legal" links={[{ label: 'Terms', href: 'https://www.sivantech.online/' }, { label: 'Privacy', href: 'https://www.sivantech.online/' }, { label: 'Risk disclosure', href: '#safety' }]} />
+      </div>
+      <div className="footer-bottom">
+        <p>© 2026 Sivan Technologies. All rights reserved. Stablecoins and cryptoassets are volatile and may not be protected by financial compensation schemes. Services depend on licensed/provider-supported payment rails and may be unavailable in some jurisdictions. Sivan does not ask for wallet private keys.</p>
+      </div>
+    </footer>
+  );
+}
+
+function FooterCol({ title, links }: { title: string; links: Array<{ label: string; href?: string; action?: () => void }> }) {
+  return (
+    <div className="footer-col">
+      <h4>{title}</h4>
+      {links.map((link) => link.action ? <button key={link.label} onClick={link.action}>{link.label}</button> : <a key={link.label} href={link.href} target={link.href?.startsWith('http') ? '_blank' : undefined} rel={link.href?.startsWith('http') ? 'noreferrer' : undefined}>{link.label}</a>)}
     </div>
   );
 }
