@@ -424,8 +424,7 @@ export default function App() {
         <div className="brand">
           <img className="brand-logo" src="/asset/sivan-logo.png" alt="Sivan logo" />
           <div>
-            <p className="eyebrow">Sivan</p>
-            <h1>Payments</h1>
+            <h1>Sivan</h1>
           </div>
         </div>
 
