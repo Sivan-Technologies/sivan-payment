@@ -220,3 +220,10 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 }
 .maintenance-banner span { color: var(--soft); }
 .maintenance-banner small { color: var(--muted); }
+.otp-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.otp-row input { text-align: center; font-size: 22px; font-weight: 900; padding: 14px 8px; }
+.review-card { display: grid; gap: 14px; }
+.warning-box { padding: 14px 16px; border-radius: var(--radius); border: 1px solid rgba(241, 189, 114, .34); background: rgba(241, 189, 114, .08); color: var(--gold); font-weight: 800; line-height: 1.5; }
+.split-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 12px; }
+.sidebar-cta { width: 100%; margin-top: 14px; }
+@media (max-width: 640px) { .otp-row { gap: 6px; } .split-actions { grid-template-columns: 1fr; } }
