@@ -860,7 +860,7 @@ export default function App() {
 
 function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurrencies, feePercent, onGetStarted, onDashboard, onBuy }: { isLiveEnv: boolean; appEnv: string; hasUser: boolean; assets: string; networks: string; payoutCurrencies: string; feePercent: string; onGetStarted: () => void; onDashboard: () => void; onBuy: () => void }) {
   const [quoteMode, setQuoteMode] = useState<'sell' | 'buy'>('sell');
-  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
   const numericFee = Number(feePercent || '1.25');
   const feeAmount = Number.isFinite(numericFee) ? (1000 * numericFee / 100) : 12.5;
   const receiveAmount = Math.max(0, 1000 - feeAmount);
@@ -900,7 +900,6 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
               <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
               <a className="secondary-btn" href="#how">See how it works</a>
             </div>
-            <div className="rating-row"><strong>★★★★★</strong><span>4.8 · Trusted by users globally</span></div>
             <div className="landing-trust"><span>✓ Licensed partners</span><span>✓ Non-custodial by design</span><span>✓ Clear payout tracking</span></div>
           </div>
           <div className="quote-widget">
