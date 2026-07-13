@@ -64,6 +64,7 @@ function shortRef(value?: string) {
 
 export default function App() {
   const [view, setView] = useState<ViewKey>('overview');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000', []);
   const appEnv = import.meta.env.VITE_APP_ENV || 'local';
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
@@ -97,6 +98,10 @@ export default function App() {
   const nextStepView: ViewKey = !hasUser ? 'signup' : !isVerified ? 'kyc' : !hasBank ? 'banks' : 'withdraw';
   const nextStepLabel = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank account' : 'Withdraw stablecoins';
   const environmentLabel = appEnv === 'test' ? 'Test environment' : isLiveEnv ? 'Protected by verification' : 'Local environment';
+  const goToView = (nextView: ViewKey) => {
+    setView(nextView);
+    setMobileMenuOpen(false);
+  };
   const enabledControls = paymentControls.payoutCurrencies.filter((control) => control.enabled);
   const enabledAssets = paymentControls.sourceAssets.filter((control) => control.enabled);
   const enabledNetworks = paymentControls.sourceNetworks.filter((control) => control.enabled);
@@ -412,8 +417,10 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={`app-shell ${mobileMenuOpen ? 'menu-open' : ''}`}>
+      <button className="mobile-menu-overlay" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)} />
+      <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
+        <button className="mobile-menu-close" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)}>×</button>
         <div className="brand">
           <img className="brand-logo" src="/asset/sivan-logo.png" alt="Sivan logo" />
           <div>
@@ -424,7 +431,7 @@ export default function App() {
 
         <nav className="nav">
           {views.map((item) => (
-            <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => setView(item.key)}>
+            <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => goToView(item.key)}>
               <span>{item.icon}</span> {item.label}
             </button>
           ))}
@@ -439,12 +446,13 @@ export default function App() {
             <ProgressItem done={isVerified} label="Verified" />
             <ProgressItem done={hasBank} label="Bank added" />
           </div>
-          <button className="primary-btn sidebar-cta" onClick={() => setView(nextStepView)}>{nextStepLabel}</button>
+          <button className="primary-btn sidebar-cta" onClick={() => goToView(nextStepView)}>{nextStepLabel}</button>
         </div>
       </aside>
 
       <main className="main">
         <header className="topbar">
+          <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <div>
             <p className="eyebrow">Stablecoin to bank withdrawals</p>
             <h2>{pageTitle}</h2>
@@ -467,8 +475,8 @@ export default function App() {
                 <h3>Move stablecoins into your bank account without the complexity.</h3>
                 <p className="muted">Sivan gives you a guided withdrawal flow: verify once, add your bank account, send the selected stablecoin, and track the payout until it arrives.</p>
                 <div className="hero-actions">
-                  <button className="primary-btn" onClick={() => setView(nextStepView)}>{hasUser ? nextStepLabel : 'Get started'}</button>
-                  <button className="secondary-btn" onClick={() => setView('withdraw')}>Withdraw</button>
+                  <button className="primary-btn" onClick={() => goToView(nextStepView)}>{hasUser ? nextStepLabel : 'Get started'}</button>
+                  <button className="secondary-btn" onClick={() => goToView('withdraw')}>Withdraw</button>
                 </div>
               </div>
               <div className="flow-card">
