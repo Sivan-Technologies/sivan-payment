@@ -2,14 +2,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
-  { key: 'overview', icon: '◇', label: 'Dashboard' },
-  { key: 'withdraw', icon: '↗', label: 'Sell stablecoins' },
-  { key: 'buy', icon: '↙', label: 'Buy stablecoins' },
-  { key: 'history', icon: '☷', label: 'Withdrawals' },
-  { key: 'banks', icon: '▣', label: 'Bank accounts' },
+  { key: 'overview', icon: '▦', label: 'Dashboard' },
+  { key: 'buy', icon: '↙', label: 'Buy crypto' },
+  { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
+  { key: 'history', icon: '◷', label: 'Transactions' },
+  { key: 'banks', icon: '▭', label: 'Payment methods' },
   { key: 'kyc', icon: '◈', label: 'Verification' },
   { key: 'settings', icon: '⚙', label: 'Settings' },
-  { key: 'help', icon: '?', label: 'Help' }
+  { key: 'help', icon: '?', label: 'Support' }
 ];
 
 const pathByView: Record<ViewKey, string> = {
@@ -213,7 +213,9 @@ export default function App() {
   const canSubmitKyc = hasUser && canStartKyc && !loading && !kycApproved && !kycUnderReview;
   const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
   const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
-  const completedWithdrawalCount = withdrawals.filter((withdrawal) => withdrawal.status === 'completed').length;
+  const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
+  const completedWithdrawalCount = completedWithdrawals.length;
+  const completedVolume = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.destinationAmount ?? withdrawal.sourceAmount ?? 0), 0);
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
   const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Base';
 
@@ -669,16 +671,14 @@ export default function App() {
   return (
     <div className={`app-shell ${mobileMenuOpen ? 'menu-open' : ''}`}>
       <button className="mobile-menu-overlay" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)} />
-      <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
+      <aside className={`sidebar app-sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <button className="mobile-menu-close" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)}>×</button>
-        <div className="brand">
+        <div className="brand app-brand">
           <img className="brand-logo" src="/asset/sivan-logo.png" alt="Sivan logo" />
-          <div>
-            <h1>Sivan</h1>
-          </div>
+          <h1>Sivan</h1>
         </div>
 
-        <nav className="nav">
+        <nav className="nav app-nav">
           {views.map((item) => (
             <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => goToView(item.key)}>
               <span>{item.icon}</span> {item.label}
@@ -686,28 +686,21 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="sidebar-footer">
-          <div className="sidebar-status"><span></span>{isLiveEnv ? 'Live' : appEnv === 'test' ? 'Test environment' : 'Local'}</div>
-          <div className="sidebar-links">
-            <button onClick={() => goToView('help')}>Support</button>
-            <a href="https://www.sivantech.online/" target="_blank" rel="noreferrer">Terms</a>
-            <a href="https://www.sivantech.online/" target="_blank" rel="noreferrer">Privacy</a>
-          </div>
-          <small>© 2026 Sivan</small>
+        <SidebarSetupCard setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} />
+
+        <div className="sidebar-footer app-sidebar-footer">
+          <div className="sidebar-status"><span></span>{systemStatus.mode === 'active' ? 'All systems operational' : systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</div>
         </div>
       </aside>
 
       <main className="main">
-        <header className="topbar">
+        <header className="topbar app-topbar">
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
-          <div>
-            <p className="eyebrow">Stablecoin to bank</p>
-            <h2>{pageTitle}</h2>
-          </div>
-          <div className="top-actions">
-            <div className={`status-pill ${appEnv === 'test' ? 'warning' : 'ok'}`}><span /> {environmentLabel}</div>
-            
-            {hasUser && <div className="user-menu-wrap"><button className="avatar-button" onClick={() => setUserMenuOpen((open) => !open)}>{initials(user?.fullName || user?.email)}</button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div>}
+          <h2>{pageTitle}</h2>
+          <div className="top-actions app-top-actions">
+            <div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div>
+            <button className="icon-btn" aria-label="Notifications"><span className="notif-dot"></span>▢</button>
+            {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small" onClick={() => goToView('signup')}>Sign in</button>}
           </div>
         </header>
 
@@ -716,40 +709,30 @@ export default function App() {
         {systemStatus.mode !== 'active' && <section className="maintenance-banner"><strong>{systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</strong><span>{systemStatus.message || (systemStatus.mode === 'maintenance' ? 'New withdrawals are temporarily unavailable while maintenance is in progress.' : 'New payment actions are temporarily paused.')}</span>{systemStatus.estimatedResumeAt && <small>Estimated resume: {new Date(systemStatus.estimatedResumeAt).toLocaleString()}</small>}</section>}
 
         {view === 'overview' && (
-          <section className="view active dashboard-view fintech-dashboard">
-            <div className={`welcome-card ${isVerified ? 'ok' : 'warn'}`}>
-              <div>
-                <p className="eyebrow">Account command center</p>
-                <h3>{hasUser ? isVerified ? `Welcome back, ${firstName}.` : `Finish setup, ${firstName}.` : 'Start your Sivan account.'}</h3>
-                <p>{hasUser ? isVerified && hasBank ? 'You are ready to sell supported stablecoins to your verified bank account.' : 'Complete verification and add a verified bank account before creating your first deposit address.' : 'Create an account, verify once, add your bank, then receive bank payouts from supported stablecoins.'}</p>
+          <section className="view active dashboard-view app-dashboard">
+            <div className={`setup-banner ${isVerified && hasBank ? 'ok' : 'warn'}`}>
+              <div><h3>{isVerified && hasBank ? `Welcome back, ${firstName}.` : 'Finish setting up your account.'}</h3><p>{isVerified && hasBank ? 'Your account is ready. You can sell supported stablecoins to your bank.' : 'Complete identity verification and add a payout method to make your first transaction.'}</p></div>
+              <button className="primary-btn" onClick={() => goToView(nextStepView)}>{isVerified && hasBank ? 'Sell crypto' : 'Complete setup'} →</button>
+            </div>
+
+            <div className="dashboard-actions-row">
+              <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
+              <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button>
+            </div>
+
+            <div className="dashboard-kpis">
+              <KpiCard label="Total volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
+              <KpiCard label="Transactions" value={String(withdrawals.length)} sub="Lifetime" trend={withdrawals.length ? `${withdrawals.length} records` : 'Start your first'} />
+              <KpiCard label="Avg. payout time" value="1–2 days" sub="Provider + bank rail" trend="Tracked by status" />
+              <KpiCard label="Verification" value={isVerified ? 'Verified' : 'Incomplete'} sub={isVerified ? 'Ready' : 'Action required'} trend={friendlyStatus(customer?.kycStatus)} />
+            </div>
+
+            <div className="dashboard-main-grid">
+              <DashboardTransactions withdrawals={withdrawals.slice(0, 4)} onStart={() => goToView('withdraw')} onViewAll={() => goToView('history')} />
+              <div className="dashboard-side-stack">
+                <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} onContinue={() => goToView(nextStepView)} />
+                <SecurityReminder onSettings={() => goToView('settings')} />
               </div>
-              <button className="primary-btn animated-cta" onClick={() => goToView(nextStepView)}>{nextStepLabel}</button>
-            </div>
-
-            <div className="quick-actions-grid">
-              <button className="quick-action-tile sell" onClick={() => goToView('withdraw')}>
-                <span className="tile-icon">↗</span><strong>Sell stablecoins</strong><small>Send {primaryAssetLabel} and receive fiat to bank</small><em>Start</em>
-              </button>
-              <button className="quick-action-tile buy" onClick={() => goToView('buy')}>
-                <span className="tile-icon">↙</span><strong>Buy stablecoins</strong><small>On-ramp experience prepared for provider rollout</small><em>View</em>
-              </button>
-              <button className="quick-action-tile" onClick={() => goToView('banks')}>
-                <span className="tile-icon">▣</span><strong>Bank accounts</strong><small>{hasBank ? `${accounts.length} verified account${accounts.length === 1 ? '' : 's'}` : 'Add your payout destination'}</small><em>Manage</em>
-              </button>
-            </div>
-
-            <div className="kpi-grid">
-              <Stat label="Setup" value={`${setupPercent}%`} helper={activeStep} />
-              <Stat label="Verification" value={friendlyStatus(customer?.kycStatus)} helper="Required before bank payouts" />
-              <Stat label="Bank accounts" value={String(accounts.length)} helper="Verified payout destinations" />
-              <Stat label="Completed payouts" value={String(completedWithdrawalCount)} helper={feePolicy ? `${feePolicy.percent}% Sivan fee` : 'Fee shown before deposit'} />
-            </div>
-
-            <div className="panel-grid two dashboard-grid">
-              <SetupChecklist hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} nextStepLabel={nextStepLabel} />
-              <RailsCard enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} />
-              <WithdrawalsList withdrawals={withdrawals.slice(0, 4)} compact />
-              <NeedHelpCard />
             </div>
           </section>
         )}
@@ -855,6 +838,32 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+
+function SidebarSetupCard({ setupPercent, hasUser, isVerified, hasBank, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; onContinue: () => void }) {
+  const helper = !hasUser ? 'Create your account to start.' : !isVerified ? 'Verify your identity next.' : !hasBank ? 'Add your payout method.' : 'Ready for transactions.';
+  return <article className="sidebar-setup-card"><p>Account setup</p><strong>{setupPercent}%</strong><div className="bar"><div className="fill" style={{ width: `${setupPercent}%` }} /></div><small>{helper}</small><button className="primary-btn" onClick={onContinue}>Continue setup ›</button></article>;
+}
+
+function KpiCard({ label, value, sub, trend }: { label: string; value: string; sub: string; trend: string }) {
+  return <article className="kpi-card"><p>{label}</p><strong>{value}</strong><span>{sub}</span><small>{trend}</small></article>;
+}
+
+function DashboardTransactions({ withdrawals, onStart, onViewAll }: { withdrawals: WithdrawalRecord[]; onStart: () => void; onViewAll: () => void }) {
+  return <article className="dashboard-transactions"><div className="dash-card-head"><h3>Recent transactions</h3><button onClick={onViewAll}>View all ↗</button></div>{!withdrawals.length ? <div className="dashboard-empty"><p>No transactions yet.</p><button className="secondary-btn" onClick={onStart}>⊕ Start your first transaction</button></div> : <div className="dashboard-tx-list">{withdrawals.map((withdrawal) => <div className="dashboard-tx" key={withdrawal.id}><span className="tx-icon">↗</span><div><strong>Sell · {withdrawal.sourceAmount || '—'} {withdrawal.sourceCurrency?.toUpperCase?.() || 'USDC'}</strong><small>To bank</small></div><div><b>{withdrawal.destinationAmount || '—'} {withdrawal.destinationCurrency?.toUpperCase()}</b><Badge status={withdrawal.status}>{friendlyStatus(withdrawal.status)}</Badge></div><time>{new Date(withdrawal.createdAt).toLocaleDateString()}</time></div>)}</div>}<button className="secondary-btn dashboard-start-btn" onClick={onStart}>⊕ Start your first transaction</button></article>;
+}
+
+function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank, user, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; user: UserRecord | null; onContinue: () => void }) {
+  return <article className="dashboard-setup-panel"><h3>Account setup</h3><div className="setup-list"><SetupLine done={hasUser} title="Email confirmed" sub={user?.email || 'Create account'} /><SetupLine done={false} title="Phone verified" sub="Required for payouts" /><SetupLine done={isVerified} title="Identity verification" sub={isVerified ? 'Verified' : '~3 minutes'} /><SetupLine done={hasBank} title="Add bank account" sub={hasBank ? 'Bank added' : 'ACH, SEPA, FPS, IBAN'} /></div><div className="setup-progress"><div><span style={{ width: `${setupPercent}%` }} /></div><strong>{setupPercent}%</strong></div><button className="primary-btn" onClick={onContinue}>Continue setup →</button></article>;
+}
+
+function SetupLine({ done, title, sub }: { done: boolean; title: string; sub: string }) {
+  return <div className={`setup-line ${done ? 'done' : ''}`}><span>{done ? '✓' : '○'}</span><div><strong>{title}</strong><small>{sub}</small></div></div>;
+}
+
+function SecurityReminder({ onSettings }: { onSettings: () => void }) {
+  return <article className="security-card"><div className="security-icon">◈</div><div><h3>Security reminder</h3><p>Enable two-factor authentication and never share your seed phrase. Sivan will never ask for wallet private keys or 2FA codes outside the dashboard.</p><button onClick={onSettings}>Security settings →</button></div></article>;
 }
 
 
