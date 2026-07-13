@@ -499,7 +499,7 @@ export default function App() {
           </div>
           <div className="top-actions">
             <div className={`status-pill ${appEnv === 'test' ? 'warning' : 'ok'}`}><span /> {environmentLabel}</div>
-            <button className="secondary-btn" onClick={loadUserData} disabled={loading}>{loading ? 'Please wait...' : 'Refresh'}</button>
+            
             {hasUser && <div className="user-menu-wrap"><button className="avatar-button" onClick={() => setUserMenuOpen((open) => !open)}>{initials(user?.fullName || user?.email)}</button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div>}
           </div>
         </header>
