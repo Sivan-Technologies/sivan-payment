@@ -3,13 +3,41 @@ import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetContr
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '◇', label: 'Dashboard' },
-  { key: 'withdraw', icon: '↗', label: 'New withdrawal' },
+  { key: 'withdraw', icon: '↗', label: 'Sell stablecoins' },
+  { key: 'buy', icon: '↙', label: 'Buy stablecoins' },
   { key: 'history', icon: '☷', label: 'Withdrawals' },
   { key: 'banks', icon: '▣', label: 'Bank accounts' },
   { key: 'kyc', icon: '◈', label: 'Verification' },
   { key: 'settings', icon: '⚙', label: 'Settings' },
   { key: 'help', icon: '?', label: 'Help' }
 ];
+
+const pathByView: Record<ViewKey, string> = {
+  landing: '/',
+  overview: '/dashboard',
+  withdraw: '/withdraw',
+  buy: '/buy',
+  history: '/withdrawals',
+  banks: '/bank-accounts',
+  kyc: '/verification',
+  settings: '/settings',
+  help: '/help',
+  signup: '/signup'
+};
+
+function viewFromPath(pathname: string): ViewKey {
+  const clean = pathname.replace(/\/$/, '') || '/';
+  if (clean === '/dashboard' || clean === '/app') return 'overview';
+  if (clean === '/withdraw' || clean === '/app/sell') return 'withdraw';
+  if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
+  if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
+  if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
+  if (clean === '/verification' || clean === '/verification-complete' || clean === '/app/verification') return 'kyc';
+  if (clean === '/settings' || clean === '/app/settings') return 'settings';
+  if (clean === '/help' || clean === '/support' || clean === '/app/support') return 'help';
+  if (clean === '/signup' || clean === '/login') return 'signup';
+  return 'landing';
+}
 
 function readStorage<T>(key: string, fallback: T): T {
   try {
@@ -116,7 +144,7 @@ function qrUrl(value: string) {
 }
 
 export default function App() {
-  const [view, setView] = useState<ViewKey>('overview');
+  const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000', []);
@@ -142,7 +170,7 @@ export default function App() {
   const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const pageTitle = useMemo(() => views.find((item) => item.key === view)?.label ?? 'Home', [view]);
+  const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
   const hasUser = Boolean(user?.id && authToken);
   const isVerified = customer?.kycStatus === 'kyc_approved';
@@ -159,6 +187,8 @@ export default function App() {
     setView(nextView);
     setMobileMenuOpen(false);
     setUserMenuOpen(false);
+    const nextPath = pathByView[nextView] ?? '/dashboard';
+    if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
   };
   const enabledCustomerTypes = (paymentControls.customerTypes ?? fallbackCustomerTypes).filter((control) => control.enabled);
   const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
@@ -181,6 +211,11 @@ export default function App() {
             : kycFailed ? 'Restart verification'
               : 'Start verification';
   const canSubmitKyc = hasUser && canStartKyc && !loading && !kycApproved && !kycUnderReview;
+  const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
+  const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
+  const completedWithdrawalCount = withdrawals.filter((withdrawal) => withdrawal.status === 'completed').length;
+  const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
+  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Base';
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -193,7 +228,8 @@ export default function App() {
     localStorage.removeItem('sivan.user');
     localStorage.removeItem('sivan.customer');
     localStorage.removeItem('sivan.accounts');
-    setView('overview');
+    setView('landing');
+    window.history.pushState({}, '', '/');
     setToast({ message, type: 'success' });
     window.setTimeout(() => setToast(null), 4200);
   }, []);
@@ -315,6 +351,18 @@ export default function App() {
   }, [loadFee, loadControls, loadUserData]);
 
   useEffect(() => {
+    const onPopState = () => setView(viewFromPath(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (view !== 'signup') return;
+    if (window.location.pathname === '/login') setAuthTab('signin');
+    if (window.location.pathname === '/signup') setAuthTab('signup');
+  }, [view]);
+
+  useEffect(() => {
     const refreshControls = () => {
       if (document.visibilityState === 'visible') void loadControls();
     };
@@ -346,7 +394,7 @@ export default function App() {
     } else {
       notify('Verification returned. Sign in to refresh your status.');
     }
-    window.history.replaceState({}, document.title, '/');
+    window.history.replaceState({}, document.title, '/verification');
   }, [authToken, loadUserData, notify, refreshKycStatus, user?.id]);
 
   useEffect(() => {
@@ -430,7 +478,7 @@ export default function App() {
       setDevCode(undefined);
       localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
       notify(authTab === 'signup' ? 'Account verified. Continue your setup.' : 'Welcome back.');
-      setView('overview');
+      goToView('overview');
       window.setTimeout(() => void loadUserData(), 0);
     } catch (error) {
       notify((error as Error).message, 'error');
@@ -603,6 +651,20 @@ export default function App() {
     }
   }
 
+  if (view === 'landing') {
+    return <LandingPage
+      isLiveEnv={isLiveEnv}
+      appEnv={appEnv}
+      hasUser={hasUser}
+      assets={primaryAssetLabel}
+      networks={primaryNetworkLabel}
+      payoutCurrencies={enabledControls.map((control) => control.currency.toUpperCase()).join(', ') || 'USD, GBP, EUR'}
+      onGetStarted={() => goToView(hasUser ? 'overview' : 'signup')}
+      onDashboard={() => goToView('overview')}
+      onBuy={() => goToView('buy')}
+    />;
+  }
+
   return (
     <div className={`app-shell ${mobileMenuOpen ? 'menu-open' : ''}`}>
       <button className="mobile-menu-overlay" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)} />
@@ -653,31 +715,44 @@ export default function App() {
         {systemStatus.mode !== 'active' && <section className="maintenance-banner"><strong>{systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</strong><span>{systemStatus.message || (systemStatus.mode === 'maintenance' ? 'New withdrawals are temporarily unavailable while maintenance is in progress.' : 'New payment actions are temporarily paused.')}</span>{systemStatus.estimatedResumeAt && <small>Estimated resume: {new Date(systemStatus.estimatedResumeAt).toLocaleString()}</small>}</section>}
 
         {view === 'overview' && (
-          <section className="view active dashboard-view">
-            <div className="status-strip">
+          <section className="view active dashboard-view fintech-dashboard">
+            <div className={`welcome-card ${isVerified ? 'ok' : 'warn'}`}>
               <div>
-                <p className="eyebrow">Next step</p>
-                <h3>{hasUser ? activeStep === 'Ready to withdraw' ? 'You are ready to create a withdrawal' : `Finish setup: ${activeStep}` : 'Create your account to start withdrawing'}</h3>
-                <p>{hasUser ? 'Complete each setup step once, then withdraw supported stablecoins to your bank account.' : 'Create an account, verify, add your bank, and get a deposit address in a guided flow.'}</p>
+                <p className="eyebrow">Account command center</p>
+                <h3>{hasUser ? isVerified ? `Welcome back, ${firstName}.` : `Finish setup, ${firstName}.` : 'Start your Sivan account.'}</h3>
+                <p>{hasUser ? isVerified && hasBank ? 'You are ready to sell supported stablecoins to your verified bank account.' : 'Complete verification and add a verified bank account before creating your first deposit address.' : 'Create an account, verify once, add your bank, then receive bank payouts from supported stablecoins.'}</p>
               </div>
               <button className="primary-btn animated-cta" onClick={() => goToView(nextStepView)}>{nextStepLabel}</button>
             </div>
 
-            <div className="stats-grid">
-              <Stat label="Account" value={hasUser ? 'Created' : 'Not started'} helper={user?.email || 'Start with your email'} />
-              <Stat label="Verification" value={friendlyStatus(customer?.kycStatus)} helper="Required for withdrawals" />
-              <Stat label="Bank accounts" value={String(accounts.length)} helper="Bank accounts you can send to" />
-              <Stat label="Payout methods" value={enabledControls.map((c) => c.currency.toUpperCase()).join(', ') || '—'} helper={feePolicy ? `${feePolicy.percent}% fee before deposit` : 'Shown before you deposit'} />
+            <div className="quick-actions-grid">
+              <button className="quick-action-tile sell" onClick={() => goToView('withdraw')}>
+                <span className="tile-icon">↗</span><strong>Sell stablecoins</strong><small>Send {primaryAssetLabel} and receive fiat to bank</small><em>Start</em>
+              </button>
+              <button className="quick-action-tile buy" onClick={() => goToView('buy')}>
+                <span className="tile-icon">↙</span><strong>Buy stablecoins</strong><small>On-ramp experience prepared for provider rollout</small><em>View</em>
+              </button>
+              <button className="quick-action-tile" onClick={() => goToView('banks')}>
+                <span className="tile-icon">▣</span><strong>Bank accounts</strong><small>{hasBank ? `${accounts.length} verified account${accounts.length === 1 ? '' : 's'}` : 'Add your payout destination'}</small><em>Manage</em>
+              </button>
+            </div>
+
+            <div className="kpi-grid">
+              <Stat label="Setup" value={`${setupPercent}%`} helper={activeStep} />
+              <Stat label="Verification" value={friendlyStatus(customer?.kycStatus)} helper="Required before bank payouts" />
+              <Stat label="Bank accounts" value={String(accounts.length)} helper="Verified payout destinations" />
+              <Stat label="Completed payouts" value={String(completedWithdrawalCount)} helper={feePolicy ? `${feePolicy.percent}% Sivan fee` : 'Fee shown before deposit'} />
             </div>
 
             <div className="panel-grid two dashboard-grid">
               <SetupChecklist hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} nextStepLabel={nextStepLabel} />
-              <QuickActionCard hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} />
+              <RailsCard enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} />
               <WithdrawalsList withdrawals={withdrawals.slice(0, 4)} compact />
               <NeedHelpCard />
             </div>
           </section>
         )}
+
 
         {view === 'signup' && (
           <section className="form-layout">
@@ -772,6 +847,8 @@ export default function App() {
           </section>
         )}
 
+        {view === 'buy' && <OnRampView hasUser={hasUser} isVerified={isVerified} onGetStarted={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} />}
+
         {view === 'history' && <WithdrawalsList withdrawals={withdrawals} />}
 
         {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
@@ -779,6 +856,116 @@ export default function App() {
 
       </main>
     </div>
+  );
+}
+
+
+function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurrencies, onGetStarted, onDashboard, onBuy }: { isLiveEnv: boolean; appEnv: string; hasUser: boolean; assets: string; networks: string; payoutCurrencies: string; onGetStarted: () => void; onDashboard: () => void; onBuy: () => void }) {
+  return (
+    <div className="landing-shell">
+      <header className="landing-nav">
+        <a className="landing-brand" href="https://www.sivantech.online/" aria-label="Sivan home">
+          <img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong>
+        </a>
+        <nav>
+          <a href="#how">How it works</a>
+          <a href="#rails">Rails</a>
+          <a href="#safety">Safety</a>
+          <button className="ghost-btn" onClick={onDashboard}>Open dashboard</button>
+          <button className="primary-btn" onClick={onGetStarted}>{hasUser ? 'Continue' : 'Get started'}</button>
+        </nav>
+      </header>
+
+      <main>
+        <section className="landing-hero">
+          <div className="landing-copy">
+            <p className="eyebrow">Stablecoin to bank</p>
+            <h1>Stablecoin to bank, made simple.</h1>
+            <p className="lead">Send supported stablecoins and receive {payoutCurrencies} in your verified bank account. Built with guided verification, network controls, and clear deposit instructions.</p>
+            <div className="landing-actions">
+              <button className="primary-btn" onClick={onGetStarted}>{hasUser ? 'Go to dashboard' : 'Get started'}</button>
+              <button className="secondary-btn" onClick={onDashboard}>Open dashboard</button>
+            </div>
+            <div className="landing-trust"><span>Licensed-provider rails</span><span>No password required</span><span>NGN coming soon</span></div>
+          </div>
+          <div className="landing-widget">
+            <div className="widget-tabs"><span className="active">Sell</span><button onClick={onBuy}>Buy</button></div>
+            <div className="mock-flow-card">
+              <div><small>You send</small><strong>{assets}</strong><span>{networks}</span></div>
+              <div className="flow-arrow">→</div>
+              <div><small>You receive</small><strong>{payoutCurrencies}</strong><span>To your bank account</span></div>
+            </div>
+            <div className="deposit-preview"><span>Unique deposit address</span><code>0x7a9c…42f8</code></div>
+            <p>Choose a bank account, asset, and network. Sivan generates a provider-backed deposit address for that off-ramp.</p>
+          </div>
+        </section>
+
+        <section className="landing-strip" id="rails">
+          <span>Assets: {assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
+          <span>Payouts: {payoutCurrencies}</span>
+          <span>Networks: {networks} + more controlled by admin</span>
+        </section>
+
+        <section className="landing-section" id="how">
+          <div className="section-head"><p className="eyebrow">How it works</p><h2>Four guided steps from wallet to bank.</h2></div>
+          <div className="landing-card-grid">
+            <InfoCard n="01" title="Create your account" body="Use secure passwordless email access. No password to manage." />
+            <InfoCard n="02" title="Verify once" body="Complete Individual verification, or Business onboarding when enabled by Sivan controls." />
+            <InfoCard n="03" title="Add your bank" body="Add a verified bank account for enabled payout currencies." />
+            <InfoCard n="04" title="Send stablecoins" body="Create a deposit address, send only the selected asset/network, and track your payout." />
+          </div>
+        </section>
+
+        <section className="landing-section split-landing" id="safety">
+          <div><p className="eyebrow">On-ramp roadmap</p><h2>Buy stablecoins is part of the product direction.</h2><p className="muted">The UI is prepared for on-ramp flows, while production actions stay gated until backend/provider rails are ready. That keeps the app honest without blocking the future experience.</p><button className="secondary-btn" onClick={onBuy}>Preview buy flow</button></div>
+          <div className="safety-panel"><strong>Safety rule</strong><p>Always send only the selected token on the selected network. Sending another token or using the wrong network can permanently lose funds and may not be recoverable.</p><small>{appEnv === 'test' ? '⚠ Test environment — no real money moves' : isLiveEnv ? '● Live environment' : 'Local environment'}</small></div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function InfoCard({ n, title, body }: { n: string; title: string; body: string }) {
+  return <article className="landing-info-card"><span>{n}</span><h3>{title}</h3><p>{body}</p></article>;
+}
+
+function RailsCard({ enabledControls, enabledAssets, enabledNetworks }: { enabledControls: PaymentControl[]; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[] }) {
+  return (
+    <article className="panel rails-card">
+      <div className="panel-head"><div><p className="eyebrow">Available rails</p><h3>Configured by Sivan Controls</h3></div></div>
+      <div className="rail-chips">{enabledControls.length ? enabledControls.map((control) => <span key={control.currency}>{control.currency.toUpperCase()}</span>) : <span>No payout rails</span>}</div>
+      <div className="rail-chips muted-chips">{enabledAssets.length ? enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>) : <span>No assets</span>}<span>{enabledNetworks.length} networks</span><span>NGN coming soon</span></div>
+      <p className="muted">Only enabled assets, networks, and payout currencies appear in the withdrawal flow.</p>
+    </article>
+  );
+}
+
+function OnRampView({ hasUser, isVerified, onGetStarted }: { hasUser: boolean; isVerified: boolean; onGetStarted: () => void }) {
+  return (
+    <section className="panel-grid two onramp-view">
+      <article className="panel form-panel onramp-hero-card">
+        <p className="eyebrow">Buy stablecoins</p>
+        <h3>On-ramp experience prepared for rollout</h3>
+        <p className="muted">Sivan can support the buy-side product experience, but live on-ramp actions should remain gated until the backend/provider rails are implemented and tested end to end.</p>
+        <div className="details-box">
+          <Kv label="Current access" value={hasUser ? isVerified ? 'Account ready' : 'Verification required' : 'Create account first'} />
+          <Kv label="Planned assets" value="USDC / USDT" />
+          <Kv label="Status" value="Provider rollout pending" />
+          <Kv label="NGN" value="Coming soon" />
+        </div>
+        <button className="primary-btn" onClick={onGetStarted}>{hasUser ? isVerified ? 'Manage bank accounts' : 'Verify account' : 'Get started'}</button>
+      </article>
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Future flow</p><h3>Fiat to stablecoin</h3></div></div>
+        <div className="onramp-steps">
+          <ProgressItem done={hasUser} label="Create or sign in" />
+          <ProgressItem done={isVerified} label="Complete verification" />
+          <ProgressItem done={false} label="Choose fiat payment method" />
+          <ProgressItem done={false} label="Receive stablecoins to your wallet" />
+        </div>
+        <div className="verification-note">This screen is intentionally not creating live buy orders yet. We will wire it to real on-ramp APIs once those backend rails are ready.</div>
+      </article>
+    </section>
   );
 }
 
