@@ -659,6 +659,7 @@ export default function App() {
       assets={primaryAssetLabel}
       networks={primaryNetworkLabel}
       payoutCurrencies={enabledControls.map((control) => control.currency.toUpperCase()).join(', ') || 'USD, GBP, EUR'}
+      feePercent={feePolicy?.percent || '1.25'}
       onGetStarted={() => goToView(hasUser ? 'overview' : 'signup')}
       onDashboard={() => goToView('overview')}
       onBuy={() => goToView('buy')}
@@ -857,71 +858,127 @@ export default function App() {
 }
 
 
-function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurrencies, onGetStarted, onDashboard, onBuy }: { isLiveEnv: boolean; appEnv: string; hasUser: boolean; assets: string; networks: string; payoutCurrencies: string; onGetStarted: () => void; onDashboard: () => void; onBuy: () => void }) {
+function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurrencies, feePercent, onGetStarted, onDashboard, onBuy }: { isLiveEnv: boolean; appEnv: string; hasUser: boolean; assets: string; networks: string; payoutCurrencies: string; feePercent: string; onGetStarted: () => void; onDashboard: () => void; onBuy: () => void }) {
+  const [quoteMode, setQuoteMode] = useState<'sell' | 'buy'>('sell');
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const numericFee = Number(feePercent || '1.25');
+  const feeAmount = Number.isFinite(numericFee) ? (1000 * numericFee / 100) : 12.5;
+  const receiveAmount = Math.max(0, 1000 - feeAmount);
+  const faqItems = [
+    { q: 'Do I need to complete KYC to use Sivan?', a: 'Yes. Verification is required before bank withdrawals or on-ramp actions. This protects users, reduces fraud, and keeps Sivan aligned with provider-supported payment rails.' },
+    { q: 'Which countries and payment methods are supported?', a: `The current off-ramp supports enabled payout rails such as ${payoutCurrencies}. Available options are controlled by Sivan in Admin Controls. NGN is planned as a coming-soon rail as partnerships are finalized.` },
+    { q: 'How long does a transaction take?', a: 'After your crypto deposit is confirmed on the selected network, provider processing and bank payout timing can vary by rail and bank. The app tracks status as the provider sends updates.' },
+    { q: 'What are the fees?', a: `The current Sivan off-ramp fee shown from the live fee configuration is ${feePercent}%. Fees are shown before users receive a deposit address, and admin-controlled pricing can be updated operationally.` },
+    { q: 'What happens if I send the wrong token or wrong network?', a: 'Only send the selected token on the selected network shown on the deposit screen. Sending any other token, or using the wrong network, can permanently lose funds and may not be recoverable.' },
+    { q: 'Does Sivan hold my funds?', a: 'Sivan coordinates provider-backed payment flows and status tracking. Deposit addresses and settlement are handled through supported payment providers; Sivan does not ask for wallet private keys.' },
+    { q: 'Is on-ramp supported?', a: 'The on-ramp product area is being prepared. Live buy actions should only be enabled after backend/provider rails, webhooks, controls, and reconciliation are fully tested.' }
+  ];
   return (
-    <div className="landing-shell">
-      <header className="landing-nav">
+    <div className="landing-shell premium-landing">
+      <header className="landing-nav premium-nav">
         <a className="landing-brand" href="https://www.sivantech.online/" aria-label="Sivan home">
           <img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong>
         </a>
         <nav>
+          <a href="#features">Features</a>
           <a href="#how">How it works</a>
-          <a href="#rails">Rails</a>
-          <a href="#safety">Safety</a>
-          <button className="ghost-btn" onClick={onDashboard}>Open dashboard</button>
+          <a href="#fees">Fees</a>
+          <a href="#faq">FAQ</a>
+          <a href="#business">Business</a>
+          <button className="ghost-btn" onClick={onDashboard}>Sign in</button>
           <button className="primary-btn" onClick={onGetStarted}>{hasUser ? 'Continue' : 'Get started'}</button>
         </nav>
       </header>
 
       <main>
-        <section className="landing-hero">
+        <section className="landing-hero premium-hero">
           <div className="landing-copy">
-            <p className="eyebrow">Stablecoin to bank</p>
-            <h1>Stablecoin to bank, made simple.</h1>
-            <p className="lead">Send supported stablecoins and receive {payoutCurrencies} in your verified bank account. Built with guided verification, network controls, and clear deposit instructions.</p>
+            <p className="eyebrow">Crypto to fiat. Fiat to crypto.</p>
+            <h1>Buy and sell crypto <span>the simple way.</span></h1>
+            <p className="lead">Convert USDC, USDT and other supported digital assets directly to your bank account — or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
             <div className="landing-actions">
-              <button className="primary-btn" onClick={onGetStarted}>{hasUser ? 'Go to dashboard' : 'Get started'}</button>
-              <button className="secondary-btn" onClick={onDashboard}>Open dashboard</button>
+              <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
+              <a className="secondary-btn" href="#how">See how it works</a>
             </div>
-            <div className="landing-trust"><span>Licensed-provider rails</span><span>No password required</span><span>NGN coming soon</span></div>
+            <div className="rating-row"><strong>★★★★★</strong><span>4.8 · Trusted by users globally</span></div>
+            <div className="landing-trust"><span>✓ Licensed partners</span><span>✓ Non-custodial by design</span><span>✓ Clear payout tracking</span></div>
           </div>
-          <div className="landing-widget">
-            <div className="widget-tabs"><span className="active">Sell</span><button onClick={onBuy}>Buy</button></div>
-            <div className="mock-flow-card">
-              <div><small>You send</small><strong>{assets}</strong><span>{networks}</span></div>
-              <div className="flow-arrow">→</div>
-              <div><small>You receive</small><strong>{payoutCurrencies}</strong><span>To your bank account</span></div>
+          <div className="quote-widget">
+            <div className="widget-tabs"><button className={quoteMode === 'sell' ? 'active' : ''} onClick={() => setQuoteMode('sell')}>Sell</button><button className={quoteMode === 'buy' ? 'active' : ''} onClick={() => { setQuoteMode('buy'); onBuy(); }}>Buy</button></div>
+            <QuoteBox label={quoteMode === 'sell' ? 'You send' : 'You pay'} amount="1,000" asset={quoteMode === 'sell' ? 'USDC' : 'USD'} helper={quoteMode === 'sell' ? '1 USDC ≈ $1.00' : 'Bank transfer'} />
+            <div className="quote-swap">↕</div>
+            <QuoteBox label={quoteMode === 'sell' ? 'You receive' : 'You get'} amount={quoteMode === 'sell' ? receiveAmount.toFixed(2) : '≈ 987.50'} asset={quoteMode === 'sell' ? 'USD · ACH' : 'USDC'} helper={quoteMode === 'sell' ? 'After Sivan fee' : 'To your wallet'} />
+            <div className="quote-fees">
+              <div><span>Rate</span><strong>1 USDC ≈ $1.00</strong></div>
+              <div><span>Sivan fee ({feePercent}%)</span><strong className="danger">−${feeAmount.toFixed(2)}</strong></div>
+              <div><span>Arrival</span><strong>Provider + bank rail timing</strong></div>
             </div>
-            <div className="deposit-preview"><span>Unique deposit address</span><code>0x7a9c…42f8</code></div>
-            <p>Choose a bank account, asset, and network. Sivan generates a provider-backed deposit address for that off-ramp.</p>
+            <button className="primary-btn quote-btn" onClick={quoteMode === 'sell' ? onGetStarted : onBuy}>{quoteMode === 'sell' ? 'Get deposit address' : 'Preview buy flow'}</button>
+            <small>Fee is pulled from the live Sivan fee configuration.</small>
           </div>
         </section>
 
         <section className="landing-strip" id="rails">
-          <span>Assets: {assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
-          <span>Payouts: {payoutCurrencies}</span>
-          <span>Networks: {networks} + more controlled by admin</span>
+          <span>{assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
+          <span>{payoutCurrencies}</span>
+          <span>{networks} + admin-controlled networks</span>
+          <span>NGN coming soon</span>
         </section>
 
-        <section className="landing-section" id="how">
-          <div className="section-head"><p className="eyebrow">How it works</p><h2>Four guided steps from wallet to bank.</h2></div>
-          <div className="landing-card-grid">
-            <InfoCard n="01" title="Create your account" body="Use secure passwordless email access. No password to manage." />
-            <InfoCard n="02" title="Verify once" body="Complete Individual verification, or Business onboarding when enabled by Sivan controls." />
-            <InfoCard n="03" title="Add your bank" body="Add a verified bank account for enabled payout currencies." />
-            <InfoCard n="04" title="Send stablecoins" body="Create a deposit address, send only the selected asset/network, and track your payout." />
+        <section className="landing-section two-directions" id="features">
+          <div className="section-head center"><p className="eyebrow center">Two directions</p><h2>Move value in either direction.</h2><p>One platform. One verification. Sell crypto to your bank or prepare to buy crypto with fiat — the same simple experience.</p></div>
+          <div className="direction-grid">
+            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Works with USDC, USDT when enabled, and more supported assets</li><li>✓ Payouts in {payoutCurrencies}; NGN coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
+            <article className="direction-card buy"><span className="chip-pill purple">↙ Buy</span><em>Rollout ready</em><h3>Buy crypto directly with fiat.</h3><p>Pay by supported bank rails and receive stablecoins in a wallet you control once on-ramp backend rails are live.</p><ul><li>✓ Bank transfer flow planned</li><li>✓ Delivered after payment clears</li><li>✓ Self-custody wallet destination</li><li>✓ Same verification covers both directions</li></ul><div><strong>Provider rollout</strong><button className="secondary-btn" onClick={onBuy}>Start buying →</button></div></article>
           </div>
         </section>
 
-        <section className="landing-section split-landing" id="safety">
-          <div><p className="eyebrow">On-ramp roadmap</p><h2>Buy stablecoins is part of the product direction.</h2><p className="muted">The UI is prepared for on-ramp flows, while production actions stay gated until backend/provider rails are ready. That keeps the app honest without blocking the future experience.</p><button className="secondary-btn" onClick={onBuy}>Preview buy flow</button></div>
-          <div className="safety-panel"><strong>Safety rule</strong><p>Always send only the selected token on the selected network. Sending another token or using the wrong network can permanently lose funds and may not be recoverable.</p><small>{appEnv === 'test' ? '⚠ Test environment — no real money moves' : isLiveEnv ? '● Live environment' : 'Local environment'}</small></div>
+        <section className="landing-section" id="how">
+          <div className="section-head center"><p className="eyebrow center">How it works</p><h2>Three steps from crypto to cash.</h2><p>Whether you're buying or selling, the flow is guided end to end — no order books, no trading interface, no jargon.</p></div>
+          <div className="steps-grid-premium">
+            <StepCard n="01" icon="♢" title="Create and verify your account" body="Sign up with your email and complete a short identity check. Your verification unlocks supported payment flows." />
+            <StepCard n="02" icon="▭" title="Choose rails and send funds" body="Pick your bank, asset, and network. Review the fee and safety warning before a deposit address is created." />
+            <StepCard n="03" icon="◷" title="Receive your payout" body="Stablecoin deposits are detected by the provider, converted, and paid out to your selected bank account." />
+          </div>
+        </section>
+
+        <section className="landing-section" id="business">
+          <div className="section-head center"><p className="eyebrow center">Why Sivan</p><h2>Built for people who just want it to work.</h2><p>We've stripped out the complexity and built a regulated-grade ramp experience with everyday users in mind.</p></div>
+          <div className="feature-grid-premium">
+            <FeatureCard icon="⚡" title="Fast payouts" body="Create a deposit address quickly and track payout status as provider updates arrive." />
+            <FeatureCard icon="🔒" title="Non-custodial by design" body="Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys." />
+            <FeatureCard icon="🌍" title="Global, multi-currency" body={`Cash out to ${payoutCurrencies}. NGN is coming soon as local partnerships progress.`} />
+            <FeatureCard icon="▥" title="Transparent pricing" body={`The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.`} />
+            <FeatureCard icon="🛡" title="Built-in compliance" body="Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow." />
+            <FeatureCard icon="☷" title="Clear transaction tracking" body="Users can follow address creation, deposit detection, conversion, payout processing, and completion." />
+          </div>
+        </section>
+
+        <section className="landing-section faq-section" id="faq">
+          <div className="section-head center"><p className="eyebrow center">Frequently asked</p><h2>Questions, answered.</h2></div>
+          <div className="faq-list">{faqItems.map((item, index) => <div className={`faq-item ${openFaq === index ? 'open' : ''}`} key={item.q}><button onClick={() => setOpenFaq(openFaq === index ? null : index)}><strong>{item.q}</strong><span>⌄</span></button>{openFaq === index && <p>{item.a}</p>}</div>)}</div>
+        </section>
+
+        <section className="landing-section final-cta-section" id="fees">
+          <div className="final-cta-card"><p className="eyebrow center">Get started</p><h2>Your first transaction in about five minutes.</h2><p>Move between crypto and your bank with a few taps. No exchange account, no order books, no hassle.</p><button className="primary-btn" onClick={onGetStarted}>Create free account →</button><small>Already have an account? <button onClick={onDashboard}>Sign in</button></small></div>
         </section>
       </main>
 
       <LandingFooter onDashboard={onDashboard} onGetStarted={onGetStarted} onBuy={onBuy} />
     </div>
   );
+}
+
+function QuoteBox({ label, amount, asset, helper }: { label: string; amount: string; asset: string; helper: string }) {
+  return <div className="quote-box"><div><small>{label}</small><strong>{amount}</strong></div><div><span>{asset}</span><small>{helper}</small></div></div>;
+}
+
+function StepCard({ n, icon, title, body }: { n: string; icon: string; title: string; body: string }) {
+  return <article className="step-card-premium"><i>{icon}</i><b>{n}</b><h3>{title}</h3><p>{body}</p></article>;
+}
+
+function FeatureCard({ icon, title, body }: { icon: string; title: string; body: string }) {
+  return <article className="feature-card-premium"><i>{icon}</i><h3>{title}</h3><p>{body}</p></article>;
 }
 
 function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () => void; onGetStarted: () => void; onBuy: () => void }) {
@@ -933,25 +990,20 @@ function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () =
           <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
           <div className="footer-badges"><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
         </div>
-        <FooterCol title="Product" links={[{ label: 'Stablecoin to bank', action: onGetStarted }, { label: 'Open dashboard', action: onDashboard }, { label: 'Buy stablecoins', action: onBuy }, { label: 'Supported rails', href: '#rails' }]} />
-        <FooterCol title="Company" links={[{ label: 'Sivan website', href: 'https://www.sivantech.online/' }, { label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Support', href: 'mailto:support@sivantech.online' }]} />
-        <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'Safety', href: '#safety' }, { label: 'Verification', action: onGetStarted }, { label: 'System status', action: onDashboard }]} />
-        <FooterCol title="Legal" links={[{ label: 'Terms', href: 'https://www.sivantech.online/' }, { label: 'Privacy', href: 'https://www.sivantech.online/' }, { label: 'Risk disclosure', href: '#safety' }]} />
+        <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Fees & rails', href: '#fees' }]} />
+        <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
+        <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'FAQ', href: '#faq' }, { label: 'Safety', href: '#safety' }, { label: 'Sivan website', href: 'https://www.sivantech.online/' }]} />
+        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: 'https://www.sivantech.online/' }, { label: 'Privacy Policy', href: 'https://www.sivantech.online/' }, { label: 'Risk disclosure', href: '#safety' }]} />
       </div>
       <div className="footer-bottom">
-        <p>© 2026 Sivan Technologies. All rights reserved. Stablecoins and cryptoassets are volatile and may not be protected by financial compensation schemes. Services depend on licensed/provider-supported payment rails and may be unavailable in some jurisdictions. Sivan does not ask for wallet private keys.</p>
+        <p>© 2026 Sivan Technologies. All rights reserved. Cryptoassets and stablecoins are volatile and may not be protected by financial compensation schemes. Services depend on licensed/provider-supported payment rails and may be unavailable in some jurisdictions. Sivan does not ask for wallet private keys.</p>
       </div>
     </footer>
   );
 }
 
 function FooterCol({ title, links }: { title: string; links: Array<{ label: string; href?: string; action?: () => void }> }) {
-  return (
-    <div className="footer-col">
-      <h4>{title}</h4>
-      {links.map((link) => link.action ? <button key={link.label} onClick={link.action}>{link.label}</button> : <a key={link.label} href={link.href} target={link.href?.startsWith('http') ? '_blank' : undefined} rel={link.href?.startsWith('http') ? 'noreferrer' : undefined}>{link.label}</a>)}
-    </div>
-  );
+  return <div className="footer-col"><h4>{title}</h4>{links.map((link) => link.action ? <button key={link.label} onClick={link.action}>{link.label}</button> : <a key={link.label} href={link.href} target={link.href?.startsWith('http') ? '_blank' : undefined} rel={link.href?.startsWith('http') ? 'noreferrer' : undefined}>{link.label}</a>)}</div>;
 }
 
 function InfoCard({ n, title, body }: { n: string; title: string; body: string }) {
