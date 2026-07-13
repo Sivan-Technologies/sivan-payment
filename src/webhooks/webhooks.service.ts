@@ -49,25 +49,36 @@ export async function processBridgeWebhook(payload: BridgeWebhookPayload, rawBod
     };
     data.webhookEvents.push(event);
 
-    if (payload.event_category === 'liquidation_address.drain') {
+    const eventCategory = normalizeEventCategory(payload.event_category);
+
+    if (eventCategory === 'liquidation_address_drain') {
       applyLiquidationDrainEvent(data, payload);
     }
 
-    if (payload.event_category === 'customer') {
+    if (eventCategory === 'customer') {
       applyCustomerEvent(data, payload);
     }
 
-    if (payload.event_category === 'kyc_link') {
+    if (eventCategory === 'kyc_link') {
       applyKycLinkEvent(data, payload);
     }
 
-    if (payload.event_category === 'external_account' || payload.event_category === 'external_acccount') {
+    if (eventCategory === 'external_account' || eventCategory === 'external_acccount') {
       applyExternalAccountEvent(data, payload);
     }
 
     event.processedAt = nowIso();
     return { duplicate: false, event };
   });
+}
+
+
+function normalizeEventCategory(category?: string): string {
+  return (category ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[\s.\-]+/g, '_');
 }
 
 function applyLiquidationDrainEvent(data: any, payload: BridgeWebhookPayload) {

@@ -277,6 +277,22 @@ export default function App() {
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
   }, [api, user?.id, authToken]);
 
+  const refreshKycStatus = useCallback(async (showToast = false) => {
+    if (!user?.id || !authToken) {
+      if (showToast) notify('Create or sign in to your account first.', 'error');
+      return null;
+    }
+    try {
+      const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
+      setCustomer(refreshed);
+      if (showToast) notify('Verification status refreshed.');
+      return refreshed;
+    } catch (error) {
+      if (showToast) notify((error as Error).message, 'error');
+      return null;
+    }
+  }, [api, authToken, notify, user?.id]);
+
   const loadControls = useCallback(async () => {
     const [controls, status] = await Promise.all([
       api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks })),
@@ -325,12 +341,25 @@ export default function App() {
     setView('kyc');
     if (user?.id && authToken) {
       void loadUserData();
+      void refreshKycStatus(false);
       notify('Welcome back. We are checking your verification status.');
     } else {
       notify('Verification returned. Sign in to refresh your status.');
     }
     window.history.replaceState({}, document.title, '/');
-  }, [authToken, loadUserData, notify, user?.id]);
+  }, [authToken, loadUserData, notify, refreshKycStatus, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !authToken || view !== 'kyc' || !customer?.id || kycApproved) return;
+    const poll = () => void refreshKycStatus(false);
+    poll();
+    const interval = window.setInterval(poll, 15_000);
+    window.addEventListener('focus', poll);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', poll);
+    };
+  }, [authToken, customer?.id, kycApproved, refreshKycStatus, user?.id, view]);
 
 
   async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
@@ -464,14 +493,7 @@ export default function App() {
   }
 
   async function refreshKyc() {
-    if (!user?.id) return notify('Create your account first.', 'error');
-    try {
-      const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
-      setCustomer(refreshed);
-      notify('Verification status refreshed.');
-    } catch (error) {
-      notify((error as Error).message, 'error');
-    }
+    await refreshKycStatus(true);
   }
 
   async function handleBank(event: FormEvent<HTMLFormElement>) {
