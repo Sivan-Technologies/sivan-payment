@@ -44,6 +44,7 @@ const envSchema = z.object({
   BRIDGE_WEBHOOK_PUBLIC_KEY: z.string().optional().default(''),
   WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
   SIVAN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
+  SIVAN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   BRIDGE_OFFRAMP_COST_PERCENT: z.coerce.number().min(0).max(100).default(0.5),
   BRIDGE_KYC_COST_USD: z.coerce.number().min(0).default(2),
   BRIDGE_KYB_COST_USD: z.coerce.number().min(0).default(10),

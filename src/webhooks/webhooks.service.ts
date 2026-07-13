@@ -5,6 +5,7 @@ import { badRequest, conflict } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { mapBridgeKycStatus } from '../customers/customer-mapping.js';
 import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
+import { mapBridgeTransferState } from '../onramp/service/onramp-mapping.js';
 
 export interface BridgeWebhookPayload {
   event_id?: string;
@@ -65,6 +66,10 @@ export async function processBridgeWebhook(payload: BridgeWebhookPayload, rawBod
 
     if (eventCategory === 'external_account' || eventCategory === 'external_acccount') {
       applyExternalAccountEvent(data, payload);
+    }
+
+    if (eventCategory === 'transfer' || eventCategory === 'transfers') {
+      applyTransferEvent(data, payload);
     }
 
     event.processedAt = nowIso();
@@ -133,6 +138,26 @@ function applyKycLinkEvent(data: any, payload: BridgeWebhookPayload) {
   customer.tosStatus = kyc.tos_status === 'approved' ? 'approved' : customer.tosStatus;
   customer.raw = kyc;
   customer.updatedAt = nowIso();
+}
+
+
+function applyTransferEvent(data: any, payload: BridgeWebhookPayload) {
+  const transfer = payload.event_object ?? {};
+  const transferId = transfer.id ?? payload.event_object_id;
+  if (!transferId) return;
+  const order = (data.onrampOrders ?? []).find((item: any) => item.providerTransferId === transferId || item.id === transfer.client_reference_id);
+  if (!order) return;
+  const status = mapBridgeTransferState(transfer.state ?? transfer.status ?? payload.event_object_status);
+  order.providerTransferId = transferId;
+  order.status = status;
+  order.statusReason = transfer.state ?? transfer.status ?? payload.event_object_status;
+  order.providerReference = transfer.source_deposit_instructions?.reference ?? transfer.deposit_instructions?.reference ?? order.providerReference;
+  order.sourceDepositInstructions = transfer.source_deposit_instructions ?? transfer.deposit_instructions ?? order.sourceDepositInstructions;
+  order.destinationTxHash = transfer.receipt?.destination_tx_hash ?? order.destinationTxHash;
+  order.receipt = transfer.receipt ?? order.receipt;
+  order.raw = transfer;
+  order.updatedAt = nowIso();
+  if (status === 'completed' && !order.completedAt) order.completedAt = nowIso();
 }
 
 function applyExternalAccountEvent(data: any, payload: BridgeWebhookPayload) {

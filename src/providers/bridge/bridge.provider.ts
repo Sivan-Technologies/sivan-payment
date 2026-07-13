@@ -61,6 +61,32 @@ export class BridgeProvider implements OfframpProvider {
     });
   }
 
+  async createOnrampTransfer(input: { amount: string; developerFee?: string; customerId: string; sourceCurrency: string; sourcePaymentRail: string; destinationCurrency: string; destinationChain: string; destinationAddress: string; clientReferenceId: string; idempotencyKey: string }): Promise<unknown> {
+    return this.client.request('/transfers', {
+      method: 'POST',
+      idempotencyKey: input.idempotencyKey,
+      body: {
+        amount: input.amount,
+        on_behalf_of: input.customerId,
+        developer_fee: input.developerFee,
+        client_reference_id: input.clientReferenceId,
+        source: {
+          payment_rail: input.sourcePaymentRail,
+          currency: input.sourceCurrency
+        },
+        destination: {
+          payment_rail: input.destinationChain,
+          currency: input.destinationCurrency,
+          to_address: input.destinationAddress
+        }
+      }
+    });
+  }
+
+  async getTransfer(transferId: string): Promise<unknown> {
+    return this.client.request(`/transfers/${transferId}`);
+  }
+
   async createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount> {
     const raw: any = await this.client.request(`/customers/${input.customerId}/external_accounts`, {
       method: 'POST',

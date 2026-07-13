@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'audit' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'audit' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
@@ -362,5 +362,27 @@ export interface SystemStatus {
   message?: string;
   estimatedResumeAt?: string;
   updatedBy?: string;
+  updatedAt: string;
+}
+
+
+export interface AdminOnrampOrder {
+  id: string;
+  userId: string;
+  user?: { email?: string; fullName?: string } | null;
+  provider: string;
+  providerTransferId?: string;
+  sourceCurrency: 'usd' | 'gbp' | 'eur';
+  sourcePaymentRail: string;
+  destinationCurrency: 'usdc' | 'usdt';
+  destinationChain: string;
+  destinationAddress: string;
+  amount: string;
+  feeAmount?: string;
+  feePercent?: string;
+  netAmount?: string;
+  status: string;
+  providerReference?: string;
+  createdAt: string;
   updatedAt: string;
 }

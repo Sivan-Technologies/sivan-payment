@@ -10,6 +10,7 @@ const emptyDb = (): DatabaseShape => ({
   externalAccounts: [],
   liquidationAddresses: [],
   withdrawals: [],
+  onrampOrders: [],
   webhookEvents: [],
   authChallenges: [],
   auditLogs: [],

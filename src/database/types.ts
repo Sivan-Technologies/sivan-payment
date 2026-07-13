@@ -3,6 +3,8 @@ export type SourceCurrency = 'usdc' | 'usdt';
 export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
 export type ExternalAccountStatus = 'created' | 'active' | 'verification_pending' | 'verified' | 'verification_failed' | 'deactivated';
+export type OnrampStatus = 'created' | 'awaiting_payment' | 'payment_received' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'requires_action';
+
 export type WithdrawalStatus =
   | 'created'
   | 'pending_deposit'
@@ -160,6 +162,33 @@ export interface WithdrawalRecord {
 }
 
 
+export interface OnrampOrderRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  provider: string;
+  providerTransferId?: string;
+  sourceCurrency: Currency;
+  sourcePaymentRail: string;
+  destinationCurrency: SourceCurrency;
+  destinationChain: Chain;
+  destinationAddress: string;
+  amount: string;
+  feePercent?: string;
+  feeAmount?: string;
+  netAmount?: string;
+  providerReference?: string;
+  sourceDepositInstructions?: unknown;
+  destinationTxHash?: string;
+  status: OnrampStatus;
+  statusReason?: string;
+  receipt?: unknown;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
 export interface AuditLogRecord {
   id: string;
   actorType: 'system' | 'user' | 'admin' | 'provider';
@@ -230,6 +259,7 @@ export interface DatabaseShape {
   externalAccounts: ExternalAccountRecord[];
   liquidationAddresses: LiquidationAddressRecord[];
   withdrawals: WithdrawalRecord[];
+  onrampOrders: OnrampOrderRecord[];
   webhookEvents: WebhookEventRecord[];
   authChallenges: AuthChallengeRecord[];
   auditLogs: AuditLogRecord[];

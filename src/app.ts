@@ -131,6 +131,8 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/customers\/kyc-link/,
     /^\/api\/external-accounts/,
     /^\/api\/withdrawals/,
+    /^\/api\/onramp\/orders/,
+    /^\/api\/users\/[^/]+\/onramp-orders/,
     /^\/api\/users\/[^/]+\/external-accounts/,
     /^\/api\/users\/[^/]+\/withdrawals/,
     /^\/api\/users\/[^/]+\/deposit-addresses/,

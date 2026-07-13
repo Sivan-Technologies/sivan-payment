@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -162,6 +162,7 @@ export default function App() {
   const [customer, setCustomer] = useState<CustomerRecord | null>(() => readStorage<CustomerRecord | null>('sivan.customer', null));
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
+  const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
@@ -225,6 +226,7 @@ export default function App() {
     setCustomer(null);
     setAccounts([]);
     setWithdrawals([]);
+    setOnrampOrders([]);
     setDepositResult(null);
     localStorage.removeItem('sivan.authToken');
     localStorage.removeItem('sivan.user');
@@ -305,14 +307,16 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
-      api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`)
+      api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
+      api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
+    if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
   }, [api, user?.id, authToken]);
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -594,6 +598,44 @@ export default function App() {
     }
   }
 
+
+  async function handleOnramp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification before buying stablecoins.', 'error');
+    if (!canCreatePaymentActions) return notify(systemStatus.message || 'New payment actions are temporarily unavailable.', 'error');
+    setLoading(true);
+    try {
+      const data = getForm(event.currentTarget);
+      const amount = Number(data.amount);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a valid amount.');
+      const latestControls = await loadControls();
+      const enabledCurrencySet = new Set(latestControls.payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency));
+      const enabledAssetSet = new Set(latestControls.sourceAssets.filter((control) => control.enabled).map((control) => control.asset));
+      const enabledNetworkSet = new Set(latestControls.sourceNetworks.filter((control) => control.enabled).map((control) => control.network));
+      if (!enabledCurrencySet.has(data.sourceCurrency as 'usd' | 'gbp' | 'eur')) throw new Error(`${data.sourceCurrency.toUpperCase()} on-ramp payments are currently unavailable.`);
+      if (!enabledAssetSet.has(data.destinationCurrency as 'usdc' | 'usdt')) throw new Error(`${data.destinationCurrency.toUpperCase()} purchases are currently unavailable.`);
+      if (!enabledNetworkSet.has(data.destinationChain as any)) throw new Error(`${data.destinationChain} destination network is currently unavailable.`);
+      const order = await api<OnrampOrderRecord>('/api/onramp/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: user.id,
+          sourceCurrency: data.sourceCurrency,
+          destinationCurrency: data.destinationCurrency,
+          destinationChain: data.destinationChain,
+          destinationAddress: data.destinationAddress,
+          amount
+        })
+      });
+      setOnrampOrders((orders) => [order, ...orders.filter((item) => item.id !== order.id)]);
+      notify('On-ramp order created. Follow the payment instructions exactly.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleWithdraw(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
@@ -800,7 +842,7 @@ export default function App() {
           />
         )}
 
-        {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} />}
+        {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} />}
 
         {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
 
@@ -1270,9 +1312,19 @@ function TransactionsView({ withdrawals, onStart }: { withdrawals: WithdrawalRec
   return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="All your buy and sell orders in one place." action={<button className="primary-btn small">Export CSV</button>} /><article className="transactions-table-card"><div className="transactions-toolbar"><input placeholder="Search by reference or amount..." /><div><button className="primary-btn small">All</button><button className="ghost-btn small">Sells</button><button className="ghost-btn small">Buys</button><button className="ghost-btn small">Processing</button></div></div>{!withdrawals.length ? <div className="dashboard-empty"><p>No transactions yet.</p><button className="secondary-btn" onClick={onStart}>Start your first transaction</button></div> : <div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Destination</th><th>Status</th><th>Reference</th><th>Date</th></tr></thead><tbody>{withdrawals.map((w) => <tr key={w.id}><td><span className="tx-type sell">↗ Sell</span></td><td>{w.sourceCurrency?.toUpperCase() || 'USDC'}</td><td>{w.destinationAmount || w.sourceAmount || '—'} {w.destinationCurrency?.toUpperCase()}</td><td>Bank payout</td><td><Badge status={w.status}>{friendlyStatus(w.status)}</Badge></td><td>{shortRef(w.id)}</td><td>{new Date(w.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table></div>}</article></section>;
 }
 
-function BuyCryptoView({ hasUser, isVerified, feePercent, onSell, onContinue, onSupport }: { hasUser: boolean; isVerified: boolean; feePercent: string; onSell: () => void; onContinue: () => void; onSupport: () => void }) {
-  return <section className="app-page trade-premium"><div className="trade-page-head"><div><h1>Buy crypto</h1><p>Send fiat, receive crypto in your wallet.</p></div><div className="wizard-stepper"><StepDot active done={false} label="Quote" /><StepDot active={false} done={false} label="Review" /><StepDot active={false} done={false} label="Payment" /><StepDot active={false} done={false} label="Tracking" /></div></div><div className="trade-grid"><article className="panel trade-card"><div className="seg"><button onClick={onSell}>↗ Sell</button><button className="active">↙ Buy</button></div><div className="quote-box large"><div><small>You pay</small><strong>10000</strong><small>Min 20 · Max 50,000</small></div><div><span>USD</span><small>Bank transfer</small></div></div><div className="quote-swap">↓</div><div className="quote-box large"><div><small>You get</small><strong>{(10000 - (10000 * Number(feePercent) / 100)).toFixed(4)}</strong></div><div><span>USDC</span></div></div><div className="quote-fees"><div><span>Rate</span><strong>1 USD ≈ 1 USDC</strong></div><div><span>Fee ({feePercent}%)</span><strong className="danger">−${(10000 * Number(feePercent) / 100).toFixed(2)}</strong></div><div><span>Arrival</span><strong>Minutes after payment clears</strong></div><div><span>Payment method</span><strong>Bank transfer</strong></div></div><div className="verification-note">Your rate will be locked after you confirm on the next screen.</div><button className="primary-btn" onClick={onContinue}>{hasUser ? isVerified ? 'Continue →' : 'Verify account →' : 'Get started →'}</button></article><aside className="side-info-stack"><article className="panel"><h3>How this works</h3><ol className="ordered-steps"><li className="active">We generate a unique payment reference for your order.</li><li>Send the exact fiat amount to our licensed partner.</li><li>We detect payment and send crypto to your wallet.</li></ol></article><article className="security-card"><div className="security-icon">◈</div><div><h3>Secure & non-custodial</h3><p>Payments are processed by licensed partners. Funds are only held briefly during settlement.</p></div></article><article className="panel"><h3>Need help?</h3><p className="muted">Issues with a transfer, wrong network, or delayed payout? Our support team is on hand.</p><button className="secondary-btn" onClick={onSupport}>Contact support ↗</button></article></aside></div></section>;
+function BuyCryptoView({ hasUser, isVerified, feePercent, enabledControls, enabledAssets, enabledNetworks, orders, loading, onSubmit, onSell, onContinue, onSupport }: { hasUser: boolean; isVerified: boolean; feePercent: string; enabledControls: PaymentControl[]; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[]; orders: OnrampOrderRecord[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSell: () => void; onContinue: () => void; onSupport: () => void }) {
+  const [amount, setAmount] = useState('1000');
+  const fee = (Number(amount || 0) * Number(feePercent || 0)) / 100;
+  const receive = Math.max(0, Number(amount || 0) - fee);
+  const latestOrder = orders[0];
+  return <section className="app-page trade-premium"><div className="trade-page-head"><div><h1>Buy crypto</h1><p>Send fiat, receive crypto in your wallet.</p></div><div className="wizard-stepper"><StepDot active done={false} label="Quote" /><StepDot active={false} done={Boolean(latestOrder)} label="Review" /><StepDot active={false} done={false} label="Payment" /><StepDot active={false} done={latestOrder?.status === 'completed'} label="Tracking" /></div></div><div className="trade-grid"><article className="panel trade-card"><div className="seg"><button type="button" onClick={onSell}>↗ Sell</button><button type="button" className="active">↙ Buy</button></div>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before buying stablecoins.' : 'Create your account before buying stablecoins.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form onSubmit={onSubmit} className="form premium-form"><div className="quote-box large"><div><small>You pay</small><input name="amount" className="quote-amount-input" value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} /><small>Min 20 · Max 50,000</small></div><div><select name="sourceCurrency" defaultValue={enabledControls[0]?.currency || 'usd'}>{enabledControls.map((control) => <option value={control.currency} key={control.currency}>{control.currency.toUpperCase()}</option>)}</select><small>Bank transfer</small></div></div><div className="quote-swap">↓</div><div className="quote-box large"><div><small>You get</small><strong>{receive.toFixed(4)}</strong></div><div><select name="destinationCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'}>{enabledAssets.map((asset) => <option value={asset.asset} key={asset.asset}>{asset.label}</option>)}</select></div></div><label>Destination network<select name="destinationChain" defaultValue={enabledNetworks[0]?.network || 'base'}>{enabledNetworks.map((network) => <option value={network.network} key={network.network}>{network.label}</option>)}</select></label><label>Receiving wallet address<input name="destinationAddress" placeholder="Wallet address you control" required /></label><div className="quote-fees"><div><span>Rate</span><strong>1 fiat ≈ 1 stablecoin</strong></div><div><span>Fee ({feePercent}%)</span><strong className="danger">−${fee.toFixed(2)}</strong></div><div><span>Arrival</span><strong>Minutes after payment clears</strong></div><div><span>Payment method</span><strong>Bank transfer</strong></div></div><div className="verification-note">Your payment instructions are generated after you create the order. Send the exact amount and reference.</div><button className="primary-btn" disabled={loading || !enabledControls.length || !enabledAssets.length || !enabledNetworks.length}>{loading ? 'Creating order...' : 'Create buy order →'}</button></form>}{latestOrder && <OnrampInstructions order={latestOrder} />}</article><aside className="side-info-stack"><article className="panel"><h3>How this works</h3><ol className="ordered-steps"><li className="active">We generate a unique payment reference for your order.</li><li>Send the exact fiat amount to our licensed partner.</li><li>We detect payment and send crypto to your wallet.</li></ol></article><article className="security-card"><div className="security-icon">◈</div><div><h3>Secure & non-custodial</h3><p>Payments are processed by licensed partners. Funds are only held briefly during settlement.</p></div></article><article className="panel"><h3>Need help?</h3><p className="muted">Issues with a transfer, wrong network, or delayed payout? Our support team is on hand.</p><button className="secondary-btn" onClick={onSupport}>Contact support ↗</button></article></aside></div></section>;
 }
+
+function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
+  const instructions = order.sourceDepositInstructions || {};
+  return <div className="onramp-instructions"><h3>Payment instructions</h3><div className="details-box"><Kv label="Reference" value={order.providerReference || order.id} /><Kv label="Amount" value={`${order.amount} ${order.sourceCurrency.toUpperCase()}`} /><Kv label="Fee" value={order.feeAmount ? `${order.feeAmount} ${order.sourceCurrency.toUpperCase()}` : '—'} /><Kv label="You get" value={`${order.netAmount || '—'} ${order.destinationCurrency.toUpperCase()}`} /><Kv label="Status" value={friendlyStatus(order.status)} /><Kv label="Bank" value={instructions.bank_name || instructions.bankName || 'Provided by Bridge'} /><Kv label="Account" value={instructions.account_number || instructions.iban || 'See provider instructions'} /></div><div className="warning-box compact">Use the exact payment reference. Missing or incorrect references can delay matching.</div></div>;
+}
+
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
   return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>;

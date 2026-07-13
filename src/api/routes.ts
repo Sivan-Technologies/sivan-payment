@@ -12,6 +12,7 @@ import { providersRoutes } from '../providers/providers.routes.js';
 import { adminRoutes } from '../admin/admin.routes.js';
 import { paymentControlsRoutes } from '../controls/payment-controls.routes.js';
 import { systemStatusRoutes } from '../system/system-status.routes.js';
+import { onrampOrdersRoutes } from '../onramp/api/onramp-orders.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -21,6 +22,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await externalAccountsRoutes(app);
   await liquidationAddressesRoutes(app);
   await withdrawalsRoutes(app);
+  await onrampOrdersRoutes(app);
   await feesRoutes(app);
   await metricsRoutes(app);
   await providersRoutes(app);

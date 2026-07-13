@@ -69,6 +69,35 @@ export class MockBridgeProvider implements OfframpProvider {
     return { success: true, customer_id: customerId, kyc_status: 'approved', message: 'Mock KYC approval simulated' };
   }
 
+  async createOnrampTransfer(input: any): Promise<unknown> {
+    const transferId = `mock_transfer_${crypto.randomUUID()}`;
+    return {
+      id: transferId,
+      client_reference_id: input.clientReferenceId,
+      state: 'awaiting_payment',
+      amount: input.amount,
+      developer_fee: input.developerFee,
+      source: { payment_rail: input.sourcePaymentRail, currency: input.sourceCurrency },
+      destination: { payment_rail: input.destinationChain, currency: input.destinationCurrency, to_address: input.destinationAddress },
+      source_deposit_instructions: {
+        payment_rail: input.sourcePaymentRail,
+        currency: input.sourceCurrency,
+        bank_name: 'Mock Bridge Bank',
+        account_name: 'Bridge FBO Sivan',
+        account_number: '000123456789',
+        routing_number: '110000000',
+        iban: input.sourceCurrency === 'eur' ? 'DE89370400440532013000' : undefined,
+        reference: input.clientReferenceId
+      },
+      receipt: null,
+      created_at: new Date().toISOString()
+    };
+  }
+
+  async getTransfer(transferId: string): Promise<unknown> {
+    return { id: transferId, state: 'completed', receipt: { destination_tx_hash: `0x${'ab'.repeat(32)}` }, updated_at: new Date().toISOString() };
+  }
+
   async createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount> {
     const payload: any = input.payload;
     const last4 = payload.account?.account_number?.slice(-4) ?? payload.iban?.account_number?.slice(-4) ?? '0000';

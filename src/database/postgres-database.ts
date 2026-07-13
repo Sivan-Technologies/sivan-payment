@@ -19,10 +19,21 @@ import type {
   AssetControlRecord,
   NetworkControlRecord,
   SystemStatusRecord,
-  CustomerTypeControlRecord
+  CustomerTypeControlRecord,
+  OnrampOrderRecord
 } from './types.js';
 
 const { Pool } = pg;
+
+
+async function optionalQuery(client: pg.PoolClient, sql: string): Promise<{ rows: any[] }> {
+  try {
+    return await client.query(sql);
+  } catch (error: any) {
+    if (error?.code === '42P01') return { rows: [] };
+    throw error;
+  }
+}
 
 function iso(value: unknown): string {
   if (!value) return new Date().toISOString();
@@ -72,6 +83,7 @@ export class PostgresDatabase {
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
       const withdrawals = await client.query('select * from payments_withdrawals order by created_at asc');
+      const onrampOrders = await optionalQuery(client, 'select * from payments_onramp_orders order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
       const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
       const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
@@ -89,6 +101,7 @@ export class PostgresDatabase {
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
+        onrampOrders: onrampOrders.rows.map(mapOnrampOrder),
         webhookEvents: webhookEvents.rows.map(mapWebhookEvent),
         authChallenges: authChallenges.rows.map(mapAuthChallenge),
         auditLogs: auditLogs.rows.map(mapAuditLog),
@@ -121,6 +134,7 @@ export class PostgresDatabase {
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
       for (const withdrawal of data.withdrawals) await upsertWithdrawal(client, withdrawal);
+      for (const order of data.onrampOrders ?? []) await upsertOnrampOrder(client, order);
       for (const event of data.webhookEvents) await upsertWebhookEvent(client, event);
       for (const challenge of data.authChallenges ?? []) await upsertAuthChallenge(client, challenge);
       for (const auditLog of data.auditLogs ?? []) await upsertAuditLog(client, auditLog);
@@ -249,6 +263,64 @@ function mapWithdrawal(row: any): WithdrawalRecord {
     updatedAt: iso(row.updated_at),
     completedAt: optionalIso(row.completed_at)
   };
+}
+
+
+function mapOnrampOrder(row: any): OnrampOrderRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: row.payments_customer_id,
+    provider: row.provider,
+    providerTransferId: str(row.provider_transfer_id),
+    sourceCurrency: row.source_currency,
+    sourcePaymentRail: row.source_payment_rail,
+    destinationCurrency: row.destination_currency,
+    destinationChain: row.destination_chain,
+    destinationAddress: row.destination_address,
+    amount: numberString(row.amount) ?? '0',
+    feePercent: numberString(row.fee_percent),
+    feeAmount: numberString(row.fee_amount),
+    netAmount: numberString(row.net_amount),
+    providerReference: str(row.provider_reference),
+    sourceDepositInstructions: row.source_deposit_instructions,
+    destinationTxHash: str(row.destination_tx_hash),
+    status: row.status,
+    statusReason: str(row.status_reason),
+    receipt: row.receipt,
+    raw: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    completedAt: optionalIso(row.completed_at)
+  };
+}
+
+async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord) {
+  await client.query(
+    `insert into payments_onramp_orders (id, user_id, payments_customer_id, provider, provider_transfer_id, source_currency, source_payment_rail, destination_currency, destination_chain, destination_address, amount, fee_percent, fee_amount, net_amount, provider_reference, source_deposit_instructions, destination_tx_hash, status, status_reason, receipt, raw_payload, created_at, updated_at, completed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+     on conflict (id) do update set
+       provider_transfer_id=excluded.provider_transfer_id,
+       source_currency=excluded.source_currency,
+       source_payment_rail=excluded.source_payment_rail,
+       destination_currency=excluded.destination_currency,
+       destination_chain=excluded.destination_chain,
+       destination_address=excluded.destination_address,
+       amount=excluded.amount,
+       fee_percent=excluded.fee_percent,
+       fee_amount=excluded.fee_amount,
+       net_amount=excluded.net_amount,
+       provider_reference=excluded.provider_reference,
+       source_deposit_instructions=excluded.source_deposit_instructions,
+       destination_tx_hash=excluded.destination_tx_hash,
+       status=excluded.status,
+       status_reason=excluded.status_reason,
+       receipt=excluded.receipt,
+       raw_payload=excluded.raw_payload,
+       updated_at=excluded.updated_at,
+       completed_at=excluded.completed_at`,
+    [item.id, item.userId, item.customerId, item.provider, item.providerTransferId, item.sourceCurrency, item.sourcePaymentRail, item.destinationCurrency, item.destinationChain, item.destinationAddress, item.amount, item.feePercent, item.feeAmount, item.netAmount, item.providerReference, item.sourceDepositInstructions ?? null, item.destinationTxHash, item.status, item.statusReason, item.receipt ?? null, item.raw ?? null, item.createdAt, item.updatedAt, item.completedAt]
+  );
 }
 
 function mapWebhookEvent(row: any): WebhookEventRecord {

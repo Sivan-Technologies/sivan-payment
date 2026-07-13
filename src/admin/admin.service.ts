@@ -24,6 +24,7 @@ export async function getAdminOverview() {
       externalAccounts: data.externalAccounts.length,
       liquidationAddresses: data.liquidationAddresses.length,
       withdrawals: data.withdrawals.length,
+      onrampOrders: (data.onrampOrders ?? []).length,
       webhookEvents: data.webhookEvents.length,
       providers: providerCapabilities.length
     },
@@ -34,6 +35,7 @@ export async function getAdminOverview() {
       users: data.users.slice(-10).reverse(),
       customers: data.customers.slice(-10).reverse(),
       withdrawals: data.withdrawals.slice(-10).reverse(),
+      onrampOrders: (data.onrampOrders ?? []).slice(-10).reverse(),
       webhookEvents: data.webhookEvents.slice(-10).reverse()
     }
   };
@@ -45,7 +47,8 @@ export async function listAdminUsers() {
     ...user,
     customer: data.customers.find((customer) => customer.userId === user.id) ?? null,
     externalAccountCount: data.externalAccounts.filter((account) => account.userId === user.id).length,
-    withdrawalCount: data.withdrawals.filter((withdrawal) => withdrawal.userId === user.id).length
+    withdrawalCount: data.withdrawals.filter((withdrawal) => withdrawal.userId === user.id).length,
+    onrampOrderCount: (data.onrampOrders ?? []).filter((order) => order.userId === user.id).length
   }));
 }
 
@@ -81,4 +84,16 @@ export async function listAdminReconciliationRuns() {
       ...run,
       findings: (data.reconciliationFindings ?? []).filter((finding) => finding.runId === run.id)
     }));
+}
+
+
+export async function listAdminOnrampOrders() {
+  const data = await db.read();
+  return (data.onrampOrders ?? [])
+    .map((order) => ({
+      ...order,
+      user: data.users.find((user) => user.id === order.userId) ?? null,
+      customer: data.customers.find((customer) => customer.id === order.customerId) ?? null
+    }))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }

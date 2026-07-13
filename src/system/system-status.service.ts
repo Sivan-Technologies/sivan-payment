@@ -62,14 +62,16 @@ export function isUserMutationBlocked(mode: SystemStatusRecord['mode'], method: 
 
   const maintenanceBlocked = [
     /^\/api\/external-accounts/,
-    /^\/api\/withdrawals$/
+    /^\/api\/withdrawals$/,
+    /^\/api\/onramp\/orders$/
   ];
 
   const pausedBlocked = [
     /^\/api\/customers$/,
     /^\/api\/customers\/kyc-link$/,
     /^\/api\/external-accounts/,
-    /^\/api\/withdrawals$/
+    /^\/api\/withdrawals$/,
+    /^\/api\/onramp\/orders$/
   ];
 
   const patterns = mode === 'maintenance' ? maintenanceBlocked : pausedBlocked;

@@ -7,6 +7,7 @@ import type {
   AdminUser,
   AdminViewKey,
   AdminWithdrawal,
+  AdminOnrampOrder,
   EconomicsEstimate,
   OfframpControls,
   PaymentControl,
@@ -23,6 +24,7 @@ const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
   { key: 'analytics', icon: '▧', label: 'Analytics' },
   { key: 'users', icon: '👥', label: 'Users' },
   { key: 'withdrawals', icon: '↗', label: 'Withdrawals' },
+  { key: 'onramp', icon: '↙', label: 'On-ramp' },
   { key: 'reconciliation', icon: '⟳', label: 'Reconciliation' },
   { key: 'providers', icon: '◈', label: 'Providers' },
   { key: 'webhooks', icon: '☷', label: 'Webhooks' },
@@ -105,6 +107,7 @@ export default function App() {
   const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [withdrawals, setWithdrawals] = useState<AdminWithdrawal[]>([]);
+  const [onrampOrders, setOnrampOrders] = useState<AdminOnrampOrder[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookEventRecord[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [reconciliationRuns, setReconciliationRuns] = useState<AdminReconciliationRun[]>([]);
@@ -146,11 +149,12 @@ export default function App() {
     setAdminError(null);
     try {
       await checkApi();
-      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult] = await Promise.allSettled([
+      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
         api<AdminUser[]>('/api/admin/users'),
         api<AdminWithdrawal[]>('/api/admin/withdrawals'),
+        api<AdminOnrampOrder[]>('/api/admin/onramp/orders'),
         api<WebhookEventRecord[]>('/api/admin/webhooks'),
         api<AdminAuditLog[]>('/api/admin/audit-logs'),
         api<AdminReconciliationRun[]>('/api/admin/reconciliation/runs'),
@@ -162,6 +166,7 @@ export default function App() {
       if (analyticsResult.status === 'fulfilled') setAnalytics(analyticsResult.value);
       if (usersResult.status === 'fulfilled') setUsers(usersResult.value);
       if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
+      if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
       if (webhooksResult.status === 'fulfilled') setWebhooks(webhooksResult.value);
       if (auditLogsResult.status === 'fulfilled') setAuditLogs(auditLogsResult.value);
       if (reconciliationRunsResult.status === 'fulfilled') setReconciliationRuns(reconciliationRunsResult.value);
@@ -290,6 +295,7 @@ export default function App() {
         {view === 'analytics' && <Analytics analytics={analytics} />}
         {view === 'users' && <Users users={users} />}
         {view === 'withdrawals' && <Withdrawals withdrawals={withdrawals} />}
+        {view === 'onramp' && <OnrampOrders orders={onrampOrders} />}
         {view === 'reconciliation' && <Reconciliation onRun={runReconciliation} result={reconciliation} loading={loading} />}
         {view === 'providers' && <Providers providers={providers} routingDecision={routingDecision} onRoute={testRoute} />}
         {view === 'controls' && <Controls controls={paymentControls} systemStatus={systemStatus} api={api} onUpdated={refreshAdmin} notify={notify} hasAdminKey={Boolean(adminApiKey)} error={adminError} />}
@@ -433,6 +439,11 @@ function Users({ users }: { users: AdminUser[] }) {
 function Withdrawals({ withdrawals, compact = false }: { withdrawals: AdminWithdrawal[]; compact?: boolean }) {
   return <article className="panel"><div className="panel-head"><div><p className="eyebrow">Off-ramp</p><h3>{compact ? 'Recent withdrawals' : 'Withdrawal operations'}</h3></div></div>{!withdrawals.length ? <Empty>No withdrawals found.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>ID</th><th>User</th><th>Status</th><th>Provider</th><th>Currency</th><th>Amount</th><th>Fee</th><th>Rail</th><th>Created</th></tr></thead><tbody>{withdrawals.map((w) => <tr key={w.id}><td>{w.id}</td><td>{w.user?.email || w.userId}</td><td><Badge value={w.status} /></td><td>{w.provider}</td><td>{w.destinationCurrency?.toUpperCase()}</td><td>{w.destinationAmount || '—'}</td><td>{w.feeAmount || w.feePercent || '—'}</td><td>{w.liquidationAddress?.destinationPaymentRail || w.externalAccount?.paymentRail || '—'}</td><td>{new Date(w.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>;
 }
+
+function OnrampOrders({ orders }: { orders: AdminOnrampOrder[] }) {
+  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">Fiat to crypto</p><h3>On-ramp orders</h3></div></div>{!orders.length ? <Empty>No on-ramp orders found.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>ID</th><th>User</th><th>Status</th><th>Provider</th><th>Fiat</th><th>Crypto</th><th>Rail</th><th>Reference</th><th>Created</th></tr></thead><tbody>{orders.map((order) => <tr key={order.id}><td>{order.id}</td><td>{order.user?.email || order.userId}</td><td><Badge value={order.status} /></td><td>{order.provider}</td><td>{order.amount} {order.sourceCurrency.toUpperCase()}</td><td>{order.netAmount || '—'} {order.destinationCurrency.toUpperCase()} · {order.destinationChain}</td><td>{order.sourcePaymentRail}</td><td>{order.providerReference || order.providerTransferId || '—'}</td><td>{new Date(order.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>;
+}
+
 
 function Reconciliation({ onRun, result, loading }: { onRun: (event: FormEvent<HTMLFormElement>) => void; result: ReconciliationResult | null; loading: boolean }) {
   return <section className="panel-grid two"><article className="panel form-panel"><p className="eyebrow">Controls</p><h3>Run reconciliation</h3><p className="muted">Compare Sivan withdrawals with provider drain history. Always run dry-run first.</p><form className="form" onSubmit={onRun}><label>Mode<select name="dryRun" defaultValue="true"><option value="true">Dry-run only</option><option value="false">Live update records</option></select></label><label>Provider<input name="provider" placeholder="bridge" /></label><label>User ID<input name="userId" placeholder="optional" /></label><label>Liquidation address ID<input name="liquidationAddressId" placeholder="optional" /></label><button className="primary-btn" disabled={loading}>{loading ? 'Running...' : 'Run reconciliation'}</button></form></article><article className="panel"><div className="panel-head"><div><p className="eyebrow">Result</p><h3>Findings</h3></div></div>{!result ? <Empty>No reconciliation run yet.</Empty> : <><div className="stats-grid mini"><Stat label="Dry-run" value={result.dryRun ? 'Yes' : 'No'} /><Stat label="Drains" value={result.summary.checkedDrains} /><Stat label="Updated" value={result.summary.updatedWithdrawals} /><Stat label="Errors" value={result.summary.providerErrors} /></div><div className="list">{result.findings.length ? result.findings.map((finding, index) => <div className="list-item" key={index}><strong>{finding.type}</strong><Badge value={finding.severity} /><small>{finding.message}</small><small>{finding.withdrawalId || finding.liquidationAddressId || finding.providerDrainId || ''}</small></div>) : <Empty>No findings.</Empty>}</div></>}</article></section>;

@@ -53,7 +53,7 @@ export interface WithdrawalRecord {
   liquidationAddressId: string;
   provider: string;
   providerDrainId?: string;
-  sourceCurrency: 'usdc';
+  sourceCurrency: 'usdc' | 'usdt';
   destinationCurrency: 'usd' | 'gbp' | 'eur';
   sourceAmount?: string;
   destinationAmount?: string;
@@ -186,4 +186,30 @@ export interface SystemStatus {
   estimatedResumeAt?: string;
   updatedBy?: string;
   updatedAt: string;
+}
+
+
+export interface OnrampOrderRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  provider: string;
+  providerTransferId?: string;
+  sourceCurrency: 'usd' | 'gbp' | 'eur';
+  sourcePaymentRail: string;
+  destinationCurrency: 'usdc' | 'usdt';
+  destinationChain: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
+  destinationAddress: string;
+  amount: string;
+  feePercent?: string;
+  feeAmount?: string;
+  netAmount?: string;
+  providerReference?: string;
+  sourceDepositInstructions?: any;
+  destinationTxHash?: string;
+  status: string;
+  statusReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }
