@@ -136,6 +136,14 @@ export interface DepositResponse {
 }
 
 
+export interface CustomerTypeControl {
+  customerType: 'individual' | 'business';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
 export interface PaymentControl {
   currency: 'usd' | 'gbp' | 'eur';
   enabled: boolean;
@@ -164,6 +172,7 @@ export interface NetworkControl {
 }
 
 export interface OfframpControls {
+  customerTypes: CustomerTypeControl[];
   payoutCurrencies: PaymentControl[];
   sourceAssets: AssetControl[];
   sourceNetworks: NetworkControl[];

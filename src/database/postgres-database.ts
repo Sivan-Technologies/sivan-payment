@@ -18,7 +18,8 @@ import type {
   PaymentControlRecord,
   AssetControlRecord,
   NetworkControlRecord,
-  SystemStatusRecord
+  SystemStatusRecord,
+  CustomerTypeControlRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -80,6 +81,7 @@ export class PostgresDatabase {
       const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
+      const customerTypeControls = await client.query('select * from payments_customer_type_controls order by customer_type asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -95,7 +97,8 @@ export class PostgresDatabase {
         paymentControls: paymentControls.rows.map(mapPaymentControl),
         assetControls: assetControls.rows.map(mapAssetControl),
         networkControls: networkControls.rows.map(mapNetworkControl),
-        systemStatus: systemStatus.rows.map(mapSystemStatus)
+        systemStatus: systemStatus.rows.map(mapSystemStatus),
+        customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl)
       };
     } finally {
       client.release();
@@ -127,6 +130,7 @@ export class PostgresDatabase {
       for (const control of data.assetControls ?? []) await upsertAssetControl(client, control);
       for (const control of data.networkControls ?? []) await upsertNetworkControl(client, control);
       for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
+      for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -330,6 +334,29 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapCustomerTypeControl(row: any): CustomerTypeControlRecord {
+  return {
+    customerType: row.customer_type,
+    enabled: row.enabled,
+    label: row.label,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertCustomerTypeControl(client: pg.PoolClient, item: CustomerTypeControlRecord) {
+  await client.query(
+    `insert into payments_customer_type_controls (customer_type, enabled, label, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5)
+     on conflict (customer_type) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.customerType, item.enabled, item.label, item.updatedBy, item.updatedAt]
+  );
+}
 
 function mapSystemStatus(row: any): SystemStatusRecord {
   return {

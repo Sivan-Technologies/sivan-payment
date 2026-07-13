@@ -63,6 +63,11 @@ function shortRef(value?: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+const fallbackCustomerTypes = [
+  { customerType: 'individual' as const, enabled: true, label: 'Individual', updatedAt: new Date().toISOString() },
+  { customerType: 'business' as const, enabled: false, label: 'Business', updatedAt: new Date().toISOString() }
+];
+
 const fallbackSourceAssets: AssetControl[] = [
   { asset: 'usdc', enabled: true, label: 'USDC', updatedAt: new Date().toISOString() },
   { asset: 'usdt', enabled: false, label: 'USDT', updatedAt: new Date().toISOString() }
@@ -81,12 +86,14 @@ function normalizeOfframpControls(value: unknown): OfframpControls {
   const data = value as Partial<OfframpControls> | PaymentControl[] | undefined;
   if (Array.isArray(data)) {
     return {
+      customerTypes: fallbackCustomerTypes,
       payoutCurrencies: data,
       sourceAssets: fallbackSourceAssets,
       sourceNetworks: fallbackSourceNetworks
     };
   }
   return {
+    customerTypes: data?.customerTypes ?? fallbackCustomerTypes,
     payoutCurrencies: data?.payoutCurrencies ?? [],
     sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
     sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks
@@ -123,7 +130,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
-  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
+  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
   const [withdrawalReview, setWithdrawalReview] = useState<null | { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string }>(null);
@@ -148,6 +155,7 @@ export default function App() {
     setMobileMenuOpen(false);
     setUserMenuOpen(false);
   };
+  const enabledCustomerTypes = (paymentControls.customerTypes ?? fallbackCustomerTypes).filter((control) => control.enabled);
   const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
@@ -250,7 +258,7 @@ export default function App() {
 
   const loadControls = useCallback(async () => {
     const [controls, status] = await Promise.all([
-      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ payoutCurrencies: [], sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks })),
+      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks })),
       api<SystemStatus>('/api/system/status').catch(() => systemStatus)
     ]);
     setPaymentControls(controls);
@@ -372,9 +380,11 @@ export default function App() {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
     if (!canStartKyc) return notify(systemStatus.message || 'Verification is temporarily paused.', 'error');
+    const formBeforeLoading = getForm(event.currentTarget);
+    if (!enabledCustomerTypes.some((control) => control.customerType === formBeforeLoading.type)) return notify(`${formBeforeLoading.type === 'business' ? 'Business' : 'Individual'} verification is currently unavailable.`, 'error');
     setLoading(true);
     try {
-      const body = getForm(event.currentTarget);
+      const body = formBeforeLoading;
       const created = await api<CustomerRecord>('/api/customers/kyc-link', {
         method: 'POST',
         body: JSON.stringify({ userId: user.id, type: body.type, redirectUri: body.redirectUri || undefined })
@@ -631,7 +641,7 @@ export default function App() {
               <p className="muted">Verification helps protect your account and enables bank withdrawals.</p>
               {!hasUser ? <Empty>Create your account first.</Empty> : (
                 <form className="form" onSubmit={handleKyc}>
-                  <label>Account type<select name="type" defaultValue="individual"><option value="individual">Individual</option><option value="business">Business</option></select></label>
+                  <label>Account type<select name="type" defaultValue="individual">{(paymentControls.customerTypes ?? fallbackCustomerTypes).map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — currently unavailable' : ''}</option>)}</select></label>
                   <input name="redirectUri" type="hidden" value="https://sivan-payments-user-test.vercel.app/verification-complete" />
                   <button className="primary-btn" disabled={loading || !canStartKyc}>{loading ? 'Starting...' : canStartKyc ? 'Start verification' : 'Verification paused'}</button>
                 </form>

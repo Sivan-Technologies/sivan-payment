@@ -1066,3 +1066,45 @@ Avalanche C-Chain
 ```
 
 Optimism has been removed from the supported network list and replaced with Avalanche C-Chain.
+
+## 23. Customer Type Controls
+
+Admin can control which onboarding types are available:
+
+```text
+Individual
+Business
+```
+
+Default configuration:
+
+```text
+Individual = enabled
+Business = disabled
+```
+
+Reason:
+
+```text
+The current MVP is focused on individual first-party bank withdrawals.
+Business/KYB can be enabled later when Sivan is ready to support business compliance flows.
+```
+
+Frontend behavior:
+
+```text
+Business appears in the account type selector but is disabled when the admin control is off.
+```
+
+Backend behavior:
+
+```text
+POST /api/customers/kyc-link is blocked for disabled customer types.
+POST /api/customers is also blocked for disabled customer types.
+```
+
+Safety rule:
+
+```text
+At least one customer type must remain enabled.
+```

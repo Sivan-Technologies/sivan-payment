@@ -18,7 +18,8 @@ const emptyDb = (): DatabaseShape => ({
   paymentControls: [],
   assetControls: [],
   networkControls: [],
-  systemStatus: []
+  systemStatus: [],
+  customerTypeControls: []
 });
 
 export class JsonDatabase {

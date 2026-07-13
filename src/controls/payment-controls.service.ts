@@ -1,9 +1,14 @@
 import { z } from 'zod';
 import { db } from '../database/json-database.js';
-import type { AssetControlRecord, Chain, Currency, NetworkControlRecord, PaymentControlRecord, SourceCurrency } from '../database/types.js';
+import type { AssetControlRecord, Chain, Currency, CustomerTypeControlRecord, NetworkControlRecord, PaymentControlRecord, SourceCurrency } from '../database/types.js';
 import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
+
+export const DEFAULT_CUSTOMER_TYPE_CONTROLS: CustomerTypeControlRecord[] = [
+  { customerType: 'individual', enabled: true, label: 'Individual', updatedBy: 'system', updatedAt: nowIso() },
+  { customerType: 'business', enabled: false, label: 'Business', updatedBy: 'system', updatedAt: nowIso() }
+];
 
 export const DEFAULT_PAYMENT_CONTROLS: PaymentControlRecord[] = [
   { currency: 'usd', enabled: true, label: 'USD — US bank account', accountType: 'us', defaultPaymentRail: 'ach', updatedBy: 'system', updatedAt: nowIso() },
@@ -26,6 +31,10 @@ export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
 ];
 
 export const updatePaymentControlsSchema = z.object({
+  customerTypes: z.array(z.object({
+    customerType: z.enum(['individual', 'business']),
+    enabled: z.boolean()
+  })).optional(),
   payoutCurrencies: z.array(z.object({
     currency: z.enum(['usd', 'gbp', 'eur']),
     enabled: z.boolean()
@@ -46,6 +55,7 @@ export const updatePaymentControlsSchema = z.object({
 });
 
 export interface OfframpControlsResponse {
+  customerTypes: CustomerTypeControlRecord[];
   payoutCurrencies: PaymentControlRecord[];
   sourceAssets: AssetControlRecord[];
   sourceNetworks: NetworkControlRecord[];
@@ -53,11 +63,16 @@ export interface OfframpControlsResponse {
 
 export async function listPaymentControls(): Promise<OfframpControlsResponse> {
   const data = await db.read();
+  const existingCustomerTypes = data.customerTypeControls ?? [];
   const existingPayouts = data.paymentControls ?? [];
   const existingAssets = data.assetControls ?? [];
   const existingNetworks = data.networkControls ?? [];
 
   return {
+    customerTypes: DEFAULT_CUSTOMER_TYPE_CONTROLS.map((defaultControl) => ({
+      ...defaultControl,
+      ...(existingCustomerTypes.find((item) => item.customerType === defaultControl.customerType) ?? {})
+    })),
     payoutCurrencies: DEFAULT_PAYMENT_CONTROLS.map((defaultControl) => ({
       ...defaultControl,
       ...(existingPayouts.find((item) => item.currency === defaultControl.currency) ?? {})
@@ -75,6 +90,15 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
 
 export async function getEnabledPaymentControls() {
   return (await listPaymentControls()).payoutCurrencies.filter((control) => control.enabled);
+}
+
+export async function requireCustomerTypeEnabled(customerType: 'individual' | 'business') {
+  const controls = await listPaymentControls();
+  const control = controls.customerTypes.find((item) => item.customerType === customerType);
+  if (!control?.enabled) {
+    throw badRequest(`${control?.label ?? customerType} verification is currently unavailable`);
+  }
+  return control;
 }
 
 export async function requireCurrencyEnabled(currency: Currency) {
@@ -108,10 +132,15 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
   const now = nowIso();
   const current = await listPaymentControls();
 
+  const customerTypePatch = input.customerTypes ?? [];
   const payoutPatch = input.payoutCurrencies ?? input.controls ?? [];
   const assetPatch = input.sourceAssets ?? [];
   const networkPatch = input.sourceNetworks ?? [];
 
+  const customerTypes = current.customerTypes.map((control) => {
+    const patch = customerTypePatch.find((item) => item.customerType === control.customerType);
+    return patch ? { ...control, enabled: patch.enabled, updatedBy: actorId, updatedAt: now } : control;
+  });
   const payoutCurrencies = current.payoutCurrencies.map((control) => {
     const patch = payoutPatch.find((item) => item.currency === control.currency);
     return patch ? { ...control, enabled: patch.enabled, updatedBy: actorId, updatedAt: now } : control;
@@ -125,6 +154,9 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
     return patch ? { ...control, enabled: patch.enabled, updatedBy: actorId, updatedAt: now } : control;
   });
 
+  if (!customerTypes.some((control) => control.enabled)) {
+    throw badRequest('At least one customer type must remain enabled');
+  }
   if (!payoutCurrencies.some((control) => control.enabled)) {
     throw badRequest('At least one payout currency must remain enabled');
   }
@@ -136,10 +168,11 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
   }
 
   await db.mutate((data) => {
+    data.customerTypeControls = customerTypes;
     data.paymentControls = payoutCurrencies;
     data.assetControls = sourceAssets;
     data.networkControls = sourceNetworks;
-    return { payoutCurrencies, sourceAssets, sourceNetworks };
+    return { customerTypes, payoutCurrencies, sourceAssets, sourceNetworks };
   });
 
   await createAuditLog({
@@ -149,11 +182,12 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
     resourceType: 'payments_control_settings',
     severity: 'warning',
     metadata: {
+      customerTypes: customerTypes.map(({ customerType, enabled }) => ({ customerType, enabled })),
       payoutCurrencies: payoutCurrencies.map(({ currency, enabled }) => ({ currency, enabled })),
       sourceAssets: sourceAssets.map(({ asset, enabled }) => ({ asset, enabled })),
       sourceNetworks: sourceNetworks.map(({ network, enabled }) => ({ network, enabled }))
     }
   });
 
-  return { payoutCurrencies, sourceAssets, sourceNetworks };
+  return { customerTypes, payoutCurrencies, sourceAssets, sourceNetworks };
 }

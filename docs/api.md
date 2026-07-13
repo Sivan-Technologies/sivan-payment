@@ -499,3 +499,54 @@ At least one deposit network must remain enabled.
 ```
 
 The backend blocks disabled assets/networks/currencies even if a user tries to submit them manually.
+
+## Customer type controls
+
+Admin can enable or disable customer onboarding types.
+
+Defaults:
+
+```text
+Individual = enabled
+Business = disabled
+```
+
+This means the user frontend can show Business as an unavailable option while only allowing Individual onboarding until Sivan is ready for KYB.
+
+Customer type controls are part of the controls response:
+
+```http
+GET /api/offramp/controls
+```
+
+Response includes:
+
+```json
+{
+  "customerTypes": [
+    { "customerType": "individual", "enabled": true, "label": "Individual" },
+    { "customerType": "business", "enabled": false, "label": "Business" }
+  ]
+}
+```
+
+Admin update:
+
+```http
+PUT /api/admin/offramp/controls
+x-admin-api-key: <admin_key>
+Content-Type: application/json
+
+{
+  "customerTypes": [
+    { "customerType": "individual", "enabled": true },
+    { "customerType": "business", "enabled": false }
+  ]
+}
+```
+
+Safety rule:
+
+```text
+At least one customer type must remain enabled.
+```

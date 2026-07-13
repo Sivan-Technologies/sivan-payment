@@ -17,6 +17,15 @@ export type WithdrawalStatus =
 
 
 
+
+export interface CustomerTypeControlRecord {
+  customerType: 'individual' | 'business';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
 export interface SystemStatusRecord {
   id: 'global';
   mode: 'active' | 'maintenance' | 'paused';
@@ -230,4 +239,5 @@ export interface DatabaseShape {
   assetControls: AssetControlRecord[];
   networkControls: NetworkControlRecord[];
   systemStatus: SystemStatusRecord[];
+  customerTypeControls: CustomerTypeControlRecord[];
 }

@@ -58,6 +58,11 @@ function Kv({ label, value }: { label: string; value?: string | number | null })
   return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>;
 }
 
+const fallbackCustomerTypes = [
+  { customerType: 'individual' as const, enabled: true, label: 'Individual', updatedAt: new Date().toISOString() },
+  { customerType: 'business' as const, enabled: false, label: 'Business', updatedAt: new Date().toISOString() }
+];
+
 const fallbackSourceAssets: any[] = [
   { asset: 'usdc', enabled: true, label: 'USDC', updatedAt: new Date().toISOString() },
   { asset: 'usdt', enabled: false, label: 'USDT', updatedAt: new Date().toISOString() }
@@ -75,9 +80,10 @@ const fallbackSourceNetworks: any[] = [
 function normalizeOfframpControls(value: unknown): any {
   const data = value as any;
   if (Array.isArray(data)) {
-    return { payoutCurrencies: data, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks };
+    return { customerTypes: fallbackCustomerTypes, payoutCurrencies: data, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks };
   }
   return {
+    customerTypes: data?.customerTypes ?? fallbackCustomerTypes,
     payoutCurrencies: data?.payoutCurrencies ?? [],
     sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
     sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks
@@ -103,7 +109,7 @@ export default function App() {
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [reconciliationRuns, setReconciliationRuns] = useState<AdminReconciliationRun[]>([]);
   const [providers, setProviders] = useState<ProviderCapability[]>([]);
-  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
+  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [routingDecision, setRoutingDecision] = useState<RoutingDecision | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
@@ -479,17 +485,19 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
   }
 
   const normalizedControls = normalizeOfframpControls(controls);
+  const customerTypes = normalizedControls.customerTypes ?? fallbackCustomerTypes;
   const payoutCurrencies = normalizedControls.payoutCurrencies ?? [];
   const sourceAssets = normalizedControls.sourceAssets ?? [];
   const sourceNetworks = normalizedControls.sourceNetworks ?? [];
   const hasAnyControls = payoutCurrencies.length > 0 || sourceAssets.length > 0 || sourceNetworks.length > 0;
 
-  async function toggleControl(group: 'payout' | 'asset' | 'network', key: string, enabled: boolean) {
+  async function toggleControl(group: 'customer' | 'payout' | 'asset' | 'network', key: string, enabled: boolean) {
     setSavingKey(`${group}:${key}`);
     try {
       await api('/api/admin/offramp/controls', {
         method: 'PUT',
         body: JSON.stringify({
+          customerTypes: customerTypes.map((control: any) => ({ customerType: control.customerType, enabled: group === 'customer' && control.customerType === key ? enabled : control.enabled })),
           payoutCurrencies: payoutCurrencies.map((control: any) => ({ currency: control.currency, enabled: group === 'payout' && control.currency === key ? enabled : control.enabled })),
           sourceAssets: sourceAssets.map((control: any) => ({ asset: control.asset, enabled: group === 'asset' && control.asset === key ? enabled : control.enabled })),
           sourceNetworks: sourceNetworks.map((control: any) => ({ network: control.network, enabled: group === 'network' && control.network === key ? enabled : control.enabled }))
@@ -539,7 +547,8 @@ function Controls({ controls, systemStatus, api, onUpdated, notify, hasAdminKey,
         <article className="panel control-panel effect-panel">
           <div className="panel-head"><div><p className="eyebrow">System-wide effect</p><h3>What happens instantly</h3></div></div>
           <div className="details-box">
-            <Kv label="Payout currencies" value={payoutCurrencies.filter((control: any) => control.enabled).map((control: any) => control.currency.toUpperCase()).join(', ') || 'None'} />
+            <Kv label="Customer types" value={customerTypes.filter((control: any) => control.enabled).map((control: any) => control.label).join(', ') || 'None'} />
+          <Kv label="Payout currencies" value={payoutCurrencies.filter((control: any) => control.enabled).map((control: any) => control.currency.toUpperCase()).join(', ') || 'None'} />
             <Kv label="Deposit assets" value={sourceAssets.filter((control: any) => control.enabled).map((control: any) => control.asset.toUpperCase()).join(', ') || 'None'} />
             <Kv label="Deposit networks" value={sourceNetworks.filter((control: any) => control.enabled).map((control: any) => control.label).join(', ') || 'None'} />
             <Kv label="Safety" value="At least one payout currency, asset, and network must remain enabled" />

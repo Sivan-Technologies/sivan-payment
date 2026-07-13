@@ -85,6 +85,16 @@ async function main() {
     assert(true, 'KYC created/approved in mock mode');
 
     const initial = await getControls();
+    assert(initial.customerTypes.length === 2, 'customer type controls include Individual and Business');
+    assert(initial.customerTypes.find((x: any) => x.customerType === 'individual')?.enabled === true, 'individual verification is enabled by default');
+    assert(initial.customerTypes.find((x: any) => x.customerType === 'business')?.enabled === false, 'business verification is disabled by default');
+    await request('POST', '/api/customers/kyc-link', { userId: user.id, type: 'business' }, { expect: 400 });
+    assert(true, 'business verification is blocked while disabled');
+    await updateControls({ customerTypes: [{ customerType: 'business', enabled: true }] });
+    const businessControls = await getControls();
+    assert(businessControls.customerTypes.find((x: any) => x.customerType === 'business')?.enabled === true, 'business verification can be enabled by admin');
+    await updateControls({ customerTypes: [{ customerType: 'business', enabled: false }] });
+
     assert(initial.payoutCurrencies.length === 3, 'payout controls include USD, GBP, EUR');
     assert(initial.sourceAssets.some((x: any) => x.asset === 'usdc'), 'asset controls include USDC');
     assert(initial.sourceAssets.some((x: any) => x.asset === 'usdt'), 'asset controls include USDT');
@@ -133,6 +143,8 @@ async function main() {
       assert(true, `${network} withdrawal succeeds after re-enable`);
     }
 
+    await updateControls({ customerTypes: [{ customerType: 'individual', enabled: false }, { customerType: 'business', enabled: false }] }, 400);
+    assert(true, 'cannot disable all customer types');
     await updateControls({ payoutCurrencies: [{ currency: 'usd', enabled: false }, { currency: 'gbp', enabled: false }, { currency: 'eur', enabled: false }] }, 400);
     assert(true, 'cannot disable all payout currencies');
     await updateControls({ sourceAssets: [{ asset: 'usdc', enabled: false }, { asset: 'usdt', enabled: false }] }, 400);
