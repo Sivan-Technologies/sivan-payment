@@ -827,24 +827,21 @@ export default function App() {
         )}
 
         {view === 'withdraw' && (
-          <section className="panel-grid two">
-            <article className="panel form-panel">
-              <p className="eyebrow">New withdrawal</p>
-              <h3>Withdraw stablecoins</h3>
-              <p className="muted">Choose a verified bank account, asset, and network before creating a deposit address.</p>
-              {!accounts.some((account) => enabledControls.some((control) => control.currency === account.currency)) ? <Empty>Add an enabled bank account first.</Empty> : !enabledAssets.length || !enabledNetworks.length ? <Empty>Deposits are temporarily unavailable.</Empty> : (
-                <form className="form" onSubmit={handleWithdraw}>
-                  <label>Bank account<select name="externalAccountId" defaultValue={primaryAccount?.id}>{accounts.filter((account) => enabledControls.some((control) => control.currency === account.currency)).map((account) => <option key={account.id} value={account.id}>{account.bankName || 'Bank account'} · {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select></label>
-                  <label>Deposit asset<select name="sourceCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'}>{enabledAssets.map((asset) => <option key={asset.asset} value={asset.asset}>{asset.label}</option>)}</select></label>
-                  <label>Deposit network<select name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'}>{enabledNetworks.map((network) => <option key={network.network} value={network.network}>{network.label}</option>)}</select></label>
-                  <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
-                  <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Creating...' : canCreatePaymentActions ? 'Get deposit address' : 'Withdrawals paused'}</button>
-                </form>
-              )}
-            </article>
-            <WithdrawalReviewCard review={withdrawalReview} feePercent={feePolicy?.percent} loading={loading} onCancel={() => setWithdrawalReview(null)} onConfirm={confirmWithdrawal} />
-            {!withdrawalReview && <DepositCard result={depositResult} />}
-          </section>
+          <OffRampWizard
+            accounts={accounts}
+            enabledControls={enabledControls}
+            enabledAssets={enabledAssets}
+            enabledNetworks={enabledNetworks}
+            primaryAccount={primaryAccount}
+            withdrawalReview={withdrawalReview}
+            depositResult={depositResult}
+            feePercent={feePolicy?.percent}
+            loading={loading}
+            canCreatePaymentActions={canCreatePaymentActions}
+            onSubmit={handleWithdraw}
+            onCancelReview={() => setWithdrawalReview(null)}
+            onConfirm={confirmWithdrawal}
+          />
         )}
 
         {view === 'buy' && <OnRampView hasUser={hasUser} isVerified={isVerified} onGetStarted={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} />}
@@ -966,6 +963,113 @@ function OnRampView({ hasUser, isVerified, onGetStarted }: { hasUser: boolean; i
         <div className="verification-note">This screen is intentionally not creating live buy orders yet. We will wire it to real on-ramp APIs once those backend rails are ready.</div>
       </article>
     </section>
+  );
+}
+
+
+type WithdrawalReviewState = { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string };
+
+function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm }: {
+  accounts: ExternalAccountRecord[];
+  enabledControls: PaymentControl[];
+  enabledAssets: AssetControl[];
+  enabledNetworks: NetworkControl[];
+  primaryAccount?: ExternalAccountRecord;
+  withdrawalReview: WithdrawalReviewState | null;
+  depositResult: DepositResponse | null;
+  feePercent?: string;
+  loading: boolean;
+  canCreatePaymentActions: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCancelReview: () => void;
+  onConfirm: () => void;
+}) {
+  const hasEnabledBank = accounts.some((account) => enabledControls.some((control) => control.currency === account.currency));
+  const step = depositResult ? 3 : withdrawalReview ? 2 : 1;
+  return (
+    <section className="offramp-wizard">
+      <div className="trade-head">
+        <div>
+          <p className="eyebrow">Sell stablecoins</p>
+          <h3>Withdraw to your bank</h3>
+          <p className="muted">Choose a verified bank account, asset, and network. Review carefully before a deposit address is created.</p>
+        </div>
+        <div className="wizard-stepper">
+          <StepDot active={step === 1} done={step > 1} label="Details" />
+          <StepDot active={step === 2} done={step > 2} label="Review" />
+          <StepDot active={step === 3} done={false} label="Deposit" />
+        </div>
+      </div>
+      <div className="trade-grid">
+        <div>
+          {step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
+          {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
+          {step === 3 && <DepositCard result={depositResult} />}
+        </div>
+        <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} />
+      </div>
+    </section>
+  );
+}
+
+function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) {
+  return <div className={`step-node ${active ? 'active' : ''} ${done ? 'done' : ''}`}><span>{done ? '✓' : active ? '•' : ''}</span>{label}</div>;
+}
+
+function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, hasEnabledBank, loading, canCreatePaymentActions, onSubmit }: {
+  accounts: ExternalAccountRecord[];
+  enabledControls: PaymentControl[];
+  enabledAssets: AssetControl[];
+  enabledNetworks: NetworkControl[];
+  primaryAccount?: ExternalAccountRecord;
+  hasEnabledBank: boolean;
+  loading: boolean;
+  canCreatePaymentActions: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  if (!hasEnabledBank) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Add a bank first</h3><Empty>Add an enabled bank account before creating a withdrawal.</Empty></article>;
+  if (!enabledAssets.length || !enabledNetworks.length) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Deposits unavailable</h3><Empty>Deposits are temporarily unavailable.</Empty></article>;
+  return (
+    <article className="panel form-panel trade-card">
+      <p className="eyebrow">Step 1</p>
+      <h3>Choose payout and deposit rail</h3>
+      <p className="muted">Your deposit address will be tied to this bank account, token, and network.</p>
+      <form className="form premium-form" onSubmit={onSubmit}>
+        <label>Bank payout
+          <select name="externalAccountId" defaultValue={primaryAccount?.id}>{accounts.filter((account) => enabledControls.some((control) => control.currency === account.currency)).map((account) => <option key={account.id} value={account.id}>{account.bankName || 'Bank account'} · {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select>
+        </label>
+        <div className="split">
+          <label>Deposit asset<select name="sourceCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'}>{enabledAssets.map((asset) => <option key={asset.asset} value={asset.asset}>{asset.label}</option>)}</select></label>
+          <label>Deposit network<select name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'}>{enabledNetworks.map((network) => <option key={network.network} value={network.network}>{network.label}</option>)}</select></label>
+        </div>
+        <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
+        <div className="warning-box compact">You will review these details before a deposit address is created. Send only the selected token on the selected network.</div>
+        <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Preparing review...' : canCreatePaymentActions ? 'Review withdrawal' : 'Withdrawals paused'}</button>
+      </form>
+    </article>
+  );
+}
+
+function OffRampSidePanel({ step, enabledAssets, enabledNetworks }: { step: number; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[] }) {
+  return (
+    <aside className="side-info-stack">
+      <article className="panel">
+        <p className="eyebrow">How this works</p>
+        <h3>Provider-backed deposit address</h3>
+        <ol className="ordered-steps">
+          <li className={step >= 1 ? 'active' : ''}>Choose your bank, token, and network.</li>
+          <li className={step >= 2 ? 'active' : ''}>Review the details and safety warning.</li>
+          <li className={step >= 3 ? 'active' : ''}>Send the selected asset to the generated address.</li>
+          <li>Track deposit detection, conversion, and bank payout.</li>
+        </ol>
+      </article>
+      <article className="panel control-summary-card">
+        <p className="eyebrow">Available now</p>
+        <div className="rail-chips">{enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>)}</div>
+        <div className="rail-chips muted-chips">{enabledNetworks.slice(0, 5).map((network) => <span key={network.network}>{network.label}</span>)}</div>
+        <p className="muted">USDT support is controlled from Admin. Users only see enabled assets and networks.</p>
+      </article>
+    </aside>
   );
 }
 
@@ -1160,7 +1264,25 @@ function BankList({ accounts }: { accounts: ExternalAccountRecord[] }) {
 
 function DepositCard({ result }: { result: DepositResponse | null }) {
   if (!result) return <article className="deposit-card"><p className="eyebrow">Deposit address</p><h3>Ready when you are</h3><p className="muted">Create a withdrawal to receive a deposit address. You will review the asset, network, fee, and payout currency before sending.</p></article>;
-  return <article className="deposit-card"><p className="eyebrow">Send selected asset</p><h3>Deposit address created</h3><p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</p><p className="muted">We will convert it and send {result.withdrawal.destinationCurrency.toUpperCase()} to your selected bank account.</p><div className="qr-wrap"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div className="deposit-address">{result.deposit.address}</div></div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></article>;
+  return (
+    <article className="deposit-card live-deposit-card">
+      <p className="eyebrow">Step 3</p>
+      <h3>Deposit address created</h3>
+      <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</p>
+      <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address">{result.deposit.address}</div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button></div></div>
+      <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Payout currency" value={result.withdrawal.destinationCurrency.toUpperCase()} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></div>
+      <div className="tracking-timeline">
+        <TimelineItem done title="Address created" body="A unique provider-backed deposit address is ready." />
+        <TimelineItem active={result.withdrawal.status === 'pending_deposit'} done={result.withdrawal.status !== 'pending_deposit'} title="Awaiting deposit" body="Send only the selected token and network." />
+        <TimelineItem active={['deposit_received', 'payout_processing'].includes(result.withdrawal.status)} done={result.withdrawal.status === 'completed'} title="Convert and payout" body="Bridge detects the deposit, liquidates, and sends fiat to your bank." />
+        <TimelineItem done={result.withdrawal.status === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
+      </div>
+    </article>
+  );
+}
+
+function TimelineItem({ title, body, done = false, active = false }: { title: string; body: string; done?: boolean; active?: boolean }) {
+  return <div className={`timeline-item ${done ? 'done' : ''} ${active ? 'active' : ''}`}><span>{done ? '✓' : active ? '•' : ''}</span><div><strong>{title}</strong><small>{body}</small></div></div>;
 }
 
 function WithdrawalsList({ withdrawals, compact = false }: { withdrawals: WithdrawalRecord[]; compact?: boolean }) {
