@@ -924,7 +924,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
         <section className="landing-strip" id="rails">
           <span>{assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
           <span>{payoutCurrencies}</span>
-          <span>{networks} + admin-controlled networks</span>
+          <span>{networks}</span>
           <span>NGN coming soon</span>
         </section>
 
