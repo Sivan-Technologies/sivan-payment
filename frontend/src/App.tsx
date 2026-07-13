@@ -860,10 +860,14 @@ export default function App() {
 
 function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurrencies, feePercent, onGetStarted, onDashboard, onBuy }: { isLiveEnv: boolean; appEnv: string; hasUser: boolean; assets: string; networks: string; payoutCurrencies: string; feePercent: string; onGetStarted: () => void; onDashboard: () => void; onBuy: () => void }) {
   const [quoteMode, setQuoteMode] = useState<'sell' | 'buy'>('sell');
+  const [quoteAmount, setQuoteAmount] = useState('1000');
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const numericFee = Number(feePercent || '1.25');
-  const feeAmount = Number.isFinite(numericFee) ? (1000 * numericFee / 100) : 12.5;
-  const receiveAmount = Math.max(0, 1000 - feeAmount);
+  const quoteValue = Math.max(0, Number(quoteAmount.replace(/,/g, '')) || 0);
+  const feeAmount = Number.isFinite(numericFee) ? (quoteValue * numericFee / 100) : 0;
+  const receiveAmount = Math.max(0, quoteValue - feeAmount);
+  const formattedReceiveAmount = receiveAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const updateQuoteAmount = (value: string) => setQuoteAmount(value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1'));
   const faqItems = [
     { q: 'Do I need to complete KYC to use Sivan?', a: 'Yes. Verification is required before bank withdrawals or on-ramp actions. This protects users, reduces fraud, and keeps Sivan aligned with provider-supported payment rails.' },
     { q: 'Which countries and payment methods are supported?', a: `The current off-ramp supports enabled payout rails such as ${payoutCurrencies}. Available options are controlled by Sivan in Admin Controls. NGN is planned as a coming-soon rail as partnerships are finalized.` },
@@ -894,7 +898,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
         <section className="landing-hero premium-hero">
           <div className="landing-copy">
             <p className="eyebrow">Crypto to fiat. Fiat to crypto.</p>
-            <h1>Buy and sell crypto <span>the simple way.</span></h1>
+            <h1>Buy and sell crypto<br /><span>the simple way.</span></h1>
             <p className="lead">Convert USDC, USDT and other supported digital assets directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
             <div className="landing-actions">
               <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
@@ -903,13 +907,13 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
             <div className="landing-trust"><span>✓ Licensed partners</span><span>✓ Non-custodial</span><span>✓ 1–2 day payouts</span></div>
           </div>
           <div className="quote-widget">
-            <div className="widget-tabs"><button className={quoteMode === 'sell' ? 'active' : ''} onClick={() => setQuoteMode('sell')}>Sell</button><button className={quoteMode === 'buy' ? 'active' : ''} onClick={() => { setQuoteMode('buy'); onBuy(); }}>Buy</button></div>
-            <QuoteBox label={quoteMode === 'sell' ? 'You send' : 'You pay'} amount="1,000" asset={quoteMode === 'sell' ? 'USDC' : 'USD'} helper={quoteMode === 'sell' ? '1 USDC ≈ $1.00' : 'Bank transfer'} />
+            <div className="widget-tabs"><button className={quoteMode === 'sell' ? 'active' : ''} onClick={() => setQuoteMode('sell')}>Sell</button><button className={quoteMode === 'buy' ? 'active' : ''} onClick={() => setQuoteMode('buy')}>Buy</button></div>
+            <QuoteBox label={quoteMode === 'sell' ? 'You send' : 'You pay'} amount={quoteAmount} asset={quoteMode === 'sell' ? 'USDC' : 'USD'} helper={quoteMode === 'sell' ? '1 USDC ≈ $1.00' : 'Bank transfer'} editable onAmountChange={updateQuoteAmount} />
             <div className="quote-swap">↕</div>
-            <QuoteBox label={quoteMode === 'sell' ? 'You receive' : 'You get'} amount={quoteMode === 'sell' ? receiveAmount.toFixed(2) : '≈ 987.50'} asset={quoteMode === 'sell' ? 'USD · ACH' : 'USDC'} helper={quoteMode === 'sell' ? 'After Sivan fee' : 'To your wallet'} />
+            <QuoteBox label={quoteMode === 'sell' ? 'You receive' : 'You get'} amount={formattedReceiveAmount} asset={quoteMode === 'sell' ? 'USD · ACH' : 'USDC'} helper={quoteMode === 'sell' ? 'After Sivan fee' : 'After Sivan fee'} />
             <div className="quote-fees">
               <div><span>Rate</span><strong>1 USDC ≈ $1.00</strong></div>
-              <div><span>Sivan fee ({feePercent}%)</span><strong className="danger">−${feeAmount.toFixed(2)}</strong></div>
+              <div><span>Sivan fee ({feePercent}%)</span><strong className="danger">−${feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
               <div><span>Arrival</span><strong>Provider + bank rail timing</strong></div>
             </div>
             <button className="primary-btn quote-btn" onClick={quoteMode === 'sell' ? onGetStarted : onBuy}>{quoteMode === 'sell' ? 'Get deposit address' : 'Preview buy flow'}</button>
@@ -968,8 +972,8 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
   );
 }
 
-function QuoteBox({ label, amount, asset, helper }: { label: string; amount: string; asset: string; helper: string }) {
-  return <div className="quote-box"><div><small>{label}</small><strong>{amount}</strong></div><div><span>{asset}</span><small>{helper}</small></div></div>;
+function QuoteBox({ label, amount, asset, helper, editable = false, onAmountChange }: { label: string; amount: string; asset: string; helper: string; editable?: boolean; onAmountChange?: (value: string) => void }) {
+  return <div className="quote-box"><div><small>{label}</small>{editable ? <input className="quote-amount-input" value={amount} inputMode="decimal" onChange={(event) => onAmountChange?.(event.target.value)} /> : <strong>{amount}</strong>}</div><div><span>{asset}</span><small>{helper}</small></div></div>;
 }
 
 function StepCard({ n, icon, title, body }: { n: string; icon: string; title: string; body: string }) {

@@ -778,3 +778,49 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
     font-size: clamp(34px, 10vw, 48px);
   }
 }
+
+/* Hero text and live quote calculator polish */
+.premium-hero .landing-copy h1 {
+  font-size: clamp(58px, 5.6vw, 78px);
+  line-height: 1.02;
+  letter-spacing: -.075em;
+}
+.premium-hero .landing-copy .lead {
+  font-size: 19px;
+  line-height: 1.68;
+  color: var(--soft);
+}
+.premium-hero .landing-actions .primary-btn,
+.premium-hero .landing-actions .secondary-btn {
+  font-size: 16px;
+  font-weight: 950;
+}
+.premium-hero .landing-trust span {
+  font-size: 14px;
+  font-weight: 850;
+}
+.quote-amount-input {
+  width: min(190px, 100%);
+  border: 0;
+  outline: 0;
+  padding: 0;
+  margin-top: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: -.045em;
+  font-weight: 950;
+}
+.quote-amount-input:focus {
+  box-shadow: none;
+  border: 0;
+}
+.quote-box:focus-within {
+  border-color: rgba(116,221,190,.48);
+  box-shadow: 0 0 0 4px rgba(116,221,190,.08);
+}
+@media (max-width: 720px) {
+  .premium-hero .landing-copy h1 { font-size: clamp(44px, 13vw, 58px); }
+  .premium-hero .landing-copy .lead { font-size: 16.5px; }
+}
