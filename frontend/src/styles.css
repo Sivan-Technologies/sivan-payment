@@ -614,3 +614,20 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   .faq-section { padding-top: 58px; padding-bottom: 58px; }
   .faq-section .faq-item button { font-size: 14.5px; padding: 16px 18px; }
 }
+
+/* Fix FAQ button default browser background */
+.faq-section .faq-item button {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+.faq-section .faq-item {
+  background: #0d151f !important;
+}
+.faq-section .faq-item:hover {
+  border-color: rgba(154,179,202,.30);
+  background: #101a26 !important;
+}
+.faq-section .faq-item button strong {
+  color: #eef3f7 !important;
+}
