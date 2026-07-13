@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
@@ -778,37 +778,9 @@ export default function App() {
         )}
 
 
-        {view === 'kyc' && (
-          <section className="panel-grid two">
-            <article className="panel form-panel">
-              <p className="eyebrow">Step 2</p>
-              <h3>Verify your identity</h3>
-              <p className="muted">Verification helps protect your account and enables bank withdrawals.</p>
-              {!hasUser ? <Empty>Create your account first.</Empty> : (
-                <form className="form" onSubmit={handleKyc} key={customer?.id || 'new-verification'}>
-                  <label>Account type<select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{(paymentControls.customerTypes ?? fallbackCustomerTypes).map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — currently unavailable' : ''}</option>)}</select></label>
-                  {customer?.id && !kycFailed && <p className="form-note">Your verification has already started. Continue with the same account type, or contact support if you need to change it.</p>}
-                  <input name="redirectUri" type="hidden" value={verificationRedirectUri} />
-                  <button className="primary-btn" disabled={!canSubmitKyc}>{kycActionLabel}</button>
-                </form>
-              )}
-            </article>
-            <article className="panel">
-              <div className="panel-head"><h3>Verification status</h3><button className="ghost-btn small" onClick={refreshKyc}>Refresh</button></div>
-              {customer ? <CustomerDetails customer={customer} /> : <Empty>No verification started yet.</Empty>}
-            </article>
-          </section>
-        )}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} />}
 
-        {view === 'banks' && (
-          <section className="panel-grid two">
-            <BankForm onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} />
-            <article className="panel">
-              <div className="panel-head"><h3>Your bank accounts</h3><button className="ghost-btn small" onClick={loadUserData}>Refresh</button></div>
-              <BankList accounts={accounts} />
-            </article>
-          </section>
-        )}
+        {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 
         {view === 'withdraw' && (
           <OffRampWizard
@@ -828,12 +800,12 @@ export default function App() {
           />
         )}
 
-        {view === 'buy' && <OnRampView hasUser={hasUser} isVerified={isVerified} onGetStarted={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} />}
+        {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} />}
 
-        {view === 'history' && <WithdrawalsList withdrawals={withdrawals} />}
+        {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
 
         {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
-        {view === 'help' && <HelpView />}
+        {view === 'help' && <SupportView />}
 
       </main>
     </div>
@@ -1252,13 +1224,80 @@ function NeedHelpCard() {
   return <article className="panel help-card"><p className="eyebrow">Need help?</p><h3>Support for withdrawals</h3><p className="muted">If you are unsure which asset or network to use, contact support before sending funds.</p><a className="secondary-btn support-link" href="mailto:support@sivantech.online">Contact support</a></article>;
 }
 
-function SettingsView({ user, onLogout }: { user: UserRecord | null; onLogout: () => void }) {
-  return <section className="panel-grid two"><article className="panel"><p className="eyebrow">Profile</p><h3>Account settings</h3><div className="details-box"><Kv label="Name" value={user?.fullName || '—'} /><Kv label="Email" value={user?.email || '—'} /><Kv label="Security" value="Passwordless email" /></div></article><article className="panel"><p className="eyebrow">Session</p><h3>Security</h3><p className="muted">You are automatically signed out after 30 minutes of inactivity.</p><button className="secondary-btn" onClick={onLogout}>Sign out</button></article></section>;
+
+function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onRefresh, onSupport }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onRefresh: () => void; onSupport: () => void }) {
+  const emailDone = hasUser;
+  const identityDone = customer?.kycStatus === 'kyc_approved';
+  const started = Boolean(customer?.id);
+  const bankDone = false;
+  const steps = [emailDone, false, identityDone, customer?.tosStatus === 'approved', bankDone];
+  const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
+  return (
+    <section className="app-page verification-premium">
+      <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." />
+      <div className="verification-grid">
+        <article className="dashboard-setup-panel verification-main-card">
+          <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
+          <div className="setup-progress big"><div><span style={{ width: `${pct}%` }} /></div></div>
+          <div className="level-grid"><div className="active"><strong>Level 0</strong><span>Email only</span></div><div className={identityDone ? 'active' : ''}><strong>Level 1</strong><span>Verified withdrawals</span></div><div><strong>Level 2</strong><span>Higher limits</span></div></div>
+          <div className="verification-steps-list">
+            <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Your email is verified" action="Completed" />
+            <VerificationStep done={false} index={2} title="Phone number" sub="Required for transaction notifications" action="Continue" />
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '3'}</span><div><strong>Identity verification</strong><small>Government-issued ID + selfie. Takes ~3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : <form onSubmit={onSubmit} key={customer?.id || 'new-verification'}><select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{customerTypes.map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — unavailable' : ''}</option>)}</select><input name="redirectUri" type="hidden" value={verificationRedirectUri} /><button className="primary-btn small" disabled={!canSubmitKyc}>{kycActionLabel}</button></form>}</div>
+            <VerificationStep done={customer?.tosStatus === 'approved'} index={4} title="Terms acceptance" sub="Accept provider terms if required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />
+            <VerificationStep done={false} index={5} title="Add a bank account" sub="Required before first payout" action="Continue" />
+          </div>
+        </article>
+        <div className="dashboard-side-stack">
+          <article className="panel"><h3>Why we verify</h3><p className="muted">Sivan works with regulated payment partners, which requires us to verify users before processing transactions. This keeps the platform safe and prevents fraud.</p><ul className="plain-list"><li>✓ Data is encrypted in transit and at rest</li><li>✓ Documents are used only for compliance</li><li>✓ Status refreshes automatically after Bridge updates</li></ul></article>
+          <article className="security-card"><div className="security-icon">?</div><div><h3>Need help verifying?</h3><p>If your ID is rejected or you're having trouble with the flow, our support team can help resolve it.</p><button onClick={onSupport}>Contact support →</button><button onClick={onRefresh}>Refresh status →</button></div></article>
+          {customer && <article className="panel"><div className="panel-head"><h3>Verification status</h3><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
+        </div>
+      </div>
+    </section>
+  );
 }
 
-function HelpView() {
-  return <section className="panel-grid two"><article className="panel"><p className="eyebrow">Help</p><h3>Before you send funds</h3><div className="details-box"><Kv label="Token" value="Send only the selected asset" /><Kv label="Network" value="Use only the selected network" /><Kv label="Bank" value="Use a bank account you own" /><Kv label="Support" value="support@sivantech.online" /></div></article><article className="panel"><p className="eyebrow">Resources</p><h3>Legal and support</h3><div className="details-box"><Kv label="Terms" value="sivantech.online" /><Kv label="Privacy" value="sivantech.online" /><Kv label="Response time" value="Usually within 24 hours" /></div></article></section>;
+function VerificationStep({ done, index, title, sub, action }: { done: boolean; index: number; title: string; sub: string; action: string }) {
+  return <div className={`verification-step ${done ? 'done' : ''}`}><span>{done ? '✓' : index}</span><div><strong>{title}</strong><small>{sub}</small></div><button className={`small ${done ? 'ghost-btn' : 'primary-btn'}`} disabled>{action}</button></div>;
 }
+
+function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
+  return <section className="app-page"><PageHero title="Payment methods" subtitle="Manage the bank accounts you use to receive payouts." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
+}
+
+function TransactionsView({ withdrawals, onStart }: { withdrawals: WithdrawalRecord[]; onStart: () => void }) {
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="All your buy and sell orders in one place." action={<button className="primary-btn small">Export CSV</button>} /><article className="transactions-table-card"><div className="transactions-toolbar"><input placeholder="Search by reference or amount..." /><div><button className="primary-btn small">All</button><button className="ghost-btn small">Sells</button><button className="ghost-btn small">Buys</button><button className="ghost-btn small">Processing</button></div></div>{!withdrawals.length ? <div className="dashboard-empty"><p>No transactions yet.</p><button className="secondary-btn" onClick={onStart}>Start your first transaction</button></div> : <div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Destination</th><th>Status</th><th>Reference</th><th>Date</th></tr></thead><tbody>{withdrawals.map((w) => <tr key={w.id}><td><span className="tx-type sell">↗ Sell</span></td><td>{w.sourceCurrency?.toUpperCase() || 'USDC'}</td><td>{w.destinationAmount || w.sourceAmount || '—'} {w.destinationCurrency?.toUpperCase()}</td><td>Bank payout</td><td><Badge status={w.status}>{friendlyStatus(w.status)}</Badge></td><td>{shortRef(w.id)}</td><td>{new Date(w.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table></div>}</article></section>;
+}
+
+function BuyCryptoView({ hasUser, isVerified, feePercent, onSell, onContinue, onSupport }: { hasUser: boolean; isVerified: boolean; feePercent: string; onSell: () => void; onContinue: () => void; onSupport: () => void }) {
+  return <section className="app-page trade-premium"><div className="trade-page-head"><div><h1>Buy crypto</h1><p>Send fiat, receive crypto in your wallet.</p></div><div className="wizard-stepper"><StepDot active done={false} label="Quote" /><StepDot active={false} done={false} label="Review" /><StepDot active={false} done={false} label="Payment" /><StepDot active={false} done={false} label="Tracking" /></div></div><div className="trade-grid"><article className="panel trade-card"><div className="seg"><button onClick={onSell}>↗ Sell</button><button className="active">↙ Buy</button></div><div className="quote-box large"><div><small>You pay</small><strong>10000</strong><small>Min 20 · Max 50,000</small></div><div><span>USD</span><small>Bank transfer</small></div></div><div className="quote-swap">↓</div><div className="quote-box large"><div><small>You get</small><strong>{(10000 - (10000 * Number(feePercent) / 100)).toFixed(4)}</strong></div><div><span>USDC</span></div></div><div className="quote-fees"><div><span>Rate</span><strong>1 USD ≈ 1 USDC</strong></div><div><span>Fee ({feePercent}%)</span><strong className="danger">−${(10000 * Number(feePercent) / 100).toFixed(2)}</strong></div><div><span>Arrival</span><strong>Minutes after payment clears</strong></div><div><span>Payment method</span><strong>Bank transfer</strong></div></div><div className="verification-note">Your rate will be locked after you confirm on the next screen.</div><button className="primary-btn" onClick={onContinue}>{hasUser ? isVerified ? 'Continue →' : 'Verify account →' : 'Get started →'}</button></article><aside className="side-info-stack"><article className="panel"><h3>How this works</h3><ol className="ordered-steps"><li className="active">We generate a unique payment reference for your order.</li><li>Send the exact fiat amount to our licensed partner.</li><li>We detect payment and send crypto to your wallet.</li></ol></article><article className="security-card"><div className="security-icon">◈</div><div><h3>Secure & non-custodial</h3><p>Payments are processed by licensed partners. Funds are only held briefly during settlement.</p></div></article><article className="panel"><h3>Need help?</h3><p className="muted">Issues with a transfer, wrong network, or delayed payout? Our support team is on hand.</p><button className="secondary-btn" onClick={onSupport}>Contact support ↗</button></article></aside></div></section>;
+}
+
+function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
+  return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>;
+}
+
+function SettingsView({ user, onLogout }: { user: UserRecord | null; onLogout: () => void }) {
+  const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
+  const nameParts = (user?.fullName || '').split(/\s+/);
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.',''],['◷','Active sessions','Current browser session active.','Manage']]} />}{tab === 'notifications' && <SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm and payouts send.','on'],['✉','Marketing emails','Product news and offers.','off'],['◈','Security alerts','Suspicious logins and account changes.','on']]} />}{tab === 'preferences' && <><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select><option>USD — US Dollar</option><option>GBP — British Pound</option><option>EUR — Euro</option><option>NGN — Coming soon</option></select></label><label>Language<select><option>English</option></select></label><button className="primary-btn">Save preferences</button><button className="secondary-btn" onClick={onLogout}>Sign out</button></>}</article></div></section>;
+}
+
+function SettingsRows({ rows }: { rows: string[][] }) {
+  return <div><h3>Security</h3><p className="muted">Keep your account safe.</p><div className="settings-row-list">{rows.map((row) => <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{row[3] === 'on' || row[3] === 'off' ? <i className={`toggle ${row[3] === 'on' ? 'on' : ''}`} /> : <button className="ghost-btn small">{row[3]}</button>}</div>)}</div></div>;
+}
+
+function SupportView() {
+  const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
+  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><SupportCard icon="☎" title="Report an issue" body="Problem with a transaction? Open a ticket." action="Open ticket" /></div><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article></section>;
+}
+
+function SupportCard({ icon, title, body, action, href }: { icon: string; title: string; body: string; action: string; href?: string }) {
+  const content = <><span>{icon}</span><h3>{title}</h3><p>{body}</p><strong>{action} →</strong></>;
+  return href ? <a className="support-card" href={href}>{content}</a> : <button className="support-card">{content}</button>;
+}
+
 
 function ProgressItem({ done, label }: { done: boolean; label: string }) {
   return <div className={`progress-item ${done ? 'done' : ''}`}><span>{done ? '✓' : '•'}</span>{label}</div>;
