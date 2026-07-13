@@ -2,12 +2,13 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
-  { key: 'overview', icon: '◇', label: 'Home' },
-  { key: 'signup', icon: '✦', label: 'Get Started' },
-  { key: 'kyc', icon: '◈', label: 'Verify' },
-  { key: 'banks', icon: '▣', label: 'Bank' },
-  { key: 'withdraw', icon: '↗', label: 'Withdraw' },
-  { key: 'history', icon: '☷', label: 'Activity' }
+  { key: 'overview', icon: '◇', label: 'Dashboard' },
+  { key: 'withdraw', icon: '↗', label: 'New withdrawal' },
+  { key: 'history', icon: '☷', label: 'Withdrawals' },
+  { key: 'banks', icon: '▣', label: 'Bank accounts' },
+  { key: 'kyc', icon: '◈', label: 'Verification' },
+  { key: 'settings', icon: '⚙', label: 'Settings' },
+  { key: 'help', icon: '?', label: 'Help' }
 ];
 
 function readStorage<T>(key: string, fallback: T): T {
@@ -62,9 +63,20 @@ function shortRef(value?: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+function initials(nameOrEmail?: string) {
+  const value = nameOrEmail || 'User';
+  const parts = value.includes('@') ? [value[0]] : value.trim().split(/\s+/);
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'U';
+}
+
+function qrUrl(value: string) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(value)}`;
+}
+
 export default function App() {
   const [view, setView] = useState<ViewKey>('overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const apiBase = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000', []);
   const appEnv = import.meta.env.VITE_APP_ENV || 'local';
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
@@ -97,10 +109,11 @@ export default function App() {
   const activeStep = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank' : 'Ready to withdraw';
   const nextStepView: ViewKey = !hasUser ? 'signup' : !isVerified ? 'kyc' : !hasBank ? 'banks' : 'withdraw';
   const nextStepLabel = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank account' : 'Withdraw stablecoins';
-  const environmentLabel = appEnv === 'test' ? 'Test environment' : isLiveEnv ? 'Protected by verification' : 'Local environment';
+  const environmentLabel = appEnv === 'test' ? '⚠ Test environment — no real money moves' : isLiveEnv ? '● Live' : 'Local environment';
   const goToView = (nextView: ViewKey) => {
     setView(nextView);
     setMobileMenuOpen(false);
+    setUserMenuOpen(false);
   };
   const enabledControls = paymentControls.payoutCurrencies.filter((control) => control.enabled);
   const enabledAssets = paymentControls.sourceAssets.filter((control) => control.enabled);
@@ -436,16 +449,14 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="api-card user-card">
-          <p className="eyebrow">Progress</p>
-          <h3>{activeStep}</h3>
-          <p className="hint">Withdraw supported stablecoins to your verified bank account in a few guided steps.</p>
-          <div className="progress-list">
-            <ProgressItem done={hasUser} label="Account" />
-            <ProgressItem done={isVerified} label="Verified" />
-            <ProgressItem done={hasBank} label="Bank added" />
+        <div className="sidebar-footer">
+          <div className="sidebar-status"><span></span>{isLiveEnv ? 'Live' : appEnv === 'test' ? 'Test environment' : 'Local'}</div>
+          <div className="sidebar-links">
+            <button onClick={() => goToView('help')}>Support</button>
+            <a href="https://www.sivantech.online/" target="_blank" rel="noreferrer">Terms</a>
+            <a href="https://www.sivantech.online/" target="_blank" rel="noreferrer">Privacy</a>
           </div>
-          <button className="primary-btn sidebar-cta" onClick={() => goToView(nextStepView)}>{nextStepLabel}</button>
+          <small>© 2026 Sivan</small>
         </div>
       </aside>
 
@@ -453,12 +464,13 @@ export default function App() {
         <header className="topbar">
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <div>
-            <p className="eyebrow">Stablecoin to bank withdrawals</p>
+            <p className="eyebrow">Stablecoin to bank</p>
             <h2>{pageTitle}</h2>
           </div>
           <div className="top-actions">
-            <div className="status-pill ok"><span /> {environmentLabel}</div>
-            {hasUser && <button className="ghost-btn" onClick={() => logout('Signed out successfully.')}>Logout</button>}<button className="secondary-btn" onClick={loadUserData} disabled={loading}>{loading ? 'Please wait...' : 'Refresh'}</button>
+            <div className={`status-pill ${appEnv === 'test' ? 'warning' : 'ok'}`}><span /> {environmentLabel}</div>
+            <button className="secondary-btn" onClick={loadUserData} disabled={loading}>{loading ? 'Please wait...' : 'Refresh'}</button>
+            {hasUser && <div className="user-menu-wrap"><button className="avatar-button" onClick={() => setUserMenuOpen((open) => !open)}>{initials(user?.fullName || user?.email)}</button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div>}
           </div>
         </header>
 
@@ -467,36 +479,28 @@ export default function App() {
         {systemStatus.mode !== 'active' && <section className="maintenance-banner"><strong>{systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</strong><span>{systemStatus.message || (systemStatus.mode === 'maintenance' ? 'New withdrawals are temporarily unavailable while maintenance is in progress.' : 'New payment actions are temporarily paused.')}</span>{systemStatus.estimatedResumeAt && <small>Estimated resume: {new Date(systemStatus.estimatedResumeAt).toLocaleString()}</small>}</section>}
 
         {view === 'overview' && (
-          <section className="view active">
-            <div className="hero-card glass">
+          <section className="view active dashboard-view">
+            <div className="status-strip">
               <div>
-                <p className="eyebrow">Stablecoin off-ramp</p>
-                <h3>Move stablecoins into your bank account without the complexity.</h3>
-                <p className="muted">Sivan gives you a guided withdrawal flow: verify once, add your bank account, send the selected stablecoin, and track the payout until it arrives.</p>
-                <div className="hero-actions">
-                  <button className="primary-btn" onClick={() => goToView(nextStepView)}>{hasUser ? nextStepLabel : 'Get started'}</button>
-                  <button className="secondary-btn" onClick={() => goToView('withdraw')}>Withdraw</button>
-                </div>
+                <p className="eyebrow">Next step</p>
+                <h3>{hasUser ? activeStep === 'Ready to withdraw' ? 'You are ready to create a withdrawal' : `Finish setup: ${activeStep}` : 'Create your account to start withdrawing'}</h3>
+                <p>{hasUser ? 'Complete each setup step once, then withdraw supported stablecoins to your bank account.' : 'Create an account, verify, add your bank, and get a deposit address in a guided flow.'}</p>
               </div>
-              <div className="flow-card">
-                <div className="flow-node">Send stablecoin</div>
-                <div className="flow-line" />
-                <div className="flow-node">Sivan converts</div>
-                <div className="flow-line" />
-                <div className="flow-node accent">Receive USD / GBP / EUR</div>
-              </div>
+              <button className="primary-btn animated-cta" onClick={() => goToView(nextStepView)}>{nextStepLabel}</button>
             </div>
 
             <div className="stats-grid">
               <Stat label="Account" value={hasUser ? 'Created' : 'Not started'} helper={user?.email || 'Start with your email'} />
               <Stat label="Verification" value={friendlyStatus(customer?.kycStatus)} helper="Required for withdrawals" />
-              <Stat label="Bank accounts" value={String(accounts.length)} helper="Verified payout destinations" />
-              <Stat label="Available rails" value={enabledControls.map((c) => c.currency.toUpperCase()).join(', ') || '—'} helper={feePolicy ? `${feePolicy.percent}% fee before deposit` : 'Shown before you deposit'} />
+              <Stat label="Bank accounts" value={String(accounts.length)} helper="Bank accounts you can send to" />
+              <Stat label="Payout methods" value={enabledControls.map((c) => c.currency.toUpperCase()).join(', ') || '—'} helper={feePolicy ? `${feePolicy.percent}% fee before deposit` : 'Shown before you deposit'} />
             </div>
 
-            <div className="panel-grid two">
-              <UserGuidePanel />
+            <div className="panel-grid two dashboard-grid">
+              <SetupChecklist hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} nextStepLabel={nextStepLabel} />
+              <QuickActionCard hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} />
               <WithdrawalsList withdrawals={withdrawals.slice(0, 4)} compact />
+              <NeedHelpCard />
             </div>
           </section>
         )}
@@ -570,7 +574,7 @@ export default function App() {
         {view === 'withdraw' && (
           <section className="panel-grid two">
             <article className="panel form-panel">
-              <p className="eyebrow">Step 4</p>
+              <p className="eyebrow">New withdrawal</p>
               <h3>Withdraw stablecoins</h3>
               <p className="muted">Choose a verified bank account, asset, and network before creating a deposit address.</p>
               {!accounts.some((account) => enabledControls.some((control) => control.currency === account.currency)) ? <Empty>Add an enabled bank account first.</Empty> : !enabledAssets.length || !enabledNetworks.length ? <Empty>Deposits are temporarily unavailable.</Empty> : (
@@ -589,6 +593,10 @@ export default function App() {
         )}
 
         {view === 'history' && <WithdrawalsList withdrawals={withdrawals} />}
+
+        {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'help' && <HelpView />}
+
       </main>
     </div>
   );
@@ -653,13 +661,36 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
         <Kv label="Payout currency" value={review.destinationCurrency.toUpperCase()} />
         <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
       </div>
-      <div className="warning-box">Only send {review.assetLabel} on {review.networkLabel}. Sending another token or using another network may cause loss or delays.</div>
+      <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</div>
       <div className="split-actions">
         <button className="ghost-btn" onClick={onCancel}>Edit details</button>
         <button className="primary-btn" disabled={loading} onClick={onConfirm}>{loading ? 'Creating...' : 'Create deposit address'}</button>
       </div>
     </article>
   );
+}
+
+
+function SetupChecklist({ hasUser, isVerified, hasBank, onContinue, nextStepLabel }: { hasUser: boolean; isVerified: boolean; hasBank: boolean; onContinue: () => void; nextStepLabel: string }) {
+  return <article className="panel setup-card"><div className="panel-head"><div><p className="eyebrow">Setup checklist</p><h3>{[hasUser, isVerified, hasBank].filter(Boolean).length}/3 complete</h3></div></div><div className="checklist"><ProgressItem done={hasUser} label="Account created" /><ProgressItem done={isVerified} label="Identity verified" /><ProgressItem done={hasBank} label="Bank account added" /></div><button className="primary-btn animated-cta" onClick={onContinue}>{nextStepLabel}</button></article>;
+}
+
+function QuickActionCard({ hasUser, isVerified, hasBank, onContinue }: { hasUser: boolean; isVerified: boolean; hasBank: boolean; onContinue: () => void }) {
+  const title = !hasUser ? 'Start with passwordless access' : !isVerified ? 'Verify once to unlock withdrawals' : !hasBank ? 'Add a bank account you own' : 'Create a stablecoin withdrawal';
+  const body = !hasUser ? 'Use your email to create or access your Sivan account. No password required.' : !isVerified ? 'Verification protects your account and is required before bank payouts.' : !hasBank ? 'Your payout must go to a verified bank account in your name.' : 'Choose the asset, network, and bank account before creating a deposit address.';
+  return <article className="panel quick-card"><div><p className="eyebrow">Quick action</p><h3>{title}</h3><p className="muted">{body}</p></div><button className="primary-btn" onClick={onContinue}>Continue</button></article>;
+}
+
+function NeedHelpCard() {
+  return <article className="panel help-card"><p className="eyebrow">Need help?</p><h3>Support for withdrawals</h3><p className="muted">If you are unsure which asset or network to use, contact support before sending funds.</p><a className="secondary-btn support-link" href="mailto:support@sivantech.online">Contact support</a></article>;
+}
+
+function SettingsView({ user, onLogout }: { user: UserRecord | null; onLogout: () => void }) {
+  return <section className="panel-grid two"><article className="panel"><p className="eyebrow">Profile</p><h3>Account settings</h3><div className="details-box"><Kv label="Name" value={user?.fullName || '—'} /><Kv label="Email" value={user?.email || '—'} /><Kv label="Security" value="Passwordless email" /></div></article><article className="panel"><p className="eyebrow">Session</p><h3>Security</h3><p className="muted">You are automatically signed out after 30 minutes of inactivity.</p><button className="secondary-btn" onClick={onLogout}>Sign out</button></article></section>;
+}
+
+function HelpView() {
+  return <section className="panel-grid two"><article className="panel"><p className="eyebrow">Help</p><h3>Before you send funds</h3><div className="details-box"><Kv label="Token" value="Send only the selected asset" /><Kv label="Network" value="Use only the selected network" /><Kv label="Bank" value="Use a bank account you own" /><Kv label="Support" value="support@sivantech.online" /></div></article><article className="panel"><p className="eyebrow">Resources</p><h3>Legal and support</h3><div className="details-box"><Kv label="Terms" value="sivantech.online" /><Kv label="Privacy" value="sivantech.online" /><Kv label="Response time" value="Usually within 24 hours" /></div></article></section>;
 }
 
 function ProgressItem({ done, label }: { done: boolean; label: string }) {
@@ -727,7 +758,7 @@ function BankList({ accounts }: { accounts: ExternalAccountRecord[] }) {
 
 function DepositCard({ result }: { result: DepositResponse | null }) {
   if (!result) return <article className="deposit-card"><p className="eyebrow">Deposit address</p><h3>Ready when you are</h3><p className="muted">Create a withdrawal to receive a deposit address. You will review the asset, network, fee, and payout currency before sending.</p></article>;
-  return <article className="deposit-card"><p className="eyebrow">Send selected asset</p><h3>Deposit address created</h3><p className="muted">Only send {result.deposit.currency.toUpperCase()} on the selected {result.deposit.chain} network. Sending another token or using another network may cause loss or delays.</p><p className="muted">We will convert it and send {result.withdrawal.destinationCurrency.toUpperCase()} to your selected bank account.</p><div className="deposit-address">{result.deposit.address}</div><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></article>;
+  return <article className="deposit-card"><p className="eyebrow">Send selected asset</p><h3>Deposit address created</h3><p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</p><p className="muted">We will convert it and send {result.withdrawal.destinationCurrency.toUpperCase()} to your selected bank account.</p><div className="qr-wrap"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div className="deposit-address">{result.deposit.address}</div></div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></article>;
 }
 
 function WithdrawalsList({ withdrawals, compact = false }: { withdrawals: WithdrawalRecord[]; compact?: boolean }) {
@@ -735,5 +766,5 @@ function WithdrawalsList({ withdrawals, compact = false }: { withdrawals: Withdr
 }
 
 function UserGuidePanel() {
-  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">How it works</p><h3>A simple withdrawal flow</h3></div></div><div className="details-box"><Kv label="1" value="Create your Sivan account" /><Kv label="2" value="Complete verification" /><Kv label="3" value="Add your bank account" /><Kv label="4" value="Send the selected stablecoin to your deposit address" /><Kv label="5" value="Receive USD, GBP, or EUR in your bank account" /></div></article>;
+  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">How it works</p><h3>A simple withdrawal flow</h3></div></div><div className="details-box"><Kv label="1" value="Create your account" /><Kv label="2" value="Complete verification" /><Kv label="3" value="Add your bank account" /><Kv label="4" value="Send the selected stablecoin to your deposit address" /><Kv label="5" value="Receive USD, GBP, or EUR in your bank account" /></div></article>;
 }
