@@ -1,4 +1,4 @@
-export type ViewKey = 'overview' | 'signup' | 'kyc' | 'banks' | 'withdraw' | 'history';
+export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'history' | 'banks' | 'kyc' | 'settings' | 'help' | 'signup';
 
 export interface UserRecord {
   id: string;
@@ -53,7 +53,7 @@ export interface WithdrawalRecord {
   liquidationAddressId: string;
   provider: string;
   providerDrainId?: string;
-  sourceCurrency: 'usdc';
+  sourceCurrency: 'usdc' | 'usdt';
   destinationCurrency: 'usd' | 'gbp' | 'eur';
   sourceAmount?: string;
   destinationAmount?: string;
@@ -133,4 +133,83 @@ export interface DepositResponse {
     chain: string;
     currency: string;
   };
+}
+
+
+export interface CustomerTypeControl {
+  customerType: 'individual' | 'business';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface PaymentControl {
+  currency: 'usd' | 'gbp' | 'eur';
+  enabled: boolean;
+  label: string;
+  accountType: 'us' | 'gb' | 'iban';
+  defaultPaymentRail: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface AssetControl {
+  asset: 'usdc' | 'usdt';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface NetworkControl {
+  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
+  enabled: boolean;
+  label: string;
+  sortOrder: number;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface OfframpControls {
+  customerTypes: CustomerTypeControl[];
+  payoutCurrencies: PaymentControl[];
+  sourceAssets: AssetControl[];
+  sourceNetworks: NetworkControl[];
+}
+
+
+export interface SystemStatus {
+  id: 'global';
+  mode: 'active' | 'maintenance' | 'paused';
+  message?: string;
+  estimatedResumeAt?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+
+export interface OnrampOrderRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  provider: string;
+  providerTransferId?: string;
+  sourceCurrency: 'usd' | 'gbp' | 'eur';
+  sourcePaymentRail: string;
+  destinationCurrency: 'usdc' | 'usdt';
+  destinationChain: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
+  destinationAddress: string;
+  amount: string;
+  feePercent?: string;
+  feeAmount?: string;
+  netAmount?: string;
+  providerReference?: string;
+  sourceDepositInstructions?: any;
+  destinationTxHash?: string;
+  status: string;
+  statusReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }

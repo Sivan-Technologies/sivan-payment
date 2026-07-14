@@ -1,8 +1,10 @@
 export type Currency = 'usd' | 'gbp' | 'eur';
-export type SourceCurrency = 'usdc';
-export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism';
+export type SourceCurrency = 'usdc' | 'usdt';
+export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
 export type ExternalAccountStatus = 'created' | 'active' | 'verification_pending' | 'verified' | 'verification_failed' | 'deactivated';
+export type OnrampStatus = 'created' | 'awaiting_payment' | 'payment_received' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'requires_action';
+
 export type WithdrawalStatus =
   | 'created'
   | 'pending_deposit'
@@ -13,6 +15,54 @@ export type WithdrawalStatus =
   | 'failed'
   | 'cancelled'
   | 'requires_action';
+
+
+
+
+
+export interface CustomerTypeControlRecord {
+  customerType: 'individual' | 'business';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface SystemStatusRecord {
+  id: 'global';
+  mode: 'active' | 'maintenance' | 'paused';
+  message?: string;
+  estimatedResumeAt?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface AssetControlRecord {
+  asset: SourceCurrency;
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface NetworkControlRecord {
+  network: Chain;
+  enabled: boolean;
+  label: string;
+  sortOrder: number;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface PaymentControlRecord {
+  currency: Currency;
+  enabled: boolean;
+  label: string;
+  accountType: 'us' | 'gb' | 'iban';
+  defaultPaymentRail: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
 
 export interface UserRecord {
   id: string;
@@ -111,6 +161,86 @@ export interface WithdrawalRecord {
   completedAt?: string;
 }
 
+
+export interface OnrampOrderRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  provider: string;
+  providerTransferId?: string;
+  sourceCurrency: Currency;
+  sourcePaymentRail: string;
+  destinationCurrency: SourceCurrency;
+  destinationChain: Chain;
+  destinationAddress: string;
+  amount: string;
+  feePercent?: string;
+  feeAmount?: string;
+  netAmount?: string;
+  providerReference?: string;
+  sourceDepositInstructions?: unknown;
+  destinationTxHash?: string;
+  status: OnrampStatus;
+  statusReason?: string;
+  receipt?: unknown;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface AuditLogRecord {
+  id: string;
+  actorType: 'system' | 'user' | 'admin' | 'provider';
+  actorId?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  severity: 'info' | 'warning' | 'error';
+  ipAddress?: string;
+  userAgent?: string;
+  metadata?: unknown;
+  createdAt: string;
+}
+
+export interface ReconciliationRunRecord {
+  id: string;
+  provider?: string;
+  dryRun: boolean;
+  status: 'completed' | 'failed';
+  summary?: unknown;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface ReconciliationFindingRecord {
+  id: string;
+  runId: string;
+  provider?: string;
+  severity: 'info' | 'warning' | 'error';
+  findingType: string;
+  withdrawalId?: string;
+  liquidationAddressId?: string;
+  providerDrainId?: string;
+  message: string;
+  expected?: unknown;
+  actual?: unknown;
+  status: 'open' | 'resolved' | 'ignored';
+  createdAt: string;
+}
+
+export interface AuthChallengeRecord {
+  id: string;
+  email: string;
+  codeHash: string;
+  intent: 'signup' | 'signin';
+  fullName?: string;
+  expiresAt: string;
+  consumedAt?: string;
+  createdAt: string;
+}
+
 export interface WebhookEventRecord {
   id: string;
   provider: string;
@@ -129,5 +259,15 @@ export interface DatabaseShape {
   externalAccounts: ExternalAccountRecord[];
   liquidationAddresses: LiquidationAddressRecord[];
   withdrawals: WithdrawalRecord[];
+  onrampOrders: OnrampOrderRecord[];
   webhookEvents: WebhookEventRecord[];
+  authChallenges: AuthChallengeRecord[];
+  auditLogs: AuditLogRecord[];
+  reconciliationRuns: ReconciliationRunRecord[];
+  reconciliationFindings: ReconciliationFindingRecord[];
+  paymentControls: PaymentControlRecord[];
+  assetControls: AssetControlRecord[];
+  networkControls: NetworkControlRecord[];
+  systemStatus: SystemStatusRecord[];
+  customerTypeControls: CustomerTypeControlRecord[];
 }

@@ -1,8 +1,8 @@
 import { db } from '../database/json-database.js';
-import type { WithdrawalRecord, WithdrawalStatus } from '../database/types.js';
+import type { ReconciliationFindingRecord, ReconciliationRunRecord, WithdrawalRecord, WithdrawalStatus } from '../database/types.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
 import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
-import { nowIso } from '../shared/id.js';
+import { id, nowIso } from '../shared/id.js';
 
 export interface ReconciliationRunInput {
   dryRun?: boolean;
@@ -125,19 +125,51 @@ export async function runOfframpReconciliation(input: ReconciliationRunInput = {
     }
   }
 
+  const completedAt = nowIso();
+  const summary = {
+    checkedLiquidationAddresses,
+    checkedDrains,
+    matchedDrains: findings.filter((finding) => finding.type === 'matched_drain').length,
+    unmatchedDrains,
+    updatedWithdrawals,
+    providerErrors,
+    findingCount: findings.length
+  };
+
+  const runRecord: ReconciliationRunRecord = {
+    id: id('recon'),
+    provider: input.provider,
+    dryRun,
+    status: providerErrors > 0 ? 'failed' : 'completed',
+    summary,
+    startedAt,
+    completedAt
+  };
+
+  const findingRecords: ReconciliationFindingRecord[] = findings.map((finding) => ({
+    id: id('reconf'),
+    runId: runRecord.id,
+    provider: input.provider,
+    severity: finding.severity,
+    findingType: finding.type,
+    withdrawalId: finding.withdrawalId,
+    liquidationAddressId: finding.liquidationAddressId,
+    providerDrainId: finding.providerDrainId,
+    message: finding.message,
+    expected: finding.previousStatus ? { status: finding.previousStatus } : undefined,
+    actual: finding.nextStatus || finding.raw ? { status: finding.nextStatus, raw: finding.raw } : undefined,
+    status: finding.severity === 'error' || finding.type === 'unmatched_drain' ? 'open' : 'resolved',
+    createdAt: completedAt
+  }));
+
+  await db.insertReconciliationRecords(runRecord, findingRecords);
+
   return {
+    runId: runRecord.id,
     dryRun,
     startedAt,
-    completedAt: nowIso(),
-    summary: {
-      checkedLiquidationAddresses,
-      checkedDrains,
-      matchedDrains: findings.filter((finding) => finding.type === 'matched_drain').length,
-      unmatchedDrains,
-      updatedWithdrawals,
-      providerErrors,
-      findingCount: findings.length
-    },
+    completedAt,
+    summary,
     findings
   };
 }
@@ -164,20 +196,22 @@ function shouldUpdateWithdrawal(withdrawal: WithdrawalRecord, drain: any, nextSt
 }
 
 async function applyDrainToWithdrawal(withdrawalId: string, drain: any, nextStatus: WithdrawalStatus) {
-  return db.mutate((mutable) => {
-    const withdrawal = mutable.withdrawals.find((item) => item.id === withdrawalId);
-    if (!withdrawal) return null;
-    withdrawal.providerDrainId = drain.id ?? withdrawal.providerDrainId;
-    withdrawal.destinationAmount = drain.amount ?? withdrawal.destinationAmount;
-    withdrawal.destinationCurrency = drain.currency ?? withdrawal.destinationCurrency;
-    withdrawal.feeAmount = drain.developer_fee ?? drain.receipt?.developer_fee ?? withdrawal.feeAmount;
-    withdrawal.depositTxHash = drain.deposit_tx_hash ?? withdrawal.depositTxHash;
-    withdrawal.destinationTxHash = drain.destination_tx_hash ?? withdrawal.destinationTxHash;
-    withdrawal.status = nextStatus;
-    withdrawal.statusReason = drain.state ?? withdrawal.statusReason;
-    withdrawal.raw = drain;
-    withdrawal.updatedAt = nowIso();
-    if (nextStatus === 'completed' && !withdrawal.completedAt) withdrawal.completedAt = nowIso();
-    return withdrawal;
-  });
+  const data = await db.read();
+  const existing = data.withdrawals.find((item) => item.id === withdrawalId);
+  if (!existing) return null;
+  const withdrawal = {
+    ...existing,
+    providerDrainId: drain.id ?? existing.providerDrainId,
+    destinationAmount: drain.amount ?? existing.destinationAmount,
+    destinationCurrency: drain.currency ?? existing.destinationCurrency,
+    feeAmount: drain.developer_fee ?? drain.receipt?.developer_fee ?? existing.feeAmount,
+    depositTxHash: drain.deposit_tx_hash ?? existing.depositTxHash,
+    destinationTxHash: drain.destination_tx_hash ?? existing.destinationTxHash,
+    status: nextStatus,
+    statusReason: drain.state ?? existing.statusReason,
+    raw: drain,
+    updatedAt: nowIso(),
+    completedAt: nextStatus === 'completed' ? (existing.completedAt ?? nowIso()) : existing.completedAt
+  };
+  return db.updateWithdrawalRecord(withdrawal);
 }

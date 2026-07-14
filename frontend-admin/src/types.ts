@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'reconciliation' | 'providers' | 'webhooks' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'audit' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
@@ -248,6 +248,29 @@ export interface AdminAnalyticsUser extends UserRecord {
   kycStatus: string;
 }
 
+export interface AdminProfitabilityMetrics {
+  averageLifetimeVolumePerUserUsd: string;
+  averageLifetimeVolumePerTransactingUserUsd: string;
+  kycCostRecoveryPerKycUserUsd: string;
+  withdrawalVolumePerUserUsd: string;
+  withdrawalVolumePerTransactingUserUsd: string;
+  repeatWithdrawalRatePercent: string;
+  averageWithdrawalSizeUsd: string;
+  failedWithdrawalRatePercent: string;
+  providerCostUsd: string;
+  bridgeVariableCostUsd: string;
+  onboardingCostUsd: string;
+  sivanFeeRevenueUsd: string;
+  netMarginBeforeCacUsd: string;
+  customerAcquisitionCostPerUserUsd: string;
+  customerAcquisitionCostTotalUsd: string;
+  netMarginAfterCacUsd: string;
+  transactingUsers: number;
+  repeatUsers: number;
+  completedWithdrawalCount: number;
+  failedWithdrawalCount: number;
+}
+
 export interface AdminAnalytics {
   generatedAt: string;
   definitions: Record<string, string>;
@@ -256,7 +279,110 @@ export interface AdminAnalytics {
     activities: number;
     activityCounts: Record<string, number>;
   };
+  profitability: AdminProfitabilityMetrics;
   windows: AdminAnalyticsWindow[];
   users: AdminAnalyticsUser[];
   recentActivities: AdminAnalyticsActivity[];
+}
+
+
+export interface AdminAuditLog {
+  id: string;
+  actorType: string;
+  actorId?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  severity: 'info' | 'warning' | 'error';
+  ipAddress?: string;
+  userAgent?: string;
+  metadata?: unknown;
+  createdAt: string;
+}
+
+export interface AdminReconciliationRun {
+  id: string;
+  provider?: string;
+  dryRun: boolean;
+  status: 'completed' | 'failed';
+  summary?: any;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+  findings: ReconciliationFinding[];
+}
+
+
+export interface CustomerTypeControl {
+  customerType: 'individual' | 'business';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface PaymentControl {
+  currency: 'usd' | 'gbp' | 'eur';
+  enabled: boolean;
+  label: string;
+  accountType: 'us' | 'gb' | 'iban';
+  defaultPaymentRail: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface AssetControl {
+  asset: 'usdc' | 'usdt';
+  enabled: boolean;
+  label: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface NetworkControl {
+  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain';
+  enabled: boolean;
+  label: string;
+  sortOrder: number;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface OfframpControls {
+  customerTypes: CustomerTypeControl[];
+  payoutCurrencies: PaymentControl[];
+  sourceAssets: AssetControl[];
+  sourceNetworks: NetworkControl[];
+}
+
+
+export interface SystemStatus {
+  id: 'global';
+  mode: 'active' | 'maintenance' | 'paused';
+  message?: string;
+  estimatedResumeAt?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+
+export interface AdminOnrampOrder {
+  id: string;
+  userId: string;
+  user?: { email?: string; fullName?: string } | null;
+  provider: string;
+  providerTransferId?: string;
+  sourceCurrency: 'usd' | 'gbp' | 'eur';
+  sourcePaymentRail: string;
+  destinationCurrency: 'usdc' | 'usdt';
+  destinationChain: string;
+  destinationAddress: string;
+  amount: string;
+  feeAmount?: string;
+  feePercent?: string;
+  netAmount?: string;
+  status: string;
+  providerReference?: string;
+  createdAt: string;
+  updatedAt: string;
 }

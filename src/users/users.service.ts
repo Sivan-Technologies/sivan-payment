@@ -17,47 +17,41 @@ export const createUserSchema = z
 
 export async function createUser(input: z.infer<typeof createUserSchema>) {
   const now = nowIso();
-  return db.mutate((data) => {
-    if (input.email) {
-      const emailExists = data.users.find((u) => u.email?.toLowerCase() === input.email?.toLowerCase());
-      if (emailExists) throw conflict('A user with this email already exists');
-    }
+  if (input.email) {
+    const emailExists = await db.findUserByEmail(input.email);
+    if (emailExists) throw conflict('A user with this email already exists');
+  }
 
-    if (input.whatsappNumber) {
-      const whatsappExists = data.users.find((u) => u.whatsappNumber === input.whatsappNumber);
-      if (whatsappExists) throw conflict('A user with this WhatsApp number already exists');
-    }
+  if (input.whatsappNumber) {
+    const whatsappExists = await db.findUserByWhatsappNumber(input.whatsappNumber);
+    if (whatsappExists) throw conflict('A user with this WhatsApp number already exists');
+  }
 
-    const primaryChannel = input.primaryChannel ?? inferPrimaryChannel(input.email, input.whatsappNumber);
-    const user = {
-      id: id('usr'),
-      email: input.email ?? '',
-      whatsappNumber: input.whatsappNumber,
-      fullName: input.fullName,
-      primaryChannel,
-      createdAt: now,
-      updatedAt: now
-    };
-    data.users.push(user);
-    return user;
-  });
+  const primaryChannel = input.primaryChannel ?? inferPrimaryChannel(input.email, input.whatsappNumber);
+  const user = {
+    id: id('usr'),
+    email: input.email ?? '',
+    whatsappNumber: input.whatsappNumber,
+    fullName: input.fullName,
+    primaryChannel,
+    createdAt: now,
+    updatedAt: now
+  };
+  return db.insertUserRecord(user);
 }
 
 export async function getUser(userId: string) {
-  const data = await db.read();
-  const user = data.users.find((u) => u.id === userId);
+  const user = await db.findUserById(userId);
   if (!user) throw notFound('User');
   return user;
 }
 
 export async function getUserByEmail(email: string) {
-  const data = await db.read();
-  return data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+  return db.findUserByEmail(email);
 }
 
 export async function getUserByWhatsappNumber(whatsappNumber: string) {
-  const data = await db.read();
-  return data.users.find((u) => u.whatsappNumber === whatsappNumber);
+  return db.findUserByWhatsappNumber(whatsappNumber);
 }
 
 export async function requireUser(userId?: string) {

@@ -285,3 +285,268 @@ Example response:
   }
 }
 ```
+
+## Passwordless email auth
+
+Start email login/signup:
+
+```http
+POST /api/auth/email/start
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "fullName": "Ada Lovelace",
+  "intent": "signup"
+}
+```
+
+For sign in:
+
+```json
+{
+  "email": "user@example.com",
+  "intent": "signin"
+}
+```
+
+Verify code:
+
+```http
+POST /api/auth/email/verify
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "code": "123456"
+}
+```
+
+Response includes a user JWT:
+
+```json
+{
+  "data": {
+    "token": "...",
+    "user": { "id": "usr_xxx" }
+  }
+}
+```
+
+Protected user APIs require:
+
+```http
+Authorization: Bearer <token>
+```
+
+## EUR / SEPA support
+
+Sivan Payments supports EUR off-ramp setup through IBAN external accounts.
+
+Create EUR external account:
+
+```http
+POST /api/external-accounts
+Content-Type: application/json
+Authorization: Bearer <user_jwt>
+
+{
+  "userId": "usr_xxx",
+  "currency": "eur",
+  "accountType": "iban",
+  "paymentRail": "sepa",
+  "bankName": "Example SEPA Bank",
+  "accountName": "Ada EUR Account",
+  "accountOwnerName": "Ada Lovelace",
+  "accountOwnerType": "individual",
+  "firstName": "Ada",
+  "lastName": "Lovelace",
+  "address": {
+    "street_line_1": "2 Rue de la Paix",
+    "country": "FRA",
+    "city": "Paris",
+    "postal_code": "75002"
+  },
+  "iban": {
+    "account_number": "FR7630006000011234567890189",
+    "bic": "AGRIFRPP",
+    "country": "FRA"
+  }
+}
+```
+
+Create EUR withdrawal:
+
+```json
+{
+  "userId": "usr_xxx",
+  "externalAccountId": "ea_xxx",
+  "sourceCurrency": "usdc",
+  "sourceChain": "ethereum",
+  "destinationCurrency": "eur",
+  "returnAddress": "0x0000000000000000000000000000000000000000"
+}
+```
+
+Default EUR payment rail is `sepa`.
+
+Important: Bridge may require a `sepa` endorsement or additional KYC/proof-of-address for EUR/SEPA access. Request or refresh the relevant endorsement before enabling EUR for production users.
+
+## Payment rail controls
+
+Admins can turn payout currencies on or off. Disabled currencies are hidden from the user frontend and blocked by backend validation.
+
+Public controls used by user frontend:
+
+```http
+GET /api/offramp/controls
+```
+
+Admin controls:
+
+```http
+GET /api/admin/offramp/controls
+```
+
+Update controls:
+
+```http
+PUT /api/admin/offramp/controls
+x-admin-api-key: <admin_key>
+Content-Type: application/json
+
+{
+  "controls": [
+    { "currency": "usd", "enabled": true },
+    { "currency": "gbp", "enabled": true },
+    { "currency": "eur", "enabled": false }
+  ]
+}
+```
+
+At least one payout currency must remain enabled.
+
+## Source asset and network controls
+
+Admin controls now cover three groups:
+
+```text
+Payout currencies: USD, GBP, EUR
+Deposit assets: USDC, USDT
+Deposit networks: Base, Polygon, Ethereum, Solana, Arbitrum, Avalanche C-Chain
+```
+
+Public controls response:
+
+```http
+GET /api/offramp/controls
+```
+
+Example response shape:
+
+```json
+{
+  "data": {
+    "payoutCurrencies": [
+      { "currency": "usd", "enabled": true }
+    ],
+    "sourceAssets": [
+      { "asset": "usdc", "enabled": true },
+      { "asset": "usdt", "enabled": false }
+    ],
+    "sourceNetworks": [
+      { "network": "base", "enabled": true },
+      { "network": "ethereum", "enabled": true }
+    ]
+  }
+}
+```
+
+Admin update:
+
+```http
+PUT /api/admin/offramp/controls
+x-admin-api-key: <admin_key>
+Content-Type: application/json
+
+{
+  "payoutCurrencies": [
+    { "currency": "usd", "enabled": true },
+    { "currency": "gbp", "enabled": true },
+    { "currency": "eur", "enabled": false }
+  ],
+  "sourceAssets": [
+    { "asset": "usdc", "enabled": true },
+    { "asset": "usdt", "enabled": false }
+  ],
+  "sourceNetworks": [
+    { "network": "base", "enabled": true },
+    { "network": "polygon", "enabled": true },
+    { "network": "ethereum", "enabled": true },
+    { "network": "solana", "enabled": false },
+    { "network": "arbitrum", "enabled": false },
+    { "network": "avalanche_c_chain", "enabled": false }
+  ]
+}
+```
+
+Safety rules:
+
+```text
+At least one payout currency must remain enabled.
+At least one deposit asset must remain enabled.
+At least one deposit network must remain enabled.
+```
+
+The backend blocks disabled assets/networks/currencies even if a user tries to submit them manually.
+
+## Customer type controls
+
+Admin can enable or disable customer onboarding types.
+
+Defaults:
+
+```text
+Individual = enabled
+Business = disabled
+```
+
+This means the user frontend can show Business as an unavailable option while only allowing Individual onboarding until Sivan is ready for KYB.
+
+Customer type controls are part of the controls response:
+
+```http
+GET /api/offramp/controls
+```
+
+Response includes:
+
+```json
+{
+  "customerTypes": [
+    { "customerType": "individual", "enabled": true, "label": "Individual" },
+    { "customerType": "business", "enabled": false, "label": "Business" }
+  ]
+}
+```
+
+Admin update:
+
+```http
+PUT /api/admin/offramp/controls
+x-admin-api-key: <admin_key>
+Content-Type: application/json
+
+{
+  "customerTypes": [
+    { "customerType": "individual", "enabled": true },
+    { "customerType": "business", "enabled": false }
+  ]
+}
+```
+
+Safety rule:
+
+```text
+At least one customer type must remain enabled.
+```

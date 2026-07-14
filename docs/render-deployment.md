@@ -69,6 +69,11 @@ DATABASE_PROVIDER=postgres
 DATABASE_URL=<TEST_NEON_DATABASE_URL>
 CORS_ORIGIN=<VERCEL_USER_TEST_URL>,<VERCEL_ADMIN_TEST_URL>
 ADMIN_API_KEY=<strong random test admin key>
+USER_JWT_SECRET=<strong random user JWT secret>
+USER_JWT_EXPIRES_MINUTES=60
+AUTH_OTP_EXPIRES_MINUTES=10
+AUTH_DEV_SHOW_OTP=true
+AUTH_REQUIRE_USER=true
 BRIDGE_MOCK_MODE=false
 BRIDGE_BASE_URL=https://api.sandbox.bridge.xyz/v0
 BRIDGE_API_KEY=<BRIDGE_SANDBOX_KEY>
@@ -89,6 +94,11 @@ DATABASE_PROVIDER=postgres
 DATABASE_URL=<LIVE_NEON_DATABASE_URL>
 CORS_ORIGIN=<VERCEL_USER_LIVE_URL>,<VERCEL_ADMIN_LIVE_URL>
 ADMIN_API_KEY=<separate strong random live admin key>
+USER_JWT_SECRET=<separate strong random live user JWT secret>
+USER_JWT_EXPIRES_MINUTES=60
+AUTH_OTP_EXPIRES_MINUTES=10
+AUTH_DEV_SHOW_OTP=false
+AUTH_REQUIRE_USER=true
 BRIDGE_MOCK_MODE=false
 BRIDGE_BASE_URL=https://api.bridge.xyz/v0
 BRIDGE_API_KEY=<BRIDGE_LIVE_KEY>
@@ -263,3 +273,208 @@ VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
 ```
 
 Never expose `ADMIN_API_KEY` as a `VITE_` variable. `VITE_` variables are public in the browser bundle.
+
+
+## User authentication
+
+The user frontend now uses passwordless email login.
+
+Backend env vars:
+
+```env
+USER_JWT_SECRET=<strong random secret, different per lane>
+USER_JWT_EXPIRES_MINUTES=60
+AUTH_OTP_EXPIRES_MINUTES=10
+AUTH_DEV_SHOW_OTP=true   # test only; set false in live
+AUTH_REQUIRE_USER=true
+```
+
+In TEST, `AUTH_DEV_SHOW_OTP=true` returns the OTP in the API response so the flow can be tested before email delivery is connected.
+
+In LIVE, set:
+
+```env
+AUTH_DEV_SHOW_OTP=false
+```
+
+and connect a real email provider before onboarding real users.
+
+## Email provider for passwordless login
+
+The user frontend uses passwordless email OTP login.
+
+For local/test without real email delivery:
+
+```env
+EMAIL_PROVIDER=console
+AUTH_DEV_SHOW_OTP=true
+```
+
+For production email delivery with Resend:
+
+```env
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=<resend_api_key>
+EMAIL_FROM="Sivan <no-reply@your-domain.com>"
+AUTH_DEV_SHOW_OTP=false
+```
+
+Important:
+
+- `AUTH_DEV_SHOW_OTP=true` returns the OTP in API responses and should only be used in test/staging.
+- `AUTH_DEV_SHOW_OTP=false` must be used in live.
+- Verify your sending domain in Resend before using a production `EMAIL_FROM` address.
+
+
+## Error monitoring
+
+Sivan Payments supports Sentry-compatible error monitoring for the backend and both frontends.
+
+### Backend Render env
+
+```env
+SENTRY_DSN=<backend_sentry_dsn>
+SENTRY_ENVIRONMENT=staging   # or production
+SENTRY_TRACES_SAMPLE_RATE=0  # increase later if you want tracing
+```
+
+Backend captures:
+
+- unhandled rejections
+- uncaught exceptions
+- server listen failures
+- unexpected 5xx request errors
+
+### Vercel user/admin frontend env
+
+```env
+VITE_SENTRY_DSN=<frontend_sentry_dsn>
+VITE_SENTRY_ENVIRONMENT=test  # or live
+VITE_SENTRY_TRACES_SAMPLE_RATE=0
+```
+
+Frontend captures React render/runtime errors through a Sentry ErrorBoundary.
+
+Recommended Sentry projects:
+
+```text
+sivan-payments-api-test
+sivan-payments-api-live
+sivan-payments-user-test
+sivan-payments-user-live
+sivan-payments-admin-test
+sivan-payments-admin-live
+```
+
+You can also use fewer projects and separate by environment if preferred.
+
+## Official Resend sender
+
+The verified production sender is:
+
+```env
+EMAIL_FROM="Sivan <no-reply@sivantech.online>"
+```
+
+The backend email provider uses the official Resend SDK.
+
+## Admin payment rail controls
+
+The admin dashboard has a **Controls** tab for enabling/disabling payout currencies:
+
+```text
+USD
+GBP
+EUR
+```
+
+These controls are persisted in:
+
+```text
+payments_control_settings
+```
+
+Disabled currencies are:
+
+- hidden from the user frontend,
+- blocked when creating new external accounts,
+- blocked when creating new withdrawals.
+
+## Admin profitability analytics
+
+The admin Analytics tab tracks unit economics in near real time. To avoid exhausting backend/API limits, automatic polling only runs while the Analytics tab is open, every 60 seconds, and when the browser window regains focus. Other admin tabs refresh on initial load, tab navigation, manual Refresh, and after explicit admin actions.
+
+Metrics include:
+
+```text
+Average lifetime volume per user
+Average lifetime volume per transacting user
+KYC cost recovery per KYC user
+Withdrawal volume per user
+Withdrawal volume per transacting user
+Repeat withdrawal rate
+Average withdrawal size
+Failed withdrawal rate
+Provider cost
+Bridge variable cost
+Onboarding cost
+Sivan fee revenue
+Net margin before CAC
+Customer acquisition cost
+Net margin after CAC
+```
+
+`CUSTOMER_ACQUISITION_COST_USD` controls the assumed CAC per signed-up user. Default is `0` until Sivan has reliable acquisition cost data.
+
+
+## Rate limiting
+
+The backend has in-memory rate limiting enabled by default:
+
+```env
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_DEFAULT_MAX_PER_MINUTE=120
+RATE_LIMIT_ADMIN_MAX_PER_MINUTE=300
+RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE=300
+RATE_LIMIT_AUTH_WINDOW_MS=900000
+RATE_LIMIT_AUTH_START_MAX=5
+RATE_LIMIT_AUTH_VERIFY_MAX=20
+```
+
+Current policies:
+
+- `POST /api/auth/email/start`: 5 attempts per 15 minutes per IP/email.
+- `POST /api/auth/email/verify`: 20 attempts per 15 minutes per IP/email.
+- `/api/admin/*`: 300 requests per minute.
+- `/api/webhooks/bridge`: 300 requests per minute.
+- Default API routes: 120 requests per minute.
+
+Responses include:
+
+```text
+X-RateLimit-Limit
+X-RateLimit-Remaining
+X-RateLimit-Reset
+Retry-After
+```
+
+A rate-limited request returns:
+
+```text
+429 rate_limited
+```
+
+For multi-instance production scale, replace the in-memory limiter with Redis/Upstash-backed rate limiting.
+
+
+## Frontend polling policy
+
+To avoid unnecessary backend load:
+
+- User frontend loads rail controls on startup.
+- User frontend refreshes rail controls only when the page is visible, every 60 seconds, and on window focus/visibility changes.
+- User frontend also rechecks controls immediately before creating a bank account or withdrawal.
+- Admin frontend auto-polls only on the Analytics tab, every 60 seconds, and on window focus.
+- Other admin tabs refresh on initial load, manual Refresh, tab navigation, and after explicit admin actions.
+
+This prevents global polling across all tabs and keeps request volume well below the configured rate limits.

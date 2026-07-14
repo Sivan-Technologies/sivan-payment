@@ -1,22 +1,43 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import type {
-  CustomerRecord,
-  DepositResponse,
-  ExternalAccountRecord,
-  FeePolicy,
-  UserRecord,
-  ViewKey,
-  WithdrawalRecord
-} from './types';
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
-  { key: 'overview', icon: '◇', label: 'Overview' },
-  { key: 'signup', icon: '✦', label: 'Signup' },
+  { key: 'overview', icon: '▦', label: 'Dashboard' },
+  { key: 'buy', icon: '↙', label: 'Buy crypto' },
+  { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
+  { key: 'history', icon: '◷', label: 'Transactions' },
+  { key: 'banks', icon: '▭', label: 'Payment methods' },
   { key: 'kyc', icon: '◈', label: 'Verification' },
-  { key: 'banks', icon: '▣', label: 'Bank Accounts' },
-  { key: 'withdraw', icon: '↗', label: 'Withdraw' },
-  { key: 'history', icon: '☷', label: 'History' }
+  { key: 'settings', icon: '⚙', label: 'Settings' },
+  { key: 'help', icon: '?', label: 'Support' }
 ];
+
+const pathByView: Record<ViewKey, string> = {
+  landing: '/',
+  overview: '/dashboard',
+  withdraw: '/withdraw',
+  buy: '/buy',
+  history: '/withdrawals',
+  banks: '/bank-accounts',
+  kyc: '/verification',
+  settings: '/settings',
+  help: '/help',
+  signup: '/signup'
+};
+
+function viewFromPath(pathname: string): ViewKey {
+  const clean = pathname.replace(/\/$/, '') || '/';
+  if (clean === '/dashboard' || clean === '/app') return 'overview';
+  if (clean === '/withdraw' || clean === '/app/sell') return 'withdraw';
+  if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
+  if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
+  if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
+  if (clean === '/verification' || clean === '/verification-complete' || clean === '/app/verification') return 'kyc';
+  if (clean === '/settings' || clean === '/app/settings') return 'settings';
+  if (clean === '/help' || clean === '/support' || clean === '/app/support') return 'help';
+  if (clean === '/signup' || clean === '/login') return 'signup';
+  return 'landing';
+}
 
 function readStorage<T>(key: string, fallback: T): T {
   try {
@@ -29,9 +50,32 @@ function readStorage<T>(key: string, fallback: T): T {
 
 function statusClass(status?: string) {
   if (!status) return 'pending';
-  if (status === 'completed' || status === 'kyc_approved' || status === 'verified' || status === 'active') return 'success';
-  if (status === 'failed' || status === 'cancelled' || status === 'kyc_rejected') return 'danger';
+  if (['completed', 'kyc_approved', 'verified', 'active'].includes(status)) return 'success';
+  if (['failed', 'cancelled', 'kyc_rejected'].includes(status)) return 'danger';
   return 'pending';
+}
+
+function friendlyStatus(status?: string) {
+  const map: Record<string, string> = {
+    created: 'Started',
+    kyc_not_started: 'Not started',
+    kyc_approved: 'Verified',
+    kyc_under_review: 'Under review',
+    kyc_incomplete: 'Action required',
+    kyc_rejected: 'Verification failed',
+    pending: 'Pending',
+    approved: 'Approved',
+    pending_deposit: 'Waiting for USDC',
+    deposit_received: 'Deposit received',
+    payout_processing: 'Sending to bank',
+    completed: 'Completed',
+    failed: 'Failed',
+    cancelled: 'Cancelled',
+    requires_action: 'Action required',
+    verified: 'Verified',
+    active: 'Active'
+  };
+  return status ? map[status] || status.replaceAll('_', ' ') : 'Not started';
 }
 
 function Badge({ children, status }: { children: string; status?: string }) {
@@ -42,62 +86,192 @@ function Empty({ children }: { children: string }) {
   return <div className="empty-state">{children}</div>;
 }
 
-function Kv({ label, value }: { label: string; value?: string | number | null }) {
-  return (
-    <div className="kv">
-      <span>{label}</span>
-      <strong>{value ?? '—'}</strong>
-    </div>
-  );
-}
-
 function getForm(form: HTMLFormElement) {
   return Object.fromEntries(new FormData(form).entries()) as Record<string, string>;
 }
 
-export default function App() {
-  const [view, setView] = useState<ViewKey>('overview');
-  const [apiBase, setApiBase] = useState(() => localStorage.getItem('sivan.apiBase') || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000');
-  const [apiDraft, setApiDraft] = useState(apiBase);
-  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+function shortRef(value?: string) {
+  if (!value) return '—';
+  if (value.length <= 14) return value;
+  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
 
+const fallbackCustomerTypes = [
+  { customerType: 'individual' as const, enabled: true, label: 'Individual', updatedAt: new Date().toISOString() },
+  { customerType: 'business' as const, enabled: false, label: 'Business', updatedAt: new Date().toISOString() }
+];
+
+const fallbackSourceAssets: AssetControl[] = [
+  { asset: 'usdc', enabled: true, label: 'USDC', updatedAt: new Date().toISOString() },
+  { asset: 'usdt', enabled: false, label: 'USDT', updatedAt: new Date().toISOString() }
+];
+
+const fallbackSourceNetworks: NetworkControl[] = [
+  { network: 'base', enabled: true, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: true, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
+];
+
+function normalizeOfframpControls(value: unknown): OfframpControls {
+  const data = value as Partial<OfframpControls> | PaymentControl[] | undefined;
+  if (Array.isArray(data)) {
+    return {
+      customerTypes: fallbackCustomerTypes,
+      payoutCurrencies: data,
+      sourceAssets: fallbackSourceAssets,
+      sourceNetworks: fallbackSourceNetworks
+    };
+  }
+  return {
+    customerTypes: data?.customerTypes ?? fallbackCustomerTypes,
+    payoutCurrencies: data?.payoutCurrencies ?? [],
+    sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
+    sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks
+  };
+}
+
+function initials(nameOrEmail?: string) {
+  const value = nameOrEmail || 'User';
+  const parts = value.includes('@') ? [value[0]] : value.trim().split(/\s+/);
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'U';
+}
+
+function qrUrl(value: string) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(value)}`;
+}
+
+export default function App() {
+  const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const apiBase = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000', []);
+  const appEnv = import.meta.env.VITE_APP_ENV || 'local';
+  const isLiveEnv = appEnv === 'live' || appEnv === 'production';
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
+  const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [pendingFullName, setPendingFullName] = useState('');
+  const [devCode, setDevCode] = useState<string | undefined>();
+  const [resendAvailableAt, setResendAvailableAt] = useState(0);
+  const [timeNow, setTimeNow] = useState(Date.now());
   const [user, setUser] = useState<UserRecord | null>(() => readStorage<UserRecord | null>('sivan.user', null));
   const [customer, setCustomer] = useState<CustomerRecord | null>(() => readStorage<CustomerRecord | null>('sivan.customer', null));
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
+  const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
+  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
+  const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
+  const [withdrawalReview, setWithdrawalReview] = useState<null | { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string }>(null);
+  const [otpCode, setOtpCode] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const pageTitle = useMemo(() => views.find((item) => item.key === view)?.label ?? 'Overview', [view]);
+  const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
+  const primaryAccount = accounts[0];
+  const hasUser = Boolean(user?.id && authToken);
+  const isVerified = customer?.kycStatus === 'kyc_approved';
+  const hasBank = accounts.length > 0;
+  const systemPaused = systemStatus.mode === 'paused';
+  const systemMaintenance = systemStatus.mode === 'maintenance';
+  const canStartKyc = !systemPaused;
+  const canCreatePaymentActions = systemStatus.mode === 'active';
+  const activeStep = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank' : 'Ready to withdraw';
+  const nextStepView: ViewKey = !hasUser ? 'signup' : !isVerified ? 'kyc' : !hasBank ? 'banks' : 'withdraw';
+  const nextStepLabel = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank account' : 'Withdraw stablecoins';
+  const environmentLabel = appEnv === 'test' ? '⚠ Test environment — no real money moves' : isLiveEnv ? '● Live' : 'Local environment';
+  const goToView = (nextView: ViewKey) => {
+    setView(nextView);
+    setMobileMenuOpen(false);
+    setUserMenuOpen(false);
+    const nextPath = pathByView[nextView] ?? '/dashboard';
+    if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
+  };
+  const enabledCustomerTypes = (paymentControls.customerTypes ?? fallbackCustomerTypes).filter((control) => control.enabled);
+  const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
+  const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
+  const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
+  const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
+  const verificationRedirectUri = useMemo(() => `${window.location.origin}/verification-complete`, []);
+  const verificationUrl = customer?.hostedKycLink || customer?.kycLink;
+  const kycStatus = customer?.kycStatus;
+  const kycApproved = kycStatus === 'kyc_approved';
+  const kycUnderReview = kycStatus === 'kyc_under_review';
+  const kycFailed = ['kyc_rejected', 'failed', 'cancelled'].includes(kycStatus ?? '');
+  const kycAlreadyStarted = Boolean(customer?.id && (verificationUrl || !['kyc_not_started', 'kyc_rejected', 'failed', 'cancelled'].includes(kycStatus ?? '')));
+  const kycActionLabel = loading
+    ? kycAlreadyStarted ? 'Opening...' : 'Starting...'
+    : !canStartKyc ? 'Verification paused'
+      : kycApproved ? 'Verified'
+        : kycUnderReview ? 'Under review'
+          : kycAlreadyStarted ? 'Continue verification'
+            : kycFailed ? 'Restart verification'
+              : 'Start verification';
+  const canSubmitKyc = hasUser && canStartKyc && !loading && !kycApproved && !kycUnderReview;
+  const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
+  const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
+  const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
+  const completedWithdrawalCount = completedWithdrawals.length;
+  const completedVolume = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.destinationAmount ?? withdrawal.sourceAmount ?? 0), 0);
+  const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
+  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Base';
+
+  const logout = useCallback((message = 'You have been signed out.') => {
+    setAuthToken('');
+    setUser(null);
+    setCustomer(null);
+    setAccounts([]);
+    setWithdrawals([]);
+    setOnrampOrders([]);
+    setDepositResult(null);
+    localStorage.removeItem('sivan.authToken');
+    localStorage.removeItem('sivan.user');
+    localStorage.removeItem('sivan.customer');
+    localStorage.removeItem('sivan.accounts');
+    setView('landing');
+    window.history.pushState({}, '', '/');
+    setToast({ message, type: 'success' });
+    window.setTimeout(() => setToast(null), 4200);
+  }, []);
 
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
     window.setTimeout(() => setToast(null), 4800);
   }, []);
 
-  const api = useCallback(
-    async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-      const response = await fetch(`${apiBase}${path}`, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(options.headers || {})
-        }
-      });
-      const json = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(json?.error?.message || `${response.status} ${response.statusText}`);
+  const resetPendingEmail = useCallback(() => {
+    setPendingEmail('');
+    setPendingFullName('');
+    setOtpCode('');
+    setDevCode(undefined);
+    setResendAvailableAt(0);
+  }, []);
+
+  const api = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
+    const response = await fetch(`${apiBase}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+        ...(options.headers || {})
       }
-      return (json.data ?? json) as T;
-    },
-    [apiBase]
-  );
+    });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (response.status === 401 && authToken) logout('Session expired. Please sign in again.');
+      throw new Error(json?.error?.message || 'Something went wrong. Please try again.');
+    }
+    return (json.data ?? json) as T;
+  }, [apiBase, authToken, logout]);
 
   useEffect(() => {
-    localStorage.setItem('sivan.apiBase', apiBase);
-  }, [apiBase]);
+    if (authToken) localStorage.setItem('sivan.authToken', authToken);
+    else localStorage.removeItem('sivan.authToken');
+  }, [authToken]);
 
   useEffect(() => {
     if (user) localStorage.setItem('sivan.user', JSON.stringify(user));
@@ -113,60 +287,155 @@ export default function App() {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
   }, [accounts]);
 
-  const checkApi = useCallback(async () => {
-    try {
-      await api('/health');
-      setApiOnline(true);
-    } catch {
-      setApiOnline(false);
-    }
-  }, [api]);
-
-  const loadFeesAndMetrics = useCallback(async () => {
-    const fee = await api<FeePolicy>('/api/fees/offramp').catch(() => null);
-    if (fee) setFeePolicy(fee);
-  }, [api]);
+  useEffect(() => {
+    if (!authToken) return;
+    const timeoutMs = 30 * 60 * 1000;
+    const updateActivity = () => localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
+    const checkActivity = () => {
+      const last = Number(localStorage.getItem('sivan.lastActivityAt') || Date.now());
+      if (Date.now() - last > timeoutMs) logout('Signed out after 30 minutes of inactivity.');
+    };
+    updateActivity();
+    const events = ['click', 'keydown', 'mousemove', 'touchstart'];
+    events.forEach((event) => window.addEventListener(event, updateActivity, { passive: true }));
+    const interval = window.setInterval(checkActivity, 60_000);
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, updateActivity));
+      window.clearInterval(interval);
+    };
+  }, [authToken, logout]);
 
   const loadUserData = useCallback(async () => {
-    if (!user?.id) return;
-    const [customerResult, accountsResult, withdrawalsResult] = await Promise.allSettled([
+    if (!user?.id || !authToken) return;
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
-      api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`)
+      api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
+      api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
-  }, [api, user?.id]);
+    if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
+  }, [api, user?.id, authToken]);
 
-  const refreshAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      await checkApi();
-      await loadFeesAndMetrics();
-      await loadUserData();
-    } finally {
-      setLoading(false);
+  const refreshKycStatus = useCallback(async (showToast = false) => {
+    if (!user?.id || !authToken) {
+      if (showToast) notify('Create or sign in to your account first.', 'error');
+      return null;
     }
-  }, [checkApi, loadFeesAndMetrics, loadUserData]);
+    try {
+      const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
+      setCustomer(refreshed);
+      if (showToast) notify('Verification status refreshed.');
+      return refreshed;
+    } catch (error) {
+      if (showToast) notify((error as Error).message, 'error');
+      return null;
+    }
+  }, [api, authToken, notify, user?.id]);
+
+  const loadControls = useCallback(async () => {
+    const [controls, status] = await Promise.all([
+      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks })),
+      api<SystemStatus>('/api/system/status').catch(() => systemStatus)
+    ]);
+    setPaymentControls(controls);
+    setSystemStatus(status);
+    return controls;
+  }, [api]);
+
+  const loadFee = useCallback(async () => {
+    const fee = await api<FeePolicy>('/api/fees/offramp').catch(() => null);
+    if (fee) setFeePolicy(fee);
+  }, [api]);
 
   useEffect(() => {
-    void refreshAll();
-  }, [refreshAll]);
+    void loadFee();
+    void loadControls();
+    void loadUserData();
+  }, [loadFee, loadControls, loadUserData]);
 
-  async function handleSignup(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    const onPopState = () => setView(viewFromPath(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (view !== 'signup') return;
+    if (window.location.pathname === '/login') setAuthTab('signin');
+    if (window.location.pathname === '/signup') setAuthTab('signup');
+  }, [view]);
+
+  useEffect(() => {
+    const refreshControls = () => {
+      if (document.visibilityState === 'visible') void loadControls();
+    };
+    const interval = window.setInterval(refreshControls, 10_000);
+    window.addEventListener('focus', refreshControls);
+    document.addEventListener('visibilitychange', refreshControls);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshControls);
+      document.removeEventListener('visibilitychange', refreshControls);
+    };
+  }, [loadControls]);
+
+  useEffect(() => {
+    if (!pendingEmail || !resendAvailableAt) return;
+    const interval = window.setInterval(() => setTimeNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [pendingEmail, resendAvailableAt]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const returnedFromVerification = window.location.pathname === '/verification-complete' || params.get('verification') === 'complete';
+    if (!returnedFromVerification) return;
+    setView('kyc');
+    if (user?.id && authToken) {
+      void loadUserData();
+      void refreshKycStatus(false);
+      notify('Welcome back. We are checking your verification status.');
+    } else {
+      notify('Verification returned. Sign in to refresh your status.');
+    }
+    window.history.replaceState({}, document.title, '/verification');
+  }, [authToken, loadUserData, notify, refreshKycStatus, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !authToken || view !== 'kyc' || !customer?.id || kycApproved) return;
+    const poll = () => void refreshKycStatus(false);
+    poll();
+    const interval = window.setInterval(poll, 15_000);
+    window.addEventListener('focus', poll);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', poll);
+    };
+  }, [authToken, customer?.id, kycApproved, refreshKycStatus, user?.id, view]);
+
+
+  async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     try {
       const body = getForm(event.currentTarget);
-      const created = await api<UserRecord>('/api/users', { method: 'POST', body: JSON.stringify(body) });
-      setUser(created);
-      setCustomer(null);
-      setAccounts([]);
-      setWithdrawals([]);
-      setDepositResult(null);
-      notify('User created. Continue to verification to enable withdrawals.');
-      setView('kyc');
+      const result = await api<{ message: string; expiresAt: string; devCode?: string }>('/api/auth/email/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: body.email,
+          fullName: authTab === 'signup' ? body.fullName : undefined,
+          intent: authTab
+        })
+      });
+      setPendingEmail(body.email);
+      setPendingFullName(body.fullName || '');
+      setOtpCode('');
+      setDevCode(result.devCode);
+      setResendAvailableAt(Date.now() + 30_000);
+      setTimeNow(Date.now());
+      notify(authTab === 'signup' ? 'Verification code sent. Enter it to create your account.' : 'Login code sent. Enter it to continue.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -174,16 +443,103 @@ export default function App() {
     }
   }
 
-  async function handleKyc(event: FormEvent<HTMLFormElement>) {
+
+  async function handleResendCode() {
+    if (!pendingEmail || resendSeconds > 0) return;
+    setLoading(true);
+    try {
+      const result = await api<{ message: string; expiresAt: string; devCode?: string }>('/api/auth/email/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: pendingEmail,
+          fullName: authTab === 'signup' ? pendingFullName : undefined,
+          intent: authTab
+        })
+      });
+      setOtpCode('');
+      setDevCode(result.devCode);
+      setResendAvailableAt(Date.now() + 30_000);
+      setTimeNow(Date.now());
+      notify('A new verification code has been sent.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleEmailAuthVerify(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     try {
       const body = getForm(event.currentTarget);
-      const created = await api<CustomerRecord>('/api/customers/kyc-link', { method: 'POST', body: JSON.stringify(body) });
-      setCustomer(created);
-      notify('Verification started. Follow the verification link to complete onboarding.');
-      setView('banks');
+      const result = await api<{ token: string; user: UserRecord; expiresInMinutes: number }>('/api/auth/email/verify', {
+        method: 'POST',
+        body: JSON.stringify({ email: pendingEmail, code: body.code || otpCode })
+      });
+      setAuthToken(result.token);
+      setUser(result.user);
+      setPendingEmail('');
+      setOtpCode('');
+      setDevCode(undefined);
+      localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
+      notify(authTab === 'signup' ? 'Account verified. Continue your setup.' : 'Welcome back.');
+      goToView('overview');
+      window.setTimeout(() => void loadUserData(), 0);
     } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  async function handleKyc(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!canStartKyc) return notify(systemStatus.message || 'Verification is temporarily paused.', 'error');
+    if (kycApproved) return notify('Your identity is already verified.');
+    if (kycUnderReview) return notify('Verification is under review. We will update this page once it is complete.');
+    const formBeforeLoading = getForm(event.currentTarget);
+    const verificationWindow = window.open('', '_blank');
+    if (verificationWindow) {
+      verificationWindow.document.title = 'Opening Sivan verification';
+      verificationWindow.document.body.style.background = '#07090d';
+      verificationWindow.document.body.style.color = '#eef3f7';
+      verificationWindow.document.body.style.fontFamily = 'Inter, system-ui, sans-serif';
+      verificationWindow.document.body.style.padding = '32px';
+      verificationWindow.document.body.innerHTML = '<h2>Opening secure verification…</h2><p>Please keep this tab open.</p>';
+    }
+    setLoading(true);
+    try {
+      const latestControls = await loadControls();
+      const latestEnabledCustomerTypes = (latestControls.customerTypes ?? fallbackCustomerTypes).filter((control) => control.enabled);
+      if (!latestEnabledCustomerTypes.some((control) => control.customerType === formBeforeLoading.type)) {
+        verificationWindow?.close();
+        return notify(`${formBeforeLoading.type === 'business' ? 'Business' : 'Individual'} verification is currently unavailable.`, 'error');
+      }
+      const body = formBeforeLoading;
+      const created = await api<CustomerRecord>('/api/customers/kyc-link', {
+        method: 'POST',
+        body: JSON.stringify({ userId: user.id, type: body.type, redirectUri: body.redirectUri || undefined })
+      });
+      setCustomer(created);
+      const nextVerificationUrl = created.hostedKycLink || created.kycLink;
+      if (nextVerificationUrl) {
+        if (verificationWindow) {
+          verificationWindow.opener = null;
+          verificationWindow.location.assign(nextVerificationUrl);
+        } else {
+          window.open(nextVerificationUrl, '_blank', 'noopener,noreferrer');
+        }
+        notify(created.tosStatus === 'approved' ? 'Verification opened in a new tab. Keep this page open and return here when you finish.' : 'Verification opened in a new tab. If Terms remains pending, accept it from the verification status card when you return.');
+      } else {
+        verificationWindow?.close();
+        notify('Verification started. Return here after completing the secure verification steps.');
+      }
+      setView('kyc');
+    } catch (error) {
+      verificationWindow?.close();
       notify((error as Error).message, 'error');
     } finally {
       setLoading(false);
@@ -191,27 +547,27 @@ export default function App() {
   }
 
   async function refreshKyc() {
-    if (!user?.id) return notify('Create a user first.', 'error');
-    try {
-      const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
-      setCustomer(refreshed);
-      notify('KYC status refreshed.');
-    } catch (error) {
-      notify((error as Error).message, 'error');
-    }
+    await refreshKycStatus(true);
   }
 
   async function handleBank(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification before adding a bank account.', 'error');
+    if (!canCreatePaymentActions) return notify(systemStatus.message || 'New bank accounts are temporarily unavailable.', 'error');
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
+      const latestControls = await loadControls();
+      const latestEnabledControls = latestControls.payoutCurrencies.filter((control) => control.enabled);
+      if (!latestEnabledControls.some((control) => control.currency === data.currency)) throw new Error(`${data.currency.toUpperCase()} withdrawals are currently unavailable.`);
       const isUsd = data.currency === 'usd';
-      const body = {
-        userId: data.userId,
+      const isGbp = data.currency === 'gbp';
+      const body: Record<string, unknown> = {
+        userId: user.id,
         currency: data.currency,
-        accountType: isUsd ? 'us' : 'gb',
-        paymentRail: isUsd ? 'ach' : 'faster_payments',
+        accountType: isUsd ? 'us' : isGbp ? 'gb' : 'iban',
+        paymentRail: isUsd ? 'ach' : isGbp ? 'faster_payments' : 'sepa',
         bankName: data.bankName,
         accountName: `${data.accountOwnerName} account`,
         accountOwnerName: data.accountOwnerName,
@@ -219,16 +575,60 @@ export default function App() {
         firstName: data.firstName,
         lastName: data.lastName,
         address: isUsd
-          ? { street_line_1: '923 Folsom Street', country: 'USA', state: 'CA', city: 'San Francisco', postal_code: '94107' }
-          : { street_line_1: '1 King Street', country: 'GBR', city: 'London', postal_code: 'SW1A 1AA' },
-        account: isUsd
-          ? { routing_number: data.routingNumber, account_number: data.accountNumber, checking_or_savings: 'checking' }
-          : { sort_code: data.sortCode, account_number: data.gbAccountNumber }
+          ? { street_line_1: data.street || '923 Folsom Street', country: 'USA', state: data.state || 'CA', city: data.city || 'San Francisco', postal_code: data.postalCode || '94107' }
+          : isGbp
+            ? { street_line_1: data.street || '1 King Street', country: 'GBR', city: data.city || 'London', postal_code: data.postalCode || 'SW1A 1AA' }
+            : { street_line_1: data.street || '2 Rue de la Paix', country: data.ibanCountry || 'FRA', city: data.city || 'Paris', postal_code: data.postalCode || '75002' }
       };
+      if (isUsd) {
+        body.account = { routing_number: data.routingNumber, account_number: data.accountNumber, checking_or_savings: 'checking' };
+      } else if (isGbp) {
+        body.account = { sort_code: data.sortCode, account_number: data.gbAccountNumber };
+      } else {
+        body.iban = { account_number: data.ibanAccountNumber, bic: data.bic || undefined, country: data.ibanCountry || 'FRA' };
+      }
       const account = await api<ExternalAccountRecord>('/api/external-accounts', { method: 'POST', body: JSON.stringify(body) });
       setAccounts((existing) => [account, ...existing.filter((item) => item.id !== account.id)]);
-      notify('Bank account added.');
+      notify('Bank account added. You can now create a withdrawal.');
       setView('withdraw');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  async function handleOnramp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification before buying stablecoins.', 'error');
+    if (!canCreatePaymentActions) return notify(systemStatus.message || 'New payment actions are temporarily unavailable.', 'error');
+    setLoading(true);
+    try {
+      const data = getForm(event.currentTarget);
+      const amount = Number(data.amount);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('Enter a valid amount.');
+      const latestControls = await loadControls();
+      const enabledCurrencySet = new Set(latestControls.payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency));
+      const enabledAssetSet = new Set(latestControls.sourceAssets.filter((control) => control.enabled).map((control) => control.asset));
+      const enabledNetworkSet = new Set(latestControls.sourceNetworks.filter((control) => control.enabled).map((control) => control.network));
+      if (!enabledCurrencySet.has(data.sourceCurrency as 'usd' | 'gbp' | 'eur')) throw new Error(`${data.sourceCurrency.toUpperCase()} on-ramp payments are currently unavailable.`);
+      if (!enabledAssetSet.has(data.destinationCurrency as 'usdc' | 'usdt')) throw new Error(`${data.destinationCurrency.toUpperCase()} purchases are currently unavailable.`);
+      if (!enabledNetworkSet.has(data.destinationChain as any)) throw new Error(`${data.destinationChain} destination network is currently unavailable.`);
+      const order = await api<OnrampOrderRecord>('/api/onramp/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: user.id,
+          sourceCurrency: data.sourceCurrency,
+          destinationCurrency: data.destinationCurrency,
+          destinationChain: data.destinationChain,
+          destinationAddress: data.destinationAddress,
+          amount
+        })
+      });
+      setOnrampOrders((orders) => [order, ...orders.filter((item) => item.id !== order.id)]);
+      notify('On-ramp order created. Follow the payment instructions exactly.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -238,23 +638,36 @@ export default function App() {
 
   async function handleWithdraw(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification first.', 'error');
+    if (!accounts.length) return notify('Add a bank account first.', 'error');
+    if (!canCreatePaymentActions) return notify(systemStatus.message || 'New withdrawals are temporarily unavailable.', 'error');
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
-      const result = await api<DepositResponse>('/api/withdrawals', {
-        method: 'POST',
-        body: JSON.stringify({
-          userId: data.userId,
-          externalAccountId: data.externalAccountId,
-          sourceCurrency: 'usdc',
-          sourceChain: data.sourceChain,
-          destinationCurrency: data.destinationCurrency,
-          returnAddress: data.returnAddress
-        })
+      const latestControls = await loadControls();
+      const enabledCurrencySet = new Set(latestControls.payoutCurrencies.filter((control) => control.enabled).map((control) => control.currency));
+      const enabledAssetSet = new Set(latestControls.sourceAssets.filter((control) => control.enabled).map((control) => control.asset));
+      const enabledNetworkSet = new Set(latestControls.sourceNetworks.filter((control) => control.enabled).map((control) => control.network));
+      if (!enabledAssetSet.has(data.sourceCurrency as 'usdc' | 'usdt')) throw new Error(`${data.sourceCurrency.toUpperCase()} deposits are currently unavailable.`);
+      if (!enabledNetworkSet.has(data.sourceChain as any)) throw new Error(`${data.sourceChain} deposits are currently unavailable.`);
+      const selectedAccount = accounts.find((account) => account.id === data.externalAccountId && enabledCurrencySet.has(account.currency)) || accounts.find((account) => enabledCurrencySet.has(account.currency));
+      if (!selectedAccount) throw new Error('Choose a bank account first.');
+      const assetLabel = latestControls.sourceAssets.find((asset) => asset.asset === data.sourceCurrency)?.label || data.sourceCurrency.toUpperCase();
+      const networkLabel = latestControls.sourceNetworks.find((network) => network.network === data.sourceChain)?.label || data.sourceChain;
+      setWithdrawalReview({
+        userId: user.id,
+        externalAccountId: selectedAccount.id,
+        sourceCurrency: data.sourceCurrency,
+        sourceChain: data.sourceChain,
+        destinationCurrency: selectedAccount.currency,
+        returnAddress: data.returnAddress,
+        bankLabel: `${selectedAccount.bankName || 'Bank account'} ****${selectedAccount.accountLast4 || '----'}`,
+        assetLabel,
+        networkLabel
       });
-      setDepositResult(result);
-      await loadUserData();
-      notify('Deposit address created.');
+      setDepositResult(null);
+      notify('Review your withdrawal details before creating a deposit address.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -262,170 +675,684 @@ export default function App() {
     }
   }
 
-  const primaryAccount = accounts[0];
+
+  async function confirmWithdrawal() {
+    if (!withdrawalReview) return;
+    setLoading(true);
+    try {
+      const result = await api<DepositResponse>('/api/withdrawals', {
+        method: 'POST',
+        body: JSON.stringify(withdrawalReview)
+      });
+      setWithdrawalReview(null);
+      setDepositResult(result);
+      await loadUserData();
+      notify('Deposit address created. Send only the selected asset and network.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (view === 'landing') {
+    return <LandingPage
+      isLiveEnv={isLiveEnv}
+      appEnv={appEnv}
+      hasUser={hasUser}
+      assets={primaryAssetLabel}
+      networks={primaryNetworkLabel}
+      payoutCurrencies={enabledControls.map((control) => control.currency.toUpperCase()).join(', ') || 'USD, GBP, EUR'}
+      feePercent={feePolicy?.percent || '1.25'}
+      onGetStarted={() => goToView(hasUser ? 'overview' : 'signup')}
+      onDashboard={() => goToView('overview')}
+      onBuy={() => goToView('buy')}
+    />;
+  }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">S</div>
-          <div>
-            <p className="eyebrow">Sivan</p>
-            <h1>Off-Ramp</h1>
-          </div>
+    <div className={`app-shell ${mobileMenuOpen ? 'menu-open' : ''}`}>
+      <button className="mobile-menu-overlay" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)} />
+      <aside className={`sidebar app-sidebar ${mobileMenuOpen ? 'open' : ''}`}>
+        <button className="mobile-menu-close" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)}>×</button>
+        <div className="brand app-brand">
+          <img className="brand-logo" src="/asset/sivan-logo.png" alt="Sivan logo" />
+          <h1>Sivan</h1>
         </div>
 
-        <nav className="nav">
+        <nav className="nav app-nav">
           {views.map((item) => (
-            <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => setView(item.key)}>
+            <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => goToView(item.key)}>
               <span>{item.icon}</span> {item.label}
             </button>
           ))}
         </nav>
 
-        <div className="api-card">
-          <label htmlFor="apiBase">API base</label>
-          <input id="apiBase" value={apiDraft} onChange={(event) => setApiDraft(event.target.value)} />
-          <button
-            className="ghost-btn"
-            onClick={() => {
-              setApiBase(apiDraft.replace(/\/$/, ''));
-              notify('API URL saved.');
-            }}
-          >
-            Save API URL
-          </button>
-          <p className="hint">Backend: <code>npm run dev</code> from repo root.</p>
+        <SidebarSetupCard setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} />
+
+        <div className="sidebar-footer app-sidebar-footer">
+          <div className="sidebar-status"><span></span>{systemStatus.mode === 'active' ? 'All systems operational' : systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</div>
         </div>
       </aside>
 
       <main className="main">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">React + TypeScript Control Center</p>
-            <h2>{pageTitle}</h2>
-          </div>
-          <div className="top-actions">
-            <div className={`status-pill ${apiOnline === true ? 'ok' : apiOnline === false ? 'bad' : ''}`}>
-              <span /> {apiOnline === true ? 'API connected' : apiOnline === false ? 'API offline' : 'Checking API'}
-            </div>
-            <button className="secondary-btn" onClick={refreshAll} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
+        <header className="topbar app-topbar">
+          <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
+          <h2>{pageTitle}</h2>
+          <div className="top-actions app-top-actions">
+            <div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div>
+            <button className="icon-btn" aria-label="Notifications"><span className="notif-dot"></span>▢</button>
+            {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small" onClick={() => goToView('signup')}>Sign in</button>}
           </div>
         </header>
 
         {toast && <section className={`toast ${toast.type === 'error' ? 'error' : ''}`}>{toast.message}</section>}
 
+        {systemStatus.mode !== 'active' && <section className="maintenance-banner"><strong>{systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</strong><span>{systemStatus.message || (systemStatus.mode === 'maintenance' ? 'New withdrawals are temporarily unavailable while maintenance is in progress.' : 'New payment actions are temporarily paused.')}</span>{systemStatus.estimatedResumeAt && <small>Estimated resume: {new Date(systemStatus.estimatedResumeAt).toLocaleString()}</small>}</section>}
+
         {view === 'overview' && (
-          <section className="view active">
-            <div className="hero-card glass">
-              <div>
-                <p className="eyebrow">USDC → USD/GBP</p>
-                <h3>Premium bank payout experience for stablecoin users.</h3>
-                <p className="muted">Sign up, verify your account, add a bank account, and withdraw USDC to USD or GBP with a simple premium experience.</p>
-                <div className="hero-actions">
-                  <button className="primary-btn" onClick={() => setView('signup')}>Create user</button>
-                  <button className="secondary-btn" onClick={() => setView('withdraw')}>Create withdrawal</button>
-                </div>
-              </div>
-              <div className="flow-card">
-                <div className="flow-node">USDC</div>
-                <div className="flow-line" />
-                <div className="flow-node">Sivan deposit address</div>
-                <div className="flow-line" />
-                <div className="flow-node">Verified bank account</div>
-                <div className="flow-line" />
-                <div className="flow-node accent">USD / GBP</div>
-              </div>
+          <section className="view active dashboard-view app-dashboard">
+            <div className={`setup-banner ${isVerified && hasBank ? 'ok' : 'warn'}`}>
+              <div><h3>{isVerified && hasBank ? `Welcome back, ${firstName}.` : 'Finish setting up your account.'}</h3><p>{isVerified && hasBank ? 'Your account is ready. You can sell supported stablecoins to your bank.' : 'Complete identity verification and add a payout method to make your first transaction.'}</p></div>
+              <button className="primary-btn" onClick={() => goToView(nextStepView)}>{isVerified && hasBank ? 'Sell crypto' : 'Complete setup'} →</button>
             </div>
 
-            <div className="stats-grid">
-              <Stat label="Current user" value={user ? 'Active' : '—'} helper={user?.email || 'No user selected'} />
-              <Stat label="KYC status" value={customer?.kycStatus || '—'} helper="Bridge customer verification" />
-              <Stat label="Sivan fee" value={feePolicy ? `${feePolicy.percent}%` : '—'} helper="User-facing off-ramp fee" />
-              <Stat label="Withdrawals" value={String(withdrawals.length)} helper="Your withdrawal history" />
+            <div className="dashboard-actions-row">
+              <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
+              <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button>
             </div>
 
-            <div className="panel-grid two">
-              <WithdrawalsList withdrawals={withdrawals.slice(0, 4)} compact />
-              <UserGuidePanel />
+            <div className="dashboard-kpis">
+              <KpiCard label="Total volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
+              <KpiCard label="Transactions" value={String(withdrawals.length)} sub="Lifetime" trend={withdrawals.length ? `${withdrawals.length} records` : 'Start your first'} />
+              <KpiCard label="Avg. payout time" value="1–2 days" sub="Provider + bank rail" trend="Tracked by status" />
+              <KpiCard label="Verification" value={isVerified ? 'Verified' : 'Incomplete'} sub={isVerified ? 'Ready' : 'Action required'} trend={friendlyStatus(customer?.kycStatus)} />
+            </div>
+
+            <div className="dashboard-main-grid">
+              <DashboardTransactions withdrawals={withdrawals.slice(0, 4)} onStart={() => goToView('withdraw')} onViewAll={() => goToView('history')} />
+              <div className="dashboard-side-stack">
+                <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} onContinue={() => goToView(nextStepView)} />
+                <SecurityReminder onSettings={() => goToView('settings')} />
+              </div>
             </div>
           </section>
         )}
+
 
         {view === 'signup' && (
           <section className="form-layout">
             <article className="panel form-panel">
-              <p className="eyebrow">Step 1</p>
-              <h3>Create a Sivan user</h3>
-              <p className="muted">Create your Sivan account to begin the secure withdrawal setup.</p>
-              <form className="form" onSubmit={handleSignup}>
-                <label>Email<input name="email" type="email" placeholder="ada@sivan.app" required /></label>
-                <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>
-                <button className="primary-btn" disabled={loading}>Create user</button>
-              </form>
+              <p className="eyebrow">Secure access</p>
+              <h3>{authTab === 'signup' ? 'Create your account' : 'Welcome back'}</h3>
+              <p className="muted">Use passwordless email access. We will send a short verification code.</p>
+              <div className="auth-tabs">
+                <button className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); }}>Create account</button>
+                <button className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); }}>Sign in</button>
+              </div>
+              {!pendingEmail ? (
+                <form className="form" onSubmit={handleEmailAuthStart}>
+                  <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
+                  {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>}
+                  <button className="primary-btn" disabled={loading}>{loading ? 'Sending...' : authTab === 'signup' ? 'Send verification code' : 'Send login code'}</button>
+                </form>
+              ) : (
+                <form className="form" onSubmit={handleEmailAuthVerify}>
+                  <div className="email-confirmation">
+                    <span>Code sent to</span>
+                    <strong>{pendingEmail}</strong>
+                    <button type="button" onClick={resetPendingEmail}>Change email</button>
+                  </div>
+                  <OtpInput value={otpCode} onChange={setOtpCode} />
+                  {devCode && <div className="dev-code">Test code: <strong>{devCode}</strong></div>}
+                  <button className="primary-btn" disabled={loading || otpCode.length < 6}>{loading ? 'Checking...' : 'Continue'}</button>
+                  <button type="button" className="ghost-btn" disabled={loading || resendSeconds > 0} onClick={handleResendCode}>{resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : 'Resend code'}</button>
+                </form>
+              )}
             </article>
             <article className="premium-card">
               <span className="orb" />
-              <h3>Withdraw USDC with confidence.</h3>
-              <p>A focused flow for verified users who want stablecoin-to-bank withdrawals.</p>
-              <ul><li>Simple signup</li><li>Secure verification</li><li>Verified bank payouts</li></ul>
+              <h3>Fast access, no passwords.</h3>
+              <p>Sign in securely with your email today. WhatsApp sign-in will be added for existing escrow users later.</p>
+              <ul><li>Passwordless login</li><li>Auto logout after inactivity</li><li>Web and WhatsApp-ready identity</li></ul>
             </article>
           </section>
         )}
 
-        {view === 'kyc' && (
-          <section className="panel-grid two">
-            <article className="panel form-panel">
-              <p className="eyebrow">Step 2</p>
-              <h3>Start KYC / KYB</h3>
-              <p className="muted">Complete verification to enable withdrawals to your verified bank account.</p>
-              <form className="form" onSubmit={handleKyc}>
-                <label>User ID<input name="userId" defaultValue={user?.id || ''} placeholder="usr_..." required /></label>
-                <label>Customer type<select name="type" defaultValue="individual"><option value="individual">Individual</option><option value="business">Business</option></select></label>
-                <label>Redirect URL<input name="redirectUri" type="url" defaultValue="https://app.sivan.test/kyc/complete" /></label>
-                <button className="primary-btn" disabled={loading}>Start verification</button>
-              </form>
-            </article>
-            <article className="panel">
-              <div className="panel-head"><h3>Verification status</h3><button className="ghost-btn small" onClick={refreshKyc}>Refresh KYC</button></div>
-              {customer ? <CustomerDetails customer={customer} /> : <Empty>No customer loaded.</Empty>}
-            </article>
-          </section>
-        )}
 
-        {view === 'banks' && (
-          <section className="panel-grid two">
-            <BankForm userId={user?.id || ''} onSubmit={handleBank} loading={loading} />
-            <article className="panel">
-              <div className="panel-head"><h3>Bank accounts</h3><button className="ghost-btn small" onClick={loadUserData}>Load</button></div>
-              <BankList accounts={accounts} onUse={(account) => setView('withdraw')} />
-            </article>
-          </section>
-        )}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} />}
+
+        {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 
         {view === 'withdraw' && (
-          <section className="panel-grid two">
-            <article className="panel form-panel">
-              <p className="eyebrow">Step 4</p>
-              <h3>Create withdrawal</h3>
-              <p className="muted">Creates a Bridge liquidation address and returns a user-facing USDC deposit address.</p>
-              <form className="form" onSubmit={handleWithdraw}>
-                <label>User ID<input name="userId" defaultValue={user?.id || ''} required /></label>
-                <label>External account ID<input name="externalAccountId" defaultValue={primaryAccount?.id || ''} placeholder="ea_..." required /></label>
-                <label>Destination currency<select name="destinationCurrency" defaultValue={primaryAccount?.currency || 'usd'}><option value="usd">USD</option><option value="gbp">GBP</option></select></label>
-                <label>USDC chain<select name="sourceChain" defaultValue="ethereum"><option value="ethereum">Ethereum</option><option value="base">Base</option><option value="polygon">Polygon</option><option value="solana">Solana</option><option value="arbitrum">Arbitrum</option><option value="optimism">Optimism</option></select></label>
-                <label>Return address<input name="returnAddress" defaultValue="0x0000000000000000000000000000000000000000" /></label>
-                <button className="primary-btn" disabled={loading}>Create deposit address</button>
-              </form>
-            </article>
-            <DepositCard result={depositResult} />
-          </section>
+          <OffRampWizard
+            accounts={accounts}
+            enabledControls={enabledControls}
+            enabledAssets={enabledAssets}
+            enabledNetworks={enabledNetworks}
+            primaryAccount={primaryAccount}
+            withdrawalReview={withdrawalReview}
+            depositResult={depositResult}
+            feePercent={feePolicy?.percent}
+            loading={loading}
+            canCreatePaymentActions={canCreatePaymentActions}
+            onSubmit={handleWithdraw}
+            onCancelReview={() => setWithdrawalReview(null)}
+            onConfirm={confirmWithdrawal}
+          />
         )}
 
-        {view === 'history' && <WithdrawalsList withdrawals={withdrawals} />}
+        {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} />}
+
+        {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
+
+        {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'help' && <SupportView />}
+
       </main>
     </div>
   );
+}
+
+
+function SidebarSetupCard({ setupPercent, hasUser, isVerified, hasBank, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; onContinue: () => void }) {
+  const helper = !hasUser ? 'Create your account to start.' : !isVerified ? 'Verify your identity next.' : !hasBank ? 'Add your payout method.' : 'Ready for transactions.';
+  return <article className="sidebar-setup-card"><p>Account setup</p><strong>{setupPercent}%</strong><div className="bar"><div className="fill" style={{ width: `${setupPercent}%` }} /></div><small>{helper}</small><button className="primary-btn" onClick={onContinue}>Continue setup ›</button></article>;
+}
+
+function KpiCard({ label, value, sub, trend }: { label: string; value: string; sub: string; trend: string }) {
+  return <article className="kpi-card"><p>{label}</p><strong>{value}</strong><span>{sub}</span><small>{trend}</small></article>;
+}
+
+function DashboardTransactions({ withdrawals, onStart, onViewAll }: { withdrawals: WithdrawalRecord[]; onStart: () => void; onViewAll: () => void }) {
+  return <article className="dashboard-transactions"><div className="dash-card-head"><h3>Recent transactions</h3><button onClick={onViewAll}>View all ↗</button></div>{!withdrawals.length ? <div className="dashboard-empty"><p>No transactions yet.</p><button className="secondary-btn" onClick={onStart}>⊕ Start your first transaction</button></div> : <><div className="dashboard-tx-list">{withdrawals.map((withdrawal) => <div className="dashboard-tx" key={withdrawal.id}><span className="tx-icon">↗</span><div><strong>Sell · {withdrawal.sourceAmount || '—'} {withdrawal.sourceCurrency?.toUpperCase?.() || 'USDC'}</strong><small>To bank</small></div><div><b>{withdrawal.destinationAmount || '—'} {withdrawal.destinationCurrency?.toUpperCase()}</b><Badge status={withdrawal.status}>{friendlyStatus(withdrawal.status)}</Badge></div><time>{new Date(withdrawal.createdAt).toLocaleDateString()}</time></div>)}</div><button className="secondary-btn dashboard-start-btn" onClick={onStart}>⊕ Start your first transaction</button></>}</article>;
+}
+
+function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank, user, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; user: UserRecord | null; onContinue: () => void }) {
+  return <article className="dashboard-setup-panel"><h3>Account setup</h3><div className="setup-list"><SetupLine done={hasUser} title="Email confirmed" sub={user?.email || 'Create account'} /><SetupLine done={false} title="Phone verified" sub="Required for payouts" /><SetupLine done={isVerified} title="Identity verification" sub={isVerified ? 'Verified' : '~3 minutes'} /><SetupLine done={hasBank} title="Add bank account" sub={hasBank ? 'Bank added' : 'ACH, SEPA, FPS, IBAN'} /></div><div className="setup-progress"><div><span style={{ width: `${setupPercent}%` }} /></div><strong>{setupPercent}%</strong></div><button className="primary-btn" onClick={onContinue}>Continue setup →</button></article>;
+}
+
+function SetupLine({ done, title, sub }: { done: boolean; title: string; sub: string }) {
+  return <div className={`setup-line ${done ? 'done' : ''}`}><span>{done ? '✓' : '○'}</span><div><strong>{title}</strong><small>{sub}</small></div></div>;
+}
+
+function SecurityReminder({ onSettings }: { onSettings: () => void }) {
+  return <article className="security-card"><div className="security-icon">◈</div><div><h3>Security reminder</h3><p>Enable two-factor authentication and never share your seed phrase. Sivan will never ask for wallet private keys or 2FA codes outside the dashboard.</p><button onClick={onSettings}>Security settings →</button></div></article>;
+}
+
+
+function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurrencies, feePercent, onGetStarted, onDashboard, onBuy }: { isLiveEnv: boolean; appEnv: string; hasUser: boolean; assets: string; networks: string; payoutCurrencies: string; feePercent: string; onGetStarted: () => void; onDashboard: () => void; onBuy: () => void }) {
+  const [quoteMode, setQuoteMode] = useState<'sell' | 'buy'>('sell');
+  const [quoteAmount, setQuoteAmount] = useState('1000');
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const numericFee = Number(feePercent || '1.25');
+  const quoteValue = Math.max(0, Number(quoteAmount.replace(/,/g, '')) || 0);
+  const feeAmount = Number.isFinite(numericFee) ? (quoteValue * numericFee / 100) : 0;
+  const receiveAmount = Math.max(0, quoteValue - feeAmount);
+  const formattedReceiveAmount = receiveAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const updateQuoteAmount = (value: string) => setQuoteAmount(value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1'));
+  const faqItems = [
+    { q: 'Do I need to complete KYC to use Sivan?', a: 'Yes. Verification is required before bank withdrawals or on-ramp actions. This protects users, reduces fraud, and keeps Sivan aligned with provider-supported payment rails.' },
+    { q: 'Which countries and payment methods are supported?', a: `The current off-ramp supports enabled payout rails such as ${payoutCurrencies}. Available options are controlled by Sivan in Admin Controls. NGN is planned as a coming-soon rail as partnerships are finalized.` },
+    { q: 'How long does a transaction take?', a: 'After your crypto deposit is confirmed on the selected network, provider processing and bank payout timing can vary by rail and bank. The app tracks status as the provider sends updates.' },
+    { q: 'What are the fees?', a: `The current Sivan off-ramp fee shown from the live fee configuration is ${feePercent}%. Fees are shown before users receive a deposit address, and admin-controlled pricing can be updated operationally.` },
+    { q: 'What happens if I send the wrong token or wrong network?', a: 'Only send the selected token on the selected network shown on the deposit screen. Sending any other token, or using the wrong network, can permanently lose funds and may not be recoverable.' },
+    { q: 'Does Sivan hold my funds?', a: 'Sivan coordinates provider-backed payment flows and status tracking. Deposit addresses and settlement are handled through supported payment providers; Sivan does not ask for wallet private keys.' },
+    { q: 'Is on-ramp supported?', a: 'The on-ramp product area is being prepared. Live buy actions should only be enabled after backend/provider rails, webhooks, controls, and reconciliation are fully tested.' }
+  ];
+  return (
+    <div className="landing-shell premium-landing">
+      <header className="landing-nav premium-nav">
+        <a className="landing-brand" href="https://www.sivantech.online/" aria-label="Sivan home">
+          <img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong>
+        </a>
+        <nav>
+          <a href="#features">Features</a>
+          <a href="#how">How it works</a>
+          <a href="#start">Start</a>
+          <a href="#faq">FAQ</a>
+          <a href="#business">Business</a>
+          <button className="ghost-btn" onClick={onDashboard}>Sign in</button>
+          <button className="primary-btn" onClick={onGetStarted}>{hasUser ? 'Continue' : 'Get started'}</button>
+        </nav>
+      </header>
+
+      <main>
+        <section className="landing-hero premium-hero">
+          <div className="landing-copy">
+            <p className="eyebrow">Crypto to fiat. Fiat to crypto.</p>
+            <h1>Buy and sell crypto<br /><span>the simple way.</span></h1>
+            <p className="lead">Convert USDC, USDT and other supported digital assets directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
+            <div className="landing-actions">
+              <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
+              <a className="secondary-btn" href="#how">See how it works</a>
+            </div>
+            <div className="landing-trust"><span>✓ Licensed partners</span><span>✓ Non-custodial</span><span>✓ 1–2 day payouts</span></div>
+          </div>
+          <div className="quote-widget">
+            <div className="widget-tabs"><button className={quoteMode === 'sell' ? 'active' : ''} onClick={() => setQuoteMode('sell')}>Sell</button><button className={quoteMode === 'buy' ? 'active' : ''} onClick={() => setQuoteMode('buy')}>Buy</button></div>
+            <QuoteBox label={quoteMode === 'sell' ? 'You send' : 'You pay'} amount={quoteAmount} asset={quoteMode === 'sell' ? 'USDC' : 'USD'} helper={quoteMode === 'sell' ? '1 USDC ≈ $1.00' : 'Bank transfer'} editable onAmountChange={updateQuoteAmount} />
+            <div className="quote-swap">↕</div>
+            <QuoteBox label={quoteMode === 'sell' ? 'You receive' : 'You get'} amount={formattedReceiveAmount} asset={quoteMode === 'sell' ? 'USD · ACH' : 'USDC'} helper={quoteMode === 'sell' ? 'After Sivan fee' : 'After Sivan fee'} />
+            <div className="quote-fees">
+              <div><span>Rate</span><strong>1 USDC ≈ $1.00</strong></div>
+              <div><span>Sivan fee ({feePercent}%)</span><strong className="danger">−${feeAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+              <div><span>Arrival</span><strong>Provider + bank rail timing</strong></div>
+            </div>
+            <button className="primary-btn quote-btn" onClick={quoteMode === 'sell' ? onGetStarted : onBuy}>{quoteMode === 'sell' ? 'Get deposit address' : 'Preview buy flow'}</button>
+            <small>Fee is pulled from the live Sivan fee configuration.</small>
+          </div>
+        </section>
+
+        <section className="landing-strip" id="rails">
+          <span>{assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
+          <span>{payoutCurrencies}</span>
+          <span>{networks}</span>
+          <span>NGN coming soon</span>
+        </section>
+
+        <section className="landing-section two-directions" id="features">
+          <div className="section-head center"><p className="eyebrow center">Two directions</p><h2>Move value in either direction.</h2><p>One platform. One verification. Sell crypto to your bank or prepare to buy crypto with fiat — the same simple experience.</p></div>
+          <div className="direction-grid">
+            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Works with USDC, USDT when enabled, and more supported assets</li><li>✓ Payouts in {payoutCurrencies}; NGN coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
+            <article className="direction-card buy"><span className="chip-pill purple">↙ Buy</span><em>Rollout ready</em><h3>Buy crypto directly with fiat.</h3><p>Pay by supported bank rails and receive stablecoins in a wallet you control once on-ramp backend rails are live.</p><ul><li>✓ Bank transfer flow planned</li><li>✓ Delivered after payment clears</li><li>✓ Self-custody wallet destination</li><li>✓ Same verification covers both directions</li></ul><div><strong>Provider rollout</strong><button className="secondary-btn" onClick={onBuy}>Start buying →</button></div></article>
+          </div>
+        </section>
+
+        <section className="landing-section" id="how">
+          <div className="section-head center"><p className="eyebrow center">How it works</p><h2>Three steps from crypto to cash.</h2><p>Whether you're buying or selling, the flow is guided end to end — no order books, no trading interface, no jargon.</p></div>
+          <div className="steps-grid-premium">
+            <StepCard n="01" icon="♢" title="Create and verify your account" body="Sign up with your email and complete a short identity check. Your verification unlocks supported payment flows." />
+            <StepCard n="02" icon="▭" title="Choose rails and send funds" body="Pick your bank, asset, and network. Review the fee and safety warning before a deposit address is created." />
+            <StepCard n="03" icon="◷" title="Receive your payout" body="Stablecoin deposits are detected by the provider, converted, and paid out to your selected bank account." />
+          </div>
+        </section>
+
+        <section className="landing-section" id="business">
+          <div className="section-head center"><p className="eyebrow center">Why Sivan</p><h2>Built for people who just want it to work.</h2><p>We've stripped out the complexity and built a regulated-grade ramp experience with everyday users in mind.</p></div>
+          <div className="feature-grid-premium">
+            <FeatureCard icon="⚡" title="Fast payouts" body="Create a deposit address quickly and track payout status as provider updates arrive." />
+            <FeatureCard icon="🔒" title="Non-custodial by design" body="Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys." />
+            <FeatureCard icon="🌍" title="Global, multi-currency" body={`Cash out to ${payoutCurrencies}. NGN is coming soon as local partnerships progress.`} />
+            <FeatureCard icon="▥" title="Transparent pricing" body={`The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.`} />
+            <FeatureCard icon="🛡" title="Built-in compliance" body="Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow." />
+            <FeatureCard icon="☷" title="Clear transaction tracking" body="Users can follow address creation, deposit detection, conversion, payout processing, and completion." />
+          </div>
+        </section>
+
+        <section className="landing-section faq-section" id="faq">
+          <div className="section-head center"><p className="eyebrow center">Frequently asked</p><h2>Questions, answered.</h2></div>
+          <div className="faq-list">{faqItems.map((item, index) => <div className={`faq-item ${openFaq === index ? 'open' : ''}`} key={item.q}><button onClick={() => setOpenFaq(openFaq === index ? null : index)}><strong>{item.q}</strong><span>⌄</span></button>{openFaq === index && <p>{item.a}</p>}</div>)}</div>
+        </section>
+
+        <section className="landing-section final-cta-section" id="start">
+          <div className="final-cta-card"><p className="eyebrow center">Get started</p><h2>Your first transaction in about five minutes.</h2><p>Move between crypto and your bank with a few taps. No exchange account, no order books, no hassle.</p><button className="primary-btn" onClick={onGetStarted}>Create free account →</button><small>Already have an account? <button onClick={onDashboard}>Sign in</button></small></div>
+        </section>
+      </main>
+
+      <LandingFooter onDashboard={onDashboard} onGetStarted={onGetStarted} onBuy={onBuy} />
+    </div>
+  );
+}
+
+function QuoteBox({ label, amount, asset, helper, editable = false, onAmountChange }: { label: string; amount: string; asset: string; helper: string; editable?: boolean; onAmountChange?: (value: string) => void }) {
+  return <div className="quote-box"><div><small>{label}</small>{editable ? <input className="quote-amount-input" value={amount} inputMode="decimal" onChange={(event) => onAmountChange?.(event.target.value)} /> : <strong>{amount}</strong>}</div><div><span>{asset}</span><small>{helper}</small></div></div>;
+}
+
+function StepCard({ n, icon, title, body }: { n: string; icon: string; title: string; body: string }) {
+  return <article className="step-card-premium"><i>{icon}</i><b>{n}</b><h3>{title}</h3><p>{body}</p></article>;
+}
+
+function FeatureCard({ icon, title, body }: { icon: string; title: string; body: string }) {
+  return <article className="feature-card-premium"><i>{icon}</i><h3>{title}</h3><p>{body}</p></article>;
+}
+
+function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () => void; onGetStarted: () => void; onBuy: () => void }) {
+  return (
+    <footer className="landing-footer">
+      <div className="footer-grid">
+        <div className="footer-brand-col">
+          <div className="footer-brand"><img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong></div>
+          <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
+          <div className="footer-badges"><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
+        </div>
+        <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
+        <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
+        <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'FAQ', href: '#faq' }, { label: 'Safety', href: '#safety' }, { label: 'Sivan website', href: 'https://www.sivantech.online/' }]} />
+        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: 'https://www.sivantech.online/' }, { label: 'Privacy Policy', href: 'https://www.sivantech.online/' }, { label: 'Risk disclosure', href: '#safety' }]} />
+      </div>
+      <div className="footer-bottom">
+        <p>© 2026 Sivan Technologies. All rights reserved. Cryptoassets and stablecoins are volatile and may not be protected by financial compensation schemes. Services depend on licensed/provider-supported payment rails and may be unavailable in some jurisdictions. Sivan does not ask for wallet private keys.</p>
+      </div>
+    </footer>
+  );
+}
+
+function FooterCol({ title, links }: { title: string; links: Array<{ label: string; href?: string; action?: () => void }> }) {
+  return <div className="footer-col"><h4>{title}</h4>{links.map((link) => link.action ? <button key={link.label} onClick={link.action}>{link.label}</button> : <a key={link.label} href={link.href} target={link.href?.startsWith('http') ? '_blank' : undefined} rel={link.href?.startsWith('http') ? 'noreferrer' : undefined}>{link.label}</a>)}</div>;
+}
+
+function InfoCard({ n, title, body }: { n: string; title: string; body: string }) {
+  return <article className="landing-info-card"><span>{n}</span><h3>{title}</h3><p>{body}</p></article>;
+}
+
+function RailsCard({ enabledControls, enabledAssets, enabledNetworks }: { enabledControls: PaymentControl[]; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[] }) {
+  return (
+    <article className="panel rails-card">
+      <div className="panel-head"><div><p className="eyebrow">Available rails</p><h3>Configured by Sivan Controls</h3></div></div>
+      <div className="rail-chips">{enabledControls.length ? enabledControls.map((control) => <span key={control.currency}>{control.currency.toUpperCase()}</span>) : <span>No payout rails</span>}</div>
+      <div className="rail-chips muted-chips">{enabledAssets.length ? enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>) : <span>No assets</span>}<span>{enabledNetworks.length} networks</span><span>NGN coming soon</span></div>
+      <p className="muted">Only enabled assets, networks, and payout currencies appear in the withdrawal flow.</p>
+    </article>
+  );
+}
+
+function OnRampView({ hasUser, isVerified, onGetStarted }: { hasUser: boolean; isVerified: boolean; onGetStarted: () => void }) {
+  return (
+    <section className="panel-grid two onramp-view">
+      <article className="panel form-panel onramp-hero-card">
+        <p className="eyebrow">Buy stablecoins</p>
+        <h3>On-ramp experience prepared for rollout</h3>
+        <p className="muted">Sivan can support the buy-side product experience, but live on-ramp actions should remain gated until the backend/provider rails are implemented and tested end to end.</p>
+        <div className="details-box">
+          <Kv label="Current access" value={hasUser ? isVerified ? 'Account ready' : 'Verification required' : 'Create account first'} />
+          <Kv label="Planned assets" value="USDC / USDT" />
+          <Kv label="Status" value="Provider rollout pending" />
+          <Kv label="NGN" value="Coming soon" />
+        </div>
+        <button className="primary-btn" onClick={onGetStarted}>{hasUser ? isVerified ? 'Manage bank accounts' : 'Verify account' : 'Get started'}</button>
+      </article>
+      <article className="panel">
+        <div className="panel-head"><div><p className="eyebrow">Future flow</p><h3>Fiat to stablecoin</h3></div></div>
+        <div className="onramp-steps">
+          <ProgressItem done={hasUser} label="Create or sign in" />
+          <ProgressItem done={isVerified} label="Complete verification" />
+          <ProgressItem done={false} label="Choose fiat payment method" />
+          <ProgressItem done={false} label="Receive stablecoins to your wallet" />
+        </div>
+        <div className="verification-note">This screen is intentionally not creating live buy orders yet. We will wire it to real on-ramp APIs once those backend rails are ready.</div>
+      </article>
+    </section>
+  );
+}
+
+
+type WithdrawalReviewState = { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string };
+
+function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm }: {
+  accounts: ExternalAccountRecord[];
+  enabledControls: PaymentControl[];
+  enabledAssets: AssetControl[];
+  enabledNetworks: NetworkControl[];
+  primaryAccount?: ExternalAccountRecord;
+  withdrawalReview: WithdrawalReviewState | null;
+  depositResult: DepositResponse | null;
+  feePercent?: string;
+  loading: boolean;
+  canCreatePaymentActions: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCancelReview: () => void;
+  onConfirm: () => void;
+}) {
+  const hasEnabledBank = accounts.some((account) => enabledControls.some((control) => control.currency === account.currency));
+  const step = depositResult ? 3 : withdrawalReview ? 2 : 1;
+  return (
+    <section className="offramp-wizard">
+      <div className="trade-head">
+        <div>
+          <p className="eyebrow">Sell stablecoins</p>
+          <h3>Withdraw to your bank</h3>
+          <p className="muted">Choose a verified bank account, asset, and network. Review carefully before a deposit address is created.</p>
+        </div>
+        <div className="wizard-stepper">
+          <StepDot active={step === 1} done={step > 1} label="Details" />
+          <StepDot active={step === 2} done={step > 2} label="Review" />
+          <StepDot active={step === 3} done={false} label="Deposit" />
+        </div>
+      </div>
+      <div className="trade-grid">
+        <div>
+          {step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
+          {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
+          {step === 3 && <DepositCard result={depositResult} />}
+        </div>
+        <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} />
+      </div>
+    </section>
+  );
+}
+
+function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) {
+  return <div className={`step-node ${active ? 'active' : ''} ${done ? 'done' : ''}`}><span>{done ? '✓' : active ? '•' : ''}</span>{label}</div>;
+}
+
+function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, hasEnabledBank, loading, canCreatePaymentActions, onSubmit }: {
+  accounts: ExternalAccountRecord[];
+  enabledControls: PaymentControl[];
+  enabledAssets: AssetControl[];
+  enabledNetworks: NetworkControl[];
+  primaryAccount?: ExternalAccountRecord;
+  hasEnabledBank: boolean;
+  loading: boolean;
+  canCreatePaymentActions: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  if (!hasEnabledBank) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Add a bank first</h3><Empty>Add an enabled bank account before creating a withdrawal.</Empty></article>;
+  if (!enabledAssets.length || !enabledNetworks.length) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Deposits unavailable</h3><Empty>Deposits are temporarily unavailable.</Empty></article>;
+  return (
+    <article className="panel form-panel trade-card">
+      <p className="eyebrow">Step 1</p>
+      <h3>Choose payout and deposit rail</h3>
+      <p className="muted">Your deposit address will be tied to this bank account, token, and network.</p>
+      <form className="form premium-form" onSubmit={onSubmit}>
+        <label>Bank payout
+          <select name="externalAccountId" defaultValue={primaryAccount?.id}>{accounts.filter((account) => enabledControls.some((control) => control.currency === account.currency)).map((account) => <option key={account.id} value={account.id}>{account.bankName || 'Bank account'} · {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select>
+        </label>
+        <div className="split">
+          <label>Deposit asset<select name="sourceCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'}>{enabledAssets.map((asset) => <option key={asset.asset} value={asset.asset}>{asset.label}</option>)}</select></label>
+          <label>Deposit network<select name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'}>{enabledNetworks.map((network) => <option key={network.network} value={network.network}>{network.label}</option>)}</select></label>
+        </div>
+        <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
+        <div className="warning-box compact">You will review these details before a deposit address is created. Send only the selected token on the selected network.</div>
+        <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Preparing review...' : canCreatePaymentActions ? 'Review withdrawal' : 'Withdrawals paused'}</button>
+      </form>
+    </article>
+  );
+}
+
+function OffRampSidePanel({ step, enabledAssets, enabledNetworks }: { step: number; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[] }) {
+  return (
+    <aside className="side-info-stack">
+      <article className="panel">
+        <p className="eyebrow">How this works</p>
+        <h3>Provider-backed deposit address</h3>
+        <ol className="ordered-steps">
+          <li className={step >= 1 ? 'active' : ''}>Choose your bank, token, and network.</li>
+          <li className={step >= 2 ? 'active' : ''}>Review the details and safety warning.</li>
+          <li className={step >= 3 ? 'active' : ''}>Send the selected asset to the generated address.</li>
+          <li>Track deposit detection, conversion, and bank payout.</li>
+        </ol>
+      </article>
+      <article className="panel control-summary-card">
+        <p className="eyebrow">Available now</p>
+        <div className="rail-chips">{enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>)}</div>
+        <div className="rail-chips muted-chips">{enabledNetworks.slice(0, 5).map((network) => <span key={network.network}>{network.label}</span>)}</div>
+        <p className="muted">USDT support is controlled from Admin. Users only see enabled assets and networks.</p>
+      </article>
+    </aside>
+  );
+}
+
+
+function OtpInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const digits = Array.from({ length: 6 }, (_, index) => value[index] || '');
+
+  function setDigit(index: number, next: string) {
+    const clean = next.replace(/\D/g, '').slice(-1);
+    const values = digits.slice();
+    values[index] = clean;
+    const joined = values.join('').slice(0, 6);
+    onChange(joined);
+    if (clean && index < 5) {
+      const nextInput = document.querySelector<HTMLInputElement>(`[data-otp-index="${index + 1}"]`);
+      nextInput?.focus();
+    }
+  }
+
+  return (
+    <label>Verification code
+      <div className="otp-row" onPaste={(event) => {
+        event.preventDefault();
+        const pasted = event.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+        onChange(pasted);
+      }}>
+        {digits.map((digit, index) => (
+          <input
+            key={index}
+            data-otp-index={index}
+            inputMode="numeric"
+            maxLength={1}
+            value={digit}
+            onChange={(event) => setDigit(index, event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Backspace' && !digit && index > 0) {
+                document.querySelector<HTMLInputElement>(`[data-otp-index="${index - 1}"]`)?.focus();
+              }
+            }}
+            aria-label={`Verification code digit ${index + 1}`}
+          />
+        ))}
+      </div>
+      <input type="hidden" name="code" value={value} />
+    </label>
+  );
+}
+
+function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm }: { review: null | { bankLabel: string; assetLabel: string; networkLabel: string; destinationCurrency: string }; feePercent?: string; loading: boolean; onCancel: () => void; onConfirm: () => void }) {
+  if (!review) return null;
+  return (
+    <article className="deposit-card review-card">
+      <p className="eyebrow">Review withdrawal</p>
+      <h3>Confirm before creating your deposit address</h3>
+      <p className="muted">Check these details carefully. Your deposit address will be tied to the selected asset, network, and bank payout.</p>
+      <div className="details-box">
+        <Kv label="Asset" value={review.assetLabel} />
+        <Kv label="Network" value={review.networkLabel} />
+        <Kv label="Bank payout" value={review.bankLabel} />
+        <Kv label="Payout currency" value={review.destinationCurrency.toUpperCase()} />
+        <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
+      </div>
+      <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</div>
+      <div className="split-actions">
+        <button className="ghost-btn" onClick={onCancel}>Edit details</button>
+        <button className="primary-btn" disabled={loading} onClick={onConfirm}>{loading ? 'Creating...' : 'Create deposit address'}</button>
+      </div>
+    </article>
+  );
+}
+
+
+function SetupChecklist({ hasUser, isVerified, hasBank, onContinue, nextStepLabel }: { hasUser: boolean; isVerified: boolean; hasBank: boolean; onContinue: () => void; nextStepLabel: string }) {
+  return <article className="panel setup-card"><div className="panel-head"><div><p className="eyebrow">Setup checklist</p><h3>{[hasUser, isVerified, hasBank].filter(Boolean).length}/3 complete</h3></div></div><div className="checklist"><ProgressItem done={hasUser} label="Account created" /><ProgressItem done={isVerified} label="Identity verified" /><ProgressItem done={hasBank} label="Bank account added" /></div><button className="primary-btn animated-cta" onClick={onContinue}>{nextStepLabel}</button></article>;
+}
+
+function QuickActionCard({ hasUser, isVerified, hasBank, onContinue }: { hasUser: boolean; isVerified: boolean; hasBank: boolean; onContinue: () => void }) {
+  const title = !hasUser ? 'Start with passwordless access' : !isVerified ? 'Verify once to unlock withdrawals' : !hasBank ? 'Add a bank account you own' : 'Create a stablecoin withdrawal';
+  const body = !hasUser ? 'Use your email to create or access your Sivan account. No password required.' : !isVerified ? 'Verification protects your account and is required before bank payouts.' : !hasBank ? 'Your payout must go to a verified bank account in your name.' : 'Choose the asset, network, and bank account before creating a deposit address.';
+  return <article className="panel quick-card"><div><p className="eyebrow">Quick action</p><h3>{title}</h3><p className="muted">{body}</p></div><button className="primary-btn" onClick={onContinue}>Continue</button></article>;
+}
+
+function NeedHelpCard() {
+  return <article className="panel help-card"><p className="eyebrow">Need help?</p><h3>Support for withdrawals</h3><p className="muted">If you are unsure which asset or network to use, contact support before sending funds.</p><a className="secondary-btn support-link" href="mailto:support@sivantech.online">Contact support</a></article>;
+}
+
+
+function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onRefresh, onSupport }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onRefresh: () => void; onSupport: () => void }) {
+  const emailDone = hasUser;
+  const identityDone = customer?.kycStatus === 'kyc_approved';
+  const started = Boolean(customer?.id);
+  const bankDone = false;
+  const steps = [emailDone, false, identityDone, customer?.tosStatus === 'approved', bankDone];
+  const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
+  return (
+    <section className="app-page verification-premium">
+      <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." />
+      <div className="verification-grid">
+        <article className="dashboard-setup-panel verification-main-card">
+          <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
+          <div className="setup-progress big"><div><span style={{ width: `${pct}%` }} /></div></div>
+          <div className="level-grid"><div className="active"><strong>Level 0</strong><span>Email only</span></div><div className={identityDone ? 'active' : ''}><strong>Level 1</strong><span>Verified withdrawals</span></div><div><strong>Level 2</strong><span>Higher limits</span></div></div>
+          <div className="verification-steps-list">
+            <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Your email is verified" action="Completed" />
+            <VerificationStep done={false} index={2} title="Phone number" sub="Required for transaction notifications" action="Continue" />
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '3'}</span><div><strong>Identity verification</strong><small>Government-issued ID + selfie. Takes ~3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : <form onSubmit={onSubmit} key={customer?.id || 'new-verification'}><select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{customerTypes.map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — unavailable' : ''}</option>)}</select><input name="redirectUri" type="hidden" value={verificationRedirectUri} /><button className="primary-btn small" disabled={!canSubmitKyc}>{kycActionLabel}</button></form>}</div>
+            <VerificationStep done={customer?.tosStatus === 'approved'} index={4} title="Terms acceptance" sub="Accept provider terms if required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />
+            <VerificationStep done={false} index={5} title="Add a bank account" sub="Required before first payout" action="Continue" />
+          </div>
+        </article>
+        <div className="dashboard-side-stack">
+          <article className="panel"><h3>Why we verify</h3><p className="muted">Sivan works with regulated payment partners, which requires us to verify users before processing transactions. This keeps the platform safe and prevents fraud.</p><ul className="plain-list"><li>✓ Data is encrypted in transit and at rest</li><li>✓ Documents are used only for compliance</li><li>✓ Status refreshes automatically after Bridge updates</li></ul></article>
+          <article className="security-card"><div className="security-icon">?</div><div><h3>Need help verifying?</h3><p>If your ID is rejected or you're having trouble with the flow, our support team can help resolve it.</p><button onClick={onSupport}>Contact support →</button><button onClick={onRefresh}>Refresh status →</button></div></article>
+          {customer && <article className="panel"><div className="panel-head"><h3>Verification status</h3><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function VerificationStep({ done, index, title, sub, action }: { done: boolean; index: number; title: string; sub: string; action: string }) {
+  return <div className={`verification-step ${done ? 'done' : ''}`}><span>{done ? '✓' : index}</span><div><strong>{title}</strong><small>{sub}</small></div><button className={`small ${done ? 'ghost-btn' : 'primary-btn'}`} disabled>{action}</button></div>;
+}
+
+function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
+  return <section className="app-page"><PageHero title="Payment methods" subtitle="Manage the bank accounts you use to receive payouts." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
+}
+
+function TransactionsView({ withdrawals, onStart }: { withdrawals: WithdrawalRecord[]; onStart: () => void }) {
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="All your buy and sell orders in one place." action={<button className="primary-btn small">Export CSV</button>} /><article className="transactions-table-card"><div className="transactions-toolbar"><input placeholder="Search by reference or amount..." /><div><button className="primary-btn small">All</button><button className="ghost-btn small">Sells</button><button className="ghost-btn small">Buys</button><button className="ghost-btn small">Processing</button></div></div>{!withdrawals.length ? <div className="dashboard-empty"><p>No transactions yet.</p><button className="secondary-btn" onClick={onStart}>Start your first transaction</button></div> : <div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Destination</th><th>Status</th><th>Reference</th><th>Date</th></tr></thead><tbody>{withdrawals.map((w) => <tr key={w.id}><td><span className="tx-type sell">↗ Sell</span></td><td>{w.sourceCurrency?.toUpperCase() || 'USDC'}</td><td>{w.destinationAmount || w.sourceAmount || '—'} {w.destinationCurrency?.toUpperCase()}</td><td>Bank payout</td><td><Badge status={w.status}>{friendlyStatus(w.status)}</Badge></td><td>{shortRef(w.id)}</td><td>{new Date(w.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table></div>}</article></section>;
+}
+
+function BuyCryptoView({ hasUser, isVerified, feePercent, enabledControls, enabledAssets, enabledNetworks, orders, loading, onSubmit, onSell, onContinue, onSupport }: { hasUser: boolean; isVerified: boolean; feePercent: string; enabledControls: PaymentControl[]; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[]; orders: OnrampOrderRecord[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSell: () => void; onContinue: () => void; onSupport: () => void }) {
+  const [amount, setAmount] = useState('1000');
+  const fee = (Number(amount || 0) * Number(feePercent || 0)) / 100;
+  const receive = Math.max(0, Number(amount || 0) - fee);
+  const latestOrder = orders[0];
+  return <section className="app-page trade-premium"><div className="trade-page-head"><div><h1>Buy crypto</h1><p>Send fiat, receive crypto in your wallet.</p></div><div className="wizard-stepper"><StepDot active done={false} label="Quote" /><StepDot active={false} done={Boolean(latestOrder)} label="Review" /><StepDot active={false} done={false} label="Payment" /><StepDot active={false} done={latestOrder?.status === 'completed'} label="Tracking" /></div></div><div className="trade-grid"><article className="panel trade-card"><div className="seg"><button type="button" onClick={onSell}>↗ Sell</button><button type="button" className="active">↙ Buy</button></div>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before buying stablecoins.' : 'Create your account before buying stablecoins.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form onSubmit={onSubmit} className="form premium-form"><div className="quote-box large"><div><small>You pay</small><input name="amount" className="quote-amount-input" value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} /><small>Min 20 · Max 50,000</small></div><div><select name="sourceCurrency" defaultValue={enabledControls[0]?.currency || 'usd'}>{enabledControls.map((control) => <option value={control.currency} key={control.currency}>{control.currency.toUpperCase()}</option>)}</select><small>Bank transfer</small></div></div><div className="quote-swap">↓</div><div className="quote-box large"><div><small>You get</small><strong>{receive.toFixed(4)}</strong></div><div><select name="destinationCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'}>{enabledAssets.map((asset) => <option value={asset.asset} key={asset.asset}>{asset.label}</option>)}</select></div></div><label>Destination network<select name="destinationChain" defaultValue={enabledNetworks[0]?.network || 'base'}>{enabledNetworks.map((network) => <option value={network.network} key={network.network}>{network.label}</option>)}</select></label><label>Receiving wallet address<input name="destinationAddress" placeholder="Wallet address you control" required /></label><div className="quote-fees"><div><span>Rate</span><strong>1 fiat ≈ 1 stablecoin</strong></div><div><span>Fee ({feePercent}%)</span><strong className="danger">−${fee.toFixed(2)}</strong></div><div><span>Arrival</span><strong>Minutes after payment clears</strong></div><div><span>Payment method</span><strong>Bank transfer</strong></div></div><div className="verification-note">Your payment instructions are generated after you create the order. Send the exact amount and reference.</div><button className="primary-btn" disabled={loading || !enabledControls.length || !enabledAssets.length || !enabledNetworks.length}>{loading ? 'Creating order...' : 'Create buy order →'}</button></form>}{latestOrder && <OnrampInstructions order={latestOrder} />}</article><aside className="side-info-stack"><article className="panel"><h3>How this works</h3><ol className="ordered-steps"><li className="active">We generate a unique payment reference for your order.</li><li>Send the exact fiat amount to our licensed partner.</li><li>We detect payment and send crypto to your wallet.</li></ol></article><article className="security-card"><div className="security-icon">◈</div><div><h3>Secure & non-custodial</h3><p>Payments are processed by licensed partners. Funds are only held briefly during settlement.</p></div></article><article className="panel"><h3>Need help?</h3><p className="muted">Issues with a transfer, wrong network, or delayed payout? Our support team is on hand.</p><button className="secondary-btn" onClick={onSupport}>Contact support ↗</button></article></aside></div></section>;
+}
+
+function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
+  const instructions = order.sourceDepositInstructions || {};
+  return <div className="onramp-instructions"><h3>Payment instructions</h3><div className="details-box"><Kv label="Reference" value={order.providerReference || order.id} /><Kv label="Amount" value={`${order.amount} ${order.sourceCurrency.toUpperCase()}`} /><Kv label="Fee" value={order.feeAmount ? `${order.feeAmount} ${order.sourceCurrency.toUpperCase()}` : '—'} /><Kv label="You get" value={`${order.netAmount || '—'} ${order.destinationCurrency.toUpperCase()}`} /><Kv label="Status" value={friendlyStatus(order.status)} /><Kv label="Bank" value={instructions.bank_name || instructions.bankName || 'Provided by Bridge'} /><Kv label="Account" value={instructions.account_number || instructions.iban || 'See provider instructions'} /></div><div className="warning-box compact">Use the exact payment reference. Missing or incorrect references can delay matching.</div></div>;
+}
+
+
+function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
+  return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>;
+}
+
+function SettingsView({ user, onLogout }: { user: UserRecord | null; onLogout: () => void }) {
+  const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
+  const nameParts = (user?.fullName || '').split(/\s+/);
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.',''],['◷','Active sessions','Current browser session active.','Manage']]} />}{tab === 'notifications' && <SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm and payouts send.','on'],['✉','Marketing emails','Product news and offers.','off'],['◈','Security alerts','Suspicious logins and account changes.','on']]} />}{tab === 'preferences' && <><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select><option>USD — US Dollar</option><option>GBP — British Pound</option><option>EUR — Euro</option><option>NGN — Coming soon</option></select></label><label>Language<select defaultValue="en-US"><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><button className="primary-btn">Save preferences</button><button className="secondary-btn" onClick={onLogout}>Sign out</button></>}</article></div></section>;
+}
+
+function SettingsRows({ rows }: { rows: string[][] }) {
+  return <div><h3>Security</h3><p className="muted">Keep your account safe.</p><div className="settings-row-list">{rows.map((row) => <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{row[3] === 'on' || row[3] === 'off' ? <i className={`toggle ${row[3] === 'on' ? 'on' : ''}`} /> : <button className="ghost-btn small">{row[3]}</button>}</div>)}</div></div>;
+}
+
+function SupportView() {
+  const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
+  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><SupportCard icon="☎" title="Report an issue" body="Problem with a transaction? Open a ticket." action="Open ticket" /></div><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article></section>;
+}
+
+function SupportCard({ icon, title, body, action, href }: { icon: string; title: string; body: string; action: string; href?: string }) {
+  const content = <><span>{icon}</span><h3>{title}</h3><p>{body}</p><strong>{action} →</strong></>;
+  return href ? <a className="support-card" href={href}>{content}</a> : <button className="support-card">{content}</button>;
+}
+
+
+function ProgressItem({ done, label }: { done: boolean; label: string }) {
+  return <div className={`progress-item ${done ? 'done' : ''}`}><span>{done ? '✓' : '•'}</span>{label}</div>;
 }
 
 function Stat({ label, value, helper }: { label: string; value: string; helper: string }) {
@@ -433,46 +1360,122 @@ function Stat({ label, value, helper }: { label: string; value: string; helper: 
 }
 
 function CustomerDetails({ customer }: { customer: CustomerRecord }) {
-  return <div className="details-box"><Kv label="Customer ID" value={customer.id} /><Kv label="Type" value={customer.customerType || 'individual'} /><Kv label="Verification status" value={customer.kycStatus} /><Kv label="Terms status" value={customer.tosStatus || '—'} /><Kv label="Verification link" value={customer.kycLink || customer.hostedKycLink || '—'} /></div>;
+  const verificationLink = customer.hostedKycLink || customer.kycLink;
+  const termsLink = customer.tosLink;
+  const approved = customer.kycStatus === 'kyc_approved';
+  const underReview = customer.kycStatus === 'kyc_under_review';
+  const termsApproved = customer.tosStatus === 'approved';
+  const actionLabel = approved ? 'Verification complete' : underReview ? 'Review in progress' : 'Open secure verification page';
+  return (
+    <div className="details-box verification-details">
+      <Kv label="Status" value={friendlyStatus(customer.kycStatus)} />
+      <Kv label="Account type" value={customer.customerType === 'business' ? 'Business' : 'Individual'} />
+      <Kv label="Terms" value={customer.tosStatus ? friendlyStatus(customer.tosStatus) : 'Pending'} />
+      {verificationLink && !approved && !underReview && (
+        <div className="verification-link-card">
+          <div>
+            <span>Secure verification page</span>
+            <strong>Ready to continue</strong>
+            <small>Opens in a new tab. Your long secure link is hidden so this page stays clean.</small>
+          </div>
+          <a className="secondary-btn" href={verificationLink} target="_blank" rel="noreferrer">{actionLabel}</a>
+        </div>
+      )}
+      {termsLink && !termsApproved && (
+        <div className="verification-link-card terms-card">
+          <div>
+            <span>Terms required</span>
+            <strong>Accept terms to finish verification</strong>
+            <small>Bridge is still reporting Terms as pending. Complete this step, then return here and the status will refresh automatically.</small>
+          </div>
+          <a className="secondary-btn" href={termsLink} target="_blank" rel="noreferrer">Accept terms</a>
+        </div>
+      )}
+      {!approved && !underReview && !termsApproved && <div className="verification-note">If you already finished the identity check, Terms may still be pending. Accept the terms above and allow Bridge a few moments for post-processing.</div>}
+      {underReview && <div className="verification-note success-note">Your verification is under review. We will update your account as soon as it is approved.</div>}
+      {approved && <div className="verification-note success-note">You are verified. You can now add a bank account and withdraw stablecoins.</div>}
+    </div>
+  );
 }
 
-function BankForm({ userId, onSubmit, loading }: { userId: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean }) {
-  const [currency, setCurrency] = useState('usd');
-  return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add verified bank account</h3><form className="form" onSubmit={onSubmit}><label>User ID<input name="userId" defaultValue={userId} required /></label><label>Currency<select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value)}><option value="usd">USD — US ACH</option><option value="gbp">GBP — Faster Payments</option></select></label><label>Bank name<input name="bankName" defaultValue={currency === 'usd' ? 'Lead Bank' : 'Example UK Bank'} required /></label><label>Account owner name<input name="accountOwnerName" defaultValue="Ada Lovelace" required /></label><div className="split"><label>First name<input name="firstName" defaultValue="Ada" /></label><label>Last name<input name="lastName" defaultValue="Lovelace" /></label></div>{currency === 'usd' ? <><label>Routing number<input name="routingNumber" defaultValue="101019644" /></label><label>Account number<input name="accountNumber" defaultValue="215268129123" /></label></> : <><label>Sort code<input name="sortCode" defaultValue="123456" /></label><label>Account number<input name="gbAccountNumber" defaultValue="12345678" /></label></>}<button className="primary-btn" disabled={loading}>Add bank account</button></form></article>;
+function Kv({ label, value }: { label: string; value?: string | number | null }) {
+  return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>;
 }
 
-function BankList({ accounts }: { accounts: ExternalAccountRecord[]; onUse: (account: ExternalAccountRecord) => void }) {
-  if (!accounts.length) return <Empty>No bank accounts loaded.</Empty>;
-  return <div className="list">{accounts.map((account) => <div className="list-item" key={account.id}><strong>{account.bankName || 'Bank account'} • {account.currency.toUpperCase()}</strong><Badge status={account.status}>{account.status}</Badge><small>{account.id} · {account.accountType} · ****{account.accountLast4 || '----'}</small></div>)}</div>;
+function BankForm({ onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean }) {
+  const [currency, setCurrency] = useState<'usd' | 'gbp' | 'eur'>((controls[0]?.currency ?? 'usd') as 'usd' | 'gbp' | 'eur');
+  useEffect(() => {
+    if (controls.length && !controls.some((control) => control.currency === currency)) {
+      setCurrency(controls[0].currency);
+    }
+  }, [controls, currency]);
+  if (!isVerified) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Complete verification before adding a bank account.</Empty></article>;
+  if (!controls.length) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Bank payouts are temporarily unavailable.</Empty></article>;
+  const isUsd = currency === 'usd';
+  const isGbp = currency === 'gbp';
+  return (
+    <article className="panel form-panel">
+      <p className="eyebrow">Step 3</p>
+      <h3>Add your bank</h3>
+      <p className="muted">Your payout must go to a bank account you own. Available payout currencies are controlled by Sivan.</p>
+      <form className="form" onSubmit={onSubmit}>
+        <label>Payout currency
+          <select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value as 'usd' | 'gbp' | 'eur')}>
+            {controls.map((control) => <option key={control.currency} value={control.currency}>{control.label}</option>)}
+          </select>
+        </label>
+        <label>Bank name<input name="bankName" placeholder={isUsd ? 'Bank name' : isGbp ? 'Bank name' : 'SEPA bank name'} defaultValue={isLiveEnv ? '' : isUsd ? 'Lead Bank' : isGbp ? 'Example UK Bank' : 'Example SEPA Bank'} required /></label>
+        <label>Account owner name<input name="accountOwnerName" placeholder="Account holder name" defaultValue={isLiveEnv ? '' : 'Ada Lovelace'} required /></label>
+        <div className="split"><label>First name<input name="firstName" placeholder="First name" defaultValue={isLiveEnv ? '' : 'Ada'} /></label><label>Last name<input name="lastName" placeholder="Last name" defaultValue={isLiveEnv ? '' : 'Lovelace'} /></label></div>
+        {isUsd ? <>
+          <label>Routing number<input name="routingNumber" placeholder="Routing number" defaultValue={isLiveEnv ? '' : '101019644'} /></label>
+          <label>Account number<input name="accountNumber" placeholder="Account number" defaultValue={isLiveEnv ? '' : '215268129123'} /></label>
+        </> : isGbp ? <>
+          <label>Sort code<input name="sortCode" placeholder="Sort code" defaultValue={isLiveEnv ? '' : '123456'} /></label>
+          <label>Account number<input name="gbAccountNumber" placeholder="Account number" defaultValue={isLiveEnv ? '' : '12345678'} /></label>
+        </> : <>
+          <label>IBAN<input name="ibanAccountNumber" placeholder="FR7630006000011234567890189" required /></label>
+          <label>BIC / SWIFT<input name="bic" placeholder="AGRIFRPP" /></label>
+          <label>Bank country<input name="ibanCountry" defaultValue="FRA" maxLength={3} /></label>
+        </>}
+        <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Adding...' : canCreatePaymentActions ? 'Add bank account' : 'Temporarily unavailable'}</button>
+      </form>
+    </article>
+  );
+}
+
+function BankList({ accounts }: { accounts: ExternalAccountRecord[] }) {
+  if (!accounts.length) return <Empty>No bank account added yet.</Empty>;
+  return <div className="list">{accounts.map((account) => <div className="list-item" key={account.id}><strong>{account.bankName || 'Bank account'} • {account.currency.toUpperCase()}</strong><Badge status={account.status}>{friendlyStatus(account.status)}</Badge><small>{account.paymentRail.replaceAll('_', ' ')} · ****{account.accountLast4 || '----'}</small></div>)}</div>;
 }
 
 function DepositCard({ result }: { result: DepositResponse | null }) {
-  if (!result) return <article className="deposit-card"><p className="eyebrow">Deposit Address</p><h3>Waiting for withdrawal</h3><p className="muted">Create a withdrawal to generate a USDC deposit address.</p></article>;
-  return <article className="deposit-card"><p className="eyebrow">Send USDC</p><h3>Deposit address created</h3><p className="muted">Send USDC on {result.deposit.chain} to this address. Sivan converts it and sends {result.withdrawal.destinationCurrency.toUpperCase()} to the selected bank account.</p><div className="deposit-address">{result.deposit.address}</div><Kv label="Withdrawal" value={result.withdrawal.id} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /></article>;
-}
-
-function WithdrawalsList({ withdrawals, compact = false }: { withdrawals: WithdrawalRecord[]; compact?: boolean }) {
-  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">Withdrawals</p><h3>{compact ? 'Recent withdrawals' : 'Withdrawal history'}</h3></div></div>{!withdrawals.length ? <Empty>No withdrawals yet.</Empty> : compact ? <div className="list">{withdrawals.map((w) => <div className="list-item" key={w.id}><strong>{w.destinationCurrency.toUpperCase()} withdrawal</strong><Badge status={w.status}>{w.status}</Badge><small>{w.id}</small></div>)}</div> : <div className="table-wrap"><table className="table"><thead><tr><th>ID</th><th>Status</th><th>Currency</th><th>Amount</th><th>Fee</th><th>Created</th></tr></thead><tbody>{withdrawals.map((w) => <tr key={w.id}><td>{w.id}</td><td><Badge status={w.status}>{w.status}</Badge></td><td>{w.destinationCurrency.toUpperCase()}</td><td>{w.destinationAmount || '—'}</td><td>{w.feeAmount || w.feePercent || '—'}</td><td>{new Date(w.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>;
-}
-
-
-function UserGuidePanel() {
+  if (!result) return <article className="deposit-card"><p className="eyebrow">Deposit address</p><h3>Ready when you are</h3><p className="muted">Create a withdrawal to receive a deposit address. You will review the asset, network, fee, and payout currency before sending.</p></article>;
   return (
-    <article className="panel">
-      <div className="panel-head">
-        <div>
-          <p className="eyebrow">Getting started</p>
-          <h3>Your withdrawal flow</h3>
-        </div>
-      </div>
-      <div className="details-box">
-        <Kv label="1" value="Create your Sivan account" />
-        <Kv label="2" value="Complete verification" />
-        <Kv label="3" value="Add a verified bank account" />
-        <Kv label="4" value="Send USDC to your deposit address" />
-        <Kv label="5" value="Receive USD/GBP in your bank account" />
+    <article className="deposit-card live-deposit-card">
+      <p className="eyebrow">Step 3</p>
+      <h3>Deposit address created</h3>
+      <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</p>
+      <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address">{result.deposit.address}</div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button></div></div>
+      <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Payout currency" value={result.withdrawal.destinationCurrency.toUpperCase()} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></div>
+      <div className="tracking-timeline">
+        <TimelineItem done title="Address created" body="A unique provider-backed deposit address is ready." />
+        <TimelineItem active={result.withdrawal.status === 'pending_deposit'} done={result.withdrawal.status !== 'pending_deposit'} title="Awaiting deposit" body="Send only the selected token and network." />
+        <TimelineItem active={['deposit_received', 'payout_processing'].includes(result.withdrawal.status)} done={result.withdrawal.status === 'completed'} title="Convert and payout" body="Bridge detects the deposit, liquidates, and sends fiat to your bank." />
+        <TimelineItem done={result.withdrawal.status === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
       </div>
     </article>
   );
 }
 
+function TimelineItem({ title, body, done = false, active = false }: { title: string; body: string; done?: boolean; active?: boolean }) {
+  return <div className={`timeline-item ${done ? 'done' : ''} ${active ? 'active' : ''}`}><span>{done ? '✓' : active ? '•' : ''}</span><div><strong>{title}</strong><small>{body}</small></div></div>;
+}
+
+function WithdrawalsList({ withdrawals, compact = false }: { withdrawals: WithdrawalRecord[]; compact?: boolean }) {
+  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">Withdrawals</p><h3>{compact ? 'Recent activity' : 'Withdrawal activity'}</h3></div></div>{!withdrawals.length ? <Empty>No withdrawals yet.</Empty> : compact ? <div className="list">{withdrawals.map((w) => <div className="list-item" key={w.id}><strong>{w.destinationCurrency.toUpperCase()} withdrawal</strong><Badge status={w.status}>{friendlyStatus(w.status)}</Badge><small>Reference {shortRef(w.id)}</small></div>)}</div> : <div className="table-wrap"><table className="table"><thead><tr><th>Reference</th><th>Status</th><th>Currency</th><th>Amount</th><th>Fee</th><th>Date</th></tr></thead><tbody>{withdrawals.map((w) => <tr key={w.id}><td>{shortRef(w.id)}</td><td><Badge status={w.status}>{friendlyStatus(w.status)}</Badge></td><td>{w.destinationCurrency.toUpperCase()}</td><td>{w.destinationAmount || '—'}</td><td>{w.feeAmount || (w.feePercent ? `${w.feePercent}%` : '—')}</td><td>{new Date(w.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table></div>}</article>;
+}
+
+function UserGuidePanel() {
+  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">How it works</p><h3>A simple withdrawal flow</h3></div></div><div className="details-box"><Kv label="1" value="Create your account" /><Kv label="2" value="Complete verification" /><Kv label="3" value="Add your bank account" /><Kv label="4" value="Send the selected stablecoin to your deposit address" /><Kv label="5" value="Receive USD, GBP, or EUR in your bank account" /></div></article>;
+}

@@ -6,10 +6,11 @@ import { badRequest, notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { addressSchema } from '../../shared/validation.js';
 import { getCustomerByUserId } from '../../customers/customers.service.js';
+import { requireCurrencyEnabled } from '../../controls/payment-controls.service.js';
 
 const baseAccountSchema = z.object({
   userId: z.string().min(1),
-  currency: z.enum(['usd', 'gbp']),
+  currency: z.enum(['usd', 'gbp', 'eur']),
   bankName: z.string().min(1),
   accountName: z.string().min(1).optional(),
   accountOwnerName: z.string().min(2),
@@ -39,10 +40,21 @@ export const createExternalAccountSchema = z.discriminatedUnion('accountType', [
       account_number: z.string().length(8),
       sort_code: z.string().length(6)
     })
+  }),
+  baseAccountSchema.extend({
+    accountType: z.literal('iban'),
+    currency: z.literal('eur'),
+    paymentRail: z.enum(['sepa', 'sepa_instant']).default('sepa'),
+    iban: z.object({
+      account_number: z.string().min(10),
+      bic: z.string().min(8).max(11).optional(),
+      country: z.string().length(3)
+    })
   })
 ]);
 
 export async function createExternalAccount(input: z.infer<typeof createExternalAccountSchema>) {
+  await requireCurrencyEnabled(input.currency);
   const customer = await getCustomerByUserId(input.userId);
   if (customer.kycStatus !== 'kyc_approved') {
     throw badRequest('KYC must be approved before adding a withdrawal bank account');
@@ -59,9 +71,14 @@ export async function createExternalAccount(input: z.infer<typeof createExternal
     first_name: input.firstName,
     last_name: input.lastName,
     business_name: input.businessName,
-    address: input.address,
-    account: input.account
+    address: input.address
   };
+
+  if (input.accountType === 'iban') {
+    payload.iban = input.iban;
+  } else {
+    payload.account = input.account;
+  }
 
   const providerAccount = await provider.createExternalAccount({
     customerId: customer.providerCustomerId,
@@ -70,28 +87,25 @@ export async function createExternalAccount(input: z.infer<typeof createExternal
   });
 
   const now = nowIso();
-  return db.mutate((data) => {
-    const record = {
-      id: id('ea'),
-      userId: input.userId,
-      customerId: customer.id,
-      provider: customer.provider,
-      providerExternalAccountId: providerAccount.id,
-      currency: providerAccount.currency as Currency,
-      accountType: input.accountType,
-      bankName: providerAccount.bankName,
-      accountName: providerAccount.accountName,
-      accountOwnerName: providerAccount.accountOwnerName,
-      accountLast4: providerAccount.last4,
-      paymentRail: input.paymentRail,
-      status: mapExternalAccountStatus(input.accountType, providerAccount.verificationStatus, providerAccount.active),
-      raw: providerAccount.raw,
-      createdAt: now,
-      updatedAt: now
-    };
-    data.externalAccounts.push(record);
-    return record;
-  });
+  const record = {
+    id: id('ea'),
+    userId: input.userId,
+    customerId: customer.id,
+    provider: customer.provider,
+    providerExternalAccountId: providerAccount.id,
+    currency: providerAccount.currency as Currency,
+    accountType: input.accountType,
+    bankName: providerAccount.bankName,
+    accountName: providerAccount.accountName,
+    accountOwnerName: providerAccount.accountOwnerName,
+    accountLast4: providerAccount.last4,
+    paymentRail: input.paymentRail,
+    status: mapExternalAccountStatus(input.accountType, providerAccount.verificationStatus, providerAccount.active),
+    raw: providerAccount.raw,
+    createdAt: now,
+    updatedAt: now
+  };
+  return db.insertExternalAccountRecord(record);
 }
 
 export async function listExternalAccounts(userId: string) {
@@ -116,13 +130,8 @@ export async function verifyExternalAccount(id: string) {
   if (!customer) throw notFound('Customer');
   const provider = getOfframpProvider(account.provider);
   const result = await provider.verifyExternalAccount(customer.providerCustomerId, account.providerExternalAccountId);
-  return db.mutate((mutable) => {
-    const record = mutable.externalAccounts.find((ea) => ea.id === id)!;
-    record.status = 'verification_pending';
-    record.raw = { previous: record.raw, verification: result };
-    record.updatedAt = nowIso();
-    return record;
-  });
+  const record = { ...account, status: 'verification_pending' as const, raw: { previous: account.raw, verification: result }, updatedAt: nowIso() };
+  return db.updateExternalAccountRecord(record);
 }
 
 function mapExternalAccountStatus(accountType: string, verificationStatus?: string, active?: boolean): ExternalAccountStatus {

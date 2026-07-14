@@ -10,10 +10,30 @@ import type {
   SourceCurrency,
   UserRecord,
   WebhookEventRecord,
-  WithdrawalRecord
+  WithdrawalRecord,
+  AuthChallengeRecord,
+  AuditLogRecord,
+  ReconciliationRunRecord,
+  ReconciliationFindingRecord,
+  PaymentControlRecord,
+  AssetControlRecord,
+  NetworkControlRecord,
+  SystemStatusRecord,
+  CustomerTypeControlRecord,
+  OnrampOrderRecord
 } from './types.js';
 
 const { Pool } = pg;
+
+
+async function optionalQuery(client: pg.PoolClient, sql: string, params: unknown[] = []): Promise<{ rows: any[] }> {
+  try {
+    return await client.query(sql, params);
+  } catch (error: any) {
+    if (error?.code === '42P01') return { rows: [] };
+    throw error;
+  }
+}
 
 function iso(value: unknown): string {
   if (!value) return new Date().toISOString();
@@ -53,6 +73,42 @@ export class PostgresDatabase {
   constructor(connectionString = env.DATABASE_URL) {
     if (!connectionString) throw new Error('DATABASE_URL is required when DATABASE_PROVIDER=postgres');
     this.pool = new Pool({ connectionString });
+    this.pool.on('error', (error) => {
+      console.error('[postgres.pool.error]', error);
+    });
+    this.instrumentPoolQueries();
+  }
+
+  private instrumentPoolQueries() {
+    const slowQueryMs = Number(process.env.POSTGRES_SLOW_QUERY_MS ?? 750);
+    const originalConnect = this.pool.connect.bind(this.pool);
+    this.pool.connect = (async (...args: any[]) => {
+      const client = await (originalConnect as any)(...args);
+      if ((client as any).__sivanInstrumented) return client;
+      const originalQuery = client.query.bind(client);
+      client.query = (async (...queryArgs: any[]) => {
+        const started = Date.now();
+        try {
+          return await (originalQuery as any)(...queryArgs);
+        } finally {
+          const durationMs = Date.now() - started;
+          if (durationMs >= slowQueryMs) {
+            const sql = typeof queryArgs[0] === 'string' ? queryArgs[0] : queryArgs[0]?.text;
+            console.warn('[postgres.slow_query]', { durationMs, sql: String(sql ?? '').replace(/\s+/g, ' ').slice(0, 500), pool: this.getPoolStats() });
+          }
+        }
+      }) as any;
+      (client as any).__sivanInstrumented = true;
+      return client;
+    }) as any;
+  }
+
+  getPoolStats() {
+    return {
+      totalCount: this.pool.totalCount,
+      idleCount: this.pool.idleCount,
+      waitingCount: this.pool.waitingCount
+    };
   }
 
   async read(): Promise<DatabaseShape> {
@@ -63,7 +119,17 @@ export class PostgresDatabase {
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
       const withdrawals = await client.query('select * from payments_withdrawals order by created_at asc');
+      const onrampOrders = await optionalQuery(client, 'select * from payments_onramp_orders order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
+      const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
+      const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
+      const reconciliationRuns = await client.query('select * from payments_reconciliation_runs order by started_at asc');
+      const reconciliationFindings = await client.query('select * from payments_reconciliation_findings order by created_at asc');
+      const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
+      const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
+      const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
+      const systemStatus = await client.query('select * from payments_system_status order by id asc');
+      const customerTypeControls = await client.query('select * from payments_customer_type_controls order by customer_type asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -71,18 +137,293 @@ export class PostgresDatabase {
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
-        webhookEvents: webhookEvents.rows.map(mapWebhookEvent)
+        onrampOrders: onrampOrders.rows.map(mapOnrampOrder),
+        webhookEvents: webhookEvents.rows.map(mapWebhookEvent),
+        authChallenges: authChallenges.rows.map(mapAuthChallenge),
+        auditLogs: auditLogs.rows.map(mapAuditLog),
+        reconciliationRuns: reconciliationRuns.rows.map(mapReconciliationRun),
+        reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding),
+        paymentControls: paymentControls.rows.map(mapPaymentControl),
+        assetControls: assetControls.rows.map(mapAssetControl),
+        networkControls: networkControls.rows.map(mapNetworkControl),
+        systemStatus: systemStatus.rows.map(mapSystemStatus),
+        customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl)
       };
     } finally {
       client.release();
     }
   }
 
-  async mutate<T>(fn: (db: DatabaseShape) => T | Promise<T>): Promise<T> {
-    const data = await this.read();
-    const result = await fn(data);
-    await this.persist(data);
-    return result;
+  async mutate<T>(_fn: (db: DatabaseShape) => T | Promise<T>): Promise<T> {
+    throw new Error('PostgresDatabase.mutate is disabled for production safety. Use direct repository methods instead.');
+  }
+
+
+
+
+  async getAdminOverviewView() {
+    const client = await this.pool.connect();
+    try {
+      const [users, customers, externalAccounts, liquidationAddresses, withdrawals, onrampOrders, webhookEvents, withdrawalsByStatusRows, webhookEventsByTypeRows, recentUsers, recentCustomers, recentWithdrawals, recentOnrampOrders, recentWebhookEvents] = await Promise.all([
+        client.query('select count(*)::int as count from users'),
+        client.query('select count(*)::int as count from payments_customers'),
+        client.query('select count(*)::int as count from payments_external_accounts'),
+        client.query('select count(*)::int as count from payments_liquidation_addresses'),
+        client.query('select count(*)::int as count from payments_withdrawals'),
+        optionalQuery(client, 'select count(*)::int as count from payments_onramp_orders'),
+        client.query('select count(*)::int as count from payments_webhook_events'),
+        client.query('select status, count(*)::int as count from payments_withdrawals group by status'),
+        client.query("select coalesce(event_category, event_type, 'unknown') as key, count(*)::int as count from payments_webhook_events group by key"),
+        client.query('select * from users order by created_at desc limit 10'),
+        client.query('select * from payments_customers order by created_at desc limit 10'),
+        client.query('select * from payments_withdrawals order by created_at desc limit 10'),
+        optionalQuery(client, 'select * from payments_onramp_orders order by created_at desc limit 10'),
+        client.query('select * from payments_webhook_events order by created_at desc limit 10')
+      ]);
+      return {
+        counts: {
+          users: users.rows[0]?.count ?? 0,
+          customers: customers.rows[0]?.count ?? 0,
+          externalAccounts: externalAccounts.rows[0]?.count ?? 0,
+          liquidationAddresses: liquidationAddresses.rows[0]?.count ?? 0,
+          withdrawals: withdrawals.rows[0]?.count ?? 0,
+          onrampOrders: onrampOrders.rows[0]?.count ?? 0,
+          webhookEvents: webhookEvents.rows[0]?.count ?? 0
+        },
+        withdrawalsByStatus: Object.fromEntries(withdrawalsByStatusRows.rows.map((row) => [row.status, Number(row.count)])),
+        webhookEventsByType: Object.fromEntries(webhookEventsByTypeRows.rows.map((row) => [row.key, Number(row.count)])),
+        recent: {
+          users: recentUsers.rows.map(mapUser),
+          customers: recentCustomers.rows.map(mapCustomer),
+          withdrawals: recentWithdrawals.rows.map(mapWithdrawal),
+          onrampOrders: recentOnrampOrders.rows.map(mapOnrampOrder),
+          webhookEvents: recentWebhookEvents.rows.map(mapWebhookEvent)
+        }
+      };
+    } finally { client.release(); }
+  }
+
+  async findUserById(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('select * from users where user_id=$1 limit 1', [userId]);
+      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async findUserByEmail(email: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('select * from users where lower(email)=lower($1) limit 1', [email]);
+      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async findUserByWhatsappNumber(whatsappNumber: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('select * from users where whatsapp_number=$1 limit 1', [whatsappNumber]);
+      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async listAdminUsersView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const usersResult = await client.query('select * from users order by created_at asc limit $1 offset $2', [limit, offset]);
+      const users = usersResult.rows.map(mapUser);
+      const userIds = users.map((user) => user.id);
+      if (!userIds.length) return [];
+      const customers = (await client.query('select * from payments_customers where user_id = any($1)', [userIds])).rows.map(mapCustomer);
+      const externalCounts = await client.query('select user_id, count(*)::int as count from payments_external_accounts where user_id = any($1) group by user_id', [userIds]);
+      const withdrawalCounts = await client.query('select user_id, count(*)::int as count from payments_withdrawals where user_id = any($1) group by user_id', [userIds]);
+      const onrampCounts = await optionalQuery(client, 'select user_id, count(*)::int as count from payments_onramp_orders group by user_id');
+      const countMap = (rows: any[]) => new Map(rows.filter((row) => userIds.includes(row.user_id)).map((row) => [row.user_id, Number(row.count)]));
+      const externalMap = countMap(externalCounts.rows);
+      const withdrawalMap = countMap(withdrawalCounts.rows);
+      const onrampMap = countMap(onrampCounts.rows);
+      return users.map((user) => ({
+        ...user,
+        customer: customers.find((customer) => customer.userId === user.id) ?? null,
+        externalAccountCount: externalMap.get(user.id) ?? 0,
+        withdrawalCount: withdrawalMap.get(user.id) ?? 0,
+        onrampOrderCount: onrampMap.get(user.id) ?? 0
+      }));
+    } finally { client.release(); }
+  }
+
+  async listAdminWithdrawalsView({ limit = 100, offset = 0, status }: { limit?: number; offset?: number; status?: string } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const params: any[] = [];
+      let where = '';
+      if (status) { params.push(status); where = 'where status=$1'; }
+      params.push(limit, offset);
+      const result = await client.query(`select * from payments_withdrawals ${where} order by created_at desc limit $${params.length - 1} offset $${params.length}`, params);
+      const withdrawals = result.rows.map(mapWithdrawal);
+      const userIds = [...new Set(withdrawals.map((item) => item.userId))];
+      const accountIds = [...new Set(withdrawals.map((item) => item.externalAccountId))];
+      const addressIds = [...new Set(withdrawals.map((item) => item.liquidationAddressId))];
+      const users = userIds.length ? (await client.query('select * from users where user_id = any($1)', [userIds])).rows.map(mapUser) : [];
+      const accounts = accountIds.length ? (await client.query('select * from payments_external_accounts where id = any($1)', [accountIds])).rows.map(mapExternalAccount) : [];
+      const addresses = addressIds.length ? (await client.query('select * from payments_liquidation_addresses where id = any($1)', [addressIds])).rows.map(mapLiquidationAddress) : [];
+      return withdrawals.map((withdrawal) => ({
+        ...withdrawal,
+        user: users.find((user) => user.id === withdrawal.userId) ?? null,
+        externalAccount: accounts.find((account) => account.id === withdrawal.externalAccountId) ?? null,
+        liquidationAddress: addresses.find((address) => address.id === withdrawal.liquidationAddressId) ?? null
+      }));
+    } finally { client.release(); }
+  }
+
+  async listAdminOnrampOrdersView({ limit = 100, offset = 0, status }: { limit?: number; offset?: number; status?: string } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const params: any[] = [];
+      let where = '';
+      if (status) { params.push(status); where = 'where status=$1'; }
+      params.push(limit, offset);
+      const result = await optionalQuery(client, `select * from payments_onramp_orders ${where} order by created_at desc limit $${params.length - 1} offset $${params.length}`, params);
+      const orders = result.rows.map(mapOnrampOrder);
+      const userIds = [...new Set(orders.map((item) => item.userId))];
+      const customerIds = [...new Set(orders.map((item) => item.customerId))];
+      const users = userIds.length ? (await client.query('select * from users where user_id = any($1)', [userIds])).rows.map(mapUser) : [];
+      const customers = customerIds.length ? (await client.query('select * from payments_customers where id = any($1)', [customerIds])).rows.map(mapCustomer) : [];
+      return orders.map((order) => ({ ...order, user: users.find((user) => user.id === order.userId) ?? null, customer: customers.find((customer) => customer.id === order.customerId) ?? null }));
+    } finally { client.release(); }
+  }
+
+  async listWebhookEventsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try { return (await client.query('select * from payments_webhook_events order by created_at desc limit $1 offset $2', [limit, offset])).rows.map(mapWebhookEvent); } finally { client.release(); }
+  }
+
+  async listAuditLogsView({ limit = 200, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try { return (await client.query('select * from payments_audit_logs order by created_at desc limit $1 offset $2', [limit, offset])).rows.map(mapAuditLog); } finally { client.release(); }
+  }
+
+  async listReconciliationRunsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const runs = (await client.query('select * from payments_reconciliation_runs order by started_at desc limit $1 offset $2', [limit, offset])).rows.map(mapReconciliationRun);
+      const runIds = runs.map((run) => run.id);
+      const findings = runIds.length ? (await client.query('select * from payments_reconciliation_findings where run_id = any($1) order by created_at asc', [runIds])).rows.map(mapReconciliationFinding) : [];
+      return runs.map((run) => ({ ...run, findings: findings.filter((finding) => finding.runId === run.id) }));
+    } finally { client.release(); }
+  }
+
+  async insertAuditLogRecord(record: AuditLogRecord) {
+    const client = await this.pool.connect();
+    try { await upsertAuditLog(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertAuthChallengeRecord(record: AuthChallengeRecord) {
+    const client = await this.pool.connect();
+    try { await upsertAuthChallenge(client, record); return record; } finally { client.release(); }
+  }
+
+  async consumeAuthChallengeAndMarkUserEmail(challengeId: string, userId: string, now: string) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const challenge = await client.query('update payments_auth_challenges set consumed_at=$1 where id=$2 returning *', [now, challengeId]);
+      await client.query('update users set email_verified_at=coalesce(email_verified_at,$1), updated_at=$1 where user_id=$2', [now, userId]);
+      await client.query('commit');
+      return challenge.rows[0] ? mapAuthChallenge(challenge.rows[0]) : null;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async insertUserRecord(record: UserRecord) {
+    const client = await this.pool.connect();
+    try { await upsertUser(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertCustomerRecord(record: CustomerRecord) {
+    const client = await this.pool.connect();
+    try { await upsertCustomer(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateCustomerRecord(record: CustomerRecord) {
+    const client = await this.pool.connect();
+    try { await upsertCustomer(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertExternalAccountRecord(record: ExternalAccountRecord) {
+    const client = await this.pool.connect();
+    try { await upsertExternalAccount(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateExternalAccountRecord(record: ExternalAccountRecord) {
+    const client = await this.pool.connect();
+    try { await upsertExternalAccount(client, record); return record; } finally { client.release(); }
+  }
+
+  async createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await upsertLiquidationAddress(client, liquidationAddress);
+      await upsertWithdrawal(client, withdrawal);
+      await client.query('commit');
+      return { liquidationAddress, withdrawal };
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async insertOnrampOrderRecord(record: OnrampOrderRecord) {
+    const client = await this.pool.connect();
+    try { await upsertOnrampOrder(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateOnrampOrderRecord(record: OnrampOrderRecord) {
+    const client = await this.pool.connect();
+    try { await upsertOnrampOrder(client, record); return record; } finally { client.release(); }
+  }
+
+
+  async updatePaymentControlsSnapshot(input: { customerTypes: CustomerTypeControlRecord[]; payoutCurrencies: PaymentControlRecord[]; sourceAssets: AssetControlRecord[]; sourceNetworks: NetworkControlRecord[] }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      for (const control of input.customerTypes) await upsertCustomerTypeControl(client, control);
+      for (const control of input.payoutCurrencies) await upsertPaymentControl(client, control);
+      for (const control of input.sourceAssets) await upsertAssetControl(client, control);
+      for (const control of input.sourceNetworks) await upsertNetworkControl(client, control);
+      await client.query('commit');
+      return input;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async updateSystemStatusRecord(record: SystemStatusRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSystemStatus(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertReconciliationRecords(run: ReconciliationRunRecord, findings: ReconciliationFindingRecord[]) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await upsertReconciliationRun(client, run);
+      for (const finding of findings) await upsertReconciliationFinding(client, finding);
+      await client.query('commit');
+      return run;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async updateWithdrawalRecord(record: WithdrawalRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWithdrawal(client, record); return record; } finally { client.release(); }
+  }
+
+
+  async insertWebhookEventRecord(record: WebhookEventRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWebhookEvent(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateWebhookEventRecord(record: WebhookEventRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWebhookEvent(client, record); return record; } finally { client.release(); }
   }
 
   private async persist(data: DatabaseShape): Promise<void> {
@@ -94,7 +435,17 @@ export class PostgresDatabase {
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
       for (const withdrawal of data.withdrawals) await upsertWithdrawal(client, withdrawal);
+      for (const order of data.onrampOrders ?? []) await upsertOnrampOrder(client, order);
       for (const event of data.webhookEvents) await upsertWebhookEvent(client, event);
+      for (const challenge of data.authChallenges ?? []) await upsertAuthChallenge(client, challenge);
+      for (const auditLog of data.auditLogs ?? []) await upsertAuditLog(client, auditLog);
+      for (const run of data.reconciliationRuns ?? []) await upsertReconciliationRun(client, run);
+      for (const finding of data.reconciliationFindings ?? []) await upsertReconciliationFinding(client, finding);
+      for (const control of data.paymentControls ?? []) await upsertPaymentControl(client, control);
+      for (const control of data.assetControls ?? []) await upsertAssetControl(client, control);
+      for (const control of data.networkControls ?? []) await upsertNetworkControl(client, control);
+      for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
+      for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -215,6 +566,64 @@ function mapWithdrawal(row: any): WithdrawalRecord {
   };
 }
 
+
+function mapOnrampOrder(row: any): OnrampOrderRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: row.payments_customer_id,
+    provider: row.provider,
+    providerTransferId: str(row.provider_transfer_id),
+    sourceCurrency: row.source_currency,
+    sourcePaymentRail: row.source_payment_rail,
+    destinationCurrency: row.destination_currency,
+    destinationChain: row.destination_chain,
+    destinationAddress: row.destination_address,
+    amount: numberString(row.amount) ?? '0',
+    feePercent: numberString(row.fee_percent),
+    feeAmount: numberString(row.fee_amount),
+    netAmount: numberString(row.net_amount),
+    providerReference: str(row.provider_reference),
+    sourceDepositInstructions: row.source_deposit_instructions,
+    destinationTxHash: str(row.destination_tx_hash),
+    status: row.status,
+    statusReason: str(row.status_reason),
+    receipt: row.receipt,
+    raw: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    completedAt: optionalIso(row.completed_at)
+  };
+}
+
+async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord) {
+  await client.query(
+    `insert into payments_onramp_orders (id, user_id, payments_customer_id, provider, provider_transfer_id, source_currency, source_payment_rail, destination_currency, destination_chain, destination_address, amount, fee_percent, fee_amount, net_amount, provider_reference, source_deposit_instructions, destination_tx_hash, status, status_reason, receipt, raw_payload, created_at, updated_at, completed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+     on conflict (id) do update set
+       provider_transfer_id=excluded.provider_transfer_id,
+       source_currency=excluded.source_currency,
+       source_payment_rail=excluded.source_payment_rail,
+       destination_currency=excluded.destination_currency,
+       destination_chain=excluded.destination_chain,
+       destination_address=excluded.destination_address,
+       amount=excluded.amount,
+       fee_percent=excluded.fee_percent,
+       fee_amount=excluded.fee_amount,
+       net_amount=excluded.net_amount,
+       provider_reference=excluded.provider_reference,
+       source_deposit_instructions=excluded.source_deposit_instructions,
+       destination_tx_hash=excluded.destination_tx_hash,
+       status=excluded.status,
+       status_reason=excluded.status_reason,
+       receipt=excluded.receipt,
+       raw_payload=excluded.raw_payload,
+       updated_at=excluded.updated_at,
+       completed_at=excluded.completed_at`,
+    [item.id, item.userId, item.customerId, item.provider, item.providerTransferId, item.sourceCurrency, item.sourcePaymentRail, item.destinationCurrency, item.destinationChain, item.destinationAddress, item.amount, item.feePercent, item.feeAmount, item.netAmount, item.providerReference, item.sourceDepositInstructions ?? null, item.destinationTxHash, item.status, item.statusReason, item.receipt ?? null, item.raw ?? null, item.createdAt, item.updatedAt, item.completedAt]
+  );
+}
+
 function mapWebhookEvent(row: any): WebhookEventRecord {
   return {
     id: row.id,
@@ -298,6 +707,227 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapCustomerTypeControl(row: any): CustomerTypeControlRecord {
+  return {
+    customerType: row.customer_type,
+    enabled: row.enabled,
+    label: row.label,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertCustomerTypeControl(client: pg.PoolClient, item: CustomerTypeControlRecord) {
+  await client.query(
+    `insert into payments_customer_type_controls (customer_type, enabled, label, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5)
+     on conflict (customer_type) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.customerType, item.enabled, item.label, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapSystemStatus(row: any): SystemStatusRecord {
+  return {
+    id: 'global',
+    mode: row.mode,
+    message: str(row.message),
+    estimatedResumeAt: optionalIso(row.estimated_resume_at),
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertSystemStatus(client: pg.PoolClient, item: SystemStatusRecord) {
+  await client.query(
+    `insert into payments_system_status (id, mode, message, estimated_resume_at, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6)
+     on conflict (id) do update set
+       mode=excluded.mode,
+       message=excluded.message,
+       estimated_resume_at=excluded.estimated_resume_at,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.id, item.mode, item.message, item.estimatedResumeAt, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapAssetControl(row: any): AssetControlRecord {
+  return {
+    asset: row.asset,
+    enabled: row.enabled,
+    label: row.label,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapNetworkControl(row: any): NetworkControlRecord {
+  return {
+    network: row.network,
+    enabled: row.enabled,
+    label: row.label,
+    sortOrder: Number(row.sort_order ?? 100),
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertAssetControl(client: pg.PoolClient, item: AssetControlRecord) {
+  await client.query(
+    `insert into payments_asset_controls (asset, enabled, label, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5)
+     on conflict (asset) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.asset, item.enabled, item.label, item.updatedBy, item.updatedAt]
+  );
+}
+
+async function upsertNetworkControl(client: pg.PoolClient, item: NetworkControlRecord) {
+  await client.query(
+    `insert into payments_network_controls (network, enabled, label, sort_order, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6)
+     on conflict (network) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       sort_order=excluded.sort_order,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.network, item.enabled, item.label, item.sortOrder, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapPaymentControl(row: any): PaymentControlRecord {
+  return {
+    currency: row.currency,
+    enabled: row.enabled,
+    label: row.label,
+    accountType: row.account_type,
+    defaultPaymentRail: row.default_payment_rail,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertPaymentControl(client: pg.PoolClient, item: PaymentControlRecord) {
+  await client.query(
+    `insert into payments_control_settings (currency, enabled, label, account_type, default_payment_rail, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7)
+     on conflict (currency) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       account_type=excluded.account_type,
+       default_payment_rail=excluded.default_payment_rail,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.currency, item.enabled, item.label, item.accountType, item.defaultPaymentRail, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapAuditLog(row: any): AuditLogRecord {
+  return {
+    id: row.id,
+    actorType: row.actor_type,
+    actorId: str(row.actor_id),
+    action: row.action,
+    resourceType: str(row.resource_type),
+    resourceId: str(row.resource_id),
+    severity: row.severity,
+    ipAddress: str(row.ip_address),
+    userAgent: str(row.user_agent),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at)
+  };
+}
+
+function mapReconciliationRun(row: any): ReconciliationRunRecord {
+  return {
+    id: row.id,
+    provider: str(row.provider),
+    dryRun: row.dry_run,
+    status: row.status,
+    summary: row.summary,
+    error: str(row.error),
+    startedAt: iso(row.started_at),
+    completedAt: optionalIso(row.completed_at)
+  };
+}
+
+function mapReconciliationFinding(row: any): ReconciliationFindingRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    provider: str(row.provider),
+    severity: row.severity,
+    findingType: row.finding_type,
+    withdrawalId: str(row.withdrawal_id),
+    liquidationAddressId: str(row.liquidation_address_id),
+    providerDrainId: str(row.provider_drain_id),
+    message: row.message,
+    expected: row.expected,
+    actual: row.actual,
+    status: row.status,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertAuditLog(client: pg.PoolClient, item: AuditLogRecord) {
+  await client.query(
+    `insert into payments_audit_logs (id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do nothing`,
+    [item.id, item.actorType, item.actorId, item.action, item.resourceType, item.resourceId, item.severity, item.ipAddress, item.userAgent, item.metadata ?? null, item.createdAt]
+  );
+}
+
+async function upsertReconciliationRun(client: pg.PoolClient, item: ReconciliationRunRecord) {
+  await client.query(
+    `insert into payments_reconciliation_runs (id, provider, dry_run, status, summary, error, started_at, completed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       provider=excluded.provider, dry_run=excluded.dry_run, status=excluded.status, summary=excluded.summary, error=excluded.error, completed_at=excluded.completed_at`,
+    [item.id, item.provider, item.dryRun, item.status, item.summary ?? null, item.error, item.startedAt, item.completedAt]
+  );
+}
+
+async function upsertReconciliationFinding(client: pg.PoolClient, item: ReconciliationFindingRecord) {
+  await client.query(
+    `insert into payments_reconciliation_findings (id, run_id, provider, severity, finding_type, withdrawal_id, liquidation_address_id, provider_drain_id, message, expected, actual, status, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     on conflict (id) do update set status=excluded.status`,
+    [item.id, item.runId, item.provider, item.severity, item.findingType, item.withdrawalId, item.liquidationAddressId, item.providerDrainId, item.message, item.expected ?? null, item.actual ?? null, item.status, item.createdAt]
+  );
+}
+
+function mapAuthChallenge(row: any): AuthChallengeRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    codeHash: row.code_hash,
+    intent: row.intent,
+    fullName: str(row.full_name),
+    expiresAt: iso(row.expires_at),
+    consumedAt: optionalIso(row.consumed_at),
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertAuthChallenge(client: pg.PoolClient, item: AuthChallengeRecord) {
+  await client.query(
+    `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at`,
+    [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt]
+  );
+}
 
 function inferPrimaryChannel(email?: string, whatsappNumber?: string): 'email' | 'whatsapp' | 'both' {
   if (email && whatsappNumber) return 'both';
