@@ -80,6 +80,19 @@ async function main() {
     assert(finance.data.volume, 'finance dashboard loads');
     const legal = await request('GET', '/api/admin/legal/evidence', undefined, true);
     assert(legal.data.total === 1, 'legal evidence dashboard loads');
+
+    const settings = await request('GET', '/api/admin/settings/platform', undefined, true);
+    assert(settings.data.newUserSignups === true, 'platform settings load with signups enabled by default');
+    await request('PUT', '/api/admin/settings/platform', { ...settings.data, newUserSignups: false, onRampEnabled: false, offRampEnabled: false, updatedBy: 'ops', reason: 'Admin ops settings test' }, true);
+    await request('POST', '/api/auth/email/start', { email: `blocked+${Date.now()}@sivan.test`, fullName: 'Blocked Signup', intent: 'signup', legalAcceptance }, false, 400);
+    console.log('✓ settings disable new signups');
+    await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'avalanche_c_chain', destinationCurrency: 'usd' }, false, 503);
+    console.log('✓ settings disable off-ramp mutations');
+    await request('POST', '/api/onramp/orders', { userId: user.id, sourceCurrency: 'usd', destinationCurrency: 'usdc', destinationChain: 'avalanche_c_chain', destinationAddress: '0x0000000000000000000000000000000000000000', amount: '100' }, false, 503);
+    console.log('✓ settings disable on-ramp mutations');
+    await request('POST', '/api/admin/settings/api-keys/bridgeApiKey/rotate', { requestedBy: 'ops', reason: 'Admin ops rotation test' }, true);
+    console.log('✓ api key rotation request is audited');
+
     const csv = await request('GET', '/api/admin/exports/users.csv', undefined, true);
     assert(String(csv).includes('adminops'), 'CSV export returns user data');
 

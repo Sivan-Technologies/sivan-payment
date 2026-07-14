@@ -153,6 +153,9 @@ export default function App() {
   const [limitControls, setLimitControls] = useState<any | null>(null);
   const [financeDashboard, setFinanceDashboard] = useState<any | null>(null);
   const [legalEvidence, setLegalEvidence] = useState<any | null>(null);
+  const [platformSettings, setPlatformSettings] = useState<any | null>(null);
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [apiKeys, setApiKeys] = useState<any[]>([]);
 
   const pageTitle = useMemo(() => nav.find((item) => item.key === view)?.label || 'Overview', [view]);
   const listQuery = useMemo(() => `limit=${listPageSize}&offset=${listPage * listPageSize}`, [listPage, listPageSize]);
@@ -186,7 +189,7 @@ export default function App() {
     setAdminError(null);
     try {
       await checkApi();
-      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, supportTicketsResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult, riskResult, approvalsResult, limitsResult, financeResult, legalResult] = await Promise.allSettled([
+      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, supportTicketsResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult, riskResult, approvalsResult, limitsResult, financeResult, legalResult, platformSettingsResult, teamResult, apiKeysResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
         api<AdminUser[]>(`/api/admin/users?${listQuery}`),
@@ -203,7 +206,10 @@ export default function App() {
         api<any[]>('/api/admin/approvals'),
         api<any>('/api/admin/limits'),
         api<any>('/api/admin/finance/dashboard'),
-        api<any>('/api/admin/legal/evidence')
+        api<any>('/api/admin/legal/evidence'),
+        api<any>('/api/admin/settings/platform'),
+        api<any[]>('/api/admin/settings/team'),
+        api<any[]>('/api/admin/settings/api-keys')
       ]);
       if (overviewResult.status === 'fulfilled') setOverview(overviewResult.value);
       if (analyticsResult.status === 'fulfilled') setAnalytics(analyticsResult.value);
@@ -222,6 +228,9 @@ export default function App() {
       if (limitsResult.status === 'fulfilled') setLimitControls(limitsResult.value);
       if (financeResult.status === 'fulfilled') setFinanceDashboard(financeResult.value);
       if (legalResult.status === 'fulfilled') setLegalEvidence(legalResult.value);
+      if (platformSettingsResult.status === 'fulfilled') setPlatformSettings(platformSettingsResult.value);
+      if (teamResult.status === 'fulfilled') setTeamMembers(teamResult.value);
+      if (apiKeysResult.status === 'fulfilled') setApiKeys(apiKeysResult.value);
       if (controlsResult.status === 'rejected') setAdminError(errorMessage(controlsResult.reason));
       if (overviewResult.status === 'rejected') setAdminError(errorMessage(overviewResult.reason));
     } catch (error) {
@@ -403,7 +412,7 @@ export default function App() {
             {view === 'legal' && <LegalEvidence evidence={legalEvidence} />}
             {view === 'search' && <GlobalSearch users={users} withdrawals={withdrawals} orders={onrampOrders} tickets={supportTickets} webhooks={webhooks} initialQuery={globalSearch} />}
             {view === 'economics' && <Economics overview={overview} estimate={estimate} onEstimate={runEconomicsEstimate} />}
-            {view === 'settings' && <Settings apiBase={apiBase} />}
+            {view === 'settings' && <Settings apiBase={apiBase} platformSettings={platformSettings} teamMembers={teamMembers} apiKeys={apiKeys} api={api} notify={notify} onUpdated={refreshAdmin} adminApiKey={adminApiKey} />}
           </>}
         </main>
       </div>
@@ -959,6 +968,48 @@ function Economics({ overview, estimate, onEstimate }: { overview: AdminOverview
   return <section className="panel-grid two">{overview ? <EconomicsSummary overview={overview} /> : <Empty>No economics loaded.</Empty>}<article className="panel form-panel"><p className="eyebrow">Simulator</p><h3>Unit economics estimate</h3><form className="form" onSubmit={onEstimate}><label>Withdrawal amount<input name="amount" type="number" min="1" step="0.01" defaultValue="1000" /></label><label>Customer type<select name="customerType" defaultValue="individual"><option value="individual">Individual — KYC</option><option value="business">Business — KYB</option></select></label><label>Include onboarding cost<select name="includeOnboardingCost" defaultValue="true"><option value="true">Yes</option><option value="false">No</option></select></label><label>Third-party rail fee<input name="thirdPartyRailFee" type="number" min="0" step="0.01" defaultValue="0" /></label><button className="primary-btn">Estimate</button></form>{estimate && <div className="estimate-box"><Kv label="Sivan revenue" value={`$${estimate.revenue.estimatedSivanFeeRevenue}`} /><Kv label="Bridge cost" value={`$${estimate.costs.estimatedBridgeOfframpCost}`} /><Kv label="Onboarding cost" value={`$${estimate.costs.onboardingCost}`} /><Kv label="Total cost" value={`$${estimate.costs.estimatedTotalCost}`} /><Kv label="Contribution margin" value={`$${estimate.margin.estimatedContributionMargin}`} /><Kv label="Break-even volume" value={estimate.margin.onboardingBreakEvenVolume ? `$${estimate.margin.onboardingBreakEvenVolume}` : '—'} /></div>}</article></section>;
 }
 
-function Settings({ apiBase }: { apiBase: string }) {
-  return <section className="panel-grid two"><article className="panel"><div className="panel-head"><div><p className="eyebrow">Runtime</p><h3>Admin settings</h3></div></div><div className="details-box"><Kv label="API base" value={apiBase} /><Kv label="User frontend" value="/frontend on port 5173" /><Kv label="Admin frontend" value="/frontend-admin on port 5174" /><Kv label="Admin auth" value="Required before production" /></div></article><article className="panel"><div className="panel-head"><div><p className="eyebrow">Production checklist</p><h3>Before launch</h3></div></div><div className="details-box"><Kv label="Admin authentication" value="Pending" /><Kv label="RBAC" value="Pending" /><Kv label="2FA" value="Pending" /><Kv label="Audit logs" value="Pending" /><Kv label="Scheduled reconciliation" value="Pending" /><Kv label="Postgres migration" value="Pending" /></div></article></section>;
+function Settings({ apiBase, platformSettings, teamMembers, apiKeys, api, notify, onUpdated, adminApiKey }: { apiBase: string; platformSettings: any; teamMembers: any[]; apiKeys: any[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; notify: (message: string, type?: 'success' | 'error') => void; onUpdated: () => Promise<void>; adminApiKey: string }) {
+  const defaults = { maintenanceMode: false, newUserSignups: true, instantPayouts: false, sanctionsScreening: true, deviceBinding: true, globalGeoBlock: true, onRampEnabled: true, offRampEnabled: true };
+  const settings = { ...defaults, ...(platformSettings ?? {}) };
+  async function updateSetting(key: string, value: boolean, reason?: string) {
+    try {
+      const next = { ...settings, [key]: value, updatedBy: 'admin_api_key', reason: reason || `Update ${key}` };
+      await api('/api/admin/settings/platform', { method: 'PUT', body: JSON.stringify(next) });
+      notify('Platform setting updated.');
+      await onUpdated();
+    } catch (error) { notify(errorMessage(error), 'error'); }
+  }
+  async function rotate(key: string) {
+    const reason = window.prompt('Rotation reason') || 'Rotation requested from admin settings';
+    try { await api(`/api/admin/settings/api-keys/${key}/rotate`, { method: 'POST', body: JSON.stringify({ requestedBy: 'admin_api_key', reason }) }); notify('API key rotation request recorded.'); await onUpdated(); } catch (error) { notify(errorMessage(error), 'error'); }
+  }
+  async function exportAll() {
+    try {
+      const res = await fetch(`${apiBase}/api/admin/exports/all.json`, { headers: adminApiKey ? { 'x-admin-api-key': adminApiKey } : {} });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const blob = await res.blob(); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'sivan-admin-export.json'; a.click(); URL.revokeObjectURL(url);
+    } catch (error) { notify(errorMessage(error), 'error'); }
+  }
+  return <section className="adm-page settings-page"><PageHead title="Settings" sub="Platform configuration, team access and security." />
+    <div className="settings-grid">
+      <article className="settings-card platform-card"><h3>Platform</h3><div className="settings-list">
+        <SettingToggle title="Maintenance mode" description="Temporarily block new trades while showing a banner to users." enabled={settings.maintenanceMode} onChange={(value) => updateSetting('maintenanceMode', value, value ? 'Enable maintenance mode' : 'Disable maintenance mode')} />
+        <SettingToggle title="New user signups" description="Allow new customer registration." enabled={settings.newUserSignups} onChange={(value) => updateSetting('newUserSignups', value)} />
+        <SettingToggle title="Instant payouts" description="Release fiat before crypto confirmations on trusted rails." enabled={settings.instantPayouts} onChange={(value) => updateSetting('instantPayouts', value)} />
+        <SettingToggle title="Sanctions screening" description="Run provider/compliance screening on every eligible transaction." enabled={settings.sanctionsScreening} onChange={(value) => updateSetting('sanctionsScreening', value)} />
+        <SettingToggle title="Device binding" description="Email verification on new device login." enabled={settings.deviceBinding} onChange={(value) => updateSetting('deviceBinding', value)} />
+        <SettingToggle title="Global geo-block" description="Block traffic from sanctioned or unsupported jurisdictions." enabled={settings.globalGeoBlock} onChange={(value) => updateSetting('globalGeoBlock', value)} />
+      </div></article>
+
+      <article className="settings-card team-card"><h3>Team members</h3><div className="team-list">{teamMembers.map((member) => <div className="team-row" key={member.email}><span className="us-av grad-bg">{String(member.name || member.email).slice(0,2).toUpperCase()}</span><div><strong>{member.name}</strong><small>{member.email}</small></div><b>{member.role}</b></div>)}</div><button className="settings-outline">Invite teammate</button></article>
+
+      <article className="settings-card api-card-settings"><h3>API keys</h3><p>Keys for webhooks, email, monitoring and third-party integrations.</p><div className="api-key-list">{apiKeys.map((item) => <div className="api-key-row" key={item.key}><div><strong>{item.label}</strong><small className="mono">{item.masked}</small></div><span>{item.lastRotatedAt ? new Date(item.lastRotatedAt).toLocaleDateString() : item.configured ? 'configured' : 'missing'}</span><button className="btn-ghost-sm" onClick={() => rotate(item.key)}>Rotate</button></div>)}</div></article>
+
+      <article className="settings-card danger-card"><h3>Danger zone</h3><div className="danger-list"><div className="danger-row"><div><strong>Export all data</strong><small>Download a full export of users, transactions, logs and evidence.</small></div><button className="danger-action neutral" onClick={exportAll}>Start export</button></div><div className="danger-row"><div><strong>Disable on-ramp</strong><small>Stop all buy crypto flows instantly.</small></div><button className="danger-action" onClick={() => updateSetting('onRampEnabled', false, 'Disable on-ramp from danger zone')}>Disable</button></div><div className="danger-row"><div><strong>Disable off-ramp</strong><small>Stop all sell crypto flows instantly.</small></div><button className="danger-action" onClick={() => updateSetting('offRampEnabled', false, 'Disable off-ramp from danger zone')}>Disable</button></div>{(!settings.onRampEnabled || !settings.offRampEnabled) && <div className="danger-row"><div><strong>Re-enable disabled flows</strong><small>Restore on-ramp and off-ramp after incident resolution.</small></div><button className="danger-action neutral" onClick={() => updateSetting('onRampEnabled', true, 'Re-enable on-ramp')}>Enable on-ramp</button><button className="danger-action neutral" onClick={() => updateSetting('offRampEnabled', true, 'Re-enable off-ramp')}>Enable off-ramp</button></div>}</div></article>
+    </div>
+  </section>;
+}
+
+function SettingToggle({ title, description, enabled, onChange }: { title: string; description: string; enabled: boolean; onChange: (value: boolean) => void }) {
+  return <div className="setting-row"><div><strong>{title}</strong><small>{description}</small></div><button className={`settings-toggle ${enabled ? 'on' : ''}`} onClick={() => onChange(!enabled)}><span /></button></div>;
 }

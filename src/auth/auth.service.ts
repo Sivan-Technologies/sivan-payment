@@ -9,6 +9,7 @@ import { signUserJwt } from './jwt.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { buildOtpEmail, sendEmail } from '../notifications/email.service.js';
 import { buildChallengeLegalAcceptance, legalAcceptancePayloadSchema, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
+import { getAdminPlatformSettings } from '../admin/admin-settings.service.js';
 
 export const startEmailAuthSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
@@ -34,6 +35,10 @@ export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>
   const existingUser = await getUserByEmail(input.email);
   if (input.intent === 'signin' && !existingUser) {
     throw notFound('Account');
+  }
+  const platformSettings = await getAdminPlatformSettings();
+  if (input.intent === 'signup' && !existingUser && !platformSettings.newUserSignups) {
+    throw badRequest('New user signups are temporarily disabled');
   }
   if (input.intent === 'signup' && !existingUser && !input.fullName) {
     throw badRequest('fullName is required to create an account');

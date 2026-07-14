@@ -8,6 +8,7 @@ import { captureError } from './monitoring/sentry.js';
 import { verifyUserJwt } from './auth/jwt.js';
 import { checkRateLimit } from './shared/rate-limit.js';
 import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './system/system-status.service.js';
+import { getAdminPlatformSettings, isPlatformMutationBlocked } from './admin/admin-settings.service.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
@@ -60,6 +61,17 @@ export async function buildApp() {
           mode: status.mode,
           message: systemStatusMessage(status),
           estimatedResumeAt: status.estimatedResumeAt
+        }
+      });
+    }
+
+    const platformSettings = await getAdminPlatformSettings();
+    const platformBlockedMessage = isPlatformMutationBlocked(platformSettings, request.method, request.url);
+    if (platformBlockedMessage) {
+      return reply.code(503).send({
+        error: {
+          code: 'platform_action_disabled',
+          message: platformBlockedMessage
         }
       });
     }

@@ -12,6 +12,7 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
 import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
+import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 
 
 function listOptions(request: any) {
@@ -81,6 +82,22 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));
   app.get('/api/admin/legal/evidence', async () => ({ data: await getLegalEvidenceSummary() }));
+  app.get('/api/admin/settings/platform', async () => ({ data: await getAdminPlatformSettings() }));
+  app.put('/api/admin/settings/platform', async (request) => {
+    const body = parseBody(adminPlatformSettingsSchema, request.body);
+    return { data: await updateAdminPlatformSettings(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+  app.get('/api/admin/settings/team', async () => ({ data: await getAdminTeamMembers() }));
+  app.get('/api/admin/settings/api-keys', async () => ({ data: await getAdminApiKeyInventory() }));
+  app.post('/api/admin/settings/api-keys/:key/rotate', async (request) => {
+    const { key } = request.params as { key: string };
+    const body = parseBody(z.object({ requestedBy: z.string().optional(), reason: z.string().optional() }), request.body ?? {});
+    return { data: await requestApiKeyRotation({ key, ...body }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.get('/api/admin/exports/all.json', async (request, reply) => {
+    return reply.header('Content-Type', 'application/json; charset=utf-8').header('Content-Disposition', 'attachment; filename="sivan-admin-export.json"').send(await buildAllAdminExport());
+  });
 
   app.get('/api/admin/exports/:type.csv', async (request, reply) => {
     const { type } = request.params as { type: string };
