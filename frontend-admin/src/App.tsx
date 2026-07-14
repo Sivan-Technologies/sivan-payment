@@ -105,6 +105,39 @@ const fallbackSourceNetworks: any[] = [
   { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
+
+const ADMIN_API_BASES = {
+  test: 'https://sivan-payments-api-test.onrender.com',
+  live: 'https://sivan-payments-api-live.onrender.com',
+  local: 'http://localhost:3000'
+};
+
+function normalizeApiBase(value?: string | null) {
+  return (value || '').trim().replace(/\/$/, '');
+}
+
+function isLocalhostApi(value: string) {
+  return /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(value);
+}
+
+function isLocalBrowserHost() {
+  return ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname);
+}
+
+function getInitialAdminApiBase() {
+  const envBase = normalizeApiBase(import.meta.env.VITE_API_BASE_URL);
+  const savedBase = normalizeApiBase(localStorage.getItem('sivan.admin.apiBase'));
+  const localBrowser = isLocalBrowserHost();
+
+  // Localhost values are useful in local development, but should never win on Vercel/production.
+  if (savedBase && (localBrowser || !isLocalhostApi(savedBase))) return savedBase;
+  if (envBase && (localBrowser || !isLocalhostApi(envBase))) return envBase;
+  if (localBrowser) return ADMIN_API_BASES.local;
+
+  // Safe deployed default: use test backend unless Vercel env overrides it.
+  return ADMIN_API_BASES.test;
+}
+
 function normalizeOfframpControls(value: unknown): any {
   const data = value as any;
   if (Array.isArray(data)) {
@@ -120,7 +153,7 @@ function normalizeOfframpControls(value: unknown): any {
 
 export default function App() {
   const [view, setView] = useState<AdminViewKey>('overview');
-  const [apiBase, setApiBase] = useState(() => localStorage.getItem('sivan.admin.apiBase') || import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000');
+  const [apiBase, setApiBase] = useState(getInitialAdminApiBase);
   const [apiDraft, setApiDraft] = useState(apiBase);
   const [adminApiKey, setAdminApiKey] = useState(() => localStorage.getItem('sivan.admin.apiKey') || '');
   const [adminApiKeyDraft, setAdminApiKeyDraft] = useState(adminApiKey);
@@ -246,6 +279,7 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem('sivan.admin.apiBase', apiBase);
+    setApiDraft(apiBase);
   }, [apiBase]);
 
   useEffect(() => {
@@ -366,7 +400,8 @@ export default function App() {
             <div className="adm-upg-head">✣ Secure connection</div>
             <p>Backend-connected console. Save API values here for local operations; production should use your admin login/session later.</p>
             <label>API base<input value={apiDraft} onChange={(event) => setApiDraft(event.target.value)} /></label>
-            <button className="btn-ghost-sm" onClick={() => { setApiBase(apiDraft.replace(/\/$/, '')); notify('Admin API URL saved.'); }}>Save API URL</button>
+            <div className="api-quick-row"><button className="btn-ghost-sm" onClick={() => setApiDraft(ADMIN_API_BASES.test)}>Use test</button><button className="btn-ghost-sm" onClick={() => setApiDraft(ADMIN_API_BASES.live)}>Use live</button></div>
+            <button className="btn-ghost-sm" onClick={() => { setApiBase(normalizeApiBase(apiDraft)); notify('Admin API URL saved.'); }}>Save API URL</button>
             <label>Admin API key<input type="password" value={adminApiKeyDraft} onChange={(event) => setAdminApiKeyDraft(event.target.value)} placeholder="Admin API key" /></label>
             <button className="btn-ghost-sm" onClick={() => { setAdminApiKey(adminApiKeyDraft); notify('Admin API key saved locally.'); }}>Save key</button>
           </div>

@@ -94,3 +94,5 @@
 .promo-row { display: grid; grid-template-columns: 1fr 130px; gap: 10px; align-items: center; padding: 12px; border-radius: 10px; background: #0a0f16; border: 1px solid var(--line); }
 .promo-row small { color: var(--muted); display: block; margin-top: 6px; }
 @media(max-width:1180px){ .fees-grid { grid-template-columns: 1fr; } .fee-head, .fee-row { grid-template-columns: 1fr; } .fee-global-row { grid-template-columns: 1fr; } }
+.api-quick-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 6px 0 8px; }
+.api-quick-row .btn-ghost-sm { justify-content: center; padding: 7px 8px; }
