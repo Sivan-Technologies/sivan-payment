@@ -53,6 +53,113 @@ export class JsonDatabase {
   }
 
 
+
+
+  async getAdminOverviewView() {
+    const data = await this.read();
+    const withdrawalsByStatus = data.withdrawals.reduce<Record<string, number>>((acc, withdrawal) => {
+      acc[withdrawal.status] = (acc[withdrawal.status] ?? 0) + 1;
+      return acc;
+    }, {});
+    const webhookEventsByType = data.webhookEvents.reduce<Record<string, number>>((acc, event) => {
+      const key = event.eventCategory || event.eventType || 'unknown';
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    return {
+      counts: {
+        users: data.users.length,
+        customers: data.customers.length,
+        externalAccounts: data.externalAccounts.length,
+        liquidationAddresses: data.liquidationAddresses.length,
+        withdrawals: data.withdrawals.length,
+        onrampOrders: (data.onrampOrders ?? []).length,
+        webhookEvents: data.webhookEvents.length
+      },
+      withdrawalsByStatus,
+      webhookEventsByType,
+      recent: {
+        users: data.users.slice(-10).reverse(),
+        customers: data.customers.slice(-10).reverse(),
+        withdrawals: data.withdrawals.slice(-10).reverse(),
+        onrampOrders: (data.onrampOrders ?? []).slice(-10).reverse(),
+        webhookEvents: data.webhookEvents.slice(-10).reverse()
+      }
+    };
+  }
+
+  async findUserById(userId: string) {
+    const data = await this.read();
+    return data.users.find((user) => user.id === userId);
+  }
+
+  async findUserByEmail(email: string) {
+    const data = await this.read();
+    return data.users.find((user) => user.email?.toLowerCase() === email.toLowerCase());
+  }
+
+  async findUserByWhatsappNumber(whatsappNumber: string) {
+    const data = await this.read();
+    return data.users.find((user) => user.whatsappNumber === whatsappNumber);
+  }
+
+  async listAdminUsersView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const data = await this.read();
+    return data.users.slice(offset, offset + limit).map((user) => ({
+      ...user,
+      customer: data.customers.find((customer) => customer.userId === user.id) ?? null,
+      externalAccountCount: data.externalAccounts.filter((account) => account.userId === user.id).length,
+      withdrawalCount: data.withdrawals.filter((withdrawal) => withdrawal.userId === user.id).length,
+      onrampOrderCount: (data.onrampOrders ?? []).filter((order) => order.userId === user.id).length
+    }));
+  }
+
+  async listAdminWithdrawalsView({ limit = 100, offset = 0, status }: { limit?: number; offset?: number; status?: string } = {}) {
+    const data = await this.read();
+    return data.withdrawals
+      .filter((withdrawal) => !status || withdrawal.status === status)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(offset, offset + limit)
+      .map((withdrawal) => ({
+        ...withdrawal,
+        user: data.users.find((user) => user.id === withdrawal.userId) ?? null,
+        externalAccount: data.externalAccounts.find((account) => account.id === withdrawal.externalAccountId) ?? null,
+        liquidationAddress: data.liquidationAddresses.find((address) => address.id === withdrawal.liquidationAddressId) ?? null
+      }));
+  }
+
+  async listAdminOnrampOrdersView({ limit = 100, offset = 0, status }: { limit?: number; offset?: number; status?: string } = {}) {
+    const data = await this.read();
+    return (data.onrampOrders ?? [])
+      .filter((order) => !status || order.status === status)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(offset, offset + limit)
+      .map((order) => ({
+        ...order,
+        user: data.users.find((user) => user.id === order.userId) ?? null,
+        customer: data.customers.find((customer) => customer.id === order.customerId) ?? null
+      }));
+  }
+
+  async listWebhookEventsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const data = await this.read();
+    return data.webhookEvents.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(offset, offset + limit);
+  }
+
+  async listAuditLogsView({ limit = 200, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const data = await this.read();
+    return (data.auditLogs ?? []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(offset, offset + limit);
+  }
+
+  async listReconciliationRunsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const data = await this.read();
+    return (data.reconciliationRuns ?? [])
+      .slice()
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
+      .slice(offset, offset + limit)
+      .map((run) => ({ ...run, findings: (data.reconciliationFindings ?? []).filter((finding) => finding.runId === run.id) }));
+  }
+
   async insertAuditLogRecord(record: AuditLogRecord) {
     return this.mutate((data) => {
       data.auditLogs = data.auditLogs ?? [];

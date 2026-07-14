@@ -26,9 +26,9 @@ import type {
 const { Pool } = pg;
 
 
-async function optionalQuery(client: pg.PoolClient, sql: string): Promise<{ rows: any[] }> {
+async function optionalQuery(client: pg.PoolClient, sql: string, params: unknown[] = []): Promise<{ rows: any[] }> {
   try {
-    return await client.query(sql);
+    return await client.query(sql, params);
   } catch (error: any) {
     if (error?.code === '42P01') return { rows: [] };
     throw error;
@@ -122,6 +122,160 @@ export class PostgresDatabase {
     throw new Error('PostgresDatabase.mutate is disabled for production safety. Use direct repository methods instead.');
   }
 
+
+
+
+  async getAdminOverviewView() {
+    const client = await this.pool.connect();
+    try {
+      const [users, customers, externalAccounts, liquidationAddresses, withdrawals, onrampOrders, webhookEvents, withdrawalsByStatusRows, webhookEventsByTypeRows, recentUsers, recentCustomers, recentWithdrawals, recentOnrampOrders, recentWebhookEvents] = await Promise.all([
+        client.query('select count(*)::int as count from users'),
+        client.query('select count(*)::int as count from payments_customers'),
+        client.query('select count(*)::int as count from payments_external_accounts'),
+        client.query('select count(*)::int as count from payments_liquidation_addresses'),
+        client.query('select count(*)::int as count from payments_withdrawals'),
+        optionalQuery(client, 'select count(*)::int as count from payments_onramp_orders'),
+        client.query('select count(*)::int as count from payments_webhook_events'),
+        client.query('select status, count(*)::int as count from payments_withdrawals group by status'),
+        client.query("select coalesce(event_category, event_type, 'unknown') as key, count(*)::int as count from payments_webhook_events group by key"),
+        client.query('select * from users order by created_at desc limit 10'),
+        client.query('select * from payments_customers order by created_at desc limit 10'),
+        client.query('select * from payments_withdrawals order by created_at desc limit 10'),
+        optionalQuery(client, 'select * from payments_onramp_orders order by created_at desc limit 10'),
+        client.query('select * from payments_webhook_events order by created_at desc limit 10')
+      ]);
+      return {
+        counts: {
+          users: users.rows[0]?.count ?? 0,
+          customers: customers.rows[0]?.count ?? 0,
+          externalAccounts: externalAccounts.rows[0]?.count ?? 0,
+          liquidationAddresses: liquidationAddresses.rows[0]?.count ?? 0,
+          withdrawals: withdrawals.rows[0]?.count ?? 0,
+          onrampOrders: onrampOrders.rows[0]?.count ?? 0,
+          webhookEvents: webhookEvents.rows[0]?.count ?? 0
+        },
+        withdrawalsByStatus: Object.fromEntries(withdrawalsByStatusRows.rows.map((row) => [row.status, Number(row.count)])),
+        webhookEventsByType: Object.fromEntries(webhookEventsByTypeRows.rows.map((row) => [row.key, Number(row.count)])),
+        recent: {
+          users: recentUsers.rows.map(mapUser),
+          customers: recentCustomers.rows.map(mapCustomer),
+          withdrawals: recentWithdrawals.rows.map(mapWithdrawal),
+          onrampOrders: recentOnrampOrders.rows.map(mapOnrampOrder),
+          webhookEvents: recentWebhookEvents.rows.map(mapWebhookEvent)
+        }
+      };
+    } finally { client.release(); }
+  }
+
+  async findUserById(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('select * from users where user_id=$1 limit 1', [userId]);
+      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async findUserByEmail(email: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('select * from users where lower(email)=lower($1) limit 1', [email]);
+      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async findUserByWhatsappNumber(whatsappNumber: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('select * from users where whatsapp_number=$1 limit 1', [whatsappNumber]);
+      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async listAdminUsersView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const usersResult = await client.query('select * from users order by created_at asc limit $1 offset $2', [limit, offset]);
+      const users = usersResult.rows.map(mapUser);
+      const userIds = users.map((user) => user.id);
+      if (!userIds.length) return [];
+      const customers = (await client.query('select * from payments_customers where user_id = any($1)', [userIds])).rows.map(mapCustomer);
+      const externalCounts = await client.query('select user_id, count(*)::int as count from payments_external_accounts where user_id = any($1) group by user_id', [userIds]);
+      const withdrawalCounts = await client.query('select user_id, count(*)::int as count from payments_withdrawals where user_id = any($1) group by user_id', [userIds]);
+      const onrampCounts = await optionalQuery(client, 'select user_id, count(*)::int as count from payments_onramp_orders group by user_id');
+      const countMap = (rows: any[]) => new Map(rows.filter((row) => userIds.includes(row.user_id)).map((row) => [row.user_id, Number(row.count)]));
+      const externalMap = countMap(externalCounts.rows);
+      const withdrawalMap = countMap(withdrawalCounts.rows);
+      const onrampMap = countMap(onrampCounts.rows);
+      return users.map((user) => ({
+        ...user,
+        customer: customers.find((customer) => customer.userId === user.id) ?? null,
+        externalAccountCount: externalMap.get(user.id) ?? 0,
+        withdrawalCount: withdrawalMap.get(user.id) ?? 0,
+        onrampOrderCount: onrampMap.get(user.id) ?? 0
+      }));
+    } finally { client.release(); }
+  }
+
+  async listAdminWithdrawalsView({ limit = 100, offset = 0, status }: { limit?: number; offset?: number; status?: string } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const params: any[] = [];
+      let where = '';
+      if (status) { params.push(status); where = 'where status=$1'; }
+      params.push(limit, offset);
+      const result = await client.query(`select * from payments_withdrawals ${where} order by created_at desc limit $${params.length - 1} offset $${params.length}`, params);
+      const withdrawals = result.rows.map(mapWithdrawal);
+      const userIds = [...new Set(withdrawals.map((item) => item.userId))];
+      const accountIds = [...new Set(withdrawals.map((item) => item.externalAccountId))];
+      const addressIds = [...new Set(withdrawals.map((item) => item.liquidationAddressId))];
+      const users = userIds.length ? (await client.query('select * from users where user_id = any($1)', [userIds])).rows.map(mapUser) : [];
+      const accounts = accountIds.length ? (await client.query('select * from payments_external_accounts where id = any($1)', [accountIds])).rows.map(mapExternalAccount) : [];
+      const addresses = addressIds.length ? (await client.query('select * from payments_liquidation_addresses where id = any($1)', [addressIds])).rows.map(mapLiquidationAddress) : [];
+      return withdrawals.map((withdrawal) => ({
+        ...withdrawal,
+        user: users.find((user) => user.id === withdrawal.userId) ?? null,
+        externalAccount: accounts.find((account) => account.id === withdrawal.externalAccountId) ?? null,
+        liquidationAddress: addresses.find((address) => address.id === withdrawal.liquidationAddressId) ?? null
+      }));
+    } finally { client.release(); }
+  }
+
+  async listAdminOnrampOrdersView({ limit = 100, offset = 0, status }: { limit?: number; offset?: number; status?: string } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const params: any[] = [];
+      let where = '';
+      if (status) { params.push(status); where = 'where status=$1'; }
+      params.push(limit, offset);
+      const result = await optionalQuery(client, `select * from payments_onramp_orders ${where} order by created_at desc limit $${params.length - 1} offset $${params.length}`, params);
+      const orders = result.rows.map(mapOnrampOrder);
+      const userIds = [...new Set(orders.map((item) => item.userId))];
+      const customerIds = [...new Set(orders.map((item) => item.customerId))];
+      const users = userIds.length ? (await client.query('select * from users where user_id = any($1)', [userIds])).rows.map(mapUser) : [];
+      const customers = customerIds.length ? (await client.query('select * from payments_customers where id = any($1)', [customerIds])).rows.map(mapCustomer) : [];
+      return orders.map((order) => ({ ...order, user: users.find((user) => user.id === order.userId) ?? null, customer: customers.find((customer) => customer.id === order.customerId) ?? null }));
+    } finally { client.release(); }
+  }
+
+  async listWebhookEventsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try { return (await client.query('select * from payments_webhook_events order by created_at desc limit $1 offset $2', [limit, offset])).rows.map(mapWebhookEvent); } finally { client.release(); }
+  }
+
+  async listAuditLogsView({ limit = 200, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try { return (await client.query('select * from payments_audit_logs order by created_at desc limit $1 offset $2', [limit, offset])).rows.map(mapAuditLog); } finally { client.release(); }
+  }
+
+  async listReconciliationRunsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const runs = (await client.query('select * from payments_reconciliation_runs order by started_at desc limit $1 offset $2', [limit, offset])).rows.map(mapReconciliationRun);
+      const runIds = runs.map((run) => run.id);
+      const findings = runIds.length ? (await client.query('select * from payments_reconciliation_findings where run_id = any($1) order by created_at asc', [runIds])).rows.map(mapReconciliationFinding) : [];
+      return runs.map((run) => ({ ...run, findings: findings.filter((finding) => finding.runId === run.id) }));
+    } finally { client.release(); }
+  }
 
   async insertAuditLogRecord(record: AuditLogRecord) {
     const client = await this.pool.connect();
