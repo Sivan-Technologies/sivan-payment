@@ -20,7 +20,8 @@ const emptyDb = (): DatabaseShape => ({
   assetControls: [],
   networkControls: [],
   systemStatus: [],
-  customerTypeControls: []
+  customerTypeControls: [],
+  unifiedWebhookLogs: []
 });
 
 export class JsonDatabase {
@@ -296,6 +297,14 @@ export class JsonDatabase {
     return this.mutate((data) => {
       data.webhookEvents = data.webhookEvents ?? [];
       data.webhookEvents.push(record);
+      return record;
+    });
+  }
+
+  async insertUnifiedWebhookLogRecord(record: any) {
+    return this.mutate((data) => {
+      data.unifiedWebhookLogs = data.unifiedWebhookLogs ?? [];
+      data.unifiedWebhookLogs.push(record);
       return record;
     });
   }

@@ -1,5 +1,5 @@
 import { db } from '../database/json-database.js';
-import type { WebhookEventRecord, WithdrawalRecord } from '../database/types.js';
+import type { WebhookEventRecord, WithdrawalRecord, UnifiedWebhookLogRecord } from '../database/types.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
 import { badRequest, conflict } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
@@ -49,6 +49,19 @@ export async function processBridgeWebhook(payload: BridgeWebhookPayload, rawBod
     createdAt: now
   };
   await db.insertWebhookEventRecord(event);
+
+  const unifiedLog: UnifiedWebhookLogRecord = {
+    id: id('uwl'),
+    serviceName: 'sivan-payment',
+    provider: 'bridge',
+    providerEventId: eventId,
+    paymentReference: undefined,
+    eventCategory: payload.event_category,
+    eventType: payload.event_type,
+    payload,
+    createdAt: now
+  };
+  await db.insertUnifiedWebhookLogRecord(unifiedLog);
 
   const eventCategory = normalizeEventCategory(payload.event_category);
   if (eventCategory === 'liquidation_address_drain') {

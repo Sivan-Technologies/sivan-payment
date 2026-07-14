@@ -49,7 +49,7 @@ export const providerCapabilities: ProviderCapability[] = [
     name: 'bridge',
     available: true,
     sourceCurrencies: ['usdc', 'usdt'],
-    sourceChains: ['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain'],
+    sourceChains: ['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche_c_chain'],
     destinationCurrencies: ['usd', 'gbp', 'eur'],
     destinationCountries: 'global',
     destinationPaymentRails: ['ach', 'wire', 'faster_payments', 'sepa', 'sepa_instant'],
@@ -57,7 +57,7 @@ export const providerCapabilities: ProviderCapability[] = [
     speed: 'standard',
     reliability: 'high',
     priority: 100,
-    notes: 'Current MVP provider for USDC to USD/GBP first-party bank withdrawals.'
+    notes: 'Current MVP provider for USDC to USD/GBP first-party bank withdrawals. Supports Avalanche C-Chain as source.'
   }
 ];
 

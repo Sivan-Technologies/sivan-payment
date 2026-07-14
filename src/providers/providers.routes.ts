@@ -6,8 +6,8 @@ import { providerCapabilities } from './provider-routing.js';
 import { routeOfframpProvider } from './provider-registry.js';
 
 const routeOfframpProviderSchema = z.object({
-  sourceCurrency: z.literal('usdc').optional(),
-  sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain']).optional(),
+  sourceCurrency: z.enum(['usdc', 'usdt']).optional(),
+  sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche_c_chain']).optional(),
   destinationCurrency: z.enum(['usd', 'gbp', 'eur']).optional(),
   destinationCountry: z.string().min(2).optional(),
   destinationPaymentRail: z.string().min(1).optional(),
