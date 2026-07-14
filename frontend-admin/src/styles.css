@@ -20,3 +20,26 @@
 .switch-row{display:flex;grid-template-columns:none;align-items:center;justify-content:space-between;gap:12px}.switch{width:46px;height:26px;border:1px solid var(--line2);border-radius:999px;background:rgba(154,179,202,.13);padding:3px}.switch span{display:block;width:18px;height:18px;border-radius:999px;background:var(--muted);transition:.18s}.switch.on{background:rgba(76,216,200,.18);border-color:rgba(76,216,200,.35)}.switch.on span{transform:translateX(20px);background:var(--cyan)}.compact-control-list{display:grid;gap:10px}.control-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px;border:1px solid var(--line);background:#0a0f16;border-radius:10px}.network-control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.control-status-card,.controls-grid,.system-mode-form{display:grid;gap:14px}.system-mode-form{grid-template-columns:170px 1fr 150px;align-items:end}.support-filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}.support-filter-row input{max-width:320px}.support-filter-row select{width:auto;min-width:140px}.ticket-thread{display:grid;gap:10px;margin:14px 0}.ticket-message{padding:12px;border:1px solid var(--line);border-radius:10px;background:#0a0f16}.ticket-message.admin{border-color:rgba(76,216,200,.24)}.ticket-message.internal{border-color:rgba(233,182,96,.28);background:rgba(233,182,96,.08)}.action-result{max-height:220px;overflow:auto;padding:12px;border:1px solid var(--line);border-radius:10px;background:#080d13;color:var(--muted);font-size:12px;white-space:pre-wrap}.pagination-controls{display:none}.admin-warning{display:none}
 @media(max-width:1180px){.metric-grid{grid-template-columns:repeat(3,1fr)}.dashboard-grid,.dashboard-grid.bottom,.panel-grid.two{grid-template-columns:1fr}.ticket-detail-drawer{position:relative;top:0;max-height:none}.system-mode-form,.network-control-grid{grid-template-columns:1fr}.donut-wrap{grid-template-columns:1fr;justify-items:center}.rail-row{grid-template-columns:110px 1fr 60px}}
 @media(max-width:760px){.adm-sidebar{position:fixed;left:-270px;transition:.2s}.adm-sidebar.open{left:0}.adm-backdrop{display:block}.adm-menu-btn{display:grid}.adm-content{padding:18px}.adm-topbar{padding:0 14px}.adm-search{min-width:0;width:100%}.adm-top-left{flex:1}.adm-prof-meta{display:none}.metric-grid,.stat-strip,.stats-grid{grid-template-columns:1fr}.filter-bar,.page-head-actions{width:100%}.adm-search.inline{width:100%}.control-row{grid-template-columns:1fr}.split{grid-template-columns:1fr}}
+
+/* Layout polish: make the Command workspace use the full available canvas on wide screens. */
+.adm-main { width: 100%; overflow-x: hidden; }
+.adm-content { width: 100%; flex: 1; padding: 28px clamp(22px, 2vw, 38px); }
+.adm-page { width: 100%; max-width: none; }
+.overview-page { min-height: calc(100vh - 118px); }
+.metric-grid, .dashboard-grid, .dashboard-grid.bottom, .stat-strip { width: 100%; }
+.dashboard-grid { grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr); align-items: stretch; }
+.dashboard-grid.bottom { grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr); }
+.chart-card, .metric-card, .adm-card { min-width: 0; }
+.adm-table-wrap { width: 100%; }
+
+/* Keep the sidebar cleaner: connection settings remain usable without visually dominating the nav. */
+.adm-upgrade { padding: 12px; }
+.adm-upgrade label, .adm-upgrade input { font-size: 10.5px; }
+.adm-upgrade input { padding: 7px 8px; }
+.adm-upgrade p { margin-bottom: 8px; }
+
+@media (min-width: 1600px) {
+  .metric-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .area-chart { height: 300px; }
+  .spark-chart { height: 205px; }
+}
