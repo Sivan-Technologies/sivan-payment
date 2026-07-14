@@ -107,11 +107,11 @@ const fallbackSourceAssets: AssetControl[] = [
 ];
 
 const fallbackSourceNetworks: NetworkControl[] = [
-  { network: 'base', enabled: true, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
-  { network: 'polygon', enabled: true, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
-  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
-  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
-  { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'base', enabled: false, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'solana', enabled: false, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
   { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
@@ -226,7 +226,7 @@ export default function App() {
   const completedWithdrawalCount = completedWithdrawals.length;
   const completedVolume = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.destinationAmount ?? withdrawal.sourceAmount ?? 0), 0);
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
-  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Base';
+  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Avalanche C-Chain';
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -932,7 +932,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
           <div className="landing-copy">
             <p className="eyebrow">Crypto to fiat. Fiat to crypto.</p>
             <h1>Buy and sell crypto<br /><span>the simple way.</span></h1>
-            <p className="lead">Convert USDC, USDT and other supported digital assets directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
+            <p className="lead">Convert supported stablecoins on Avalanche C-Chain directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
             <div className="landing-actions">
               <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
               <a className="secondary-btn" href="#how">See how it works</a>
@@ -964,7 +964,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
         <section className="landing-section two-directions" id="features">
           <div className="section-head center"><p className="eyebrow center">Two directions</p><h2>Move value in either direction.</h2><p>One platform. One verification. Sell crypto to your bank or prepare to buy crypto with fiat — the same simple experience.</p></div>
           <div className="direction-grid">
-            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Works with USDC, USDT when enabled, and more supported assets</li><li>✓ Payouts in {payoutCurrencies}; NGN coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
+            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Launching first on Avalanche C-Chain</li><li>✓ Works with USDC and USDT when enabled</li><li>✓ Payouts in {payoutCurrencies}; NGN coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
             <article className="direction-card buy"><span className="chip-pill purple">↙ Buy</span><em>Rollout ready</em><h3>Buy crypto directly with fiat.</h3><p>Pay by supported bank rails and receive stablecoins in a wallet you control once on-ramp backend rails are live.</p><ul><li>✓ Bank transfer flow planned</li><li>✓ Delivered after payment clears</li><li>✓ Self-custody wallet destination</li><li>✓ Same verification covers both directions</li></ul><div><strong>Provider rollout</strong><button className="secondary-btn" onClick={onBuy}>Start buying →</button></div></article>
           </div>
         </section>
@@ -1024,7 +1024,7 @@ function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () =
         <div className="footer-brand-col">
           <div className="footer-brand"><img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong></div>
           <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
-          <div className="footer-badges"><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
+          <div className="footer-badges"><span>Avalanche C-Chain first</span><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
         </div>
         <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
         <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />

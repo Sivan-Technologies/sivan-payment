@@ -120,7 +120,7 @@ async function main() {
       userId: user.id,
       externalAccountId: externalAccount.id,
       sourceCurrency: 'usdc',
-      sourceChain: 'ethereum',
+      sourceChain: 'avalanche_c_chain',
       destinationCurrency: 'usd',
       returnAddress: '0x0000000000000000000000000000000000000000'
     });

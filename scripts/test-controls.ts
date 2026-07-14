@@ -122,7 +122,7 @@ async function main() {
 
     await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'base', 'usd', 400);
     assert(true, 'USDT withdrawal blocked while USDT default disabled');
-    await updateControls({ sourceAssets: [{ asset: 'usdt', enabled: true }] });
+    await updateControls({ sourceAssets: [{ asset: 'usdt', enabled: true }], sourceNetworks: [{ network: 'base', enabled: true }] });
     await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'base', 'usd', 201);
     assert(true, 'USDT withdrawal succeeds after admin enables USDT');
 

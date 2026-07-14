@@ -46,7 +46,7 @@ async function main() {
       userId: user.id,
       sourceCurrency: 'usd',
       destinationCurrency: 'usdc',
-      destinationChain: 'base',
+      destinationChain: 'avalanche_c_chain',
       destinationAddress: '0x0000000000000000000000000000000000000001',
       amount: 100
     });

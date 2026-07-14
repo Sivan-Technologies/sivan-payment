@@ -71,11 +71,11 @@ const fallbackSourceAssets: any[] = [
 ];
 
 const fallbackSourceNetworks: any[] = [
-  { network: 'base', enabled: true, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
-  { network: 'polygon', enabled: true, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
-  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
-  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
-  { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'base', enabled: false, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'solana', enabled: false, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
   { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
