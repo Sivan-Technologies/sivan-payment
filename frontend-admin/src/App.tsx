@@ -20,7 +20,7 @@ import type {
 } from './types';
 
 const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
-  { key: 'overview', icon: '◆', label: 'Command' },
+  { key: 'overview', icon: '◆', label: 'Overview' },
   { key: 'controls', icon: '◌', label: 'Controls' },
   { key: 'analytics', icon: '▧', label: 'Analytics' },
   { key: 'users', icon: '👥', label: 'Users' },
@@ -154,7 +154,7 @@ export default function App() {
   const [financeDashboard, setFinanceDashboard] = useState<any | null>(null);
   const [legalEvidence, setLegalEvidence] = useState<any | null>(null);
 
-  const pageTitle = useMemo(() => nav.find((item) => item.key === view)?.label || 'Command', [view]);
+  const pageTitle = useMemo(() => nav.find((item) => item.key === view)?.label || 'Overview', [view]);
   const listQuery = useMemo(() => `limit=${listPageSize}&offset=${listPage * listPageSize}`, [listPage, listPageSize]);
 
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
