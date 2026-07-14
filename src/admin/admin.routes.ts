@@ -13,6 +13,7 @@ import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation
 import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
+import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
 
 
 function listOptions(request: any) {
@@ -82,6 +83,11 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));
   app.get('/api/admin/legal/evidence', async () => ({ data: await getLegalEvidenceSummary() }));
+  app.get('/api/admin/fees/settings', async () => ({ data: await getAdminFeeSettings() }));
+  app.put('/api/admin/fees/settings', async (request) => {
+    const body = parseBody(feeSettingsSchema, request.body);
+    return { data: await updateAdminFeeSettings(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
   app.get('/api/admin/settings/platform', async () => ({ data: await getAdminPlatformSettings() }));
   app.put('/api/admin/settings/platform', async (request) => {
     const body = parseBody(adminPlatformSettingsSchema, request.body);

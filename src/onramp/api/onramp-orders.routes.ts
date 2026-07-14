@@ -6,7 +6,7 @@ import { syncOnrampOrder } from '../service/onramp-sync.service.js';
 import { parseBody } from '../../shared/validation.js';
 
 export async function onrampOrdersRoutes(app: FastifyInstance) {
-  app.get('/api/onramp/fees', async () => ({ data: { percent: getOnrampFeePercent(), type: 'percentage' } }));
+  app.get('/api/onramp/fees', async () => ({ data: { percent: await getOnrampFeePercent(), type: 'percentage' } }));
 
   app.post('/api/onramp/orders', async (request, reply) => {
     const body = parseBody(createOnrampOrderSchema, request.body);

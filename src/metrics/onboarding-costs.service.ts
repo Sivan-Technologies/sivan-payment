@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { db } from '../database/json-database.js';
+import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
 
 function money(value: number): string {
   return value.toFixed(2);
@@ -11,6 +12,7 @@ function percent(value: number): string {
 
 export async function getOnboardingCostSummary() {
   const data = await db.read();
+  const feeSettings = await getAdminFeeSettings();
 
   const customersWithTrackedCost = data.customers.filter((customer) => customer.onboardingCostUsd);
   const kycCustomers = customersWithTrackedCost.filter((customer) => customer.onboardingCostType === 'kyc');
@@ -42,7 +44,7 @@ export async function getOnboardingCostSummary() {
   }, 0);
 
   const sivanDeveloperFeeRevenue = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.feeAmount ?? 0), 0);
-  const estimatedBridgeOfframpCost = completedGrossVolume * (env.BRIDGE_OFFRAMP_COST_PERCENT / 100);
+  const estimatedBridgeOfframpCost = completedGrossVolume * (feeSettings.bridgeOfframpCostPercent / 100);
   const contributionBeforeOnboarding = sivanDeveloperFeeRevenue - estimatedBridgeOfframpCost;
   const onboardingCostRecovered = Math.min(totalOnboardingCost, Math.max(contributionBeforeOnboarding, 0));
   const unrecoveredOnboardingCost = Math.max(totalOnboardingCost - onboardingCostRecovered, 0);
@@ -69,8 +71,8 @@ export async function getOnboardingCostSummary() {
       totalOnboardingCostUsd: money(totalOnboardingCost)
     },
     recovery: {
-      sivanOfframpFeePercent: percent(env.SIVAN_OFFRAMP_FEE_PERCENT),
-      bridgeOfframpCostPercent: percent(env.BRIDGE_OFFRAMP_COST_PERCENT),
+      sivanOfframpFeePercent: percent(feeSettings.offrampFeePercent),
+      bridgeOfframpCostPercent: percent(feeSettings.bridgeOfframpCostPercent),
       completedWithdrawalCount: completedWithdrawals.length,
       completedGrossVolumeUsdEstimate: money(completedGrossVolume),
       sivanDeveloperFeeRevenueUsd: money(sivanDeveloperFeeRevenue),

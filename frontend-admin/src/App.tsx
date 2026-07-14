@@ -36,6 +36,7 @@ const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
   { key: 'support', icon: '?', label: 'Support' },
   { key: 'audit', icon: '▤', label: 'Audit' },
   { key: 'finance', icon: '$', label: 'Finance' },
+  { key: 'fees', icon: '%', label: 'Fees & Rates' },
   { key: 'exports', icon: '⇩', label: 'Exports' },
   { key: 'legal', icon: '§', label: 'Legal' },
   { key: 'search', icon: '⌕', label: 'Search' },
@@ -153,6 +154,7 @@ export default function App() {
   const [limitControls, setLimitControls] = useState<any | null>(null);
   const [financeDashboard, setFinanceDashboard] = useState<any | null>(null);
   const [legalEvidence, setLegalEvidence] = useState<any | null>(null);
+  const [feeSettings, setFeeSettings] = useState<any | null>(null);
   const [platformSettings, setPlatformSettings] = useState<any | null>(null);
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [apiKeys, setApiKeys] = useState<any[]>([]);
@@ -189,7 +191,7 @@ export default function App() {
     setAdminError(null);
     try {
       await checkApi();
-      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, supportTicketsResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult, riskResult, approvalsResult, limitsResult, financeResult, legalResult, platformSettingsResult, teamResult, apiKeysResult] = await Promise.allSettled([
+      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, supportTicketsResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult, riskResult, approvalsResult, limitsResult, financeResult, legalResult, feeSettingsResult, platformSettingsResult, teamResult, apiKeysResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
         api<AdminUser[]>(`/api/admin/users?${listQuery}`),
@@ -207,6 +209,7 @@ export default function App() {
         api<any>('/api/admin/limits'),
         api<any>('/api/admin/finance/dashboard'),
         api<any>('/api/admin/legal/evidence'),
+        api<any>('/api/admin/fees/settings'),
         api<any>('/api/admin/settings/platform'),
         api<any[]>('/api/admin/settings/team'),
         api<any[]>('/api/admin/settings/api-keys')
@@ -228,6 +231,7 @@ export default function App() {
       if (limitsResult.status === 'fulfilled') setLimitControls(limitsResult.value);
       if (financeResult.status === 'fulfilled') setFinanceDashboard(financeResult.value);
       if (legalResult.status === 'fulfilled') setLegalEvidence(legalResult.value);
+      if (feeSettingsResult.status === 'fulfilled') setFeeSettings(feeSettingsResult.value);
       if (platformSettingsResult.status === 'fulfilled') setPlatformSettings(platformSettingsResult.value);
       if (teamResult.status === 'fulfilled') setTeamMembers(teamResult.value);
       if (apiKeysResult.status === 'fulfilled') setApiKeys(apiKeysResult.value);
@@ -408,6 +412,7 @@ export default function App() {
             {view === 'support' && <SupportTickets tickets={supportTickets} api={api} onUpdated={refreshAdmin} notify={notify} />}
             {view === 'audit' && <Audit auditLogs={auditLogs} reconciliationRuns={reconciliationRuns} />}
             {view === 'finance' && <Finance dashboard={financeDashboard} overview={overview} />}
+            {view === 'fees' && <FeesAndRates feeSettings={feeSettings} api={api} notify={notify} onUpdated={refreshAdmin} />}
             {view === 'exports' && <Exports apiBase={apiBase} adminApiKey={adminApiKey} notify={notify} />}
             {view === 'legal' && <LegalEvidence evidence={legalEvidence} />}
             {view === 'search' && <GlobalSearch users={users} withdrawals={withdrawals} orders={onrampOrders} tickets={supportTickets} webhooks={webhooks} initialQuery={globalSearch} />}
@@ -938,6 +943,29 @@ function Limits({ controls, api, notify, onUpdated }: { controls: any; api: <T>(
 function Finance({ dashboard, overview }: { dashboard: any; overview: AdminOverview | null }) {
   if (!dashboard) return <Empty>No finance dashboard loaded.</Empty>;
   return <section><div className="stats-grid"><Stat label="Total volume" value={`$${dashboard.volume.totalUsd}`} helper="On-ramp + off-ramp" /><Stat label="Gross fees" value={`$${dashboard.fees.grossFeesUsd}`} helper="Sivan revenue" /><Stat label="Provider costs" value={`$${dashboard.costs.providerVariableCostUsd}`} helper="Estimated variable" /><Stat label="Net revenue" value={`$${dashboard.margin.netRevenueUsd}`} helper="After provider + KYC/KYB" /></div><div className="panel-grid two"><article className="panel"><div className="panel-head"><div><p className="eyebrow">Finance</p><h3>Product economics</h3></div></div><DetailObject data={dashboard} /></article><article className="panel"><div className="panel-head"><div><p className="eyebrow">Recovery</p><h3>Onboarding cost recovery</h3></div></div>{overview ? <EconomicsSummary overview={overview} /> : <Empty>No overview metrics loaded.</Empty>}</article></div></section>;
+}
+
+
+function FeesAndRates({ feeSettings, api, notify, onUpdated }: { feeSettings: any; api: <T>(path: string, options?: RequestInit) => Promise<T>; notify: (message: string, type?: 'success' | 'error') => void; onUpdated: () => Promise<void> }) {
+  const [draft, setDraft] = useState<any>(feeSettings);
+  useEffect(() => setDraft(feeSettings), [feeSettings]);
+  if (!draft) return <Empty>No fee settings loaded.</Empty>;
+  function updateTier(index: number, patch: Record<string, unknown>) { setDraft((current: any) => ({ ...current, feeTiers: current.feeTiers.map((tier: any, i: number) => i === index ? { ...tier, ...patch } : tier) })); }
+  function updateNetwork(index: number, patch: Record<string, unknown>) { setDraft((current: any) => ({ ...current, networkFees: current.networkFees.map((network: any, i: number) => i === index ? { ...network, ...patch } : network) })); }
+  function updateSource(index: number, weightPercent: number) { setDraft((current: any) => ({ ...current, rateSources: current.rateSources.map((source: any, i: number) => i === index ? { ...source, weightPercent } : source) })); }
+  async function save() {
+    try { await api('/api/admin/fees/settings', { method: 'PUT', body: JSON.stringify({ ...draft, updatedBy: 'admin_api_key', reason: 'Update fees and rates from admin UI' }) }); notify('Fees and rates updated. New orders will use the updated fee policy.'); await onUpdated(); } catch (error) { notify(errorMessage(error), 'error'); }
+  }
+  async function bumpNetwork(index: number) { updateNetwork(index, { estimatedFeeUsd: Number((Number(draft.networkFees[index].estimatedFeeUsd || 0) * 1.1).toFixed(2)) }); }
+  const sourceTotal = (draft.rateSources ?? []).reduce((sum: number, source: any) => sum + Number(source.weightPercent || 0), 0);
+  return <section className="adm-page fees-page"><PageHead title="Fees & Rates" sub="Configure margin, spread and rate sources across customer tiers." actions={<button className="btn-primary" onClick={save}>Save changes</button>} />
+    <div className="fees-grid">
+      <article className="settings-card fee-tiers-card"><h3>Fee tiers</h3><p>Applied based on user KYC tier. Default fee fields feed on-ramp/off-ramp pricing for new transactions.</p><div className="fee-table"><div className="fee-head"><span>Tier</span><span>Trading fee</span><span>Spread</span><span>Minimum fee</span><span>Description</span><span /></div>{draft.feeTiers.map((tier: any, index: number) => <div className="fee-row" key={tier.tier}><strong>{tier.label}</strong><label><b>%</b><input type="number" step="0.01" value={tier.tradingFeePercent} onChange={(event) => updateTier(index, { tradingFeePercent: Number(event.target.value), ...(index === 0 ? { } : {}) })} /></label><label><b>%</b><input type="number" step="0.01" value={tier.spreadPercent} onChange={(event) => updateTier(index, { spreadPercent: Number(event.target.value) })} /></label><label><b>$</b><input type="number" step="0.01" value={tier.minimumFeeUsd} onChange={(event) => updateTier(index, { minimumFeeUsd: Number(event.target.value) })} /></label><span>{tier.description}</span><button className="icon-more">⋮</button></div>)}</div><div className="fee-global-row"><label>Default on-ramp fee %<input type="number" step="0.01" value={draft.onrampFeePercent} onChange={(event) => setDraft({ ...draft, onrampFeePercent: Number(event.target.value) })} /></label><label>Default off-ramp fee %<input type="number" step="0.01" value={draft.offrampFeePercent} onChange={(event) => setDraft({ ...draft, offrampFeePercent: Number(event.target.value) })} /></label><label>Bridge off-ramp cost %<input type="number" step="0.01" value={draft.bridgeOfframpCostPercent} onChange={(event) => setDraft({ ...draft, bridgeOfframpCostPercent: Number(event.target.value) })} /></label></div></article>
+      <article className="settings-card rate-card"><div className="chart-head"><div><h3>Rate sources</h3><p>Weighted median of providers.</p></div><span className="health-pill">Live</span></div><div className="rate-source-list">{draft.rateSources.map((source: any, index: number) => <div className="rate-source" key={source.name}><span>{source.name}</span><div><i style={{ width: `${source.weightPercent}%` }} /></div><input type="number" value={source.weightPercent} onChange={(event) => updateSource(index, Number(event.target.value))} /><b>%</b></div>)}</div><small className={sourceTotal === 100 ? 'ok-text' : 'warn-text'}>Total weight: {sourceTotal}% {sourceTotal === 100 ? 'balanced' : 'should equal 100%'}</small></article>
+      <article className="settings-card network-card"><h3>Network fees</h3><p>Passed through to the customer where applicable.</p><div className="network-fee-table"><div className="fee-head"><span>Network</span><span>Estimated fee</span><span>Last updated</span><span /></div>{draft.networkFees.map((network: any, index: number) => <div className="network-fee-row" key={network.network}><strong>{network.network}</strong><span>${Number(network.estimatedFeeUsd).toFixed(2)}</span><small>{draft.updatedAt ? new Date(draft.updatedAt).toLocaleDateString() : 'now'}</small><button className="btn-ghost-sm" onClick={() => bumpNetwork(index)}>Bump</button></div>)}</div></article>
+      <article className="settings-card promo-card"><div className="chart-head"><div><h3>Promotions</h3><p>First-trade and volume campaigns.</p></div><button className="btn-ghost-sm" onClick={() => setDraft({ ...draft, promotions: [...draft.promotions, { id: `promo_${Date.now()}`, name: 'New promotion', description: 'Describe campaign', status: 'scheduled' }] })}>+ New</button></div><div className="promo-list">{draft.promotions.map((promo: any, index: number) => <div className="promo-row" key={promo.id}><div><input value={promo.name} onChange={(event) => setDraft({ ...draft, promotions: draft.promotions.map((item: any, i: number) => i === index ? { ...item, name: event.target.value } : item) })} /><small>{promo.description}</small></div><select value={promo.status} onChange={(event) => setDraft({ ...draft, promotions: draft.promotions.map((item: any, i: number) => i === index ? { ...item, status: event.target.value } : item) })}><option value="active">Active</option><option value="scheduled">Scheduled</option><option value="paused">Paused</option></select></div>)}</div></article>
+    </div>
+  </section>;
 }
 
 function Exports({ apiBase, adminApiKey, notify }: { apiBase: string; adminApiKey: string; notify: (message: string, type?: 'success' | 'error') => void }) {

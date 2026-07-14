@@ -68,3 +68,29 @@
 .danger-action.neutral { color: #c7d2de; background: #0e1621; border-color: var(--line2); }
 @media(max-width:1180px){ .settings-grid { grid-template-columns: 1fr; } }
 @media(max-width:760px){ .setting-row, .api-key-row, .team-row, .danger-row { align-items: flex-start; flex-direction: column; } .team-row b, .api-key-row > span { margin-left: 0; } }
+.fees-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(340px, 1fr); gap: 18px; }
+.fee-tiers-card, .network-card { min-height: 330px; }
+.fee-table, .network-fee-table { display: grid; gap: 0; margin-top: 14px; }
+.fee-head, .fee-row, .network-fee-row { display: grid; align-items: center; gap: 14px; padding: 13px 0; border-bottom: 1px solid rgba(18,26,38,.85); }
+.fee-head { grid-template-columns: 1.1fr .8fr .8fr .9fr 1.4fr 24px; color: var(--faint); font-size: 10.5px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; background: #090e15; border-radius: 8px; padding: 10px 12px; border-bottom: 0; }
+.fee-row { grid-template-columns: 1.1fr .8fr .8fr .9fr 1.4fr 24px; }
+.fee-row strong, .network-fee-row strong { color: var(--text); }
+.fee-row label { position: relative; display: flex; align-items: center; gap: 7px; margin: 0; }
+.fee-row label b { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: #080d13; border: 1px solid var(--line2); color: var(--muted); }
+.fee-row input, .fee-global-row input, .rate-source input, .promo-row input, .promo-row select { background: #080d13; border: 1px solid var(--line2); border-radius: 8px; color: var(--text); padding: 8px 9px; }
+.fee-row span { color: var(--muted); font-size: 12px; }
+.icon-more { color: var(--faint); font-size: 20px; }
+.fee-global-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.rate-source-list { display: grid; gap: 16px; margin: 22px 0; }
+.rate-source { display: grid; grid-template-columns: 100px 1fr 58px 14px; align-items: center; gap: 10px; color: var(--text); font-weight: 800; }
+.rate-source div { height: 8px; border-radius: 999px; background: #090e15; overflow: hidden; }
+.rate-source i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #4cd8c8, #4b8bf4); }
+.rate-source input { text-align: right; }
+.ok-text { color: var(--green); }
+.warn-text { color: var(--gold); }
+.network-fee-row { grid-template-columns: 1fr 1fr 1fr auto; }
+.network-fee-table .fee-head { grid-template-columns: 1fr 1fr 1fr auto; }
+.promo-list { display: grid; gap: 10px; margin-top: 10px; }
+.promo-row { display: grid; grid-template-columns: 1fr 130px; gap: 10px; align-items: center; padding: 12px; border-radius: 10px; background: #0a0f16; border: 1px solid var(--line); }
+.promo-row small { color: var(--muted); display: block; margin-top: 6px; }
+@media(max-width:1180px){ .fees-grid { grid-template-columns: 1fr; } .fee-head, .fee-row { grid-template-columns: 1fr; } .fee-global-row { grid-template-columns: 1fr; } }

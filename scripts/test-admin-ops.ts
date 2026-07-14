@@ -81,6 +81,15 @@ async function main() {
     const legal = await request('GET', '/api/admin/legal/evidence', undefined, true);
     assert(legal.data.total === 1, 'legal evidence dashboard loads');
 
+    const feeSettings = await request('GET', '/api/admin/fees/settings', undefined, true);
+    assert(Array.isArray(feeSettings.data.feeTiers), 'fee settings load fee tiers');
+    const updatedFeeSettings = await request('PUT', '/api/admin/fees/settings', { ...feeSettings.data, onrampFeePercent: 2.25, offrampFeePercent: 2.5, bridgeOfframpCostPercent: 0.5, updatedBy: 'ops', reason: 'Admin ops fee settings test' }, true);
+    assert(updatedFeeSettings.data.offrampFeePercent === 2.5, 'fee settings save off-ramp percent');
+    const publicOnrampFees = await request('GET', '/api/onramp/fees');
+    assert(publicOnrampFees.data.percent === '2.25', 'public on-ramp fee reflects admin fee settings');
+    const publicOfframpFees = await request('GET', '/api/fees/offramp');
+    assert(publicOfframpFees.data.percent === '2.5', 'public off-ramp fee reflects admin fee settings');
+
     const settings = await request('GET', '/api/admin/settings/platform', undefined, true);
     assert(settings.data.newUserSignups === true, 'platform settings load with signups enabled by default');
     await request('PUT', '/api/admin/settings/platform', { ...settings.data, newUserSignups: false, onRampEnabled: false, offRampEnabled: false, updatedBy: 'ops', reason: 'Admin ops settings test' }, true);

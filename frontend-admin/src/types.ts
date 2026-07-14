@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'risk' | 'approvals' | 'reconciliation' | 'providers' | 'controls' | 'incident' | 'limits' | 'webhooks' | 'support' | 'audit' | 'finance' | 'exports' | 'legal' | 'search' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'risk' | 'approvals' | 'reconciliation' | 'providers' | 'controls' | 'incident' | 'limits' | 'webhooks' | 'support' | 'audit' | 'finance' | 'fees' | 'exports' | 'legal' | 'search' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
