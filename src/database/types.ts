@@ -189,6 +189,42 @@ export interface OnrampOrderRecord {
   completedAt?: string;
 }
 
+
+export type SupportTicketStatus = 'open' | 'in_review' | 'waiting_on_user' | 'waiting_on_provider' | 'resolved' | 'closed';
+export type SupportTicketPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type SupportTicketType = 'verification' | 'bank_account' | 'withdrawal' | 'deposit_not_detected' | 'wrong_token_or_network' | 'payout_delayed' | 'onramp_payment' | 'onramp_delivery' | 'account_access' | 'other';
+export type SupportResourceType = 'withdrawal' | 'onramp_order' | 'external_account' | 'customer' | 'general';
+
+export interface SupportTicketRecord {
+  id: string;
+  userId: string;
+  customerId?: string;
+  type: SupportTicketType;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  subject: string;
+  description: string;
+  resourceType: SupportResourceType;
+  resourceId?: string;
+  assignedTo?: string;
+  lastMessageAt?: string;
+  metadata?: unknown;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+}
+
+export interface SupportTicketMessageRecord {
+  id: string;
+  ticketId: string;
+  senderType: 'user' | 'admin' | 'system' | 'provider';
+  senderId?: string;
+  message: string;
+  attachments?: unknown;
+  internalNote?: boolean;
+  createdAt: string;
+}
+
 export interface AuditLogRecord {
   id: string;
   actorType: 'system' | 'user' | 'admin' | 'provider';
@@ -283,4 +319,6 @@ export interface DatabaseShape {
   systemStatus: SystemStatusRecord[];
   customerTypeControls: CustomerTypeControlRecord[];
   unifiedWebhookLogs: UnifiedWebhookLogRecord[];
+  supportTickets: SupportTicketRecord[];
+  supportTicketMessages: SupportTicketMessageRecord[];
 }

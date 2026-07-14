@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'audit' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'support' | 'audit' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
@@ -383,6 +383,23 @@ export interface AdminOnrampOrder {
   netAmount?: string;
   status: string;
   providerReference?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminSupportTicket {
+  id: string;
+  userId: string;
+  user?: { email?: string; fullName?: string } | null;
+  type: string;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  status: 'open' | 'in_review' | 'waiting_on_user' | 'waiting_on_provider' | 'resolved' | 'closed';
+  subject: string;
+  description: string;
+  resourceType: string;
+  resourceId?: string;
+  assignedTo?: string;
+  messageCount?: number;
   createdAt: string;
   updatedAt: string;
 }

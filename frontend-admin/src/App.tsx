@@ -15,7 +15,8 @@ import type {
   ReconciliationResult,
   SystemStatus,
   RoutingDecision,
-  WebhookEventRecord
+  WebhookEventRecord,
+  AdminSupportTicket
 } from './types';
 
 const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
@@ -28,6 +29,7 @@ const nav: Array<{ key: AdminViewKey; icon: string; label: string }> = [
   { key: 'reconciliation', icon: '⟳', label: 'Reconciliation' },
   { key: 'providers', icon: '◈', label: 'Providers' },
   { key: 'webhooks', icon: '☷', label: 'Webhooks' },
+  { key: 'support', icon: '?', label: 'Support' },
   { key: 'audit', icon: '▤', label: 'Audit' },
   { key: 'economics', icon: '◎', label: 'Economics' },
   { key: 'settings', icon: '⚙', label: 'Settings' }
@@ -111,6 +113,7 @@ export default function App() {
   const [withdrawals, setWithdrawals] = useState<AdminWithdrawal[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<AdminOnrampOrder[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookEventRecord[]>([]);
+  const [supportTickets, setSupportTickets] = useState<AdminSupportTicket[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLog[]>([]);
   const [reconciliationRuns, setReconciliationRuns] = useState<AdminReconciliationRun[]>([]);
   const [providers, setProviders] = useState<ProviderCapability[]>([]);
@@ -152,13 +155,14 @@ export default function App() {
     setAdminError(null);
     try {
       await checkApi();
-      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult] = await Promise.allSettled([
+      const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, supportTicketsResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
         api<AdminUser[]>(`/api/admin/users?${listQuery}`),
         api<AdminWithdrawal[]>(`/api/admin/withdrawals?${listQuery}`),
         api<AdminOnrampOrder[]>(`/api/admin/onramp/orders?${listQuery}`),
         api<WebhookEventRecord[]>(`/api/admin/webhooks?${listQuery}`),
+        api<AdminSupportTicket[]>(`/api/admin/support/tickets?${listQuery}`),
         api<AdminAuditLog[]>(`/api/admin/audit-logs?${listQuery}`),
         api<AdminReconciliationRun[]>(`/api/admin/reconciliation/runs?${listQuery}`),
         api<ProviderCapability[]>('/api/providers/offramp/capabilities'),
@@ -171,6 +175,7 @@ export default function App() {
       if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
       if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
       if (webhooksResult.status === 'fulfilled') setWebhooks(webhooksResult.value);
+      if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
       if (auditLogsResult.status === 'fulfilled') setAuditLogs(auditLogsResult.value);
       if (reconciliationRunsResult.status === 'fulfilled') setReconciliationRuns(reconciliationRunsResult.value);
       if (providersResult.status === 'fulfilled') setProviders(providersResult.value);
@@ -303,6 +308,7 @@ export default function App() {
         {view === 'providers' && <Providers providers={providers} routingDecision={routingDecision} onRoute={testRoute} />}
         {view === 'controls' && <Controls controls={paymentControls} systemStatus={systemStatus} api={api} onUpdated={refreshAdmin} notify={notify} hasAdminKey={Boolean(adminApiKey)} error={adminError} />}
         {view === 'webhooks' && <Webhooks webhooks={webhooks} />}
+        {view === 'support' && <SupportTickets tickets={supportTickets} api={api} onUpdated={refreshAdmin} notify={notify} />}
         {view === 'audit' && <Audit auditLogs={auditLogs} reconciliationRuns={reconciliationRuns} />}
         {view === 'economics' && <Economics overview={overview} estimate={estimate} onEstimate={runEconomicsEstimate} />}
         {view === 'settings' && <Settings apiBase={apiBase} />}
@@ -459,6 +465,18 @@ function Reconciliation({ onRun, result, loading }: { onRun: (event: FormEvent<H
 
 function Providers({ providers, routingDecision, onRoute }: { providers: ProviderCapability[]; routingDecision: RoutingDecision | null; onRoute: (event: FormEvent<HTMLFormElement>) => void }) {
   return <section className="panel-grid two"><article className="panel"><div className="panel-head"><div><p className="eyebrow">Routing catalog</p><h3>Provider capabilities</h3></div></div>{!providers.length ? <Empty>No providers configured.</Empty> : <div className="list">{providers.map((provider) => <div className="list-item" key={provider.name}><strong>{provider.name}</strong><Badge value={provider.available ? 'active' : 'inactive'} /><small>Rails: {provider.destinationPaymentRails.join(', ')}</small><small>Currencies: {provider.destinationCurrencies.join(', ')}</small><small>Reliability: {provider.reliability} · Speed: {provider.speed} · Priority: {provider.priority}</small></div>)}</div>}</article><article className="panel form-panel"><p className="eyebrow">Router</p><h3>Test provider selection</h3><form className="form" onSubmit={onRoute}><label>Source chain<select name="sourceChain" defaultValue="ethereum"><option value="ethereum">Ethereum</option><option value="base">Base</option><option value="polygon">Polygon</option><option value="solana">Solana</option><option value="arbitrum">Arbitrum</option><option value="avalanche_c_chain">Avalanche C-Chain</option></select></label><label>Destination currency<select name="destinationCurrency" defaultValue="usd"><option value="usd">USD</option><option value="gbp">GBP</option><option value="eur">EUR</option></select></label><label>Country<input name="destinationCountry" defaultValue="USA" /></label><label>Rail<input name="destinationPaymentRail" defaultValue="ach" /></label><label>Compliance model<select name="complianceModel" defaultValue="first_party_withdrawal"><option value="first_party_withdrawal">First-party withdrawal</option><option value="third_party_payout">Third-party payout</option><option value="b2b_supplier_payout">B2B supplier payout</option></select></label><label>Required speed<select name="requiredSpeed" defaultValue="standard"><option value="standard">Standard</option><option value="same_day">Same day</option><option value="instant">Instant</option></select></label><button className="primary-btn">Route provider</button></form>{routingDecision && <div className="estimate-box"><Kv label="Selected" value={routingDecision.providerName} /><Kv label="Reason" value={routingDecision.reason} /></div>}</article></section>;
+}
+
+
+function SupportTickets({ tickets, api, onUpdated, notify }: { tickets: AdminSupportTicket[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; onUpdated: () => Promise<void>; notify: (message: string, type?: 'success' | 'error') => void }) {
+  async function updateTicket(ticket: AdminSupportTicket, status: AdminSupportTicket['status']) {
+    try {
+      await api(`/api/admin/support/tickets/${ticket.id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+      notify(`Ticket ${ticket.id} updated to ${status}.`);
+      await onUpdated();
+    } catch (error) { notify((error as Error).message, 'error'); }
+  }
+  return <article className="panel"><div className="panel-head"><div><p className="eyebrow">User support</p><h3>Support tickets</h3></div></div>{!tickets.length ? <Empty>No support tickets found.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>ID</th><th>User</th><th>Type</th><th>Priority</th><th>Status</th><th>Subject</th><th>Resource</th><th>Messages</th><th>Created</th><th>Action</th></tr></thead><tbody>{tickets.map((ticket) => <tr key={ticket.id}><td>{ticket.id}</td><td>{ticket.user?.email || ticket.userId}</td><td>{ticket.type.replaceAll('_', ' ')}</td><td><Badge value={ticket.priority} /></td><td><Badge value={ticket.status} /></td><td>{ticket.subject}</td><td>{ticket.resourceType}{ticket.resourceId ? ` · ${ticket.resourceId}` : ''}</td><td>{ticket.messageCount ?? '—'}</td><td>{new Date(ticket.createdAt).toLocaleString()}</td><td><select value={ticket.status} onChange={(event) => updateTicket(ticket, event.target.value as AdminSupportTicket['status'])}><option value="open">Open</option><option value="in_review">In review</option><option value="waiting_on_user">Waiting on user</option><option value="waiting_on_provider">Waiting on provider</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select></td></tr>)}</tbody></table></div>}</article>;
 }
 
 

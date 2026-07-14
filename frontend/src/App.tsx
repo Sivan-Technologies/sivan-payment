@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -171,6 +171,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
+  const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
@@ -235,6 +236,7 @@ export default function App() {
     setAccounts([]);
     setWithdrawals([]);
     setOnrampOrders([]);
+    setSupportTickets([]);
     setDepositResult(null);
     localStorage.removeItem('sivan.authToken');
     localStorage.removeItem('sivan.user');
@@ -315,16 +317,18 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, supportTicketsResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
-      api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`)
+      api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`),
+      api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
     if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
+    if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
   }, [api, user?.id, authToken]);
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -703,6 +707,34 @@ export default function App() {
     }
   }
 
+
+  async function handleCreateSupportTicket(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    setLoading(true);
+    try {
+      const data = getForm(event.currentTarget);
+      const ticket = await api<SupportTicketRecord>('/api/support/tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: user.id,
+          type: data.type,
+          subject: data.subject,
+          description: data.description,
+          resourceType: data.resourceType || 'general',
+          resourceId: data.resourceId || undefined
+        })
+      });
+      setSupportTickets((tickets) => [ticket, ...tickets.filter((item) => item.id !== ticket.id)]);
+      notify(`Support ticket created: ${ticket.id}`);
+      (event.currentTarget as HTMLFormElement).reset();
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (view === 'landing') {
     return <LandingPage
       isLiveEnv={isLiveEnv}
@@ -857,7 +889,7 @@ export default function App() {
         {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
 
         {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
-        {view === 'help' && <SupportView />}
+        {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onCreateTicket={handleCreateSupportTicket} loading={loading} />}
 
       </main>
     </div>
@@ -1360,9 +1392,9 @@ function SettingsRows({ rows }: { rows: string[][] }) {
   return <div><h3>Security</h3><p className="muted">Keep your account safe.</p><div className="settings-row-list">{rows.map((row) => <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{row[3] === 'on' || row[3] === 'off' ? <i className={`toggle ${row[3] === 'on' ? 'on' : ''}`} /> : <button className="ghost-btn small">{row[3]}</button>}</div>)}</div></div>;
 }
 
-function SupportView() {
+function SupportView({ hasUser, tickets, withdrawals, onCreateTicket, loading }: { hasUser: boolean; tickets: SupportTicketRecord[]; withdrawals: WithdrawalRecord[]; onCreateTicket: (event: FormEvent<HTMLFormElement>) => void; loading: boolean }) {
   const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
-  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><SupportCard icon="☎" title="Report an issue" body="Problem with a transaction? Open a ticket." action="Open ticket" /></div><div className="support-legal-grid"><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article><LegalResources /></div></section>;
+  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><a className="support-card" href="#report-issue"><span>☎</span><h3>Report an issue</h3><p>Problem with a transaction? Open a ticket.</p><strong>Open ticket →</strong></a></div><div className="support-legal-grid"><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article><LegalResources /></div><div className="support-legal-grid"><article className="support-faq-card" id="report-issue"><h3>Report an issue</h3>{!hasUser ? <Empty>Create your account or sign in before opening a support ticket.</Empty> : <form className="form" onSubmit={onCreateTicket}><label>Issue type<select name="type" defaultValue="withdrawal"><option value="verification">Verification issue</option><option value="bank_account">Bank account issue</option><option value="withdrawal">Withdrawal issue</option><option value="deposit_not_detected">Deposit sent but not detected</option><option value="wrong_token_or_network">Wrong token or wrong network</option><option value="payout_delayed">Payout delayed</option><option value="onramp_payment">On-ramp payment issue</option><option value="onramp_delivery">On-ramp crypto not received</option><option value="account_access">Account access issue</option><option value="other">Other</option></select></label><label>Related item<select name="resourceId" defaultValue=""><option value="">No related transaction</option>{withdrawals.map((withdrawal) => <option key={withdrawal.id} value={withdrawal.id}>Withdrawal {shortRef(withdrawal.id)} · {friendlyStatus(withdrawal.status)}</option>)}</select><input type="hidden" name="resourceType" value="withdrawal" /></label><label>Subject<input name="subject" placeholder="Short summary" required /></label><label>Description<textarea name="description" placeholder="Tell us what happened. Include date, amount, wallet address, transaction hash, bank reference, or error message if available." required /></label><button className="primary-btn" disabled={loading}>{loading ? 'Creating ticket...' : 'Create ticket'}</button></form>}</article><article className="support-faq-card"><h3>Your recent tickets</h3>{!tickets.length ? <Empty>No support tickets yet.</Empty> : <div className="list">{tickets.slice(0, 6).map((ticket) => <div className="list-item" key={ticket.id}><strong>{ticket.subject}</strong><Badge status={ticket.status}>{friendlyStatus(ticket.status)}</Badge><small>{ticket.type.replaceAll('_', ' ')} · {ticket.priority}</small><small>{new Date(ticket.createdAt).toLocaleString()}</small></div>)}</div>}</article></div></section>;
 }
 
 

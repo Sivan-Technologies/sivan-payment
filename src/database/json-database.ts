@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord } from './types.js';
+import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 
 const emptyDb = (): DatabaseShape => ({
@@ -21,7 +21,9 @@ const emptyDb = (): DatabaseShape => ({
   networkControls: [],
   systemStatus: [],
   customerTypeControls: [],
-  unifiedWebhookLogs: []
+  unifiedWebhookLogs: [],
+  supportTickets: [],
+  supportTicketMessages: []
 });
 
 export class JsonDatabase {
@@ -163,6 +165,58 @@ export class JsonDatabase {
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
       .slice(offset, offset + limit)
       .map((run) => ({ ...run, findings: (data.reconciliationFindings ?? []).filter((finding) => finding.runId === run.id) }));
+  }
+
+
+  async insertSupportTicketRecord(record: SupportTicketRecord) {
+    return this.mutate((data) => {
+      data.supportTickets = data.supportTickets ?? [];
+      data.supportTickets.push(record);
+      return record;
+    });
+  }
+
+  async updateSupportTicketRecord(record: SupportTicketRecord) {
+    return this.mutate((data) => {
+      data.supportTickets = data.supportTickets ?? [];
+      const index = data.supportTickets.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.supportTickets[index] = record;
+      return record;
+    });
+  }
+
+  async insertSupportTicketMessageRecord(record: SupportTicketMessageRecord) {
+    return this.mutate((data) => {
+      data.supportTicketMessages = data.supportTicketMessages ?? [];
+      data.supportTicketMessages.push(record);
+      const ticket = (data.supportTickets ?? []).find((item) => item.id === record.ticketId);
+      if (ticket) {
+        ticket.lastMessageAt = record.createdAt;
+        ticket.updatedAt = record.createdAt;
+      }
+      return record;
+    });
+  }
+
+  async getSupportTicketView(ticketId: string) {
+    const data = await this.read();
+    const ticket = (data.supportTickets ?? []).find((item) => item.id === ticketId);
+    if (!ticket) return undefined;
+    return { ...ticket, messages: (data.supportTicketMessages ?? []).filter((message) => message.ticketId === ticket.id).sort((a,b) => a.createdAt.localeCompare(b.createdAt)), user: data.users.find((user) => user.id === ticket.userId) ?? null };
+  }
+
+  async listUserSupportTicketsView(userId: string, { limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const data = await this.read();
+    return (data.supportTickets ?? []).filter((ticket) => ticket.userId === userId).sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(offset, offset + limit);
+  }
+
+  async listAdminSupportTicketsView({ limit = 100, offset = 0, status, priority, type }: { limit?: number; offset?: number; status?: string; priority?: string; type?: string } = {}) {
+    const data = await this.read();
+    return (data.supportTickets ?? [])
+      .filter((ticket) => (!status || ticket.status === status) && (!priority || ticket.priority === priority) && (!type || ticket.type === type))
+      .sort((a,b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(offset, offset + limit)
+      .map((ticket) => ({ ...ticket, user: data.users.find((user) => user.id === ticket.userId) ?? null, messageCount: (data.supportTicketMessages ?? []).filter((message) => message.ticketId === ticket.id).length }));
   }
 
   async insertAuditLogRecord(record: AuditLogRecord) {

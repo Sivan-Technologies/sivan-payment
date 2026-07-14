@@ -21,6 +21,8 @@ import type {
   SystemStatusRecord,
   CustomerTypeControlRecord,
   OnrampOrderRecord,
+  SupportTicketRecord,
+  SupportTicketMessageRecord,
   UnifiedWebhookLogRecord
 } from './types.js';
 
@@ -131,6 +133,8 @@ export class PostgresDatabase {
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
       const customerTypeControls = await client.query('select * from payments_customer_type_controls order by customer_type asc');
+      const supportTickets = await optionalQuery(client, 'select * from payments_support_tickets order by created_at asc');
+      const supportTicketMessages = await optionalQuery(client, 'select * from payments_support_ticket_messages order by created_at asc');
       const unifiedWebhookLogs = await client.query('select * from sivan_unified_webhook_logs order by created_at asc');
 
       return {
@@ -150,7 +154,9 @@ export class PostgresDatabase {
         networkControls: networkControls.rows.map(mapNetworkControl),
         systemStatus: systemStatus.rows.map(mapSystemStatus),
         customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl),
-        unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog)
+        unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog),
+        supportTickets: supportTickets.rows.map(mapSupportTicket),
+        supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage)
       };
     } finally {
       client.release();
@@ -316,6 +322,65 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+
+  async insertSupportTicketRecord(record: SupportTicketRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupportTicket(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateSupportTicketRecord(record: SupportTicketRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupportTicket(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertSupportTicketMessageRecord(record: SupportTicketMessageRecord) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await upsertSupportTicketMessage(client, record);
+      await client.query('update payments_support_tickets set last_message_at=$1, updated_at=$1 where id=$2', [record.createdAt, record.ticketId]);
+      await client.query('commit');
+      return record;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async getSupportTicketView(ticketId: string) {
+    const client = await this.pool.connect();
+    try {
+      const ticketResult = await optionalQuery(client, 'select * from payments_support_tickets where id=$1 limit 1', [ticketId]);
+      const ticket = ticketResult.rows[0] ? mapSupportTicket(ticketResult.rows[0]) : undefined;
+      if (!ticket) return undefined;
+      const messages = (await optionalQuery(client, 'select * from payments_support_ticket_messages where ticket_id=$1 order by created_at asc', [ticket.id])).rows.map(mapSupportTicketMessage);
+      const userResult = await client.query('select * from users where user_id=$1 limit 1', [ticket.userId]);
+      return { ...ticket, messages, user: userResult.rows[0] ? mapUser(userResult.rows[0]) : null };
+    } finally { client.release(); }
+  }
+
+  async listUserSupportTicketsView(userId: string, { limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try { return (await optionalQuery(client, 'select * from payments_support_tickets where user_id=$1 order by created_at desc limit $2 offset $3', [userId, limit, offset])).rows.map(mapSupportTicket); } finally { client.release(); }
+  }
+
+  async listAdminSupportTicketsView({ limit = 100, offset = 0, status, priority, type }: { limit?: number; offset?: number; status?: string; priority?: string; type?: string } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const clauses: string[] = [];
+      const params: any[] = [];
+      if (status) { params.push(status); clauses.push(`status=$${params.length}`); }
+      if (priority) { params.push(priority); clauses.push(`priority=$${params.length}`); }
+      if (type) { params.push(type); clauses.push(`ticket_type=$${params.length}`); }
+      params.push(limit, offset);
+      const where = clauses.length ? `where ${clauses.join(' and ')}` : '';
+      const tickets = (await optionalQuery(client, `select * from payments_support_tickets ${where} order by created_at desc limit $${params.length - 1} offset $${params.length}`, params)).rows.map(mapSupportTicket);
+      const userIds = [...new Set(tickets.map((ticket) => ticket.userId))];
+      const ticketIds = tickets.map((ticket) => ticket.id);
+      const users = userIds.length ? (await client.query('select * from users where user_id = any($1)', [userIds])).rows.map(mapUser) : [];
+      const messageCounts = ticketIds.length ? (await optionalQuery(client, 'select ticket_id, count(*)::int as count from payments_support_ticket_messages where ticket_id = any($1) group by ticket_id', [ticketIds])).rows : [];
+      const countMap = new Map(messageCounts.map((row) => [row.ticket_id, Number(row.count)]));
+      return tickets.map((ticket) => ({ ...ticket, user: users.find((user) => user.id === ticket.userId) ?? null, messageCount: countMap.get(ticket.id) ?? 0 }));
+    } finally { client.release(); }
+  }
+
   async insertAuditLogRecord(record: AuditLogRecord) {
     const client = await this.pool.connect();
     try { await upsertAuditLog(client, record); return record; } finally { client.release(); }
@@ -455,6 +520,8 @@ export class PostgresDatabase {
       for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
       for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       for (const log of data.unifiedWebhookLogs ?? []) await upsertUnifiedWebhookLog(client, log);
+      for (const ticket of data.supportTickets ?? []) await upsertSupportTicket(client, ticket);
+      for (const message of data.supportTicketMessages ?? []) await upsertSupportTicketMessage(client, message);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -630,6 +697,75 @@ async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord)
        updated_at=excluded.updated_at,
        completed_at=excluded.completed_at`,
     [item.id, item.userId, item.customerId, item.provider, item.providerTransferId, item.sourceCurrency, item.sourcePaymentRail, item.destinationCurrency, item.destinationChain, item.destinationAddress, item.amount, item.feePercent, item.feeAmount, item.netAmount, item.providerReference, item.sourceDepositInstructions ?? null, item.destinationTxHash, item.status, item.statusReason, item.receipt ?? null, item.raw ?? null, item.createdAt, item.updatedAt, item.completedAt]
+  );
+}
+
+function mapSupportTicket(row: any): SupportTicketRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: str(row.payments_customer_id),
+    type: row.ticket_type,
+    priority: row.priority,
+    status: row.status,
+    subject: row.subject,
+    description: row.description,
+    resourceType: row.resource_type,
+    resourceId: str(row.resource_id),
+    assignedTo: str(row.assigned_to),
+    lastMessageAt: optionalIso(row.last_message_at),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    closedAt: optionalIso(row.closed_at)
+  };
+}
+
+function mapSupportTicketMessage(row: any): SupportTicketMessageRecord {
+  return {
+    id: row.id,
+    ticketId: row.ticket_id,
+    senderType: row.sender_type,
+    senderId: str(row.sender_id),
+    message: row.message,
+    attachments: row.attachments,
+    internalNote: row.internal_note,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertSupportTicket(client: pg.PoolClient, item: SupportTicketRecord) {
+  await client.query(
+    `insert into payments_support_tickets (id, user_id, payments_customer_id, ticket_type, priority, status, subject, description, resource_type, resource_id, assigned_to, last_message_at, metadata, created_at, updated_at, closed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     on conflict (id) do update set
+       ticket_type=excluded.ticket_type,
+       priority=excluded.priority,
+       status=excluded.status,
+       subject=excluded.subject,
+       description=excluded.description,
+       resource_type=excluded.resource_type,
+       resource_id=excluded.resource_id,
+       assigned_to=excluded.assigned_to,
+       last_message_at=excluded.last_message_at,
+       metadata=excluded.metadata,
+       updated_at=excluded.updated_at,
+       closed_at=excluded.closed_at`,
+    [item.id, item.userId, item.customerId, item.type, item.priority, item.status, item.subject, item.description, item.resourceType, item.resourceId, item.assignedTo, item.lastMessageAt, item.metadata ?? null, item.createdAt, item.updatedAt, item.closedAt]
+  );
+}
+
+async function upsertSupportTicketMessage(client: pg.PoolClient, item: SupportTicketMessageRecord) {
+  await client.query(
+    `insert into payments_support_ticket_messages (id, ticket_id, sender_type, sender_id, message, attachments, internal_note, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       sender_type=excluded.sender_type,
+       sender_id=excluded.sender_id,
+       message=excluded.message,
+       attachments=excluded.attachments,
+       internal_note=excluded.internal_note`,
+    [item.id, item.ticketId, item.senderType, item.senderId, item.message, item.attachments ?? null, item.internalNote ?? false, item.createdAt]
   );
 }
 

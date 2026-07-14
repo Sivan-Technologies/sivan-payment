@@ -213,3 +213,21 @@ export interface OnrampOrderRecord {
   updatedAt: string;
   completedAt?: string;
 }
+
+export interface SupportTicketRecord {
+  id: string;
+  userId: string;
+  customerId?: string;
+  type: string;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  status: 'open' | 'in_review' | 'waiting_on_user' | 'waiting_on_provider' | 'resolved' | 'closed';
+  subject: string;
+  description: string;
+  resourceType: string;
+  resourceId?: string;
+  assignedTo?: string;
+  lastMessageAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+}
