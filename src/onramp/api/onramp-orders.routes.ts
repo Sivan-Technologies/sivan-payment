@@ -1,5 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { createOnrampOrder, createOnrampOrderSchema, getOnrampFeePercent, getOnrampOrder, listOnrampOrders, syncOnrampOrder } from '../service/onramp-orders.service.js';
+import { createOnrampOrder, getOnrampOrder, listOnrampOrders } from '../service/onramp-orders.service.js';
+import { createOnrampOrderSchema } from '../types/onramp.schemas.js';
+import { getOnrampFeePercent } from '../service/onramp-fees.service.js';
+import { syncOnrampOrder } from '../service/onramp-sync.service.js';
 import { parseBody } from '../../shared/validation.js';
 
 export async function onrampOrdersRoutes(app: FastifyInstance) {

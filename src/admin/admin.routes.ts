@@ -5,7 +5,7 @@ import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWith
 import { getAdminAnalytics } from './analytics.service.js';
 import { runOfframpReconciliation } from '../reconciliation/reconciliation.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
-import { runOnrampReconciliation } from '../onramp/service/onramp-orders.service.js';
+import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
 
 const reconciliationRunSchema = z.object({
   dryRun: z.boolean().default(true),
