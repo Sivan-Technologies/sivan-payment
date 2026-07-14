@@ -20,7 +20,8 @@ const emptyDb = (): DatabaseShape => ({
   assetControls: [],
   networkControls: [],
   systemStatus: [],
-  customerTypeControls: []
+  customerTypeControls: [],
+  unifiedWebhookLogs: []
 });
 
 export class JsonDatabase {

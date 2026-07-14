@@ -253,6 +253,18 @@ export interface WebhookEventRecord {
   createdAt: string;
 }
 
+export interface UnifiedWebhookLogRecord {
+  id: string;
+  serviceName: string;
+  provider: string;
+  providerEventId?: string;
+  paymentReference?: string;
+  eventCategory?: string;
+  eventType?: string;
+  payload: unknown;
+  createdAt: string;
+}
+
 export interface DatabaseShape {
   users: UserRecord[];
   customers: CustomerRecord[];
@@ -270,4 +282,5 @@ export interface DatabaseShape {
   networkControls: NetworkControlRecord[];
   systemStatus: SystemStatusRecord[];
   customerTypeControls: CustomerTypeControlRecord[];
+  unifiedWebhookLogs: UnifiedWebhookLogRecord[];
 }

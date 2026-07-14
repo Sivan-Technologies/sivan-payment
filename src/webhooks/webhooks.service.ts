@@ -50,6 +50,22 @@ export async function processBridgeWebhook(payload: BridgeWebhookPayload, rawBod
     };
     data.webhookEvents.push(event);
 
+    const unifiedLog = {
+      id: id('uwl'),
+      serviceName: 'sivan-payment',
+      provider: 'bridge',
+      providerEventId: eventId,
+      paymentReference: undefined,
+      eventCategory: payload.event_category,
+      eventType: payload.event_type,
+      payload,
+      createdAt: now
+    };
+    if (!data.unifiedWebhookLogs) {
+      data.unifiedWebhookLogs = [];
+    }
+    data.unifiedWebhookLogs.push(unifiedLog);
+
     const eventCategory = normalizeEventCategory(payload.event_category);
 
     if (eventCategory === 'liquidation_address_drain') {

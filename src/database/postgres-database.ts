@@ -94,6 +94,7 @@ export class PostgresDatabase {
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
       const customerTypeControls = await client.query('select * from payments_customer_type_controls order by customer_type asc');
+      const unifiedWebhookLogs = await client.query('select * from sivan_unified_webhook_logs order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -111,7 +112,8 @@ export class PostgresDatabase {
         assetControls: assetControls.rows.map(mapAssetControl),
         networkControls: networkControls.rows.map(mapNetworkControl),
         systemStatus: systemStatus.rows.map(mapSystemStatus),
-        customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl)
+        customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl),
+        unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog)
       };
     } finally {
       client.release();
@@ -145,6 +147,7 @@ export class PostgresDatabase {
       for (const control of data.networkControls ?? []) await upsertNetworkControl(client, control);
       for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
       for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
+      for (const log of data.unifiedWebhookLogs ?? []) await upsertUnifiedWebhookLog(client, log);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -632,4 +635,27 @@ function inferPrimaryChannel(email?: string, whatsappNumber?: string): 'email' |
   if (email && whatsappNumber) return 'both';
   if (email) return 'email';
   return 'whatsapp';
+}
+
+function mapUnifiedWebhookLog(row: any): UnifiedWebhookLogRecord {
+  return {
+    id: row.id,
+    serviceName: row.service_name,
+    provider: row.provider,
+    providerEventId: str(row.provider_event_id),
+    paymentReference: str(row.payment_reference),
+    eventCategory: str(row.event_category),
+    eventType: str(row.event_type),
+    payload: row.payload,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertUnifiedWebhookLog(client: pg.PoolClient, item: UnifiedWebhookLogRecord) {
+  await client.query(
+    `insert into sivan_unified_webhook_logs (id, service_name, provider, provider_event_id, payment_reference, event_category, event_type, payload, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     on conflict (id) do nothing`,
+    [item.id, item.serviceName, item.provider, item.providerEventId ?? null, item.paymentReference ?? null, item.eventCategory ?? null, item.eventType ?? null, item.payload, item.createdAt]
+  );
 }
