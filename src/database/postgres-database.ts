@@ -9,6 +9,7 @@ import type {
   LiquidationAddressRecord,
   SourceCurrency,
   UserRecord,
+  UserPreferencesRecord,
   WebhookEventRecord,
   WithdrawalRecord,
   AuthChallengeRecord,
@@ -118,6 +119,7 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try {
       const users = await client.query('select * from users order by created_at asc');
+      const userPreferences = await optionalQuery(client, 'select * from payments_user_preferences order by user_id asc');
       const customers = await client.query('select * from payments_customers order by created_at asc');
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
@@ -139,6 +141,7 @@ export class PostgresDatabase {
 
       return {
         users: users.rows.map(mapUser),
+        userPreferences: userPreferences.rows.map(mapUserPreferences),
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
@@ -169,6 +172,20 @@ export class PostgresDatabase {
 
 
 
+
+
+  async getUserPreferencesRecord(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_user_preferences where user_id=$1 limit 1', [userId]);
+      return result.rows[0] ? mapUserPreferences(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async upsertUserPreferencesRecord(record: UserPreferencesRecord) {
+    const client = await this.pool.connect();
+    try { await upsertUserPreferences(client, record); return record; } finally { client.release(); }
+  }
 
   async getAdminOverviewView() {
     const client = await this.pool.connect();
@@ -508,6 +525,7 @@ export class PostgresDatabase {
     try {
       await client.query('begin');
       for (const user of data.users) await upsertUser(client, user);
+      for (const preferences of data.userPreferences ?? []) await upsertUserPreferences(client, preferences);
       for (const customer of data.customers) await upsertCustomer(client, customer);
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
@@ -534,6 +552,36 @@ export class PostgresDatabase {
       client.release();
     }
   }
+}
+
+
+function mapUserPreferences(row: any): UserPreferencesRecord {
+  return {
+    userId: row.user_id,
+    defaultFiatCurrency: row.default_fiat_currency,
+    language: row.language,
+    transactionUpdates: row.transaction_updates,
+    marketingEmails: row.marketing_emails,
+    securityAlerts: row.security_alerts,
+    emailConfirmationsForHighValue: row.email_confirmations_for_high_value,
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertUserPreferences(client: pg.PoolClient, item: UserPreferencesRecord) {
+  await client.query(
+    `insert into payments_user_preferences (user_id, default_fiat_currency, language, transaction_updates, marketing_emails, security_alerts, email_confirmations_for_high_value, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (user_id) do update set
+       default_fiat_currency=excluded.default_fiat_currency,
+       language=excluded.language,
+       transaction_updates=excluded.transaction_updates,
+       marketing_emails=excluded.marketing_emails,
+       security_alerts=excluded.security_alerts,
+       email_confirmations_for_high_value=excluded.email_confirmations_for_high_value,
+       updated_at=excluded.updated_at`,
+    [item.userId, item.defaultFiatCurrency, item.language, item.transactionUpdates, item.marketingEmails, item.securityAlerts, item.emailConfirmationsForHighValue, item.updatedAt]
+  );
 }
 
 function mapUser(row: any): UserRecord {

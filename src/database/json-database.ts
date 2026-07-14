@@ -1,11 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
+import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, UserPreferencesRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 
 const emptyDb = (): DatabaseShape => ({
   users: [],
+  userPreferences: [],
   customers: [],
   externalAccounts: [],
   liquidationAddresses: [],
@@ -61,6 +62,22 @@ export class JsonDatabase {
 
 
 
+
+
+  async getUserPreferencesRecord(userId: string) {
+    const data = await this.read();
+    return data.userPreferences.find((item) => item.userId === userId);
+  }
+
+  async upsertUserPreferencesRecord(record: UserPreferencesRecord) {
+    return this.mutate((data) => {
+      data.userPreferences = data.userPreferences ?? [];
+      const index = data.userPreferences.findIndex((item) => item.userId === record.userId);
+      if (index >= 0) data.userPreferences[index] = record;
+      else data.userPreferences.push(record);
+      return record;
+    });
+  }
 
   async getAdminOverviewView() {
     const data = await this.read();

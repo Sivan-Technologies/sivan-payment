@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -172,6 +172,7 @@ export default function App() {
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
+  const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
@@ -237,6 +238,7 @@ export default function App() {
     setWithdrawals([]);
     setOnrampOrders([]);
     setSupportTickets([]);
+    setUserPreferences(null);
     setDepositResult(null);
     localStorage.removeItem('sivan.authToken');
     localStorage.removeItem('sivan.user');
@@ -317,18 +319,20 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, supportTicketsResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, supportTicketsResult, preferencesResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
       api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`),
-      api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`)
+      api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
+      api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
     if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
     if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
+    if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
   }, [api, user?.id, authToken]);
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -708,6 +712,35 @@ export default function App() {
   }
 
 
+
+  async function handleSaveUserPreferences(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    setLoading(true);
+    try {
+      const form = event.currentTarget;
+      const data = getForm(form);
+      const checkbox = (name: string, current: boolean) => form.querySelector<HTMLInputElement>(`input[type="checkbox"][name="${name}"]`)?.checked ?? current;
+      const updated = await api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          defaultFiatCurrency: data.defaultFiatCurrency || userPreferences?.defaultFiatCurrency || 'usd',
+          language: data.language || userPreferences?.language || 'en-US',
+          transactionUpdates: checkbox('transactionUpdates', userPreferences?.transactionUpdates ?? true),
+          marketingEmails: checkbox('marketingEmails', userPreferences?.marketingEmails ?? false),
+          securityAlerts: checkbox('securityAlerts', userPreferences?.securityAlerts ?? true),
+          emailConfirmationsForHighValue: checkbox('emailConfirmationsForHighValue', userPreferences?.emailConfirmationsForHighValue ?? false)
+        })
+      });
+      setUserPreferences(updated);
+      notify('Preferences saved.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCreateSupportTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
@@ -911,7 +944,7 @@ export default function App() {
 
         {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
 
-        {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'settings' && <SettingsView user={user} preferences={userPreferences} onSavePreferences={handleSaveUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
@@ -1405,15 +1438,32 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
   return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
 }
 
-function SettingsView({ user, onLogout }: { user: UserRecord | null; onLogout: () => void }) {
+function SettingsView({ user, preferences, onSavePreferences, loading, onLogout }: { user: UserRecord | null; preferences: UserPreferencesRecord | null; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; onLogout: () => void }) {
   const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
   const nameParts = (user?.fullName || '').split(/\s+/);
-  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.',''],['◷','Active sessions','Current browser session active.','Manage']]} />}{tab === 'notifications' && <SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm and payouts send.','on'],['✉','Marketing emails','Product news and offers.','off'],['◈','Security alerts','Suspicious logins and account changes.','on']]} />}{tab === 'preferences' && <><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select><option>USD — US Dollar</option><option>GBP — British Pound</option><option>EUR — Euro</option><option>NGN — Coming soon</option></select></label><label>Language<select defaultValue="en-US"><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><button className="primary-btn">Save preferences</button><button className="secondary-btn" onClick={onLogout}>Sign out</button></>}<LegalResources compact /></article></div></section>;
+  const currentPreferences = preferences ?? {
+    userId: user?.id || '',
+    defaultFiatCurrency: 'usd' as const,
+    language: 'en-US' as const,
+    transactionUpdates: true,
+    marketingEmails: false,
+    securityAlerts: true,
+    emailConfirmationsForHighValue: false,
+    updatedAt: new Date().toISOString()
+  };
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <form onSubmit={onSavePreferences}><h3>Security</h3><p className="muted">Keep your account safe.</p><SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.','emailConfirmationsForHighValue'],['◷','Active sessions','Current browser session active.','Manage']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save security preferences'}</button></form>}{tab === 'notifications' && <form onSubmit={onSavePreferences}><h3>Notifications</h3><p className="muted">Choose how Sivan contacts you about payments, security, and product updates.</p><SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm, on-ramp payments match, and payouts send.','transactionUpdates'],['✉','Marketing emails','Product news, feature updates, and offers.','marketingEmails'],['◈','Security alerts','Suspicious logins, account changes, and important risk events.','securityAlerts']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save notification preferences'}</button><p className="field-hint">Transactional and security notices may still be sent where required for account safety, compliance, or provider operations.</p></form>}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
 }
 
-function SettingsRows({ rows }: { rows: string[][] }) {
-  return <div><h3>Security</h3><p className="muted">Keep your account safe.</p><div className="settings-row-list">{rows.map((row) => <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{row[3] === 'on' || row[3] === 'off' ? <i className={`toggle ${row[3] === 'on' ? 'on' : ''}`} /> : <button className="ghost-btn small">{row[3]}</button>}</div>)}</div></div>;
+
+function SettingsRows({ rows, preferences }: { rows: string[][]; preferences?: UserPreferencesRecord }) {
+  return <div className="settings-row-list">{rows.map((row) => {
+    const key = row[3];
+    const isToggle = ['transactionUpdates', 'marketingEmails', 'securityAlerts', 'emailConfirmationsForHighValue'].includes(key);
+    const checked = key === 'transactionUpdates' ? preferences?.transactionUpdates : key === 'marketingEmails' ? preferences?.marketingEmails : key === 'securityAlerts' ? preferences?.securityAlerts : key === 'emailConfirmationsForHighValue' ? preferences?.emailConfirmationsForHighValue : false;
+    return <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{isToggle ? <label className="switch-toggle"><input name={key} type="checkbox" defaultChecked={Boolean(checked)} /><i /></label> : <button type="button" className="ghost-btn small">{key}</button>}</div>;
+  })}</div>;
 }
+
 
 function SupportView({ hasUser, tickets, withdrawals, onrampOrders, accounts, customer, api, onCreateTicket, onTicketsChanged, loading }: { hasUser: boolean; tickets: SupportTicketRecord[]; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; accounts: ExternalAccountRecord[]; customer: CustomerRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; onCreateTicket: (event: FormEvent<HTMLFormElement>) => void; onTicketsChanged: (tickets: SupportTicketRecord[]) => void; loading: boolean }) {
   const [selectedTicket, setSelectedTicket] = useState<SupportTicketRecord | null>(null);

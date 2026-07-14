@@ -233,3 +233,14 @@ export interface SupportTicketRecord {
   messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
   sla?: any;
 }
+
+export interface UserPreferencesRecord {
+  userId: string;
+  defaultFiatCurrency: 'usd' | 'gbp' | 'eur' | 'ngn';
+  language: 'en-US' | 'en-GB' | 'fr-FR' | 'de-DE' | 'es-ES' | 'it-IT' | 'nl-NL' | 'pt-PT';
+  transactionUpdates: boolean;
+  marketingEmails: boolean;
+  securityAlerts: boolean;
+  emailConfirmationsForHighValue: boolean;
+  updatedAt: string;
+}

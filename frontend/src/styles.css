@@ -1033,3 +1033,9 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .ticket-message strong { display: block; color: var(--text); }
 .ticket-message p { margin: 6px 0; color: var(--muted); }
 .ticket-message small { color: var(--soft); }
+.switch-toggle { display: inline-flex; align-items: center; width: auto; gap: 0; }
+.switch-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.switch-toggle i { width: 38px; height: 22px; border-radius: 999px; background: #263448; position: relative; border: 1px solid var(--border); transition: .18s; }
+.switch-toggle i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #9eacbb; transition: .18s; }
+.switch-toggle input:checked + i { background: rgba(116,221,190,.72); border-color: rgba(116,221,190,.44); }
+.switch-toggle input:checked + i::after { transform: translateX(16px); background: #06130f; }

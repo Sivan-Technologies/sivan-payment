@@ -64,6 +64,18 @@ export interface PaymentControlRecord {
   updatedAt: string;
 }
 
+
+export interface UserPreferencesRecord {
+  userId: string;
+  defaultFiatCurrency: Currency | 'ngn';
+  language: string;
+  transactionUpdates: boolean;
+  marketingEmails: boolean;
+  securityAlerts: boolean;
+  emailConfirmationsForHighValue: boolean;
+  updatedAt: string;
+}
+
 export interface UserRecord {
   id: string;
   email: string;
@@ -303,6 +315,7 @@ export interface UnifiedWebhookLogRecord {
 
 export interface DatabaseShape {
   users: UserRecord[];
+  userPreferences: UserPreferencesRecord[];
   customers: CustomerRecord[];
   externalAccounts: ExternalAccountRecord[];
   liquidationAddresses: LiquidationAddressRecord[];
