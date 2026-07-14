@@ -123,6 +123,23 @@ async function main() {
     const depositResponse = await request<any>('GET', `/api/withdrawals/${withdrawal.id}/deposit-address`);
     assert(depositResponse.data.address === deposit.address, 'deposit address can be fetched by withdrawal id');
 
+    // Verify Avalanche C-Chain off-ramp withdrawal creation
+    const avalancheWithdrawalResponse = await request<any>('POST', '/api/withdrawals', {
+      userId: user.id,
+      externalAccountId: externalAccount.id,
+      sourceCurrency: 'usdc',
+      sourceChain: 'avalanche',
+      destinationCurrency: 'usd',
+      returnAddress: '0x0000000000000000000000000000000000000000'
+    });
+    const avalancheWithdrawal = avalancheWithdrawalResponse.data.withdrawal;
+    const avalancheDeposit = avalancheWithdrawalResponse.data.deposit;
+    assert(avalancheWithdrawal.status === 'pending_deposit', 'avalanche withdrawal starts pending_deposit');
+
+    const avalancheLAResponse = await request<any>('GET', `/api/deposit-addresses/${avalancheWithdrawal.liquidationAddressId}`);
+    assert(avalancheLAResponse.data.chain === 'avalanche', 'withdrawal stores sourceChain as avalanche in liquidation address');
+    assert(/^0x[a-f0-9]{40}$/i.test(avalancheDeposit.address), 'avalanche deposit address looks like an EVM address');
+
     const liquidationAddressResponse = await request<any>('GET', `/api/deposit-addresses/${withdrawal.liquidationAddressId}`);
     const liquidationAddress = liquidationAddressResponse.data;
     assert(Boolean(liquidationAddress.providerLiquidationAddressId), 'internal liquidation address maps to Bridge id');
@@ -171,8 +188,8 @@ async function main() {
     assert(duplicateWebhookResponse.data.duplicate === true, 'duplicate webhook is idempotent');
 
     const historyResponse = await request<any>('GET', `/api/users/${user.id}/withdrawals`);
-    assert(historyResponse.data.length === 1, 'withdrawal history returns one withdrawal');
-    assert(historyResponse.data[0].status === 'completed', 'withdrawal history shows completed status');
+    assert(historyResponse.data.length === 2, 'withdrawal history returns two withdrawals');
+    assert(historyResponse.data.some((w: any) => w.status === 'completed'), 'withdrawal history shows completed status');
 
     console.log('\n✅ Sivan Off-Ramp local E2E test passed');
     console.log(JSON.stringify({

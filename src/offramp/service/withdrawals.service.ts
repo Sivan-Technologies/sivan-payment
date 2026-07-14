@@ -11,7 +11,7 @@ export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
   externalAccountId: z.string().min(1),
   sourceCurrency: z.literal('usdc').default('usdc'),
-  sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism']).default('ethereum'),
+  sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche']).default('ethereum'),
   destinationCurrency: z.enum(['usd', 'gbp']),
   destinationPaymentRail: z.string().optional(),
   destinationReference: z.string().optional(),

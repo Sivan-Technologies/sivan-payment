@@ -24,6 +24,7 @@ const envSchema = z.object({
   BRIDGE_BASE_URL: z.string().url().default('https://api.sandbox.bridge.xyz/v0'),
   BRIDGE_API_KEY: z.string().optional().default(''),
   BRIDGE_WEBHOOK_PUBLIC_KEY: z.string().optional().default(''),
+  AVALANCHE_RPC_URL: z.string().url().optional(),
   WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
   SIVAN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   BRIDGE_OFFRAMP_COST_PERCENT: z.coerce.number().min(0).max(100).default(0.5),
