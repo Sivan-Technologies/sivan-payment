@@ -32,6 +32,9 @@ async function main() {
     const user = verified.data.user;
     assert(Boolean(user.id), 'created user for support test');
 
+    const upload: any = await request('POST', '/api/support/attachments/upload-url', { userId: user.id, fileName: 'receipt.png', contentType: 'image/png', sizeBytes: 1000 });
+    assert(upload.data.provider === 'mock' && upload.data.uploadUrl, 'support attachment upload URL can be created');
+
     const ticketResponse: any = await request('POST', '/api/support/tickets', {
       userId: user.id,
       type: 'wrong_token_or_network',

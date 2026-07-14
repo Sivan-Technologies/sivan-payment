@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
+import { createSupportAttachmentUploadUrl, createSupportUploadUrlSchema } from './support-attachments.service.js';
 import { addSupportTicketMessage, createSupportMessageSchema, createSupportTicket, createSupportTicketSchema, getSupportAnalytics, getSupportTicket, listAdminSupportTickets, listUserSupportTickets, updateSupportTicket, updateSupportTicketSchema } from './support.service.js';
 
 function listOptions(request: any) {
@@ -10,6 +11,13 @@ function listOptions(request: any) {
 }
 
 export async function supportRoutes(app: FastifyInstance) {
+
+  app.post('/api/support/attachments/upload-url', async (request, reply) => {
+    const body = parseBody(createSupportUploadUrlSchema, request.body);
+    const result = await createSupportAttachmentUploadUrl(body);
+    return reply.code(201).send({ data: result });
+  });
+
   app.post('/api/support/tickets', async (request, reply) => {
     const body = parseBody(createSupportTicketSchema, request.body);
     const ticket = await createSupportTicket(body);

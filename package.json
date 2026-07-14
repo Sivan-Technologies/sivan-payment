@@ -17,9 +17,11 @@
     "render:build": "npm install && npm run build",
     "test:controls": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-controls.json tsx scripts/test-controls.ts",
     "test:onramp": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-onramp.json tsx scripts/test-onramp.ts",
-    "test:support": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-support.json tsx scripts/test-support.ts"
+    "test:support": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-support.json tsx scripts/test-support.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1086.0",
+    "@aws-sdk/s3-request-presigner": "^3.1086.0",
     "@fastify/cors": "latest",
     "@sentry/node": "^10.65.0",
     "dotenv": "latest",

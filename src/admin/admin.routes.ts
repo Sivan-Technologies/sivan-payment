@@ -4,6 +4,10 @@ import { parseBody } from '../shared/validation.js';
 import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWithdrawals, listAdminAuditLogs, listAdminReconciliationRuns, listAdminOnrampOrders } from './admin.service.js';
 import { getAdminAnalytics } from './analytics.service.js';
 import { runOfframpReconciliation } from '../reconciliation/reconciliation.service.js';
+import { getWithdrawal, syncWithdrawalDrains } from '../offramp/service/withdrawals.service.js';
+import { getOnrampOrder } from '../onramp/service/onramp-orders.service.js';
+import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
+import { refreshKycStatus } from '../customers/customers.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
 
@@ -25,6 +29,32 @@ const reconciliationRunSchema = z.object({
 export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/overview', async () => ({ data: await getAdminOverview() }));
   app.get('/api/admin/users', async (request) => ({ data: await listAdminUsers(listOptions(request)) }));
+
+  app.get('/api/admin/withdrawals/:id', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getWithdrawal(id) };
+  });
+
+  app.post('/api/admin/withdrawals/:id/sync', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await syncWithdrawalDrains(id) };
+  });
+
+  app.get('/api/admin/onramp/orders/:id', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getOnrampOrder(id) };
+  });
+
+  app.post('/api/admin/onramp/orders/:id/sync', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await syncOnrampOrder(id) };
+  });
+
+  app.post('/api/admin/customers/:userId/kyc-status', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await refreshKycStatus(userId) };
+  });
+
   app.get('/api/admin/withdrawals', async (request) => ({ data: await listAdminWithdrawals(listOptions(request)) }));
   app.get('/api/admin/onramp/orders', async (request) => ({ data: await listAdminOnrampOrders(listOptions(request)) }));
   app.get('/api/admin/webhooks', async (request) => ({ data: await listAdminWebhookEvents(listOptions(request)) }));

@@ -230,3 +230,4 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .ticket-message strong { display: block; color: var(--text); }
 .ticket-message p { margin: 6px 0; color: var(--muted); }
 .ticket-message small { color: var(--soft); }
+.action-result { max-height: 220px; overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: rgba(0,0,0,.25); color: var(--soft); font-size: 12px; white-space: pre-wrap; }

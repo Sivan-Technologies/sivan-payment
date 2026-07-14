@@ -711,10 +711,27 @@ export default function App() {
   async function handleCreateSupportTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
+    const form = event.currentTarget;
     setLoading(true);
     try {
-      const data = getForm(event.currentTarget);
-      const isVerificationResource = data.resourceId === 'verification';
+      const data = getForm(form);
+      const formData = new FormData(form);
+      const file = formData.get('attachment') instanceof File ? formData.get('attachment') as File : null;
+      let attachmentUrl = data.attachmentUrl || undefined;
+      let attachmentObjectKey: string | undefined;
+      if (file && file.size > 0) {
+        const upload = await api<{ uploadUrl: string; publicUrl?: string; objectKey: string; headers?: Record<string, string> }>('/api/support/attachments/upload-url', {
+          method: 'POST',
+          body: JSON.stringify({ userId: user.id, fileName: file.name, contentType: file.type || 'application/octet-stream', sizeBytes: file.size })
+        });
+        const uploaded = await fetch(upload.uploadUrl, { method: 'PUT', headers: upload.headers || { 'Content-Type': file.type }, body: file });
+        if (!uploaded.ok) throw new Error('Attachment upload failed. Please try again or paste an attachment URL.');
+        attachmentUrl = upload.publicUrl || upload.uploadUrl.split('?')[0];
+        attachmentObjectKey = upload.objectKey;
+      }
+      const [resourceTypeRaw, resourceIdRaw] = (data.relatedItem || 'general:').split(':');
+      const resourceType = resourceTypeRaw || 'general';
+      const resourceId = resourceIdRaw || undefined;
       const ticket = await api<SupportTicketRecord>('/api/support/tickets', {
         method: 'POST',
         body: JSON.stringify({
@@ -722,17 +739,18 @@ export default function App() {
           type: data.type,
           subject: data.subject,
           description: data.description,
-          resourceType: isVerificationResource ? 'customer' : data.resourceId ? 'withdrawal' : 'general',
-          resourceId: isVerificationResource ? customer?.id : data.resourceId || undefined,
+          resourceType,
+          resourceId,
           transactionHash: data.transactionHash || undefined,
           bankReference: data.bankReference || undefined,
           walletAddress: data.walletAddress || undefined,
-          attachmentUrl: data.attachmentUrl || undefined
+          attachmentUrl,
+          metadata: attachmentObjectKey ? { attachmentObjectKey } : undefined
         })
       });
       setSupportTickets((tickets) => [ticket, ...tickets.filter((item) => item.id !== ticket.id)]);
       notify(`Support ticket created: ${ticket.id}`);
-      (event.currentTarget as HTMLFormElement).reset();
+      form.reset();
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -894,7 +912,7 @@ export default function App() {
         {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
 
         {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
-        {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
+        {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
     </div>
@@ -1397,7 +1415,7 @@ function SettingsRows({ rows }: { rows: string[][] }) {
   return <div><h3>Security</h3><p className="muted">Keep your account safe.</p><div className="settings-row-list">{rows.map((row) => <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{row[3] === 'on' || row[3] === 'off' ? <i className={`toggle ${row[3] === 'on' ? 'on' : ''}`} /> : <button className="ghost-btn small">{row[3]}</button>}</div>)}</div></div>;
 }
 
-function SupportView({ hasUser, tickets, withdrawals, api, onCreateTicket, onTicketsChanged, loading }: { hasUser: boolean; tickets: SupportTicketRecord[]; withdrawals: WithdrawalRecord[]; api: <T>(path: string, options?: RequestInit) => Promise<T>; onCreateTicket: (event: FormEvent<HTMLFormElement>) => void; onTicketsChanged: (tickets: SupportTicketRecord[]) => void; loading: boolean }) {
+function SupportView({ hasUser, tickets, withdrawals, onrampOrders, accounts, customer, api, onCreateTicket, onTicketsChanged, loading }: { hasUser: boolean; tickets: SupportTicketRecord[]; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; accounts: ExternalAccountRecord[]; customer: CustomerRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; onCreateTicket: (event: FormEvent<HTMLFormElement>) => void; onTicketsChanged: (tickets: SupportTicketRecord[]) => void; loading: boolean }) {
   const [selectedTicket, setSelectedTicket] = useState<SupportTicketRecord | null>(null);
   const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
   async function openTicket(ticket: SupportTicketRecord) {
@@ -1414,7 +1432,7 @@ function SupportView({ hasUser, tickets, withdrawals, api, onCreateTicket, onTic
     onTicketsChanged(tickets.map((ticket) => ticket.id === detail.id ? { ...ticket, ...detail } : ticket));
     (event.currentTarget as HTMLFormElement).reset();
   }
-  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><a className="support-card" href="#report-issue"><span>☎</span><h3>Report an issue</h3><p>Problem with a transaction? Open a ticket.</p><strong>Open ticket →</strong></a></div><div className="support-legal-grid"><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article><LegalResources /></div><div className="support-legal-grid"><article className="support-faq-card" id="report-issue"><h3>Report an issue</h3>{!hasUser ? <Empty>Create your account or sign in before opening a support ticket.</Empty> : <form className="form" onSubmit={onCreateTicket}><label>Issue type<select name="type" defaultValue="withdrawal"><option value="verification">Verification issue</option><option value="bank_account">Bank account issue</option><option value="withdrawal">Withdrawal issue</option><option value="deposit_not_detected">Deposit sent but not detected</option><option value="wrong_token_or_network">Wrong token or wrong network</option><option value="payout_delayed">Payout delayed</option><option value="onramp_payment">On-ramp payment issue</option><option value="onramp_delivery">On-ramp crypto not received</option><option value="account_access">Account access issue</option><option value="other">Other</option></select></label><label>Related item<select name="resourceId" defaultValue=""><option value="">General issue</option><option value="verification">Verification</option>{withdrawals.map((withdrawal) => <option key={withdrawal.id} value={withdrawal.id}>Withdrawal {shortRef(withdrawal.id)} · {friendlyStatus(withdrawal.status)}</option>)}</select><input type="hidden" name="resourceType" value="withdrawal" /></label><div className="split"><label>Transaction hash<input name="transactionHash" placeholder="Optional" /></label><label>Bank reference<input name="bankReference" placeholder="Optional" /></label></div><label>Wallet address<input name="walletAddress" placeholder="Optional wallet involved" /></label><label>Attachment URL<input name="attachmentUrl" placeholder="Optional screenshot/receipt URL" /></label><label>Subject<input name="subject" placeholder="Short summary" required /></label><label>Description<textarea name="description" placeholder="Tell us what happened. Include date, amount, wallet address, transaction hash, bank reference, or error message if available." required /></label><button className="primary-btn" disabled={loading}>{loading ? 'Creating ticket...' : 'Create ticket'}</button></form>}</article><article className="support-faq-card"><h3>Your recent tickets</h3>{!tickets.length ? <Empty>No support tickets yet.</Empty> : <div className="list">{tickets.slice(0, 6).map((ticket) => <button className="list-item ticket-list-button" key={ticket.id} onClick={() => openTicket(ticket)}><strong>{ticket.subject}</strong><Badge status={ticket.status}>{friendlyStatus(ticket.status)}</Badge><small>{ticket.type.replaceAll('_', ' ')} · {ticket.priority}</small><small>{new Date(ticket.createdAt).toLocaleString()}</small></button>)}</div>}</article></div>{selectedTicket && <TicketConversation ticket={selectedTicket} onClose={() => setSelectedTicket(null)} onReply={reply} />}</section>;
+  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><a className="support-card" href="#report-issue"><span>☎</span><h3>Report an issue</h3><p>Problem with a transaction? Open a ticket.</p><strong>Open ticket →</strong></a></div><div className="support-legal-grid"><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article><LegalResources /></div><div className="support-legal-grid"><article className="support-faq-card" id="report-issue"><h3>Report an issue</h3>{!hasUser ? <Empty>Create your account or sign in before opening a support ticket.</Empty> : <form className="form" onSubmit={onCreateTicket}><label>Issue type<select name="type" defaultValue="withdrawal"><option value="verification">Verification issue</option><option value="bank_account">Bank account issue</option><option value="withdrawal">Withdrawal issue</option><option value="deposit_not_detected">Deposit sent but not detected</option><option value="wrong_token_or_network">Wrong token or wrong network</option><option value="payout_delayed">Payout delayed</option><option value="onramp_payment">On-ramp payment issue</option><option value="onramp_delivery">On-ramp crypto not received</option><option value="account_access">Account access issue</option><option value="other">Other</option></select></label><label>Related item<select name="relatedItem" defaultValue="general:"><option value="general:">General issue</option>{customer && <option value={`customer:${customer.id}`}>Verification · {friendlyStatus(customer.kycStatus)}</option>}{withdrawals.map((withdrawal) => <option key={withdrawal.id} value={`withdrawal:${withdrawal.id}`}>Withdrawal {shortRef(withdrawal.id)} · {friendlyStatus(withdrawal.status)}</option>)}{onrampOrders.map((order) => <option key={order.id} value={`onramp_order:${order.id}`}>Buy order {shortRef(order.id)} · {friendlyStatus(order.status)}</option>)}{accounts.map((account) => <option key={account.id} value={`external_account:${account.id}`}>Bank account {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select></label><div className="split"><label>Transaction hash<input name="transactionHash" placeholder="Optional" /></label><label>Bank reference<input name="bankReference" placeholder="Optional" /></label></div><label>Wallet address<input name="walletAddress" placeholder="Optional wallet involved" /></label><label>Upload screenshot or receipt<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp,image/heic,application/pdf" /></label><label>Attachment URL<input name="attachmentUrl" placeholder="Optional screenshot/receipt URL" /></label><label>Subject<input name="subject" placeholder="Short summary" required /></label><label>Description<textarea name="description" placeholder="Tell us what happened. Include date, amount, wallet address, transaction hash, bank reference, or error message if available." required /></label><button className="primary-btn" disabled={loading}>{loading ? 'Creating ticket...' : 'Create ticket'}</button></form>}</article><article className="support-faq-card"><h3>Your recent tickets</h3>{!tickets.length ? <Empty>No support tickets yet.</Empty> : <div className="list">{tickets.slice(0, 6).map((ticket) => <button className="list-item ticket-list-button" key={ticket.id} onClick={() => openTicket(ticket)}><strong>{ticket.subject}</strong><Badge status={ticket.status}>{friendlyStatus(ticket.status)}</Badge><small>{ticket.type.replaceAll('_', ' ')} · {ticket.priority}</small><small>{new Date(ticket.createdAt).toLocaleString()}</small></button>)}</div>}</article></div>{selectedTicket && <TicketConversation ticket={selectedTicket} onClose={() => setSelectedTicket(null)} onReply={reply} />}</section>;
 }
 
 function TicketConversation({ ticket, onClose, onReply }: { ticket: SupportTicketRecord; onClose: () => void; onReply: (event: FormEvent<HTMLFormElement>) => void }) {
