@@ -73,6 +73,42 @@ export class PostgresDatabase {
   constructor(connectionString = env.DATABASE_URL) {
     if (!connectionString) throw new Error('DATABASE_URL is required when DATABASE_PROVIDER=postgres');
     this.pool = new Pool({ connectionString });
+    this.pool.on('error', (error) => {
+      console.error('[postgres.pool.error]', error);
+    });
+    this.instrumentPoolQueries();
+  }
+
+  private instrumentPoolQueries() {
+    const slowQueryMs = Number(process.env.POSTGRES_SLOW_QUERY_MS ?? 750);
+    const originalConnect = this.pool.connect.bind(this.pool);
+    this.pool.connect = (async (...args: any[]) => {
+      const client = await (originalConnect as any)(...args);
+      if ((client as any).__sivanInstrumented) return client;
+      const originalQuery = client.query.bind(client);
+      client.query = (async (...queryArgs: any[]) => {
+        const started = Date.now();
+        try {
+          return await (originalQuery as any)(...queryArgs);
+        } finally {
+          const durationMs = Date.now() - started;
+          if (durationMs >= slowQueryMs) {
+            const sql = typeof queryArgs[0] === 'string' ? queryArgs[0] : queryArgs[0]?.text;
+            console.warn('[postgres.slow_query]', { durationMs, sql: String(sql ?? '').replace(/\s+/g, ' ').slice(0, 500), pool: this.getPoolStats() });
+          }
+        }
+      }) as any;
+      (client as any).__sivanInstrumented = true;
+      return client;
+    }) as any;
+  }
+
+  getPoolStats() {
+    return {
+      totalCount: this.pool.totalCount,
+      idleCount: this.pool.idleCount,
+      waitingCount: this.pool.waitingCount
+    };
   }
 
   async read(): Promise<DatabaseShape> {

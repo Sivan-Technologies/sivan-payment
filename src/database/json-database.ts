@@ -32,6 +32,10 @@ export class JsonDatabase {
     this.filePath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
   }
 
+  getPoolStats() {
+    return { totalCount: 0, idleCount: 0, waitingCount: 0, provider: 'json' };
+  }
+
   async read(): Promise<DatabaseShape> {
     if (this.db) return this.db;
     try {
