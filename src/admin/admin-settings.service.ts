@@ -64,6 +64,7 @@ export async function updateAdminPlatformSettings(input: z.infer<typeof adminPla
 export function isPlatformMutationBlocked(settings: Awaited<ReturnType<typeof getAdminPlatformSettings>>, method: string, url: string) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return undefined;
   if (url.startsWith('/api/admin') || url.startsWith('/api/webhooks')) return undefined;
+  if (settings.maintenanceMode && [/^\/api\/external-accounts/, /^\/api\/withdrawals$/, /^\/api\/onramp\/orders$/].some((pattern) => pattern.test(url))) return 'Sivan is in maintenance mode. New payment actions are temporarily unavailable.';
   if (!settings.onRampEnabled && url === '/api/onramp/orders') return 'On-ramp orders are temporarily disabled.';
   if (!settings.offRampEnabled && url === '/api/withdrawals') return 'Off-ramp withdrawals are temporarily disabled.';
   return undefined;
@@ -80,6 +81,40 @@ export async function getAdminTeamMembers() {
     { name: 'Compliance', email: 'compliance@sivantech.online', role: 'Compliance', status: 'active' }
   ];
   return (latest?.metadata as any)?.members ?? fallback;
+}
+
+
+export async function inviteAdminTeamMember(input: { name: string; email: string; role: string; invitedBy?: string; reason?: string }, context: { ipAddress?: string; userAgent?: string } = {}) {
+  const current = await getAdminTeamMembers();
+  const normalizedEmail = input.email.toLowerCase();
+  if (current.some((member: any) => String(member.email).toLowerCase() === normalizedEmail)) {
+    return { invited: false, duplicate: true, members: current };
+  }
+  const invited = { name: input.name, email: normalizedEmail, role: input.role, status: 'invited', invitedAt: nowIso() };
+  const members = [...current, invited];
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: input.invitedBy ?? 'admin_api_key',
+    action: 'admin.team_member_invited',
+    resourceType: 'admin_team_member',
+    resourceId: normalizedEmail,
+    severity: 'warning',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: { invited, reason: input.reason ?? 'Team invitation from admin settings' }
+  });
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: input.invitedBy ?? 'admin_api_key',
+    action: 'admin.team_members.updated',
+    resourceType: 'admin_team_members',
+    resourceId: 'global',
+    severity: 'warning',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: { members }
+  });
+  return { invited: true, member: invited, members };
 }
 
 export async function getAdminApiKeyInventory() {

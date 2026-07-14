@@ -12,7 +12,7 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
 import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
-import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
+import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
 
 
@@ -94,6 +94,10 @@ export async function adminRoutes(app: FastifyInstance) {
     return { data: await updateAdminPlatformSettings(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
   app.get('/api/admin/settings/team', async () => ({ data: await getAdminTeamMembers() }));
+  app.post('/api/admin/settings/team/invite', async (request) => {
+    const body = parseBody(z.object({ name: z.string().min(2), email: z.string().email(), role: z.string().min(2), invitedBy: z.string().optional(), reason: z.string().optional() }), request.body);
+    return { data: await inviteAdminTeamMember(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
   app.get('/api/admin/settings/api-keys', async () => ({ data: await getAdminApiKeyInventory() }));
   app.post('/api/admin/settings/api-keys/:key/rotate', async (request) => {
     const { key } = request.params as { key: string };
