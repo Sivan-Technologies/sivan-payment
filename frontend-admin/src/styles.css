@@ -217,3 +217,16 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .pagination-controls span { color: var(--muted); font-size: 12px; font-weight: 800; white-space: nowrap; }
 .pagination-controls select { width: auto; min-width: 76px; padding: 8px 10px; border-radius: 9px; }
 @media (max-width: 760px) { .pagination-controls { width: 100%; justify-content: space-between; flex-wrap: wrap; } }
+.support-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.support-filter-row input { max-width: 320px; }
+.support-filter-row select { width: auto; min-width: 140px; }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover td { background: rgba(116,221,190,.05); }
+.ticket-detail-drawer { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow: auto; }
+.ticket-thread { display: grid; gap: 10px; margin: 14px 0; }
+.ticket-message { padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.035); }
+.ticket-message.admin { border-color: rgba(116,221,190,.24); }
+.ticket-message.internal { border-color: rgba(241,189,114,.28); background: rgba(241,189,114,.08); }
+.ticket-message strong { display: block; color: var(--text); }
+.ticket-message p { margin: 6px 0; color: var(--muted); }
+.ticket-message small { color: var(--soft); }

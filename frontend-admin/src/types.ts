@@ -6,6 +6,8 @@ export interface UserRecord {
   fullName: string;
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface CustomerRecord {
@@ -20,6 +22,8 @@ export interface CustomerRecord {
   onboardingCostType?: 'kyc' | 'kyb';
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface ExternalAccountRecord {
@@ -37,6 +41,8 @@ export interface ExternalAccountRecord {
   status: string;
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface WithdrawalRecord {
@@ -319,6 +325,8 @@ export interface CustomerTypeControl {
   label: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface PaymentControl {
@@ -329,6 +337,8 @@ export interface PaymentControl {
   defaultPaymentRail: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface AssetControl {
@@ -337,6 +347,8 @@ export interface AssetControl {
   label: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface NetworkControl {
@@ -346,6 +358,8 @@ export interface NetworkControl {
   sortOrder: number;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface OfframpControls {
@@ -363,6 +377,8 @@ export interface SystemStatus {
   estimatedResumeAt?: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 
@@ -385,6 +401,8 @@ export interface AdminOnrampOrder {
   providerReference?: string;
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface AdminSupportTicket {
@@ -402,4 +420,6 @@ export interface AdminSupportTicket {
   messageCount?: number;
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }

@@ -361,7 +361,7 @@ export class PostgresDatabase {
     try { return (await optionalQuery(client, 'select * from payments_support_tickets where user_id=$1 order by created_at desc limit $2 offset $3', [userId, limit, offset])).rows.map(mapSupportTicket); } finally { client.release(); }
   }
 
-  async listAdminSupportTicketsView({ limit = 100, offset = 0, status, priority, type }: { limit?: number; offset?: number; status?: string; priority?: string; type?: string } = {}) {
+  async listAdminSupportTicketsView({ limit = 100, offset = 0, status, priority, type, assignedTo, search, dateFrom, dateTo }: { limit?: number; offset?: number; status?: string; priority?: string; type?: string; assignedTo?: string; search?: string; dateFrom?: string; dateTo?: string } = {}) {
     const client = await this.pool.connect();
     try {
       const clauses: string[] = [];
@@ -369,6 +369,10 @@ export class PostgresDatabase {
       if (status) { params.push(status); clauses.push(`status=$${params.length}`); }
       if (priority) { params.push(priority); clauses.push(`priority=$${params.length}`); }
       if (type) { params.push(type); clauses.push(`ticket_type=$${params.length}`); }
+      if (assignedTo) { params.push(assignedTo); clauses.push(`assigned_to=$${params.length}`); }
+      if (dateFrom) { params.push(dateFrom); clauses.push(`created_at >= $${params.length}`); }
+      if (dateTo) { params.push(dateTo); clauses.push(`created_at <= $${params.length}`); }
+      if (search) { params.push(`%${search}%`); clauses.push(`(id ilike $${params.length} or user_id ilike $${params.length} or subject ilike $${params.length} or resource_id ilike $${params.length})`); }
       params.push(limit, offset);
       const where = clauses.length ? `where ${clauses.join(' and ')}` : '';
       const tickets = (await optionalQuery(client, `select * from payments_support_tickets ${where} order by created_at desc limit $${params.length - 1} offset $${params.length}`, params)).rows.map(mapSupportTicket);

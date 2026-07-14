@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { addSupportTicketMessage, createSupportMessageSchema, createSupportTicket, createSupportTicketSchema, getSupportTicket, listAdminSupportTickets, listUserSupportTickets, updateSupportTicket, updateSupportTicketSchema } from './support.service.js';
+import { addSupportTicketMessage, createSupportMessageSchema, createSupportTicket, createSupportTicketSchema, getSupportAnalytics, getSupportTicket, listAdminSupportTickets, listUserSupportTickets, updateSupportTicket, updateSupportTicketSchema } from './support.service.js';
 
 function listOptions(request: any) {
   const query = (request.query ?? {}) as Record<string, string>;
   const limit = Math.min(Math.max(Number(query.limit ?? 100), 1), 500);
   const offset = Math.max(Number(query.offset ?? 0), 0);
-  return { limit, offset, status: query.status || undefined, priority: query.priority || undefined, type: query.type || undefined };
+  return { limit, offset, status: query.status || undefined, priority: query.priority || undefined, type: query.type || undefined, assignedTo: query.assignedTo || undefined, search: query.search || undefined, dateFrom: query.dateFrom || undefined, dateTo: query.dateTo || undefined };
 }
 
 export async function supportRoutes(app: FastifyInstance) {
@@ -36,6 +36,7 @@ export async function supportRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/admin/support/tickets', async (request) => ({ data: await listAdminSupportTickets(listOptions(request)) }));
+  app.get('/api/admin/support/analytics', async () => ({ data: await getSupportAnalytics() }));
 
   app.get('/api/admin/support/tickets/:id', async (request) => {
     const { id } = request.params as { id: string };

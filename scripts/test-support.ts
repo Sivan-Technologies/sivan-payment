@@ -55,6 +55,10 @@ async function main() {
 
     const adminList: any = await request('GET', '/api/admin/support/tickets', undefined, true);
     assert(adminList.data.some((item: any) => item.id === ticket.id), 'admin can list support tickets');
+    const filteredList: any = await request('GET', '/api/admin/support/tickets?priority=urgent&type=wrong_token_or_network&search=wrong', undefined, true);
+    assert(filteredList.data.some((item: any) => item.id === ticket.id), 'admin can filter support tickets by priority type and search');
+    const analytics: any = await request('GET', '/api/admin/support/analytics', undefined, true);
+    assert(analytics.data.urgentTickets >= 1, 'admin support analytics counts urgent tickets');
 
     const updated: any = await request('PUT', `/api/admin/support/tickets/${ticket.id}`, { status: 'in_review', priority: 'urgent', assignedTo: 'ops' }, true);
     assert(updated.data.status === 'in_review', 'admin can update ticket status');

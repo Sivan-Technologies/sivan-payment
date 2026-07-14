@@ -1023,3 +1023,13 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .legal-resource-card a:hover { border-color: rgba(116,221,190,.34); color: var(--green); }
 .support-legal-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(300px, .8fr); gap: 18px; margin-top: 18px; }
 @media (max-width: 900px) { .support-legal-grid { grid-template-columns: 1fr; } }
+.ticket-list-button { width: 100%; text-align: left; cursor: pointer; }
+.ticket-drawer { position: fixed; inset: 0; z-index: 80; display: grid; place-items: end; background: rgba(0,0,0,.55); padding: 20px; }
+.ticket-drawer-card { width: min(720px, 100%); max-height: calc(100vh - 40px); overflow: auto; border: 1px solid var(--border); border-radius: 20px; background: #0d1520; box-shadow: var(--shadow); padding: 24px; }
+.ticket-thread { display: grid; gap: 10px; margin: 16px 0; }
+.ticket-message { padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.025); }
+.ticket-message.admin { border-color: rgba(116,221,190,.24); background: rgba(116,221,190,.06); }
+.ticket-message.user { border-color: rgba(147,183,223,.22); }
+.ticket-message strong { display: block; color: var(--text); }
+.ticket-message p { margin: 6px 0; color: var(--muted); }
+.ticket-message small { color: var(--soft); }

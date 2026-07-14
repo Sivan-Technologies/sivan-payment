@@ -210,10 +210,13 @@ export class JsonDatabase {
     return (data.supportTickets ?? []).filter((ticket) => ticket.userId === userId).sort((a,b) => b.createdAt.localeCompare(a.createdAt)).slice(offset, offset + limit);
   }
 
-  async listAdminSupportTicketsView({ limit = 100, offset = 0, status, priority, type }: { limit?: number; offset?: number; status?: string; priority?: string; type?: string } = {}) {
+  async listAdminSupportTicketsView({ limit = 100, offset = 0, status, priority, type, assignedTo, search, dateFrom, dateTo }: { limit?: number; offset?: number; status?: string; priority?: string; type?: string; assignedTo?: string; search?: string; dateFrom?: string; dateTo?: string } = {}) {
     const data = await this.read();
+    const lowerSearch = search?.toLowerCase();
+    const fromTime = dateFrom ? new Date(dateFrom).getTime() : 0;
+    const toTime = dateTo ? new Date(dateTo).getTime() : Number.POSITIVE_INFINITY;
     return (data.supportTickets ?? [])
-      .filter((ticket) => (!status || ticket.status === status) && (!priority || ticket.priority === priority) && (!type || ticket.type === type))
+      .filter((ticket) => (!status || ticket.status === status) && (!priority || ticket.priority === priority) && (!type || ticket.type === type) && (!assignedTo || ticket.assignedTo === assignedTo) && new Date(ticket.createdAt).getTime() >= fromTime && new Date(ticket.createdAt).getTime() <= toTime && (!lowerSearch || [ticket.id, ticket.userId, ticket.subject, ticket.resourceId].filter(Boolean).some((value) => String(value).toLowerCase().includes(lowerSearch))))
       .sort((a,b) => b.createdAt.localeCompare(a.createdAt))
       .slice(offset, offset + limit)
       .map((ticket) => ({ ...ticket, user: data.users.find((user) => user.id === ticket.userId) ?? null, messageCount: (data.supportTicketMessages ?? []).filter((message) => message.ticketId === ticket.id).length }));

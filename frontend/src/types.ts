@@ -230,4 +230,6 @@ export interface SupportTicketRecord {
   createdAt: string;
   updatedAt: string;
   closedAt?: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: any;
 }

@@ -37,6 +37,7 @@ const envSchema = z.object({
   EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional().default(''),
   EMAIL_FROM: z.string().optional().default('Sivan <no-reply@sivan.local>'),
+  SUPPORT_NOTIFICATION_EMAIL: z.string().email().optional().default(''),
   BRIDGE_MOCK_MODE: booleanFromEnv.default(true),
   DEFAULT_OFFRAMP_PROVIDER: z.string().default('bridge'),
   BRIDGE_BASE_URL: z.string().url().default('https://api.sandbox.bridge.xyz/v0'),
