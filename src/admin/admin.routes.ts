@@ -10,6 +10,10 @@ import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
 import { refreshKycStatus } from '../customers/customers.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
+import { getWithdrawal, syncWithdrawalDrains } from '../offramp/service/withdrawals.service.js';
+import { getOnrampOrder } from '../onramp/service/onramp-orders.service.js';
+import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
+import { refreshKycStatus } from '../customers/customers.service.js';
 
 
 function listOptions(request: any) {
@@ -62,6 +66,32 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/reconciliation/runs', async (request) => ({ data: await listAdminReconciliationRuns(listOptions(request)) }));
   app.get('/api/admin/analytics', async () => ({ data: await getAdminAnalytics() }));
 
+
+
+  app.get('/api/admin/withdrawals/:id', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getWithdrawal(id) };
+  });
+
+  app.post('/api/admin/withdrawals/:id/sync-drains', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await syncWithdrawalDrains(id) };
+  });
+
+  app.get('/api/admin/onramp/orders/:id', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getOnrampOrder(id) };
+  });
+
+  app.post('/api/admin/onramp/orders/:id/sync', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await syncOnrampOrder(id) };
+  });
+
+  app.post('/api/admin/customers/:userId/kyc-status', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await refreshKycStatus(userId) };
+  });
 
   app.post('/api/admin/onramp/reconciliation/run', async (request) => {
     const body = parseBody(z.object({ dryRun: z.boolean().default(true), provider: z.string().optional(), userId: z.string().optional() }), request.body);
