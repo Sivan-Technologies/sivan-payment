@@ -8,11 +8,13 @@ import { createUser, getUserByEmail } from '../users/users.service.js';
 import { signUserJwt } from './jwt.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { buildOtpEmail, sendEmail } from '../notifications/email.service.js';
+import { buildChallengeLegalAcceptance, legalAcceptancePayloadSchema, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
 
 export const startEmailAuthSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
   fullName: z.string().min(2).optional(),
-  intent: z.enum(['signup', 'signin']).default('signin')
+  intent: z.enum(['signup', 'signin']).default('signin'),
+  legalAcceptance: legalAcceptancePayloadSchema.optional()
 });
 
 export const verifyEmailAuthSchema = z.object({
@@ -28,13 +30,16 @@ function generateCode() {
   return String(crypto.randomInt(100000, 1000000));
 }
 
-export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>) {
+export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
   const existingUser = await getUserByEmail(input.email);
   if (input.intent === 'signin' && !existingUser) {
     throw notFound('Account');
   }
   if (input.intent === 'signup' && !existingUser && !input.fullName) {
     throw badRequest('fullName is required to create an account');
+  }
+  if (input.intent === 'signup' && !input.legalAcceptance?.accepted) {
+    throw badRequest('You must accept the Terms, Privacy Policy, and Risk Disclosure to create an account');
   }
 
   const code = generateCode();
@@ -46,6 +51,12 @@ export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>
     codeHash: hashCode(input.email, code),
     intent: input.intent,
     fullName: input.fullName,
+    ...buildChallengeLegalAcceptance({
+      legalAcceptance: input.intent === 'signup' ? input.legalAcceptance : undefined,
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      acceptedAt: now.toISOString()
+    }),
     expiresAt,
     createdAt: now.toISOString()
   };
@@ -101,6 +112,20 @@ export async function verifyEmailAuth(input: z.infer<typeof verifyEmailAuthSchem
 
   const freshUser = await getUserByEmail(input.email);
   if (!freshUser) throw notFound('Account');
+
+  if (challenge.intent === 'signup' && challenge.legalTermsVersion && challenge.legalPrivacyVersion && challenge.legalRiskDisclosureVersion) {
+    await recordSignupLegalAcceptance({
+      userId: freshUser.id,
+      email: freshUser.email,
+      termsVersion: challenge.legalTermsVersion,
+      privacyVersion: challenge.legalPrivacyVersion,
+      riskDisclosureVersion: challenge.legalRiskDisclosureVersion,
+      acceptedAt: challenge.legalAcceptedAt,
+      ipAddress: challenge.legalAcceptanceIpAddress,
+      userAgent: challenge.legalAcceptanceUserAgent
+    });
+  }
+
   await createAuditLog({
     actorType: 'user',
     actorId: freshUser.id,

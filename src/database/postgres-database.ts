@@ -24,7 +24,8 @@ import type {
   OnrampOrderRecord,
   SupportTicketRecord,
   SupportTicketMessageRecord,
-  UnifiedWebhookLogRecord
+  UnifiedWebhookLogRecord,
+  LegalAcceptanceRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -120,6 +121,7 @@ export class PostgresDatabase {
     try {
       const users = await client.query('select * from users order by created_at asc');
       const userPreferences = await optionalQuery(client, 'select * from payments_user_preferences order by user_id asc');
+      const legalAcceptances = await optionalQuery(client, 'select * from payments_legal_acceptances order by accepted_at asc');
       const customers = await client.query('select * from payments_customers order by created_at asc');
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
@@ -142,6 +144,7 @@ export class PostgresDatabase {
       return {
         users: users.rows.map(mapUser),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
+        legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
@@ -173,6 +176,20 @@ export class PostgresDatabase {
 
 
 
+
+
+  async insertLegalAcceptanceRecord(record: LegalAcceptanceRecord) {
+    const client = await this.pool.connect();
+    try { await upsertLegalAcceptance(client, record); return record; } finally { client.release(); }
+  }
+
+  async listLegalAcceptancesForUser(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_legal_acceptances where user_id=$1 order by accepted_at desc', [userId]);
+      return result.rows.map(mapLegalAcceptance);
+    } finally { client.release(); }
+  }
 
   async getUserPreferencesRecord(userId: string) {
     const client = await this.pool.connect();
@@ -526,6 +543,7 @@ export class PostgresDatabase {
       await client.query('begin');
       for (const user of data.users) await upsertUser(client, user);
       for (const preferences of data.userPreferences ?? []) await upsertUserPreferences(client, preferences);
+      for (const acceptance of data.legalAcceptances ?? []) await upsertLegalAcceptance(client, acceptance);
       for (const customer of data.customers) await upsertCustomer(client, customer);
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
@@ -554,6 +572,32 @@ export class PostgresDatabase {
   }
 }
 
+
+
+function mapLegalAcceptance(row: any): LegalAcceptanceRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    email: row.email,
+    termsVersion: row.terms_version,
+    privacyVersion: row.privacy_version,
+    riskDisclosureVersion: row.risk_disclosure_version,
+    acceptedAt: iso(row.accepted_at),
+    ipAddress: str(row.ip_address),
+    userAgent: str(row.user_agent),
+    source: row.source,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertLegalAcceptance(client: pg.PoolClient, item: LegalAcceptanceRecord) {
+  await client.query(
+    `insert into payments_legal_acceptances (id, user_id, email, terms_version, privacy_version, risk_disclosure_version, accepted_at, ip_address, user_agent, source, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do nothing`,
+    [item.id, item.userId, item.email, item.termsVersion, item.privacyVersion, item.riskDisclosureVersion, item.acceptedAt, item.ipAddress, item.userAgent, item.source, item.createdAt]
+  );
+}
 
 function mapUserPreferences(row: any): UserPreferencesRecord {
   return {
@@ -1112,17 +1156,23 @@ function mapAuthChallenge(row: any): AuthChallengeRecord {
     fullName: str(row.full_name),
     expiresAt: iso(row.expires_at),
     consumedAt: optionalIso(row.consumed_at),
-    createdAt: iso(row.created_at)
+    createdAt: iso(row.created_at),
+    legalTermsVersion: str(row.legal_terms_version),
+    legalPrivacyVersion: str(row.legal_privacy_version),
+    legalRiskDisclosureVersion: str(row.legal_risk_disclosure_version),
+    legalAcceptedAt: optionalIso(row.legal_accepted_at),
+    legalAcceptanceIpAddress: str(row.legal_acceptance_ip_address),
+    legalAcceptanceUserAgent: str(row.legal_acceptance_user_agent)
   };
 }
 
 async function upsertAuthChallenge(client: pg.PoolClient, item: AuthChallengeRecord) {
   await client.query(
-    `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+    `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at, legal_terms_version, legal_privacy_version, legal_risk_disclosure_version, legal_accepted_at, legal_acceptance_ip_address, legal_acceptance_user_agent)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (id) do update set
-       code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at`,
-    [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt]
+       code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at, legal_terms_version=excluded.legal_terms_version, legal_privacy_version=excluded.legal_privacy_version, legal_risk_disclosure_version=excluded.legal_risk_disclosure_version, legal_accepted_at=excluded.legal_accepted_at, legal_acceptance_ip_address=excluded.legal_acceptance_ip_address, legal_acceptance_user_agent=excluded.legal_acceptance_user_agent`,
+    [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt, item.legalTermsVersion, item.legalPrivacyVersion, item.legalRiskDisclosureVersion, item.legalAcceptedAt, item.legalAcceptanceIpAddress, item.legalAcceptanceUserAgent]
   );
 }
 

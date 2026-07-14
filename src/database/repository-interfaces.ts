@@ -8,6 +8,7 @@ import type {
   ReconciliationFindingRecord,
   ReconciliationRunRecord,
   UserRecord,
+  LegalAcceptanceRecord,
   WebhookEventRecord,
   WithdrawalRecord,
   PaymentControlRecord,
@@ -26,6 +27,8 @@ export interface UserRepository {
 
 export interface AuthRepository {
   insertAuthChallengeRecord(record: AuthChallengeRecord): Promise<AuthChallengeRecord>;
+  insertLegalAcceptanceRecord(record: LegalAcceptanceRecord): Promise<LegalAcceptanceRecord>;
+  listLegalAcceptancesForUser(userId: string): Promise<LegalAcceptanceRecord[]>;
   consumeAuthChallengeAndMarkUserEmail(challengeId: string, userId: string, now: string): Promise<AuthChallengeRecord | null>;
 }
 

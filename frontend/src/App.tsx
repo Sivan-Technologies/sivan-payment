@@ -143,6 +143,13 @@ function qrUrl(value: string) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(value)}`;
 }
 
+
+const legalVersions = {
+  termsVersion: '2026-07-14',
+  privacyVersion: '2026-07-14',
+  riskDisclosureVersion: '2026-07-14'
+};
+
 const legalLinks = {
   terms: 'https://www.sivantech.online/legal/terms',
   privacy: 'https://www.sivantech.online/legal/privacy',
@@ -447,7 +454,11 @@ export default function App() {
         body: JSON.stringify({
           email: body.email,
           fullName: authTab === 'signup' ? body.fullName : undefined,
-          intent: authTab
+          intent: authTab,
+          legalAcceptance: authTab === 'signup' ? {
+            accepted: body.legalAccepted === 'on',
+            ...legalVersions
+          } : undefined
         })
       });
       setPendingEmail(body.email);
@@ -474,7 +485,11 @@ export default function App() {
         body: JSON.stringify({
           email: pendingEmail,
           fullName: authTab === 'signup' ? pendingFullName : undefined,
-          intent: authTab
+          intent: authTab,
+          legalAcceptance: authTab === 'signup' ? {
+            accepted: true,
+            ...legalVersions
+          } : undefined
         })
       });
       setOtpCode('');

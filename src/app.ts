@@ -137,6 +137,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/users\/[^/]+\/onramp-orders/,
     /^\/api\/users\/[^/]+\/support\/tickets/,
     /^\/api\/users\/[^/]+\/preferences/,
+    /^\/api\/users\/[^/]+\/legal-acceptances/,
     /^\/api\/users\/[^/]+\/external-accounts/,
     /^\/api\/users\/[^/]+\/withdrawals/,
     /^\/api\/users\/[^/]+\/deposit-addresses/,

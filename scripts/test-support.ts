@@ -26,7 +26,7 @@ async function main() {
 
   try {
     const email = `support+${Date.now()}@sivan.test`;
-    const started: any = await request('POST', '/api/auth/email/start', { email, fullName: 'Support User', intent: 'signup' });
+    const started: any = await request('POST', '/api/auth/email/start', { email, fullName: 'Support User', intent: 'signup', legalAcceptance: { accepted: true, termsVersion: '2026-07-14', privacyVersion: '2026-07-14', riskDisclosureVersion: '2026-07-14' } });
     const verified: any = await request('POST', '/api/auth/email/verify', { email, code: started.data.devCode });
     authToken = verified.data.token;
     const user = verified.data.user;

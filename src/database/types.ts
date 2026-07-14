@@ -65,6 +65,20 @@ export interface PaymentControlRecord {
 }
 
 
+export interface LegalAcceptanceRecord {
+  id: string;
+  userId: string;
+  email: string;
+  termsVersion: string;
+  privacyVersion: string;
+  riskDisclosureVersion: string;
+  acceptedAt: string;
+  ipAddress?: string;
+  userAgent?: string;
+  source: 'signup' | 'manual' | 'migration';
+  createdAt: string;
+}
+
 export interface UserPreferencesRecord {
   userId: string;
   defaultFiatCurrency: Currency | 'ngn';
@@ -287,6 +301,12 @@ export interface AuthChallengeRecord {
   expiresAt: string;
   consumedAt?: string;
   createdAt: string;
+  legalTermsVersion?: string;
+  legalPrivacyVersion?: string;
+  legalRiskDisclosureVersion?: string;
+  legalAcceptedAt?: string;
+  legalAcceptanceIpAddress?: string;
+  legalAcceptanceUserAgent?: string;
 }
 
 export interface WebhookEventRecord {
@@ -316,6 +336,7 @@ export interface UnifiedWebhookLogRecord {
 export interface DatabaseShape {
   users: UserRecord[];
   userPreferences: UserPreferencesRecord[];
+  legalAcceptances: LegalAcceptanceRecord[];
   customers: CustomerRecord[];
   externalAccounts: ExternalAccountRecord[];
   liquidationAddresses: LiquidationAddressRecord[];

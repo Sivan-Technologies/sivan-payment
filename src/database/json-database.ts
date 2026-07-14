@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, UserPreferencesRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
+import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 
 const emptyDb = (): DatabaseShape => ({
   users: [],
   userPreferences: [],
+  legalAcceptances: [],
   customers: [],
   externalAccounts: [],
   liquidationAddresses: [],
@@ -63,6 +64,22 @@ export class JsonDatabase {
 
 
 
+
+
+  async insertLegalAcceptanceRecord(record: LegalAcceptanceRecord) {
+    return this.mutate((data) => {
+      data.legalAcceptances = data.legalAcceptances ?? [];
+      data.legalAcceptances.push(record);
+      return record;
+    });
+  }
+
+  async listLegalAcceptancesForUser(userId: string) {
+    const data = await this.read();
+    return (data.legalAcceptances ?? [])
+      .filter((item) => item.userId === userId)
+      .sort((a, b) => b.acceptedAt.localeCompare(a.acceptedAt));
+  }
 
   async getUserPreferencesRecord(userId: string) {
     const data = await this.read();
