@@ -7,6 +7,14 @@ import { runOfframpReconciliation } from '../reconciliation/reconciliation.servi
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
 
+
+function listOptions(request: any) {
+  const query = (request.query ?? {}) as Record<string, string>;
+  const limit = Math.min(Math.max(Number(query.limit ?? 100), 1), 500);
+  const offset = Math.max(Number(query.offset ?? 0), 0);
+  return { limit, offset, status: query.status || undefined };
+}
+
 const reconciliationRunSchema = z.object({
   dryRun: z.boolean().default(true),
   provider: z.string().optional(),
@@ -16,12 +24,12 @@ const reconciliationRunSchema = z.object({
 
 export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/overview', async () => ({ data: await getAdminOverview() }));
-  app.get('/api/admin/users', async () => ({ data: await listAdminUsers() }));
-  app.get('/api/admin/withdrawals', async () => ({ data: await listAdminWithdrawals() }));
-  app.get('/api/admin/onramp/orders', async () => ({ data: await listAdminOnrampOrders() }));
-  app.get('/api/admin/webhooks', async () => ({ data: await listAdminWebhookEvents() }));
-  app.get('/api/admin/audit-logs', async () => ({ data: await listAdminAuditLogs() }));
-  app.get('/api/admin/reconciliation/runs', async () => ({ data: await listAdminReconciliationRuns() }));
+  app.get('/api/admin/users', async (request) => ({ data: await listAdminUsers(listOptions(request)) }));
+  app.get('/api/admin/withdrawals', async (request) => ({ data: await listAdminWithdrawals(listOptions(request)) }));
+  app.get('/api/admin/onramp/orders', async (request) => ({ data: await listAdminOnrampOrders(listOptions(request)) }));
+  app.get('/api/admin/webhooks', async (request) => ({ data: await listAdminWebhookEvents(listOptions(request)) }));
+  app.get('/api/admin/audit-logs', async (request) => ({ data: await listAdminAuditLogs(listOptions(request)) }));
+  app.get('/api/admin/reconciliation/runs', async (request) => ({ data: await listAdminReconciliationRuns(listOptions(request)) }));
   app.get('/api/admin/analytics', async () => ({ data: await getAdminAnalytics() }));
 
 

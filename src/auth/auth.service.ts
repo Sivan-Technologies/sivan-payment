@@ -50,11 +50,7 @@ export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>
     createdAt: now.toISOString()
   };
 
-  await db.mutate((data) => {
-    data.authChallenges = data.authChallenges ?? [];
-    data.authChallenges.push(challenge);
-    return challenge;
-  });
+  await db.insertAuthChallengeRecord(challenge);
 
   const email = buildOtpEmail({
     code,
@@ -101,16 +97,7 @@ export async function verifyEmailAuth(input: z.infer<typeof verifyEmailAuthSchem
     user = await createUser({ email: input.email, fullName: challenge.fullName, primaryChannel: 'email' });
   }
 
-  await db.mutate((mutable) => {
-    const record = (mutable.authChallenges ?? []).find((item) => item.id === challenge.id);
-    if (record) record.consumedAt = now;
-    const userRecord = mutable.users.find((item) => item.id === user.id);
-    if (userRecord && !userRecord.emailVerifiedAt) {
-      userRecord.emailVerifiedAt = now;
-      userRecord.updatedAt = now;
-    }
-    return record;
-  });
+  await db.consumeAuthChallengeAndMarkUserEmail(challenge.id, user.id, now);
 
   const freshUser = await getUserByEmail(input.email);
   if (!freshUser) throw notFound('Account');

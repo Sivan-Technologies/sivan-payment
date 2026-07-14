@@ -213,3 +213,7 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .effect-panel { align-self: start; }
 @media (max-width: 1180px) { .control-status-card, .system-mode-form, .network-control-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .control-row { grid-template-columns: 1fr; } .switch-row { justify-content: space-between; } }
+.pagination-controls { display: inline-flex; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.035); }
+.pagination-controls span { color: var(--muted); font-size: 12px; font-weight: 800; white-space: nowrap; }
+.pagination-controls select { width: auto; min-width: 76px; padding: 8px 10px; border-radius: 9px; }
+@media (max-width: 760px) { .pagination-controls { width: 100%; justify-content: space-between; flex-wrap: wrap; } }

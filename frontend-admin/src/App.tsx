@@ -101,6 +101,8 @@ export default function App() {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [listPage, setListPage] = useState(0);
+  const [listPageSize, setListPageSize] = useState(100);
   const [adminError, setAdminError] = useState<string | null>(null);
 
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -119,6 +121,7 @@ export default function App() {
   const [estimate, setEstimate] = useState<EconomicsEstimate | null>(null);
 
   const pageTitle = useMemo(() => nav.find((item) => item.key === view)?.label || 'Command', [view]);
+  const listQuery = useMemo(() => `limit=${listPageSize}&offset=${listPage * listPageSize}`, [listPage, listPageSize]);
 
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -152,12 +155,12 @@ export default function App() {
       const [overviewResult, analyticsResult, usersResult, withdrawalsResult, onrampOrdersResult, webhooksResult, auditLogsResult, reconciliationRunsResult, providersResult, controlsResult, systemStatusResult] = await Promise.allSettled([
         api<AdminOverview>('/api/admin/overview'),
         api<AdminAnalytics>('/api/admin/analytics'),
-        api<AdminUser[]>('/api/admin/users'),
-        api<AdminWithdrawal[]>('/api/admin/withdrawals'),
-        api<AdminOnrampOrder[]>('/api/admin/onramp/orders'),
-        api<WebhookEventRecord[]>('/api/admin/webhooks'),
-        api<AdminAuditLog[]>('/api/admin/audit-logs'),
-        api<AdminReconciliationRun[]>('/api/admin/reconciliation/runs'),
+        api<AdminUser[]>(`/api/admin/users?${listQuery}`),
+        api<AdminWithdrawal[]>(`/api/admin/withdrawals?${listQuery}`),
+        api<AdminOnrampOrder[]>(`/api/admin/onramp/orders?${listQuery}`),
+        api<WebhookEventRecord[]>(`/api/admin/webhooks?${listQuery}`),
+        api<AdminAuditLog[]>(`/api/admin/audit-logs?${listQuery}`),
+        api<AdminReconciliationRun[]>(`/api/admin/reconciliation/runs?${listQuery}`),
         api<ProviderCapability[]>('/api/providers/offramp/capabilities'),
         api<unknown>('/api/admin/offramp/controls'),
         api<SystemStatus>('/api/admin/system/status')
@@ -180,7 +183,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [api, checkApi, notify]);
+  }, [api, checkApi, notify, listQuery]);
 
   useEffect(() => {
     localStorage.setItem('sivan.admin.apiBase', apiBase);
@@ -287,7 +290,7 @@ export default function App() {
       </aside>
 
       <main className="main">
-        <header className="topbar"><div><p className="eyebrow">Production Admin Control Center</p><h2>{pageTitle}</h2></div><div className="top-actions"><div className={`status-pill ${apiOnline === true ? 'ok' : apiOnline === false ? 'bad' : ''}`}><span />{apiOnline === true ? 'API connected' : apiOnline === false ? 'API offline' : 'Checking API'}</div><button className="secondary-btn" onClick={refreshAdmin}>{loading ? 'Loading...' : 'Refresh'}</button></div></header>
+        <header className="topbar"><div><p className="eyebrow">Production Admin Control Center</p><h2>{pageTitle}</h2></div><div className="top-actions"><div className={`status-pill ${apiOnline === true ? 'ok' : apiOnline === false ? 'bad' : ''}`}><span />{apiOnline === true ? 'API connected' : apiOnline === false ? 'API offline' : 'Checking API'}</div><PaginationControls page={listPage} pageSize={listPageSize} onPage={setListPage} onPageSize={(size) => { setListPage(0); setListPageSize(size); }} /><button className="secondary-btn" onClick={refreshAdmin}>{loading ? 'Loading...' : 'Refresh'}</button></div></header>
         <div className="admin-warning">Internal controls. Do not expose this dashboard without admin authentication, RBAC, 2FA, and audit logging.</div>
         {toast && <section className={`toast ${toast.type === 'error' ? 'error' : ''}`}>{toast.message}</section>}
 
@@ -307,6 +310,11 @@ export default function App() {
     </div>
   );
 }
+
+function PaginationControls({ page, pageSize, onPage, onPageSize }: { page: number; pageSize: number; onPage: (page: number) => void; onPageSize: (size: number) => void }) {
+  return <div className="pagination-controls"><button className="ghost-btn small" disabled={page === 0} onClick={() => onPage(Math.max(0, page - 1))}>Prev</button><span>Page {page + 1}</span><select value={pageSize} onChange={(event) => onPageSize(Number(event.target.value))}><option value={50}>50</option><option value={100}>100</option><option value={250}>250</option><option value={500}>500</option></select><button className="ghost-btn small" onClick={() => onPage(page + 1)}>Next</button></div>;
+}
+
 
 function Stat({ label, value, helper }: { label: string; value: string | number; helper?: string }) {
   return <article className="stat-card"><p>{label}</p><strong>{value}</strong><span>{helper}</span></article>;

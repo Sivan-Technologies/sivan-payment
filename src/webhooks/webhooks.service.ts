@@ -1,5 +1,5 @@
 import { db } from '../database/json-database.js';
-import type { WebhookEventRecord, WithdrawalRecord } from '../database/types.js';
+import type { WebhookEventRecord, WithdrawalRecord, UnifiedWebhookLogRecord } from '../database/types.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
 import { badRequest, conflict } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
@@ -29,68 +29,65 @@ export async function processBridgeWebhook(payload: BridgeWebhookPayload, rawBod
 
   const now = nowIso();
 
-  return db.mutate((data) => {
-    const existing = data.webhookEvents.find((event) => event.provider === 'bridge' && event.providerEventId === eventId);
-    if (existing?.processedAt) {
-      return { duplicate: true, event: existing };
-    }
-    if (existing) {
-      throw conflict('Webhook event is already being processed');
-    }
+  const data = await db.read();
+  const existing = data.webhookEvents.find((event) => event.provider === 'bridge' && event.providerEventId === eventId);
+  if (existing?.processedAt) {
+    return { duplicate: true, event: existing };
+  }
+  if (existing) {
+    throw conflict('Webhook event is already being processed');
+  }
 
-    const event: WebhookEventRecord = {
-      id: id('wh'),
-      provider: 'bridge',
-      providerEventId: eventId,
-      eventCategory: payload.event_category,
-      eventType: payload.event_type,
-      eventObjectId: payload.event_object_id,
-      payload,
-      createdAt: now
-    };
-    data.webhookEvents.push(event);
+  const event: WebhookEventRecord = {
+    id: id('wh'),
+    provider: 'bridge',
+    providerEventId: eventId,
+    eventCategory: payload.event_category,
+    eventType: payload.event_type,
+    eventObjectId: payload.event_object_id,
+    payload,
+    createdAt: now
+  };
+  await db.insertWebhookEventRecord(event);
 
-    const unifiedLog = {
-      id: id('uwl'),
-      serviceName: 'sivan-payment',
-      provider: 'bridge',
-      providerEventId: eventId,
-      paymentReference: undefined,
-      eventCategory: payload.event_category,
-      eventType: payload.event_type,
-      payload,
-      createdAt: now
-    };
-    if (!data.unifiedWebhookLogs) {
-      data.unifiedWebhookLogs = [];
-    }
-    data.unifiedWebhookLogs.push(unifiedLog);
+  const unifiedLog: UnifiedWebhookLogRecord = {
+    id: id('uwl'),
+    serviceName: 'sivan-payment',
+    provider: 'bridge',
+    providerEventId: eventId,
+    paymentReference: undefined,
+    eventCategory: payload.event_category,
+    eventType: payload.event_type,
+    payload,
+    createdAt: now
+  };
+  await db.insertUnifiedWebhookLogRecord(unifiedLog);
 
-    const eventCategory = normalizeEventCategory(payload.event_category);
+  const eventCategory = normalizeEventCategory(payload.event_category);
+  if (eventCategory === 'liquidation_address_drain') {
+    const withdrawal = applyLiquidationDrainEvent(data, payload);
+    if (withdrawal) await db.updateWithdrawalRecord(withdrawal);
+  }
+  if (eventCategory === 'customer') {
+    const customer = applyCustomerEvent(data, payload);
+    if (customer) await db.updateCustomerRecord(customer);
+  }
+  if (eventCategory === 'kyc_link') {
+    const customer = applyKycLinkEvent(data, payload);
+    if (customer) await db.updateCustomerRecord(customer);
+  }
+  if (eventCategory === 'external_account' || eventCategory === 'external_acccount') {
+    const account = applyExternalAccountEvent(data, payload);
+    if (account) await db.updateExternalAccountRecord(account);
+  }
+  if (eventCategory === 'transfer' || eventCategory === 'transfers') {
+    const order = applyTransferEvent(data, payload);
+    if (order) await db.updateOnrampOrderRecord(order);
+  }
 
-    if (eventCategory === 'liquidation_address_drain') {
-      applyLiquidationDrainEvent(data, payload);
-    }
-
-    if (eventCategory === 'customer') {
-      applyCustomerEvent(data, payload);
-    }
-
-    if (eventCategory === 'kyc_link') {
-      applyKycLinkEvent(data, payload);
-    }
-
-    if (eventCategory === 'external_account' || eventCategory === 'external_acccount') {
-      applyExternalAccountEvent(data, payload);
-    }
-
-    if (eventCategory === 'transfer' || eventCategory === 'transfers') {
-      applyTransferEvent(data, payload);
-    }
-
-    event.processedAt = nowIso();
-    return { duplicate: false, event };
-  });
+  event.processedAt = nowIso();
+  await db.updateWebhookEventRecord(event);
+  return { duplicate: false, event };
 }
 
 
@@ -102,13 +99,13 @@ function normalizeEventCategory(category?: string): string {
     .replace(/[\s.\-]+/g, '_');
 }
 
-function applyLiquidationDrainEvent(data: any, payload: BridgeWebhookPayload) {
+function applyLiquidationDrainEvent(data: any, payload: BridgeWebhookPayload): WithdrawalRecord | undefined {
   const drain = payload.event_object ?? {};
   const providerLiquidationAddressId = drain.liquidation_address_id;
-  if (!providerLiquidationAddressId) return;
+  if (!providerLiquidationAddressId) return undefined;
 
   const la = data.liquidationAddresses.find((item: any) => item.providerLiquidationAddressId === providerLiquidationAddressId);
-  if (!la) return;
+  if (!la) return undefined;
 
   let withdrawal: WithdrawalRecord | undefined = data.withdrawals.find(
     (w: WithdrawalRecord) => w.providerDrainId === drain.id
@@ -120,7 +117,7 @@ function applyLiquidationDrainEvent(data: any, payload: BridgeWebhookPayload) {
       .sort((a: WithdrawalRecord, b: WithdrawalRecord) => b.createdAt.localeCompare(a.createdAt))[0];
   }
 
-  if (!withdrawal) return;
+  if (!withdrawal) return undefined;
 
   const status = mapBridgeDrainState(drain.state ?? payload.event_object_status);
   withdrawal.providerDrainId = drain.id ?? withdrawal.providerDrainId;
@@ -135,34 +132,37 @@ function applyLiquidationDrainEvent(data: any, payload: BridgeWebhookPayload) {
   withdrawal.raw = drain;
   withdrawal.updatedAt = nowIso();
   if (status === 'completed' && !withdrawal.completedAt) withdrawal.completedAt = nowIso();
+  return withdrawal;
 }
 
-function applyCustomerEvent(data: any, payload: BridgeWebhookPayload) {
+function applyCustomerEvent(data: any, payload: BridgeWebhookPayload): any | undefined {
   const customerObject = payload.event_object ?? {};
   const customer = data.customers.find((c: any) => c.providerCustomerId === customerObject.id);
-  if (!customer) return;
+  if (!customer) return undefined;
   customer.kycStatus = mapBridgeKycStatus(customerObject.kyc_status ?? customerObject.status ?? payload.event_object_status);
   customer.raw = customerObject;
   customer.updatedAt = nowIso();
+  return customer;
 }
 
-function applyKycLinkEvent(data: any, payload: BridgeWebhookPayload) {
+function applyKycLinkEvent(data: any, payload: BridgeWebhookPayload): any | undefined {
   const kyc = payload.event_object ?? {};
   const customer = data.customers.find((c: any) => c.kycLinkId === kyc.id || c.providerCustomerId === kyc.customer_id);
-  if (!customer) return;
+  if (!customer) return undefined;
   customer.kycStatus = mapBridgeKycStatus(kyc.kyc_status ?? payload.event_object_status);
   customer.tosStatus = kyc.tos_status === 'approved' ? 'approved' : customer.tosStatus;
   customer.raw = kyc;
   customer.updatedAt = nowIso();
+  return customer;
 }
 
 
-function applyTransferEvent(data: any, payload: BridgeWebhookPayload) {
+function applyTransferEvent(data: any, payload: BridgeWebhookPayload): any | undefined {
   const transfer = payload.event_object ?? {};
   const transferId = transfer.id ?? payload.event_object_id;
-  if (!transferId) return;
+  if (!transferId) return undefined;
   const order = (data.onrampOrders ?? []).find((item: any) => item.providerTransferId === transferId || item.id === transfer.client_reference_id);
-  if (!order) return;
+  if (!order) return undefined;
   const status = mapBridgeTransferState(transfer.state ?? transfer.status ?? payload.event_object_status);
   order.providerTransferId = transferId;
   order.status = status;
@@ -174,13 +174,15 @@ function applyTransferEvent(data: any, payload: BridgeWebhookPayload) {
   order.raw = transfer;
   order.updatedAt = nowIso();
   if (status === 'completed' && !order.completedAt) order.completedAt = nowIso();
+  return order;
 }
 
-function applyExternalAccountEvent(data: any, payload: BridgeWebhookPayload) {
+function applyExternalAccountEvent(data: any, payload: BridgeWebhookPayload): any | undefined {
   const external = payload.event_object ?? {};
   const account = data.externalAccounts.find((ea: any) => ea.providerExternalAccountId === external.id);
-  if (!account) return;
+  if (!account) return undefined;
   account.status = external.active === false ? 'deactivated' : account.status;
   account.raw = external;
   account.updatedAt = nowIso();
+  return account;
 }
