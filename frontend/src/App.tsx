@@ -143,6 +143,14 @@ function qrUrl(value: string) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(value)}`;
 }
 
+const legalLinks = {
+  terms: 'https://www.sivantech.online/legal/terms',
+  privacy: 'https://www.sivantech.online/legal/privacy',
+  risk: 'https://www.sivantech.online/legal/risk-disclosure',
+  dataRetention: 'https://www.sivantech.online/legal/data-retention'
+};
+
+
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -732,6 +740,7 @@ export default function App() {
 
         <div className="sidebar-footer app-sidebar-footer">
           <div className="sidebar-status"><span></span>{systemStatus.mode === 'active' ? 'All systems operational' : systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</div>
+          <div className="sidebar-legal-links"><a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a><a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy</a><a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk</a></div>
         </div>
       </aside>
 
@@ -794,6 +803,7 @@ export default function App() {
                 <form className="form" onSubmit={handleEmailAuthStart}>
                   <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
                   {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>}
+                  {authTab === 'signup' && <p className="legal-consent">By continuing, you agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</p>}
                   <button className="primary-btn" disabled={loading}>{loading ? 'Sending...' : authTab === 'signup' ? 'Send verification code' : 'Send login code'}</button>
                 </form>
               ) : (
@@ -1019,7 +1029,7 @@ function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () =
         <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
         <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
         <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'FAQ', href: '#faq' }, { label: 'Safety', href: '#safety' }, { label: 'Sivan website', href: 'https://www.sivantech.online/' }]} />
-        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: 'https://www.sivantech.online/' }, { label: 'Privacy Policy', href: 'https://www.sivantech.online/' }, { label: 'Risk disclosure', href: '#safety' }]} />
+        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: legalLinks.terms }, { label: 'Privacy Policy', href: legalLinks.privacy }, { label: 'Risk Disclosure', href: legalLinks.risk }, { label: 'Data Retention', href: legalLinks.dataRetention }]} />
       </div>
       <div className="footer-bottom">
         <p>© 2026 Sivan Technologies. All rights reserved. Cryptoassets and stablecoins are volatile and may not be protected by financial compensation schemes. Services depend on licensed/provider-supported payment rails and may be unavailable in some jurisdictions. Sivan does not ask for wallet private keys.</p>
@@ -1242,7 +1252,7 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
         <Kv label="Payout currency" value={review.destinationCurrency.toUpperCase()} />
         <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
       </div>
-      <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</div>
+      <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</div>
       <div className="split-actions">
         <button className="ghost-btn" onClick={onCancel}>Edit details</button>
         <button className="primary-btn" disabled={loading} onClick={onConfirm}>{loading ? 'Creating...' : 'Create deposit address'}</button>
@@ -1276,7 +1286,7 @@ function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubm
   const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
   return (
     <section className="app-page verification-premium">
-      <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." />
+      <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." /><p className="legal-inline-note">Verification is required under our <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a> and provider compliance requirements.</p>
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
           <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
@@ -1330,10 +1340,20 @@ function PageHero({ title, subtitle, action }: { title: string; subtitle: string
   return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>;
 }
 
+function LegalResources({ compact = false }: { compact?: boolean }) {
+  const links = [
+    { label: 'Terms', href: legalLinks.terms },
+    { label: 'Privacy', href: legalLinks.privacy },
+    { label: 'Risk Disclosure', href: legalLinks.risk },
+    { label: 'Data Retention', href: legalLinks.dataRetention }
+  ];
+  return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
+}
+
 function SettingsView({ user, onLogout }: { user: UserRecord | null; onLogout: () => void }) {
   const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
   const nameParts = (user?.fullName || '').split(/\s+/);
-  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.',''],['◷','Active sessions','Current browser session active.','Manage']]} />}{tab === 'notifications' && <SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm and payouts send.','on'],['✉','Marketing emails','Product news and offers.','off'],['◈','Security alerts','Suspicious logins and account changes.','on']]} />}{tab === 'preferences' && <><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select><option>USD — US Dollar</option><option>GBP — British Pound</option><option>EUR — Euro</option><option>NGN — Coming soon</option></select></label><label>Language<select defaultValue="en-US"><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><button className="primary-btn">Save preferences</button><button className="secondary-btn" onClick={onLogout}>Sign out</button></>}</article></div></section>;
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.',''],['◷','Active sessions','Current browser session active.','Manage']]} />}{tab === 'notifications' && <SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm and payouts send.','on'],['✉','Marketing emails','Product news and offers.','off'],['◈','Security alerts','Suspicious logins and account changes.','on']]} />}{tab === 'preferences' && <><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select><option>USD — US Dollar</option><option>GBP — British Pound</option><option>EUR — Euro</option><option>NGN — Coming soon</option></select></label><label>Language<select defaultValue="en-US"><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><button className="primary-btn">Save preferences</button><button className="secondary-btn" onClick={onLogout}>Sign out</button></>}<LegalResources compact /></article></div></section>;
 }
 
 function SettingsRows({ rows }: { rows: string[][] }) {
@@ -1342,8 +1362,9 @@ function SettingsRows({ rows }: { rows: string[][] }) {
 
 function SupportView() {
   const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
-  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><SupportCard icon="☎" title="Report an issue" body="Problem with a transaction? Open a ticket." action="Open ticket" /></div><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article></section>;
+  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><SupportCard icon="☎" title="Report an issue" body="Problem with a transaction? Open a ticket." action="Open ticket" /></div><div className="support-legal-grid"><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article><LegalResources /></div></section>;
 }
+
 
 function SupportCard({ icon, title, body, action, href }: { icon: string; title: string; body: string; action: string; href?: string }) {
   const content = <><span>{icon}</span><h3>{title}</h3><p>{body}</p><strong>{action} →</strong></>;
