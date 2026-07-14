@@ -147,7 +147,12 @@ const legalLinks = {
   terms: 'https://www.sivantech.online/legal/terms',
   privacy: 'https://www.sivantech.online/legal/privacy',
   risk: 'https://www.sivantech.online/legal/risk-disclosure',
-  dataRetention: 'https://www.sivantech.online/legal/data-retention'
+  dataRetention: 'https://www.sivantech.online/legal/data-retention',
+  amlKyc: 'https://www.sivantech.online/legal/aml-kyc',
+  jurisdictions: 'https://www.sivantech.online/legal/supported-jurisdictions',
+  wrongNetwork: 'https://www.sivantech.online/legal/wrong-network',
+  complaints: 'https://www.sivantech.online/legal/complaints',
+  cookies: 'https://www.sivantech.online/legal/cookies'
 };
 
 
@@ -891,7 +896,7 @@ export default function App() {
                 <form className="form" onSubmit={handleEmailAuthStart}>
                   <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
                   {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>}
-                  {authTab === 'signup' && <p className="legal-consent">By continuing, you agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</p>}
+                  {authTab === 'signup' && <label className="legal-checkbox"><input name="legalAccepted" type="checkbox" required /><span>I agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</span></label>}
                   <button className="primary-btn" disabled={loading}>{loading ? 'Sending...' : authTab === 'signup' ? 'Send verification code' : 'Send login code'}</button>
                 </form>
               ) : (
@@ -1117,7 +1122,7 @@ function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () =
         <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
         <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
         <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'FAQ', href: '#faq' }, { label: 'Safety', href: '#safety' }, { label: 'Sivan website', href: 'https://www.sivantech.online/' }]} />
-        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: legalLinks.terms }, { label: 'Privacy Policy', href: legalLinks.privacy }, { label: 'Risk Disclosure', href: legalLinks.risk }, { label: 'Data Retention', href: legalLinks.dataRetention }]} />
+        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: legalLinks.terms }, { label: 'Privacy Policy', href: legalLinks.privacy }, { label: 'Risk Disclosure', href: legalLinks.risk }, { label: 'Data Retention', href: legalLinks.dataRetention }, { label: 'AML/KYC', href: legalLinks.amlKyc }, { label: 'Jurisdictions', href: legalLinks.jurisdictions }, { label: 'Wrong Network Policy', href: legalLinks.wrongNetwork }, { label: 'Complaints', href: legalLinks.complaints }, { label: 'Cookies', href: legalLinks.cookies }]} />
       </div>
       <div className="footer-bottom">
         <p>© 2026 Sivan Technologies. All rights reserved. Cryptoassets and stablecoins are volatile and may not be protected by financial compensation schemes. Services depend on licensed/provider-supported payment rails and may be unavailable in some jurisdictions. Sivan does not ask for wallet private keys.</p>
@@ -1433,7 +1438,12 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
     { label: 'Terms', href: legalLinks.terms },
     { label: 'Privacy', href: legalLinks.privacy },
     { label: 'Risk Disclosure', href: legalLinks.risk },
-    { label: 'Data Retention', href: legalLinks.dataRetention }
+    { label: 'Data Retention', href: legalLinks.dataRetention },
+    { label: 'AML/KYC Policy', href: legalLinks.amlKyc },
+    { label: 'Supported Jurisdictions', href: legalLinks.jurisdictions },
+    { label: 'Wrong Network Policy', href: legalLinks.wrongNetwork },
+    { label: 'Complaints Policy', href: legalLinks.complaints },
+    { label: 'Cookie Policy', href: legalLinks.cookies }
   ];
   return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
 }
@@ -1600,7 +1610,7 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
     <article className="deposit-card live-deposit-card">
       <p className="eyebrow">Step 3</p>
       <h3>Deposit address created</h3>
-      <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</p>
+      <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</p>
       <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address">{result.deposit.address}</div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button></div></div>
       <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Payout currency" value={result.withdrawal.destinationCurrency.toUpperCase()} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></div>
       <div className="tracking-timeline">

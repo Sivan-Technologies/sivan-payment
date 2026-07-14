@@ -1039,3 +1039,6 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .switch-toggle i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #9eacbb; transition: .18s; }
 .switch-toggle input:checked + i { background: rgba(116,221,190,.72); border-color: rgba(116,221,190,.44); }
 .switch-toggle input:checked + i::after { transform: translateX(16px); background: #06130f; }
+.legal-checkbox { display: flex; grid-template-columns: none; align-items: flex-start; gap: 10px; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.legal-checkbox input { width: auto; margin-top: 3px; }
+.legal-checkbox a { color: var(--green); font-weight: 900; text-decoration: none; }
