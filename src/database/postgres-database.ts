@@ -118,11 +118,122 @@ export class PostgresDatabase {
     }
   }
 
-  async mutate<T>(fn: (db: DatabaseShape) => T | Promise<T>): Promise<T> {
-    const data = await this.read();
-    const result = await fn(data);
-    await this.persist(data);
-    return result;
+  async mutate<T>(_fn: (db: DatabaseShape) => T | Promise<T>): Promise<T> {
+    throw new Error('PostgresDatabase.mutate is disabled for production safety. Use direct repository methods instead.');
+  }
+
+
+  async insertAuditLogRecord(record: AuditLogRecord) {
+    const client = await this.pool.connect();
+    try { await upsertAuditLog(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertAuthChallengeRecord(record: AuthChallengeRecord) {
+    const client = await this.pool.connect();
+    try { await upsertAuthChallenge(client, record); return record; } finally { client.release(); }
+  }
+
+  async consumeAuthChallengeAndMarkUserEmail(challengeId: string, userId: string, now: string) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      const challenge = await client.query('update payments_auth_challenges set consumed_at=$1 where id=$2 returning *', [now, challengeId]);
+      await client.query('update users set email_verified_at=coalesce(email_verified_at,$1), updated_at=$1 where user_id=$2', [now, userId]);
+      await client.query('commit');
+      return challenge.rows[0] ? mapAuthChallenge(challenge.rows[0]) : null;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async insertUserRecord(record: UserRecord) {
+    const client = await this.pool.connect();
+    try { await upsertUser(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertCustomerRecord(record: CustomerRecord) {
+    const client = await this.pool.connect();
+    try { await upsertCustomer(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateCustomerRecord(record: CustomerRecord) {
+    const client = await this.pool.connect();
+    try { await upsertCustomer(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertExternalAccountRecord(record: ExternalAccountRecord) {
+    const client = await this.pool.connect();
+    try { await upsertExternalAccount(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateExternalAccountRecord(record: ExternalAccountRecord) {
+    const client = await this.pool.connect();
+    try { await upsertExternalAccount(client, record); return record; } finally { client.release(); }
+  }
+
+  async createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await upsertLiquidationAddress(client, liquidationAddress);
+      await upsertWithdrawal(client, withdrawal);
+      await client.query('commit');
+      return { liquidationAddress, withdrawal };
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async insertOnrampOrderRecord(record: OnrampOrderRecord) {
+    const client = await this.pool.connect();
+    try { await upsertOnrampOrder(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateOnrampOrderRecord(record: OnrampOrderRecord) {
+    const client = await this.pool.connect();
+    try { await upsertOnrampOrder(client, record); return record; } finally { client.release(); }
+  }
+
+
+  async updatePaymentControlsSnapshot(input: { customerTypes: CustomerTypeControlRecord[]; payoutCurrencies: PaymentControlRecord[]; sourceAssets: AssetControlRecord[]; sourceNetworks: NetworkControlRecord[] }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      for (const control of input.customerTypes) await upsertCustomerTypeControl(client, control);
+      for (const control of input.payoutCurrencies) await upsertPaymentControl(client, control);
+      for (const control of input.sourceAssets) await upsertAssetControl(client, control);
+      for (const control of input.sourceNetworks) await upsertNetworkControl(client, control);
+      await client.query('commit');
+      return input;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async updateSystemStatusRecord(record: SystemStatusRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSystemStatus(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertReconciliationRecords(run: ReconciliationRunRecord, findings: ReconciliationFindingRecord[]) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await upsertReconciliationRun(client, run);
+      for (const finding of findings) await upsertReconciliationFinding(client, finding);
+      await client.query('commit');
+      return run;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async updateWithdrawalRecord(record: WithdrawalRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWithdrawal(client, record); return record; } finally { client.release(); }
+  }
+
+
+  async insertWebhookEventRecord(record: WebhookEventRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWebhookEvent(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateWebhookEventRecord(record: WebhookEventRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWebhookEvent(client, record); return record; } finally { client.release(); }
   }
 
   private async persist(data: DatabaseShape): Promise<void> {

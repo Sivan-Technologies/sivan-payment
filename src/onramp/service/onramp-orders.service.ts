@@ -63,11 +63,7 @@ export async function createOnrampOrder(input: CreateOnrampOrderInput) {
     completedAt: status === 'completed' ? now : undefined
   };
 
-  await db.mutate((mutable) => {
-    mutable.onrampOrders = mutable.onrampOrders ?? [];
-    mutable.onrampOrders.push(record);
-    return record;
-  });
+  await db.insertOnrampOrderRecord(record);
 
   await createAuditLog({
     actorType: 'user',

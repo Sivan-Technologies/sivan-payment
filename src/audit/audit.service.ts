@@ -29,11 +29,7 @@ export async function createAuditLog(input: CreateAuditLogInput) {
     createdAt: nowIso()
   };
 
-  await db.mutate((data) => {
-    data.auditLogs = data.auditLogs ?? [];
-    data.auditLogs.push(record);
-    return record;
-  });
+  await db.insertAuditLogRecord(record);
 
   return record;
 }

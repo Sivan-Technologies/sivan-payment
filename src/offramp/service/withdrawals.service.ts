@@ -69,57 +69,54 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
   });
 
   const now = nowIso();
-  const result = await db.mutate((mutable) => {
-    const la = {
-      id: id('la'),
-      userId: input.userId,
-      customerId: customer.id,
-      externalAccountId: externalAccount.id,
-      provider: provider.name,
-      providerLiquidationAddressId: providerAddress.id,
-      address: providerAddress.address,
-      memolessAddress: providerAddress.memolessAddress,
-      chain: providerAddress.chain,
-      sourceCurrency: providerAddress.currency,
-      destinationCurrency: providerAddress.destinationCurrency,
-      destinationPaymentRail: providerAddress.destinationPaymentRail,
-      returnAddress: input.returnAddress,
-      returnInstructions: input.returnInstructions,
-      customDeveloperFeePercent,
-      status: providerAddress.state === 'active' ? 'active' as const : 'created' as const,
-      raw: providerAddress.raw,
-      createdAt: now,
-      updatedAt: now
-    };
-    mutable.liquidationAddresses.push(la);
+  const la = {
+    id: id('la'),
+    userId: input.userId,
+    customerId: customer.id,
+    externalAccountId: externalAccount.id,
+    provider: provider.name,
+    providerLiquidationAddressId: providerAddress.id,
+    address: providerAddress.address,
+    memolessAddress: providerAddress.memolessAddress,
+    chain: providerAddress.chain,
+    sourceCurrency: providerAddress.currency,
+    destinationCurrency: providerAddress.destinationCurrency,
+    destinationPaymentRail: providerAddress.destinationPaymentRail,
+    returnAddress: input.returnAddress,
+    returnInstructions: input.returnInstructions,
+    customDeveloperFeePercent,
+    status: providerAddress.state === 'active' ? 'active' as const : 'created' as const,
+    raw: providerAddress.raw,
+    createdAt: now,
+    updatedAt: now
+  };
 
-    const withdrawal = {
-      id: id('wd'),
-      userId: input.userId,
-      customerId: customer.id,
-      externalAccountId: externalAccount.id,
-      liquidationAddressId: la.id,
-      provider: provider.name,
-      sourceCurrency: input.sourceCurrency,
-      destinationCurrency: input.destinationCurrency,
-      feePercent: customDeveloperFeePercent,
-      status: 'pending_deposit' as const,
-      destinationReference: input.destinationReference,
-      createdAt: now,
-      updatedAt: now
-    };
-    mutable.withdrawals.push(withdrawal);
+  const withdrawal = {
+    id: id('wd'),
+    userId: input.userId,
+    customerId: customer.id,
+    externalAccountId: externalAccount.id,
+    liquidationAddressId: la.id,
+    provider: provider.name,
+    sourceCurrency: input.sourceCurrency,
+    destinationCurrency: input.destinationCurrency,
+    feePercent: customDeveloperFeePercent,
+    status: 'pending_deposit' as const,
+    destinationReference: input.destinationReference,
+    createdAt: now,
+    updatedAt: now
+  };
 
-    return {
-      withdrawal,
-      deposit: {
-        address: la.address,
-        memolessAddress: la.memolessAddress,
-        chain: la.chain,
-        currency: la.sourceCurrency
-      }
-    };
-  });
+  await db.createWithdrawalRecords(la, withdrawal);
+  const result = {
+    withdrawal,
+    deposit: {
+      address: la.address,
+      memolessAddress: la.memolessAddress,
+      chain: la.chain,
+      currency: la.sourceCurrency
+    }
+  };
 
   await createAuditLog({
     actorType: 'user',

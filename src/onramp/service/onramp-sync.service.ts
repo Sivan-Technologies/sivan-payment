@@ -18,22 +18,24 @@ export async function syncOnrampOrder(id: string) {
 export async function applyTransferToOnrampOrder(transfer: BridgeOnrampTransfer) {
   const transferId = transfer?.id;
   if (!transferId) return null;
-  return db.mutate((mutable) => {
-    const order = (mutable.onrampOrders ?? []).find((item) => item.providerTransferId === transferId || item.id === transfer.client_reference_id);
-    if (!order) return null;
-    const status = mapBridgeTransferState(transfer.state ?? transfer.status);
-    order.providerTransferId = transfer.id ?? order.providerTransferId;
-    order.status = status;
-    order.statusReason = transfer.state ?? transfer.status ?? order.statusReason;
-    order.providerReference = transfer.source_deposit_instructions?.reference ?? transfer.deposit_instructions?.reference ?? order.providerReference;
-    order.sourceDepositInstructions = transfer.source_deposit_instructions ?? transfer.deposit_instructions ?? order.sourceDepositInstructions;
-    order.destinationTxHash = transfer.receipt?.destination_tx_hash ?? order.destinationTxHash;
-    order.receipt = transfer.receipt ?? order.receipt;
-    order.raw = transfer;
-    order.updatedAt = nowIso();
-    if (status === 'completed' && !order.completedAt) order.completedAt = nowIso();
-    return order;
-  });
+  const data = await db.read();
+  const existing = (data.onrampOrders ?? []).find((item) => item.providerTransferId === transferId || item.id === transfer.client_reference_id);
+  if (!existing) return null;
+  const status = mapBridgeTransferState(transfer.state ?? transfer.status);
+  const order = {
+    ...existing,
+    providerTransferId: transfer.id ?? existing.providerTransferId,
+    status,
+    statusReason: transfer.state ?? transfer.status ?? existing.statusReason,
+    providerReference: transfer.source_deposit_instructions?.reference ?? transfer.deposit_instructions?.reference ?? existing.providerReference,
+    sourceDepositInstructions: transfer.source_deposit_instructions ?? transfer.deposit_instructions ?? existing.sourceDepositInstructions,
+    destinationTxHash: transfer.receipt?.destination_tx_hash ?? existing.destinationTxHash,
+    receipt: transfer.receipt ?? existing.receipt,
+    raw: transfer,
+    updatedAt: nowIso(),
+    completedAt: status === 'completed' ? (existing.completedAt ?? nowIso()) : existing.completedAt
+  };
+  return db.updateOnrampOrderRecord(order);
 }
 
 export async function requireOnrampOrder(id: string) {

@@ -33,10 +33,7 @@ export async function updateSystemStatus(input: z.infer<typeof updateSystemStatu
     updatedAt: nowIso()
   };
 
-  await db.mutate((data) => {
-    data.systemStatus = [next];
-    return next;
-  });
+  await db.updateSystemStatusRecord(next);
 
   await createAuditLog({
     actorType: 'admin',

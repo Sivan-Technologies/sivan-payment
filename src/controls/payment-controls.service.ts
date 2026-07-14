@@ -167,13 +167,7 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
     throw badRequest('At least one deposit network must remain enabled');
   }
 
-  await db.mutate((data) => {
-    data.customerTypeControls = customerTypes;
-    data.paymentControls = payoutCurrencies;
-    data.assetControls = sourceAssets;
-    data.networkControls = sourceNetworks;
-    return { customerTypes, payoutCurrencies, sourceAssets, sourceNetworks };
-  });
+  await db.updatePaymentControlsSnapshot({ customerTypes, payoutCurrencies, sourceAssets, sourceNetworks });
 
   await createAuditLog({
     actorType: 'admin',

@@ -17,30 +17,28 @@ export const createUserSchema = z
 
 export async function createUser(input: z.infer<typeof createUserSchema>) {
   const now = nowIso();
-  return db.mutate((data) => {
-    if (input.email) {
-      const emailExists = data.users.find((u) => u.email?.toLowerCase() === input.email?.toLowerCase());
-      if (emailExists) throw conflict('A user with this email already exists');
-    }
+  const data = await db.read();
+  if (input.email) {
+    const emailExists = data.users.find((u) => u.email?.toLowerCase() === input.email?.toLowerCase());
+    if (emailExists) throw conflict('A user with this email already exists');
+  }
 
-    if (input.whatsappNumber) {
-      const whatsappExists = data.users.find((u) => u.whatsappNumber === input.whatsappNumber);
-      if (whatsappExists) throw conflict('A user with this WhatsApp number already exists');
-    }
+  if (input.whatsappNumber) {
+    const whatsappExists = data.users.find((u) => u.whatsappNumber === input.whatsappNumber);
+    if (whatsappExists) throw conflict('A user with this WhatsApp number already exists');
+  }
 
-    const primaryChannel = input.primaryChannel ?? inferPrimaryChannel(input.email, input.whatsappNumber);
-    const user = {
-      id: id('usr'),
-      email: input.email ?? '',
-      whatsappNumber: input.whatsappNumber,
-      fullName: input.fullName,
-      primaryChannel,
-      createdAt: now,
-      updatedAt: now
-    };
-    data.users.push(user);
-    return user;
-  });
+  const primaryChannel = input.primaryChannel ?? inferPrimaryChannel(input.email, input.whatsappNumber);
+  const user = {
+    id: id('usr'),
+    email: input.email ?? '',
+    whatsappNumber: input.whatsappNumber,
+    fullName: input.fullName,
+    primaryChannel,
+    createdAt: now,
+    updatedAt: now
+  };
+  return db.insertUserRecord(user);
 }
 
 export async function getUser(userId: string) {
