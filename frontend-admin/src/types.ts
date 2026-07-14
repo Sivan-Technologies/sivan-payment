@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'support' | 'audit' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'risk' | 'approvals' | 'reconciliation' | 'providers' | 'controls' | 'incident' | 'limits' | 'webhooks' | 'support' | 'audit' | 'finance' | 'exports' | 'legal' | 'search' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
@@ -55,6 +55,7 @@ export interface WithdrawalRecord {
   providerDrainId?: string;
   sourceCurrency: 'usdc';
   destinationCurrency: 'usd' | 'gbp' | 'eur';
+  sourceAmount?: string;
   destinationAmount?: string;
   feePercent?: string;
   feeAmount?: string;

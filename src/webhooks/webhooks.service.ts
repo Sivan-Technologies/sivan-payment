@@ -1,7 +1,7 @@
 import { db } from '../database/json-database.js';
 import type { WebhookEventRecord, WithdrawalRecord, UnifiedWebhookLogRecord } from '../database/types.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
-import { badRequest, conflict } from '../shared/errors.js';
+import { badRequest, conflict, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { mapBridgeKycStatus } from '../customers/customer-mapping.js';
 import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
@@ -63,6 +63,27 @@ export async function processBridgeWebhook(payload: BridgeWebhookPayload, rawBod
   };
   await db.insertUnifiedWebhookLogRecord(unifiedLog);
 
+  await applyBridgeWebhookEffects(data, payload);
+
+  event.processedAt = nowIso();
+  await db.updateWebhookEventRecord(event);
+  return { duplicate: false, event };
+}
+
+
+
+export async function reprocessBridgeWebhookEvent(eventIdOrInternalId: string) {
+  const data = await db.read();
+  const event = (data.webhookEvents ?? []).find((item) => item.id === eventIdOrInternalId || item.providerEventId === eventIdOrInternalId);
+  if (!event) throw notFound('Webhook event');
+  if (event.provider !== 'bridge') throw badRequest('Only Bridge webhooks can be reprocessed');
+  await applyBridgeWebhookEffects(data, event.payload as BridgeWebhookPayload);
+  event.processedAt = nowIso();
+  await db.updateWebhookEventRecord(event);
+  return { reprocessed: true, event };
+}
+
+async function applyBridgeWebhookEffects(data: any, payload: BridgeWebhookPayload) {
   const eventCategory = normalizeEventCategory(payload.event_category);
   if (eventCategory === 'liquidation_address_drain') {
     const withdrawal = applyLiquidationDrainEvent(data, payload);
@@ -84,12 +105,7 @@ export async function processBridgeWebhook(payload: BridgeWebhookPayload, rawBod
     const order = applyTransferEvent(data, payload);
     if (order) await db.updateOnrampOrderRecord(order);
   }
-
-  event.processedAt = nowIso();
-  await db.updateWebhookEventRecord(event);
-  return { duplicate: false, event };
 }
-
 
 function normalizeEventCategory(category?: string): string {
   return (category ?? '')

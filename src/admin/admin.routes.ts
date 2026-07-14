@@ -10,6 +10,8 @@ import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
 import { refreshKycStatus } from '../customers/customers.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
+import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
+import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 
 
 function listOptions(request: any) {
@@ -30,9 +32,70 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/overview', async () => ({ data: await getAdminOverview() }));
   app.get('/api/admin/users', async (request) => ({ data: await listAdminUsers(listOptions(request)) }));
 
+  app.get('/api/admin/users/:id/details', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getAdminUserDetails(id) };
+  });
+
+  app.get('/api/admin/risk/cases', async (request) => {
+    const query = (request.query ?? {}) as Record<string, string>;
+    return { data: await listRiskCases({ status: query.status, severity: query.severity }) };
+  });
+
+  app.post('/api/admin/risk/cases/:id/review', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = parseBody(riskReviewSchema, request.body);
+    return { data: await reviewRiskCase(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.get('/api/admin/approvals', async () => ({ data: await listApprovalRequests() }));
+
+  app.post('/api/admin/approvals', async (request) => {
+    const body = parseBody(approvalRequestSchema, request.body);
+    return { data: await createApprovalRequest(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/approvals/:id/approve', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = parseBody(approvalReviewSchema, request.body);
+    return { data: await approveRequest(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/approvals/:id/reject', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = parseBody(approvalReviewSchema, request.body);
+    return { data: await rejectRequest(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/notes', async (request) => {
+    const body = parseBody(adminNoteSchema, request.body);
+    return { data: await addAdminNote(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.get('/api/admin/limits', async () => ({ data: await getLimitControls() }));
+
+  app.put('/api/admin/limits', async (request) => {
+    const body = parseBody(limitControlsSchema, request.body);
+    return { data: await updateLimitControls(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));
+  app.get('/api/admin/legal/evidence', async () => ({ data: await getLegalEvidenceSummary() }));
+
+  app.get('/api/admin/exports/:type.csv', async (request, reply) => {
+    const { type } = request.params as { type: string };
+    const csv = await buildExport(type);
+    return reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="sivan-${type}.csv"`).send(csv);
+  });
+
   app.get('/api/admin/withdrawals/:id', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await getWithdrawal(id) };
+  });
+
+  app.get('/api/admin/withdrawals/:id/details', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getAdminWithdrawalDetails(id) };
   });
 
   app.post('/api/admin/withdrawals/:id/sync', async (request) => {
@@ -43,6 +106,11 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/onramp/orders/:id', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await getOnrampOrder(id) };
+  });
+
+  app.get('/api/admin/onramp/orders/:id/details', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getAdminOnrampOrderDetails(id) };
   });
 
   app.post('/api/admin/onramp/orders/:id/sync', async (request) => {
@@ -58,6 +126,10 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/withdrawals', async (request) => ({ data: await listAdminWithdrawals(listOptions(request)) }));
   app.get('/api/admin/onramp/orders', async (request) => ({ data: await listAdminOnrampOrders(listOptions(request)) }));
   app.get('/api/admin/webhooks', async (request) => ({ data: await listAdminWebhookEvents(listOptions(request)) }));
+  app.post('/api/admin/webhooks/:id/reprocess', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await reprocessBridgeWebhookEvent(id) };
+  });
   app.get('/api/admin/audit-logs', async (request) => ({ data: await listAdminAuditLogs(listOptions(request)) }));
   app.get('/api/admin/reconciliation/runs', async (request) => ({ data: await listAdminReconciliationRuns(listOptions(request)) }));
   app.get('/api/admin/analytics', async () => ({ data: await getAdminAnalytics() }));
