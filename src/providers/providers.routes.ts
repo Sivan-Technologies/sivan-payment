@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../shared/validation.js';
+import { badRequest } from '../shared/errors.js';
 import { providerCapabilities } from './provider-routing.js';
 import { routeOfframpProvider } from './provider-registry.js';
 
 const routeOfframpProviderSchema = z.object({
-  sourceCurrency: z.literal('usdc').optional(),
-  sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche']).optional(),
+  sourceCurrency: z.enum(['usdc', 'usdt']).optional(),
+  sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche_c_chain']).optional(),
   destinationCurrency: z.enum(['usd', 'gbp', 'eur']).optional(),
   destinationCountry: z.string().min(2).optional(),
   destinationPaymentRail: z.string().min(1).optional(),
@@ -23,6 +24,10 @@ export async function providersRoutes(app: FastifyInstance) {
 
   app.post('/api/providers/offramp/route', async (request) => {
     const body = parseBody(routeOfframpProviderSchema, request.body);
-    return { data: routeOfframpProvider(body) };
+    try {
+      return { data: routeOfframpProvider(body) };
+    } catch (error) {
+      throw badRequest(error instanceof Error ? error.message : 'No off-ramp provider available for this route');
+    }
   });
 }

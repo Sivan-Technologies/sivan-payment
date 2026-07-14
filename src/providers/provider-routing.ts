@@ -48,8 +48,8 @@ export const providerCapabilities: ProviderCapability[] = [
   {
     name: 'bridge',
     available: true,
-    sourceCurrencies: ['usdc'],
-    sourceChains: ['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche'],
+    sourceCurrencies: ['usdc', 'usdt'],
+    sourceChains: ['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche_c_chain'],
     destinationCurrencies: ['usd', 'gbp', 'eur'],
     destinationCountries: 'global',
     destinationPaymentRails: ['ach', 'wire', 'faster_payments', 'sepa', 'sepa_instant'],

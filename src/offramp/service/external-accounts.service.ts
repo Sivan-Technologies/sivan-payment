@@ -6,10 +6,11 @@ import { badRequest, notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { addressSchema } from '../../shared/validation.js';
 import { getCustomerByUserId } from '../../customers/customers.service.js';
+import { requireCurrencyEnabled } from '../../controls/payment-controls.service.js';
 
 const baseAccountSchema = z.object({
   userId: z.string().min(1),
-  currency: z.enum(['usd', 'gbp']),
+  currency: z.enum(['usd', 'gbp', 'eur']),
   bankName: z.string().min(1),
   accountName: z.string().min(1).optional(),
   accountOwnerName: z.string().min(2),
@@ -39,10 +40,21 @@ export const createExternalAccountSchema = z.discriminatedUnion('accountType', [
       account_number: z.string().length(8),
       sort_code: z.string().length(6)
     })
+  }),
+  baseAccountSchema.extend({
+    accountType: z.literal('iban'),
+    currency: z.literal('eur'),
+    paymentRail: z.enum(['sepa', 'sepa_instant']).default('sepa'),
+    iban: z.object({
+      account_number: z.string().min(10),
+      bic: z.string().min(8).max(11).optional(),
+      country: z.string().length(3)
+    })
   })
 ]);
 
 export async function createExternalAccount(input: z.infer<typeof createExternalAccountSchema>) {
+  await requireCurrencyEnabled(input.currency);
   const customer = await getCustomerByUserId(input.userId);
   if (customer.kycStatus !== 'kyc_approved') {
     throw badRequest('KYC must be approved before adding a withdrawal bank account');
@@ -59,9 +71,14 @@ export async function createExternalAccount(input: z.infer<typeof createExternal
     first_name: input.firstName,
     last_name: input.lastName,
     business_name: input.businessName,
-    address: input.address,
-    account: input.account
+    address: input.address
   };
+
+  if (input.accountType === 'iban') {
+    payload.iban = input.iban;
+  } else {
+    payload.account = input.account;
+  }
 
   const providerAccount = await provider.createExternalAccount({
     customerId: customer.providerCustomerId,

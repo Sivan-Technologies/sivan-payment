@@ -10,10 +10,30 @@ import type {
   SourceCurrency,
   UserRecord,
   WebhookEventRecord,
-  WithdrawalRecord
+  WithdrawalRecord,
+  AuthChallengeRecord,
+  AuditLogRecord,
+  ReconciliationRunRecord,
+  ReconciliationFindingRecord,
+  PaymentControlRecord,
+  AssetControlRecord,
+  NetworkControlRecord,
+  SystemStatusRecord,
+  CustomerTypeControlRecord,
+  OnrampOrderRecord
 } from './types.js';
 
 const { Pool } = pg;
+
+
+async function optionalQuery(client: pg.PoolClient, sql: string): Promise<{ rows: any[] }> {
+  try {
+    return await client.query(sql);
+  } catch (error: any) {
+    if (error?.code === '42P01') return { rows: [] };
+    throw error;
+  }
+}
 
 function iso(value: unknown): string {
   if (!value) return new Date().toISOString();
@@ -63,7 +83,17 @@ export class PostgresDatabase {
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
       const withdrawals = await client.query('select * from payments_withdrawals order by created_at asc');
+      const onrampOrders = await optionalQuery(client, 'select * from payments_onramp_orders order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
+      const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
+      const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
+      const reconciliationRuns = await client.query('select * from payments_reconciliation_runs order by started_at asc');
+      const reconciliationFindings = await client.query('select * from payments_reconciliation_findings order by created_at asc');
+      const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
+      const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
+      const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
+      const systemStatus = await client.query('select * from payments_system_status order by id asc');
+      const customerTypeControls = await client.query('select * from payments_customer_type_controls order by customer_type asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -71,7 +101,17 @@ export class PostgresDatabase {
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
-        webhookEvents: webhookEvents.rows.map(mapWebhookEvent)
+        onrampOrders: onrampOrders.rows.map(mapOnrampOrder),
+        webhookEvents: webhookEvents.rows.map(mapWebhookEvent),
+        authChallenges: authChallenges.rows.map(mapAuthChallenge),
+        auditLogs: auditLogs.rows.map(mapAuditLog),
+        reconciliationRuns: reconciliationRuns.rows.map(mapReconciliationRun),
+        reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding),
+        paymentControls: paymentControls.rows.map(mapPaymentControl),
+        assetControls: assetControls.rows.map(mapAssetControl),
+        networkControls: networkControls.rows.map(mapNetworkControl),
+        systemStatus: systemStatus.rows.map(mapSystemStatus),
+        customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl)
       };
     } finally {
       client.release();
@@ -94,7 +134,17 @@ export class PostgresDatabase {
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
       for (const withdrawal of data.withdrawals) await upsertWithdrawal(client, withdrawal);
+      for (const order of data.onrampOrders ?? []) await upsertOnrampOrder(client, order);
       for (const event of data.webhookEvents) await upsertWebhookEvent(client, event);
+      for (const challenge of data.authChallenges ?? []) await upsertAuthChallenge(client, challenge);
+      for (const auditLog of data.auditLogs ?? []) await upsertAuditLog(client, auditLog);
+      for (const run of data.reconciliationRuns ?? []) await upsertReconciliationRun(client, run);
+      for (const finding of data.reconciliationFindings ?? []) await upsertReconciliationFinding(client, finding);
+      for (const control of data.paymentControls ?? []) await upsertPaymentControl(client, control);
+      for (const control of data.assetControls ?? []) await upsertAssetControl(client, control);
+      for (const control of data.networkControls ?? []) await upsertNetworkControl(client, control);
+      for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
+      for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -215,6 +265,64 @@ function mapWithdrawal(row: any): WithdrawalRecord {
   };
 }
 
+
+function mapOnrampOrder(row: any): OnrampOrderRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: row.payments_customer_id,
+    provider: row.provider,
+    providerTransferId: str(row.provider_transfer_id),
+    sourceCurrency: row.source_currency,
+    sourcePaymentRail: row.source_payment_rail,
+    destinationCurrency: row.destination_currency,
+    destinationChain: row.destination_chain,
+    destinationAddress: row.destination_address,
+    amount: numberString(row.amount) ?? '0',
+    feePercent: numberString(row.fee_percent),
+    feeAmount: numberString(row.fee_amount),
+    netAmount: numberString(row.net_amount),
+    providerReference: str(row.provider_reference),
+    sourceDepositInstructions: row.source_deposit_instructions,
+    destinationTxHash: str(row.destination_tx_hash),
+    status: row.status,
+    statusReason: str(row.status_reason),
+    receipt: row.receipt,
+    raw: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    completedAt: optionalIso(row.completed_at)
+  };
+}
+
+async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord) {
+  await client.query(
+    `insert into payments_onramp_orders (id, user_id, payments_customer_id, provider, provider_transfer_id, source_currency, source_payment_rail, destination_currency, destination_chain, destination_address, amount, fee_percent, fee_amount, net_amount, provider_reference, source_deposit_instructions, destination_tx_hash, status, status_reason, receipt, raw_payload, created_at, updated_at, completed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+     on conflict (id) do update set
+       provider_transfer_id=excluded.provider_transfer_id,
+       source_currency=excluded.source_currency,
+       source_payment_rail=excluded.source_payment_rail,
+       destination_currency=excluded.destination_currency,
+       destination_chain=excluded.destination_chain,
+       destination_address=excluded.destination_address,
+       amount=excluded.amount,
+       fee_percent=excluded.fee_percent,
+       fee_amount=excluded.fee_amount,
+       net_amount=excluded.net_amount,
+       provider_reference=excluded.provider_reference,
+       source_deposit_instructions=excluded.source_deposit_instructions,
+       destination_tx_hash=excluded.destination_tx_hash,
+       status=excluded.status,
+       status_reason=excluded.status_reason,
+       receipt=excluded.receipt,
+       raw_payload=excluded.raw_payload,
+       updated_at=excluded.updated_at,
+       completed_at=excluded.completed_at`,
+    [item.id, item.userId, item.customerId, item.provider, item.providerTransferId, item.sourceCurrency, item.sourcePaymentRail, item.destinationCurrency, item.destinationChain, item.destinationAddress, item.amount, item.feePercent, item.feeAmount, item.netAmount, item.providerReference, item.sourceDepositInstructions ?? null, item.destinationTxHash, item.status, item.statusReason, item.receipt ?? null, item.raw ?? null, item.createdAt, item.updatedAt, item.completedAt]
+  );
+}
+
 function mapWebhookEvent(row: any): WebhookEventRecord {
   return {
     id: row.id,
@@ -298,6 +406,227 @@ async function upsertWebhookEvent(client: pg.PoolClient, item: WebhookEventRecor
   );
 }
 
+
+function mapCustomerTypeControl(row: any): CustomerTypeControlRecord {
+  return {
+    customerType: row.customer_type,
+    enabled: row.enabled,
+    label: row.label,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertCustomerTypeControl(client: pg.PoolClient, item: CustomerTypeControlRecord) {
+  await client.query(
+    `insert into payments_customer_type_controls (customer_type, enabled, label, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5)
+     on conflict (customer_type) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.customerType, item.enabled, item.label, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapSystemStatus(row: any): SystemStatusRecord {
+  return {
+    id: 'global',
+    mode: row.mode,
+    message: str(row.message),
+    estimatedResumeAt: optionalIso(row.estimated_resume_at),
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertSystemStatus(client: pg.PoolClient, item: SystemStatusRecord) {
+  await client.query(
+    `insert into payments_system_status (id, mode, message, estimated_resume_at, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6)
+     on conflict (id) do update set
+       mode=excluded.mode,
+       message=excluded.message,
+       estimated_resume_at=excluded.estimated_resume_at,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.id, item.mode, item.message, item.estimatedResumeAt, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapAssetControl(row: any): AssetControlRecord {
+  return {
+    asset: row.asset,
+    enabled: row.enabled,
+    label: row.label,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapNetworkControl(row: any): NetworkControlRecord {
+  return {
+    network: row.network,
+    enabled: row.enabled,
+    label: row.label,
+    sortOrder: Number(row.sort_order ?? 100),
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertAssetControl(client: pg.PoolClient, item: AssetControlRecord) {
+  await client.query(
+    `insert into payments_asset_controls (asset, enabled, label, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5)
+     on conflict (asset) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.asset, item.enabled, item.label, item.updatedBy, item.updatedAt]
+  );
+}
+
+async function upsertNetworkControl(client: pg.PoolClient, item: NetworkControlRecord) {
+  await client.query(
+    `insert into payments_network_controls (network, enabled, label, sort_order, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6)
+     on conflict (network) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       sort_order=excluded.sort_order,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.network, item.enabled, item.label, item.sortOrder, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapPaymentControl(row: any): PaymentControlRecord {
+  return {
+    currency: row.currency,
+    enabled: row.enabled,
+    label: row.label,
+    accountType: row.account_type,
+    defaultPaymentRail: row.default_payment_rail,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertPaymentControl(client: pg.PoolClient, item: PaymentControlRecord) {
+  await client.query(
+    `insert into payments_control_settings (currency, enabled, label, account_type, default_payment_rail, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7)
+     on conflict (currency) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       account_type=excluded.account_type,
+       default_payment_rail=excluded.default_payment_rail,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.currency, item.enabled, item.label, item.accountType, item.defaultPaymentRail, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapAuditLog(row: any): AuditLogRecord {
+  return {
+    id: row.id,
+    actorType: row.actor_type,
+    actorId: str(row.actor_id),
+    action: row.action,
+    resourceType: str(row.resource_type),
+    resourceId: str(row.resource_id),
+    severity: row.severity,
+    ipAddress: str(row.ip_address),
+    userAgent: str(row.user_agent),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at)
+  };
+}
+
+function mapReconciliationRun(row: any): ReconciliationRunRecord {
+  return {
+    id: row.id,
+    provider: str(row.provider),
+    dryRun: row.dry_run,
+    status: row.status,
+    summary: row.summary,
+    error: str(row.error),
+    startedAt: iso(row.started_at),
+    completedAt: optionalIso(row.completed_at)
+  };
+}
+
+function mapReconciliationFinding(row: any): ReconciliationFindingRecord {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    provider: str(row.provider),
+    severity: row.severity,
+    findingType: row.finding_type,
+    withdrawalId: str(row.withdrawal_id),
+    liquidationAddressId: str(row.liquidation_address_id),
+    providerDrainId: str(row.provider_drain_id),
+    message: row.message,
+    expected: row.expected,
+    actual: row.actual,
+    status: row.status,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertAuditLog(client: pg.PoolClient, item: AuditLogRecord) {
+  await client.query(
+    `insert into payments_audit_logs (id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do nothing`,
+    [item.id, item.actorType, item.actorId, item.action, item.resourceType, item.resourceId, item.severity, item.ipAddress, item.userAgent, item.metadata ?? null, item.createdAt]
+  );
+}
+
+async function upsertReconciliationRun(client: pg.PoolClient, item: ReconciliationRunRecord) {
+  await client.query(
+    `insert into payments_reconciliation_runs (id, provider, dry_run, status, summary, error, started_at, completed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       provider=excluded.provider, dry_run=excluded.dry_run, status=excluded.status, summary=excluded.summary, error=excluded.error, completed_at=excluded.completed_at`,
+    [item.id, item.provider, item.dryRun, item.status, item.summary ?? null, item.error, item.startedAt, item.completedAt]
+  );
+}
+
+async function upsertReconciliationFinding(client: pg.PoolClient, item: ReconciliationFindingRecord) {
+  await client.query(
+    `insert into payments_reconciliation_findings (id, run_id, provider, severity, finding_type, withdrawal_id, liquidation_address_id, provider_drain_id, message, expected, actual, status, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     on conflict (id) do update set status=excluded.status`,
+    [item.id, item.runId, item.provider, item.severity, item.findingType, item.withdrawalId, item.liquidationAddressId, item.providerDrainId, item.message, item.expected ?? null, item.actual ?? null, item.status, item.createdAt]
+  );
+}
+
+function mapAuthChallenge(row: any): AuthChallengeRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    codeHash: row.code_hash,
+    intent: row.intent,
+    fullName: str(row.full_name),
+    expiresAt: iso(row.expires_at),
+    consumedAt: optionalIso(row.consumed_at),
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertAuthChallenge(client: pg.PoolClient, item: AuthChallengeRecord) {
+  await client.query(
+    `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at`,
+    [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt]
+  );
+}
 
 function inferPrimaryChannel(email?: string, whatsappNumber?: string): 'email' | 'whatsapp' | 'both' {
   if (email && whatsappNumber) return 'both';

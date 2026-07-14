@@ -1,8 +1,8 @@
 import { db } from '../database/json-database.js';
-import type { WithdrawalRecord, WithdrawalStatus } from '../database/types.js';
+import type { ReconciliationFindingRecord, ReconciliationRunRecord, WithdrawalRecord, WithdrawalStatus } from '../database/types.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
 import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
-import { nowIso } from '../shared/id.js';
+import { id, nowIso } from '../shared/id.js';
 
 export interface ReconciliationRunInput {
   dryRun?: boolean;
@@ -125,19 +125,57 @@ export async function runOfframpReconciliation(input: ReconciliationRunInput = {
     }
   }
 
+  const completedAt = nowIso();
+  const summary = {
+    checkedLiquidationAddresses,
+    checkedDrains,
+    matchedDrains: findings.filter((finding) => finding.type === 'matched_drain').length,
+    unmatchedDrains,
+    updatedWithdrawals,
+    providerErrors,
+    findingCount: findings.length
+  };
+
+  const runRecord: ReconciliationRunRecord = {
+    id: id('recon'),
+    provider: input.provider,
+    dryRun,
+    status: providerErrors > 0 ? 'failed' : 'completed',
+    summary,
+    startedAt,
+    completedAt
+  };
+
+  const findingRecords: ReconciliationFindingRecord[] = findings.map((finding) => ({
+    id: id('reconf'),
+    runId: runRecord.id,
+    provider: input.provider,
+    severity: finding.severity,
+    findingType: finding.type,
+    withdrawalId: finding.withdrawalId,
+    liquidationAddressId: finding.liquidationAddressId,
+    providerDrainId: finding.providerDrainId,
+    message: finding.message,
+    expected: finding.previousStatus ? { status: finding.previousStatus } : undefined,
+    actual: finding.nextStatus || finding.raw ? { status: finding.nextStatus, raw: finding.raw } : undefined,
+    status: finding.severity === 'error' || finding.type === 'unmatched_drain' ? 'open' : 'resolved',
+    createdAt: completedAt
+  }));
+
+  await db.mutate((mutable) => {
+    mutable.reconciliationRuns = mutable.reconciliationRuns ?? [];
+    mutable.reconciliationFindings = mutable.reconciliationFindings ?? [];
+    mutable.reconciliationRuns.push(runRecord);
+    mutable.reconciliationFindings.push(...findingRecords);
+    return runRecord;
+  });
+
   return {
+    runId: runRecord.id,
     dryRun,
     startedAt,
-    completedAt: nowIso(),
-    summary: {
-      checkedLiquidationAddresses,
-      checkedDrains,
-      matchedDrains: findings.filter((finding) => finding.type === 'matched_drain').length,
-      unmatchedDrains,
-      updatedWithdrawals,
-      providerErrors,
-      findingCount: findings.length
-    },
+    completedAt,
+    summary,
     findings
   };
 }

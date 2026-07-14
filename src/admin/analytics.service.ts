@@ -1,4 +1,5 @@
 import { db } from '../database/json-database.js';
+import { env } from '../config/env.js';
 
 const DEFAULT_WINDOWS = [7, 14, 30, 60, 90];
 
@@ -25,6 +26,22 @@ function toTime(value?: string) {
 
 function unique<T>(values: T[]) {
   return [...new Set(values)];
+}
+
+function money(value: number) {
+  return value.toFixed(2);
+}
+
+function ratio(numerator: number, denominator: number) {
+  if (denominator <= 0) return '0';
+  return ((numerator / denominator) * 100).toFixed(2);
+}
+
+function grossWithdrawalAmount(withdrawal: any) {
+  const feeAmount = Number(withdrawal.feeAmount ?? 0);
+  const destinationAmount = Number(withdrawal.destinationAmount ?? 0);
+  const sourceAmount = Number(withdrawal.sourceAmount ?? 0);
+  return destinationAmount > 0 || feeAmount > 0 ? destinationAmount + feeAmount : sourceAmount;
 }
 
 export async function getAdminAnalytics() {
@@ -198,6 +215,23 @@ export async function getAdminAnalytics() {
       user: data.users.find((user) => user.id === activity.userId) ?? null
     }));
 
+
+  const completedWithdrawals = data.withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
+  const failedWithdrawals = data.withdrawals.filter((withdrawal) => ['failed', 'cancelled'].includes(withdrawal.status));
+  const usersWithWithdrawals = unique(data.withdrawals.map((withdrawal) => withdrawal.userId));
+  const usersWithRepeatWithdrawals = usersWithWithdrawals.filter((userId) => data.withdrawals.filter((withdrawal) => withdrawal.userId === userId).length >= 2);
+  const completedGrossVolume = completedWithdrawals.reduce((sum, withdrawal) => sum + grossWithdrawalAmount(withdrawal), 0);
+  const allKnownGrossVolume = data.withdrawals.reduce((sum, withdrawal) => sum + grossWithdrawalAmount(withdrawal), 0);
+  const sivanFeeRevenue = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.feeAmount ?? 0), 0);
+  const estimatedBridgeVariableCost = completedGrossVolume * (env.BRIDGE_OFFRAMP_COST_PERCENT / 100);
+  const onboardingCost = data.customers.reduce((sum, customer) => sum + Number(customer.onboardingCostUsd ?? 0), 0);
+  const kycCustomers = data.customers.filter((customer) => customer.onboardingCostType === 'kyc');
+  const customerAcquisitionCostTotal = data.users.length * env.CUSTOMER_ACQUISITION_COST_USD;
+  const providerCostTotal = estimatedBridgeVariableCost + onboardingCost;
+  const netMarginBeforeCac = sivanFeeRevenue - providerCostTotal;
+  const netMarginAfterCac = netMarginBeforeCac - customerAcquisitionCostTotal;
+  const onboardingRecovered = Math.min(onboardingCost, Math.max(sivanFeeRevenue - estimatedBridgeVariableCost, 0));
+
   return {
     generatedAt: new Date().toISOString(),
     definitions: {
@@ -211,6 +245,28 @@ export async function getAdminAnalytics() {
       users: data.users.length,
       activities: activities.length,
       activityCounts
+    },
+    profitability: {
+      averageLifetimeVolumePerUserUsd: money(completedGrossVolume / Math.max(data.users.length, 1)),
+      averageLifetimeVolumePerTransactingUserUsd: money(completedGrossVolume / Math.max(usersWithWithdrawals.length, 1)),
+      kycCostRecoveryPerKycUserUsd: money(onboardingRecovered / Math.max(kycCustomers.length, 1)),
+      withdrawalVolumePerUserUsd: money(allKnownGrossVolume / Math.max(data.users.length, 1)),
+      withdrawalVolumePerTransactingUserUsd: money(allKnownGrossVolume / Math.max(usersWithWithdrawals.length, 1)),
+      repeatWithdrawalRatePercent: ratio(usersWithRepeatWithdrawals.length, usersWithWithdrawals.length),
+      averageWithdrawalSizeUsd: money(completedGrossVolume / Math.max(completedWithdrawals.length, 1)),
+      failedWithdrawalRatePercent: ratio(failedWithdrawals.length, data.withdrawals.length),
+      providerCostUsd: money(providerCostTotal),
+      bridgeVariableCostUsd: money(estimatedBridgeVariableCost),
+      onboardingCostUsd: money(onboardingCost),
+      sivanFeeRevenueUsd: money(sivanFeeRevenue),
+      netMarginBeforeCacUsd: money(netMarginBeforeCac),
+      customerAcquisitionCostPerUserUsd: money(env.CUSTOMER_ACQUISITION_COST_USD),
+      customerAcquisitionCostTotalUsd: money(customerAcquisitionCostTotal),
+      netMarginAfterCacUsd: money(netMarginAfterCac),
+      transactingUsers: usersWithWithdrawals.length,
+      repeatUsers: usersWithRepeatWithdrawals.length,
+      completedWithdrawalCount: completedWithdrawals.length,
+      failedWithdrawalCount: failedWithdrawals.length
     },
     windows,
     users,

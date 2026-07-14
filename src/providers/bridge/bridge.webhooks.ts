@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
 
 export function verifyBridgeWebhookSignature(rawBody: Buffer, signatureHeader?: string, publicKey = env.BRIDGE_WEBHOOK_PUBLIC_KEY): boolean {
+  publicKey = normalizePublicKey(publicKey);
   if (!publicKey) return env.APP_ENV !== 'production';
   if (!signatureHeader) return false;
 
@@ -30,4 +31,12 @@ export function verifyBridgeWebhookSignature(rawBody: Buffer, signatureHeader?: 
 
   const signedPayload = Buffer.concat([Buffer.from(`${timestamp}.`, 'utf8'), rawBody]);
   return crypto.verify('RSA-SHA256', signedPayload, publicKey, signature);
+}
+
+
+function normalizePublicKey(publicKey?: string): string {
+  return (publicKey ?? '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/\\n/g, '\n');
 }

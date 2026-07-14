@@ -11,6 +11,26 @@ services:
     envVars:
       - key: APP_ENV
         value: staging
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: staging
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_DEFAULT_MAX_PER_MINUTE
+        value: "120"
+      - key: RATE_LIMIT_ADMIN_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_AUTH_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_AUTH_START_MAX
+        value: "5"
+      - key: RATE_LIMIT_AUTH_VERIFY_MAX
+        value: "20"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
@@ -23,6 +43,22 @@ services:
         sync: false
       - key: ADMIN_API_KEY
         sync: false
+      - key: USER_JWT_SECRET
+        sync: false
+      - key: USER_JWT_EXPIRES_MINUTES
+        value: "60"
+      - key: AUTH_OTP_EXPIRES_MINUTES
+        value: "10"
+      - key: AUTH_DEV_SHOW_OTP
+        value: "true"
+      - key: AUTH_REQUIRE_USER
+        value: "true"
+      - key: EMAIL_PROVIDER
+        value: console
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "Sivan <no-reply@sivan.local>"
       - key: BRIDGE_MOCK_MODE
         value: "false"
       - key: DEFAULT_OFFRAMP_PROVIDER
@@ -43,6 +79,8 @@ services:
         value: "2"
       - key: BRIDGE_KYB_COST_USD
         value: "10"
+      - key: CUSTOMER_ACQUISITION_COST_USD
+        value: "0"
 
   - type: web
     name: sivan-payments-api-live
@@ -56,6 +94,26 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0"
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_DEFAULT_MAX_PER_MINUTE
+        value: "120"
+      - key: RATE_LIMIT_ADMIN_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE
+        value: "300"
+      - key: RATE_LIMIT_AUTH_WINDOW_MS
+        value: "900000"
+      - key: RATE_LIMIT_AUTH_START_MAX
+        value: "5"
+      - key: RATE_LIMIT_AUTH_VERIFY_MAX
+        value: "20"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
@@ -67,6 +125,22 @@ services:
       - key: CORS_ORIGIN
         sync: false
       - key: ADMIN_API_KEY
+        sync: false
+      - key: USER_JWT_SECRET
+        sync: false
+      - key: USER_JWT_EXPIRES_MINUTES
+        value: "60"
+      - key: AUTH_OTP_EXPIRES_MINUTES
+        value: "10"
+      - key: AUTH_DEV_SHOW_OTP
+        value: "false"
+      - key: AUTH_REQUIRE_USER
+        value: "true"
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
         sync: false
       - key: BRIDGE_MOCK_MODE
         value: "false"
@@ -88,3 +162,5 @@ services:
         value: "2"
       - key: BRIDGE_KYB_COST_USD
         value: "10"
+      - key: CUSTOMER_ACQUISITION_COST_USD
+        value: "0"

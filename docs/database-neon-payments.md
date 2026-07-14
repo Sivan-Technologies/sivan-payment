@@ -127,3 +127,29 @@ Recommended product behavior:
 - WhatsApp flow: require `whatsapp_number`; email optional.
 - Web flow: require `email`; WhatsApp optional.
 - Payment tables: only reference `users.user_id`.
+
+## Passwordless auth tables
+
+Migration `003_create_payments_auth_challenges.sql` adds:
+
+```text
+payments_auth_challenges
+```
+
+This supports email passwordless login using short-lived verification codes. User sessions use stateless JWTs signed by `USER_JWT_SECRET`.
+
+Frontend users authenticate with:
+
+```http
+POST /api/auth/email/start
+POST /api/auth/email/verify
+GET  /api/auth/me
+```
+
+Protected user APIs require:
+
+```http
+Authorization: Bearer <user_jwt>
+```
+
+Admin APIs remain protected separately by `ADMIN_API_KEY` until Telegram Admin JWT/RBAC is integrated.

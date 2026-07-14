@@ -6,6 +6,7 @@ import { badRequest, notFound } from '../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../shared/id.js';
 import { requireUser } from '../users/users.service.js';
 import { mapBridgeKycStatus } from './customer-mapping.js';
+import { requireCustomerTypeEnabled } from '../controls/payment-controls.service.js';
 
 export const startKycSchema = z.object({
   userId: z.string().min(1),
@@ -20,6 +21,7 @@ export const createBridgeCustomerSchema = z.object({
 });
 
 export async function startKyc(input: z.infer<typeof startKycSchema>) {
+  await requireCustomerTypeEnabled(input.type);
   const user = await requireUser(input.userId);
   const provider = getOfframpProvider();
   const existing = await getCustomerByUserId(input.userId).catch(() => null);
@@ -64,6 +66,8 @@ export async function startKyc(input: z.infer<typeof startKycSchema>) {
 }
 
 export async function createBridgeCustomer(input: z.infer<typeof createBridgeCustomerSchema>) {
+  const requestedType = input.payload.type === 'business' ? 'business' : 'individual';
+  await requireCustomerTypeEnabled(requestedType);
   const user = await requireUser(input.userId);
   const provider = getOfframpProvider();
   const existing = await getCustomerByUserId(input.userId).catch(() => null);
