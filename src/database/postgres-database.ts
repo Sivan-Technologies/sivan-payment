@@ -20,7 +20,8 @@ import type {
   NetworkControlRecord,
   SystemStatusRecord,
   CustomerTypeControlRecord,
-  OnrampOrderRecord
+  OnrampOrderRecord,
+  UnifiedWebhookLogRecord
 } from './types.js';
 
 const { Pool } = pg;
