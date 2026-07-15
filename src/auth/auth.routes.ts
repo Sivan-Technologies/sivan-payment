@@ -7,7 +7,7 @@ import { getUser } from '../users/users.service.js';
 export async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/email/start', async (request) => {
     const body = parseBody(startEmailAuthSchema, request.body);
-    return { data: await startEmailAuth(body) };
+    return { data: await startEmailAuth(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.post('/api/auth/email/verify', async (request) => {

@@ -60,7 +60,7 @@ async function main() {
     const authStartResponse = await request<any>('POST', '/api/auth/email/start', {
       email,
       fullName: 'Ada Lovelace',
-      intent: 'signup'
+      intent: 'signup', legalAcceptance: { accepted: true, termsVersion: '2026-07-14', privacyVersion: '2026-07-14', riskDisclosureVersion: '2026-07-14' }
     });
     assert(Boolean(authStartResponse.data.devCode), 'passwordless signup generated a test OTP');
 
@@ -120,7 +120,7 @@ async function main() {
       userId: user.id,
       externalAccountId: externalAccount.id,
       sourceCurrency: 'usdc',
-      sourceChain: 'ethereum',
+      sourceChain: 'avalanche_c_chain',
       destinationCurrency: 'usd',
       returnAddress: '0x0000000000000000000000000000000000000000'
     });

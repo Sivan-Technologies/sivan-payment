@@ -22,11 +22,11 @@ export const DEFAULT_ASSET_CONTROLS: AssetControlRecord[] = [
 ];
 
 export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
-  { network: 'base', enabled: true, label: 'Base', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'polygon', enabled: true, label: 'Polygon', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'base', enabled: false, label: 'Base', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'ethereum', enabled: false, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'solana', enabled: false, label: 'Solana', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
 ];
 

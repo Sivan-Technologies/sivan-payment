@@ -4,9 +4,11 @@ import * as Sentry from '@sentry/react';
 import App from './App';
 import './styles.css';
 
-if (import.meta.env.VITE_SENTRY_DSN) {
+const sentryDsn = import.meta.env.VITE_SENTRY_DSN || (import.meta.env.PROD ? 'https://d9966b77bda1549b1d7ef234dd8d243a@o4511479728046080.ingest.us.sentry.io/4511479747969024' : '');
+
+if (sentryDsn) {
   Sentry.init({
-    dsn: import.meta.env.VITE_SENTRY_DSN,
+    dsn: sentryDsn,
     environment: import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.VITE_APP_ENV || 'development',
     tracesSampleRate: Number(import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE || 0),
     release: import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA

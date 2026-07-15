@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { env } from '../../config/env.js';
+import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import type { Currency } from '../../database/types.js';
 
 export const feeEstimateSchema = z.object({
@@ -30,8 +31,9 @@ export interface CostPolicy {
   note: string;
 }
 
-export function getDefaultOfframpFeePolicy(): FeePolicy {
-  const percent = normalizePercent(env.SIVAN_OFFRAMP_FEE_PERCENT);
+export async function getDefaultOfframpFeePolicy(): Promise<FeePolicy> {
+  const settings = await getAdminFeeSettings();
+  const percent = normalizePercent(settings.offrampFeePercent);
   return {
     id: 'default_offramp_fee',
     name: 'Default Sivan off-ramp fee',
@@ -43,26 +45,27 @@ export function getDefaultOfframpFeePolicy(): FeePolicy {
   };
 }
 
-export function getBridgeCostPolicy(): CostPolicy {
+export async function getBridgeCostPolicy(): Promise<CostPolicy> {
+  const settings = await getAdminFeeSettings();
   return {
-    bridgeOfframpCostPercent: normalizePercent(env.BRIDGE_OFFRAMP_COST_PERCENT),
+    bridgeOfframpCostPercent: normalizePercent(settings.bridgeOfframpCostPercent),
     bridgeKycCostUsd: toMoney(env.BRIDGE_KYC_COST_USD),
     bridgeKybCostUsd: toMoney(env.BRIDGE_KYB_COST_USD),
     note: 'These are configured business-cost assumptions from Bridge pricing. Confirm final billing in your Bridge agreement.'
   };
 }
 
-export function getLiquidationAddressFeePercent(_input: {
+export async function getLiquidationAddressFeePercent(_input: {
   destinationCurrency: Currency;
   destinationPaymentRail: string;
-}): string | undefined {
-  const policy = getDefaultOfframpFeePolicy();
+}): Promise<string | undefined> {
+  const policy = await getDefaultOfframpFeePolicy();
   if (!policy.enabled) return undefined;
   return policy.percent;
 }
 
-export function estimateFee(input: z.infer<typeof feeEstimateSchema>) {
-  const policy = getDefaultOfframpFeePolicy();
+export async function estimateFee(input: z.infer<typeof feeEstimateSchema>) {
+  const policy = await getDefaultOfframpFeePolicy();
   const amount = Number(input.amount);
   const percent = Number(policy.percent);
   const fee = policy.enabled ? amount * (percent / 100) : 0;
@@ -78,11 +81,11 @@ export function estimateFee(input: z.infer<typeof feeEstimateSchema>) {
   };
 }
 
-export function estimateEconomics(input: z.infer<typeof economicsEstimateSchema>) {
+export async function estimateEconomics(input: z.infer<typeof economicsEstimateSchema>) {
   const amount = Number(input.amount);
   const thirdPartyRailFee = Number(input.thirdPartyRailFee);
-  const sivanFeePercent = Number(getDefaultOfframpFeePolicy().percent);
-  const bridgeOfframpCostPercent = Number(getBridgeCostPolicy().bridgeOfframpCostPercent);
+  const sivanFeePercent = Number((await getDefaultOfframpFeePolicy()).percent);
+  const bridgeOfframpCostPercent = Number((await getBridgeCostPolicy()).bridgeOfframpCostPercent);
   const onboardingCost = input.includeOnboardingCost
     ? input.customerType === 'business'
       ? env.BRIDGE_KYB_COST_USD

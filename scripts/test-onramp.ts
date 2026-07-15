@@ -30,7 +30,7 @@ async function main() {
 
   try {
     const email = `onramp+${Date.now()}@sivan.test`;
-    const started: any = await request('POST', '/api/auth/email/start', { email, fullName: 'On Ramp', intent: 'signup' });
+    const started: any = await request('POST', '/api/auth/email/start', { email, fullName: 'On Ramp', intent: 'signup', legalAcceptance: { accepted: true, termsVersion: '2026-07-14', privacyVersion: '2026-07-14', riskDisclosureVersion: '2026-07-14' } });
     const verified: any = await request('POST', '/api/auth/email/verify', { email, code: started.data.devCode });
     authToken = verified.data.token;
     const user = verified.data.user;
@@ -46,7 +46,7 @@ async function main() {
       userId: user.id,
       sourceCurrency: 'usd',
       destinationCurrency: 'usdc',
-      destinationChain: 'base',
+      destinationChain: 'avalanche_c_chain',
       destinationAddress: '0x0000000000000000000000000000000000000001',
       amount: 100
     });

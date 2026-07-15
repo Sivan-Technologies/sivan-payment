@@ -49,7 +49,7 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
     complianceModel: 'first_party_withdrawal'
   });
   const provider = getOfframpProvider(routingDecision.providerName);
-  const customDeveloperFeePercent = getLiquidationAddressFeePercent({
+  const customDeveloperFeePercent = await getLiquidationAddressFeePercent({
     destinationCurrency: input.destinationCurrency as Currency,
     destinationPaymentRail
   });

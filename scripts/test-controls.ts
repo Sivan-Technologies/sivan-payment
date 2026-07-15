@@ -73,7 +73,7 @@ async function main() {
 
   try {
     const email = `controls+${Date.now()}@sivan.test`;
-    const authStart = await request('POST', '/api/auth/email/start', { email, fullName: 'Ada Lovelace', intent: 'signup' }, { noAuth: true });
+    const authStart = await request('POST', '/api/auth/email/start', { email, fullName: 'Ada Lovelace', intent: 'signup', legalAcceptance: { accepted: true, termsVersion: '2026-07-14', privacyVersion: '2026-07-14', riskDisclosureVersion: '2026-07-14' } }, { noAuth: true });
     await request('POST', '/api/auth/email/verify', { email, code: '000000' }, { noAuth: true, expect: 400 });
     assert(authStart.json.data.devCode, 'auth start returns dev OTP for local test');
     const verified = await request('POST', '/api/auth/email/verify', { email, code: authStart.json.data.devCode }, { noAuth: true });
@@ -122,7 +122,7 @@ async function main() {
 
     await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'base', 'usd', 400);
     assert(true, 'USDT withdrawal blocked while USDT default disabled');
-    await updateControls({ sourceAssets: [{ asset: 'usdt', enabled: true }] });
+    await updateControls({ sourceAssets: [{ asset: 'usdt', enabled: true }], sourceNetworks: [{ network: 'base', enabled: true }] });
     await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'base', 'usd', 201);
     assert(true, 'USDT withdrawal succeeds after admin enables USDT');
 

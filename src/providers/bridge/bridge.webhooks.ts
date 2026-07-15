@@ -24,19 +24,42 @@ export function verifyBridgeWebhookSignature(rawBody: Buffer, signatureHeader?: 
   let signature: Buffer;
   try {
     signature = Buffer.from(signatureBase64, 'base64');
-    if (signature.length === 0) return false;
+    if (signature.length === 0 || signature.toString('base64') !== signatureBase64) return false;
   } catch {
     return false;
   }
 
   const signedPayload = Buffer.concat([Buffer.from(`${timestamp}.`, 'utf8'), rawBody]);
-  return crypto.verify('RSA-SHA256', signedPayload, publicKey, signature);
+
+  // Bridge's TypeScript/Go samples verify the RSA-SHA256 signature over a SHA256 digest
+  // of `${timestamp}.${rawBody}`. Keep a raw-payload fallback for older/internal tests.
+  return verifyBridgeDigestSignature(signedPayload, signature, publicKey) || verifyRawRsaSignature(signedPayload, signature, publicKey);
 }
 
+function verifyBridgeDigestSignature(signedPayload: Buffer, signature: Buffer, publicKey: string): boolean {
+  try {
+    const digest = crypto.createHash('sha256').update(signedPayload).digest();
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(digest);
+    verifier.end();
+    return verifier.verify(publicKey, signature);
+  } catch {
+    return false;
+  }
+}
+
+function verifyRawRsaSignature(signedPayload: Buffer, signature: Buffer, publicKey: string): boolean {
+  try {
+    return crypto.verify('RSA-SHA256', signedPayload, publicKey, signature);
+  } catch {
+    return false;
+  }
+}
 
 function normalizePublicKey(publicKey?: string): string {
   return (publicKey ?? '')
     .trim()
-    .replace(/^['"]|['"]$/g, '')
+    .replace(/^[']|[']$/g, '')
+    .replace(/^\"|\"$/g, '')
     .replace(/\\n/g, '\n');
 }

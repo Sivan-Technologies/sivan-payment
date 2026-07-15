@@ -213,3 +213,34 @@ export interface OnrampOrderRecord {
   updatedAt: string;
   completedAt?: string;
 }
+
+export interface SupportTicketRecord {
+  id: string;
+  userId: string;
+  customerId?: string;
+  type: string;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  status: 'open' | 'in_review' | 'waiting_on_user' | 'waiting_on_provider' | 'resolved' | 'closed';
+  subject: string;
+  description: string;
+  resourceType: string;
+  resourceId?: string;
+  assignedTo?: string;
+  lastMessageAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: any;
+}
+
+export interface UserPreferencesRecord {
+  userId: string;
+  defaultFiatCurrency: 'usd' | 'gbp' | 'eur' | 'ngn';
+  language: 'en-US' | 'en-GB' | 'fr-FR' | 'de-DE' | 'es-ES' | 'it-IT' | 'nl-NL' | 'pt-PT';
+  transactionUpdates: boolean;
+  marketingEmails: boolean;
+  securityAlerts: boolean;
+  emailConfirmationsForHighValue: boolean;
+  updatedAt: string;
+}

@@ -1,4 +1,4 @@
-export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'reconciliation' | 'providers' | 'controls' | 'webhooks' | 'audit' | 'economics' | 'settings';
+export type AdminViewKey = 'overview' | 'analytics' | 'users' | 'withdrawals' | 'onramp' | 'risk' | 'approvals' | 'reconciliation' | 'providers' | 'controls' | 'incident' | 'limits' | 'webhooks' | 'support' | 'audit' | 'finance' | 'fees' | 'exports' | 'legal' | 'search' | 'economics' | 'settings';
 
 export interface UserRecord {
   id: string;
@@ -6,6 +6,8 @@ export interface UserRecord {
   fullName: string;
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface CustomerRecord {
@@ -20,6 +22,8 @@ export interface CustomerRecord {
   onboardingCostType?: 'kyc' | 'kyb';
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface ExternalAccountRecord {
@@ -37,6 +41,8 @@ export interface ExternalAccountRecord {
   status: string;
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface WithdrawalRecord {
@@ -49,6 +55,7 @@ export interface WithdrawalRecord {
   providerDrainId?: string;
   sourceCurrency: 'usdc';
   destinationCurrency: 'usd' | 'gbp' | 'eur';
+  sourceAmount?: string;
   destinationAmount?: string;
   feePercent?: string;
   feeAmount?: string;
@@ -319,6 +326,8 @@ export interface CustomerTypeControl {
   label: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface PaymentControl {
@@ -329,6 +338,8 @@ export interface PaymentControl {
   defaultPaymentRail: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface AssetControl {
@@ -337,6 +348,8 @@ export interface AssetControl {
   label: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface NetworkControl {
@@ -346,6 +359,8 @@ export interface NetworkControl {
   sortOrder: number;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 export interface OfframpControls {
@@ -363,6 +378,8 @@ export interface SystemStatus {
   estimatedResumeAt?: string;
   updatedBy?: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }
 
 
@@ -385,4 +402,25 @@ export interface AdminOnrampOrder {
   providerReference?: string;
   createdAt: string;
   updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
+}
+
+export interface AdminSupportTicket {
+  id: string;
+  userId: string;
+  user?: { email?: string; fullName?: string } | null;
+  type: string;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  status: 'open' | 'in_review' | 'waiting_on_user' | 'waiting_on_provider' | 'resolved' | 'closed';
+  subject: string;
+  description: string;
+  resourceType: string;
+  resourceId?: string;
+  assignedTo?: string;
+  messageCount?: number;
+  createdAt: string;
+  updatedAt: string;
+  messages?: Array<{ id: string; senderType: string; senderId?: string; message: string; internalNote?: boolean; createdAt: string }>;
+  sla?: { firstResponseDueAt: string; minutesUntilDue: number; overdue: boolean; ageMinutes: number; minutesSinceLastMessage: number };
 }

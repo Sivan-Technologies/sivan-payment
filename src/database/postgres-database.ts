@@ -9,6 +9,7 @@ import type {
   LiquidationAddressRecord,
   SourceCurrency,
   UserRecord,
+  UserPreferencesRecord,
   WebhookEventRecord,
   WithdrawalRecord,
   AuthChallengeRecord,
@@ -21,7 +22,10 @@ import type {
   SystemStatusRecord,
   CustomerTypeControlRecord,
   OnrampOrderRecord,
-  UnifiedWebhookLogRecord
+  SupportTicketRecord,
+  SupportTicketMessageRecord,
+  UnifiedWebhookLogRecord,
+  LegalAcceptanceRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -116,6 +120,8 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try {
       const users = await client.query('select * from users order by created_at asc');
+      const userPreferences = await optionalQuery(client, 'select * from payments_user_preferences order by user_id asc');
+      const legalAcceptances = await optionalQuery(client, 'select * from payments_legal_acceptances order by accepted_at asc');
       const customers = await client.query('select * from payments_customers order by created_at asc');
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
@@ -131,10 +137,14 @@ export class PostgresDatabase {
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
       const customerTypeControls = await client.query('select * from payments_customer_type_controls order by customer_type asc');
+      const supportTickets = await optionalQuery(client, 'select * from payments_support_tickets order by created_at asc');
+      const supportTicketMessages = await optionalQuery(client, 'select * from payments_support_ticket_messages order by created_at asc');
       const unifiedWebhookLogs = await client.query('select * from sivan_unified_webhook_logs order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
+        userPreferences: userPreferences.rows.map(mapUserPreferences),
+        legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
@@ -150,7 +160,9 @@ export class PostgresDatabase {
         networkControls: networkControls.rows.map(mapNetworkControl),
         systemStatus: systemStatus.rows.map(mapSystemStatus),
         customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl),
-        unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog)
+        unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog),
+        supportTickets: supportTickets.rows.map(mapSupportTicket),
+        supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage)
       };
     } finally {
       client.release();
@@ -163,6 +175,34 @@ export class PostgresDatabase {
 
 
 
+
+
+
+  async insertLegalAcceptanceRecord(record: LegalAcceptanceRecord) {
+    const client = await this.pool.connect();
+    try { await upsertLegalAcceptance(client, record); return record; } finally { client.release(); }
+  }
+
+  async listLegalAcceptancesForUser(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_legal_acceptances where user_id=$1 order by accepted_at desc', [userId]);
+      return result.rows.map(mapLegalAcceptance);
+    } finally { client.release(); }
+  }
+
+  async getUserPreferencesRecord(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_user_preferences where user_id=$1 limit 1', [userId]);
+      return result.rows[0] ? mapUserPreferences(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async upsertUserPreferencesRecord(record: UserPreferencesRecord) {
+    const client = await this.pool.connect();
+    try { await upsertUserPreferences(client, record); return record; } finally { client.release(); }
+  }
 
   async getAdminOverviewView() {
     const client = await this.pool.connect();
@@ -316,6 +356,69 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+
+  async insertSupportTicketRecord(record: SupportTicketRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupportTicket(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateSupportTicketRecord(record: SupportTicketRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupportTicket(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertSupportTicketMessageRecord(record: SupportTicketMessageRecord) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await upsertSupportTicketMessage(client, record);
+      await client.query('update payments_support_tickets set last_message_at=$1, updated_at=$1 where id=$2', [record.createdAt, record.ticketId]);
+      await client.query('commit');
+      return record;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
+
+  async getSupportTicketView(ticketId: string) {
+    const client = await this.pool.connect();
+    try {
+      const ticketResult = await optionalQuery(client, 'select * from payments_support_tickets where id=$1 limit 1', [ticketId]);
+      const ticket = ticketResult.rows[0] ? mapSupportTicket(ticketResult.rows[0]) : undefined;
+      if (!ticket) return undefined;
+      const messages = (await optionalQuery(client, 'select * from payments_support_ticket_messages where ticket_id=$1 order by created_at asc', [ticket.id])).rows.map(mapSupportTicketMessage);
+      const userResult = await client.query('select * from users where user_id=$1 limit 1', [ticket.userId]);
+      return { ...ticket, messages, user: userResult.rows[0] ? mapUser(userResult.rows[0]) : null };
+    } finally { client.release(); }
+  }
+
+  async listUserSupportTicketsView(userId: string, { limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
+    const client = await this.pool.connect();
+    try { return (await optionalQuery(client, 'select * from payments_support_tickets where user_id=$1 order by created_at desc limit $2 offset $3', [userId, limit, offset])).rows.map(mapSupportTicket); } finally { client.release(); }
+  }
+
+  async listAdminSupportTicketsView({ limit = 100, offset = 0, status, priority, type, assignedTo, search, dateFrom, dateTo }: { limit?: number; offset?: number; status?: string; priority?: string; type?: string; assignedTo?: string; search?: string; dateFrom?: string; dateTo?: string } = {}) {
+    const client = await this.pool.connect();
+    try {
+      const clauses: string[] = [];
+      const params: any[] = [];
+      if (status) { params.push(status); clauses.push(`status=$${params.length}`); }
+      if (priority) { params.push(priority); clauses.push(`priority=$${params.length}`); }
+      if (type) { params.push(type); clauses.push(`ticket_type=$${params.length}`); }
+      if (assignedTo) { params.push(assignedTo); clauses.push(`assigned_to=$${params.length}`); }
+      if (dateFrom) { params.push(dateFrom); clauses.push(`created_at >= $${params.length}`); }
+      if (dateTo) { params.push(dateTo); clauses.push(`created_at <= $${params.length}`); }
+      if (search) { params.push(`%${search}%`); clauses.push(`(id ilike $${params.length} or user_id ilike $${params.length} or subject ilike $${params.length} or resource_id ilike $${params.length})`); }
+      params.push(limit, offset);
+      const where = clauses.length ? `where ${clauses.join(' and ')}` : '';
+      const tickets = (await optionalQuery(client, `select * from payments_support_tickets ${where} order by created_at desc limit $${params.length - 1} offset $${params.length}`, params)).rows.map(mapSupportTicket);
+      const userIds = [...new Set(tickets.map((ticket) => ticket.userId))];
+      const ticketIds = tickets.map((ticket) => ticket.id);
+      const users = userIds.length ? (await client.query('select * from users where user_id = any($1)', [userIds])).rows.map(mapUser) : [];
+      const messageCounts = ticketIds.length ? (await optionalQuery(client, 'select ticket_id, count(*)::int as count from payments_support_ticket_messages where ticket_id = any($1) group by ticket_id', [ticketIds])).rows : [];
+      const countMap = new Map(messageCounts.map((row) => [row.ticket_id, Number(row.count)]));
+      return tickets.map((ticket) => ({ ...ticket, user: users.find((user) => user.id === ticket.userId) ?? null, messageCount: countMap.get(ticket.id) ?? 0 }));
+    } finally { client.release(); }
+  }
+
   async insertAuditLogRecord(record: AuditLogRecord) {
     const client = await this.pool.connect();
     try { await upsertAuditLog(client, record); return record; } finally { client.release(); }
@@ -439,6 +542,8 @@ export class PostgresDatabase {
     try {
       await client.query('begin');
       for (const user of data.users) await upsertUser(client, user);
+      for (const preferences of data.userPreferences ?? []) await upsertUserPreferences(client, preferences);
+      for (const acceptance of data.legalAcceptances ?? []) await upsertLegalAcceptance(client, acceptance);
       for (const customer of data.customers) await upsertCustomer(client, customer);
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
@@ -455,6 +560,8 @@ export class PostgresDatabase {
       for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
       for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       for (const log of data.unifiedWebhookLogs ?? []) await upsertUnifiedWebhookLog(client, log);
+      for (const ticket of data.supportTickets ?? []) await upsertSupportTicket(client, ticket);
+      for (const message of data.supportTicketMessages ?? []) await upsertSupportTicketMessage(client, message);
       await client.query('commit');
     } catch (error) {
       await client.query('rollback');
@@ -463,6 +570,62 @@ export class PostgresDatabase {
       client.release();
     }
   }
+}
+
+
+
+function mapLegalAcceptance(row: any): LegalAcceptanceRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    email: row.email,
+    termsVersion: row.terms_version,
+    privacyVersion: row.privacy_version,
+    riskDisclosureVersion: row.risk_disclosure_version,
+    acceptedAt: iso(row.accepted_at),
+    ipAddress: str(row.ip_address),
+    userAgent: str(row.user_agent),
+    source: row.source,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertLegalAcceptance(client: pg.PoolClient, item: LegalAcceptanceRecord) {
+  await client.query(
+    `insert into payments_legal_acceptances (id, user_id, email, terms_version, privacy_version, risk_disclosure_version, accepted_at, ip_address, user_agent, source, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do nothing`,
+    [item.id, item.userId, item.email, item.termsVersion, item.privacyVersion, item.riskDisclosureVersion, item.acceptedAt, item.ipAddress, item.userAgent, item.source, item.createdAt]
+  );
+}
+
+function mapUserPreferences(row: any): UserPreferencesRecord {
+  return {
+    userId: row.user_id,
+    defaultFiatCurrency: row.default_fiat_currency,
+    language: row.language,
+    transactionUpdates: row.transaction_updates,
+    marketingEmails: row.marketing_emails,
+    securityAlerts: row.security_alerts,
+    emailConfirmationsForHighValue: row.email_confirmations_for_high_value,
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertUserPreferences(client: pg.PoolClient, item: UserPreferencesRecord) {
+  await client.query(
+    `insert into payments_user_preferences (user_id, default_fiat_currency, language, transaction_updates, marketing_emails, security_alerts, email_confirmations_for_high_value, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (user_id) do update set
+       default_fiat_currency=excluded.default_fiat_currency,
+       language=excluded.language,
+       transaction_updates=excluded.transaction_updates,
+       marketing_emails=excluded.marketing_emails,
+       security_alerts=excluded.security_alerts,
+       email_confirmations_for_high_value=excluded.email_confirmations_for_high_value,
+       updated_at=excluded.updated_at`,
+    [item.userId, item.defaultFiatCurrency, item.language, item.transactionUpdates, item.marketingEmails, item.securityAlerts, item.emailConfirmationsForHighValue, item.updatedAt]
+  );
 }
 
 function mapUser(row: any): UserRecord {
@@ -630,6 +793,75 @@ async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord)
        updated_at=excluded.updated_at,
        completed_at=excluded.completed_at`,
     [item.id, item.userId, item.customerId, item.provider, item.providerTransferId, item.sourceCurrency, item.sourcePaymentRail, item.destinationCurrency, item.destinationChain, item.destinationAddress, item.amount, item.feePercent, item.feeAmount, item.netAmount, item.providerReference, item.sourceDepositInstructions ?? null, item.destinationTxHash, item.status, item.statusReason, item.receipt ?? null, item.raw ?? null, item.createdAt, item.updatedAt, item.completedAt]
+  );
+}
+
+function mapSupportTicket(row: any): SupportTicketRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: str(row.payments_customer_id),
+    type: row.ticket_type,
+    priority: row.priority,
+    status: row.status,
+    subject: row.subject,
+    description: row.description,
+    resourceType: row.resource_type,
+    resourceId: str(row.resource_id),
+    assignedTo: str(row.assigned_to),
+    lastMessageAt: optionalIso(row.last_message_at),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    closedAt: optionalIso(row.closed_at)
+  };
+}
+
+function mapSupportTicketMessage(row: any): SupportTicketMessageRecord {
+  return {
+    id: row.id,
+    ticketId: row.ticket_id,
+    senderType: row.sender_type,
+    senderId: str(row.sender_id),
+    message: row.message,
+    attachments: row.attachments,
+    internalNote: row.internal_note,
+    createdAt: iso(row.created_at)
+  };
+}
+
+async function upsertSupportTicket(client: pg.PoolClient, item: SupportTicketRecord) {
+  await client.query(
+    `insert into payments_support_tickets (id, user_id, payments_customer_id, ticket_type, priority, status, subject, description, resource_type, resource_id, assigned_to, last_message_at, metadata, created_at, updated_at, closed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     on conflict (id) do update set
+       ticket_type=excluded.ticket_type,
+       priority=excluded.priority,
+       status=excluded.status,
+       subject=excluded.subject,
+       description=excluded.description,
+       resource_type=excluded.resource_type,
+       resource_id=excluded.resource_id,
+       assigned_to=excluded.assigned_to,
+       last_message_at=excluded.last_message_at,
+       metadata=excluded.metadata,
+       updated_at=excluded.updated_at,
+       closed_at=excluded.closed_at`,
+    [item.id, item.userId, item.customerId, item.type, item.priority, item.status, item.subject, item.description, item.resourceType, item.resourceId, item.assignedTo, item.lastMessageAt, item.metadata ?? null, item.createdAt, item.updatedAt, item.closedAt]
+  );
+}
+
+async function upsertSupportTicketMessage(client: pg.PoolClient, item: SupportTicketMessageRecord) {
+  await client.query(
+    `insert into payments_support_ticket_messages (id, ticket_id, sender_type, sender_id, message, attachments, internal_note, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set
+       sender_type=excluded.sender_type,
+       sender_id=excluded.sender_id,
+       message=excluded.message,
+       attachments=excluded.attachments,
+       internal_note=excluded.internal_note`,
+    [item.id, item.ticketId, item.senderType, item.senderId, item.message, item.attachments ?? null, item.internalNote ?? false, item.createdAt]
   );
 }
 
@@ -924,17 +1156,23 @@ function mapAuthChallenge(row: any): AuthChallengeRecord {
     fullName: str(row.full_name),
     expiresAt: iso(row.expires_at),
     consumedAt: optionalIso(row.consumed_at),
-    createdAt: iso(row.created_at)
+    createdAt: iso(row.created_at),
+    legalTermsVersion: str(row.legal_terms_version),
+    legalPrivacyVersion: str(row.legal_privacy_version),
+    legalRiskDisclosureVersion: str(row.legal_risk_disclosure_version),
+    legalAcceptedAt: optionalIso(row.legal_accepted_at),
+    legalAcceptanceIpAddress: str(row.legal_acceptance_ip_address),
+    legalAcceptanceUserAgent: str(row.legal_acceptance_user_agent)
   };
 }
 
 async function upsertAuthChallenge(client: pg.PoolClient, item: AuthChallengeRecord) {
   await client.query(
-    `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+    `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at, legal_terms_version, legal_privacy_version, legal_risk_disclosure_version, legal_accepted_at, legal_acceptance_ip_address, legal_acceptance_user_agent)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (id) do update set
-       code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at`,
-    [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt]
+       code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at, legal_terms_version=excluded.legal_terms_version, legal_privacy_version=excluded.legal_privacy_version, legal_risk_disclosure_version=excluded.legal_risk_disclosure_version, legal_accepted_at=excluded.legal_accepted_at, legal_acceptance_ip_address=excluded.legal_acceptance_ip_address, legal_acceptance_user_agent=excluded.legal_acceptance_user_agent`,
+    [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt, item.legalTermsVersion, item.legalPrivacyVersion, item.legalRiskDisclosureVersion, item.legalAcceptedAt, item.legalAcceptanceIpAddress, item.legalAcceptanceUserAgent]
   );
 }
 

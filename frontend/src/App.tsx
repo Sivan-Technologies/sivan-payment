@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -107,11 +107,11 @@ const fallbackSourceAssets: AssetControl[] = [
 ];
 
 const fallbackSourceNetworks: NetworkControl[] = [
-  { network: 'base', enabled: true, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
-  { network: 'polygon', enabled: true, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
-  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
-  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
-  { network: 'arbitrum', enabled: true, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'base', enabled: false, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'solana', enabled: false, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
   { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
@@ -143,6 +143,26 @@ function qrUrl(value: string) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(value)}`;
 }
 
+
+const legalVersions = {
+  termsVersion: '2026-07-14',
+  privacyVersion: '2026-07-14',
+  riskDisclosureVersion: '2026-07-14'
+};
+
+const legalLinks = {
+  terms: 'https://www.sivantech.online/legal/terms',
+  privacy: 'https://www.sivantech.online/legal/privacy',
+  risk: 'https://www.sivantech.online/legal/risk-disclosure',
+  dataRetention: 'https://www.sivantech.online/legal/data-retention',
+  amlKyc: 'https://www.sivantech.online/legal/aml-kyc',
+  jurisdictions: 'https://www.sivantech.online/legal/supported-jurisdictions',
+  wrongNetwork: 'https://www.sivantech.online/legal/wrong-network',
+  complaints: 'https://www.sivantech.online/legal/complaints',
+  cookies: 'https://www.sivantech.online/legal/cookies'
+};
+
+
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -163,6 +183,8 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
+  const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
+  const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
@@ -218,7 +240,7 @@ export default function App() {
   const completedWithdrawalCount = completedWithdrawals.length;
   const completedVolume = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.destinationAmount ?? withdrawal.sourceAmount ?? 0), 0);
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
-  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Base';
+  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Avalanche C-Chain';
 
   const logout = useCallback((message = 'You have been signed out.') => {
     setAuthToken('');
@@ -227,6 +249,8 @@ export default function App() {
     setAccounts([]);
     setWithdrawals([]);
     setOnrampOrders([]);
+    setSupportTickets([]);
+    setUserPreferences(null);
     setDepositResult(null);
     localStorage.removeItem('sivan.authToken');
     localStorage.removeItem('sivan.user');
@@ -307,16 +331,20 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, supportTicketsResult, preferencesResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
-      api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`)
+      api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`),
+      api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
+      api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
     if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
+    if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
+    if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
   }, [api, user?.id, authToken]);
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -426,7 +454,11 @@ export default function App() {
         body: JSON.stringify({
           email: body.email,
           fullName: authTab === 'signup' ? body.fullName : undefined,
-          intent: authTab
+          intent: authTab,
+          legalAcceptance: authTab === 'signup' ? {
+            accepted: body.legalAccepted === 'on',
+            ...legalVersions
+          } : undefined
         })
       });
       setPendingEmail(body.email);
@@ -453,7 +485,11 @@ export default function App() {
         body: JSON.stringify({
           email: pendingEmail,
           fullName: authTab === 'signup' ? pendingFullName : undefined,
-          intent: authTab
+          intent: authTab,
+          legalAcceptance: authTab === 'signup' ? {
+            accepted: true,
+            ...legalVersions
+          } : undefined
         })
       });
       setOtpCode('');
@@ -695,6 +731,86 @@ export default function App() {
     }
   }
 
+
+
+  async function handleSaveUserPreferences(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    setLoading(true);
+    try {
+      const form = event.currentTarget;
+      const data = getForm(form);
+      const checkbox = (name: string, current: boolean) => form.querySelector<HTMLInputElement>(`input[type="checkbox"][name="${name}"]`)?.checked ?? current;
+      const updated = await api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          defaultFiatCurrency: data.defaultFiatCurrency || userPreferences?.defaultFiatCurrency || 'usd',
+          language: data.language || userPreferences?.language || 'en-US',
+          transactionUpdates: checkbox('transactionUpdates', userPreferences?.transactionUpdates ?? true),
+          marketingEmails: checkbox('marketingEmails', userPreferences?.marketingEmails ?? false),
+          securityAlerts: checkbox('securityAlerts', userPreferences?.securityAlerts ?? true),
+          emailConfirmationsForHighValue: checkbox('emailConfirmationsForHighValue', userPreferences?.emailConfirmationsForHighValue ?? false)
+        })
+      });
+      setUserPreferences(updated);
+      notify('Preferences saved.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateSupportTicket(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    const form = event.currentTarget;
+    setLoading(true);
+    try {
+      const data = getForm(form);
+      const formData = new FormData(form);
+      const file = formData.get('attachment') instanceof File ? formData.get('attachment') as File : null;
+      let attachmentUrl = data.attachmentUrl || undefined;
+      let attachmentObjectKey: string | undefined;
+      if (file && file.size > 0) {
+        const upload = await api<{ uploadUrl: string; publicUrl?: string; objectKey: string; headers?: Record<string, string> }>('/api/support/attachments/upload-url', {
+          method: 'POST',
+          body: JSON.stringify({ userId: user.id, fileName: file.name, contentType: file.type || 'application/octet-stream', sizeBytes: file.size })
+        });
+        const uploaded = await fetch(upload.uploadUrl, { method: 'PUT', headers: upload.headers || { 'Content-Type': file.type }, body: file });
+        if (!uploaded.ok) throw new Error('Attachment upload failed. Please try again or paste an attachment URL.');
+        attachmentUrl = upload.publicUrl || upload.uploadUrl.split('?')[0];
+        attachmentObjectKey = upload.objectKey;
+      }
+      const [resourceTypeRaw, resourceIdRaw] = (data.relatedItem || 'general:').split(':');
+      const resourceType = resourceTypeRaw || 'general';
+      const resourceId = resourceIdRaw || undefined;
+      const ticket = await api<SupportTicketRecord>('/api/support/tickets', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: user.id,
+          type: data.type,
+          subject: data.subject,
+          description: data.description,
+          resourceType,
+          resourceId,
+          transactionHash: data.transactionHash || undefined,
+          bankReference: data.bankReference || undefined,
+          walletAddress: data.walletAddress || undefined,
+          attachmentUrl,
+          metadata: attachmentObjectKey ? { attachmentObjectKey } : undefined
+        })
+      });
+      setSupportTickets((tickets) => [ticket, ...tickets.filter((item) => item.id !== ticket.id)]);
+      notify(`Support ticket created: ${ticket.id}`);
+      form.reset();
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (view === 'landing') {
     return <LandingPage
       isLiveEnv={isLiveEnv}
@@ -732,6 +848,7 @@ export default function App() {
 
         <div className="sidebar-footer app-sidebar-footer">
           <div className="sidebar-status"><span></span>{systemStatus.mode === 'active' ? 'All systems operational' : systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</div>
+          <div className="sidebar-legal-links"><a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a><a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy</a><a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk</a></div>
         </div>
       </aside>
 
@@ -794,6 +911,7 @@ export default function App() {
                 <form className="form" onSubmit={handleEmailAuthStart}>
                   <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
                   {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>}
+                  {authTab === 'signup' && <label className="legal-checkbox"><input name="legalAccepted" type="checkbox" required /><span>I agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</span></label>}
                   <button className="primary-btn" disabled={loading}>{loading ? 'Sending...' : authTab === 'signup' ? 'Send verification code' : 'Send login code'}</button>
                 </form>
               ) : (
@@ -846,8 +964,8 @@ export default function App() {
 
         {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
 
-        {view === 'settings' && <SettingsView user={user} onLogout={() => logout('Signed out successfully.')} />}
-        {view === 'help' && <SupportView />}
+        {view === 'settings' && <SettingsView user={user} preferences={userPreferences} onSavePreferences={handleSaveUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
     </div>
@@ -922,7 +1040,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
           <div className="landing-copy">
             <p className="eyebrow">Crypto to fiat. Fiat to crypto.</p>
             <h1>Buy and sell crypto<br /><span>the simple way.</span></h1>
-            <p className="lead">Convert USDC, USDT and other supported digital assets directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
+            <p className="lead">Convert supported stablecoins on Avalanche C-Chain directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
             <div className="landing-actions">
               <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
               <a className="secondary-btn" href="#how">See how it works</a>
@@ -954,7 +1072,7 @@ function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payoutCurre
         <section className="landing-section two-directions" id="features">
           <div className="section-head center"><p className="eyebrow center">Two directions</p><h2>Move value in either direction.</h2><p>One platform. One verification. Sell crypto to your bank or prepare to buy crypto with fiat — the same simple experience.</p></div>
           <div className="direction-grid">
-            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Works with USDC, USDT when enabled, and more supported assets</li><li>✓ Payouts in {payoutCurrencies}; NGN coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
+            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Launching first on Avalanche C-Chain</li><li>✓ Works with USDC and USDT when enabled</li><li>✓ Payouts in {payoutCurrencies}; NGN coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
             <article className="direction-card buy"><span className="chip-pill purple">↙ Buy</span><em>Rollout ready</em><h3>Buy crypto directly with fiat.</h3><p>Pay by supported bank rails and receive stablecoins in a wallet you control once on-ramp backend rails are live.</p><ul><li>✓ Bank transfer flow planned</li><li>✓ Delivered after payment clears</li><li>✓ Self-custody wallet destination</li><li>✓ Same verification covers both directions</li></ul><div><strong>Provider rollout</strong><button className="secondary-btn" onClick={onBuy}>Start buying →</button></div></article>
           </div>
         </section>
@@ -1014,12 +1132,12 @@ function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () =
         <div className="footer-brand-col">
           <div className="footer-brand"><img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong></div>
           <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
-          <div className="footer-badges"><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
+          <div className="footer-badges"><span>Avalanche C-Chain first</span><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
         </div>
         <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
         <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
         <FooterCol title="Resources" links={[{ label: 'How it works', href: '#how' }, { label: 'FAQ', href: '#faq' }, { label: 'Safety', href: '#safety' }, { label: 'Sivan website', href: 'https://www.sivantech.online/' }]} />
-        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: 'https://www.sivantech.online/' }, { label: 'Privacy Policy', href: 'https://www.sivantech.online/' }, { label: 'Risk disclosure', href: '#safety' }]} />
+        <FooterCol title="Company" links={[{ label: 'Pilot access', href: 'https://waitlist.sivantech.online/' }, { label: 'Terms of Service', href: legalLinks.terms }, { label: 'Privacy Policy', href: legalLinks.privacy }, { label: 'Risk Disclosure', href: legalLinks.risk }, { label: 'Data Retention', href: legalLinks.dataRetention }, { label: 'AML/KYC', href: legalLinks.amlKyc }, { label: 'Jurisdictions', href: legalLinks.jurisdictions }, { label: 'Wrong Network Policy', href: legalLinks.wrongNetwork }, { label: 'Complaints', href: legalLinks.complaints }, { label: 'Cookies', href: legalLinks.cookies }]} />
       </div>
       <div className="footer-bottom">
         <p>© 2026 Sivan Technologies. All rights reserved. Cryptoassets and stablecoins are volatile and may not be protected by financial compensation schemes. Services depend on licensed/provider-supported payment rails and may be unavailable in some jurisdictions. Sivan does not ask for wallet private keys.</p>
@@ -1242,7 +1360,7 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
         <Kv label="Payout currency" value={review.destinationCurrency.toUpperCase()} />
         <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
       </div>
-      <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</div>
+      <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</div>
       <div className="split-actions">
         <button className="ghost-btn" onClick={onCancel}>Edit details</button>
         <button className="primary-btn" disabled={loading} onClick={onConfirm}>{loading ? 'Creating...' : 'Create deposit address'}</button>
@@ -1276,7 +1394,7 @@ function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubm
   const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
   return (
     <section className="app-page verification-premium">
-      <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." />
+      <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." /><p className="legal-inline-note">Verification is required under our <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a> and provider compliance requirements.</p>
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
           <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
@@ -1330,20 +1448,72 @@ function PageHero({ title, subtitle, action }: { title: string; subtitle: string
   return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>;
 }
 
-function SettingsView({ user, onLogout }: { user: UserRecord | null; onLogout: () => void }) {
+function LegalResources({ compact = false }: { compact?: boolean }) {
+  const links = [
+    { label: 'Terms', href: legalLinks.terms },
+    { label: 'Privacy', href: legalLinks.privacy },
+    { label: 'Risk Disclosure', href: legalLinks.risk },
+    { label: 'Data Retention', href: legalLinks.dataRetention },
+    { label: 'AML/KYC Policy', href: legalLinks.amlKyc },
+    { label: 'Supported Jurisdictions', href: legalLinks.jurisdictions },
+    { label: 'Wrong Network Policy', href: legalLinks.wrongNetwork },
+    { label: 'Complaints Policy', href: legalLinks.complaints },
+    { label: 'Cookie Policy', href: legalLinks.cookies }
+  ];
+  return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
+}
+
+function SettingsView({ user, preferences, onSavePreferences, loading, onLogout }: { user: UserRecord | null; preferences: UserPreferencesRecord | null; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; onLogout: () => void }) {
   const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
   const nameParts = (user?.fullName || '').split(/\s+/);
-  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.',''],['◷','Active sessions','Current browser session active.','Manage']]} />}{tab === 'notifications' && <SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm and payouts send.','on'],['✉','Marketing emails','Product news and offers.','off'],['◈','Security alerts','Suspicious logins and account changes.','on']]} />}{tab === 'preferences' && <><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select><option>USD — US Dollar</option><option>GBP — British Pound</option><option>EUR — Euro</option><option>NGN — Coming soon</option></select></label><label>Language<select defaultValue="en-US"><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><button className="primary-btn">Save preferences</button><button className="secondary-btn" onClick={onLogout}>Sign out</button></>}</article></div></section>;
+  const currentPreferences = preferences ?? {
+    userId: user?.id || '',
+    defaultFiatCurrency: 'usd' as const,
+    language: 'en-US' as const,
+    transactionUpdates: true,
+    marketingEmails: false,
+    securityAlerts: true,
+    emailConfirmationsForHighValue: false,
+    updatedAt: new Date().toISOString()
+  };
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <form onSubmit={onSavePreferences}><h3>Security</h3><p className="muted">Keep your account safe.</p><SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.','emailConfirmationsForHighValue'],['◷','Active sessions','Current browser session active.','Manage']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save security preferences'}</button></form>}{tab === 'notifications' && <form onSubmit={onSavePreferences}><h3>Notifications</h3><p className="muted">Choose how Sivan contacts you about payments, security, and product updates.</p><SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm, on-ramp payments match, and payouts send.','transactionUpdates'],['✉','Marketing emails','Product news, feature updates, and offers.','marketingEmails'],['◈','Security alerts','Suspicious logins, account changes, and important risk events.','securityAlerts']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save notification preferences'}</button><p className="field-hint">Transactional and security notices may still be sent where required for account safety, compliance, or provider operations.</p></form>}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
 }
 
-function SettingsRows({ rows }: { rows: string[][] }) {
-  return <div><h3>Security</h3><p className="muted">Keep your account safe.</p><div className="settings-row-list">{rows.map((row) => <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{row[3] === 'on' || row[3] === 'off' ? <i className={`toggle ${row[3] === 'on' ? 'on' : ''}`} /> : <button className="ghost-btn small">{row[3]}</button>}</div>)}</div></div>;
+
+function SettingsRows({ rows, preferences }: { rows: string[][]; preferences?: UserPreferencesRecord }) {
+  return <div className="settings-row-list">{rows.map((row) => {
+    const key = row[3];
+    const isToggle = ['transactionUpdates', 'marketingEmails', 'securityAlerts', 'emailConfirmationsForHighValue'].includes(key);
+    const checked = key === 'transactionUpdates' ? preferences?.transactionUpdates : key === 'marketingEmails' ? preferences?.marketingEmails : key === 'securityAlerts' ? preferences?.securityAlerts : key === 'emailConfirmationsForHighValue' ? preferences?.emailConfirmationsForHighValue : false;
+    return <div className="settings-row" key={row[1]}><span>{row[0]}</span><div><strong>{row[1]}</strong><small>{row[2]}</small></div>{isToggle ? <label className="switch-toggle"><input name={key} type="checkbox" defaultChecked={Boolean(checked)} /><i /></label> : <button type="button" className="ghost-btn small">{key}</button>}</div>;
+  })}</div>;
 }
 
-function SupportView() {
+
+function SupportView({ hasUser, tickets, withdrawals, onrampOrders, accounts, customer, api, onCreateTicket, onTicketsChanged, loading }: { hasUser: boolean; tickets: SupportTicketRecord[]; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; accounts: ExternalAccountRecord[]; customer: CustomerRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; onCreateTicket: (event: FormEvent<HTMLFormElement>) => void; onTicketsChanged: (tickets: SupportTicketRecord[]) => void; loading: boolean }) {
+  const [selectedTicket, setSelectedTicket] = useState<SupportTicketRecord | null>(null);
   const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
-  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><SupportCard icon="☎" title="Report an issue" body="Problem with a transaction? Open a ticket." action="Open ticket" /></div><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article></section>;
+  async function openTicket(ticket: SupportTicketRecord) {
+    const detail = await api<SupportTicketRecord>(`/api/support/tickets/${ticket.id}`);
+    setSelectedTicket(detail);
+  }
+  async function reply(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTicket) return;
+    const data = getForm(event.currentTarget);
+    await api(`/api/support/tickets/${selectedTicket.id}/messages`, { method: 'POST', body: JSON.stringify({ message: data.message }) });
+    const detail = await api<SupportTicketRecord>(`/api/support/tickets/${selectedTicket.id}`);
+    setSelectedTicket(detail);
+    onTicketsChanged(tickets.map((ticket) => ticket.id === detail.id ? { ...ticket, ...detail } : ticket));
+    (event.currentTarget as HTMLFormElement).reset();
+  }
+  return <section className="app-page support-premium"><PageHero title="Support" subtitle="We’re here to help with anything from verification to delayed payouts." /><div className="support-card-grid"><SupportCard icon="▢" title="Live chat" body="Chat with our team · Response within hours" action="Start chat" /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><a className="support-card" href="#report-issue"><span>☎</span><h3>Report an issue</h3><p>Problem with a transaction? Open a ticket.</p><strong>Open ticket →</strong></a></div><div className="support-legal-grid"><article className="support-faq-card"><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article><LegalResources /></div><div className="support-legal-grid"><article className="support-faq-card" id="report-issue"><h3>Report an issue</h3>{!hasUser ? <Empty>Create your account or sign in before opening a support ticket.</Empty> : <form className="form" onSubmit={onCreateTicket}><label>Issue type<select name="type" defaultValue="withdrawal"><option value="verification">Verification issue</option><option value="bank_account">Bank account issue</option><option value="withdrawal">Withdrawal issue</option><option value="deposit_not_detected">Deposit sent but not detected</option><option value="wrong_token_or_network">Wrong token or wrong network</option><option value="payout_delayed">Payout delayed</option><option value="onramp_payment">On-ramp payment issue</option><option value="onramp_delivery">On-ramp crypto not received</option><option value="account_access">Account access issue</option><option value="other">Other</option></select></label><label>Related item<select name="relatedItem" defaultValue="general:"><option value="general:">General issue</option>{customer && <option value={`customer:${customer.id}`}>Verification · {friendlyStatus(customer.kycStatus)}</option>}{withdrawals.map((withdrawal) => <option key={withdrawal.id} value={`withdrawal:${withdrawal.id}`}>Withdrawal {shortRef(withdrawal.id)} · {friendlyStatus(withdrawal.status)}</option>)}{onrampOrders.map((order) => <option key={order.id} value={`onramp_order:${order.id}`}>Buy order {shortRef(order.id)} · {friendlyStatus(order.status)}</option>)}{accounts.map((account) => <option key={account.id} value={`external_account:${account.id}`}>Bank account {account.currency.toUpperCase()} · ****{account.accountLast4 || '----'}</option>)}</select></label><div className="split"><label>Transaction hash<input name="transactionHash" placeholder="Optional" /></label><label>Bank reference<input name="bankReference" placeholder="Optional" /></label></div><label>Wallet address<input name="walletAddress" placeholder="Optional wallet involved" /></label><label>Upload screenshot or receipt<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp,image/heic,application/pdf" /></label><label>Attachment URL<input name="attachmentUrl" placeholder="Optional screenshot/receipt URL" /></label><label>Subject<input name="subject" placeholder="Short summary" required /></label><label>Description<textarea name="description" placeholder="Tell us what happened. Include date, amount, wallet address, transaction hash, bank reference, or error message if available." required /></label><button className="primary-btn" disabled={loading}>{loading ? 'Creating ticket...' : 'Create ticket'}</button></form>}</article><article className="support-faq-card"><h3>Your recent tickets</h3>{!tickets.length ? <Empty>No support tickets yet.</Empty> : <div className="list">{tickets.slice(0, 6).map((ticket) => <button className="list-item ticket-list-button" key={ticket.id} onClick={() => openTicket(ticket)}><strong>{ticket.subject}</strong><Badge status={ticket.status}>{friendlyStatus(ticket.status)}</Badge><small>{ticket.type.replaceAll('_', ' ')} · {ticket.priority}</small><small>{new Date(ticket.createdAt).toLocaleString()}</small></button>)}</div>}</article></div>{selectedTicket && <TicketConversation ticket={selectedTicket} onClose={() => setSelectedTicket(null)} onReply={reply} />}</section>;
 }
+
+function TicketConversation({ ticket, onClose, onReply }: { ticket: SupportTicketRecord; onClose: () => void; onReply: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <div className="ticket-drawer"><div className="ticket-drawer-card"><div className="panel-head"><div><p className="eyebrow">Ticket {ticket.id}</p><h3>{ticket.subject}</h3></div><button className="ghost-btn small" onClick={onClose}>Close</button></div><div className="details-box"><Kv label="Status" value={friendlyStatus(ticket.status)} /><Kv label="Priority" value={ticket.priority} /><Kv label="Type" value={ticket.type.replaceAll('_', ' ')} /><Kv label="Related" value={`${ticket.resourceType}${ticket.resourceId ? ` · ${ticket.resourceId}` : ''}`} /></div><div className="ticket-thread">{(ticket.messages ?? []).filter((message) => !message.internalNote).map((message) => <div className={`ticket-message ${message.senderType}`} key={message.id}><strong>{message.senderType === 'admin' ? 'Sivan Support' : 'You'}</strong><p>{message.message}</p><small>{new Date(message.createdAt).toLocaleString()}</small></div>)}</div><form className="form" onSubmit={onReply}><label>Reply<textarea name="message" required /></label><button className="primary-btn">Send reply</button></form></div></div>;
+}
+
 
 function SupportCard({ icon, title, body, action, href }: { icon: string; title: string; body: string; action: string; href?: string }) {
   const content = <><span>{icon}</span><h3>{title}</h3><p>{body}</p><strong>{action} →</strong></>;
@@ -1455,7 +1625,7 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
     <article className="deposit-card live-deposit-card">
       <p className="eyebrow">Step 3</p>
       <h3>Deposit address created</h3>
-      <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable.</p>
+      <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</p>
       <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address">{result.deposit.address}</div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button></div></div>
       <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Payout currency" value={result.withdrawal.destinationCurrency.toUpperCase()} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></div>
       <div className="tracking-timeline">
