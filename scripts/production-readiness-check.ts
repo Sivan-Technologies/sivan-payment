@@ -5,7 +5,7 @@ const liveBackend = process.env.LIVE_API_BASE_URL || 'https://sivan-payments-api
 const testBackend = process.env.TEST_API_BASE_URL || 'https://sivan-payments-api-test.onrender.com';
 const liveUserApp = process.env.LIVE_USER_APP_URL || 'https://app.sivantech.online';
 const testUserApp = process.env.TEST_USER_APP_URL || 'https://sivan-payments-user-test.vercel.app';
-const adminApp = process.env.ADMIN_APP_URL || 'https://sivan-payment.vercel.app';
+const adminApp = process.env.ADMIN_APP_URL || 'https://sivan-admin-hub-test.vercel.app';
 const homepage = process.env.HOMEPAGE_URL || 'https://www.sivantech.online';
 
 const checks: Check[] = [];
@@ -14,7 +14,7 @@ await checkBackend('live backend', liveBackend, liveUserApp);
 await checkBackend('test backend', testBackend, testUserApp);
 await checkFrontend('live user app', liveUserApp, ['/', '/dashboard', '/buy', '/withdraw', '/settings', '/help']);
 await checkFrontend('test user app', testUserApp, ['/', '/dashboard', '/buy', '/withdraw', '/settings', '/help']);
-await checkFrontend('admin app', adminApp, ['/', '/support', '/controls']);
+await checkFrontend('admin hub', adminApp, ['/', '/login', '/dashboard/modules/sivan-payment']);
 await checkFrontend('homepage legal', homepage, ['/legal/terms', '/legal/privacy', '/legal/risk-disclosure', '/legal/aml-kyc', '/legal/wrong-network']);
 checkLocalEnvReadiness();
 

@@ -9,7 +9,7 @@ const urls = {
   testBackend: 'https://sivan-payments-api-test.onrender.com',
   liveUser: 'https://app.sivantech.online',
   testUser: 'https://sivan-payments-user-test.vercel.app',
-  admin: 'https://sivan-payment.vercel.app'
+  admin: process.env.ADMIN_APP_URL || 'https://sivan-admin-hub-test.vercel.app'
 };
 
 await checkHealth(`${urls.liveBackend}/health`, 'Render live backend health');

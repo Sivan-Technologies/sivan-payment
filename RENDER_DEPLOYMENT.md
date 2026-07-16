@@ -8,7 +8,7 @@ The repository deploys into two lanes:
 [ TEST LANE ]                                      [ LIVE LANE ]
 
 Vercel: sivan-payments-user-test                  Vercel: sivan-payments-user-live
-Vercel: sivan-payments-admin-test                 Vercel: sivan-payments-admin-live
+Admin Hub: sivan-admin-hub-test                 Admin Hub: admin.sivantech.online
         ↓                                                 ↓
 Render: sivan-payments-api-test                   Render: sivan-payments-api-live
         ↓                                                 ↓
@@ -34,9 +34,9 @@ Sentry: staging                                   Sentry: production
 | Lane | Vercel project | Root directory | API target |
 |---|---|---|---|
 | TEST | `sivan-payments-user-test` | `frontend` | `https://sivan-payments-api-test.onrender.com` |
-| TEST | `sivan-payments-admin-test` | `frontend-admin` | `https://sivan-payments-api-test.onrender.com` |
+| TEST | `sivan-admin-hub-test` | `sivan-admin-hub` repo | server-side proxy to `https://sivan-payments-api-test.onrender.com` |
 | LIVE | `sivan-payments-user-live` | `frontend` | `https://sivan-payments-api-live.onrender.com` |
-| LIVE | `sivan-payments-admin-live` | `frontend-admin` | `https://sivan-payments-api-live.onrender.com` |
+| LIVE | `admin.sivantech.online` | `sivan-admin-hub` repo | server-side proxy to `https://sivan-payments-api-live.onrender.com` |
 
 ---
 
@@ -85,7 +85,7 @@ Required Render env vars:
 APP_ENV=staging
 PORT=10000
 APP_URL=https://sivan-payments-api-test.onrender.com
-CORS_ORIGIN=https://sivan-payments-user-test.vercel.app,https://sivan-payments-admin-test.vercel.app
+CORS_ORIGIN=https://sivan-payments-user-test.vercel.app,https://sivan-admin-hub-test.vercel.app
 LOG_LEVEL=info
 
 DATABASE_PROVIDER=postgres
@@ -129,7 +129,7 @@ Required Render env vars:
 APP_ENV=production
 PORT=10000
 APP_URL=https://sivan-payments-api-live.onrender.com
-CORS_ORIGIN=https://sivan-payments-user-live.vercel.app,https://sivan-payments-admin-live.vercel.app
+CORS_ORIGIN=https://app.sivantech.online,https://admin.sivantech.online
 LOG_LEVEL=info
 
 DATABASE_PROVIDER=postgres
@@ -205,45 +205,45 @@ VITE_SENTRY_ENVIRONMENT=production
 VITE_SENTRY_TRACES_SAMPLE_RATE=0
 ```
 
-### Admin frontend TEST
+### Admin frontend
 
-Project root:
-
-```text
-frontend-admin
-```
-
-Vercel env:
-
-```env
-VITE_APP_ENV=test
-VITE_APP_NAME=Sivan Payments Admin Test
-VITE_API_BASE_URL=https://sivan-payments-api-test.onrender.com
-VITE_SENTRY_DSN=<SENTRY_ADMIN_TEST_DSN>
-VITE_SENTRY_ENVIRONMENT=test
-VITE_SENTRY_TRACES_SAMPLE_RATE=0
-```
-
-### Admin frontend LIVE
-
-Project root:
+The standalone `frontend-admin/` Vite app has been removed from this repository.
+The official Sivan Payment admin frontend now lives in the Admin Hub repository:
 
 ```text
-frontend-admin
+https://github.com/Samswitchy/sivan-admin-hub
 ```
 
-Vercel env:
+Admin Hub module path:
+
+```text
+/dashboard/modules/sivan-payment
+```
+
+Admin Hub calls this backend through its server-side proxy and must keep the payment admin API key server-side.
+Do **not** expose `ADMIN_API_KEY` in any browser `NEXT_PUBLIC_*` or `VITE_*` variable.
+
+Admin Hub TEST env:
 
 ```env
-VITE_APP_ENV=live
-VITE_APP_NAME=Sivan Payments Admin
-VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
-VITE_SENTRY_DSN=<SENTRY_ADMIN_LIVE_DSN>
-VITE_SENTRY_ENVIRONMENT=production
-VITE_SENTRY_TRACES_SAMPLE_RATE=0
+SIVAN_PAYMENT_API_URL=https://sivan-payments-api-test.onrender.com
+SIVAN_PAYMENT_ADMIN_API_KEY=<TEST_ADMIN_API_KEY>
+NEXT_PUBLIC_DATABASE_MODE=test
 ```
 
-Do **not** put `ADMIN_API_KEY` in Vercel. The admin frontend stores it locally after an admin enters it in the sidebar.
+Admin Hub LIVE env:
+
+```env
+SIVAN_PAYMENT_API_URL=https://sivan-payments-api-live.onrender.com
+SIVAN_PAYMENT_ADMIN_API_KEY=<LIVE_ADMIN_API_KEY>
+NEXT_PUBLIC_DATABASE_MODE=live
+```
+
+Keep the backend admin APIs in this repo:
+
+```text
+/api/admin/*
+```
 
 ---
 
@@ -255,7 +255,7 @@ Do **not** put `ADMIN_API_KEY` in Vercel. The admin frontend stores it locally a
 2. Render auto-deploys `sivan-payments-api-test`.
 3. Vercel auto-deploys:
    - `sivan-payments-user-test`
-   - `sivan-payments-admin-test`
+   - `sivan-admin-hub-test` payment module
 4. Verify TEST health and UI.
 
 ### Normal LIVE deployment
@@ -264,7 +264,7 @@ LIVE Render auto-deploy is disabled.
 
 1. Validate TEST lane first.
 2. Manually deploy `sivan-payments-api-live` from Render.
-3. Manually promote/deploy Vercel LIVE projects if needed.
+3. Manually promote/deploy the user frontend and Admin Hub LIVE project if needed.
 4. Run smoke tests.
 5. Verify Bridge live webhook configuration.
 
