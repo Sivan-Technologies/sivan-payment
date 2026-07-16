@@ -52,6 +52,7 @@ This creates:
 ## API docs
 
 - [Engine API](./docs/api.md)
+- [Admin API contract](./docs/admin-api-contract.md)
 - [Bridge integration notes](./docs/bridge-integration-notes.md)
 - [Product & architecture plan](./docs/offramp-product-architecture.md)
 

@@ -90,6 +90,13 @@ async function main() {
     const publicOfframpFees = await request('GET', '/api/fees/offramp');
     assert(publicOfframpFees.data.percent === '2.5', 'public off-ramp fee reflects admin fee settings');
 
+    const forbiddenRbac = await fetch(`${baseUrl}/api/admin/fees/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'x-admin-api-key': env.ADMIN_API_KEY, 'x-sivan-admin-role': 'guest', 'x-sivan-admin-email': 'guest@sivan.test' },
+      body: JSON.stringify({ ...feeSettings.data, updatedBy: 'guest', reason: 'RBAC negative test' })
+    });
+    assert(forbiddenRbac.status === 403, 'backend RBAC blocks guest from changing fee settings');
+
     const settings = await request('GET', '/api/admin/settings/platform', undefined, true);
     assert(settings.data.newUserSignups === true, 'platform settings load with signups enabled by default');
     await request('PUT', '/api/admin/settings/platform', { ...settings.data, newUserSignups: false, onRampEnabled: false, offRampEnabled: false, updatedBy: 'ops', reason: 'Admin ops settings test' }, true);
