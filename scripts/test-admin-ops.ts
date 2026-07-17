@@ -68,7 +68,7 @@ async function main() {
 
     const approval = await request('POST', '/api/admin/approvals', { action: 'system_status.update', resourceType: 'payments_system_status', resourceId: 'global', reason: 'Admin ops test maintenance approval', requestedBy: 'ops', riskLevel: 'high', requestedChange: { mode: 'maintenance', message: 'Admin ops test' } }, true);
     assert(approval.data.status === 'pending', 'approval request starts pending');
-    const approved = await request('POST', `/api/admin/approvals/${approval.data.id}/approve`, { reviewer: 'owner', reason: 'Approved for admin ops test', apply: true }, true);
+    const approved = await request('POST', `/api/admin/approvals/${approval.data.id}/approve`, { reviewer: 'owner', reason: 'Approved for admin ops test', apply: false }, true);
     assert(approved.data.status === 'approved', 'approval can be approved by checker');
 
     const limits = await request('PUT', '/api/admin/limits', { newUserDailyLimitUsd: 500, verifiedUserDailyLimitUsd: 5000, businessDailyLimitUsd: 0, minTransactionAmountUsd: 10, maxOnrampAmountUsd: 5000, maxOfframpAmountUsd: 5000, highValueApprovalThresholdUsd: 10000, monthlyUserLimitUsd: 25000, updatedBy: 'ops', reason: 'Admin ops test limits' }, true);
@@ -76,6 +76,26 @@ async function main() {
 
     const risk = await request('GET', '/api/admin/risk/cases', undefined, true);
     assert(Array.isArray(risk.data), 'risk cases endpoint returns list');
+    const search = await request('GET', `/api/admin/search?q=${encodeURIComponent(email)}`, undefined, true);
+    assert(search.data.results.some((item: any) => item.type === 'user'), 'global server-side search finds user');
+    const timeline = await request('GET', `/api/admin/users/${user.id}/timeline`, undefined, true);
+    assert(timeline.data.events.length >= 3, 'customer timeline returns activity');
+    await request('POST', `/api/admin/users/${user.id}/restrictions`, { reason: 'Admin ops restriction test', restrictedBy: 'compliance', restrictionType: 'offramp' }, true);
+    await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'avalanche_c_chain', destinationCurrency: 'usd' }, false, 403);
+    console.log('✓ account restriction blocks off-ramp mutation');
+    await request('DELETE', `/api/admin/users/${user.id}/restrictions`, { reason: 'Admin ops unrestrict test', actorId: 'compliance' }, true);
+    const providerHealth = await request('GET', '/api/admin/provider-health', undefined, true);
+    assert(Array.isArray(providerHealth.data.providers), 'provider health dashboard loads');
+    const queue = await request('GET', '/api/admin/queue/status', undefined, true);
+    assert(Array.isArray(queue.data.queues), 'queue dashboard loads');
+    const documents = await request('GET', '/api/admin/compliance/documents', undefined, true);
+    assert(Array.isArray(documents.data), 'document verification queue loads');
+    const settlements = await request('GET', '/api/admin/finance/settlements', undefined, true);
+    assert(settlements.data.summary, 'settlement reconciliation dashboard loads');
+    await request('POST', `/api/admin/withdrawals/${withdrawal.data.withdrawal.id}/retry-payout`, { reason: 'Admin ops retry test', requestedBy: 'ops' }, true, 400);
+    console.log('✓ payout retry rejects non-retryable withdrawal state');
+    await request('POST', '/api/admin/refunds/request', { resourceType: 'withdrawal', resourceId: withdrawal.data.withdrawal.id, amount: '1', currency: 'usd', reason: 'Admin ops refund request test', requestedBy: 'finance' }, true);
+    console.log('✓ refund request records audit request');
     const finance = await request('GET', '/api/admin/finance/dashboard', undefined, true);
     assert(finance.data.volume, 'finance dashboard loads');
     const legal = await request('GET', '/api/admin/legal/evidence', undefined, true);

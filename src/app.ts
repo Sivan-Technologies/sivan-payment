@@ -9,6 +9,7 @@ import { verifyUserJwt } from './auth/jwt.js';
 import { checkRateLimit } from './shared/rate-limit.js';
 import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './system/system-status.service.js';
 import { getAdminPlatformSettings, isPlatformMutationBlocked } from './admin/admin-settings.service.js';
+import { getActiveRestrictionForUser } from './admin/admin-hardening.service.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
@@ -75,6 +76,21 @@ export async function buildApp() {
         }
       });
     }
+
+    const targetUserId = getTargetUserId(request);
+    const restrictionAction = restrictedActionForRequest(request.method, request.url);
+    if (targetUserId && restrictionAction) {
+      const restriction = await getActiveRestrictionForUser(targetUserId, restrictionAction);
+      if (restriction) {
+        return reply.code(403).send({
+          error: {
+            code: 'account_restricted',
+            message: 'This account is restricted for the requested action. Contact Sivan Support.',
+            restriction: { type: (restriction.metadata as any)?.restrictionType, reason: (restriction.metadata as any)?.reason }
+          }
+        });
+      }
+    }
   });
 
   app.addHook('preHandler', async (request, reply) => {
@@ -138,6 +154,15 @@ export async function buildApp() {
 
   await registerRoutes(app);
   return app;
+}
+
+
+function restrictedActionForRequest(method: string, url: string): 'onramp' | 'offramp' | 'kyc' | undefined {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return undefined;
+  if (url === '/api/customers' || url === '/api/customers/kyc-link') return 'kyc';
+  if (url.startsWith('/api/external-accounts') || url === '/api/withdrawals') return 'offramp';
+  if (url === '/api/onramp/orders') return 'onramp';
+  return undefined;
 }
 
 function requiresUserAuth(method: string, url: string): boolean {
