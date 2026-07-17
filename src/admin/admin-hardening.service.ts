@@ -233,3 +233,56 @@ function extractDocumentEvidence(raw: unknown) {
 
 function ageHours(iso: string) { return (Date.now() - new Date(iso).getTime()) / 36e5; }
 function money(value: number) { return value.toFixed(2); }
+
+export async function getBusinessKpis() {
+  const data = await db.read();
+  const now = Date.now();
+  const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
+  const inMonth = (iso?: string) => Boolean(iso && new Date(iso).getTime() >= monthAgo);
+  const allTransactions = [...data.withdrawals, ...(data.onrampOrders ?? [])];
+  const monthlyTransactions = allTransactions.filter((item: any) => inMonth(item.createdAt) || inMonth(item.updatedAt) || inMonth(item.completedAt));
+  const monthlyUserIds = new Set<string>();
+  for (const item of monthlyTransactions as any[]) if (item.userId) monthlyUserIds.add(item.userId);
+  for (const item of data.externalAccounts) if (inMonth(item.createdAt)) monthlyUserIds.add(item.userId);
+  for (const item of data.customers) if (inMonth(item.createdAt) || inMonth(item.updatedAt)) monthlyUserIds.add(item.userId);
+  for (const item of data.supportTickets ?? []) if (inMonth(item.createdAt) || inMonth(item.updatedAt)) monthlyUserIds.add(item.userId);
+
+  const completedWithdrawals = data.withdrawals.filter((item) => item.status === 'completed');
+  const completedOnramps = (data.onrampOrders ?? []).filter((item) => item.status === 'completed');
+  const monthlyCompletedWithdrawals = completedWithdrawals.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+  const monthlyCompletedOnramps = completedOnramps.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+  const monthlyWithdrawalVolume = monthlyCompletedWithdrawals.reduce((sum, item) => sum + Number(item.destinationAmount ?? item.sourceAmount ?? 0) + Number(item.feeAmount ?? 0), 0);
+  const monthlyOnrampVolume = monthlyCompletedOnramps.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+  const payoutDurations = completedWithdrawals
+    .map((item) => item.completedAt ? new Date(item.completedAt).getTime() - new Date(item.createdAt).getTime() : 0)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const avgPayoutMinutes = payoutDurations.length ? Math.round(payoutDurations.reduce((sum, value) => sum + value, 0) / payoutDurations.length / 60000) : 0;
+  const successfulTransactions = allTransactions.filter((item: any) => item.status === 'completed').length;
+  const transactingUsers = new Map<string, number>();
+  for (const item of allTransactions as any[]) if (item.userId) transactingUsers.set(item.userId, (transactingUsers.get(item.userId) ?? 0) + 1);
+  const repeatUsers = [...transactingUsers.values()].filter((count) => count > 1).length;
+  const disputeLikeTypes = new Set(['wrong_token_or_network', 'deposit_not_detected', 'payout_delayed', 'onramp_payment', 'onramp_delivery']);
+  const disputeTickets = (data.supportTickets ?? []).filter((ticket) => disputeLikeTypes.has(ticket.type)).length;
+  const revenue = completedWithdrawals.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0) + completedOnramps.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0);
+  return {
+    generatedAt: nowIso(),
+    currentUsers: data.users.length,
+    monthlyActiveUsers: monthlyUserIds.size,
+    monthlyTransactionVolumeUsd: money(monthlyWithdrawalVolume + monthlyOnrampVolume),
+    averagePayoutTimeMinutes: avgPayoutMinutes,
+    successfulTransactionPercent: percent(allTransactions.length ? (successfulTransactions / allTransactions.length) * 100 : 100),
+    repeatCustomerRatePercent: percent(transactingUsers.size ? (repeatUsers / transactingUsers.size) * 100 : 0),
+    disputeRatePercent: percent(allTransactions.length ? (disputeTickets / allTransactions.length) * 100 : 0),
+    revenueUsd: money(revenue),
+    details: {
+      monthlyWithdrawalVolumeUsd: money(monthlyWithdrawalVolume),
+      monthlyOnrampVolumeUsd: money(monthlyOnrampVolume),
+      transactionCount: allTransactions.length,
+      monthlyTransactionCount: monthlyTransactions.length,
+      repeatCustomerCount: repeatUsers,
+      disputeTicketCount: disputeTickets
+    }
+  };
+}
+
+function percent(value: number) { return Number(value.toFixed(2)).toString(); }

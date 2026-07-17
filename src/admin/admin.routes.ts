@@ -14,7 +14,7 @@ import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSch
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
-import { getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
+import { getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, getBusinessKpis, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
 
 
 function listOptions(request: any) {
@@ -110,6 +110,7 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));
+  app.get('/api/admin/business-kpis', async () => ({ data: await getBusinessKpis() }));
   app.get('/api/admin/finance/settlements', async () => ({ data: await getSettlementReconciliation() }));
   app.get('/api/admin/provider-health', async () => ({ data: await getProviderHealth() }));
   app.get('/api/admin/queue/status', async () => ({ data: await getQueueDashboard() }));
