@@ -37,8 +37,8 @@ services:
         value: postgres
       - key: DATABASE_URL
         sync: false
-      # Add your Vercel frontend URLs here after deploying frontend/admin to Vercel.
-      # Example: https://sivan-payments-user-test.vercel.app,https://sivan-payments-admin-test.vercel.app
+      # Add your Vercel frontend URLs here after deploying the user frontend and Admin Hub.
+      # Example: https://sivan-payments-user-test.vercel.app,https://sivan-admin-hub-test.vercel.app
       - key: CORS_ORIGIN
         sync: false
       - key: ADMIN_API_KEY
@@ -120,8 +120,8 @@ services:
         value: postgres
       - key: DATABASE_URL
         sync: false
-      # Add your Vercel frontend URLs here after deploying frontend/admin to Vercel.
-      # Example: https://sivan-payments-user-live.vercel.app,https://sivan-payments-admin-live.vercel.app
+      # Add your Vercel frontend URLs here after deploying the user frontend and Admin Hub.
+      # Example: https://app.sivantech.online,https://admin.sivantech.online
       - key: CORS_ORIGIN
         sync: false
       - key: ADMIN_API_KEY

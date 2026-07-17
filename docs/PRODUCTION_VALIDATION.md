@@ -101,7 +101,7 @@ This verifies:
 - Avalanche C-Chain is the only active chain
 - CORS allows expected Vercel/user origins
 - live/test user frontend routes return HTTP 200
-- admin frontend routes return HTTP 200
+- Admin Hub routes return HTTP 200
 - homepage legal pages return HTTP 200
 
 Manual dashboard items that cannot be fully verified from public endpoints:
@@ -119,7 +119,7 @@ Manual dashboard items that cannot be fully verified from public endpoints:
 - Sentry:
   - backend DSN configured on Render test/live
   - user frontend DSN configured on Vercel test/live
-  - admin frontend DSN configured if admin monitoring is desired
+  - Admin Hub monitoring configured if admin monitoring is desired
   - alert: any production backend error > 0 in 5 minutes
   - alert: webhook 400/500 spike
   - alert: payment creation/sync/reconciliation error spike

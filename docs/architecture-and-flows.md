@@ -72,7 +72,7 @@ Admin operations are separate:
 ```text
                   ┌──────────────────────────────┐
                   │      Admin Frontend          │
-                  │  sivan-payment.vercel.app    │
+                  │  admin.sivantech.online / sivan-admin-hub    │
                   └──────────────┬───────────────┘
                                  │
                                  │ x-admin-api-key
@@ -110,7 +110,7 @@ sivan-payments/
 │   └── webhooks/
 │
 ├── frontend/
-├── frontend-admin/
+├── sivan-admin-hub/app/dashboard/modules/sivan-payment/
 ├── database/migrations/
 ├── docs/
 ├── scripts/
@@ -614,10 +614,10 @@ src/providers/<provider-name>/
 
 ## 11. Admin Architecture
 
-Admin frontend:
+Admin frontend (moved to sivan-admin-hub):
 
 ```text
-sivan-payment.vercel.app
+admin.sivantech.online / sivan-admin-hub
 ```
 
 Admin backend:
@@ -863,7 +863,7 @@ User frontend:
   - rechecks controls before bank account creation
   - rechecks controls before withdrawal creation
 
-Admin frontend:
+Admin frontend (moved to sivan-admin-hub):
   - auto-polls only on Analytics tab
   - interval is 60 seconds
   - refreshes on focus
@@ -949,7 +949,7 @@ JWT issued
 
 ```text
 User frontend:   Vercel
-Admin frontend:  Vercel
+Admin frontend (moved to sivan-admin-hub):  Admin Hub (separate repo)
 API backend:     Render
 Database:        Neon TEST
 Bridge:          Sandbox
@@ -959,7 +959,7 @@ Bridge:          Sandbox
 
 ```text
 User frontend:   app.sivantech.online
-Admin frontend:  sivan-payment.vercel.app
+Admin frontend (moved to sivan-admin-hub):  admin.sivantech.online / sivan-admin-hub
 API backend:     sivan-payments-api-live.onrender.com
 Database:        Neon LIVE
 Bridge:          Production
@@ -1107,4 +1107,20 @@ Safety rule:
 
 ```text
 At least one customer type must remain enabled.
+```
+
+
+## Admin frontend moved to Admin Hub
+
+The standalone `frontend-admin/` app has been removed from `sivan-payment`.
+The official admin UI is now the `sivan-admin-hub` repo, with the Sivan Payment module mounted at:
+
+```text
+/dashboard/modules/sivan-payment
+```
+
+Do not remove backend admin APIs from this repo. Admin Hub depends on:
+
+```text
+/api/admin/*
 ```

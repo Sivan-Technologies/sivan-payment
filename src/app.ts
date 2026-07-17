@@ -9,6 +9,7 @@ import { verifyUserJwt } from './auth/jwt.js';
 import { checkRateLimit } from './shared/rate-limit.js';
 import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './system/system-status.service.js';
 import { getAdminPlatformSettings, isPlatformMutationBlocked } from './admin/admin-settings.service.js';
+import { getActiveRestrictionForUser } from './admin/admin-hardening.service.js';
 
 export async function buildApp() {
   const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
@@ -75,6 +76,21 @@ export async function buildApp() {
         }
       });
     }
+
+    const targetUserId = getTargetUserId(request);
+    const restrictionAction = restrictedActionForRequest(request.method, request.url);
+    if (targetUserId && restrictionAction) {
+      const restriction = await getActiveRestrictionForUser(targetUserId, restrictionAction);
+      if (restriction) {
+        return reply.code(403).send({
+          error: {
+            code: 'account_restricted',
+            message: 'This account is restricted for the requested action. Contact Sivan Support.',
+            restriction: { type: (restriction.metadata as any)?.restrictionType, reason: (restriction.metadata as any)?.reason }
+          }
+        });
+      }
+    }
   });
 
   app.addHook('preHandler', async (request, reply) => {
@@ -104,6 +120,15 @@ export async function buildApp() {
     if (adminKey !== env.ADMIN_API_KEY) {
       return reply.code(401).send({ error: { code: 'admin_auth_required', message: 'Admin API key is required' } });
     }
+
+    const roleHeader = request.headers['x-sivan-admin-role'];
+    const emailHeader = request.headers['x-sivan-admin-email'];
+    const role = (Array.isArray(roleHeader) ? roleHeader[0] : roleHeader)?.toLowerCase();
+    const email = Array.isArray(emailHeader) ? emailHeader[0] : emailHeader;
+    if (role && !isAdminRouteAllowed(request.method, request.url, role)) {
+      return reply.code(403).send({ error: { code: 'admin_forbidden', message: `Admin role ${role} cannot perform this action` } });
+    }
+    (request as any).adminActor = { role: role || 'admin_api_key', email: email || undefined };
   });
 
   app.setErrorHandler((error, request, reply) => {
@@ -131,6 +156,15 @@ export async function buildApp() {
   return app;
 }
 
+
+function restrictedActionForRequest(method: string, url: string): 'onramp' | 'offramp' | 'kyc' | undefined {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return undefined;
+  if (url === '/api/customers' || url === '/api/customers/kyc-link') return 'kyc';
+  if (url.startsWith('/api/external-accounts') || url === '/api/withdrawals') return 'offramp';
+  if (url === '/api/onramp/orders') return 'onramp';
+  return undefined;
+}
+
 function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/admin')) return false;
   if (url.startsWith('/api/auth')) return false;
@@ -156,6 +190,35 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/deposit-addresses\//
   ];
   return protectedPatterns.some((pattern) => pattern.test(url));
+}
+
+
+type AdminRole = 'superadmin' | 'owner' | 'ops' | 'operator' | 'compliance' | 'finance' | 'support' | 'engineering' | 'auditor' | 'guest' | 'escrow';
+
+function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): boolean {
+  const role = rawRole as AdminRole;
+  const url = rawUrl.split('?')[0];
+  if (['superadmin', 'owner'].includes(role)) return true;
+  if (role === 'escrow') return false;
+
+  const readOnly = method === 'GET';
+  if (role === 'guest') return readOnly && !url.startsWith('/api/admin/exports');
+  if (role === 'auditor') return readOnly && (url.includes('/audit') || url.includes('/legal') || url.includes('/reconciliation') || url.includes('/webhooks') || url.includes('/users') || url.includes('/withdrawals') || url.includes('/onramp'));
+
+  if (readOnly) return true;
+
+  if (url.startsWith('/api/admin/notes')) return ['ops', 'operator', 'compliance', 'finance', 'support', 'engineering'].includes(role);
+  if (url.startsWith('/api/admin/support')) return ['support', 'ops', 'operator', 'compliance'].includes(role);
+  if (url.startsWith('/api/admin/risk')) return ['compliance'].includes(role);
+  if (url.startsWith('/api/admin/fees')) return ['finance'].includes(role);
+  if (url.startsWith('/api/admin/limits')) return ['ops', 'operator', 'finance'].includes(role);
+  if (url.startsWith('/api/admin/settings/platform') || url.startsWith('/api/admin/offramp/controls') || url.startsWith('/api/admin/system/status')) return ['ops', 'operator'].includes(role);
+  if (url.startsWith('/api/admin/settings/team') || url.startsWith('/api/admin/settings/api-keys')) return ['ops', 'operator'].includes(role);
+  if (url.startsWith('/api/admin/approvals')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
+  if (url.includes('/sync') || url.includes('/reconciliation') || url.includes('/webhooks')) return ['ops', 'operator', 'engineering'].includes(role);
+  if (url.startsWith('/api/admin/customers') && url.includes('/kyc-status')) return ['ops', 'operator', 'compliance'].includes(role);
+
+  return false;
 }
 
 function getTargetUserId(request: any): string | undefined {

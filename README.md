@@ -52,6 +52,7 @@ This creates:
 ## API docs
 
 - [Engine API](./docs/api.md)
+- [Admin API contract](./docs/admin-api-contract.md)
 - [Bridge integration notes](./docs/bridge-integration-notes.md)
 - [Product & architecture plan](./docs/offramp-product-architecture.md)
 
@@ -70,25 +71,34 @@ Bridge docs confirm this MVP should use **Liquidation Addresses** for crypto-to-
 
 ## Frontends
 
-This repo now has two separate React + TypeScript frontends:
+This repo keeps the user-facing React + TypeScript app and the Sivan Payments backend APIs.
 
 ```text
-frontend/        # user-facing app; hides internal KYC/Bridge costs
-frontend-admin/  # internal admin dashboard; shows controls, KYC costs, margins, and recovery
+frontend/  # user-facing app; hides internal KYC/Bridge costs
+```
+
+The admin frontend has moved to the dedicated Admin Hub repo:
+
+```text
+https://github.com/Samswitchy/sivan-admin-hub
+```
+
+Admin Hub serves the Sivan Payment admin module at:
+
+```text
+/dashboard/modules/sivan-payment
+```
+
+Keep all backend admin APIs in this repo. Admin Hub calls them through its server-side proxy, so these routes must remain available:
+
+```text
+/api/admin/*
 ```
 
 Run user frontend:
 
 ```bash
 cd frontend
-npm install
-npm run dev
-```
-
-Run admin frontend:
-
-```bash
-cd frontend-admin
 npm install
 npm run dev
 ```

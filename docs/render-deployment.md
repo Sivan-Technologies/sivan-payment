@@ -6,7 +6,7 @@ Sivan Payments uses two isolated lanes:
 [ TEST LANE ]                                      [ LIVE LANE ]
 
 Vercel: sivan-payments-user-test                  Vercel: sivan-payments-user-live
-Vercel: sivan-payments-admin-test                 Vercel: sivan-payments-admin-live
+Admin Hub: sivan-admin-hub-test                 Admin Hub: admin.sivantech.online
         ↓                                                 ↓
 Render Free Web Service: sivan-payments-api-test                   Render Free Web Service: sivan-payments-api-live
         ↓                                                 ↓
@@ -16,7 +16,7 @@ Bridge Sandbox                                    Bridge Production
 
 The backend API is deployed on **Render**.
 
-The user frontend and admin frontend are deployed on **Vercel**.
+The user frontend is deployed from this repo on **Vercel**. The admin frontend has moved to **sivan-admin-hub** and is deployed from that separate repo.
 
 ## Backend Render Blueprint
 
@@ -134,34 +134,50 @@ LIVE env:
 VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
 ```
 
-## Vercel admin frontend
+## Admin frontend — moved to Admin Hub
 
-Create another Vercel project from the same repo.
+The standalone `frontend-admin/` Vite app has been removed from this repository.
+The official admin frontend now lives in:
 
 ```text
-Root Directory: frontend-admin
-Framework: Vite
-Build Command: npm run build
-Output Directory: dist
+https://github.com/Samswitchy/sivan-admin-hub
 ```
 
-TEST env:
+Sivan Payment admin module path:
+
+```text
+/dashboard/modules/sivan-payment
+```
+
+Admin Hub calls the Sivan Payment backend through a server-side proxy:
+
+```text
+/api/admin/payment/*
+```
+
+Keep all backend admin routes in this repo because Admin Hub depends on them:
+
+```text
+/api/admin/*
+```
+
+Admin Hub TEST env:
 
 ```env
-VITE_API_BASE_URL=https://sivan-payments-api-test.onrender.com
+SIVAN_PAYMENT_API_URL=https://sivan-payments-api-test.onrender.com
+SIVAN_PAYMENT_ADMIN_API_KEY=<TEST_ADMIN_API_KEY>
+NEXT_PUBLIC_DATABASE_MODE=test
 ```
 
-LIVE env:
+Admin Hub LIVE env:
 
 ```env
-VITE_API_BASE_URL=https://sivan-payments-api-live.onrender.com
+SIVAN_PAYMENT_API_URL=https://sivan-payments-api-live.onrender.com
+SIVAN_PAYMENT_ADMIN_API_KEY=<LIVE_ADMIN_API_KEY>
+NEXT_PUBLIC_DATABASE_MODE=live
 ```
 
-The admin frontend does not bake `ADMIN_API_KEY` into the static build. Enter the admin key in the admin UI sidebar. It is stored locally and sent as:
-
-```http
-x-admin-api-key: <key>
-```
+Never expose the admin key with `NEXT_PUBLIC_*`, `VITE_*`, or any browser-readable variable.
 
 ## Bridge webhooks
 
@@ -200,7 +216,7 @@ https://sivan-payments-api-live.onrender.com/health
 1. Deploy `sivan-payments-api-test` on Render.
 2. Confirm `/health`.
 3. Confirm migrations run during the Render build step.
-4. Deploy `frontend` and `frontend-admin` to Vercel test projects.
+4. Deploy `frontend` from this repo and deploy the Sivan Payment admin module from `sivan-admin-hub`.
 5. Update Render `CORS_ORIGIN` with both Vercel test URLs.
 6. Configure Bridge sandbox webhook.
 7. Test full TEST lane.
@@ -234,13 +250,7 @@ frontend/.env.test.example
 frontend/.env.live.example
 ```
 
-Admin frontend env files:
-
-```text
-frontend-admin/.env.example
-frontend-admin/.env.test.example
-frontend-admin/.env.live.example
-```
+Admin frontend env files now live in `sivan-admin-hub`.
 
 In Vercel, configure each project separately:
 
@@ -345,7 +355,7 @@ Backend captures:
 - server listen failures
 - unexpected 5xx request errors
 
-### Vercel user/admin frontend env
+### Vercel user frontend and Admin Hub env
 
 ```env
 VITE_SENTRY_DSN=<frontend_sentry_dsn>
@@ -362,8 +372,8 @@ sivan-payments-api-test
 sivan-payments-api-live
 sivan-payments-user-test
 sivan-payments-user-live
-sivan-payments-admin-test
-sivan-payments-admin-live
+sivan-admin-hub-test
+sivan-admin-hub-live
 ```
 
 You can also use fewer projects and separate by environment if preferred.
@@ -474,7 +484,7 @@ To avoid unnecessary backend load:
 - User frontend loads rail controls on startup.
 - User frontend refreshes rail controls only when the page is visible, every 60 seconds, and on window focus/visibility changes.
 - User frontend also rechecks controls immediately before creating a bank account or withdrawal.
-- Admin frontend auto-polls only on the Analytics tab, every 60 seconds, and on window focus.
+- Admin Hub Sivan Payment module refreshes backend data through the server-side payment proxy.
 - Other admin tabs refresh on initial load, manual Refresh, tab navigation, and after explicit admin actions.
 
 This prevents global polling across all tabs and keeps request volume well below the configured rate limits.

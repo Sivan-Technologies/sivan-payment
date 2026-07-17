@@ -14,6 +14,7 @@ import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSch
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
+import { getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
 
 
 function listOptions(request: any) {
@@ -37,6 +38,33 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/users/:id/details', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await getAdminUserDetails(id) };
+  });
+
+  app.get('/api/admin/users/:id/timeline', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getUserTimeline(id) };
+  });
+
+  app.get('/api/admin/users/:id/restrictions', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await listUserRestrictions(id) };
+  });
+
+  app.post('/api/admin/users/:id/restrictions', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = parseBody(userRestrictionSchema, request.body);
+    return { data: await restrictUser(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.delete('/api/admin/users/:id/restrictions', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = parseBody(z.object({ reason: z.string().optional(), actorId: z.string().optional() }), request.body ?? {});
+    return { data: await unrestrictUser(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.get('/api/admin/search', async (request) => {
+    const query = (request.query ?? {}) as Record<string, string>;
+    return { data: await getGlobalSearch(query.q || query.search || '', { limit: Number(query.limit || 50) }) };
   });
 
   app.get('/api/admin/risk/cases', async (request) => {
@@ -82,6 +110,19 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));
+  app.get('/api/admin/finance/settlements', async () => ({ data: await getSettlementReconciliation() }));
+  app.get('/api/admin/provider-health', async () => ({ data: await getProviderHealth() }));
+  app.get('/api/admin/queue/status', async () => ({ data: await getQueueDashboard() }));
+  app.get('/api/admin/compliance/documents', async () => ({ data: await getDocumentVerificationQueue() }));
+  app.post('/api/admin/refunds/request', async (request) => {
+    const body = parseBody(refundRequestSchema, request.body);
+    return { data: await requestRefund(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+  app.post('/api/admin/withdrawals/:id/retry-payout', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = parseBody(payoutRetrySchema, request.body);
+    return { data: await requestPayoutRetry(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
   app.get('/api/admin/legal/evidence', async () => ({ data: await getLegalEvidenceSummary() }));
   app.get('/api/admin/fees/settings', async () => ({ data: await getAdminFeeSettings() }));
   app.put('/api/admin/fees/settings', async (request) => {
