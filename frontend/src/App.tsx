@@ -12,6 +12,13 @@ const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'help', icon: '?', label: 'Support' }
 ];
 
+const publicViews: Array<{ key: 'landing' | 'signup' | 'signin' | 'help'; icon: string; label: string }> = [
+  { key: 'landing', icon: '⌂', label: 'Home' },
+  { key: 'signup', icon: '⊕', label: 'Create account' },
+  { key: 'signin', icon: '↪', label: 'Sign in' },
+  { key: 'help', icon: '?', label: 'Support' }
+];
+
 const pathByView: Record<ViewKey, string> = {
   landing: '/',
   overview: '/dashboard',
@@ -216,6 +223,29 @@ export default function App() {
     const nextPath = pathByView[nextView] ?? '/dashboard';
     if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
   };
+
+  const goToPublicView = (nextView: 'landing' | 'signup' | 'signin' | 'help') => {
+    if (nextView === 'landing') {
+      setView('landing');
+      setMobileMenuOpen(false);
+      setUserMenuOpen(false);
+      window.history.pushState({}, '', '/');
+      return;
+    }
+    if (nextView === 'signin') {
+      setAuthTab('signin');
+      resetPendingEmail();
+      goToView('signup');
+      return;
+    }
+    if (nextView === 'signup') {
+      setAuthTab('signup');
+      resetPendingEmail();
+      goToView('signup');
+      return;
+    }
+    goToView('help');
+  };
   const enabledCustomerTypes = (paymentControls.customerTypes ?? fallbackCustomerTypes).filter((control) => control.enabled);
   const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
@@ -310,6 +340,16 @@ export default function App() {
     if (customer) localStorage.setItem('sivan.customer', JSON.stringify(customer));
     else localStorage.removeItem('sivan.customer');
   }, [customer]);
+
+  useEffect(() => {
+    const protectedViews: ViewKey[] = ['overview', 'buy', 'withdraw', 'history', 'banks', 'kyc', 'settings'];
+    if (!hasUser && protectedViews.includes(view)) {
+      setAuthTab('signup');
+      resetPendingEmail();
+      setView('signup');
+      if (window.location.pathname !== '/signup') window.history.replaceState({}, '', '/signup');
+    }
+  }, [hasUser, resetPendingEmail, view]);
 
   useEffect(() => {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
@@ -893,14 +933,23 @@ export default function App() {
         </div>
 
         <nav className="nav app-nav">
-          {views.map((item) => (
+          {hasUser ? views.map((item) => (
             <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => goToView(item.key)}>
               <span>{item.icon}</span> {item.label}
             </button>
-          ))}
+          )) : publicViews.map((item) => {
+            const active = item.key === 'landing'
+              ? false
+              : item.key === 'help'
+                ? view === 'help'
+                : view === 'signup' && ((item.key === 'signin' && authTab === 'signin') || (item.key === 'signup' && authTab === 'signup'));
+            return <button key={item.key} className={`nav-item ${active ? 'active' : ''}`} onClick={() => goToPublicView(item.key)}>
+              <span>{item.icon}</span> {item.label}
+            </button>;
+          })}
         </nav>
 
-        <SidebarSetupCard setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} />
+        {hasUser ? <SidebarSetupCard setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} /> : <PublicSidebarCta onCreate={() => goToPublicView('signup')} />}
 
         <div className="sidebar-footer app-sidebar-footer">
           <div className="sidebar-status"><span></span>{systemStatus.mode === 'active' ? 'All systems operational' : systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</div>
@@ -913,9 +962,8 @@ export default function App() {
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <h2>{pageTitle}</h2>
           <div className="top-actions app-top-actions">
-            <div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div>
-            <button className="icon-btn" aria-label="Notifications"><span className="notif-dot"></span>▢</button>
-            {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small" onClick={() => goToView('signup')}>Sign in</button>}
+            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><button className="icon-btn" aria-label="Notifications"><span className="notif-dot"></span>▢</button></>}
+            {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small" onClick={() => goToPublicView('signin')}>Sign in</button>}
           </div>
         </header>
 
@@ -1032,6 +1080,10 @@ export default function App() {
 function SidebarSetupCard({ setupPercent, hasUser, isVerified, hasBank, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; onContinue: () => void }) {
   const helper = !hasUser ? 'Create your account to start.' : !isVerified ? 'Verify your identity next.' : !hasBank ? 'Add your payout method.' : 'Ready for transactions.';
   return <article className="sidebar-setup-card"><p>Account setup</p><strong>{setupPercent}%</strong><div className="bar"><div className="fill" style={{ width: `${setupPercent}%` }} /></div><small>{helper}</small><button className="primary-btn" onClick={onContinue}>Continue setup ›</button></article>;
+}
+
+function PublicSidebarCta({ onCreate }: { onCreate: () => void }) {
+  return <article className="sidebar-setup-card public-cta"><p>New to Sivan?</p><strong>Start</strong><small>Create your account to access payments, verification, and linked WhatsApp identity.</small><button className="primary-btn" onClick={onCreate}>Create account ›</button></article>;
 }
 
 function KpiCard({ label, value, sub, trend }: { label: string; value: string; sub: string; trend: string }) {
