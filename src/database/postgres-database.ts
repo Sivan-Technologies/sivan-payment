@@ -25,7 +25,9 @@ import type {
   SupportTicketRecord,
   SupportTicketMessageRecord,
   UnifiedWebhookLogRecord,
-  LegalAcceptanceRecord
+  LegalAcceptanceRecord,
+  CustomerIdentityLinkRecord,
+  IdentityPairingTokenRecord
 } from './types.js';
 
 const { Pool } = pg;
@@ -140,9 +142,13 @@ export class PostgresDatabase {
       const supportTickets = await optionalQuery(client, 'select * from payments_support_tickets order by created_at asc');
       const supportTicketMessages = await optionalQuery(client, 'select * from payments_support_ticket_messages order by created_at asc');
       const unifiedWebhookLogs = await client.query('select * from sivan_unified_webhook_logs order by created_at asc');
+      const customerIdentityLinks = await optionalQuery(client, 'select * from customer_identity_links order by created_at asc');
+      const identityPairingTokens = await optionalQuery(client, 'select * from identity_pairing_tokens order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
+        customerIdentityLinks: customerIdentityLinks.rows.map(mapCustomerIdentityLink),
+        identityPairingTokens: identityPairingTokens.rows.map(mapIdentityPairingToken),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
@@ -443,6 +449,37 @@ export class PostgresDatabase {
   async insertUserRecord(record: UserRecord) {
     const client = await this.pool.connect();
     try { await upsertUser(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateUserRecord(record: UserRecord) {
+    const client = await this.pool.connect();
+    try { await upsertUser(client, record); return record; } finally { client.release(); }
+  }
+
+  async listCustomerIdentityLinks(): Promise<CustomerIdentityLinkRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from customer_identity_links order by created_at asc');
+      return result.rows.map(mapCustomerIdentityLink);
+    } finally { client.release(); }
+  }
+
+  async upsertCustomerIdentityLinkRecord(record: CustomerIdentityLinkRecord) {
+    const client = await this.pool.connect();
+    try { await upsertCustomerIdentityLink(client, record); return record; } finally { client.release(); }
+  }
+
+  async listIdentityPairingTokens(): Promise<IdentityPairingTokenRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from identity_pairing_tokens order by created_at asc');
+      return result.rows.map(mapIdentityPairingToken);
+    } finally { client.release(); }
+  }
+
+  async upsertIdentityPairingTokenRecord(record: IdentityPairingTokenRecord) {
+    const client = await this.pool.connect();
+    try { await upsertIdentityPairingToken(client, record); return record; } finally { client.release(); }
   }
 
   async insertCustomerRecord(record: CustomerRecord) {
@@ -877,6 +914,75 @@ function mapWebhookEvent(row: any): WebhookEventRecord {
     processedAt: optionalIso(row.processed_at),
     createdAt: iso(row.created_at)
   };
+}
+
+
+function mapCustomerIdentityLink(row: any): CustomerIdentityLinkRecord {
+  return {
+    id: row.id,
+    paymentUserId: row.payment_user_id,
+    escrowUserId: str(row.escrow_user_id),
+    email: row.email,
+    whatsappNumber: row.whatsapp_number,
+    status: row.status,
+    linkedAt: optionalIso(row.linked_at),
+    unlinkedAt: optionalIso(row.unlinked_at),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapIdentityPairingToken(row: any): IdentityPairingTokenRecord {
+  return {
+    id: row.id,
+    paymentUserId: row.payment_user_id,
+    tokenHash: row.token_hash,
+    status: row.status,
+    expiresAt: iso(row.expires_at),
+    redeemedAt: optionalIso(row.redeemed_at),
+    canceledAt: optionalIso(row.canceled_at),
+    whatsappNumber: str(row.whatsapp_number),
+    escrowUserId: str(row.escrow_user_id),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertCustomerIdentityLink(client: pg.PoolClient, item: CustomerIdentityLinkRecord) {
+  await client.query(
+    `insert into customer_identity_links (id, payment_user_id, escrow_user_id, email, whatsapp_number, status, linked_at, unlinked_at, metadata, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do update set
+       payment_user_id=excluded.payment_user_id,
+       escrow_user_id=excluded.escrow_user_id,
+       email=excluded.email,
+       whatsapp_number=excluded.whatsapp_number,
+       status=excluded.status,
+       linked_at=excluded.linked_at,
+       unlinked_at=excluded.unlinked_at,
+       metadata=excluded.metadata,
+       updated_at=excluded.updated_at`,
+    [item.id, item.paymentUserId, item.escrowUserId ?? null, item.email, item.whatsappNumber, item.status, item.linkedAt ?? null, item.unlinkedAt ?? null, item.metadata ?? null, item.createdAt, item.updatedAt]
+  );
+}
+
+async function upsertIdentityPairingToken(client: pg.PoolClient, item: IdentityPairingTokenRecord) {
+  await client.query(
+    `insert into identity_pairing_tokens (id, payment_user_id, token_hash, status, expires_at, redeemed_at, canceled_at, whatsapp_number, escrow_user_id, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do update set
+       payment_user_id=excluded.payment_user_id,
+       token_hash=excluded.token_hash,
+       status=excluded.status,
+       expires_at=excluded.expires_at,
+       redeemed_at=excluded.redeemed_at,
+       canceled_at=excluded.canceled_at,
+       whatsapp_number=excluded.whatsapp_number,
+       escrow_user_id=excluded.escrow_user_id,
+       updated_at=excluded.updated_at`,
+    [item.id, item.paymentUserId, item.tokenHash, item.status, item.expiresAt, item.redeemedAt ?? null, item.canceledAt ?? null, item.whatsappNumber ?? null, item.escrowUserId ?? null, item.createdAt, item.updatedAt]
+  );
 }
 
 async function upsertUser(client: pg.PoolClient, user: UserRecord) {

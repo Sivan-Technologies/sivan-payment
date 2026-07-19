@@ -1,11 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
+import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 
 const emptyDb = (): DatabaseShape => ({
   users: [],
+  customerIdentityLinks: [],
+  identityPairingTokens: [],
   userPreferences: [],
   legalAcceptances: [],
   customers: [],
@@ -288,6 +290,45 @@ export class JsonDatabase {
   async insertUserRecord(record: UserRecord) {
     return this.mutate((data) => {
       data.users.push(record);
+      return record;
+    });
+  }
+
+  async updateUserRecord(record: UserRecord) {
+    return this.mutate((data) => {
+      const index = data.users.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.users[index] = record;
+      else data.users.push(record);
+      return record;
+    });
+  }
+
+  async listCustomerIdentityLinks(): Promise<CustomerIdentityLinkRecord[]> {
+    const data = await this.read();
+    return data.customerIdentityLinks ?? [];
+  }
+
+  async upsertCustomerIdentityLinkRecord(record: CustomerIdentityLinkRecord) {
+    return this.mutate((data) => {
+      data.customerIdentityLinks = data.customerIdentityLinks ?? [];
+      const index = data.customerIdentityLinks.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.customerIdentityLinks[index] = record;
+      else data.customerIdentityLinks.push(record);
+      return record;
+    });
+  }
+
+  async listIdentityPairingTokens(): Promise<IdentityPairingTokenRecord[]> {
+    const data = await this.read();
+    return data.identityPairingTokens ?? [];
+  }
+
+  async upsertIdentityPairingTokenRecord(record: IdentityPairingTokenRecord) {
+    return this.mutate((data) => {
+      data.identityPairingTokens = data.identityPairingTokens ?? [];
+      const index = data.identityPairingTokens.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.identityPairingTokens[index] = record;
+      else data.identityPairingTokens.push(record);
       return record;
     });
   }

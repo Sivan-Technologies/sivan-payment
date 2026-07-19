@@ -102,6 +102,35 @@ export interface UserRecord {
   updatedAt: string;
 }
 
+
+export interface CustomerIdentityLinkRecord {
+  id: string;
+  paymentUserId: string;
+  escrowUserId?: string;
+  email: string;
+  whatsappNumber: string;
+  status: 'linked' | 'unlinked';
+  linkedAt?: string;
+  unlinkedAt?: string;
+  metadata?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IdentityPairingTokenRecord {
+  id: string;
+  paymentUserId: string;
+  tokenHash: string;
+  status: 'pending' | 'redeemed' | 'canceled' | 'expired';
+  expiresAt: string;
+  redeemedAt?: string;
+  canceledAt?: string;
+  whatsappNumber?: string;
+  escrowUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CustomerRecord {
   id: string;
   userId: string;
@@ -335,6 +364,8 @@ export interface UnifiedWebhookLogRecord {
 
 export interface DatabaseShape {
   users: UserRecord[];
+  customerIdentityLinks: CustomerIdentityLinkRecord[];
+  identityPairingTokens: IdentityPairingTokenRecord[];
   userPreferences: UserPreferencesRecord[];
   legalAcceptances: LegalAcceptanceRecord[];
   customers: CustomerRecord[];

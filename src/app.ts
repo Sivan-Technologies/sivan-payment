@@ -168,6 +168,7 @@ function restrictedActionForRequest(method: string, url: string): 'onramp' | 'of
 function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/admin')) return false;
   if (url.startsWith('/api/auth')) return false;
+  if (url.startsWith('/api/identity/link-whatsapp/redeem')) return false;
   if (method === 'POST' && url === '/api/users') return false;
 
   if (url === '/api/customers') return true;
@@ -179,6 +180,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/withdrawals/,
     /^\/api\/onramp\/orders/,
     /^\/api\/support\/tickets/,
+    /^\/api\/users\/me\/identity/,
     /^\/api\/support\/attachments/,
     /^\/api\/users\/[^/]+\/onramp-orders/,
     /^\/api\/users\/[^/]+\/support\/tickets/,

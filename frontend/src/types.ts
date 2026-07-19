@@ -3,9 +3,32 @@ export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'history' | 
 export interface UserRecord {
   id: string;
   email: string;
+  whatsappNumber?: string;
   fullName: string;
+  primaryChannel?: 'email' | 'whatsapp' | 'both';
+  emailVerifiedAt?: string;
+  whatsappVerifiedAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface IdentityStatus {
+  linked: boolean;
+  link: null | {
+    id: string;
+    status: 'linked';
+    paymentUserId: string;
+    escrowUserId?: string;
+    email: string;
+    whatsappNumber: string;
+    linkedAt?: string;
+  };
+  pendingPairing: null | {
+    id: string;
+    status: 'pending';
+    expiresAt: string;
+    createdAt: string;
+  };
 }
 
 export interface CustomerRecord {

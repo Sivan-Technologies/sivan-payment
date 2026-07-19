@@ -15,12 +15,14 @@ import { systemStatusRoutes } from '../system/system-status.routes.js';
 import { supportRoutes } from '../support/support.routes.js';
 import { db } from '../database/json-database.js';
 import { onrampOrdersRoutes } from '../onramp/api/onramp-orders.routes.js';
+import { identityRoutes } from '../identity/identity.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
   app.get('/health/db', async () => ({ status: 'ok', database: db.getPoolStats() }));
   await authRoutes(app);
   await usersRoutes(app);
+  await identityRoutes(app);
   await customersRoutes(app);
   await externalAccountsRoutes(app);
   await liquidationAddressesRoutes(app);

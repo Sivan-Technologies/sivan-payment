@@ -34,6 +34,8 @@ const envSchema = z.object({
   AUTH_OTP_EXPIRES_MINUTES: z.coerce.number().int().positive().default(10),
   AUTH_DEV_SHOW_OTP: booleanFromEnv.default(true),
   AUTH_REQUIRE_USER: booleanFromEnv.default(true),
+  IDENTITY_LINK_SERVICE_SECRET: z.string().optional().default(''),
+  IDENTITY_PAIRING_TOKEN_EXPIRES_MINUTES: z.coerce.number().int().positive().default(10),
   EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional().default(''),
   EMAIL_FROM: z.string().optional().default('Sivan <no-reply@sivan.local>'),

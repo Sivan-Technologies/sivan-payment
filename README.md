@@ -115,3 +115,25 @@ GET  /api/fees/offramp
 POST /api/fees/offramp/estimate
 POST /api/webhooks/bridge
 ```
+
+## Shared customer identity
+
+Sivan Payment now owns the canonical customer identity linking layer for connecting email-based Payment users with WhatsApp-based Escrow users.
+
+Customer-facing endpoints:
+
+```txt
+GET  /api/users/me/identity
+POST /api/users/me/identity/link-whatsapp/start
+POST /api/users/me/identity/link-whatsapp/cancel
+POST /api/users/me/identity/unlink-whatsapp
+```
+
+WhatsApp/Escrow service redemption endpoint:
+
+```txt
+POST /api/identity/link-whatsapp/redeem
+Header: x-sivan-identity-link-secret: <IDENTITY_LINK_SERVICE_SECRET>
+```
+
+Admin modules should show link status only by default. Cross-module support/compliance lookup is a later phase.

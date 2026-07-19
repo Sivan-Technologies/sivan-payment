@@ -8,6 +8,8 @@ import type {
   ReconciliationFindingRecord,
   ReconciliationRunRecord,
   UserRecord,
+  CustomerIdentityLinkRecord,
+  IdentityPairingTokenRecord,
   LegalAcceptanceRecord,
   WebhookEventRecord,
   WithdrawalRecord,
@@ -23,6 +25,11 @@ export interface UserRepository {
   findUserByEmail(email: string): Promise<UserRecord | undefined>;
   findUserByWhatsappNumber(whatsappNumber: string): Promise<UserRecord | undefined>;
   insertUserRecord(record: UserRecord): Promise<UserRecord>;
+  updateUserRecord(record: UserRecord): Promise<UserRecord>;
+  listCustomerIdentityLinks(): Promise<CustomerIdentityLinkRecord[]>;
+  upsertCustomerIdentityLinkRecord(record: CustomerIdentityLinkRecord): Promise<CustomerIdentityLinkRecord>;
+  listIdentityPairingTokens(): Promise<IdentityPairingTokenRecord[]>;
+  upsertIdentityPairingTokenRecord(record: IdentityPairingTokenRecord): Promise<IdentityPairingTokenRecord>;
 }
 
 export interface AuthRepository {

@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -185,6 +185,7 @@ export default function App() {
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
   const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
+  const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
@@ -251,6 +252,7 @@ export default function App() {
     setOnrampOrders([]);
     setSupportTickets([]);
     setUserPreferences(null);
+    setIdentityStatus(null);
     setDepositResult(null);
     localStorage.removeItem('sivan.authToken');
     localStorage.removeItem('sivan.user');
@@ -331,13 +333,14 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, supportTicketsResult, preferencesResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
       api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`),
       api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
-      api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`)
+      api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`),
+      api<IdentityStatus>('/api/users/me/identity')
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
@@ -345,6 +348,7 @@ export default function App() {
     if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
     if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
     if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
+    if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
   }, [api, user?.id, authToken]);
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -761,6 +765,47 @@ export default function App() {
     }
   }
 
+  async function handleStartWhatsappLink() {
+    if (!user?.id) return notify('Create your account first.', 'error');
+    setLoading(true);
+    try {
+      const result = await api<any>('/api/users/me/identity/link-whatsapp/start', { method: 'POST', body: '{}' });
+      await loadUserData();
+      if (result?.token) notify(`Pairing code generated: ${result.token}. Send it to Sivan on WhatsApp.`);
+      else notify(result?.message || 'Pairing request is ready.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCancelWhatsappLink() {
+    setLoading(true);
+    try {
+      await api('/api/users/me/identity/link-whatsapp/cancel', { method: 'POST', body: '{}' });
+      await loadUserData();
+      notify('Pairing code canceled.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleUnlinkWhatsapp() {
+    setLoading(true);
+    try {
+      await api('/api/users/me/identity/unlink-whatsapp', { method: 'POST', body: '{}' });
+      await loadUserData();
+      notify('WhatsApp account unlinked.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCreateSupportTicket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
@@ -964,7 +1009,7 @@ export default function App() {
 
         {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
 
-        {view === 'settings' && <SettingsView user={user} preferences={userPreferences} onSavePreferences={handleSaveUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'settings' && <SettingsView user={user} preferences={userPreferences} identityStatus={identityStatus} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onSavePreferences={handleSaveUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
@@ -1463,7 +1508,7 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
   return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
 }
 
-function SettingsView({ user, preferences, onSavePreferences, loading, onLogout }: { user: UserRecord | null; preferences: UserPreferencesRecord | null; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; onLogout: () => void }) {
+function SettingsView({ user, preferences, identityStatus, onStartWhatsappLink, onCancelWhatsappLink, onUnlinkWhatsapp, onSavePreferences, loading, onLogout }: { user: UserRecord | null; preferences: UserPreferencesRecord | null; identityStatus: IdentityStatus | null; onStartWhatsappLink: () => void; onCancelWhatsappLink: () => void; onUnlinkWhatsapp: () => void; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; onLogout: () => void }) {
   const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
   const nameParts = (user?.fullName || '').split(/\s+/);
   const currentPreferences = preferences ?? {
@@ -1476,9 +1521,15 @@ function SettingsView({ user, preferences, onSavePreferences, loading, onLogout 
     emailConfirmationsForHighValue: false,
     updatedAt: new Date().toISOString()
   };
-  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input placeholder="+1 ..." /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <form onSubmit={onSavePreferences}><h3>Security</h3><p className="muted">Keep your account safe.</p><SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.','emailConfirmationsForHighValue'],['◷','Active sessions','Current browser session active.','Manage']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save security preferences'}</button></form>}{tab === 'notifications' && <form onSubmit={onSavePreferences}><h3>Notifications</h3><p className="muted">Choose how Sivan contacts you about payments, security, and product updates.</p><SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm, on-ramp payments match, and payouts send.','transactionUpdates'],['✉','Marketing emails','Product news, feature updates, and offers.','marketingEmails'],['◈','Security alerts','Suspicious logins, account changes, and important risk events.','securityAlerts']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save notification preferences'}</button><p className="field-hint">Transactional and security notices may still be sent where required for account safety, compliance, or provider operations.</p></form>}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><IdentityLinkCard identityStatus={identityStatus} loading={loading} onStart={onStartWhatsappLink} onCancel={onCancelWhatsappLink} onUnlink={onUnlinkWhatsapp} /><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input value={identityStatus?.link?.whatsappNumber || user?.whatsappNumber || ''} placeholder="Link WhatsApp to populate this securely" readOnly /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <form onSubmit={onSavePreferences}><h3>Security</h3><p className="muted">Keep your account safe.</p><SettingsRows rows={[['▣','Password','Passwordless email access','Change'],['⚿','Two-factor authentication','Add an extra layer of security with an authenticator app.','Enable'],['✉','Email confirmations','Require email confirmation for high-value transactions.','emailConfirmationsForHighValue'],['◷','Active sessions','Current browser session active.','Manage']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save security preferences'}</button></form>}{tab === 'notifications' && <form onSubmit={onSavePreferences}><h3>Notifications</h3><p className="muted">Choose how Sivan contacts you about payments, security, and product updates.</p><SettingsRows rows={[['♢','Transaction updates','Email me when deposits confirm, on-ramp payments match, and payouts send.','transactionUpdates'],['✉','Marketing emails','Product news, feature updates, and offers.','marketingEmails'],['◈','Security alerts','Suspicious logins, account changes, and important risk events.','securityAlerts']]} preferences={currentPreferences} /><input type="hidden" name="defaultFiatCurrency" value={currentPreferences.defaultFiatCurrency} /><input type="hidden" name="language" value={currentPreferences.language} /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save notification preferences'}</button><p className="field-hint">Transactional and security notices may still be sent where required for account safety, compliance, or provider operations.</p></form>}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
 }
 
+
+function IdentityLinkCard({ identityStatus, loading, onStart, onCancel, onUnlink }: { identityStatus: IdentityStatus | null; loading: boolean; onStart: () => void; onCancel: () => void; onUnlink: () => void }) {
+  const link = identityStatus?.link;
+  const pending = identityStatus?.pendingPairing;
+  return <div className="identity-link-card"><div><p className="eyebrow">Sivan unified identity</p><h3>Linked WhatsApp / Escrow account</h3><p className="muted">Link your WhatsApp escrow identity so your web dashboard and WhatsApp use one Sivan customer profile.</p></div>{link ? <div className="identity-link-status linked"><span>Linked</span><strong>{link.whatsappNumber}</strong><small>Linked {link.linkedAt ? new Date(link.linkedAt).toLocaleString() : 'recently'}</small><button type="button" className="ghost-btn small" disabled={loading} onClick={onUnlink}>Unlink</button></div> : pending ? <div className="identity-link-status pending"><span>Pairing code active</span><strong>Send your code to Sivan on WhatsApp</strong><small>Expires {new Date(pending.expiresAt).toLocaleString()}</small><button type="button" className="ghost-btn small" disabled={loading} onClick={onCancel}>Cancel code</button></div> : <div className="identity-link-status"><span>Not linked</span><strong>Connect WhatsApp Escrow</strong><small>Generate a code, then send it to Sivan on WhatsApp.</small><button type="button" className="secondary-btn" disabled={loading} onClick={onStart}>Generate pairing code</button></div>}</div>;
+}
 
 function SettingsRows({ rows, preferences }: { rows: string[][]; preferences?: UserPreferencesRecord }) {
   return <div className="settings-row-list">{rows.map((row) => {
