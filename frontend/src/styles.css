@@ -1084,3 +1084,6 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .identity-link-status strong { color: var(--text); }
 .identity-link-status small { color: var(--muted); }
 .identity-link-status button { width: max-content; }
+.identity-link-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.identity-link-actions a { text-decoration: none; }
+.identity-link-status strong { overflow-wrap: anywhere; }
