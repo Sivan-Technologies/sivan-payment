@@ -137,3 +137,19 @@ Header: x-sivan-identity-link-secret: <IDENTITY_LINK_SERVICE_SECRET>
 ```
 
 Admin modules should show link status only by default. Cross-module support/compliance lookup is a later phase.
+
+## Virtual account provider adapter pipeline
+
+Sivan Payment includes a disabled-by-default `src/virtual-accounts` provider adapter foundation for future virtual bank/account issuance.
+
+The product should call the internal virtual account service, not a provider directly. This keeps Bridge, Nomba, Monnify, Flutterwave, or another banking partner swappable later by env/config instead of rewriting the product code.
+
+Default env:
+
+```env
+VIRTUAL_ACCOUNTS_ENABLED=false
+VIRTUAL_ACCOUNT_REQUESTS_ENABLED=false
+VIRTUAL_ACCOUNT_PROVIDER=mock
+```
+
+Do not enable virtual accounts publicly until provider, compliance, KYC, approval, reconciliation, and support workflows are ready.
