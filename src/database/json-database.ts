@@ -151,6 +151,7 @@ export class JsonDatabase {
     return data.users.slice(offset, offset + limit).map((user) => ({
       ...user,
       customer: data.customers.find((customer) => customer.userId === user.id) ?? null,
+      identityLink: (data.customerIdentityLinks ?? []).find((link) => link.paymentUserId === user.id && link.status === 'linked') ? { linked: true } : { linked: false },
       externalAccountCount: data.externalAccounts.filter((account) => account.userId === user.id).length,
       withdrawalCount: data.withdrawals.filter((withdrawal) => withdrawal.userId === user.id).length,
       onrampOrderCount: (data.onrampOrders ?? []).filter((order) => order.userId === user.id).length

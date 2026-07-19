@@ -287,6 +287,8 @@ export class PostgresDatabase {
       const externalCounts = await client.query('select user_id, count(*)::int as count from payments_external_accounts where user_id = any($1) group by user_id', [userIds]);
       const withdrawalCounts = await client.query('select user_id, count(*)::int as count from payments_withdrawals where user_id = any($1) group by user_id', [userIds]);
       const onrampCounts = await optionalQuery(client, 'select user_id, count(*)::int as count from payments_onramp_orders group by user_id');
+      const identityLinks = await optionalQuery(client, 'select payment_user_id from customer_identity_links where status = $1 and payment_user_id = any($2)', ['linked', userIds]);
+      const linkedUserIds = new Set(identityLinks.rows.map((row) => row.payment_user_id));
       const countMap = (rows: any[]) => new Map(rows.filter((row) => userIds.includes(row.user_id)).map((row) => [row.user_id, Number(row.count)]));
       const externalMap = countMap(externalCounts.rows);
       const withdrawalMap = countMap(withdrawalCounts.rows);
@@ -294,6 +296,7 @@ export class PostgresDatabase {
       return users.map((user) => ({
         ...user,
         customer: customers.find((customer) => customer.userId === user.id) ?? null,
+        identityLink: { linked: linkedUserIds.has(user.id) },
         externalAccountCount: externalMap.get(user.id) ?? 0,
         withdrawalCount: withdrawalMap.get(user.id) ?? 0,
         onrampOrderCount: onrampMap.get(user.id) ?? 0
