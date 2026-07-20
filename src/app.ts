@@ -185,6 +185,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/users\/[^/]+\/onramp-orders/,
     /^\/api\/users\/[^/]+\/support\/tickets/,
     /^\/api\/users\/[^/]+\/preferences/,
+    /^\/api\/users\/[^/]+\/virtual-accounts/,
     /^\/api\/users\/[^/]+\/legal-acceptances/,
     /^\/api\/users\/[^/]+\/external-accounts/,
     /^\/api\/users\/[^/]+\/withdrawals/,
@@ -216,6 +217,7 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
   if (url.startsWith('/api/admin/limits')) return ['ops', 'operator', 'finance'].includes(role);
   if (url.startsWith('/api/admin/settings/platform') || url.startsWith('/api/admin/offramp/controls') || url.startsWith('/api/admin/system/status')) return ['ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/settings/team') || url.startsWith('/api/admin/settings/api-keys')) return ['ops', 'operator'].includes(role);
+  if (url.startsWith('/api/admin/virtual-account')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);
   if (url.startsWith('/api/admin/approvals')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.includes('/sync') || url.includes('/reconciliation') || url.includes('/webhooks')) return ['ops', 'operator', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/customers') && url.includes('/kyc-status')) return ['ops', 'operator', 'compliance'].includes(role);

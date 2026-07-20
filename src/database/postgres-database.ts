@@ -29,6 +29,7 @@ import type {
   CustomerIdentityLinkRecord,
   IdentityPairingTokenRecord
 } from './types.js';
+import type { VirtualAccountRecord, VirtualAccountRequestRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const { Pool } = pg;
 
@@ -144,11 +145,15 @@ export class PostgresDatabase {
       const unifiedWebhookLogs = await client.query('select * from sivan_unified_webhook_logs order by created_at asc');
       const customerIdentityLinks = await optionalQuery(client, 'select * from customer_identity_links order by created_at asc');
       const identityPairingTokens = await optionalQuery(client, 'select * from identity_pairing_tokens order by created_at asc');
+      const virtualAccountRequests = await optionalQuery(client, 'select * from payments_virtual_account_requests order by created_at asc');
+      const virtualAccounts = await optionalQuery(client, 'select * from payments_virtual_accounts order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
         customerIdentityLinks: customerIdentityLinks.rows.map(mapCustomerIdentityLink),
         identityPairingTokens: identityPairingTokens.rows.map(mapIdentityPairingToken),
+        virtualAccountRequests: virtualAccountRequests.rows.map(mapVirtualAccountRequest),
+        virtualAccounts: virtualAccounts.rows.map(mapVirtualAccount),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
@@ -483,6 +488,32 @@ export class PostgresDatabase {
   async upsertIdentityPairingTokenRecord(record: IdentityPairingTokenRecord) {
     const client = await this.pool.connect();
     try { await upsertIdentityPairingToken(client, record); return record; } finally { client.release(); }
+  }
+
+  async listVirtualAccountRequests(): Promise<VirtualAccountRequestRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_virtual_account_requests order by created_at asc');
+      return result.rows.map(mapVirtualAccountRequest);
+    } finally { client.release(); }
+  }
+
+  async upsertVirtualAccountRequestRecord(record: VirtualAccountRequestRecord) {
+    const client = await this.pool.connect();
+    try { await upsertVirtualAccountRequest(client, record); return record; } finally { client.release(); }
+  }
+
+  async listVirtualAccounts(): Promise<VirtualAccountRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_virtual_accounts order by created_at asc');
+      return result.rows.map(mapVirtualAccount);
+    } finally { client.release(); }
+  }
+
+  async upsertVirtualAccountRecord(record: VirtualAccountRecord) {
+    const client = await this.pool.connect();
+    try { await upsertVirtualAccount(client, record); return record; } finally { client.release(); }
   }
 
   async insertCustomerRecord(record: CustomerRecord) {
@@ -919,6 +950,91 @@ function mapWebhookEvent(row: any): WebhookEventRecord {
   };
 }
 
+
+
+function mapVirtualAccountRequest(row: any): VirtualAccountRequestRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: str(row.payments_customer_id),
+    currency: row.currency,
+    country: str(row.country),
+    useCase: str(row.use_case),
+    status: row.status,
+    reviewedBy: str(row.reviewed_by),
+    reviewedAt: optionalIso(row.reviewed_at),
+    rejectionReason: str(row.rejection_reason),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapVirtualAccount(row: any): VirtualAccountRecord {
+  return {
+    id: row.id,
+    requestId: str(row.request_id),
+    userId: row.user_id,
+    customerId: str(row.payments_customer_id),
+    provider: row.provider,
+    providerAccountId: row.provider_account_id,
+    currency: row.currency,
+    country: str(row.country),
+    bankName: str(row.bank_name),
+    accountName: str(row.account_name),
+    accountNumberMasked: str(row.account_number_masked),
+    routingNumberMasked: str(row.routing_number_masked),
+    ibanMasked: str(row.iban_masked),
+    status: row.status,
+    rawProviderPayload: row.raw_provider_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertVirtualAccountRequest(client: pg.PoolClient, item: VirtualAccountRequestRecord) {
+  await client.query(
+    `insert into payments_virtual_account_requests (id, user_id, payments_customer_id, currency, country, use_case, status, reviewed_by, reviewed_at, rejection_reason, metadata, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+     on conflict (id) do update set
+       user_id=excluded.user_id,
+       payments_customer_id=excluded.payments_customer_id,
+       currency=excluded.currency,
+       country=excluded.country,
+       use_case=excluded.use_case,
+       status=excluded.status,
+       reviewed_by=excluded.reviewed_by,
+       reviewed_at=excluded.reviewed_at,
+       rejection_reason=excluded.rejection_reason,
+       metadata=excluded.metadata,
+       updated_at=excluded.updated_at`,
+    [item.id, item.userId, item.customerId ?? null, item.currency, item.country ?? null, item.useCase ?? null, item.status, item.reviewedBy ?? null, item.reviewedAt ?? null, item.rejectionReason ?? null, item.metadata ?? null, item.createdAt, item.updatedAt]
+  );
+}
+
+async function upsertVirtualAccount(client: pg.PoolClient, item: VirtualAccountRecord) {
+  await client.query(
+    `insert into payments_virtual_accounts (id, request_id, user_id, payments_customer_id, provider, provider_account_id, currency, country, bank_name, account_name, account_number_masked, routing_number_masked, iban_masked, status, raw_provider_payload, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+     on conflict (id) do update set
+       request_id=excluded.request_id,
+       user_id=excluded.user_id,
+       payments_customer_id=excluded.payments_customer_id,
+       provider=excluded.provider,
+       provider_account_id=excluded.provider_account_id,
+       currency=excluded.currency,
+       country=excluded.country,
+       bank_name=excluded.bank_name,
+       account_name=excluded.account_name,
+       account_number_masked=excluded.account_number_masked,
+       routing_number_masked=excluded.routing_number_masked,
+       iban_masked=excluded.iban_masked,
+       status=excluded.status,
+       raw_provider_payload=excluded.raw_provider_payload,
+       updated_at=excluded.updated_at`,
+    [item.id, item.requestId ?? null, item.userId, item.customerId ?? null, item.provider, item.providerAccountId, item.currency, item.country ?? null, item.bankName ?? null, item.accountName ?? null, item.accountNumberMasked ?? null, item.routingNumberMasked ?? null, item.ibanMasked ?? null, item.status, item.rawProviderPayload ?? null, item.createdAt, item.updatedAt]
+  );
+}
 
 function mapCustomerIdentityLink(row: any): CustomerIdentityLinkRecord {
   return {

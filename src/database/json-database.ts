@@ -3,6 +3,7 @@ import path from 'node:path';
 import { env } from '../config/env.js';
 import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
+import type { VirtualAccountRecord, VirtualAccountRequestRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const emptyDb = (): DatabaseShape => ({
   users: [],
@@ -27,7 +28,9 @@ const emptyDb = (): DatabaseShape => ({
   customerTypeControls: [],
   unifiedWebhookLogs: [],
   supportTickets: [],
-  supportTicketMessages: []
+  supportTicketMessages: [],
+  virtualAccountRequests: [],
+  virtualAccounts: []
 });
 
 export class JsonDatabase {
@@ -446,6 +449,37 @@ export class JsonDatabase {
     return this.mutate((data) => {
       const index = data.webhookEvents.findIndex((item) => item.id === record.id);
       if (index >= 0) data.webhookEvents[index] = record;
+      return record;
+    });
+  }
+
+
+  async listVirtualAccountRequests(): Promise<VirtualAccountRequestRecord[]> {
+    const data = await this.read();
+    return data.virtualAccountRequests ?? [];
+  }
+
+  async upsertVirtualAccountRequestRecord(record: VirtualAccountRequestRecord) {
+    return this.mutate((data) => {
+      data.virtualAccountRequests = data.virtualAccountRequests ?? [];
+      const index = data.virtualAccountRequests.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.virtualAccountRequests[index] = record;
+      else data.virtualAccountRequests.push(record);
+      return record;
+    });
+  }
+
+  async listVirtualAccounts(): Promise<VirtualAccountRecord[]> {
+    const data = await this.read();
+    return data.virtualAccounts ?? [];
+  }
+
+  async upsertVirtualAccountRecord(record: VirtualAccountRecord) {
+    return this.mutate((data) => {
+      data.virtualAccounts = data.virtualAccounts ?? [];
+      const index = data.virtualAccounts.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.virtualAccounts[index] = record;
+      else data.virtualAccounts.push(record);
       return record;
     });
   }

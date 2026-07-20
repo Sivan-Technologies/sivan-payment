@@ -66,7 +66,10 @@ const envSchema = z.object({
   CUSTOMER_ACQUISITION_COST_USD: z.coerce.number().min(0).default(0),
   DATABASE_PROVIDER: z.enum(['json', 'postgres']).default('json'),
   DATABASE_URL: z.string().optional().default(''),
-  DATABASE_FILE: z.string().default('.data/sivan-offramp.json')
+  DATABASE_FILE: z.string().default('.data/sivan-offramp.json'),
+  VIRTUAL_ACCOUNTS_ENABLED: booleanFromEnv.default(false),
+  VIRTUAL_ACCOUNT_REQUESTS_ENABLED: booleanFromEnv.default(false),
+  VIRTUAL_ACCOUNT_PROVIDER: z.enum(['mock', 'bridge', 'nomba', 'monnify', 'flutterwave']).default('mock')
 });
 
 export const env = envSchema.parse(process.env);
