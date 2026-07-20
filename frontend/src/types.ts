@@ -68,6 +68,31 @@ export interface ExternalAccountRecord {
   updatedAt: string;
 }
 
+export interface TransactionTimelineStep {
+  key: string;
+  label: string;
+  description: string;
+  status: 'completed' | 'current' | 'pending' | 'failed';
+  at?: string;
+}
+
+export interface TransactionTimeline {
+  transactionType: 'withdrawal' | 'onramp_order' | 'virtual_account_transaction';
+  requestId: string;
+  internalTransactionId: string;
+  providerReference?: string;
+  amount?: string;
+  currency?: string;
+  asset?: string;
+  direction: 'sell' | 'buy' | 'deposit';
+  provider?: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  steps: TransactionTimelineStep[];
+}
+
 export interface WithdrawalRecord {
   id: string;
   userId: string;
@@ -83,11 +108,13 @@ export interface WithdrawalRecord {
   feePercent?: string;
   feeAmount?: string;
   depositTxHash?: string;
+  destinationReference?: string;
   destinationTxHash?: string;
   status: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  transactionTimeline?: TransactionTimeline;
 }
 
 export interface FeePolicy {
@@ -235,6 +262,7 @@ export interface OnrampOrderRecord {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+  transactionTimeline?: TransactionTimeline;
 }
 
 export interface SupportTicketRecord {

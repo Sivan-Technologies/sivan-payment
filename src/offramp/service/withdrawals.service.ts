@@ -9,6 +9,7 @@ import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
 import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled } from '../../controls/payment-controls.service.js';
 import { syncPaymentTransactionReferencesForResource } from '../../references/transaction-references.service.js';
+import { attachWithdrawalTimeline } from '../../timeline/transaction-timeline.service.js';
 
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
@@ -109,8 +110,10 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
   };
 
   await db.createWithdrawalRecords(la, withdrawal);
+  await syncPaymentTransactionReferencesForResource('withdrawal', withdrawal);
+  const timelineData = await db.read();
   const result = {
-    withdrawal,
+    withdrawal: attachWithdrawalTimeline(withdrawal, timelineData),
     deposit: {
       address: la.address,
       memolessAddress: la.memolessAddress,
@@ -138,14 +141,17 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
 
 export async function listWithdrawals(userId: string) {
   const data = await db.read();
-  return data.withdrawals.filter((w) => w.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return data.withdrawals
+    .filter((w) => w.userId === userId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((withdrawal) => attachWithdrawalTimeline(withdrawal, data));
 }
 
 export async function getWithdrawal(id: string) {
   const data = await db.read();
   const record = data.withdrawals.find((w) => w.id === id);
   if (!record) throw notFound('Withdrawal');
-  return record;
+  return attachWithdrawalTimeline(record, data);
 }
 
 export async function getWithdrawalDeposit(id: string) {

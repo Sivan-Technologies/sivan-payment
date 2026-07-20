@@ -2,6 +2,7 @@ import { db } from '../../database/json-database.js';
 import type { Chain, Currency, OnrampOrderRecord, SourceCurrency } from '../../database/types.js';
 import { createAuditLog } from '../../audit/audit.service.js';
 import { syncPaymentTransactionReferencesForResource } from '../../references/transaction-references.service.js';
+import { attachOnrampTimeline } from '../../timeline/transaction-timeline.service.js';
 import { getOfframpProvider } from '../../providers/provider-registry.js';
 import { notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
@@ -77,17 +78,21 @@ export async function createOnrampOrder(input: CreateOnrampOrderInput) {
     metadata: { provider: record.provider, sourceCurrency: record.sourceCurrency, destinationCurrency: record.destinationCurrency, destinationChain: record.destinationChain, feePercent: record.feePercent }
   });
 
-  return record;
+  const timelineData = await db.read();
+  return attachOnrampTimeline(record, timelineData);
 }
 
 export async function listOnrampOrders(userId: string) {
   const data = await db.read();
-  return (data.onrampOrders ?? []).filter((order) => order.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return (data.onrampOrders ?? [])
+    .filter((order) => order.userId === userId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((order) => attachOnrampTimeline(order, data));
 }
 
 export async function getOnrampOrder(id: string) {
   const data = await db.read();
   const order = (data.onrampOrders ?? []).find((item) => item.id === id);
   if (!order) throw notFound('On-ramp order');
-  return order;
+  return attachOnrampTimeline(order, data);
 }

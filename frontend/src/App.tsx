@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -1066,7 +1066,7 @@ export default function App() {
 
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} />}
 
-        {view === 'history' && <TransactionsView withdrawals={withdrawals} onStart={() => goToView('withdraw')} />}
+        {view === 'history' && <TransactionsView withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
         {view === 'settings' && <SettingsView user={user} preferences={userPreferences} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
@@ -1534,8 +1534,130 @@ function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls,
   return <section className="app-page"><PageHero title="Payment methods" subtitle="Manage the bank accounts you use to receive payouts." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
 }
 
-function TransactionsView({ withdrawals, onStart }: { withdrawals: WithdrawalRecord[]; onStart: () => void }) {
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="All your buy and sell orders in one place." action={<button className="primary-btn small">Export CSV</button>} /><article className="transactions-table-card"><div className="transactions-toolbar"><input placeholder="Search by reference or amount..." /><div><button className="primary-btn small">All</button><button className="ghost-btn small">Sells</button><button className="ghost-btn small">Buys</button><button className="ghost-btn small">Processing</button></div></div>{!withdrawals.length ? <div className="dashboard-empty"><p>No transactions yet.</p><button className="secondary-btn" onClick={onStart}>Start your first transaction</button></div> : <div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Destination</th><th>Status</th><th>Reference</th><th>Date</th></tr></thead><tbody>{withdrawals.map((w) => <tr key={w.id}><td><span className="tx-type sell">↗ Sell</span></td><td>{w.sourceCurrency?.toUpperCase() || 'USDC'}</td><td>{w.destinationAmount || w.sourceAmount || '—'} {w.destinationCurrency?.toUpperCase()}</td><td>Bank payout</td><td><Badge status={w.status}>{friendlyStatus(w.status)}</Badge></td><td>{shortRef(w.id)}</td><td>{new Date(w.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table></div>}</article></section>;
+type CustomerTransactionRow = {
+  id: string;
+  kind: 'withdrawal' | 'onramp_order';
+  label: string;
+  direction: 'sell' | 'buy';
+  asset: string;
+  amount: string;
+  currency: string;
+  status: string;
+  createdAt: string;
+  providerReference?: string;
+  timeline?: TransactionTimeline;
+  raw: WithdrawalRecord | OnrampOrderRecord;
+};
+
+function TransactionsView({ withdrawals, onrampOrders, onStart, onBuy }: { withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; onStart: () => void; onBuy: () => void }) {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<'all' | 'sell' | 'buy' | 'processing'>('all');
+  const transactions = useMemo<CustomerTransactionRow[]>(() => {
+    const sells = withdrawals.map((w): CustomerTransactionRow => ({
+      id: w.id,
+      kind: 'withdrawal',
+      label: 'Sell crypto',
+      direction: 'sell',
+      asset: w.sourceCurrency?.toUpperCase() || 'USDC',
+      amount: w.destinationAmount || w.sourceAmount || w.transactionTimeline?.amount || '—',
+      currency: w.destinationCurrency?.toUpperCase() || w.transactionTimeline?.currency || '—',
+      status: w.status,
+      createdAt: w.createdAt,
+      providerReference: w.transactionTimeline?.providerReference || w.providerDrainId || w.destinationReference,
+      timeline: w.transactionTimeline || fallbackWithdrawalTimeline(w),
+      raw: w
+    }));
+    const buys = onrampOrders.map((o): CustomerTransactionRow => ({
+      id: o.id,
+      kind: 'onramp_order',
+      label: 'Buy crypto',
+      direction: 'buy',
+      asset: o.destinationCurrency?.toUpperCase() || 'USDC',
+      amount: o.amount || o.transactionTimeline?.amount || '—',
+      currency: o.sourceCurrency?.toUpperCase() || o.transactionTimeline?.currency || '—',
+      status: o.status,
+      createdAt: o.createdAt,
+      providerReference: o.transactionTimeline?.providerReference || o.providerTransferId || o.providerReference,
+      timeline: o.transactionTimeline || fallbackOnrampTimeline(o),
+      raw: o
+    }));
+    return [...sells, ...buys].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [withdrawals, onrampOrders]);
+  const filtered = transactions.filter((tx) => {
+    if (filter === 'sell' && tx.direction !== 'sell') return false;
+    if (filter === 'buy' && tx.direction !== 'buy') return false;
+    if (filter === 'processing' && ['completed', 'failed', 'cancelled'].includes(tx.status)) return false;
+    const haystack = [tx.id, tx.providerReference, tx.status, tx.amount, tx.currency, tx.asset, tx.label].join(' ').toLowerCase();
+    return haystack.includes(query.trim().toLowerCase());
+  });
+  const [selectedId, setSelectedId] = useState<string>('');
+  const selected = filtered.find((tx) => tx.id === selectedId) || filtered[0] || null;
+
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','sell','buy','processing'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'sell' ? 'Sells' : item === 'buy' ? 'Buys' : 'Processing'}</button>)}</div></div>{!transactions.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Start selling</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Status</th><th>Provider Ref</th><th>Request ID</th><th>Date</th></tr></thead><tbody>{filtered.map((tx) => <tr key={tx.id} className={selected?.id === tx.id ? 'selected-row' : ''} onClick={() => setSelectedId(tx.id)}><td><span className={`tx-type ${tx.direction}`}>{tx.direction === 'sell' ? '↗ Sell' : '↙ Buy'}</span></td><td>{tx.asset}</td><td>{tx.amount} {tx.currency}</td><td><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></td><td>{tx.providerReference ? shortRef(tx.providerReference) : 'Pending'}</td><td>{shortRef(tx.id)}</td><td>{new Date(tx.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table>{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} /></div>}</article></section>;
+}
+
+function TransactionTimelinePanel({ transaction }: { transaction: CustomerTransactionRow | null }) {
+  if (!transaction?.timeline) return <aside className="transaction-timeline-card"><Empty>Select a transaction to see its timeline.</Empty></aside>;
+  const timeline = transaction.timeline;
+  const currentStep = timeline.steps.find((step) => step.status === 'current') || timeline.steps.find((step) => step.status === 'failed') || timeline.steps[timeline.steps.length - 1];
+  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || transaction.amount} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{timeline.steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < timeline.steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><div className="support-reference-box"><strong>Need support?</strong><span>Share the Request ID and Provider reference so support can trace this transaction faster.</span></div></aside>;
+}
+
+function InlineTransactionTimeline({ timeline }: { timeline: TransactionTimeline }) {
+  return <div className="inline-transaction-timeline"><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || '—'} ${timeline.currency || ''}`} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /></div><div className="customer-timeline-list compact">{timeline.steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < timeline.steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div></div>;
+}
+
+function fallbackWithdrawalTimeline(w: WithdrawalRecord): TransactionTimeline {
+  const status = w.status;
+  const doneAfterDeposit = ['deposit_received', 'converting', 'payout_processing', 'completed'].includes(status);
+  const doneBank = ['payout_processing', 'completed'].includes(status);
+  return {
+    transactionType: 'withdrawal', requestId: w.id, internalTransactionId: w.id, providerReference: w.providerDrainId || w.destinationReference, amount: w.destinationAmount || w.sourceAmount, currency: w.destinationCurrency?.toUpperCase(), asset: w.sourceCurrency?.toUpperCase(), direction: 'sell', provider: w.provider, status, createdAt: w.createdAt, updatedAt: w.updatedAt, completedAt: w.completedAt,
+    steps: [
+      { key: 'withdrawal_created', label: 'Withdrawal Created', description: 'Your withdrawal request was created.', status: 'completed', at: w.createdAt },
+      { key: 'identity_verified', label: 'Identity Verified', description: 'Your verified Sivan profile is attached to this transaction.', status: 'completed', at: w.createdAt },
+      { key: 'provider_accepted', label: 'Provider Accepted', description: 'A provider-backed deposit address/reference was issued.', status: 'completed', at: w.createdAt },
+      { key: 'blockchain_confirmed', label: 'Blockchain Confirmed', description: 'Waiting for blockchain confirmation.', status: doneAfterDeposit ? 'completed' : 'current', at: doneAfterDeposit ? w.updatedAt : undefined },
+      { key: 'settlement_initiated', label: 'Settlement Initiated', description: 'Settlement into payout currency has started.', status: doneAfterDeposit ? 'completed' : 'pending', at: doneAfterDeposit ? w.updatedAt : undefined },
+      { key: 'bank_processing', label: 'Bank Processing', description: 'Bank payout is being processed.', status: doneBank ? 'completed' : 'pending', at: doneBank ? w.updatedAt : undefined },
+      { key: 'completed', label: 'Completed', description: 'The payout is complete.', status: status === 'completed' ? 'completed' : 'pending', at: w.completedAt }
+    ]
+  };
+}
+
+function fallbackOnrampTimeline(o: OnrampOrderRecord): TransactionTimeline {
+  const status = o.status;
+  const paymentReceived = ['payment_received', 'processing', 'completed'].includes(status);
+  const processing = ['processing', 'completed'].includes(status);
+  return {
+    transactionType: 'onramp_order', requestId: o.id, internalTransactionId: o.id, providerReference: o.providerTransferId || o.providerReference, amount: o.amount, currency: o.sourceCurrency?.toUpperCase(), asset: o.destinationCurrency?.toUpperCase(), direction: 'buy', provider: o.provider, status, createdAt: o.createdAt, updatedAt: o.updatedAt, completedAt: o.completedAt,
+    steps: [
+      { key: 'order_created', label: 'Order Created', description: 'Your buy order was created.', status: 'completed', at: o.createdAt },
+      { key: 'identity_verified', label: 'Identity Verified', description: 'Your verified Sivan profile is attached to this transaction.', status: 'completed', at: o.createdAt },
+      { key: 'provider_accepted', label: 'Provider Accepted', description: 'Provider generated payment instructions.', status: 'completed', at: o.createdAt },
+      { key: 'payment_instructions_issued', label: 'Payment Instructions Issued', description: 'Use the exact reference shown.', status: 'completed', at: o.createdAt },
+      { key: 'fiat_payment_received', label: 'Fiat Payment Received', description: 'Waiting for bank payment detection.', status: paymentReceived ? 'completed' : 'current', at: paymentReceived ? o.updatedAt : undefined },
+      { key: 'settlement_processing', label: 'Settlement Processing', description: 'Converting and preparing delivery.', status: processing ? 'completed' : 'pending', at: processing ? o.updatedAt : undefined },
+      { key: 'blockchain_delivered', label: 'Blockchain Delivered', description: 'Crypto delivery to wallet.', status: status === 'completed' ? 'completed' : 'pending', at: o.completedAt },
+      { key: 'completed', label: 'Completed', description: 'The buy order is complete.', status: status === 'completed' ? 'completed' : 'pending', at: o.completedAt }
+    ]
+  };
+}
+
+function exportTransactions(rows: CustomerTransactionRow[]) {
+  const csv = ['type,requestId,status,amount,currency,providerReference,date', ...rows.map((tx) => [tx.direction, tx.id, tx.status, tx.amount, tx.currency, tx.providerReference || '', tx.createdAt].map(csvCell).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sivan-transactions.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function BuyCryptoView({ hasUser, isVerified, feePercent, enabledControls, enabledAssets, enabledNetworks, orders, loading, onSubmit, onSell, onContinue, onSupport }: { hasUser: boolean; isVerified: boolean; feePercent: string; enabledControls: PaymentControl[]; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[]; orders: OnrampOrderRecord[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSell: () => void; onContinue: () => void; onSupport: () => void }) {
@@ -1548,7 +1670,7 @@ function BuyCryptoView({ hasUser, isVerified, feePercent, enabledControls, enabl
 
 function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
   const instructions = order.sourceDepositInstructions || {};
-  return <div className="onramp-instructions"><h3>Payment instructions</h3><div className="details-box"><Kv label="Reference" value={order.providerReference || order.id} /><Kv label="Amount" value={`${order.amount} ${order.sourceCurrency.toUpperCase()}`} /><Kv label="Fee" value={order.feeAmount ? `${order.feeAmount} ${order.sourceCurrency.toUpperCase()}` : '—'} /><Kv label="You get" value={`${order.netAmount || '—'} ${order.destinationCurrency.toUpperCase()}`} /><Kv label="Status" value={friendlyStatus(order.status)} /><Kv label="Bank" value={instructions.bank_name || instructions.bankName || 'Provided by Bridge'} /><Kv label="Account" value={instructions.account_number || instructions.iban || 'See provider instructions'} /></div><div className="warning-box compact">Use the exact payment reference. Missing or incorrect references can delay matching.</div></div>;
+  return <div className="onramp-instructions"><h3>Payment instructions</h3><div className="details-box"><Kv label="Reference" value={order.providerReference || order.id} /><Kv label="Amount" value={`${order.amount} ${order.sourceCurrency.toUpperCase()}`} /><Kv label="Fee" value={order.feeAmount ? `${order.feeAmount} ${order.sourceCurrency.toUpperCase()}` : '—'} /><Kv label="You get" value={`${order.netAmount || '—'} ${order.destinationCurrency.toUpperCase()}`} /><Kv label="Status" value={friendlyStatus(order.status)} /><Kv label="Bank" value={instructions.bank_name || instructions.bankName || 'Provided by Bridge'} /><Kv label="Account" value={instructions.account_number || instructions.iban || 'See provider instructions'} /></div>{order.transactionTimeline && <InlineTransactionTimeline timeline={order.transactionTimeline} />}<div className="warning-box compact">Use the exact payment reference. Missing or incorrect references can delay matching.</div></div>;
 }
 
 
@@ -1750,12 +1872,12 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
       <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</p>
       <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address">{result.deposit.address}</div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button></div></div>
       <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Payout currency" value={result.withdrawal.destinationCurrency.toUpperCase()} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></div>
-      <div className="tracking-timeline">
+      {result.withdrawal.transactionTimeline ? <InlineTransactionTimeline timeline={result.withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
         <TimelineItem done title="Address created" body="A unique provider-backed deposit address is ready." />
         <TimelineItem active={result.withdrawal.status === 'pending_deposit'} done={result.withdrawal.status !== 'pending_deposit'} title="Awaiting deposit" body="Send only the selected token and network." />
         <TimelineItem active={['deposit_received', 'payout_processing'].includes(result.withdrawal.status)} done={result.withdrawal.status === 'completed'} title="Convert and payout" body="Bridge detects the deposit, liquidates, and sends fiat to your bank." />
         <TimelineItem done={result.withdrawal.status === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
-      </div>
+      </div>}
     </article>
   );
 }
