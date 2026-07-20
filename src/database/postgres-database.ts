@@ -1,6 +1,10 @@
 import pg from 'pg';
 import { env } from '../config/env.js';
 import type {
+  AceSupportMessageRecord,
+  AceSupportResolutionRecord,
+  AceSupportSessionRecord,
+  AceToolCallRecord,
   Chain,
   Currency,
   CustomerRecord,
@@ -149,6 +153,10 @@ export class PostgresDatabase {
       const supportTicketMessages = await optionalQuery(client, 'select * from payments_support_ticket_messages order by created_at asc');
       const unifiedWebhookLogs = await client.query('select * from sivan_unified_webhook_logs order by created_at asc');
       const transactionReferences = await optionalQuery(client, 'select * from transaction_references order by created_at asc');
+      const aceSupportSessions = await optionalQuery(client, 'select * from ace_support_sessions order by created_at asc');
+      const aceSupportMessages = await optionalQuery(client, 'select * from ace_support_messages order by created_at asc');
+      const aceToolCalls = await optionalQuery(client, 'select * from ace_tool_calls order by created_at asc');
+      const aceSupportResolutions = await optionalQuery(client, 'select * from ace_support_resolutions order by created_at asc');
       const customerIdentityLinks = await optionalQuery(client, 'select * from customer_identity_links order by created_at asc');
       const identityPairingTokens = await optionalQuery(client, 'select * from identity_pairing_tokens order by created_at asc');
       const virtualAccountRequests = await optionalQuery(client, 'select * from payments_virtual_account_requests order by created_at asc');
@@ -185,6 +193,10 @@ export class PostgresDatabase {
         customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl),
         unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog),
         transactionReferences: transactionReferences.rows.map(mapTransactionReference),
+        aceSupportSessions: aceSupportSessions.rows.map(mapAceSupportSession),
+        aceSupportMessages: aceSupportMessages.rows.map(mapAceSupportMessage),
+        aceToolCalls: aceToolCalls.rows.map(mapAceToolCall),
+        aceSupportResolutions: aceSupportResolutions.rows.map(mapAceSupportResolution),
         supportTickets: supportTickets.rows.map(mapSupportTicket),
         supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage)
       };
@@ -383,6 +395,19 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+
+  async insertAceSupportRecords(input: { session: AceSupportSessionRecord; messages: AceSupportMessageRecord[]; toolCalls: AceToolCallRecord[]; resolution?: AceSupportResolutionRecord }) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await upsertAceSupportSession(client, input.session);
+      for (const message of input.messages) await upsertAceSupportMessage(client, message);
+      for (const call of input.toolCalls) await upsertAceToolCall(client, call);
+      if (input.resolution) await upsertAceSupportResolution(client, input.resolution);
+      await client.query('commit');
+      return input.session;
+    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+  }
 
   async insertSupportTicketRecord(record: SupportTicketRecord) {
     const client = await this.pool.connect();
@@ -696,6 +721,10 @@ export class PostgresDatabase {
       for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       for (const log of data.unifiedWebhookLogs ?? []) await upsertUnifiedWebhookLog(client, log);
       for (const reference of data.transactionReferences ?? []) await upsertTransactionReference(client, reference);
+      for (const session of data.aceSupportSessions ?? []) await upsertAceSupportSession(client, session);
+      for (const message of data.aceSupportMessages ?? []) await upsertAceSupportMessage(client, message);
+      for (const call of data.aceToolCalls ?? []) await upsertAceToolCall(client, call);
+      for (const resolution of data.aceSupportResolutions ?? []) await upsertAceSupportResolution(client, resolution);
       for (const ticket of data.supportTickets ?? []) await upsertSupportTicket(client, ticket);
       for (const message of data.supportTicketMessages ?? []) await upsertSupportTicketMessage(client, message);
       await client.query('commit');
@@ -930,6 +959,50 @@ async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord)
        completed_at=excluded.completed_at`,
     [item.id, item.userId, item.customerId, item.provider, item.providerTransferId, item.sourceCurrency, item.sourcePaymentRail, item.destinationCurrency, item.destinationChain, item.destinationAddress, item.amount, item.feePercent, item.feeAmount, item.netAmount, item.providerReference, item.sourceDepositInstructions ?? null, item.destinationTxHash, item.status, item.statusReason, item.receipt ?? null, item.raw ?? null, item.createdAt, item.updatedAt, item.completedAt]
   );
+}
+
+
+function mapAceSupportSession(row: any): AceSupportSessionRecord {
+  return {
+    id: row.id,
+    userId: str(row.user_id),
+    channel: row.channel,
+    resourceType: str(row.resource_type),
+    resourceId: str(row.resource_id),
+    confidence: row.confidence,
+    needsHuman: row.needs_human,
+    toolsUsed: row.tools_used ?? [],
+    evidenceSnapshot: row.evidence_snapshot,
+    createdAt: iso(row.created_at)
+  };
+}
+
+function mapAceSupportMessage(row: any): AceSupportMessageRecord {
+  return { id: row.id, sessionId: row.session_id, role: row.role, message: row.message, createdAt: iso(row.created_at) };
+}
+
+function mapAceToolCall(row: any): AceToolCallRecord {
+  return { id: row.id, sessionId: row.session_id, toolName: row.tool_name, status: row.status, summary: str(row.summary), createdAt: iso(row.created_at) };
+}
+
+function mapAceSupportResolution(row: any): AceSupportResolutionRecord {
+  return { id: row.id, sessionId: row.session_id, resolutionType: row.resolution_type, summary: row.summary, createdAt: iso(row.created_at) };
+}
+
+async function upsertAceSupportSession(client: pg.PoolClient, item: AceSupportSessionRecord) {
+  await client.query(`insert into ace_support_sessions (id, user_id, channel, resource_type, resource_id, confidence, needs_human, tools_used, evidence_snapshot, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (id) do nothing`, [item.id, item.userId, item.channel, item.resourceType, item.resourceId, item.confidence, item.needsHuman, item.toolsUsed, item.evidenceSnapshot ?? null, item.createdAt]);
+}
+
+async function upsertAceSupportMessage(client: pg.PoolClient, item: AceSupportMessageRecord) {
+  await client.query(`insert into ace_support_messages (id, session_id, role, message, created_at) values ($1,$2,$3,$4,$5) on conflict (id) do nothing`, [item.id, item.sessionId, item.role, item.message, item.createdAt]);
+}
+
+async function upsertAceToolCall(client: pg.PoolClient, item: AceToolCallRecord) {
+  await client.query(`insert into ace_tool_calls (id, session_id, tool_name, status, summary, created_at) values ($1,$2,$3,$4,$5,$6) on conflict (id) do nothing`, [item.id, item.sessionId, item.toolName, item.status, item.summary, item.createdAt]);
+}
+
+async function upsertAceSupportResolution(client: pg.PoolClient, item: AceSupportResolutionRecord) {
+  await client.query(`insert into ace_support_resolutions (id, session_id, resolution_type, summary, created_at) values ($1,$2,$3,$4,$5) on conflict (id) do nothing`, [item.id, item.sessionId, item.resolutionType, item.summary, item.createdAt]);
 }
 
 function mapSupportTicket(row: any): SupportTicketRecord {

@@ -29,6 +29,44 @@ export interface CustomerTypeControlRecord {
   updatedAt: string;
 }
 
+export interface AceSupportSessionRecord {
+  id: string;
+  userId?: string;
+  channel: string;
+  resourceType?: string;
+  resourceId?: string;
+  confidence: 'high' | 'medium' | 'low';
+  needsHuman: boolean;
+  toolsUsed: string[];
+  evidenceSnapshot: unknown;
+  createdAt: string;
+}
+
+export interface AceSupportMessageRecord {
+  id: string;
+  sessionId: string;
+  role: 'user' | 'ace' | 'admin';
+  message: string;
+  createdAt: string;
+}
+
+export interface AceToolCallRecord {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  status: 'success' | 'failed';
+  summary?: string;
+  createdAt: string;
+}
+
+export interface AceSupportResolutionRecord {
+  id: string;
+  sessionId: string;
+  resolutionType: 'answered' | 'escalated' | 'ticket_recommended';
+  summary: string;
+  createdAt: string;
+}
+
 export interface SystemIncidentRecord {
   id: string;
   provider: string;
@@ -449,6 +487,10 @@ export interface DatabaseShape {
   customerTypeControls: CustomerTypeControlRecord[];
   unifiedWebhookLogs: UnifiedWebhookLogRecord[];
   transactionReferences: TransactionReferenceRecord[];
+  aceSupportSessions: AceSupportSessionRecord[];
+  aceSupportMessages: AceSupportMessageRecord[];
+  aceToolCalls: AceToolCallRecord[];
+  aceSupportResolutions: AceSupportResolutionRecord[];
   supportTickets: SupportTicketRecord[];
   supportTicketMessages: SupportTicketMessageRecord[];
   virtualAccountRequests: VirtualAccountRequestRecord[];

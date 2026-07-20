@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
@@ -30,6 +30,10 @@ const emptyDb = (): DatabaseShape => ({
   customerTypeControls: [],
   unifiedWebhookLogs: [],
   transactionReferences: [],
+  aceSupportSessions: [],
+  aceSupportMessages: [],
+  aceToolCalls: [],
+  aceSupportResolutions: [],
   supportTickets: [],
   supportTicketMessages: [],
   virtualAccountRequests: [],
@@ -212,6 +216,20 @@ export class JsonDatabase {
       .map((run) => ({ ...run, findings: (data.reconciliationFindings ?? []).filter((finding) => finding.runId === run.id) }));
   }
 
+
+  async insertAceSupportRecords(input: { session: AceSupportSessionRecord; messages: AceSupportMessageRecord[]; toolCalls: AceToolCallRecord[]; resolution?: AceSupportResolutionRecord }) {
+    return this.mutate((data) => {
+      data.aceSupportSessions = data.aceSupportSessions ?? [];
+      data.aceSupportMessages = data.aceSupportMessages ?? [];
+      data.aceToolCalls = data.aceToolCalls ?? [];
+      data.aceSupportResolutions = data.aceSupportResolutions ?? [];
+      data.aceSupportSessions.push(input.session);
+      data.aceSupportMessages.push(...input.messages);
+      data.aceToolCalls.push(...input.toolCalls);
+      if (input.resolution) data.aceSupportResolutions.push(input.resolution);
+      return input.session;
+    });
+  }
 
   async insertSupportTicketRecord(record: SupportTicketRecord) {
     return this.mutate((data) => {
