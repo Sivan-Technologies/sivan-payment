@@ -327,6 +327,11 @@ export interface ReconciliationFindingRecord {
   withdrawalId?: string;
   liquidationAddressId?: string;
   providerDrainId?: string;
+  resourceType?: string;
+  resourceId?: string;
+  referenceId?: string;
+  webhookEventId?: string;
+  sivanTransactionId?: string;
   message: string;
   expected?: unknown;
   actual?: unknown;

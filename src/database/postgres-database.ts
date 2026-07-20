@@ -1546,6 +1546,11 @@ function mapReconciliationFinding(row: any): ReconciliationFindingRecord {
     withdrawalId: str(row.withdrawal_id),
     liquidationAddressId: str(row.liquidation_address_id),
     providerDrainId: str(row.provider_drain_id),
+    resourceType: str(row.resource_type),
+    resourceId: str(row.resource_id),
+    referenceId: str(row.reference_id),
+    webhookEventId: str(row.webhook_event_id),
+    sivanTransactionId: str(row.sivan_transaction_id),
     message: row.message,
     expected: row.expected,
     actual: row.actual,
@@ -1575,10 +1580,16 @@ async function upsertReconciliationRun(client: pg.PoolClient, item: Reconciliati
 
 async function upsertReconciliationFinding(client: pg.PoolClient, item: ReconciliationFindingRecord) {
   await client.query(
-    `insert into payments_reconciliation_findings (id, run_id, provider, severity, finding_type, withdrawal_id, liquidation_address_id, provider_drain_id, message, expected, actual, status, created_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-     on conflict (id) do update set status=excluded.status`,
-    [item.id, item.runId, item.provider, item.severity, item.findingType, item.withdrawalId, item.liquidationAddressId, item.providerDrainId, item.message, item.expected ?? null, item.actual ?? null, item.status, item.createdAt]
+    `insert into payments_reconciliation_findings (id, run_id, provider, severity, finding_type, withdrawal_id, liquidation_address_id, provider_drain_id, resource_type, resource_id, reference_id, webhook_event_id, sivan_transaction_id, message, expected, actual, status, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+     on conflict (id) do update set
+       status=excluded.status,
+       resource_type=excluded.resource_type,
+       resource_id=excluded.resource_id,
+       reference_id=excluded.reference_id,
+       webhook_event_id=excluded.webhook_event_id,
+       sivan_transaction_id=excluded.sivan_transaction_id`,
+    [item.id, item.runId, item.provider, item.severity, item.findingType, item.withdrawalId, item.liquidationAddressId, item.providerDrainId, item.resourceType, item.resourceId, item.referenceId, item.webhookEventId, item.sivanTransactionId, item.message, item.expected ?? null, item.actual ?? null, item.status, item.createdAt]
   );
 }
 

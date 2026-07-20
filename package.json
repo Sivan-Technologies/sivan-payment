@@ -28,6 +28,7 @@
     "test:virtual-accounts": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-virtual-accounts.json ADMIN_API_KEY=virtual-account-test-admin-key VIRTUAL_ACCOUNT_REQUESTS_ENABLED=true VIRTUAL_ACCOUNTS_ENABLED=true VIRTUAL_ACCOUNT_PROVIDER=mock tsx scripts/test-virtual-accounts.ts",
     "test:bridge-virtual-accounts": "tsx scripts/test-bridge-virtual-account-mapping.ts",
     "test:virtual-account-events": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-virtual-account-events.json tsx scripts/test-virtual-account-events.ts",
+    "test:reference-reconciliation": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-reference-reconciliation.json tsx scripts/test-reference-reconciliation.ts",
     "bridge:virtual-account-smoke": "tsx scripts/bridge-virtual-account-smoke.ts"
   },
   "dependencies": {

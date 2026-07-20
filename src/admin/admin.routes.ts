@@ -4,6 +4,7 @@ import { parseBody } from '../shared/validation.js';
 import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWithdrawals, listAdminAuditLogs, listAdminReconciliationRuns, listAdminOnrampOrders } from './admin.service.js';
 import { getAdminAnalytics } from './analytics.service.js';
 import { runOfframpReconciliation } from '../reconciliation/reconciliation.service.js';
+import { buildReferenceReconciliationDashboard, persistReferenceReconciliationRun } from '../reconciliation/reference-reconciliation.service.js';
 import { getWithdrawal, syncWithdrawalDrains } from '../offramp/service/withdrawals.service.js';
 import { getOnrampOrder } from '../onramp/service/onramp-orders.service.js';
 import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
@@ -29,6 +30,11 @@ const reconciliationRunSchema = z.object({
   provider: z.string().optional(),
   userId: z.string().optional(),
   liquidationAddressId: z.string().optional()
+});
+
+const referenceReconciliationRunSchema = z.object({
+  dryRun: z.boolean().default(true),
+  limit: z.coerce.number().int().min(1).max(1000).default(1000)
 });
 
 export async function adminRoutes(app: FastifyInstance) {
@@ -201,6 +207,26 @@ export async function adminRoutes(app: FastifyInstance) {
   });
   app.get('/api/admin/audit-logs', async (request) => ({ data: await listAdminAuditLogs(listOptions(request)) }));
   app.get('/api/admin/reconciliation/runs', async (request) => ({ data: await listAdminReconciliationRuns(listOptions(request)) }));
+  app.get('/api/admin/reconciliation/findings/dashboard', async (request) => {
+    const query = (request.query ?? {}) as Record<string, string>;
+    return { data: await buildReferenceReconciliationDashboard({ limit: query.limit ? Number(query.limit) : undefined }) };
+  });
+  app.post('/api/admin/reconciliation/findings/run', async (request) => {
+    const body = parseBody(referenceReconciliationRunSchema, request.body);
+    const result = await persistReferenceReconciliationRun(body);
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: 'admin_api_key',
+      action: body.dryRun ? 'reference_reconciliation.dry_run' : 'reference_reconciliation.live_run',
+      resourceType: 'reconciliation_run',
+      resourceId: result.runId,
+      severity: result.summary.errors > 0 ? 'warning' : 'info',
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+      metadata: { summary: result.summary }
+    });
+    return { data: result };
+  });
   app.get('/api/admin/analytics', async () => ({ data: await getAdminAnalytics() }));
 
   app.post('/api/admin/onramp/reconciliation/run', async (request) => {
