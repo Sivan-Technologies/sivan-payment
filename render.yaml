@@ -81,6 +81,16 @@ services:
         value: "10"
       - key: CUSTOMER_ACQUISITION_COST_USD
         value: "0"
+      - key: ACE_PROVIDER
+        value: remote
+      - key: SIVAN_AI_API_URL
+        value: https://test-sivan.sivantech.online/api/sivan-ai
+      - key: SIVAN_AI_API_KEY
+        sync: false
+      - key: SIVAN_AI_TIMEOUT_MS
+        value: "3500"
+      - key: SIVAN_AI_FALLBACK_ENABLED
+        value: "true"
 
   - type: web
     name: sivan-payments-api-live
@@ -164,3 +174,13 @@ services:
         value: "10"
       - key: CUSTOMER_ACQUISITION_COST_USD
         value: "0"
+      - key: ACE_PROVIDER
+        value: remote
+      - key: SIVAN_AI_API_URL
+        value: https://api.sivantech.online/api/sivan-ai
+      - key: SIVAN_AI_API_KEY
+        sync: false
+      - key: SIVAN_AI_TIMEOUT_MS
+        value: "3500"
+      - key: SIVAN_AI_FALLBACK_ENABLED
+        value: "true"
