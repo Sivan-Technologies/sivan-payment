@@ -940,6 +940,7 @@ function mapSupportTicket(row: any): SupportTicketRecord {
 }
 
 function mapSupportTicketMessage(row: any): SupportTicketMessageRecord {
+  const internalNote = Boolean(row.internal_note);
   return {
     id: row.id,
     ticketId: row.ticket_id,
@@ -947,7 +948,13 @@ function mapSupportTicketMessage(row: any): SupportTicketMessageRecord {
     senderId: str(row.sender_id),
     message: row.message,
     attachments: row.attachments,
-    internalNote: row.internal_note,
+    internalNote,
+    messageType: row.message_type ?? (internalNote ? 'internal_note' : 'conversation'),
+    noteType: str(row.note_type) as any,
+    title: str(row.title),
+    statusAfter: str(row.status_after) as any,
+    visibleToCustomer: row.visible_to_customer ?? !internalNote,
+    metadata: row.metadata,
     createdAt: iso(row.created_at)
   };
 }
@@ -975,15 +982,21 @@ async function upsertSupportTicket(client: pg.PoolClient, item: SupportTicketRec
 
 async function upsertSupportTicketMessage(client: pg.PoolClient, item: SupportTicketMessageRecord) {
   await client.query(
-    `insert into payments_support_ticket_messages (id, ticket_id, sender_type, sender_id, message, attachments, internal_note, created_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+    `insert into payments_support_ticket_messages (id, ticket_id, sender_type, sender_id, message, attachments, internal_note, message_type, note_type, title, status_after, visible_to_customer, metadata, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (id) do update set
        sender_type=excluded.sender_type,
        sender_id=excluded.sender_id,
        message=excluded.message,
        attachments=excluded.attachments,
-       internal_note=excluded.internal_note`,
-    [item.id, item.ticketId, item.senderType, item.senderId, item.message, item.attachments ?? null, item.internalNote ?? false, item.createdAt]
+       internal_note=excluded.internal_note,
+       message_type=excluded.message_type,
+       note_type=excluded.note_type,
+       title=excluded.title,
+       status_after=excluded.status_after,
+       visible_to_customer=excluded.visible_to_customer,
+       metadata=excluded.metadata`,
+    [item.id, item.ticketId, item.senderType, item.senderId, item.message, item.attachments ?? null, item.internalNote ?? false, item.messageType ?? (item.internalNote ? 'internal_note' : 'conversation'), item.noteType, item.title, item.statusAfter, item.visibleToCustomer ?? !item.internalNote, item.metadata ?? null, item.createdAt]
   );
 }
 

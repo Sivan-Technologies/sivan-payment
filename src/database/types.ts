@@ -282,6 +282,9 @@ export interface SupportTicketRecord {
   closedAt?: string;
 }
 
+export type SupportMessageType = 'conversation' | 'internal_note' | 'resolution' | 'system';
+export type SupportNoteType = 'general' | 'investigation' | 'provider_update' | 'payout_instruction' | 'compliance' | 'risk' | 'handoff' | 'resolution';
+
 export interface SupportTicketMessageRecord {
   id: string;
   ticketId: string;
@@ -290,6 +293,12 @@ export interface SupportTicketMessageRecord {
   message: string;
   attachments?: unknown;
   internalNote?: boolean;
+  messageType?: SupportMessageType;
+  noteType?: SupportNoteType;
+  title?: string;
+  statusAfter?: SupportTicketStatus;
+  visibleToCustomer?: boolean;
+  metadata?: unknown;
   createdAt: string;
 }
 

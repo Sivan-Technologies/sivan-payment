@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db } from '../database/json-database.js';
-import type { SupportTicketMessageRecord, SupportTicketRecord } from '../database/types.js';
+import type { SupportMessageType, SupportNoteType, SupportTicketMessageRecord, SupportTicketRecord, SupportTicketStatus } from '../database/types.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
@@ -22,10 +22,19 @@ export const createSupportTicketSchema = z.object({
   metadata: z.unknown().optional()
 });
 
+const supportNoteTypeSchema = z.enum(['general', 'investigation', 'provider_update', 'payout_instruction', 'compliance', 'risk', 'handoff', 'resolution']);
+const supportMessageTypeSchema = z.enum(['conversation', 'internal_note', 'resolution', 'system']);
+
 export const createSupportMessageSchema = z.object({
   userId: z.string().optional(),
   message: z.string().min(1).max(5000),
-  internalNote: z.boolean().optional().default(false)
+  internalNote: z.boolean().optional().default(false),
+  messageType: supportMessageTypeSchema.optional(),
+  noteType: supportNoteTypeSchema.optional(),
+  title: z.string().max(120).optional(),
+  statusAfter: z.enum(['open', 'in_review', 'waiting_on_user', 'waiting_on_provider', 'resolved', 'closed']).optional(),
+  visibleToCustomer: z.boolean().optional(),
+  metadata: z.unknown().optional()
 });
 
 export const updateSupportTicketSchema = z.object({
@@ -71,6 +80,8 @@ export async function createSupportTicket(input: z.infer<typeof createSupportTic
     senderId: input.userId,
     message: input.description,
     internalNote: false,
+    messageType: 'conversation',
+    visibleToCustomer: true,
     createdAt: now
   };
 
@@ -78,39 +89,76 @@ export async function createSupportTicket(input: z.infer<typeof createSupportTic
   await db.insertSupportTicketMessageRecord(message);
   await createAuditLog({ actorType: 'user', actorId: input.userId, action: 'support.ticket_created', resourceType: 'payments_support_ticket', resourceId: ticket.id, severity: ticket.priority === 'urgent' ? 'warning' : 'info', metadata: { type: ticket.type, priority: ticket.priority, resourceType: ticket.resourceType, resourceId: ticket.resourceId } });
   await notifyTicketCreated(ticket, user.email);
-  return enrichTicket({ ...ticket, messages: [message], user });
+  return enrichTicket({ ...ticket, messages: [message], user }, { admin: false });
 }
 
 export async function listUserSupportTickets(userId: string, options: { limit?: number; offset?: number } = {}) {
-  return (await db.listUserSupportTicketsView(userId, options)).map(enrichTicket);
+  return (await db.listUserSupportTicketsView(userId, options)).map((ticket) => enrichTicket(ticket, { admin: false }));
 }
 
 export async function getSupportTicket(ticketId: string, requester?: { userId?: string; admin?: boolean }) {
   const ticket = await db.getSupportTicketView(ticketId);
   if (!ticket) throw notFound('Support ticket');
   if (!requester?.admin && requester?.userId && (ticket as any).userId !== requester.userId) throw notFound('Support ticket');
-  return enrichTicket(ticket);
+  return enrichTicket(ticket, { admin: Boolean(requester?.admin) });
 }
 
 export async function addSupportTicketMessage(ticketId: string, input: z.infer<typeof createSupportMessageSchema>, sender: { type: 'user' | 'admin' | 'system'; id?: string }) {
-  const current = await getSupportTicket(ticketId, { userId: sender.type === 'user' ? sender.id : undefined, admin: sender.type === 'admin' || sender.type === 'system' });
+  const adminSender = sender.type === 'admin' || sender.type === 'system';
+  const current = await getSupportTicket(ticketId, { userId: sender.type === 'user' ? sender.id : undefined, admin: adminSender });
   const now = nowIso();
-  const message: SupportTicketMessageRecord = { id: id('msg'), ticketId, senderType: sender.type, senderId: sender.id, message: input.message, internalNote: sender.type === 'admin' ? Boolean(input.internalNote) : false, createdAt: now };
+  const messageType = resolveMessageType(input, sender.type);
+  const internalNote = adminSender ? (messageType === 'internal_note' || (messageType === 'resolution' && input.visibleToCustomer !== true)) : false;
+  const visibleToCustomer = adminSender ? (input.visibleToCustomer ?? !internalNote) : true;
+  const noteType = resolveNoteType(input.noteType, messageType);
+  const statusAfter = resolveStatusAfter(input.statusAfter, messageType);
+
+  const message: SupportTicketMessageRecord = {
+    id: id('msg'),
+    ticketId,
+    senderType: sender.type,
+    senderId: sender.id,
+    message: input.message,
+    internalNote,
+    messageType,
+    noteType,
+    title: input.title,
+    statusAfter,
+    visibleToCustomer,
+    metadata: input.metadata,
+    createdAt: now
+  };
   await db.insertSupportTicketMessageRecord(message);
 
-  let nextStatus = (current as any).status;
-  if (sender.type === 'user' && nextStatus === 'waiting_on_user') nextStatus = 'in_review';
-  const updated: SupportTicketRecord = { ...(current as any), status: nextStatus, lastMessageAt: now, updatedAt: now };
+  let nextStatus = (current as any).status as SupportTicketStatus;
+  if (statusAfter) nextStatus = statusAfter;
+  else if (sender.type === 'user' && nextStatus === 'waiting_on_user') nextStatus = 'in_review';
+
+  const updated: SupportTicketRecord = { ...(current as any), status: nextStatus, lastMessageAt: now, updatedAt: now, closedAt: ['resolved', 'closed'].includes(nextStatus) ? ((current as any).closedAt ?? now) : (current as any).closedAt };
   delete (updated as any).messages;
   delete (updated as any).user;
+  delete (updated as any).sla;
+  delete (updated as any).conversation;
+  delete (updated as any).internalNotes;
+  delete (updated as any).resolutionNotes;
+  delete (updated as any).supportWorkflow;
   await db.updateSupportTicketRecord(updated);
-  await createAuditLog({ actorType: sender.type === 'admin' ? 'admin' : 'user', actorId: sender.id, action: sender.type === 'admin' ? (message.internalNote ? 'support.ticket_internal_note_added' : 'support.ticket_admin_replied') : 'support.ticket_user_replied', resourceType: 'payments_support_ticket', resourceId: ticketId, severity: 'info', metadata: { internalNote: message.internalNote } });
-  if (sender.type === 'admin' && !message.internalNote) await notifyAdminReply(current as any, message);
+
+  const action = sender.type === 'admin'
+    ? messageType === 'resolution'
+      ? 'support.ticket_resolution_added'
+      : internalNote
+        ? 'support.ticket_internal_note_added'
+        : 'support.ticket_admin_replied'
+    : 'support.ticket_user_replied';
+  await createAuditLog({ actorType: sender.type === 'admin' ? 'admin' : 'user', actorId: sender.id, action, resourceType: 'payments_support_ticket', resourceId: ticketId, severity: messageType === 'resolution' ? 'warning' : 'info', metadata: { internalNote, messageType, noteType, statusAfter, visibleToCustomer } });
+  if (sender.type === 'admin' && visibleToCustomer) await notifyAdminReply(current as any, message);
+  if (['resolved', 'closed'].includes(nextStatus) && !['resolved', 'closed'].includes((current as any).status)) await notifyTicketResolved(current as any);
   return message;
 }
 
 export async function listAdminSupportTickets(options: { limit?: number; offset?: number; status?: string; priority?: string; type?: string; assignedTo?: string; search?: string; dateFrom?: string; dateTo?: string } = {}) {
-  return (await db.listAdminSupportTicketsView(options)).map(enrichTicket);
+  return (await db.listAdminSupportTicketsView(options)).map((ticket) => enrichTicket(ticket, { admin: true }));
 }
 
 export async function updateSupportTicket(ticketId: string, input: z.infer<typeof updateSupportTicketSchema>, actorId = 'admin_api_key') {
@@ -127,10 +175,15 @@ export async function updateSupportTicket(ticketId: string, input: z.infer<typeo
   };
   delete (updated as any).messages;
   delete (updated as any).user;
+  delete (updated as any).sla;
+  delete (updated as any).conversation;
+  delete (updated as any).internalNotes;
+  delete (updated as any).resolutionNotes;
+  delete (updated as any).supportWorkflow;
   await db.updateSupportTicketRecord(updated);
   await createAuditLog({ actorType: 'admin', actorId, action: 'support.ticket_updated', resourceType: 'payments_support_ticket', resourceId: ticketId, severity: updated.priority === 'urgent' ? 'warning' : 'info', metadata: { previousStatus: (current as any).status, nextStatus: updated.status, priority: updated.priority, assignedTo: updated.assignedTo } });
   if (['resolved', 'closed'].includes(updated.status) && !['resolved', 'closed'].includes((current as any).status)) await notifyTicketResolved(current as any);
-  return enrichTicket(updated);
+  return enrichTicket(updated, { admin: true });
 }
 
 
@@ -161,13 +214,23 @@ export async function getSupportAnalytics() {
   };
 }
 
-function enrichTicket(ticket: any): any {
+function enrichTicket(ticket: any, options: { admin?: boolean } = {}): any {
   const createdAt = new Date(ticket.createdAt).getTime();
   const lastMessageAt = ticket.lastMessageAt ? new Date(ticket.lastMessageAt).getTime() : createdAt;
   const dueAt = firstResponseDueAt(ticket.priority, createdAt);
   const now = Date.now();
+  const allMessages = normalizeSupportMessages(ticket.messages ?? []);
+  const visibleMessages = options.admin ? allMessages : allMessages.filter((message) => message.visibleToCustomer !== false && !message.internalNote);
+  const conversation = visibleMessages.filter((message) => message.messageType === 'conversation' || (!message.internalNote && message.messageType !== 'resolution'));
+  const internalNotes = options.admin ? allMessages.filter((message) => message.internalNote || message.messageType === 'internal_note') : [];
+  const resolutionNotes = options.admin ? allMessages.filter((message) => message.messageType === 'resolution' || message.noteType === 'resolution') : [];
   return {
     ...ticket,
+    messages: visibleMessages,
+    conversation,
+    internalNotes,
+    resolutionNotes,
+    supportWorkflow: buildSupportWorkflow(ticket, allMessages),
     sla: {
       firstResponseDueAt: new Date(dueAt).toISOString(),
       minutesUntilDue: Math.round((dueAt - now) / 60000),
@@ -176,6 +239,58 @@ function enrichTicket(ticket: any): any {
       minutesSinceLastMessage: Math.round((now - lastMessageAt) / 60000)
     }
   };
+}
+
+function normalizeSupportMessages(messages: SupportTicketMessageRecord[]): SupportTicketMessageRecord[] {
+  return messages.map((message) => {
+    const messageType = message.messageType ?? (message.internalNote ? 'internal_note' : 'conversation');
+    return {
+      ...message,
+      messageType,
+      noteType: message.noteType ?? (messageType === 'resolution' ? 'resolution' : message.internalNote ? 'general' : undefined),
+      visibleToCustomer: message.visibleToCustomer ?? !message.internalNote
+    };
+  }).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function buildSupportWorkflow(ticket: any, messages: SupportTicketMessageRecord[]) {
+  const publicConversationCount = messages.filter((message) => !message.internalNote && message.visibleToCustomer !== false && message.messageType !== 'resolution').length;
+  const internalNoteCount = messages.filter((message) => message.internalNote || message.messageType === 'internal_note').length;
+  const resolutionCount = messages.filter((message) => message.messageType === 'resolution' || message.noteType === 'resolution').length;
+  const closed = ticket.status === 'closed';
+  const resolved = ['resolved', 'closed'].includes(ticket.status) || resolutionCount > 0;
+  const steps = [
+    { key: 'ticket', label: 'Ticket', done: true, count: 1, at: ticket.createdAt },
+    { key: 'conversation', label: 'Conversation', done: publicConversationCount > 0, count: publicConversationCount, at: messages.find((message) => !message.internalNote)?.createdAt },
+    { key: 'internal_notes', label: 'Internal Notes', done: internalNoteCount > 0, count: internalNoteCount, at: messages.find((message) => message.internalNote || message.messageType === 'internal_note')?.createdAt },
+    { key: 'resolution', label: 'Resolution', done: resolved, count: resolutionCount, at: messages.find((message) => message.messageType === 'resolution' || message.noteType === 'resolution')?.createdAt ?? ticket.closedAt },
+    { key: 'closed', label: 'Closed', done: closed, count: closed ? 1 : 0, at: closed ? ticket.closedAt : undefined }
+  ];
+  let currentAssigned = false;
+  return steps.map((step) => {
+    const status = step.done ? 'completed' : currentAssigned ? 'pending' : 'current';
+    if (!step.done && !currentAssigned) currentAssigned = true;
+    return { ...step, status };
+  });
+}
+
+function resolveMessageType(input: z.infer<typeof createSupportMessageSchema>, senderType: 'user' | 'admin' | 'system'): SupportMessageType {
+  if (senderType === 'user') return 'conversation';
+  if (input.messageType) return input.messageType;
+  return input.internalNote ? 'internal_note' : 'conversation';
+}
+
+function resolveNoteType(noteType: SupportNoteType | undefined, messageType: SupportMessageType): SupportNoteType | undefined {
+  if (noteType) return noteType;
+  if (messageType === 'internal_note') return 'general';
+  if (messageType === 'resolution') return 'resolution';
+  return undefined;
+}
+
+function resolveStatusAfter(statusAfter: SupportTicketStatus | undefined, messageType: SupportMessageType): SupportTicketStatus | undefined {
+  if (statusAfter) return statusAfter;
+  if (messageType === 'resolution') return 'resolved';
+  return undefined;
 }
 
 function firstResponseDueAt(priority: string, createdAtMs: number) {

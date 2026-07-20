@@ -30,6 +30,7 @@
     "test:virtual-account-events": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-virtual-account-events.json tsx scripts/test-virtual-account-events.ts",
     "test:reference-reconciliation": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-reference-reconciliation.json tsx scripts/test-reference-reconciliation.ts",
     "test:transaction-timeline": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-transaction-timeline.json tsx scripts/test-transaction-timeline.ts",
+    "test:support-notes": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-support-notes.json tsx scripts/test-support-internal-notes.ts",
     "bridge:virtual-account-smoke": "tsx scripts/bridge-virtual-account-smoke.ts"
   },
   "dependencies": {
