@@ -8,6 +8,7 @@ import { badRequest, notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
 import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled } from '../../controls/payment-controls.service.js';
+import { syncPaymentTransactionReferencesForResource } from '../../references/transaction-references.service.js';
 
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),

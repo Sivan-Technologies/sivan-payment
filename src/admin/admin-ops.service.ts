@@ -6,6 +6,7 @@ import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { updatePaymentControls } from '../controls/payment-controls.service.js';
 import { updateSystemStatus } from '../system/system-status.service.js';
+import { getTransactionTrace, syncPaymentTransactionReferencesForResource } from '../references/transaction-references.service.js';
 
 export const adminNoteSchema = z.object({
   resourceType: z.string().min(1),
@@ -99,7 +100,10 @@ export async function getAdminWithdrawalDetails(withdrawalId: string) {
   const webhooks = (data.webhookEvents ?? []).filter((event) => event.eventObjectId === withdrawal.providerDrainId || event.eventObjectId === liquidationAddress?.providerLiquidationAddressId || JSON.stringify(event.payload ?? {}).includes(withdrawal.providerDrainId ?? liquidationAddress?.providerLiquidationAddressId ?? withdrawal.id)).sort(descCreated);
   const supportTickets = (data.supportTickets ?? []).filter((ticket) => ticket.resourceId === withdrawal.id || ticket.userId === withdrawal.userId).sort(descCreated);
   const reconciliationFindings = (data.reconciliationFindings ?? []).filter((finding) => finding.withdrawalId === withdrawal.id || finding.liquidationAddressId === withdrawal.liquidationAddressId || finding.providerDrainId === withdrawal.providerDrainId).sort(descCreated);
+  await syncPaymentTransactionReferencesForResource('withdrawal', withdrawal);
+  const transactionTrace = await getTransactionTrace('withdrawal', withdrawal.id);
   return {
+    transactionTrace,
     withdrawal,
     user,
     customer,
@@ -123,7 +127,10 @@ export async function getAdminOnrampOrderDetails(orderId: string) {
   const customer = data.customers.find((item) => item.id === order.customerId) ?? null;
   const webhooks = (data.webhookEvents ?? []).filter((event) => event.eventObjectId === order.providerTransferId || JSON.stringify(event.payload ?? {}).includes(order.providerTransferId ?? order.id)).sort(descCreated);
   const supportTickets = (data.supportTickets ?? []).filter((ticket) => ticket.resourceId === order.id || ticket.userId === order.userId).sort(descCreated);
+  await syncPaymentTransactionReferencesForResource('onramp_order', order);
+  const transactionTrace = await getTransactionTrace('onramp_order', order.id);
   return {
+    transactionTrace,
     order,
     user,
     customer,

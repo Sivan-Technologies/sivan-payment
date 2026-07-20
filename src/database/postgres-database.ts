@@ -27,6 +27,7 @@ import type {
   SupportTicketMessageRecord,
   UnifiedWebhookLogRecord,
   LegalAcceptanceRecord,
+  TransactionReferenceRecord,
   CustomerIdentityLinkRecord,
   IdentityPairingTokenRecord
 } from './types.js';
@@ -145,6 +146,7 @@ export class PostgresDatabase {
       const supportTickets = await optionalQuery(client, 'select * from payments_support_tickets order by created_at asc');
       const supportTicketMessages = await optionalQuery(client, 'select * from payments_support_ticket_messages order by created_at asc');
       const unifiedWebhookLogs = await client.query('select * from sivan_unified_webhook_logs order by created_at asc');
+      const transactionReferences = await optionalQuery(client, 'select * from transaction_references order by created_at asc');
       const customerIdentityLinks = await optionalQuery(client, 'select * from customer_identity_links order by created_at asc');
       const identityPairingTokens = await optionalQuery(client, 'select * from identity_pairing_tokens order by created_at asc');
       const virtualAccountRequests = await optionalQuery(client, 'select * from payments_virtual_account_requests order by created_at asc');
@@ -179,6 +181,7 @@ export class PostgresDatabase {
         systemStatus: systemStatus.rows.map(mapSystemStatus),
         customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl),
         unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog),
+        transactionReferences: transactionReferences.rows.map(mapTransactionReference),
         supportTickets: supportTickets.rows.map(mapSupportTicket),
         supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage)
       };
@@ -632,6 +635,19 @@ export class PostgresDatabase {
     try { await upsertWebhookEvent(client, record); return record; } finally { client.release(); }
   }
 
+  async listTransactionReferences(): Promise<TransactionReferenceRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from transaction_references order by created_at asc');
+      return result.rows.map(mapTransactionReference);
+    } finally { client.release(); }
+  }
+
+  async upsertTransactionReferenceRecord(record: TransactionReferenceRecord) {
+    const client = await this.pool.connect();
+    try { await upsertTransactionReference(client, record); return record; } finally { client.release(); }
+  }
+
   async insertUnifiedWebhookLogRecord(record: UnifiedWebhookLogRecord) {
     const client = await this.pool.connect();
     try { await upsertUnifiedWebhookLog(client, record); return record; } finally { client.release(); }
@@ -665,6 +681,7 @@ export class PostgresDatabase {
       for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
       for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       for (const log of data.unifiedWebhookLogs ?? []) await upsertUnifiedWebhookLog(client, log);
+      for (const reference of data.transactionReferences ?? []) await upsertTransactionReference(client, reference);
       for (const ticket of data.supportTickets ?? []) await upsertSupportTicket(client, ticket);
       for (const message of data.supportTicketMessages ?? []) await upsertSupportTicketMessage(client, message);
       await client.query('commit');
@@ -986,6 +1003,38 @@ function mapWebhookEvent(row: any): WebhookEventRecord {
 
 
 
+
+
+function mapTransactionReference(row: any): TransactionReferenceRecord {
+  return {
+    id: row.id,
+    sivanTransactionId: row.sivan_transaction_id,
+    resourceType: row.resource_type,
+    resourceId: row.resource_id,
+    provider: row.provider,
+    referenceType: row.reference_type,
+    referenceValue: row.reference_value,
+    direction: row.direction,
+    status: str(row.status),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertTransactionReference(client: pg.PoolClient, item: TransactionReferenceRecord) {
+  await client.query(
+    `insert into transaction_references (id, sivan_transaction_id, resource_type, resource_id, provider, reference_type, reference_value, direction, status, metadata, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     on conflict (provider, reference_type, reference_value, resource_type, resource_id) do update set
+       sivan_transaction_id=excluded.sivan_transaction_id,
+       direction=excluded.direction,
+       status=excluded.status,
+       metadata=excluded.metadata,
+       updated_at=excluded.updated_at`,
+    [item.id, item.sivanTransactionId, item.resourceType, item.resourceId, item.provider, item.referenceType, item.referenceValue, item.direction, item.status ?? null, item.metadata ?? null, item.createdAt, item.updatedAt]
+  );
+}
 
 function mapVirtualAccountEvent(row: any): VirtualAccountEventRecord {
   return {

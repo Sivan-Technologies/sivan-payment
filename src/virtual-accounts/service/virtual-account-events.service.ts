@@ -1,6 +1,7 @@
 import { db } from '../../database/json-database.js';
 import { id, nowIso } from '../../shared/id.js';
 import type { BridgeWebhookPayload } from '../../webhooks/webhooks.service.js';
+import { syncPaymentTransactionReferencesForResource, upsertTransactionReference } from '../../references/transaction-references.service.js';
 import type { VirtualAccountEventRecord, VirtualAccountEventType, VirtualAccountTransactionRecord, VirtualAccountTransactionStatus, VirtualAccountCurrency } from '../types/virtual-account.types.js';
 
 function normalizeEventType(value: unknown): VirtualAccountEventType {
@@ -76,6 +77,7 @@ export async function applyBridgeVirtualAccountEvent(payload: BridgeWebhookPaylo
     updatedAt: now,
   };
   await db.upsertVirtualAccountEventRecord(eventRecord);
+  await upsertTransactionReference({ sivanTransactionId: eventRecord.virtualAccountId ?? eventRecord.providerAccountId ?? providerEventId, resourceType: 'virtual_account_event', resourceId: eventRecord.id, provider: 'bridge', referenceType: 'provider_event_id', referenceValue: providerEventId, direction: 'provider', status: eventRecord.status });
 
   if (!depositId) return { event: eventRecord, transaction: null };
 
@@ -104,5 +106,6 @@ export async function applyBridgeVirtualAccountEvent(payload: BridgeWebhookPaylo
     completedAt: status === 'completed' ? now : existing?.completedAt,
   };
   await db.upsertVirtualAccountTransactionRecord(transaction);
+  await syncPaymentTransactionReferencesForResource('virtual_account_transaction', transaction);
   return { event: eventRecord, transaction };
 }

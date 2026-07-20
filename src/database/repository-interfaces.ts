@@ -18,7 +18,8 @@ import type {
   AssetControlRecord,
   NetworkControlRecord,
   CustomerTypeControlRecord,
-  SystemStatusRecord
+  SystemStatusRecord,
+  TransactionReferenceRecord
 } from './types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
@@ -40,6 +41,8 @@ export interface UserRepository {
   upsertVirtualAccountEventRecord(record: VirtualAccountEventRecord): Promise<VirtualAccountEventRecord>;
   listVirtualAccountTransactions(): Promise<VirtualAccountTransactionRecord[]>;
   upsertVirtualAccountTransactionRecord(record: VirtualAccountTransactionRecord): Promise<VirtualAccountTransactionRecord>;
+  listTransactionReferences(): Promise<TransactionReferenceRecord[]>;
+  upsertTransactionReferenceRecord(record: TransactionReferenceRecord): Promise<TransactionReferenceRecord>;
 }
 
 export interface AuthRepository {

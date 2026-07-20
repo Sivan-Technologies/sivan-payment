@@ -363,6 +363,22 @@ export interface WebhookEventRecord {
   createdAt: string;
 }
 
+
+export interface TransactionReferenceRecord {
+  id: string;
+  sivanTransactionId: string;
+  resourceType: string;
+  resourceId: string;
+  provider: string;
+  referenceType: string;
+  referenceValue: string;
+  direction: 'inbound' | 'outbound' | 'internal' | 'provider' | 'settlement' | 'refund';
+  status?: string;
+  metadata?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UnifiedWebhookLogRecord {
   id: string;
   serviceName: string;
@@ -398,6 +414,7 @@ export interface DatabaseShape {
   systemStatus: SystemStatusRecord[];
   customerTypeControls: CustomerTypeControlRecord[];
   unifiedWebhookLogs: UnifiedWebhookLogRecord[];
+  transactionReferences: TransactionReferenceRecord[];
   supportTickets: SupportTicketRecord[];
   supportTicketMessages: SupportTicketMessageRecord[];
   virtualAccountRequests: VirtualAccountRequestRecord[];

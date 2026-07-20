@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
+import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
@@ -28,6 +28,7 @@ const emptyDb = (): DatabaseShape => ({
   systemStatus: [],
   customerTypeControls: [],
   unifiedWebhookLogs: [],
+  transactionReferences: [],
   supportTickets: [],
   supportTicketMessages: [],
   virtualAccountRequests: [],
@@ -437,6 +438,22 @@ export class JsonDatabase {
     return this.mutate((data) => {
       data.webhookEvents = data.webhookEvents ?? [];
       data.webhookEvents.push(record);
+      return record;
+    });
+  }
+
+
+  async listTransactionReferences(): Promise<TransactionReferenceRecord[]> {
+    const data = await this.read();
+    return data.transactionReferences ?? [];
+  }
+
+  async upsertTransactionReferenceRecord(record: TransactionReferenceRecord) {
+    return this.mutate((data) => {
+      data.transactionReferences = data.transactionReferences ?? [];
+      const index = data.transactionReferences.findIndex((item) => item.id === record.id || (item.provider === record.provider && item.referenceType === record.referenceType && item.referenceValue === record.referenceValue && item.resourceType === record.resourceType && item.resourceId === record.resourceId));
+      if (index >= 0) data.transactionReferences[index] = { ...data.transactionReferences[index], ...record };
+      else data.transactionReferences.push(record);
       return record;
     });
   }

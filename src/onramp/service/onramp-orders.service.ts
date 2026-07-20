@@ -1,6 +1,7 @@
 import { db } from '../../database/json-database.js';
 import type { Chain, Currency, OnrampOrderRecord, SourceCurrency } from '../../database/types.js';
 import { createAuditLog } from '../../audit/audit.service.js';
+import { syncPaymentTransactionReferencesForResource } from '../../references/transaction-references.service.js';
 import { getOfframpProvider } from '../../providers/provider-registry.js';
 import { notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
@@ -64,6 +65,7 @@ export async function createOnrampOrder(input: CreateOnrampOrderInput) {
   };
 
   await db.insertOnrampOrderRecord(record);
+  await syncPaymentTransactionReferencesForResource('onramp_order', record);
 
   await createAuditLog({
     actorType: 'user',

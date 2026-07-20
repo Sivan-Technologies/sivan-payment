@@ -6,6 +6,7 @@ import { nowIso } from '../shared/id.js';
 import { getAdminFeeSettings } from './admin-fees.service.js';
 import { getLimitControls } from './admin-ops.service.js';
 import { providerCapabilities } from '../providers/provider-routing.js';
+import { searchTransactionReferences } from '../references/transaction-references.service.js';
 
 export const userRestrictionSchema = z.object({
   reason: z.string().min(5).max(2000),
@@ -35,7 +36,9 @@ export async function getGlobalSearch(q: string, options: { limit?: number } = {
   if (!query) return { query, results: [] };
   const data = await db.read();
   const match = (value: unknown) => JSON.stringify(value ?? '').toLowerCase().includes(query);
+  const transactionReferences = await searchTransactionReferences(query, limit);
   const results = [
+    ...transactionReferences.map((item) => ({ type: 'transaction_reference', id: item.id, title: item.referenceValue, subtitle: `${item.provider} · ${item.referenceType} · ${item.resourceType}:${item.resourceId}`, record: item })),
     ...data.users.filter(match).map((item) => ({ type: 'user', id: item.id, title: item.email, subtitle: item.fullName, record: item })),
     ...data.customers.filter(match).map((item) => ({ type: 'customer', id: item.id, title: item.providerCustomerId, subtitle: item.kycStatus, record: item })),
     ...data.withdrawals.filter(match).map((item) => ({ type: 'withdrawal', id: item.id, title: item.status, subtitle: `${item.sourceCurrency} → ${item.destinationCurrency}`, record: item })),
