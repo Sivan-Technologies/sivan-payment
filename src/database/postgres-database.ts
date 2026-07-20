@@ -17,6 +17,7 @@ import type {
   ReconciliationRunRecord,
   ReconciliationFindingRecord,
   PaymentControlRecord,
+  VirtualAccountControlRecord,
   AssetControlRecord,
   NetworkControlRecord,
   SystemStatusRecord,
@@ -136,6 +137,7 @@ export class PostgresDatabase {
       const reconciliationRuns = await client.query('select * from payments_reconciliation_runs order by started_at asc');
       const reconciliationFindings = await client.query('select * from payments_reconciliation_findings order by created_at asc');
       const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
+      const virtualAccountControls = await optionalQuery(client, 'select * from payments_virtual_account_controls order by currency asc');
       const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
@@ -171,6 +173,7 @@ export class PostgresDatabase {
         reconciliationRuns: reconciliationRuns.rows.map(mapReconciliationRun),
         reconciliationFindings: reconciliationFindings.rows.map(mapReconciliationFinding),
         paymentControls: paymentControls.rows.map(mapPaymentControl),
+        virtualAccountControls: virtualAccountControls.rows.map(mapVirtualAccountControl),
         assetControls: assetControls.rows.map(mapAssetControl),
         networkControls: networkControls.rows.map(mapNetworkControl),
         systemStatus: systemStatus.rows.map(mapSystemStatus),
@@ -588,12 +591,13 @@ export class PostgresDatabase {
   }
 
 
-  async updatePaymentControlsSnapshot(input: { customerTypes: CustomerTypeControlRecord[]; payoutCurrencies: PaymentControlRecord[]; sourceAssets: AssetControlRecord[]; sourceNetworks: NetworkControlRecord[] }) {
+  async updatePaymentControlsSnapshot(input: { customerTypes: CustomerTypeControlRecord[]; payoutCurrencies: PaymentControlRecord[]; virtualAccounts: VirtualAccountControlRecord[]; sourceAssets: AssetControlRecord[]; sourceNetworks: NetworkControlRecord[] }) {
     const client = await this.pool.connect();
     try {
       await client.query('begin');
       for (const control of input.customerTypes) await upsertCustomerTypeControl(client, control);
       for (const control of input.payoutCurrencies) await upsertPaymentControl(client, control);
+      for (const control of input.virtualAccounts) await upsertVirtualAccountControl(client, control);
       for (const control of input.sourceAssets) await upsertAssetControl(client, control);
       for (const control of input.sourceNetworks) await upsertNetworkControl(client, control);
       await client.query('commit');
@@ -1394,6 +1398,36 @@ async function upsertNetworkControl(client: pg.PoolClient, item: NetworkControlR
        updated_by=excluded.updated_by,
        updated_at=excluded.updated_at`,
     [item.network, item.enabled, item.label, item.sortOrder, item.updatedBy, item.updatedAt]
+  );
+}
+
+
+function mapVirtualAccountControl(row: any): VirtualAccountControlRecord {
+  return {
+    currency: row.currency,
+    enabled: Boolean(row.enabled),
+    label: row.label,
+    provider: row.provider,
+    accountType: row.account_type,
+    paymentRails: Array.isArray(row.payment_rails) ? row.payment_rails : String(row.payment_rails ?? '').split(',').filter(Boolean),
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertVirtualAccountControl(client: pg.PoolClient, item: VirtualAccountControlRecord) {
+  await client.query(
+    `insert into payments_virtual_account_controls (currency, enabled, label, provider, account_type, payment_rails, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (currency) do update set
+       enabled=excluded.enabled,
+       label=excluded.label,
+       provider=excluded.provider,
+       account_type=excluded.account_type,
+       payment_rails=excluded.payment_rails,
+       updated_by=excluded.updated_by,
+       updated_at=excluded.updated_at`,
+    [item.currency, item.enabled, item.label, item.provider, item.accountType, item.paymentRails, item.updatedBy ?? null, item.updatedAt]
   );
 }
 

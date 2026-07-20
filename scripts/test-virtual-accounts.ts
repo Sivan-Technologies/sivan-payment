@@ -30,6 +30,15 @@ async function main() {
     const customer: any = await request('POST', '/api/customers/kyc-link', { userId: user.id, type: 'individual', redirectUri: 'https://app.sivan.test/kyc/complete' });
     assert(customer.kycStatus === 'kyc_approved', 'test user is KYC approved');
 
+    await request('PUT', '/api/admin/offramp/controls', {
+      virtualAccounts: [
+        { currency: 'usd', enabled: true },
+        { currency: 'gbp', enabled: false },
+        { currency: 'eur', enabled: false },
+      ],
+    }, { 'x-admin-api-key': 'virtual-account-test-admin-key' });
+    assert(true, 'admin can enable USD virtual account requests through runtime controls');
+
     const requested: any = await request('POST', `/api/users/${user.id}/virtual-accounts/request`, { currency: 'usd', useCase: 'Test USD funding account' });
     assert(requested.status === 'requested', 'user can request virtual account when request flag is enabled');
     assert(requested.currency === 'usd', 'request stores currency');

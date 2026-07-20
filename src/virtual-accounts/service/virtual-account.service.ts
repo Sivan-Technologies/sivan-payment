@@ -1,5 +1,6 @@
 import { createAuditLog } from '../../audit/audit.service.js';
 import { env } from '../../config/env.js';
+import { listPaymentControls } from '../../controls/payment-controls.service.js';
 import { db } from '../../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../../shared/errors.js';
 import { id, nowIso } from '../../shared/id.js';
@@ -25,9 +26,11 @@ export async function listUserVirtualAccounts(userId: string) {
 }
 
 export async function requestVirtualAccount(input: { userId: string; currency: VirtualAccountCurrency; useCase?: string; country?: string }, context: { ipAddress?: string; userAgent?: string } = {}) {
-  if (!virtualAccountRequestsEnabled()) throw forbidden('Virtual account requests are not available yet.');
   const currencyConfig = getVirtualAccountCurrencyConfig(input.currency);
   if (!currencyConfig) throw badRequest('Unsupported virtual account currency.');
+  const runtimeControls = await listPaymentControls();
+  const virtualAccountControl = runtimeControls.virtualAccounts.find((control) => control.currency === input.currency);
+  if (!virtualAccountControl?.enabled) throw forbidden(`${input.currency.toUpperCase()} virtual account requests are disabled.`);
 
   const eligibility = await checkVirtualAccountEligibility(input.userId, input.currency);
   if (!eligibility.eligible) throw forbidden('Virtual account request is not eligible yet.', { reasons: eligibility.reasons });
@@ -80,6 +83,10 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   const request = requests.find((item) => item.id === requestId);
   if (!request) throw notFound('Virtual account request');
   if (!['requested', 'under_review'].includes(request.status)) throw badRequest('Virtual account request is not pending review.');
+  const runtimeControls = await listPaymentControls();
+  const virtualAccountControl = runtimeControls.virtualAccounts.find((control) => control.currency === request.currency);
+  if (!virtualAccountControl?.enabled) throw forbidden(`${request.currency.toUpperCase()} virtual account provisioning is disabled.`);
+
   const data = await db.read();
   const user = data.users.find((item) => item.id === request.userId);
   if (!user) throw notFound('User');

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { db } from '../database/json-database.js';
-import type { AssetControlRecord, Chain, Currency, CustomerTypeControlRecord, NetworkControlRecord, PaymentControlRecord, SourceCurrency } from '../database/types.js';
+import type { AssetControlRecord, Chain, Currency, CustomerTypeControlRecord, NetworkControlRecord, PaymentControlRecord, SourceCurrency, VirtualAccountControlRecord } from '../database/types.js';
 import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
@@ -14,6 +14,13 @@ export const DEFAULT_PAYMENT_CONTROLS: PaymentControlRecord[] = [
   { currency: 'usd', enabled: true, label: 'USD — US bank account', accountType: 'us', defaultPaymentRail: 'ach', updatedBy: 'system', updatedAt: nowIso() },
   { currency: 'gbp', enabled: true, label: 'GBP — UK bank account', accountType: 'gb', defaultPaymentRail: 'faster_payments', updatedBy: 'system', updatedAt: nowIso() },
   { currency: 'eur', enabled: true, label: 'EUR — SEPA / IBAN', accountType: 'iban', defaultPaymentRail: 'sepa', updatedBy: 'system', updatedAt: nowIso() }
+];
+
+
+export const DEFAULT_VIRTUAL_ACCOUNT_CONTROLS: VirtualAccountControlRecord[] = [
+  { currency: 'usd', enabled: false, label: 'USD virtual account', provider: 'bridge', accountType: 'us', paymentRails: ['ach_push', 'wire'], updatedBy: 'system', updatedAt: nowIso() },
+  { currency: 'gbp', enabled: false, label: 'GBP virtual account', provider: 'bridge', accountType: 'gb', paymentRails: ['faster_payments'], updatedBy: 'system', updatedAt: nowIso() },
+  { currency: 'eur', enabled: false, label: 'EUR virtual account', provider: 'bridge', accountType: 'iban', paymentRails: ['sepa'], updatedBy: 'system', updatedAt: nowIso() }
 ];
 
 export const DEFAULT_ASSET_CONTROLS: AssetControlRecord[] = [
@@ -39,6 +46,10 @@ export const updatePaymentControlsSchema = z.object({
     currency: z.enum(['usd', 'gbp', 'eur']),
     enabled: z.boolean()
   })).optional(),
+  virtualAccounts: z.array(z.object({
+    currency: z.enum(['usd', 'gbp', 'eur']),
+    enabled: z.boolean()
+  })).optional(),
   sourceAssets: z.array(z.object({
     asset: z.enum(['usdc', 'usdt']),
     enabled: z.boolean()
@@ -57,6 +68,7 @@ export const updatePaymentControlsSchema = z.object({
 export interface OfframpControlsResponse {
   customerTypes: CustomerTypeControlRecord[];
   payoutCurrencies: PaymentControlRecord[];
+  virtualAccounts: VirtualAccountControlRecord[];
   sourceAssets: AssetControlRecord[];
   sourceNetworks: NetworkControlRecord[];
 }
@@ -66,6 +78,7 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
   const existingCustomerTypes = data.customerTypeControls ?? [];
   const existingPayouts = data.paymentControls ?? [];
   const existingAssets = data.assetControls ?? [];
+  const existingVirtualAccounts = data.virtualAccountControls ?? [];
   const existingNetworks = data.networkControls ?? [];
 
   return {
@@ -76,6 +89,10 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
     payoutCurrencies: DEFAULT_PAYMENT_CONTROLS.map((defaultControl) => ({
       ...defaultControl,
       ...(existingPayouts.find((item) => item.currency === defaultControl.currency) ?? {})
+    })),
+    virtualAccounts: DEFAULT_VIRTUAL_ACCOUNT_CONTROLS.map((defaultControl) => ({
+      ...defaultControl,
+      ...(existingVirtualAccounts.find((item) => item.currency === defaultControl.currency) ?? {})
     })),
     sourceAssets: DEFAULT_ASSET_CONTROLS.map((defaultControl) => ({
       ...defaultControl,
@@ -135,6 +152,7 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
   const customerTypePatch = input.customerTypes ?? [];
   const payoutPatch = input.payoutCurrencies ?? input.controls ?? [];
   const assetPatch = input.sourceAssets ?? [];
+  const virtualAccountPatch = input.virtualAccounts ?? [];
   const networkPatch = input.sourceNetworks ?? [];
 
   const customerTypes = current.customerTypes.map((control) => {
@@ -143,6 +161,10 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
   });
   const payoutCurrencies = current.payoutCurrencies.map((control) => {
     const patch = payoutPatch.find((item) => item.currency === control.currency);
+    return patch ? { ...control, enabled: patch.enabled, updatedBy: actorId, updatedAt: now } : control;
+  });
+  const virtualAccounts = current.virtualAccounts.map((control) => {
+    const patch = virtualAccountPatch.find((item) => item.currency === control.currency);
     return patch ? { ...control, enabled: patch.enabled, updatedBy: actorId, updatedAt: now } : control;
   });
   const sourceAssets = current.sourceAssets.map((control) => {
@@ -167,7 +189,7 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
     throw badRequest('At least one deposit network must remain enabled');
   }
 
-  await db.updatePaymentControlsSnapshot({ customerTypes, payoutCurrencies, sourceAssets, sourceNetworks });
+  await db.updatePaymentControlsSnapshot({ customerTypes, payoutCurrencies, virtualAccounts, sourceAssets, sourceNetworks });
 
   await createAuditLog({
     actorType: 'admin',
@@ -178,10 +200,11 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
     metadata: {
       customerTypes: customerTypes.map(({ customerType, enabled }) => ({ customerType, enabled })),
       payoutCurrencies: payoutCurrencies.map(({ currency, enabled }) => ({ currency, enabled })),
+      virtualAccounts: virtualAccounts.map(({ currency, enabled }) => ({ currency, enabled })),
       sourceAssets: sourceAssets.map(({ asset, enabled }) => ({ asset, enabled })),
       sourceNetworks: sourceNetworks.map(({ network, enabled }) => ({ network, enabled }))
     }
   });
 
-  return { customerTypes, payoutCurrencies, sourceAssets, sourceNetworks };
+  return { customerTypes, payoutCurrencies, virtualAccounts, sourceAssets, sourceNetworks };
 }

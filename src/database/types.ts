@@ -55,6 +55,18 @@ export interface NetworkControlRecord {
   updatedAt: string;
 }
 
+
+export interface VirtualAccountControlRecord {
+  currency: 'usd' | 'gbp' | 'eur';
+  enabled: boolean;
+  label: string;
+  provider: string;
+  accountType: 'us' | 'gb' | 'iban';
+  paymentRails: string[];
+  updatedBy?: string;
+  updatedAt: string;
+}
+
 export interface PaymentControlRecord {
   currency: Currency;
   enabled: boolean;
@@ -380,6 +392,7 @@ export interface DatabaseShape {
   reconciliationRuns: ReconciliationRunRecord[];
   reconciliationFindings: ReconciliationFindingRecord[];
   paymentControls: PaymentControlRecord[];
+  virtualAccountControls: VirtualAccountControlRecord[];
   assetControls: AssetControlRecord[];
   networkControls: NetworkControlRecord[];
   systemStatus: SystemStatusRecord[];

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
+import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
@@ -22,6 +22,7 @@ const emptyDb = (): DatabaseShape => ({
   reconciliationRuns: [],
   reconciliationFindings: [],
   paymentControls: [],
+  virtualAccountControls: [],
   assetControls: [],
   networkControls: [],
   systemStatus: [],
@@ -395,10 +396,11 @@ export class JsonDatabase {
   }
 
 
-  async updatePaymentControlsSnapshot(input: { customerTypes: any[]; payoutCurrencies: PaymentControlRecord[]; sourceAssets: AssetControlRecord[]; sourceNetworks: NetworkControlRecord[] }) {
+  async updatePaymentControlsSnapshot(input: { customerTypes: any[]; payoutCurrencies: PaymentControlRecord[]; virtualAccounts: VirtualAccountControlRecord[]; sourceAssets: AssetControlRecord[]; sourceNetworks: NetworkControlRecord[] }) {
     return this.mutate((data) => {
       data.customerTypeControls = input.customerTypes as any;
       data.paymentControls = input.payoutCurrencies;
+      data.virtualAccountControls = input.virtualAccounts;
       data.assetControls = input.sourceAssets;
       data.networkControls = input.sourceNetworks;
       return input;

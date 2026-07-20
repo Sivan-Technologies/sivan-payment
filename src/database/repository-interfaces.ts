@@ -14,6 +14,7 @@ import type {
   WebhookEventRecord,
   WithdrawalRecord,
   PaymentControlRecord,
+  VirtualAccountControlRecord,
   AssetControlRecord,
   NetworkControlRecord,
   CustomerTypeControlRecord,
@@ -69,6 +70,7 @@ export interface ControlsRepository {
   updatePaymentControlsSnapshot(input: {
     customerTypes: CustomerTypeControlRecord[];
     payoutCurrencies: PaymentControlRecord[];
+    virtualAccounts: VirtualAccountControlRecord[];
     sourceAssets: AssetControlRecord[];
     sourceNetworks: NetworkControlRecord[];
   }): Promise<unknown>;
