@@ -87,6 +87,7 @@ export interface TransactionTimeline {
   direction: 'sell' | 'buy' | 'deposit';
   provider?: string;
   status: string;
+  explanation: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -229,11 +230,26 @@ export interface OfframpControls {
 }
 
 
+export interface SystemIncident {
+  id: string;
+  provider: string;
+  affectedService: 'withdrawals' | 'onramp' | 'virtual_accounts' | 'webhooks' | 'all' | 'other';
+  severity: 'info' | 'warning' | 'critical';
+  status: 'active' | 'monitoring' | 'resolved';
+  message: string;
+  customerMessage?: string;
+  startedAt: string;
+  eta?: string;
+  resolvedAt?: string;
+  durationMinutes?: number;
+}
+
 export interface SystemStatus {
   id: 'global';
   mode: 'active' | 'maintenance' | 'paused';
   message?: string;
   estimatedResumeAt?: string;
+  activeIncidents?: SystemIncident[];
   updatedBy?: string;
   updatedAt: string;
 }

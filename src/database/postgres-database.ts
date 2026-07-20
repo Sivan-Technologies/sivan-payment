@@ -21,6 +21,7 @@ import type {
   AssetControlRecord,
   NetworkControlRecord,
   SystemStatusRecord,
+  SystemIncidentRecord,
   CustomerTypeControlRecord,
   OnrampOrderRecord,
   SupportTicketRecord,
@@ -142,6 +143,7 @@ export class PostgresDatabase {
       const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
+      const systemIncidents = await optionalQuery(client, 'select * from payments_system_incidents order by started_at desc, created_at desc');
       const customerTypeControls = await client.query('select * from payments_customer_type_controls order by customer_type asc');
       const supportTickets = await optionalQuery(client, 'select * from payments_support_tickets order by created_at asc');
       const supportTicketMessages = await optionalQuery(client, 'select * from payments_support_ticket_messages order by created_at asc');
@@ -179,6 +181,7 @@ export class PostgresDatabase {
         assetControls: assetControls.rows.map(mapAssetControl),
         networkControls: networkControls.rows.map(mapNetworkControl),
         systemStatus: systemStatus.rows.map(mapSystemStatus),
+        systemIncidents: systemIncidents.rows.map(mapSystemIncident),
         customerTypeControls: customerTypeControls.rows.map(mapCustomerTypeControl),
         unifiedWebhookLogs: unifiedWebhookLogs.rows.map(mapUnifiedWebhookLog),
         transactionReferences: transactionReferences.rows.map(mapTransactionReference),
@@ -613,6 +616,16 @@ export class PostgresDatabase {
     try { await upsertSystemStatus(client, record); return record; } finally { client.release(); }
   }
 
+  async listSystemIncidentRecords(): Promise<SystemIncidentRecord[]> {
+    const client = await this.pool.connect();
+    try { return (await optionalQuery(client, 'select * from payments_system_incidents order by started_at desc, created_at desc')).rows.map(mapSystemIncident); } finally { client.release(); }
+  }
+
+  async upsertSystemIncidentRecord(record: SystemIncidentRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSystemIncident(client, record); return record; } finally { client.release(); }
+  }
+
   async insertReconciliationRecords(run: ReconciliationRunRecord, findings: ReconciliationFindingRecord[]) {
     const client = await this.pool.connect();
     try {
@@ -679,6 +692,7 @@ export class PostgresDatabase {
       for (const control of data.assetControls ?? []) await upsertAssetControl(client, control);
       for (const control of data.networkControls ?? []) await upsertNetworkControl(client, control);
       for (const status of data.systemStatus ?? []) await upsertSystemStatus(client, status);
+      for (const incident of data.systemIncidents ?? []) await upsertSystemIncident(client, incident);
       for (const control of data.customerTypeControls ?? []) await upsertCustomerTypeControl(client, control);
       for (const log of data.unifiedWebhookLogs ?? []) await upsertUnifiedWebhookLog(client, log);
       for (const reference of data.transactionReferences ?? []) await upsertTransactionReference(client, reference);
@@ -1412,6 +1426,35 @@ async function upsertSystemStatus(client: pg.PoolClient, item: SystemStatusRecor
        updated_by=excluded.updated_by,
        updated_at=excluded.updated_at`,
     [item.id, item.mode, item.message, item.estimatedResumeAt, item.updatedBy, item.updatedAt]
+  );
+}
+
+function mapSystemIncident(row: any): SystemIncidentRecord {
+  return {
+    id: row.id,
+    provider: row.provider,
+    affectedService: row.affected_service,
+    severity: row.severity,
+    status: row.status,
+    message: row.message,
+    startedAt: iso(row.started_at),
+    eta: str(row.eta),
+    resolvedAt: optionalIso(row.resolved_at),
+    resolutionSummary: str(row.resolution_summary),
+    createdBy: str(row.created_by),
+    resolvedBy: str(row.resolved_by),
+    metadata: row.metadata,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertSystemIncident(client: pg.PoolClient, item: SystemIncidentRecord) {
+  await client.query(
+    `insert into payments_system_incidents (id, provider, affected_service, severity, status, message, started_at, eta, resolved_at, resolution_summary, created_by, resolved_by, metadata, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     on conflict (id) do update set provider=excluded.provider, affected_service=excluded.affected_service, severity=excluded.severity, status=excluded.status, message=excluded.message, started_at=excluded.started_at, eta=excluded.eta, resolved_at=excluded.resolved_at, resolution_summary=excluded.resolution_summary, created_by=excluded.created_by, resolved_by=excluded.resolved_by, metadata=excluded.metadata, updated_at=excluded.updated_at`,
+    [item.id, item.provider, item.affectedService, item.severity, item.status, item.message, item.startedAt, item.eta, item.resolvedAt, item.resolutionSummary, item.createdBy, item.resolvedBy, item.metadata ?? null, item.createdAt, item.updatedAt]
   );
 }
 

@@ -21,6 +21,7 @@ export interface PublicTransactionTimeline {
   direction: 'sell' | 'buy' | 'deposit';
   provider?: string;
   status: string;
+  explanation: string;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
@@ -125,6 +126,7 @@ export function buildPublicWithdrawalTimeline(withdrawal: WithdrawalRecord, data
     direction: 'sell',
     provider: withdrawal.provider,
     status: withdrawal.status,
+    explanation: explainWithdrawalStatus(withdrawal.status),
     createdAt: withdrawal.createdAt,
     updatedAt: withdrawal.updatedAt,
     completedAt: withdrawal.completedAt,
@@ -213,6 +215,7 @@ export function buildPublicOnrampTimeline(order: OnrampOrderRecord, data: Databa
     direction: 'buy',
     provider: order.provider,
     status: order.status,
+    explanation: explainOnrampStatus(order.status),
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     completedAt: order.completedAt,
@@ -252,6 +255,35 @@ function markTimeline(drafts: StepDraft[], transactionStatus: string): PublicTra
 function withoutDone(draft: StepDraft): Omit<StepDraft, 'done'> {
   const { done, ...rest } = draft;
   return rest;
+}
+
+function explainWithdrawalStatus(status: string) {
+  const copy: Record<string, string> = {
+    created: 'Your withdrawal request has been created. We are preparing your provider deposit details.',
+    pending_deposit: 'We are waiting for your USDC/USDT to arrive on the selected network.',
+    deposit_received: 'Your crypto has arrived. We are preparing your bank payout.',
+    converting: 'Your crypto is being converted into your selected payout currency.',
+    payout_processing: 'We are waiting for the banking partner to confirm your transfer.',
+    completed: 'Your bank payout is complete.',
+    failed: 'This withdrawal could not be completed. Contact support with your Request ID.',
+    cancelled: 'This withdrawal was cancelled.',
+    requires_action: 'This withdrawal needs additional review. Support may contact you for next steps.'
+  };
+  return copy[status] ?? 'Your transaction is moving through provider processing.';
+}
+
+function explainOnrampStatus(status: string) {
+  const copy: Record<string, string> = {
+    created: 'Your buy order has been created. We are preparing payment instructions.',
+    awaiting_payment: 'We are waiting for your bank payment using the exact reference shown.',
+    payment_received: 'Your bank payment has been received. We are preparing crypto delivery.',
+    processing: 'We are waiting for the provider to deliver crypto to your wallet.',
+    completed: 'Your crypto delivery is complete.',
+    failed: 'This buy order could not be completed. Contact support with your Request ID.',
+    cancelled: 'This buy order was cancelled.',
+    requires_action: 'This buy order needs additional review. Support may contact you for next steps.'
+  };
+  return copy[status] ?? 'Your transaction is moving through provider processing.';
 }
 
 function refValue(refs: Array<{ referenceType: string; referenceValue?: string }>, type: string) {

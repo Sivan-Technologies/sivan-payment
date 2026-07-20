@@ -29,11 +29,30 @@ export interface CustomerTypeControlRecord {
   updatedAt: string;
 }
 
+export interface SystemIncidentRecord {
+  id: string;
+  provider: string;
+  affectedService: 'withdrawals' | 'onramp' | 'virtual_accounts' | 'webhooks' | 'all' | 'other';
+  severity: 'info' | 'warning' | 'critical';
+  status: 'active' | 'monitoring' | 'resolved';
+  message: string;
+  startedAt: string;
+  eta?: string;
+  resolvedAt?: string;
+  resolutionSummary?: string;
+  createdBy?: string;
+  resolvedBy?: string;
+  metadata?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SystemStatusRecord {
   id: 'global';
   mode: 'active' | 'maintenance' | 'paused';
   message?: string;
   estimatedResumeAt?: string;
+  activeIncidents?: SystemIncidentRecord[];
   updatedBy?: string;
   updatedAt: string;
 }
@@ -426,6 +445,7 @@ export interface DatabaseShape {
   assetControls: AssetControlRecord[];
   networkControls: NetworkControlRecord[];
   systemStatus: SystemStatusRecord[];
+  systemIncidents: SystemIncidentRecord[];
   customerTypeControls: CustomerTypeControlRecord[];
   unifiedWebhookLogs: UnifiedWebhookLogRecord[];
   transactionReferences: TransactionReferenceRecord[];

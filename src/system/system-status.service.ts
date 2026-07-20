@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { db } from '../database/json-database.js';
 import type { SystemStatusRecord } from '../database/types.js';
+import { listActiveSystemIncidents } from '../incidents/system-incidents.service.js';
 import { nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
 
@@ -19,7 +20,9 @@ export const updateSystemStatusSchema = z.object({
 
 export async function getSystemStatus(): Promise<SystemStatusRecord> {
   const data = await db.read();
-  return (data.systemStatus ?? []).find((status) => status.id === 'global') ?? defaultStatus();
+  const status = (data.systemStatus ?? []).find((item) => item.id === 'global') ?? defaultStatus();
+  const activeIncidents = await listActiveSystemIncidents();
+  return { ...status, activeIncidents };
 }
 
 export async function updateSystemStatus(input: z.infer<typeof updateSystemStatusSchema>, actorId = 'admin_api_key') {

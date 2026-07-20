@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord } from './types.js';
+import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
@@ -26,6 +26,7 @@ const emptyDb = (): DatabaseShape => ({
   assetControls: [],
   networkControls: [],
   systemStatus: [],
+  systemIncidents: [],
   customerTypeControls: [],
   unifiedWebhookLogs: [],
   transactionReferences: [],
@@ -411,6 +412,21 @@ export class JsonDatabase {
   async updateSystemStatusRecord(record: SystemStatusRecord) {
     return this.mutate((data) => {
       data.systemStatus = [record];
+      return record;
+    });
+  }
+
+  async listSystemIncidentRecords(): Promise<SystemIncidentRecord[]> {
+    const data = await this.read();
+    return data.systemIncidents ?? [];
+  }
+
+  async upsertSystemIncidentRecord(record: SystemIncidentRecord) {
+    return this.mutate((data) => {
+      data.systemIncidents = data.systemIncidents ?? [];
+      const index = data.systemIncidents.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.systemIncidents[index] = record;
+      else data.systemIncidents.push(record);
       return record;
     });
   }

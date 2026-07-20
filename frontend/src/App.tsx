@@ -969,7 +969,7 @@ export default function App() {
 
         {toast && <section className={`toast ${toast.type === 'error' ? 'error' : ''}`}>{toast.message}</section>}
 
-        {systemStatus.mode !== 'active' && <section className="maintenance-banner"><strong>{systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</strong><span>{systemStatus.message || (systemStatus.mode === 'maintenance' ? 'New withdrawals are temporarily unavailable while maintenance is in progress.' : 'New payment actions are temporarily paused.')}</span>{systemStatus.estimatedResumeAt && <small>Estimated resume: {new Date(systemStatus.estimatedResumeAt).toLocaleString()}</small>}</section>}
+        {(systemStatus.activeIncidents?.length || systemStatus.mode !== 'active') && <IncidentBanner systemStatus={systemStatus} />}
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
@@ -1600,11 +1600,32 @@ function TransactionTimelinePanel({ transaction }: { transaction: CustomerTransa
   if (!transaction?.timeline) return <aside className="transaction-timeline-card"><Empty>Select a transaction to see its timeline.</Empty></aside>;
   const timeline = transaction.timeline;
   const currentStep = timeline.steps.find((step) => step.status === 'current') || timeline.steps.find((step) => step.status === 'failed') || timeline.steps[timeline.steps.length - 1];
-  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || transaction.amount} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{timeline.steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < timeline.steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><div className="support-reference-box"><strong>Need support?</strong><span>Share the Request ID and Provider reference so support can trace this transaction faster.</span></div></aside>;
+  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || transaction.amount} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{timeline.steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < timeline.steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><div className="support-reference-box"><strong>Need support?</strong><span>Share the Request ID and Provider reference so support can trace this transaction faster.</span></div></aside>;
 }
 
 function InlineTransactionTimeline({ timeline }: { timeline: TransactionTimeline }) {
-  return <div className="inline-transaction-timeline"><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || '—'} ${timeline.currency || ''}`} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /></div><div className="customer-timeline-list compact">{timeline.steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < timeline.steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div></div>;
+  return <div className="inline-transaction-timeline"><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || '—'} ${timeline.currency || ''}`} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /></div><div className="customer-timeline-list compact">{timeline.steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < timeline.steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div></div>;
+}
+
+function transactionExplanation(type: string, status: string) {
+  const withdrawal: Record<string, string> = {
+    pending_deposit: 'We are waiting for your USDC/USDT to arrive on the selected network.',
+    deposit_received: 'Your crypto has arrived. We are preparing your bank payout.',
+    converting: 'Your crypto is being converted into your selected payout currency.',
+    payout_processing: 'We are waiting for the banking partner to confirm your transfer.',
+    completed: 'Your bank payout is complete.',
+    failed: 'This withdrawal could not be completed. Contact support with your Request ID.',
+    requires_action: 'This withdrawal needs additional review. Support may contact you for next steps.'
+  };
+  const onramp: Record<string, string> = {
+    awaiting_payment: 'We are waiting for your bank payment using the exact reference shown.',
+    payment_received: 'Your bank payment has been received. We are preparing crypto delivery.',
+    processing: 'We are waiting for the provider to deliver crypto to your wallet.',
+    completed: 'Your crypto delivery is complete.',
+    failed: 'This buy order could not be completed. Contact support with your Request ID.',
+    requires_action: 'This buy order needs additional review. Support may contact you for next steps.'
+  };
+  return (type === 'withdrawal' ? withdrawal : onramp)[status] || 'Your transaction is moving through provider processing.';
 }
 
 function fallbackWithdrawalTimeline(w: WithdrawalRecord): TransactionTimeline {
@@ -1612,7 +1633,7 @@ function fallbackWithdrawalTimeline(w: WithdrawalRecord): TransactionTimeline {
   const doneAfterDeposit = ['deposit_received', 'converting', 'payout_processing', 'completed'].includes(status);
   const doneBank = ['payout_processing', 'completed'].includes(status);
   return {
-    transactionType: 'withdrawal', requestId: w.id, internalTransactionId: w.id, providerReference: w.providerDrainId || w.destinationReference, amount: w.destinationAmount || w.sourceAmount, currency: w.destinationCurrency?.toUpperCase(), asset: w.sourceCurrency?.toUpperCase(), direction: 'sell', provider: w.provider, status, createdAt: w.createdAt, updatedAt: w.updatedAt, completedAt: w.completedAt,
+    transactionType: 'withdrawal', requestId: w.id, internalTransactionId: w.id, providerReference: w.providerDrainId || w.destinationReference, amount: w.destinationAmount || w.sourceAmount, currency: w.destinationCurrency?.toUpperCase(), asset: w.sourceCurrency?.toUpperCase(), direction: 'sell', provider: w.provider, status, explanation: transactionExplanation('withdrawal', status), createdAt: w.createdAt, updatedAt: w.updatedAt, completedAt: w.completedAt,
     steps: [
       { key: 'withdrawal_created', label: 'Withdrawal Created', description: 'Your withdrawal request was created.', status: 'completed', at: w.createdAt },
       { key: 'identity_verified', label: 'Identity Verified', description: 'Your verified Sivan profile is attached to this transaction.', status: 'completed', at: w.createdAt },
@@ -1630,7 +1651,7 @@ function fallbackOnrampTimeline(o: OnrampOrderRecord): TransactionTimeline {
   const paymentReceived = ['payment_received', 'processing', 'completed'].includes(status);
   const processing = ['processing', 'completed'].includes(status);
   return {
-    transactionType: 'onramp_order', requestId: o.id, internalTransactionId: o.id, providerReference: o.providerTransferId || o.providerReference, amount: o.amount, currency: o.sourceCurrency?.toUpperCase(), asset: o.destinationCurrency?.toUpperCase(), direction: 'buy', provider: o.provider, status, createdAt: o.createdAt, updatedAt: o.updatedAt, completedAt: o.completedAt,
+    transactionType: 'onramp_order', requestId: o.id, internalTransactionId: o.id, providerReference: o.providerTransferId || o.providerReference, amount: o.amount, currency: o.sourceCurrency?.toUpperCase(), asset: o.destinationCurrency?.toUpperCase(), direction: 'buy', provider: o.provider, status, explanation: transactionExplanation('onramp_order', status), createdAt: o.createdAt, updatedAt: o.updatedAt, completedAt: o.completedAt,
     steps: [
       { key: 'order_created', label: 'Order Created', description: 'Your buy order was created.', status: 'completed', at: o.createdAt },
       { key: 'identity_verified', label: 'Identity Verified', description: 'Your verified Sivan profile is attached to this transaction.', status: 'completed', at: o.createdAt },
@@ -1673,6 +1694,15 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
   return <div className="onramp-instructions"><h3>Payment instructions</h3><div className="details-box"><Kv label="Reference" value={order.providerReference || order.id} /><Kv label="Amount" value={`${order.amount} ${order.sourceCurrency.toUpperCase()}`} /><Kv label="Fee" value={order.feeAmount ? `${order.feeAmount} ${order.sourceCurrency.toUpperCase()}` : '—'} /><Kv label="You get" value={`${order.netAmount || '—'} ${order.destinationCurrency.toUpperCase()}`} /><Kv label="Status" value={friendlyStatus(order.status)} /><Kv label="Bank" value={instructions.bank_name || instructions.bankName || 'Provided by Bridge'} /><Kv label="Account" value={instructions.account_number || instructions.iban || 'See provider instructions'} /></div>{order.transactionTimeline && <InlineTransactionTimeline timeline={order.transactionTimeline} />}<div className="warning-box compact">Use the exact payment reference. Missing or incorrect references can delay matching.</div></div>;
 }
 
+
+function IncidentBanner({ systemStatus }: { systemStatus: SystemStatus }) {
+  const incidents = systemStatus.activeIncidents ?? [];
+  if (incidents.length) {
+    return <section className="maintenance-banner incident-banner dynamic"><strong>{incidents.some((item) => item.severity === 'critical') ? 'Service disruption' : 'Service notice'}</strong><div className="incident-banner-list">{incidents.map((incident) => <span key={incident.id}><b>{incident.provider}</b> · {incident.customerMessage || incident.message}{incident.eta ? ` ETA: ${incident.eta}` : ''}</span>)}</div></section>;
+  }
+  if (systemStatus.mode === 'active') return null;
+  return <section className="maintenance-banner"><strong>{systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</strong><span>{systemStatus.message || (systemStatus.mode === 'maintenance' ? 'New withdrawals are temporarily unavailable while maintenance is in progress.' : 'New payment actions are temporarily paused.')}</span>{systemStatus.estimatedResumeAt && <small>Estimated resume: {new Date(systemStatus.estimatedResumeAt).toLocaleString()}</small>}</section>;
+}
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
   return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>;
