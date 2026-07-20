@@ -153,3 +153,28 @@ VIRTUAL_ACCOUNT_PROVIDER=mock
 ```
 
 Do not enable virtual accounts publicly until provider, compliance, KYC, approval, reconciliation, and support workflows are ready.
+
+### Bridge virtual account adapter
+
+Bridge virtual account creation is implemented through the provider adapter layer, but remains disabled by default.
+
+Bridge docs confirm virtual accounts are permanent reusable fiat deposit addresses, customers must be onboarded/KYC-approved before creation, and the creation endpoint is:
+
+```txt
+POST /v0/customers/{customerID}/virtual_accounts
+```
+
+Required Sivan env before enabling Bridge provisioning:
+
+```env
+VIRTUAL_ACCOUNTS_ENABLED=true
+VIRTUAL_ACCOUNT_PROVIDER=bridge
+BRIDGE_VIRTUAL_ACCOUNTS_ENABLED=true
+BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY=usdc
+BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL=base
+BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS=<destination wallet address>
+# or BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID=<bridge wallet id>
+BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT=0.0
+```
+
+Do not enable until Bridge confirms your program is approved for the requested currencies/rails.

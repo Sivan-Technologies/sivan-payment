@@ -80,7 +80,8 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   const approved: VirtualAccountRequestRecord = { ...request, status: 'approved', reviewedBy: reviewer, reviewedAt: now, updatedAt: now };
   await db.upsertVirtualAccountRequestRecord(approved);
 
-  const providerAccount = await provisionVirtualAccount({ requestId, userId: request.userId, customerId: request.customerId, email: user.email, fullName: user.fullName, currency: request.currency, country: request.country, useCase: request.useCase, metadata: request.metadata });
+  const customer = data.customers.find((item) => item.id === request.customerId || item.userId === request.userId);
+  const providerAccount = await provisionVirtualAccount({ requestId, userId: request.userId, customerId: request.customerId, providerCustomerId: customer?.providerCustomerId, email: user.email, fullName: user.fullName, currency: request.currency, country: request.country, useCase: request.useCase, metadata: request.metadata });
   const account: VirtualAccountRecord = {
     id: id('va'),
     requestId,

@@ -69,7 +69,13 @@ const envSchema = z.object({
   DATABASE_FILE: z.string().default('.data/sivan-offramp.json'),
   VIRTUAL_ACCOUNTS_ENABLED: booleanFromEnv.default(false),
   VIRTUAL_ACCOUNT_REQUESTS_ENABLED: booleanFromEnv.default(false),
-  VIRTUAL_ACCOUNT_PROVIDER: z.enum(['mock', 'bridge', 'nomba', 'monnify', 'flutterwave']).default('mock')
+  VIRTUAL_ACCOUNT_PROVIDER: z.enum(['mock', 'bridge', 'nomba', 'monnify', 'flutterwave']).default('mock'),
+  BRIDGE_VIRTUAL_ACCOUNTS_ENABLED: booleanFromEnv.default(false),
+  BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY: z.string().default('usdc'),
+  BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL: z.string().default('base'),
+  BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS: z.string().optional().default(''),
+  BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID: z.string().optional().default(''),
+  BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT: z.string().default('0.0')
 });
 
 export const env = envSchema.parse(process.env);

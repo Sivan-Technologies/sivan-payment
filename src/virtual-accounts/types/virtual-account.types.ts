@@ -52,6 +52,7 @@ export interface CreateVirtualAccountInput {
   requestId?: string;
   userId: string;
   customerId?: string;
+  providerCustomerId?: string;
   email?: string;
   fullName?: string;
   currency: VirtualAccountCurrency;
