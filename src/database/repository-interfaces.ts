@@ -19,7 +19,7 @@ import type {
   CustomerTypeControlRecord,
   SystemStatusRecord
 } from './types.js';
-import type { VirtualAccountRecord, VirtualAccountRequestRecord } from '../virtual-accounts/types/virtual-account.types.js';
+import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 export interface UserRepository {
   findUserById(userId: string): Promise<UserRecord | undefined>;
@@ -35,6 +35,10 @@ export interface UserRepository {
   upsertVirtualAccountRequestRecord(record: VirtualAccountRequestRecord): Promise<VirtualAccountRequestRecord>;
   listVirtualAccounts(): Promise<VirtualAccountRecord[]>;
   upsertVirtualAccountRecord(record: VirtualAccountRecord): Promise<VirtualAccountRecord>;
+  listVirtualAccountEvents(): Promise<VirtualAccountEventRecord[]>;
+  upsertVirtualAccountEventRecord(record: VirtualAccountEventRecord): Promise<VirtualAccountEventRecord>;
+  listVirtualAccountTransactions(): Promise<VirtualAccountTransactionRecord[]>;
+  upsertVirtualAccountTransactionRecord(record: VirtualAccountTransactionRecord): Promise<VirtualAccountTransactionRecord>;
 }
 
 export interface AuthRepository {

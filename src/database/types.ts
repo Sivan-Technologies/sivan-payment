@@ -1,4 +1,4 @@
-import type { VirtualAccountRecord, VirtualAccountRequestRecord } from '../virtual-accounts/types/virtual-account.types.js';
+import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 export type Currency = 'usd' | 'gbp' | 'eur';
 export type SourceCurrency = 'usdc' | 'usdt';
 export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism' | 'avalanche_c_chain';
@@ -389,4 +389,6 @@ export interface DatabaseShape {
   supportTicketMessages: SupportTicketMessageRecord[];
   virtualAccountRequests: VirtualAccountRequestRecord[];
   virtualAccounts: VirtualAccountRecord[];
+  virtualAccountEvents: VirtualAccountEventRecord[];
+  virtualAccountTransactions: VirtualAccountTransactionRecord[];
 }

@@ -59,6 +59,14 @@ export async function listVirtualAccounts() {
   return (await db.listVirtualAccounts()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+export async function listVirtualAccountEvents() {
+  return (await db.listVirtualAccountEvents()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function listVirtualAccountTransactions() {
+  return (await db.listVirtualAccountTransactions()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 export async function provisionVirtualAccount(input: CreateVirtualAccountInput): Promise<ProviderVirtualAccount> {
   if (!virtualAccountsEnabled()) {
     throw new Error('Virtual accounts are disabled. Enable VIRTUAL_ACCOUNTS_ENABLED only after provider/compliance approval.');

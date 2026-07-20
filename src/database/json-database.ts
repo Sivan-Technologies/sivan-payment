@@ -3,7 +3,7 @@ import path from 'node:path';
 import { env } from '../config/env.js';
 import type { AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SupportTicketRecord, SupportTicketMessageRecord } from './types.js';
 import { PostgresDatabase } from './postgres-database.js';
-import type { VirtualAccountRecord, VirtualAccountRequestRecord } from '../virtual-accounts/types/virtual-account.types.js';
+import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const emptyDb = (): DatabaseShape => ({
   users: [],
@@ -30,7 +30,9 @@ const emptyDb = (): DatabaseShape => ({
   supportTickets: [],
   supportTicketMessages: [],
   virtualAccountRequests: [],
-  virtualAccounts: []
+  virtualAccounts: [],
+  virtualAccountEvents: [],
+  virtualAccountTransactions: []
 });
 
 export class JsonDatabase {
@@ -480,6 +482,37 @@ export class JsonDatabase {
       const index = data.virtualAccounts.findIndex((item) => item.id === record.id);
       if (index >= 0) data.virtualAccounts[index] = record;
       else data.virtualAccounts.push(record);
+      return record;
+    });
+  }
+
+
+  async listVirtualAccountEvents(): Promise<VirtualAccountEventRecord[]> {
+    const data = await this.read();
+    return data.virtualAccountEvents ?? [];
+  }
+
+  async upsertVirtualAccountEventRecord(record: VirtualAccountEventRecord) {
+    return this.mutate((data) => {
+      data.virtualAccountEvents = data.virtualAccountEvents ?? [];
+      const index = data.virtualAccountEvents.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.virtualAccountEvents[index] = record;
+      else data.virtualAccountEvents.push(record);
+      return record;
+    });
+  }
+
+  async listVirtualAccountTransactions(): Promise<VirtualAccountTransactionRecord[]> {
+    const data = await this.read();
+    return data.virtualAccountTransactions ?? [];
+  }
+
+  async upsertVirtualAccountTransactionRecord(record: VirtualAccountTransactionRecord) {
+    return this.mutate((data) => {
+      data.virtualAccountTransactions = data.virtualAccountTransactions ?? [];
+      const index = data.virtualAccountTransactions.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.virtualAccountTransactions[index] = record;
+      else data.virtualAccountTransactions.push(record);
       return record;
     });
   }

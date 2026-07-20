@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../../shared/validation.js';
 import { forbidden } from '../../shared/errors.js';
-import { approveVirtualAccountRequest, listUserVirtualAccounts, listVirtualAccountRequests, listVirtualAccounts, rejectVirtualAccountRequest, requestVirtualAccount } from '../service/virtual-account.service.js';
+import { approveVirtualAccountRequest, listUserVirtualAccounts, listVirtualAccountEvents, listVirtualAccountRequests, listVirtualAccounts, listVirtualAccountTransactions, rejectVirtualAccountRequest, requestVirtualAccount } from '../service/virtual-account.service.js';
 
 const requestSchema = z.object({
   currency: z.enum(['usd', 'gbp', 'eur']),
@@ -35,6 +35,10 @@ export async function virtualAccountsRoutes(app: FastifyInstance) {
   app.get('/api/admin/virtual-account-requests', async () => ({ data: await listVirtualAccountRequests() }));
 
   app.get('/api/admin/virtual-accounts', async () => ({ data: await listVirtualAccounts() }));
+
+  app.get('/api/admin/virtual-account-events', async () => ({ data: await listVirtualAccountEvents() }));
+
+  app.get('/api/admin/virtual-account-transactions', async () => ({ data: await listVirtualAccountTransactions() }));
 
   app.post('/api/admin/virtual-account-requests/:requestId/approve', async (request) => {
     const { requestId } = request.params as { requestId: string };

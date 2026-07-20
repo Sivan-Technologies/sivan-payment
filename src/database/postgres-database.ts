@@ -29,7 +29,7 @@ import type {
   CustomerIdentityLinkRecord,
   IdentityPairingTokenRecord
 } from './types.js';
-import type { VirtualAccountRecord, VirtualAccountRequestRecord } from '../virtual-accounts/types/virtual-account.types.js';
+import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const { Pool } = pg;
 
@@ -147,6 +147,8 @@ export class PostgresDatabase {
       const identityPairingTokens = await optionalQuery(client, 'select * from identity_pairing_tokens order by created_at asc');
       const virtualAccountRequests = await optionalQuery(client, 'select * from payments_virtual_account_requests order by created_at asc');
       const virtualAccounts = await optionalQuery(client, 'select * from payments_virtual_accounts order by created_at asc');
+      const virtualAccountEvents = await optionalQuery(client, 'select * from payments_virtual_account_events order by created_at asc');
+      const virtualAccountTransactions = await optionalQuery(client, 'select * from payments_virtual_account_transactions order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -154,6 +156,8 @@ export class PostgresDatabase {
         identityPairingTokens: identityPairingTokens.rows.map(mapIdentityPairingToken),
         virtualAccountRequests: virtualAccountRequests.rows.map(mapVirtualAccountRequest),
         virtualAccounts: virtualAccounts.rows.map(mapVirtualAccount),
+        virtualAccountEvents: virtualAccountEvents.rows.map(mapVirtualAccountEvent),
+        virtualAccountTransactions: virtualAccountTransactions.rows.map(mapVirtualAccountTransaction),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
@@ -514,6 +518,32 @@ export class PostgresDatabase {
   async upsertVirtualAccountRecord(record: VirtualAccountRecord) {
     const client = await this.pool.connect();
     try { await upsertVirtualAccount(client, record); return record; } finally { client.release(); }
+  }
+
+  async listVirtualAccountEvents(): Promise<VirtualAccountEventRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_virtual_account_events order by created_at asc');
+      return result.rows.map(mapVirtualAccountEvent);
+    } finally { client.release(); }
+  }
+
+  async upsertVirtualAccountEventRecord(record: VirtualAccountEventRecord) {
+    const client = await this.pool.connect();
+    try { await upsertVirtualAccountEvent(client, record); return record; } finally { client.release(); }
+  }
+
+  async listVirtualAccountTransactions(): Promise<VirtualAccountTransactionRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_virtual_account_transactions order by created_at asc');
+      return result.rows.map(mapVirtualAccountTransaction);
+    } finally { client.release(); }
+  }
+
+  async upsertVirtualAccountTransactionRecord(record: VirtualAccountTransactionRecord) {
+    const client = await this.pool.connect();
+    try { await upsertVirtualAccountTransaction(client, record); return record; } finally { client.release(); }
   }
 
   async insertCustomerRecord(record: CustomerRecord) {
@@ -951,6 +981,103 @@ function mapWebhookEvent(row: any): WebhookEventRecord {
 }
 
 
+
+
+function mapVirtualAccountEvent(row: any): VirtualAccountEventRecord {
+  return {
+    id: row.id,
+    provider: row.provider,
+    providerEventId: row.provider_event_id,
+    virtualAccountId: str(row.virtual_account_id),
+    providerAccountId: str(row.provider_account_id),
+    depositId: str(row.deposit_id),
+    eventType: row.event_type,
+    sourceCurrency: str(row.source_currency) as any,
+    destinationCurrency: str(row.destination_currency),
+    sourceAmount: row.source_amount === null || row.source_amount === undefined ? undefined : String(row.source_amount),
+    destinationAmount: row.destination_amount === null || row.destination_amount === undefined ? undefined : String(row.destination_amount),
+    paymentRail: str(row.payment_rail),
+    status: row.status,
+    depositReference: str(row.deposit_reference),
+    destinationTxHash: str(row.destination_tx_hash),
+    rawPayload: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapVirtualAccountTransaction(row: any): VirtualAccountTransactionRecord {
+  return {
+    id: row.id,
+    provider: row.provider,
+    virtualAccountId: str(row.virtual_account_id),
+    providerAccountId: str(row.provider_account_id),
+    depositId: row.deposit_id,
+    userId: str(row.user_id),
+    customerId: str(row.payments_customer_id),
+    sourceCurrency: str(row.source_currency) as any,
+    destinationCurrency: str(row.destination_currency),
+    sourceAmount: row.source_amount === null || row.source_amount === undefined ? undefined : String(row.source_amount),
+    destinationAmount: row.destination_amount === null || row.destination_amount === undefined ? undefined : String(row.destination_amount),
+    paymentRail: str(row.payment_rail),
+    status: row.status,
+    depositReference: str(row.deposit_reference),
+    destinationTxHash: str(row.destination_tx_hash),
+    lastProviderEventId: str(row.last_provider_event_id),
+    rawPayload: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    completedAt: optionalIso(row.completed_at)
+  };
+}
+
+async function upsertVirtualAccountEvent(client: pg.PoolClient, item: VirtualAccountEventRecord) {
+  await client.query(
+    `insert into payments_virtual_account_events (id, provider, provider_event_id, virtual_account_id, provider_account_id, deposit_id, event_type, source_currency, destination_currency, source_amount, destination_amount, payment_rail, status, deposit_reference, destination_tx_hash, raw_payload, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+     on conflict (provider, provider_event_id) do update set
+       virtual_account_id=excluded.virtual_account_id,
+       provider_account_id=excluded.provider_account_id,
+       deposit_id=excluded.deposit_id,
+       event_type=excluded.event_type,
+       source_currency=excluded.source_currency,
+       destination_currency=excluded.destination_currency,
+       source_amount=excluded.source_amount,
+       destination_amount=excluded.destination_amount,
+       payment_rail=excluded.payment_rail,
+       status=excluded.status,
+       deposit_reference=excluded.deposit_reference,
+       destination_tx_hash=excluded.destination_tx_hash,
+       raw_payload=excluded.raw_payload,
+       updated_at=excluded.updated_at`,
+    [item.id, item.provider, item.providerEventId, item.virtualAccountId ?? null, item.providerAccountId ?? null, item.depositId ?? null, item.eventType, item.sourceCurrency ?? null, item.destinationCurrency ?? null, item.sourceAmount ?? null, item.destinationAmount ?? null, item.paymentRail ?? null, item.status, item.depositReference ?? null, item.destinationTxHash ?? null, item.rawPayload ?? null, item.createdAt, item.updatedAt]
+  );
+}
+
+async function upsertVirtualAccountTransaction(client: pg.PoolClient, item: VirtualAccountTransactionRecord) {
+  await client.query(
+    `insert into payments_virtual_account_transactions (id, provider, virtual_account_id, provider_account_id, deposit_id, user_id, payments_customer_id, source_currency, destination_currency, source_amount, destination_amount, payment_rail, status, deposit_reference, destination_tx_hash, last_provider_event_id, raw_payload, created_at, updated_at, completed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+     on conflict (provider, deposit_id) do update set
+       virtual_account_id=excluded.virtual_account_id,
+       provider_account_id=excluded.provider_account_id,
+       user_id=excluded.user_id,
+       payments_customer_id=excluded.payments_customer_id,
+       source_currency=excluded.source_currency,
+       destination_currency=excluded.destination_currency,
+       source_amount=excluded.source_amount,
+       destination_amount=excluded.destination_amount,
+       payment_rail=excluded.payment_rail,
+       status=excluded.status,
+       deposit_reference=excluded.deposit_reference,
+       destination_tx_hash=excluded.destination_tx_hash,
+       last_provider_event_id=excluded.last_provider_event_id,
+       raw_payload=excluded.raw_payload,
+       updated_at=excluded.updated_at,
+       completed_at=excluded.completed_at`,
+    [item.id, item.provider, item.virtualAccountId ?? null, item.providerAccountId ?? null, item.depositId, item.userId ?? null, item.customerId ?? null, item.sourceCurrency ?? null, item.destinationCurrency ?? null, item.sourceAmount ?? null, item.destinationAmount ?? null, item.paymentRail ?? null, item.status, item.depositReference ?? null, item.destinationTxHash ?? null, item.lastProviderEventId ?? null, item.rawPayload ?? null, item.createdAt, item.updatedAt, item.completedAt ?? null]
+  );
+}
 
 function mapVirtualAccountRequest(row: any): VirtualAccountRequestRecord {
   return {

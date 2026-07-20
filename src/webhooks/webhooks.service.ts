@@ -6,6 +6,7 @@ import { id, nowIso } from '../shared/id.js';
 import { mapBridgeKycStatus } from '../customers/customer-mapping.js';
 import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
 import { mapBridgeTransferState } from '../onramp/service/onramp-mapping.js';
+import { applyBridgeVirtualAccountEvent, isVirtualAccountWebhook } from '../virtual-accounts/service/virtual-account-events.service.js';
 
 export interface BridgeWebhookPayload {
   event_id?: string;
@@ -104,6 +105,9 @@ async function applyBridgeWebhookEffects(data: any, payload: BridgeWebhookPayloa
   if (eventCategory === 'transfer' || eventCategory === 'transfers') {
     const order = applyTransferEvent(data, payload);
     if (order) await db.updateOnrampOrderRecord(order);
+  }
+  if (isVirtualAccountWebhook(payload)) {
+    await applyBridgeVirtualAccountEvent(payload);
   }
 }
 
