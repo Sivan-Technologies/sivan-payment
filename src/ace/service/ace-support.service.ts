@@ -4,6 +4,8 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { buildAceEvidence } from './ace-evidence.service.js';
 import { inferAceResourceType } from './ace-intent.service.js';
 import { composeAceSupportAnswer } from './ace-response.service.js';
+import { requestRemoteAceSupport } from './ace-remote.service.js';
+import { env } from '../../config/env.js';
 import type { AceResourceType } from '../types/ace.types.js';
 
 export async function answerAceSupport(input: { userId?: string; message: string; resourceType?: AceResourceType; resourceId?: string; channel?: 'web_dashboard' | 'admin_hub' | 'whatsapp' | 'api'; admin?: boolean }) {
@@ -11,7 +13,8 @@ export async function answerAceSupport(input: { userId?: string; message: string
   const sessionId = id('ace');
   const now = nowIso();
   const evidence = await buildAceEvidence({ userId: input.userId, message: input.message, resourceType, resourceId: input.resourceId, admin: input.admin });
-  const answer = composeAceSupportAnswer(evidence, { admin: input.admin, sessionId });
+  const localAnswer = composeAceSupportAnswer(evidence, { admin: input.admin, sessionId });
+  const { answer, providerMode, fallbackReason } = await resolveAceAnswer({ input, evidence, localAnswer });
   const toolsUsed = answer.evidenceChecked;
 
   await db.insertAceSupportRecords({
@@ -24,7 +27,7 @@ export async function answerAceSupport(input: { userId?: string; message: string
       confidence: answer.confidence,
       needsHuman: answer.needsHuman,
       toolsUsed,
-      evidenceSnapshot: input.admin ? evidence : answer.evidence,
+      evidenceSnapshot: input.admin ? { evidence, aceProvider: providerMode, fallbackReason, remoteTrace: (answer as any).remoteTrace } : { ...answer.evidence, aceProvider: providerMode, fallbackReason },
       createdAt: now
     },
     messages: [
@@ -42,8 +45,26 @@ export async function answerAceSupport(input: { userId?: string; message: string
     resourceType: 'ace_support_session',
     resourceId: sessionId,
     severity: answer.needsHuman ? 'warning' : 'info',
-    metadata: { resourceType, resourceId: input.resourceId ?? evidence.transaction?.id, confidence: answer.confidence, needsHuman: answer.needsHuman, toolsUsed }
+    metadata: { resourceType, resourceId: input.resourceId ?? evidence.transaction?.id, confidence: answer.confidence, needsHuman: answer.needsHuman, toolsUsed, aceProvider: providerMode, fallbackReason }
   });
 
   return answer;
+}
+
+async function resolveAceAnswer({ input, evidence, localAnswer }: { input: { userId?: string; message: string; resourceType?: AceResourceType; resourceId?: string; channel?: 'web_dashboard' | 'admin_hub' | 'whatsapp' | 'api'; admin?: boolean }; evidence: Awaited<ReturnType<typeof buildAceEvidence>>; localAnswer: ReturnType<typeof composeAceSupportAnswer> }) {
+  if (env.ACE_PROVIDER !== 'remote') return { answer: localAnswer, providerMode: 'local' as const, fallbackReason: undefined };
+  try {
+    const remote = await requestRemoteAceSupport({
+      message: input.message,
+      channel: input.channel ?? (input.admin ? 'admin_hub' : 'web_dashboard'),
+      admin: input.admin,
+      bundle: evidence,
+      localAnswer
+    });
+    return { answer: remote, providerMode: 'remote' as const, fallbackReason: undefined };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!env.SIVAN_AI_FALLBACK_ENABLED) throw error;
+    return { answer: localAnswer, providerMode: 'local_fallback' as const, fallbackReason: reason };
+  }
 }

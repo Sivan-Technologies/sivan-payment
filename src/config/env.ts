@@ -75,7 +75,12 @@ const envSchema = z.object({
   BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL: z.string().default('base'),
   BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS: z.string().optional().default(''),
   BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID: z.string().optional().default(''),
-  BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT: z.string().default('0.0')
+  BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT: z.string().default('0.0'),
+  ACE_PROVIDER: z.enum(['local', 'remote']).default('local'),
+  SIVAN_AI_API_URL: z.string().url().optional(),
+  SIVAN_AI_API_KEY: z.string().optional().default(''),
+  SIVAN_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(3500),
+  SIVAN_AI_FALLBACK_ENABLED: booleanFromEnv.default(true)
 });
 
 export const env = envSchema.parse(process.env);
