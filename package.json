@@ -33,6 +33,7 @@
     "test:support-notes": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-support-notes.json tsx scripts/test-support-internal-notes.ts",
     "test:system-incidents": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-system-incidents.json tsx scripts/test-system-incidents.ts",
     "test:ace-support": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-ace-support.json tsx scripts/test-ace-support.ts",
+    "test:ace-whatsapp": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-ace-whatsapp.json tsx scripts/test-ace-whatsapp-support.ts",
     "bridge:virtual-account-smoke": "tsx scripts/bridge-virtual-account-smoke.ts"
   },
   "dependencies": {
