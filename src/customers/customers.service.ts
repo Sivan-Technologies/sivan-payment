@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { db } from '../database/json-database.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
-import { badRequest, notFound } from '../shared/errors.js';
+import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../shared/id.js';
 import { requireUser } from '../users/users.service.js';
 import { mapBridgeKycStatus } from './customer-mapping.js';
@@ -118,5 +118,22 @@ export async function simulateSandboxKycApproval(userId: string) {
   }
   const result: any = await provider.simulateSandboxKycApproval(customer.providerCustomerId, idempotencyKey('simulate-kyc'));
   const record = { ...customer, kycStatus: mapBridgeKycStatus(result?.kyc_status ?? 'approved'), raw: { previous: customer.raw, sandboxSimulation: result }, updatedAt: nowIso() };
+  return db.updateCustomerRecord(record);
+}
+
+export async function forceSandboxKycApproval(userId: string, actorId = 'admin_api_key') {
+  const isSandboxBridge = env.BRIDGE_BASE_URL.includes('sandbox') || env.BRIDGE_MOCK_MODE;
+  if (env.APP_ENV === 'production' || !isSandboxBridge) {
+    throw forbidden('Sandbox KYC force approval is only available in non-production sandbox environments.');
+  }
+  const customer = await getCustomerByUserId(userId);
+  const now = nowIso();
+  const record = {
+    ...customer,
+    kycStatus: 'kyc_approved' as const,
+    tosStatus: 'approved' as const,
+    raw: { previous: customer.raw, sandboxForceApproval: { actorId, approvedAt: now } },
+    updatedAt: now
+  };
   return db.updateCustomerRecord(record);
 }
