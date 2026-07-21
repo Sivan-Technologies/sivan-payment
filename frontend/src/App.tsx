@@ -128,6 +128,19 @@ const fallbackVirtualAccounts: VirtualAccountControl[] = [
   { currency: 'eur', enabled: false, label: 'EUR virtual account', provider: 'bridge', accountType: 'iban', paymentRails: ['sepa'], updatedAt: new Date().toISOString() }
 ];
 
+function normalizeFrontendApiBase(value: string) {
+  const clean = value.trim().replace(/\/$/, '');
+  try {
+    const parsed = new URL(clean);
+    if (parsed.hostname === 'test-sivan.sivantech.online' && !parsed.pathname.startsWith('/api/payment')) {
+      return `${clean}/api/payment`;
+    }
+  } catch {
+    // Keep local/relative values unchanged.
+  }
+  return clean;
+}
+
 function normalizeOfframpControls(value: unknown): OfframpControls {
   const data = value as Partial<OfframpControls> | PaymentControl[] | undefined;
   if (Array.isArray(data)) {
@@ -182,7 +195,7 @@ export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const apiBase = useMemo(() => import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000', []);
+  const apiBase = useMemo(() => normalizeFrontendApiBase(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'), []);
   const appEnv = import.meta.env.VITE_APP_ENV || 'local';
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
