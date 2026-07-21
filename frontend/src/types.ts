@@ -222,9 +222,56 @@ export interface NetworkControl {
   updatedAt: string;
 }
 
+export interface VirtualAccountControl {
+  currency: 'usd' | 'gbp' | 'eur';
+  enabled: boolean;
+  label: string;
+  provider?: string;
+  accountType: 'us' | 'gb' | 'iban';
+  paymentRails?: string[];
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+export interface VirtualAccountRequestRecord {
+  id: string;
+  userId: string;
+  customerId?: string;
+  currency: 'usd' | 'gbp' | 'eur' | 'ngn';
+  country?: string;
+  useCase?: string;
+  status: 'requested' | 'under_review' | 'approved' | 'rejected' | 'canceled';
+  reviewedBy?: string;
+  reviewedAt?: string;
+  rejectionReason?: string;
+  metadata?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VirtualAccountRecord {
+  id: string;
+  requestId?: string;
+  userId: string;
+  customerId?: string;
+  provider: string;
+  providerAccountId: string;
+  currency: 'usd' | 'gbp' | 'eur' | 'ngn';
+  country?: string;
+  bankName?: string;
+  accountName?: string;
+  accountNumberMasked?: string;
+  routingNumberMasked?: string;
+  ibanMasked?: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OfframpControls {
   customerTypes: CustomerTypeControl[];
   payoutCurrencies: PaymentControl[];
+  virtualAccounts: VirtualAccountControl[];
   sourceAssets: AssetControl[];
   sourceNetworks: NetworkControl[];
 }

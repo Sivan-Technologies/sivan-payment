@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -122,12 +122,19 @@ const fallbackSourceNetworks: NetworkControl[] = [
   { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
+const fallbackVirtualAccounts: VirtualAccountControl[] = [
+  { currency: 'usd', enabled: false, label: 'USD virtual account', provider: 'bridge', accountType: 'us', paymentRails: ['ach_push', 'wire'], updatedAt: new Date().toISOString() },
+  { currency: 'gbp', enabled: false, label: 'GBP virtual account', provider: 'bridge', accountType: 'gb', paymentRails: ['faster_payments'], updatedAt: new Date().toISOString() },
+  { currency: 'eur', enabled: false, label: 'EUR virtual account', provider: 'bridge', accountType: 'iban', paymentRails: ['sepa'], updatedAt: new Date().toISOString() }
+];
+
 function normalizeOfframpControls(value: unknown): OfframpControls {
   const data = value as Partial<OfframpControls> | PaymentControl[] | undefined;
   if (Array.isArray(data)) {
     return {
       customerTypes: fallbackCustomerTypes,
       payoutCurrencies: data,
+      virtualAccounts: fallbackVirtualAccounts,
       sourceAssets: fallbackSourceAssets,
       sourceNetworks: fallbackSourceNetworks
     };
@@ -135,6 +142,7 @@ function normalizeOfframpControls(value: unknown): OfframpControls {
   return {
     customerTypes: data?.customerTypes ?? fallbackCustomerTypes,
     payoutCurrencies: data?.payoutCurrencies ?? [],
+    virtualAccounts: data?.virtualAccounts ?? fallbackVirtualAccounts,
     sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
     sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks
   };
@@ -190,13 +198,15 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
+  const [virtualAccountRequests, setVirtualAccountRequests] = useState<VirtualAccountRequestRecord[]>([]);
+  const [virtualAccounts, setVirtualAccounts] = useState<VirtualAccountRecord[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
   const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
   const [pairingCode, setPairingCode] = useState('');
   const [pairingExpiresAt, setPairingExpiresAt] = useState('');
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
-  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: [], sourceNetworks: [] });
+  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
   const [withdrawalReview, setWithdrawalReview] = useState<null | { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string }>(null);
@@ -375,11 +385,12 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
       api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`),
+      api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[] }>(`/api/users/${user.id}/virtual-accounts`),
       api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
       api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`),
       api<IdentityStatus>('/api/users/me/identity')
@@ -388,6 +399,7 @@ export default function App() {
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
     if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
+    if (virtualAccountsResult.status === 'fulfilled') { setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []); setVirtualAccounts(virtualAccountsResult.value.accounts ?? []); }
     if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
     if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
     if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
@@ -411,7 +423,7 @@ export default function App() {
 
   const loadControls = useCallback(async () => {
     const [controls, status] = await Promise.all([
-      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks })),
+      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks })),
       api<SystemStatus>('/api/system/status').catch(() => systemStatus)
     ]);
     setPaymentControls(controls);
@@ -680,6 +692,26 @@ export default function App() {
     }
   }
 
+
+  async function handleVirtualAccountRequest(currency: 'usd' | 'gbp' | 'eur') {
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification before requesting a virtual account.', 'error');
+    if (!canCreatePaymentActions) return notify(systemStatus.message || 'New virtual account requests are temporarily unavailable.', 'error');
+    setLoading(true);
+    try {
+      const result = await api<VirtualAccountRequestRecord>(`/api/users/${user.id}/virtual-accounts/request`, {
+        method: 'POST',
+        body: JSON.stringify({ currency, useCase: 'Receive fiat deposits into Sivan and convert to supported stablecoin settlement.' })
+      });
+      setVirtualAccountRequests((items) => [result, ...items.filter((item) => item.id !== result.id)]);
+      notify(`${currency.toUpperCase()} virtual account request submitted.`);
+      await loadUserData();
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleOnramp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1044,7 +1076,7 @@ export default function App() {
 
         {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} />}
 
-        {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
+        {view === 'banks' && <PaymentMethodsView accounts={accounts} virtualAccountRequests={virtualAccountRequests} virtualAccounts={virtualAccounts} virtualAccountControls={paymentControls.virtualAccounts} onRequestVirtualAccount={handleVirtualAccountRequest} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 
         {view === 'withdraw' && (
           <OffRampWizard
@@ -1530,8 +1562,28 @@ function VerificationStep({ done, index, title, sub, action }: { done: boolean; 
   return <div className={`verification-step ${done ? 'done' : ''}`}><span>{done ? '✓' : index}</span><div><strong>{title}</strong><small>{sub}</small></div><button className={`small ${done ? 'ghost-btn' : 'primary-btn'}`} disabled>{action}</button></div>;
 }
 
-function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
-  return <section className="app-page"><PageHero title="Payment methods" subtitle="Manage the bank accounts you use to receive payouts." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
+function PaymentMethodsView({ accounts, virtualAccountRequests, virtualAccounts, virtualAccountControls, onRequestVirtualAccount, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; virtualAccountRequests: VirtualAccountRequestRecord[]; virtualAccounts: VirtualAccountRecord[]; virtualAccountControls: VirtualAccountControl[]; onRequestVirtualAccount: (currency: 'usd' | 'gbp' | 'eur') => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
+  return <section className="app-page payment-methods-premium"><PageHero title="Payment methods" subtitle="Manage payout banks and request reusable virtual accounts for fiat deposits." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div><VirtualAccountsCustomerPanel requests={virtualAccountRequests} accounts={virtualAccounts} controls={virtualAccountControls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequestVirtualAccount} /></section>;
+}
+
+const vaCurrencyMeta: Record<'usd' | 'gbp' | 'eur', { title: string; rails: string; account: string; flag: string }> = {
+  usd: { title: 'USD Account', rails: 'ACH / Wire', account: 'US bank account', flag: '$' },
+  gbp: { title: 'GBP Account', rails: 'Faster Payments', account: 'UK account number', flag: '£' },
+  eur: { title: 'EUR Account', rails: 'SEPA', account: 'IBAN', flag: '€' }
+};
+
+function VirtualAccountsCustomerPanel({ requests, accounts, controls, loading, isVerified, canCreatePaymentActions, onRequest }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void }) {
+  const currencies: Array<'usd' | 'gbp' | 'eur'> = ['usd', 'gbp', 'eur'];
+  const enabledControls = controls.filter((control) => control.enabled);
+  return <article className="virtual-bank-panel"><div className="virtual-bank-head"><div><p className="eyebrow">Virtual Accounts</p><h3>Request virtual bank accounts</h3><p className="muted">After approval, Sivan shows customer-safe bank details only. Provider internals, destination wallets, and economics stay hidden.</p></div><Badge status={enabledControls.length ? 'active' : 'pending'}>{enabledControls.length ? `${enabledControls.length} enabled` : 'Disabled'}</Badge></div><div className="virtual-bank-grid">{currencies.map((currency) => <VirtualAccountCurrencyCard key={currency} currency={currency} request={requests.find((item) => item.currency === currency && !['rejected', 'canceled'].includes(item.status))} account={accounts.find((item) => item.currency === currency)} control={controls.find((item) => item.currency === currency)} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} />)}</div></article>;
+}
+
+function VirtualAccountCurrencyCard({ currency, request, account, control, loading, isVerified, canCreatePaymentActions, onRequest }: { currency: 'usd' | 'gbp' | 'eur'; request?: VirtualAccountRequestRecord; account?: VirtualAccountRecord; control?: VirtualAccountControl; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void }) {
+  const meta = vaCurrencyMeta[currency];
+  const enabled = Boolean(control?.enabled);
+  const status = account?.status || request?.status || (enabled ? 'available' : 'disabled');
+  const disabledReason = !enabled ? 'Not available yet' : !isVerified ? 'Complete verification first' : !canCreatePaymentActions ? 'Temporarily unavailable' : '';
+  return <section className={`virtual-bank-card ${account ? 'active' : request ? 'pending' : ''}`}><div className="vb-card-top"><span>{meta.flag}</span><div><strong>{meta.title}</strong><small>{meta.rails} · {meta.account}</small></div></div><Badge status={status}>{friendlyStatus(status)}</Badge>{account ? <div className="vb-details"><Kv label="Bank" value={account.bankName || 'Partner bank'} /><Kv label="Account name" value={account.accountName || 'Sivan account'} />{account.ibanMasked ? <Kv label="IBAN" value={account.ibanMasked} /> : <><Kv label="Account" value={account.accountNumberMasked || 'Assigned'} /><Kv label="Routing" value={account.routingNumberMasked || meta.rails} /></>}<Kv label="Status" value={friendlyStatus(account.status)} /></div> : request ? <div className="vb-pending"><strong>{request.status === 'requested' ? 'Request received' : friendlyStatus(request.status)}</strong><small>Submitted {new Date(request.createdAt).toLocaleString()}. Sivan operations will review and approve before account details appear here.</small>{request.rejectionReason && <small className="danger-text">{request.rejectionReason}</small>}</div> : <div className="vb-empty"><p>Request a reusable {currency.toUpperCase()} virtual account for fiat deposits.</p><button className="primary-btn small" disabled={loading || Boolean(disabledReason)} onClick={() => onRequest(currency)}>{disabledReason || `Request ${currency.toUpperCase()} account`}</button></div>}</section>;
 }
 
 type CustomerTransactionRow = {
