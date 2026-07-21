@@ -471,15 +471,18 @@ export default function App() {
     const refreshControls = () => {
       if (document.visibilityState === 'visible') void loadControls();
     };
-    const interval = window.setInterval(refreshControls, 10_000);
+    // Avoid hammering public bootstrap endpoints on unauthenticated signup/login
+    // pages. Controls/status still refresh on focus/visibility, and authenticated
+    // app sessions get a gentle one-minute background refresh.
+    const interval = hasUser ? window.setInterval(refreshControls, 60_000) : undefined;
     window.addEventListener('focus', refreshControls);
     document.addEventListener('visibilitychange', refreshControls);
     return () => {
-      window.clearInterval(interval);
+      if (interval) window.clearInterval(interval);
       window.removeEventListener('focus', refreshControls);
       document.removeEventListener('visibilitychange', refreshControls);
     };
-  }, [loadControls]);
+  }, [hasUser, loadControls]);
 
   useEffect(() => {
     if (!pendingEmail || !resendAvailableAt) return;

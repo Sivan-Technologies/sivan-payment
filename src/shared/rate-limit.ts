@@ -24,7 +24,15 @@ interface RateLimitPolicy {
 
 export function getRateLimitPolicy(method: string, url: string): RateLimitPolicy | null {
   if (!env.RATE_LIMIT_ENABLED) return null;
+  if (method === 'OPTIONS') return null;
   if (url === '/health') return null;
+
+  // Public read-only bootstrap endpoints are called by the unauthenticated web app
+  // on signup/login and by focus/visibility refreshes. Rate limiting them at the
+  // default user-action bucket causes noisy 429s that browsers report as CORS
+  // failures. They are non-mutating and safe to leave unthrottled here; CDN/edge
+  // protection can still rate-limit abusive traffic before it reaches the app.
+  if (method === 'GET' && (url.startsWith('/api/offramp/controls') || url.startsWith('/api/fees/offramp') || url.startsWith('/api/system/status'))) return null;
 
   // Keep Bridge webhook capacity high enough for retries/bursts.
   if (url.startsWith('/api/webhooks/bridge')) {

@@ -42,6 +42,12 @@ export async function buildApp() {
     reply.header('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
 
     if (!decision.allowed) {
+      const requestOrigin = request.headers.origin;
+      const allowedOrigins = env.CORS_ORIGIN === '*' ? ['*'] : env.CORS_ORIGIN.split(',').map((item) => item.trim()).filter(Boolean);
+      if (typeof requestOrigin === 'string' && (allowedOrigins.includes('*') || allowedOrigins.includes(requestOrigin))) {
+        reply.header('Access-Control-Allow-Origin', allowedOrigins.includes('*') ? requestOrigin : requestOrigin);
+        reply.header('Vary', 'Origin');
+      }
       reply.header('Retry-After', String(decision.retryAfterSeconds));
       return reply.code(429).send({
         error: {
