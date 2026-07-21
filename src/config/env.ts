@@ -80,7 +80,9 @@ const envSchema = z.object({
   SIVAN_AI_API_URL: z.string().url().optional(),
   SIVAN_AI_API_KEY: z.string().optional().default(''),
   SIVAN_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(3500),
-  SIVAN_AI_FALLBACK_ENABLED: booleanFromEnv.default(true)
+  SIVAN_AI_FALLBACK_ENABLED: booleanFromEnv.default(true),
+  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba']).default('mock'),
+  NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false)
 });
 
 export const env = envSchema.parse(process.env);

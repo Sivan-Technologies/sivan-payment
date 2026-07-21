@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
 import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord } from './types.js';
+import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
@@ -39,7 +40,11 @@ const emptyDb = (): DatabaseShape => ({
   virtualAccountRequests: [],
   virtualAccounts: [],
   virtualAccountEvents: [],
-  virtualAccountTransactions: []
+  virtualAccountTransactions: [],
+  ngnControls: [],
+  ngnQuotes: [],
+  ngnTransfers: [],
+  ngnWebhooks: []
 });
 
 export class JsonDatabase {
@@ -570,6 +575,67 @@ export class JsonDatabase {
     });
   }
 
+
+
+  async listNgnControls(): Promise<NgnControlsRecord[]> {
+    const data = await this.read();
+    return data.ngnControls ?? [];
+  }
+
+  async upsertNgnControlsRecord(record: NgnControlsRecord) {
+    return this.mutate((data) => {
+      data.ngnControls = data.ngnControls ?? [];
+      const index = data.ngnControls.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ngnControls[index] = record;
+      else data.ngnControls.push(record);
+      return record;
+    });
+  }
+
+  async listNgnQuotes(): Promise<NgnQuoteRecord[]> {
+    const data = await this.read();
+    return data.ngnQuotes ?? [];
+  }
+
+  async upsertNgnQuoteRecord(record: NgnQuoteRecord) {
+    return this.mutate((data) => {
+      data.ngnQuotes = data.ngnQuotes ?? [];
+      const index = data.ngnQuotes.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ngnQuotes[index] = record;
+      else data.ngnQuotes.push(record);
+      return record;
+    });
+  }
+
+  async listNgnTransfers(): Promise<NgnTransferRecord[]> {
+    const data = await this.read();
+    return data.ngnTransfers ?? [];
+  }
+
+  async upsertNgnTransferRecord(record: NgnTransferRecord) {
+    return this.mutate((data) => {
+      data.ngnTransfers = data.ngnTransfers ?? [];
+      const index = data.ngnTransfers.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ngnTransfers[index] = record;
+      else data.ngnTransfers.push(record);
+      return record;
+    });
+  }
+
+  async listNgnWebhooks(): Promise<NgnWebhookRecord[]> {
+    const data = await this.read();
+    return data.ngnWebhooks ?? [];
+  }
+
+  async upsertNgnWebhookRecord(record: NgnWebhookRecord) {
+    return this.mutate((data) => {
+      data.ngnWebhooks = data.ngnWebhooks ?? [];
+      const index = data.ngnWebhooks.findIndex((item) => item.id === record.id || (item.provider === record.provider && item.providerEventId === record.providerEventId));
+      if (index >= 0) data.ngnWebhooks[index] = record;
+      else data.ngnWebhooks.push(record);
+      return record;
+    });
+  }
   private async persist(): Promise<void> {
     if (!this.db) return;
     const data = JSON.stringify(this.db, null, 2);

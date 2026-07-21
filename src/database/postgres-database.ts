@@ -36,6 +36,7 @@ import type {
   CustomerIdentityLinkRecord,
   IdentityPairingTokenRecord
 } from './types.js';
+import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const { Pool } = pg;
@@ -163,6 +164,10 @@ export class PostgresDatabase {
       const virtualAccounts = await optionalQuery(client, 'select * from payments_virtual_accounts order by created_at asc');
       const virtualAccountEvents = await optionalQuery(client, 'select * from payments_virtual_account_events order by created_at asc');
       const virtualAccountTransactions = await optionalQuery(client, 'select * from payments_virtual_account_transactions order by created_at asc');
+      const ngnControls = await optionalQuery(client, 'select * from payments_ngn_controls order by id asc');
+      const ngnQuotes = await optionalQuery(client, 'select * from payments_ngn_quotes order by created_at asc');
+      const ngnTransfers = await optionalQuery(client, 'select * from payments_ngn_transfers order by created_at asc');
+      const ngnWebhooks = await optionalQuery(client, 'select * from payments_ngn_webhook_events order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -172,6 +177,10 @@ export class PostgresDatabase {
         virtualAccounts: virtualAccounts.rows.map(mapVirtualAccount),
         virtualAccountEvents: virtualAccountEvents.rows.map(mapVirtualAccountEvent),
         virtualAccountTransactions: virtualAccountTransactions.rows.map(mapVirtualAccountTransaction),
+        ngnControls: ngnControls.rows.map(mapNgnControls),
+        ngnQuotes: ngnQuotes.rows.map(mapNgnQuote),
+        ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
+        ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
@@ -409,6 +418,47 @@ export class PostgresDatabase {
     } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
   }
 
+
+
+  async listNgnControls(): Promise<NgnControlsRecord[]> {
+    const client = await this.pool.connect();
+    try { return (await optionalQuery(client, 'select * from payments_ngn_controls order by id asc')).rows.map(mapNgnControls); } finally { client.release(); }
+  }
+
+  async upsertNgnControlsRecord(record: NgnControlsRecord) {
+    const client = await this.pool.connect();
+    try { await upsertNgnControls(client, record); return record; } finally { client.release(); }
+  }
+
+  async listNgnQuotes(): Promise<NgnQuoteRecord[]> {
+    const client = await this.pool.connect();
+    try { return (await optionalQuery(client, 'select * from payments_ngn_quotes order by created_at asc')).rows.map(mapNgnQuote); } finally { client.release(); }
+  }
+
+  async upsertNgnQuoteRecord(record: NgnQuoteRecord) {
+    const client = await this.pool.connect();
+    try { await upsertNgnQuote(client, record); return record; } finally { client.release(); }
+  }
+
+  async listNgnTransfers(): Promise<NgnTransferRecord[]> {
+    const client = await this.pool.connect();
+    try { return (await optionalQuery(client, 'select * from payments_ngn_transfers order by created_at asc')).rows.map(mapNgnTransfer); } finally { client.release(); }
+  }
+
+  async upsertNgnTransferRecord(record: NgnTransferRecord) {
+    const client = await this.pool.connect();
+    try { await upsertNgnTransfer(client, record); return record; } finally { client.release(); }
+  }
+
+  async listNgnWebhooks(): Promise<NgnWebhookRecord[]> {
+    const client = await this.pool.connect();
+    try { return (await optionalQuery(client, 'select * from payments_ngn_webhook_events order by created_at asc')).rows.map(mapNgnWebhook); } finally { client.release(); }
+  }
+
+  async upsertNgnWebhookRecord(record: NgnWebhookRecord) {
+    const client = await this.pool.connect();
+    try { await upsertNgnWebhook(client, record); return record; } finally { client.release(); }
+  }
   async insertSupportTicketRecord(record: SupportTicketRecord) {
     const client = await this.pool.connect();
     try { await upsertSupportTicket(client, record); return record; } finally { client.release(); }
@@ -1003,6 +1053,50 @@ async function upsertAceToolCall(client: pg.PoolClient, item: AceToolCallRecord)
 
 async function upsertAceSupportResolution(client: pg.PoolClient, item: AceSupportResolutionRecord) {
   await client.query(`insert into ace_support_resolutions (id, session_id, resolution_type, summary, created_at) values ($1,$2,$3,$4,$5) on conflict (id) do nothing`, [item.id, item.sessionId, item.resolutionType, item.summary, item.createdAt]);
+}
+
+
+function mapNgnControls(row: any): NgnControlsRecord {
+  return {
+    id: 'global',
+    onrampEnabled: Boolean(row.onramp_enabled),
+    offrampEnabled: Boolean(row.offramp_enabled),
+    mockProviderEnabled: Boolean(row.mock_provider_enabled),
+    bankSettlementEnabled: Boolean(row.bank_settlement_enabled),
+    virtualAccountEnabled: Boolean(row.virtual_account_enabled),
+    activeProvider: row.active_provider,
+    backupProvider: str(row.backup_provider) as any,
+    maxTransactionNgn: row.max_transaction_ngn,
+    dailyLimitNgn: row.daily_limit_ngn,
+    highValueReviewThresholdNgn: row.high_value_review_threshold_ngn,
+    updatedBy: str(row.updated_by),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapNgnQuote(row: any): NgnQuoteRecord {
+  return { id: row.id, userId: row.user_id, customerId: str(row.customer_id), direction: row.direction, provider: row.provider, sourceCurrency: row.source_currency, destinationCurrency: row.destination_currency, sourceAmount: row.source_amount, destinationAmount: row.destination_amount, rate: row.rate, feeAmount: row.fee_amount, status: row.status, providerQuoteId: str(row.provider_quote_id), expiresAt: iso(row.expires_at), metadata: row.metadata, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
+}
+
+function mapNgnTransfer(row: any): NgnTransferRecord {
+  return { id: row.id, quoteId: row.quote_id, userId: row.user_id, customerId: str(row.customer_id), direction: row.direction, provider: row.provider, sourceCurrency: row.source_currency, destinationCurrency: row.destination_currency, sourceAmount: row.source_amount, destinationAmount: row.destination_amount, rate: row.rate, feeAmount: row.fee_amount, status: row.status, providerQuoteId: str(row.provider_quote_id), providerTransferId: str(row.provider_transfer_id), bankReference: str(row.bank_reference), depositAddress: str(row.deposit_address), virtualAccount: row.virtual_account, settlementReference: str(row.settlement_reference), destinationTxHash: str(row.destination_tx_hash), metadata: row.metadata, timeline: row.timeline, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at), completedAt: optionalIso(row.completed_at) };
+}
+
+function mapNgnWebhook(row: any): NgnWebhookRecord {
+  return { id: row.id, provider: row.provider, providerEventId: row.provider_event_id, eventType: row.event_type, transferId: str(row.transfer_id), payload: row.payload, processedAt: optionalIso(row.processed_at), createdAt: iso(row.created_at) };
+}
+
+async function upsertNgnControls(client: pg.PoolClient, item: NgnControlsRecord) {
+  await client.query(`insert into payments_ngn_controls (id,onramp_enabled,offramp_enabled,mock_provider_enabled,bank_settlement_enabled,virtual_account_enabled,active_provider,backup_provider,max_transaction_ngn,daily_limit_ngn,high_value_review_threshold_ngn,updated_by,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) on conflict (id) do update set onramp_enabled=excluded.onramp_enabled,offramp_enabled=excluded.offramp_enabled,mock_provider_enabled=excluded.mock_provider_enabled,bank_settlement_enabled=excluded.bank_settlement_enabled,virtual_account_enabled=excluded.virtual_account_enabled,active_provider=excluded.active_provider,backup_provider=excluded.backup_provider,max_transaction_ngn=excluded.max_transaction_ngn,daily_limit_ngn=excluded.daily_limit_ngn,high_value_review_threshold_ngn=excluded.high_value_review_threshold_ngn,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, [item.id, item.onrampEnabled, item.offrampEnabled, item.mockProviderEnabled, item.bankSettlementEnabled, item.virtualAccountEnabled, item.activeProvider, item.backupProvider, item.maxTransactionNgn, item.dailyLimitNgn, item.highValueReviewThresholdNgn, item.updatedBy, item.updatedAt]);
+}
+async function upsertNgnQuote(client: pg.PoolClient, item: NgnQuoteRecord) {
+  await client.query(`insert into payments_ngn_quotes (id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,expires_at,metadata,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) on conflict (id) do update set status=excluded.status,updated_at=excluded.updated_at,metadata=excluded.metadata`, [item.id,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.expiresAt,item.metadata ?? null,item.createdAt,item.updatedAt]);
+}
+async function upsertNgnTransfer(client: pg.PoolClient, item: NgnTransferRecord) {
+  await client.query(`insert into payments_ngn_transfers (id,quote_id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,provider_transfer_id,bank_reference,deposit_address,virtual_account,settlement_reference,destination_tx_hash,metadata,timeline,created_at,updated_at,completed_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) on conflict (id) do update set status=excluded.status,provider_transfer_id=excluded.provider_transfer_id,bank_reference=excluded.bank_reference,deposit_address=excluded.deposit_address,virtual_account=excluded.virtual_account,settlement_reference=excluded.settlement_reference,destination_tx_hash=excluded.destination_tx_hash,metadata=excluded.metadata,timeline=excluded.timeline,updated_at=excluded.updated_at,completed_at=excluded.completed_at`, [item.id,item.quoteId,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.providerTransferId,item.bankReference,item.depositAddress,item.virtualAccount ?? null,item.settlementReference,item.destinationTxHash,item.metadata ?? null,item.timeline ?? null,item.createdAt,item.updatedAt,item.completedAt]);
+}
+async function upsertNgnWebhook(client: pg.PoolClient, item: NgnWebhookRecord) {
+  await client.query(`insert into payments_ngn_webhook_events (id,provider,provider_event_id,event_type,transfer_id,payload,processed_at,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict (provider, provider_event_id) do update set event_type=excluded.event_type,transfer_id=excluded.transfer_id,payload=excluded.payload,processed_at=excluded.processed_at`, [item.id,item.provider,item.providerEventId,item.eventType,item.transferId,item.payload ?? null,item.processedAt,item.createdAt]);
 }
 
 function mapSupportTicket(row: any): SupportTicketRecord {

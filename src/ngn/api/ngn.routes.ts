@@ -1,0 +1,71 @@
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { forbidden } from '../../shared/errors.js';
+import { parseBody } from '../../shared/validation.js';
+import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
+import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
+import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
+import { getNgnProvider } from '../provider/ngn-provider-registry.js';
+import { getNgnReconciliationSummary } from '../service/ngn-reconciliation.service.js';
+import { listNgnSettlementQueue } from '../service/ngn-settlement.service.js';
+import { listNgnWebhooks, recordNgnWebhook } from '../service/ngn-webhooks.service.js';
+
+function ensureOwnUser(request: any, userId: string) {
+  const authUserId = request.authUser?.sub;
+  if (authUserId && authUserId !== userId) {
+    throw forbidden('You cannot access another user account');
+  }
+}
+
+export async function ngnRoutes(app: FastifyInstance) {
+  app.get('/api/ngn/quote', async (request) => {
+    const query = createNgnQuoteSchema.parse(request.query ?? {});
+    ensureOwnUser(request, query.userId);
+    return { data: await createNgnQuote(query) };
+  });
+
+  app.post('/api/ngn/onramp/orders', async (request) => {
+    const body = parseBody(acceptNgnQuoteSchema, request.body);
+    ensureOwnUser(request, body.userId);
+    return { data: await acceptNgnQuote(body) };
+  });
+
+  app.post('/api/ngn/offramp/orders', async (request) => {
+    const body = parseBody(acceptNgnQuoteSchema, request.body);
+    ensureOwnUser(request, body.userId);
+    return { data: await acceptNgnQuote(body) };
+  });
+
+  app.get('/api/users/:userId/ngn-transfers', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await listNgnTransfers({ userId }) };
+  });
+
+  app.get('/api/admin/ngn/controls', async () => ({ data: await getNgnControls() }));
+  app.put('/api/admin/ngn/controls', async (request) => ({ data: await updateNgnControls(parseBody(updateNgnControlsSchema, request.body)) }));
+  app.get('/api/admin/ngn/quotes', async (request) => {
+    const query = request.query as { userId?: string };
+    return { data: await listNgnQuotes({ userId: query.userId }) };
+  });
+  app.get('/api/admin/ngn/transfers', async (request) => {
+    const query = request.query as { userId?: string; status?: string };
+    return { data: await listNgnTransfers(query) };
+  });
+  app.get('/api/admin/ngn/settlement-queue', async () => ({ data: await listNgnSettlementQueue() }));
+  app.get('/api/admin/ngn/webhooks', async () => ({ data: await listNgnWebhooks() }));
+  app.get('/api/admin/ngn/reconciliation', async () => ({ data: await getNgnReconciliationSummary() }));
+  app.get('/api/admin/ngn/provider-health', async () => {
+    const controls = await getNgnControls();
+    const active = getNgnProvider(controls.activeProvider);
+    const backup = controls.backupProvider ? getNgnProvider(controls.backupProvider) : null;
+    return { data: { active: await active.health(), backup: backup ? await backup.health() : null, controls } };
+  });
+  app.post('/api/admin/ngn/transfers/:id/retry', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await retryNgnTransfer(id, (request as any).adminActor?.email || 'admin_api_key') };
+  });
+  app.post('/api/admin/ngn/webhooks/:provider', async (request) => {
+    const { provider } = request.params as { provider: 'mock' | 'linkio' | 'eversend' | 'nomba' };
+    return { data: await recordNgnWebhook(provider, request.body, request.headers) };
+  });
+}

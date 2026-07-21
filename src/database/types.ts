@@ -1,3 +1,4 @@
+import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 export type Currency = 'usd' | 'gbp' | 'eur';
 export type SourceCurrency = 'usdc' | 'usdt';
@@ -497,4 +498,8 @@ export interface DatabaseShape {
   virtualAccounts: VirtualAccountRecord[];
   virtualAccountEvents: VirtualAccountEventRecord[];
   virtualAccountTransactions: VirtualAccountTransactionRecord[];
+  ngnControls: NgnControlsRecord[];
+  ngnQuotes: NgnQuoteRecord[];
+  ngnTransfers: NgnTransferRecord[];
+  ngnWebhooks: NgnWebhookRecord[];
 }
