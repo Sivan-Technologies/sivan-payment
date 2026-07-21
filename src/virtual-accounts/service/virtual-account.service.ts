@@ -71,9 +71,11 @@ export async function listVirtualAccountTransactions() {
 }
 
 export async function provisionVirtualAccount(input: CreateVirtualAccountInput): Promise<ProviderVirtualAccount> {
-  if (!virtualAccountsEnabled()) {
-    throw new Error('Virtual accounts are disabled. Enable VIRTUAL_ACCOUNTS_ENABLED only after provider/compliance approval.');
-  }
+  // Runtime Admin Controls are the source of truth for enabling/disabling
+  // USD/GBP/EUR virtual account requests and approvals. Do not require a Render
+  // redeploy just to turn a currency on/off. Provider-specific safety remains in
+  // the provider adapter (for example BRIDGE_VIRTUAL_ACCOUNTS_ENABLED must still
+  // be true before the Bridge adapter can create a real provider account).
   const provider = getVirtualAccountProvider(env.VIRTUAL_ACCOUNT_PROVIDER);
   return provider.createVirtualAccount(input);
 }
