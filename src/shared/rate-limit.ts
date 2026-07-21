@@ -27,12 +27,12 @@ export function getRateLimitPolicy(method: string, url: string): RateLimitPolicy
   if (method === 'OPTIONS') return null;
   if (url === '/health') return null;
 
-  // Public read-only bootstrap endpoints are called by the unauthenticated web app
-  // on signup/login and by focus/visibility refreshes. Rate limiting them at the
-  // default user-action bucket causes noisy 429s that browsers report as CORS
-  // failures. They are non-mutating and safe to leave unthrottled here; CDN/edge
-  // protection can still rate-limit abusive traffic before it reaches the app.
-  if (method === 'GET' && (url.startsWith('/api/offramp/controls') || url.startsWith('/api/fees/offramp') || url.startsWith('/api/system/status'))) return null;
+  // Read-only API calls are used heavily by dashboards for bootstrap, focus,
+  // visibility, and status refreshes. Throttling them in the in-process user-action
+  // bucket creates noisy 429s that browsers surface as CORS failures. Keep abuse
+  // controls on mutation/auth/webhook/admin paths here; let CDN/edge protection
+  // handle abusive read-only scraping before it reaches the app.
+  if ((method === 'GET' || method === 'HEAD') && !url.startsWith('/api/admin')) return null;
 
   // Keep Bridge webhook capacity high enough for retries/bursts.
   if (url.startsWith('/api/webhooks/bridge')) {
