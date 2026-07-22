@@ -31,10 +31,10 @@ services:
         value: "5"
       - key: RATE_LIMIT_AUTH_VERIFY_MAX
         value: "20"
-      - key: PORT
-        value: 10000
       - key: DATABASE_PROVIDER
         value: json
+
+
 
       - key: DATABASE_URL
         sync: false
