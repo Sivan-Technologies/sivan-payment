@@ -352,7 +352,8 @@ export default function App() {
     const json = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (response.status === 401 && authToken) logout('Session expired. Please sign in again.');
-      throw new Error(json?.error?.message || 'Something went wrong. Please try again.');
+      const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
+      throw new Error(json?.error?.message || detailMessage || json?.message || 'Something went wrong. Please try again.');
     }
     return (json.data ?? json) as T;
   }, [apiBase, authToken, logout]);
@@ -639,7 +640,11 @@ export default function App() {
       const body = formBeforeLoading;
       const created = await api<CustomerRecord>('/api/customers/kyc-link', {
         method: 'POST',
-        body: JSON.stringify({ userId: user.id, type: body.type, redirectUri: body.redirectUri || undefined })
+        body: JSON.stringify({
+          userId: user.id,
+          type: body.type || 'individual',
+          redirectUri: body.redirectUri || verificationRedirectUri || `${window.location.origin}/verification-complete`
+        })
       });
       setCustomer(created);
       const nextVerificationUrl = created.hostedKycLink || created.kycLink;
