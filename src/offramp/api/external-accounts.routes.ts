@@ -9,7 +9,16 @@ export async function externalAccountsRoutes(app: FastifyInstance) {
     return reply.code(201).send({ data: account });
   });
 
+  app.post('/api/users/:userId/external-accounts', async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const rawBody = (request.body as Record<string, unknown>) || {};
+    const body = parseBody(createExternalAccountSchema, { ...rawBody, userId });
+    const account = await createExternalAccount(body);
+    return reply.code(201).send({ data: account });
+  });
+
   app.get('/api/users/:userId/external-accounts', async (request) => {
+
     const { userId } = request.params as { userId: string };
     return { data: await listExternalAccounts(userId) };
   });
