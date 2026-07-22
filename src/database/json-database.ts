@@ -581,6 +581,7 @@ export class JsonDatabase {
   }
 }
 
-export const db = env.DATABASE_PROVIDER === 'postgres'
+export const db = (env.DATABASE_PROVIDER === 'postgres' && Boolean(env.DATABASE_URL))
   ? new PostgresDatabase()
   : new JsonDatabase();
+

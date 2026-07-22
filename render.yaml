@@ -34,7 +34,8 @@ services:
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
-        value: postgres
+        value: json
+
       - key: DATABASE_URL
         sync: false
       # Add your Vercel frontend URLs here after deploying the user frontend and Admin Hub.
