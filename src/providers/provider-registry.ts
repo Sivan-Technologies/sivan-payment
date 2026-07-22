@@ -9,6 +9,8 @@ export type OfframpProviderRequest = string | OfframpProviderSelectionContext;
 export function getOfframpProvider(input: OfframpProviderRequest = env.DEFAULT_OFFRAMP_PROVIDER): OfframpProvider {
   const providerName = typeof input === 'string' ? input : chooseOfframpProvider(input).providerName;
 
+  if (providerName === 'mock') return new MockBridgeProvider();
+
   if (providerName !== 'bridge') {
     throw new Error(`Unsupported off-ramp provider: ${providerName}`);
   }
