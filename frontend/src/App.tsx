@@ -337,12 +337,11 @@ export default function App() {
   }, []);
 
   const api = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-    let cleanPath = path;
-    if (apiBase.endsWith('/api/payment') && cleanPath.startsWith('/api/')) {
-      cleanPath = cleanPath.slice(4);
-    }
-    const response = await fetch(`${apiBase}${cleanPath}`, {
-
+    // Keep backend API paths intact. The Cloudflare payment gateway expects
+    // /api/payment + /api/... so it can strip /api/payment and forward /api/...
+    // to the payment service. Removing the second /api causes gateway 404s like
+    // /api/payment/system/status and /api/payment/offramp/controls.
+    const response = await fetch(`${apiBase}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',

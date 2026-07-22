@@ -4,10 +4,15 @@ import * as Sentry from '@sentry/react';
 import App from './App';
 import './styles.css';
 
-if (import.meta.env.VITE_SENTRY_DSN) {
+const sentryEnvironment = import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.VITE_APP_ENV || 'development';
+const sentryExplicitlyEnabled = import.meta.env.VITE_ENABLE_SENTRY === 'true';
+const shouldEnableSentry = Boolean(import.meta.env.VITE_SENTRY_DSN)
+  && (sentryExplicitlyEnabled || !['test', 'local', 'development'].includes(sentryEnvironment));
+
+if (shouldEnableSentry) {
   Sentry.init({
     dsn: import.meta.env.VITE_SENTRY_DSN,
-    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.VITE_APP_ENV || 'development',
+    environment: sentryEnvironment,
     tracesSampleRate: Number(import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE || 0),
     release: import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA
   });
