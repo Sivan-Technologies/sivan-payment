@@ -116,10 +116,15 @@ function toMoney(value: number): string {
 export async function simulateSandboxKycApproval(userId: string) {
   const customer = await getCustomerByUserId(userId);
   const provider = getOfframpProvider(customer.provider);
-  if (!provider.simulateSandboxKycApproval) {
-    throw badRequest('Current provider does not support sandbox KYC simulation');
+  let result: any = { kyc_status: 'approved', status: 'approved' };
+  if (provider.simulateSandboxKycApproval) {
+    try {
+      result = await provider.simulateSandboxKycApproval(customer.providerCustomerId, idempotencyKey('simulate-kyc'));
+    } catch (err: any) {
+      console.warn('[simulateSandboxKycApproval] Provider call failed, falling back to local simulation:', err?.message || err);
+    }
   }
-  const result: any = await provider.simulateSandboxKycApproval(customer.providerCustomerId, idempotencyKey('simulate-kyc'));
-  const record = { ...customer, kycStatus: mapBridgeKycStatus(result?.kyc_status ?? 'approved'), raw: { previous: customer.raw, sandboxSimulation: result }, updatedAt: nowIso() };
+  const record = { ...customer, kycStatus: mapBridgeKycStatus(result?.kyc_status ?? result?.status ?? 'approved'), raw: { previous: customer.raw, sandboxSimulation: result }, updatedAt: nowIso() };
   return db.updateCustomerRecord(record);
 }
+
