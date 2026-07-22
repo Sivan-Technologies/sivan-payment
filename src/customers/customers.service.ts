@@ -30,8 +30,18 @@ export async function startKyc(input: z.infer<typeof startKycSchema>) {
   const existing = await getCustomerByUserId(input.userId).catch(() => null);
 
   if (existing?.providerCustomerId) {
-    const hosted = await provider.getHostedKycLink(existing.providerCustomerId, input.redirectUri);
-    return { ...existing, hostedKycLink: hosted.url };
+    // If we already have a hosted KYC/TOS link, return it immediately. Bridge can
+    // reject re-generating a hosted link for an existing sandbox customer with a
+    // 400, which left users stuck at "Not started" after account creation. The
+    // stored provider link is still valid for continuing verification.
+    if (existing.kycLink) return { ...existing, hostedKycLink: existing.kycLink };
+    try {
+      const hosted = await provider.getHostedKycLink(existing.providerCustomerId, input.redirectUri);
+      return { ...existing, hostedKycLink: hosted.url };
+    } catch (error) {
+      if (existing.kycLink) return { ...existing, hostedKycLink: existing.kycLink };
+      throw error;
+    }
   }
 
   const kyc = await provider.createKycLink({
