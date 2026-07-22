@@ -8,12 +8,15 @@ import { requireUser } from '../users/users.service.js';
 import { mapBridgeKycStatus } from './customer-mapping.js';
 import { requireCustomerTypeEnabled } from '../controls/payment-controls.service.js';
 
+const optionalUrl = z.preprocess((val) => (typeof val === 'string' && val.trim() === '' ? undefined : val), z.string().url().optional());
+
 export const startKycSchema = z.object({
   userId: z.string().min(1),
   type: z.enum(['individual', 'business']).default('individual'),
-  redirectUri: z.string().url().optional(),
+  redirectUri: optionalUrl,
   endorsements: z.array(z.string()).optional()
 });
+
 
 export const createBridgeCustomerSchema = z.object({
   userId: z.string().min(1),
