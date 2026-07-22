@@ -129,17 +129,21 @@ const fallbackVirtualAccounts: VirtualAccountControl[] = [
 ];
 
 function normalizeFrontendApiBase(value: string) {
-  const clean = value.trim().replace(/\/$/, '');
+  let clean = value.trim().replace(/\/$/, '');
+  if (clean.endsWith('/api/payment')) {
+    clean = clean.slice(0, -'/api/payment'.length);
+  }
   try {
     const parsed = new URL(clean);
-    if (parsed.hostname === 'test-sivan.sivantech.online' && !parsed.pathname.startsWith('/api/payment')) {
-      return `${clean}/api/payment`;
+    if (parsed.hostname === 'test-sivan.sivantech.online') {
+      return `${parsed.origin}/api/payment`;
     }
   } catch {
     // Keep local/relative values unchanged.
   }
   return clean;
 }
+
 
 function normalizeOfframpControls(value: unknown): OfframpControls {
   const data = value as Partial<OfframpControls> | PaymentControl[] | undefined;
@@ -333,7 +337,12 @@ export default function App() {
   }, []);
 
   const api = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-    const response = await fetch(`${apiBase}${path}`, {
+    let cleanPath = path;
+    if (apiBase.endsWith('/api/payment') && cleanPath.startsWith('/api/')) {
+      cleanPath = cleanPath.slice(4);
+    }
+    const response = await fetch(`${apiBase}${cleanPath}`, {
+
       ...options,
       headers: {
         'Content-Type': 'application/json',
