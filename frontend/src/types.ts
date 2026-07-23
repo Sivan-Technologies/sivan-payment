@@ -264,6 +264,7 @@ export interface VirtualAccountRecord {
   routingNumberMasked?: string;
   ibanMasked?: string;
   status: string;
+  rawProviderPayload?: unknown;
   createdAt: string;
   updatedAt: string;
 }
