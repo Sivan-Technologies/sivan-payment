@@ -6,6 +6,8 @@ import { nowIso } from '../shared/id.js';
 import { getAdminFeeSettings } from './admin-fees.service.js';
 import { getLimitControls } from './admin-ops.service.js';
 import { providerCapabilities } from '../providers/provider-routing.js';
+import { BridgeClient } from '../providers/bridge/bridge.client.js';
+import { refreshKycStatus } from '../customers/customers.service.js';
 import { searchTransactionReferences } from '../references/transaction-references.service.js';
 
 export const userRestrictionSchema = z.object({
@@ -189,17 +191,60 @@ export async function getSettlementReconciliation() {
 
 export async function getDocumentVerificationQueue() {
   const data = await db.read();
-  return data.customers.map((customer) => ({
-    id: customer.id,
-    userId: customer.userId,
-    provider: customer.provider,
-    providerCustomerId: customer.providerCustomerId,
-    customerType: customer.customerType,
-    kycStatus: customer.kycStatus,
-    tosStatus: customer.tosStatus,
-    documents: extractDocumentEvidence(customer.raw),
-    updatedAt: customer.updatedAt
-  })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const usersById = new Map(data.users.map((user) => [user.id, user]));
+  const rows = await Promise.all(data.customers.map(async (customer) => {
+    const diagnostics = await getBridgeKycDiagnostics(customer);
+    const user = usersById.get(customer.userId);
+    return {
+      id: customer.id,
+      userId: customer.userId,
+      userEmail: user?.email,
+      userName: user?.fullName,
+      provider: customer.provider,
+      providerCustomerId: customer.providerCustomerId,
+      customerType: customer.customerType,
+      kycStatus: customer.kycStatus,
+      tosStatus: customer.tosStatus,
+      documents: extractDocumentEvidence(customer.raw),
+      diagnostics,
+      actionSummary: diagnostics.actionSummary,
+      missingRequirements: diagnostics.missingRequirements,
+      pendingRequirements: diagnostics.pendingRequirements,
+      issueRequirements: diagnostics.issueRequirements,
+      updatedAt: customer.updatedAt
+    };
+  }));
+  return rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function getCustomerKycDiagnostics(userId: string) {
+  const before = await db.read();
+  const existing = before.customers.find((customer) => customer.userId === userId);
+  if (!existing) throw notFound('Customer');
+  let customer = existing;
+  let refreshError: string | undefined;
+  try {
+    customer = await refreshKycStatus(userId);
+  } catch (error) {
+    refreshError = error instanceof Error ? error.message : String(error);
+  }
+  const diagnostics = await getBridgeKycDiagnostics(customer);
+  return {
+    refreshedAt: nowIso(),
+    refreshError,
+    customer: {
+      id: customer.id,
+      userId: customer.userId,
+      provider: customer.provider,
+      providerCustomerId: customer.providerCustomerId,
+      customerType: customer.customerType,
+      kycLinkId: customer.kycLinkId,
+      kycStatus: customer.kycStatus,
+      tosStatus: customer.tosStatus,
+      updatedAt: customer.updatedAt
+    },
+    diagnostics
+  };
 }
 
 export async function requestRefund(input: z.infer<typeof refundRequestSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
@@ -232,6 +277,168 @@ function extractDocumentEvidence(raw: unknown) {
   if (/identity|id_document|government/i.test(text)) evidence.push('identity_document');
   if (/proof_of_address|address/i.test(text)) evidence.push('proof_of_address');
   return evidence.length ? evidence : ['provider_hosted_kyc'];
+}
+
+async function getBridgeKycDiagnostics(customer: any) {
+  const diagnostics: any = {
+    provider: customer.provider,
+    checkedAt: nowIso(),
+    bridgeKycStatus: customer.kycStatus,
+    bridgeTosStatus: customer.tosStatus,
+    missingRequirements: [] as string[],
+    pendingRequirements: [] as string[],
+    completedRequirements: [] as string[],
+    issueRequirements: [] as string[],
+    additionalRequirements: [] as string[],
+    endorsements: [] as any[],
+    actionSummary: customer.kycStatus === 'kyc_approved' ? 'KYC approved.' : 'No live Bridge diagnostics available for this customer.',
+    operatorGuidance: [] as string[]
+  };
+  if (customer.provider !== 'bridge') {
+    diagnostics.actionSummary = customer.provider === 'mock'
+      ? 'Legacy mock customer. Not Bridge-verifiable. Ask user to complete a fresh Bridge KYC flow before real provider actions.'
+      : `Customer provider is ${customer.provider}; Bridge diagnostics do not apply.`;
+    return diagnostics;
+  }
+
+  const client = new BridgeClient();
+  let kycLink: any;
+  let bridgeCustomer: any;
+  const errors: string[] = [];
+  if (customer.kycLinkId) {
+    try {
+      kycLink = await client.request<any>(`/kyc_links/${customer.kycLinkId}`);
+      diagnostics.kycLink = summarizeKycLink(kycLink);
+      diagnostics.bridgeKycStatus = kycLink.kyc_status || diagnostics.bridgeKycStatus;
+      diagnostics.bridgeTosStatus = kycLink.tos_status || diagnostics.bridgeTosStatus;
+    } catch (error) {
+      errors.push(`KYC link lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (customer.providerCustomerId) {
+    try {
+      bridgeCustomer = await client.request<any>(`/customers/${customer.providerCustomerId}`);
+      diagnostics.bridgeCustomer = summarizeBridgeCustomer(bridgeCustomer);
+      diagnostics.bridgeCustomerStatus = bridgeCustomer.status;
+      diagnostics.bridgeKycStatus = bridgeCustomer.status || diagnostics.bridgeKycStatus;
+      diagnostics.endorsements = summarizeEndorsements(bridgeCustomer.endorsements || []);
+    } catch (error) {
+      errors.push(`Bridge customer lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  const endorsements = diagnostics.endorsements || [];
+  diagnostics.missingRequirements = unique(endorsements.flatMap((endorsement: any) => endorsement.missingRequirements || []));
+  diagnostics.pendingRequirements = unique(endorsements.flatMap((endorsement: any) => endorsement.pendingRequirements || []));
+  diagnostics.completedRequirements = unique(endorsements.flatMap((endorsement: any) => endorsement.completedRequirements || []));
+  diagnostics.issueRequirements = unique(endorsements.flatMap((endorsement: any) => endorsement.issueRequirements || []));
+  diagnostics.additionalRequirements = unique(endorsements.flatMap((endorsement: any) => endorsement.additionalRequirements || []));
+  diagnostics.errors = errors;
+  diagnostics.actionSummary = buildKycActionSummary(diagnostics);
+  diagnostics.operatorGuidance = buildKycOperatorGuidance(diagnostics);
+  return diagnostics;
+}
+
+function summarizeKycLink(raw: any) {
+  return {
+    id: raw?.id,
+    customerId: raw?.customer_id,
+    kycStatus: raw?.kyc_status,
+    tosStatus: raw?.tos_status,
+    type: raw?.type,
+    personaInquiryType: raw?.persona_inquiry_type,
+    hasKycLink: Boolean(raw?.kyc_link),
+    hasTosLink: Boolean(raw?.tos_link),
+    updatedAt: raw?.updated_at,
+    createdAt: raw?.created_at
+  };
+}
+
+function summarizeBridgeCustomer(raw: any) {
+  return {
+    id: raw?.id,
+    status: raw?.status,
+    type: raw?.type,
+    email: raw?.email,
+    firstName: raw?.first_name,
+    lastName: raw?.last_name,
+    updatedAt: raw?.updated_at,
+    createdAt: raw?.created_at
+  };
+}
+
+function summarizeEndorsements(endorsements: any[]) {
+  return endorsements.map((endorsement) => {
+    const requirements = endorsement?.requirements || {};
+    const missingRequirements = flattenRequirements(requirements.missing);
+    const pendingRequirements = flattenRequirements(requirements.pending);
+    const completedRequirements = flattenRequirements(requirements.complete);
+    const issueRequirements = flattenRequirements(requirements.issues);
+    return {
+      name: endorsement?.name,
+      status: endorsement?.status,
+      missingRequirements,
+      pendingRequirements,
+      completedRequirements,
+      issueRequirements,
+      additionalRequirements: flattenRequirements(endorsement?.additional_requirements)
+    };
+  });
+}
+
+function flattenRequirements(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(flattenRequirements);
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(flattenRequirements);
+  return [String(value)];
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function humanRequirement(value: string) {
+  const labels: Record<string, string> = {
+    date_of_birth: 'date of birth',
+    min_age_18: '18+ age check',
+    post_processing: 'Bridge post-processing',
+    kyc_approval: 'Bridge KYC approval',
+    kyc_with_proof_of_address: 'KYC with proof of address',
+    selfie_verification: 'selfie verification',
+    proof_of_address: 'proof of address',
+    source_of_funds_questionnaire: 'source-of-funds questionnaire',
+    tax_identification_number: 'tax identification number'
+  };
+  return labels[value] || value.replaceAll('_', ' ');
+}
+
+function buildKycActionSummary(diagnostics: any) {
+  if (diagnostics.errors?.length && !diagnostics.endorsements?.length) return `Could not load live Bridge requirements: ${diagnostics.errors.join('; ')}`;
+  if (String(diagnostics.bridgeKycStatus) === 'approved' || String(diagnostics.bridgeKycStatus) === 'kyc_approved') return 'KYC approved by Bridge.';
+  const missing = diagnostics.missingRequirements || [];
+  const pending = diagnostics.pendingRequirements || [];
+  const issues = diagnostics.issueRequirements || [];
+  if (missing.length) return `User action required: missing ${missing.map(humanRequirement).join(', ')}.`;
+  if (pending.length) return `Waiting on Bridge/user: pending ${pending.map(humanRequirement).join(', ')}.`;
+  if (issues.length) return `Bridge reported issues: ${issues.map(humanRequirement).join(', ')}.`;
+  if (diagnostics.additionalRequirements?.length) return `Bridge still requires ${diagnostics.additionalRequirements.map(humanRequirement).join(', ')}.`;
+  return 'KYC is not approved yet. Re-open hosted Bridge verification or refresh after Bridge post-processing.';
+}
+
+function buildKycOperatorGuidance(diagnostics: any) {
+  const missing = new Set<string>(diagnostics.missingRequirements || []);
+  const guidance: string[] = [];
+  if (missing.has('date_of_birth') || missing.has('min_age_18')) {
+    guidance.push('Ask the user to re-open the secure Bridge/Persona verification page and complete date of birth / 18+ age verification.');
+  }
+  if (missing.has('post_processing')) {
+    guidance.push('Bridge post-processing has not completed; refresh after a few minutes. If it remains stuck, create a provider support ticket with Bridge.');
+  }
+  if (missing.has('proof_of_address')) guidance.push('Ask the user to upload/confirm proof of address inside Bridge verification.');
+  if (missing.has('source_of_funds_questionnaire')) guidance.push('Ask the user to complete the source-of-funds questionnaire inside Bridge verification.');
+  if (!guidance.length && String(diagnostics.bridgeKycStatus) !== 'approved') guidance.push('Run full KYC refresh, then ask the user to continue hosted Bridge verification if status remains incomplete.');
+  return guidance;
 }
 
 function ageHours(iso: string) { return (Date.now() - new Date(iso).getTime()) / 36e5; }

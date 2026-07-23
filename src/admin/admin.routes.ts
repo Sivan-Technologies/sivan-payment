@@ -15,7 +15,7 @@ import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSch
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
-import { getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, getBusinessKpis, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
+import { getCustomerKycDiagnostics, getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, getBusinessKpis, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
 
 
 function listOptions(request: any) {
@@ -121,6 +121,10 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/provider-health', async () => ({ data: await getProviderHealth() }));
   app.get('/api/admin/queue/status', async () => ({ data: await getQueueDashboard() }));
   app.get('/api/admin/compliance/documents', async () => ({ data: await getDocumentVerificationQueue() }));
+  app.post('/api/admin/customers/:userId/kyc-diagnostics', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await getCustomerKycDiagnostics(userId) };
+  });
   app.post('/api/admin/refunds/request', async (request) => {
     const body = parseBody(refundRequestSchema, request.body);
     return { data: await requestRefund(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
