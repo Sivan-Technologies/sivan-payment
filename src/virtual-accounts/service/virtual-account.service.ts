@@ -19,9 +19,14 @@ export function virtualAccountRequestsEnabled() {
 
 export async function listUserVirtualAccounts(userId: string) {
   const [requests, accounts] = await Promise.all([db.listVirtualAccountRequests(), db.listVirtualAccounts()]);
+  const hideLegacyMockAccounts = env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge';
   return {
     requests: requests.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    accounts: accounts.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    accounts: accounts
+      .filter((item) => item.userId === userId)
+      .filter((item) => item.status !== 'closed')
+      .filter((item) => !hideLegacyMockAccounts || item.provider !== 'mock')
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   };
 }
 
