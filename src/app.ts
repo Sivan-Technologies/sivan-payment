@@ -27,6 +27,7 @@ export async function buildApp() {
   });
 
   app.addHook('preHandler', async (request, reply) => {
+    if (isFastHealthRequest(request.method, request.url)) return;
     const body = request.body as Record<string, unknown> | undefined;
     const decision = checkRateLimit({
       ip: request.ip,
@@ -60,6 +61,7 @@ export async function buildApp() {
   });
 
   app.addHook('preHandler', async (request, reply) => {
+    if (isFastHealthRequest(request.method, request.url)) return;
     const status = await getSystemStatus();
     if (isUserMutationBlocked(status.mode, request.method, request.url)) {
       return reply.code(503).send({
@@ -162,6 +164,11 @@ export async function buildApp() {
   return app;
 }
 
+
+function isFastHealthRequest(method: string, url: string): boolean {
+  const path = url.split('?')[0];
+  return ['GET', 'HEAD'].includes(method) && ['/', '/ping', '/health', '/health/db'].includes(path);
+}
 
 function restrictedActionForRequest(method: string, url: string): 'onramp' | 'offramp' | 'kyc' | undefined {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return undefined;

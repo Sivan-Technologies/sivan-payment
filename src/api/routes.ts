@@ -21,6 +21,8 @@ import { aceSupportRoutes } from '../ace/api/ace-support.routes.js';
 import { ngnRoutes } from '../ngn/api/ngn.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
+  app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
+  app.get('/ping', async (_request, reply) => reply.type('text/plain').send('ok'));
   app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
   app.get('/health/db', async () => ({ status: 'ok', database: db.getPoolStats() }));
   await authRoutes(app);
