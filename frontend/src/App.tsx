@@ -88,7 +88,8 @@ function friendlyStatus(status?: string) {
   return status ? map[status] || status.replaceAll('_', ' ') : 'Not started';
 }
 
-function kycOutcomeMessage(status?: string) {
+function kycOutcomeMessage(status?: string, customerAction?: CustomerRecord['customerAction']) {
+  if (customerAction?.message) return customerAction.message;
   if (status === 'kyc_approved') return 'Verification successful. You can now use Sivan Payment features that require KYC.';
   if (status === 'kyc_under_review') return 'Verification submitted. Bridge is reviewing it and this page will keep refreshing.';
   if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) return 'Verification could not be completed. Please retry securely or contact support.';
@@ -454,7 +455,7 @@ export default function App() {
     try {
       const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
       setCustomer(refreshed);
-      if (showToast) notify(kycOutcomeMessage(refreshed.kycStatus), ['kyc_rejected', 'failed', 'cancelled'].includes(refreshed.kycStatus || '') ? 'error' : 'success');
+      if (showToast) notify(kycOutcomeMessage(refreshed.kycStatus, refreshed.customerAction), ['kyc_rejected', 'failed', 'cancelled'].includes(refreshed.kycStatus || '') ? 'error' : 'success');
       return refreshed;
     } catch (error) {
       if (showToast) notify((error as Error).message, 'error');
@@ -1585,18 +1586,18 @@ function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onRefresh 
   const isFailed = ['kyc_rejected', 'failed', 'cancelled'].includes(status || '');
   const isIncomplete = status === 'kyc_incomplete';
   const copy = isApproved
-    ? { icon: '✓', title: 'Verification successful', body: 'Your identity has been verified. You can now use Sivan Payment features that require KYC.', primary: hasBank ? 'Sell crypto' : 'Add bank account' }
+    ? { icon: '✓', title: customer.customerAction?.title || 'Verification successful', body: customer.customerAction?.message || 'Your identity has been verified. You can now use Sivan Payment features that require KYC.', primary: hasBank ? 'Sell crypto' : 'Add bank account' }
     : isReview
-      ? { icon: '⏳', title: 'Verification under review', body: 'Your verification has been submitted and is being reviewed by our provider. We will update this page automatically.', primary: 'Refresh status' }
+      ? { icon: '⏳', title: customer.customerAction?.title || 'Verification under review', body: customer.customerAction?.message || 'Your verification has been submitted and is being reviewed by our provider. We will update this page automatically.', primary: 'Refresh status' }
       : isFailed
-        ? { icon: '!', title: 'Verification could not be completed', body: 'Your secure verification was not approved. This can happen if a document is unclear or details do not match. You can retry or contact support.', primary: verificationLink ? 'Try verification again' : 'Refresh status' }
+        ? { icon: '!', title: customer.customerAction?.title || 'Verification could not be completed', body: customer.customerAction?.message || 'Your secure verification was not approved. This can happen if a document is unclear or details do not match. You can retry or contact support.', primary: verificationLink ? 'Try verification again' : 'Refresh status' }
         : isIncomplete
-          ? { icon: '🔔', title: 'Verification needs one more step', body: 'Your secure verification is not fully complete yet. Continue the Bridge verification flow to finish your identity check.', primary: verificationLink ? 'Continue verification' : 'Refresh status' }
-          : { icon: '◈', title: 'Verification not started', body: 'Complete identity verification to unlock payments, higher limits, and account features.', primary: 'Start verification' };
+          ? { icon: '🔔', title: customer.customerAction?.title || 'Verification needs one more step', body: customer.customerAction?.message || 'Your secure verification is not fully complete yet. Continue the Bridge verification flow to finish your identity check.', primary: verificationLink ? 'Continue verification' : 'Refresh status' }
+          : { icon: '◈', title: customer.customerAction?.title || 'Verification not started', body: customer.customerAction?.message || 'Complete identity verification to unlock payments, higher limits, and account features.', primary: 'Start verification' };
   const primaryAction = isApproved || (!isReview && !isIncomplete && !isFailed) ? onContinue : onRefresh;
   return <article className={`kyc-outcome-notice ${kind}`}>
     <span className="kyc-outcome-icon">{copy.icon}</span>
-    <div className="kyc-outcome-copy"><p className="eyebrow">Verification status</p><h3>{copy.title}</h3><p>{copy.body}</p></div>
+    <div className="kyc-outcome-copy"><p className="eyebrow">Verification status</p><h3>{copy.title}</h3><p>{copy.body}</p>{Boolean(customer.customerAction?.requirements?.length) && <small>Needed: {customer.customerAction?.requirements?.join(', ')}</small>}</div>
     <div className="kyc-outcome-actions">
       {(isIncomplete || isFailed) && verificationLink ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{copy.primary}</a> : <button className="primary-btn small" onClick={primaryAction}>{copy.primary}</button>}
       {!isApproved && <button className="secondary-btn small" onClick={onSupport}>Contact support</button>}

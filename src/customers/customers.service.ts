@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { db } from '../database/json-database.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
+import { BridgeClient } from '../providers/bridge/bridge.client.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../shared/id.js';
 import { requireUser } from '../users/users.service.js';
@@ -115,15 +116,110 @@ export async function getCustomerByUserId(userId: string) {
 
 export async function refreshKycStatus(userId: string) {
   const customer = await getCustomerByUserId(userId);
-  if (!customer.kycLinkId) return customer;
+  if (!customer.kycLinkId) return enrichCustomerKycAction(customer);
   const provider = getOfframpProvider(customer.provider);
   const kyc = await provider.getKycLink(customer.kycLinkId);
   const record = { ...customer, kycStatus: mapBridgeKycStatus(kyc.kycStatus), tosStatus: kyc.tosStatus === 'approved' ? 'approved' as const : 'pending' as const, raw: kyc.raw, updatedAt: nowIso() };
-  return db.updateCustomerRecord(record);
+  const saved = await db.updateCustomerRecord(record);
+  return enrichCustomerKycAction(saved);
 }
 
 function toMoney(value: number): string {
   return value.toFixed(2);
+}
+
+
+async function enrichCustomerKycAction<T extends { provider: string; providerCustomerId?: string; kycStatus?: string; tosStatus?: string }>(customer: T): Promise<T & { customerAction: ReturnType<typeof buildCustomerKycAction> }> {
+  if (customer.provider !== 'bridge' || !customer.providerCustomerId || customer.kycStatus === 'kyc_approved') {
+    return { ...customer, customerAction: buildCustomerKycAction(customer.kycStatus, customer.tosStatus) };
+  }
+  try {
+    const bridgeCustomer: any = await new BridgeClient().request(`/customers/${customer.providerCustomerId}`);
+    const missingRequirements = unique((bridgeCustomer.endorsements || []).flatMap((endorsement: any) => flattenRequirements(endorsement?.requirements?.missing)));
+    const pendingRequirements = unique((bridgeCustomer.endorsements || []).flatMap((endorsement: any) => flattenRequirements(endorsement?.requirements?.pending)));
+    const issueRequirements = unique((bridgeCustomer.endorsements || []).flatMap((endorsement: any) => flattenRequirements(endorsement?.requirements?.issues)));
+    return { ...customer, customerAction: buildCustomerKycAction(customer.kycStatus, customer.tosStatus, { missingRequirements, pendingRequirements, issueRequirements }) };
+  } catch {
+    return { ...customer, customerAction: buildCustomerKycAction(customer.kycStatus, customer.tosStatus) };
+  }
+}
+
+function buildCustomerKycAction(status?: string, tosStatus?: string, diagnostics: { missingRequirements?: string[]; pendingRequirements?: string[]; issueRequirements?: string[] } = {}) {
+  const missing = unique(diagnostics.missingRequirements || []);
+  const pending = unique(diagnostics.pendingRequirements || []);
+  const issues = unique(diagnostics.issueRequirements || []);
+  const actionable = missing.filter((item) => !providerOnlyRequirement(item));
+  const providerOnly = missing.filter(providerOnlyRequirement);
+  const friendly = actionable.map(humanRequirement);
+
+  if (status === 'kyc_approved') {
+    return { level: 'success', title: 'Verification successful', message: 'Your identity has been verified. You can now use Sivan Payment features that require KYC.', requirements: [], canContinue: false };
+  }
+  if (status === 'kyc_under_review') {
+    return { level: 'review', title: 'Verification under review', message: 'Your verification has been submitted and is being reviewed by our provider. This page will update automatically.', requirements: [], canContinue: false };
+  }
+  if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) {
+    return { level: 'failed', title: 'Verification could not be completed', message: 'Your secure verification was not approved. Please retry verification or contact support if you need help.', requirements: friendly, canContinue: true };
+  }
+  if (status === 'kyc_incomplete') {
+    if (friendly.length) {
+      const list = formatHumanList(friendly);
+      const processing = providerOnly.length ? ' If you already submitted this, our provider may still be processing your verification.' : '';
+      return { level: 'action_required', title: 'Verification needs one more step', message: `Please complete your ${list} in the secure verification page.${processing}`, requirements: friendly, canContinue: true };
+    }
+    if (providerOnly.length || pending.length) {
+      return { level: 'processing', title: 'Verification is still processing', message: 'Your verification is still being processed by our provider. Please refresh again in a few minutes.', requirements: providerOnly.map(humanRequirement), canContinue: false };
+    }
+    if (issues.length) {
+      return { level: 'action_required', title: 'Verification needs attention', message: `Please review ${formatHumanList(issues.map(humanRequirement))} in the secure verification page.`, requirements: issues.map(humanRequirement), canContinue: true };
+    }
+    return { level: 'action_required', title: 'Verification needs one more step', message: 'Please continue the secure verification flow to finish your identity check.', requirements: [], canContinue: true };
+  }
+  if (tosStatus !== 'approved') {
+    return { level: 'action_required', title: 'Provider terms required', message: 'Please accept the provider terms in the secure verification page.', requirements: ['provider terms'], canContinue: true };
+  }
+  return { level: 'neutral', title: 'Verification not started', message: 'Complete identity verification to unlock payments, higher limits, and account features.', requirements: [], canContinue: true };
+}
+
+function flattenRequirements(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(flattenRequirements);
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(flattenRequirements);
+  return [String(value)];
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function providerOnlyRequirement(value: string) {
+  return ['post_processing', 'kyc_approval', 'kyc_with_proof_of_address'].includes(value);
+}
+
+function humanRequirement(value: string) {
+  const labels: Record<string, string> = {
+    date_of_birth: 'date of birth',
+    min_age_18: 'age confirmation',
+    proof_of_address: 'proof of address',
+    address_of_residence: 'residential address',
+    selfie_verification: 'selfie verification',
+    source_of_funds_questionnaire: 'source-of-funds questions',
+    tax_identification_number: 'required identity details',
+    terms_of_service_v1: 'provider terms',
+    terms_of_service_v2: 'provider terms',
+    post_processing: 'provider processing',
+    kyc_approval: 'provider approval',
+    kyc_with_proof_of_address: 'proof-of-address review'
+  };
+  return labels[value] || value.replaceAll('_', ' ');
+}
+
+function formatHumanList(values: string[]) {
+  const uniqueValues = unique(values);
+  if (uniqueValues.length <= 1) return uniqueValues[0] || 'remaining verification steps';
+  if (uniqueValues.length === 2) return `${uniqueValues[0]} and ${uniqueValues[1]}`;
+  return `${uniqueValues.slice(0, -1).join(', ')}, and ${uniqueValues[uniqueValues.length - 1]}`;
 }
 
 export async function simulateSandboxKycApproval(userId: string) {

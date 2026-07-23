@@ -46,6 +46,13 @@ export interface CustomerRecord {
   onboardingCostUsd?: string;
   onboardingCostType?: 'kyc' | 'kyb';
   onboardingCostRecordedAt?: string;
+  customerAction?: {
+    level: 'success' | 'review' | 'failed' | 'action_required' | 'processing' | 'neutral';
+    title: string;
+    message: string;
+    requirements?: string[];
+    canContinue?: boolean;
+  };
   createdAt: string;
   updatedAt: string;
 }
