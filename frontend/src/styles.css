@@ -1232,3 +1232,22 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
     display: none !important;
   }
 }
+
+@media (max-width: 900px) {
+  .app-shell.authenticated .app-topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+  }
+
+  .app-shell.authenticated .app-topbar .app-top-actions {
+    grid-column: 3 !important;
+    width: auto !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+  }
+
+  .app-shell.authenticated .user-pill {
+    padding: 5px !important;
+  }
+}
