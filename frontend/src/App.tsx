@@ -7,6 +7,7 @@ const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
   { key: 'history', icon: '◷', label: 'Transactions' },
   { key: 'banks', icon: '▭', label: 'Payment methods' },
+  { key: 'virtualAccounts', icon: '▥', label: 'Virtual account' },
   { key: 'kyc', icon: '◈', label: 'Verification' },
   { key: 'settings', icon: '⚙', label: 'Settings' },
   { key: 'help', icon: '?', label: 'Support' }
@@ -26,6 +27,7 @@ const pathByView: Record<ViewKey, string> = {
   buy: '/buy',
   history: '/withdrawals',
   banks: '/bank-accounts',
+  virtualAccounts: '/virtual-account',
   kyc: '/verification',
   settings: '/settings',
   help: '/help',
@@ -39,6 +41,7 @@ function viewFromPath(pathname: string): ViewKey {
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
   if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
+  if (clean === '/virtual-account' || clean === '/virtual-accounts' || clean === '/receiving-accounts' || clean === '/app/virtual-account') return 'virtualAccounts';
   if (clean === '/verification' || clean === '/verification-complete' || clean === '/app/verification') return 'kyc';
   if (clean === '/settings' || clean === '/app/settings') return 'settings';
   if (clean === '/help' || clean === '/support' || clean === '/app/support') return 'help';
@@ -374,7 +377,7 @@ export default function App() {
   }, [customer]);
 
   useEffect(() => {
-    const protectedViews: ViewKey[] = ['overview', 'buy', 'withdraw', 'history', 'banks', 'kyc', 'settings'];
+    const protectedViews: ViewKey[] = ['overview', 'buy', 'withdraw', 'history', 'banks', 'virtualAccounts', 'kyc', 'settings'];
     if (!hasUser && protectedViews.includes(view)) {
       setAuthTab('signup');
       resetPendingEmail();
@@ -1105,7 +1108,9 @@ export default function App() {
 
         {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} />}
 
-        {view === 'banks' && <PaymentMethodsView accounts={accounts} virtualAccountRequests={virtualAccountRequests} virtualAccounts={virtualAccounts} virtualAccountControls={paymentControls.virtualAccounts} onRequestVirtualAccount={handleVirtualAccountRequest} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
+        {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
+
+        {view === 'virtualAccounts' && <VirtualAccountsView requests={virtualAccountRequests} accounts={virtualAccounts} controls={paymentControls.virtualAccounts} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={handleVirtualAccountRequest} onRefresh={loadUserData} />}
 
         {view === 'withdraw' && (
           <OffRampWizard
@@ -1591,8 +1596,12 @@ function VerificationStep({ done, index, title, sub, action }: { done: boolean; 
   return <div className={`verification-step ${done ? 'done' : ''}`}><span>{done ? '✓' : index}</span><div><strong>{title}</strong><small>{sub}</small></div><button className={`small ${done ? 'ghost-btn' : 'primary-btn'}`} disabled>{action}</button></div>;
 }
 
-function PaymentMethodsView({ accounts, virtualAccountRequests, virtualAccounts, virtualAccountControls, onRequestVirtualAccount, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; virtualAccountRequests: VirtualAccountRequestRecord[]; virtualAccounts: VirtualAccountRecord[]; virtualAccountControls: VirtualAccountControl[]; onRequestVirtualAccount: (currency: 'usd' | 'gbp' | 'eur') => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
-  return <section className="app-page payment-methods-premium"><PageHero title="Payment methods" subtitle="Manage payout banks and request reusable virtual accounts for fiat deposits." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div><VirtualAccountsCustomerPanel requests={virtualAccountRequests} accounts={virtualAccounts} controls={virtualAccountControls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequestVirtualAccount} /></section>;
+function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
+  return <section className="app-page payment-methods-premium"><PageHero title="Payment methods" subtitle="Manage payout banks you own for crypto-to-bank withdrawals." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
+}
+
+function VirtualAccountsView({ requests, accounts, controls, loading, isVerified, canCreatePaymentActions, onRequest, onRefresh }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void; onRefresh: () => void }) {
+  return <section className="app-page payment-methods-premium"><PageHero title="Virtual accounts" subtitle="Request reusable receiving accounts for fiat deposits into Sivan." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><VirtualAccountsCustomerPanel requests={requests} accounts={accounts} controls={controls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} /></section>;
 }
 
 const vaCurrencyMeta: Record<'usd' | 'gbp' | 'eur', { title: string; rails: string; account: string; flag: string }> = {
