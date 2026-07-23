@@ -88,6 +88,22 @@ function friendlyStatus(status?: string) {
   return status ? map[status] || status.replaceAll('_', ' ') : 'Not started';
 }
 
+function kycOutcomeMessage(status?: string) {
+  if (status === 'kyc_approved') return 'Verification successful. You can now use Sivan Payment features that require KYC.';
+  if (status === 'kyc_under_review') return 'Verification submitted. Bridge is reviewing it and this page will keep refreshing.';
+  if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) return 'Verification could not be completed. Please retry securely or contact support.';
+  if (status === 'kyc_incomplete') return 'Verification needs one more step. Continue the secure Bridge flow to finish.';
+  return 'Verification status refreshed.';
+}
+
+function kycNoticeKind(status?: string) {
+  if (status === 'kyc_approved') return 'success';
+  if (status === 'kyc_under_review') return 'review';
+  if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) return 'failed';
+  if (status === 'kyc_incomplete') return 'action';
+  return 'neutral';
+}
+
 function Badge({ children, status }: { children: string; status?: string }) {
   return <span className={`badge ${statusClass(status)}`}>{children}</span>;
 }
@@ -438,7 +454,7 @@ export default function App() {
     try {
       const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
       setCustomer(refreshed);
-      if (showToast) notify('Verification status refreshed.');
+      if (showToast) notify(kycOutcomeMessage(refreshed.kycStatus), ['kyc_rejected', 'failed', 'cancelled'].includes(refreshed.kycStatus || '') ? 'error' : 'success');
       return refreshed;
     } catch (error) {
       if (showToast) notify((error as Error).message, 'error');
@@ -508,9 +524,10 @@ export default function App() {
     if (!returnedFromVerification) return;
     setView('kyc');
     if (user?.id && authToken) {
-      void loadUserData();
-      void refreshKycStatus(false);
-      notify('Welcome back. We are checking your verification status.');
+      void (async () => {
+        await loadUserData();
+        await refreshKycStatus(true);
+      })();
     } else {
       notify('Verification returned. Sign in to refresh your status.');
     }
@@ -1037,6 +1054,7 @@ export default function App() {
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
+            {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />}
             <div className={`setup-banner ${isVerified && hasBank ? 'ok' : 'warn'}`}>
               <div><h3>{isVerified && hasBank ? `Welcome back, ${firstName}.` : 'Finish setting up your account.'}</h3><p>{isVerified && hasBank ? 'Your account is ready. You can sell supported stablecoins to your bank.' : 'Complete identity verification and add a payout method to make your first transaction.'}</p></div>
               <button className="primary-btn" onClick={() => goToView(nextStepView)}>{isVerified && hasBank ? 'Sell crypto' : 'Complete setup'} →</button>
@@ -1106,7 +1124,7 @@ export default function App() {
         )}
 
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 
@@ -1558,8 +1576,36 @@ function NeedHelpCard() {
   return <article className="panel help-card"><p className="eyebrow">Need help?</p><h3>Support for withdrawals</h3><p className="muted">If you are unsure which asset or network to use, contact support before sending funds.</p><a className="secondary-btn support-link" href="mailto:support@sivantech.online">Contact support</a></article>;
 }
 
+function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onRefresh }: { customer: CustomerRecord; hasBank: boolean; onContinue: () => void; onSupport: () => void; onRefresh: () => void }) {
+  const status = customer.kycStatus;
+  const kind = kycNoticeKind(status);
+  const verificationLink = customer.hostedKycLink || customer.kycLink;
+  const isApproved = status === 'kyc_approved';
+  const isReview = status === 'kyc_under_review';
+  const isFailed = ['kyc_rejected', 'failed', 'cancelled'].includes(status || '');
+  const isIncomplete = status === 'kyc_incomplete';
+  const copy = isApproved
+    ? { icon: '✓', title: 'Verification successful', body: 'Your identity has been verified. You can now use Sivan Payment features that require KYC.', primary: hasBank ? 'Sell crypto' : 'Add bank account' }
+    : isReview
+      ? { icon: '⏳', title: 'Verification under review', body: 'Your verification has been submitted and is being reviewed by our provider. We will update this page automatically.', primary: 'Refresh status' }
+      : isFailed
+        ? { icon: '!', title: 'Verification could not be completed', body: 'Your secure verification was not approved. This can happen if a document is unclear or details do not match. You can retry or contact support.', primary: verificationLink ? 'Try verification again' : 'Refresh status' }
+        : isIncomplete
+          ? { icon: '🔔', title: 'Verification needs one more step', body: 'Your secure verification is not fully complete yet. Continue the Bridge verification flow to finish your identity check.', primary: verificationLink ? 'Continue verification' : 'Refresh status' }
+          : { icon: '◈', title: 'Verification not started', body: 'Complete identity verification to unlock payments, higher limits, and account features.', primary: 'Start verification' };
+  const primaryAction = isApproved || (!isReview && !isIncomplete && !isFailed) ? onContinue : onRefresh;
+  return <article className={`kyc-outcome-notice ${kind}`}>
+    <span className="kyc-outcome-icon">{copy.icon}</span>
+    <div className="kyc-outcome-copy"><p className="eyebrow">Verification status</p><h3>{copy.title}</h3><p>{copy.body}</p></div>
+    <div className="kyc-outcome-actions">
+      {(isIncomplete || isFailed) && verificationLink ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{copy.primary}</a> : <button className="primary-btn small" onClick={primaryAction}>{copy.primary}</button>}
+      {!isApproved && <button className="secondary-btn small" onClick={onSupport}>Contact support</button>}
+    </div>
+  </article>;
+}
 
-function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onRefresh, onSupport }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onRefresh: () => void; onSupport: () => void }) {
+
+function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
   const emailDone = hasUser;
   const identityDone = customer?.kycStatus === 'kyc_approved';
   const verificationLink = customer?.hostedKycLink || customer?.kycLink;
@@ -1571,6 +1617,7 @@ function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubm
   return (
     <section className="app-page verification-premium">
       <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." /><p className="legal-inline-note">Verification is required under our <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a> and provider compliance requirements.</p>
+      {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} />}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
           <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
