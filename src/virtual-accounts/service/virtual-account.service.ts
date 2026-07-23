@@ -139,6 +139,9 @@ export async function reprovisionVirtualAccountRequest(requestId: string, review
   if (!user) throw notFound('User');
   const customer = data.customers.find((item) => item.id === request.customerId || item.userId === request.userId);
   if (!customer?.providerCustomerId) throw badRequest('Cannot reprovision without a provider customer ID. Complete Bridge KYC first.');
+  if (env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge' && customer.provider !== 'bridge') {
+    throw badRequest('This approved request belongs to a mock sandbox customer. Create/request a virtual account from a real Bridge-KYC customer, or re-run KYC with Bridge before reprovisioning.');
+  }
 
   const runtimeControls = await listPaymentControls();
   const virtualAccountControl = runtimeControls.virtualAccounts.find((control) => control.currency === request.currency);
