@@ -1026,7 +1026,7 @@ export default function App() {
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <h2>{pageTitle}</h2>
           <div className="top-actions app-top-actions">
-            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><button className="icon-btn" aria-label="Notifications"><span className="notif-dot"></span>▢</button></>}
+            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><button className="icon-btn notification-button" aria-label="Notifications"><span className="notif-dot"></span>▢</button></>}
             {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small" onClick={() => goToPublicView('signin')}>Sign in</button>}
           </div>
         </header>
