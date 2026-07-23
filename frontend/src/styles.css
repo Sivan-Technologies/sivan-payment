@@ -1267,7 +1267,7 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   .verification-step > a.primary-btn,
   .verification-step > a.secondary-btn,
   .verification-step > a.ghost-btn {
-    grid-column: 1 / -1;
+    grid-column: 2 / -1;
     width: 100%;
     min-height: 46px;
     display: inline-flex;
@@ -1280,7 +1280,7 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   }
 
   .verification-step form {
-    grid-column: 1 / -1;
+    grid-column: 2 / -1;
     width: 100%;
     display: grid;
     grid-template-columns: 1fr;
