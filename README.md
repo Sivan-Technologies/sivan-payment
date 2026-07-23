@@ -28,13 +28,14 @@ npm install
 npm run dev
 ```
 
-By default, `.env.example` uses:
+By default, `.env.example` uses Bridge sandbox mode:
 
 ```env
-BRIDGE_MOCK_MODE=true
+BRIDGE_MOCK_MODE=false
+BRIDGE_BASE_URL=https://api.sandbox.bridge.xyz/v0
 ```
 
-This lets you run the engine without real Bridge credentials.
+New user verification should come from Bridge sandbox/production hosted KYC and TOS, not a mock approval path. For isolated local-only tests, explicitly set `BRIDGE_MOCK_MODE=true` in the test command or local throwaway `.env`.
 
 ## Seed a full mock flow
 
