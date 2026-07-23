@@ -32,10 +32,7 @@ services:
       - key: RATE_LIMIT_AUTH_VERIFY_MAX
         value: "20"
       - key: DATABASE_PROVIDER
-        value: json
-
-
-
+        value: postgres
       - key: DATABASE_URL
         sync: false
       # Add your Vercel frontend URLs here after deploying the user frontend and Admin Hub.
