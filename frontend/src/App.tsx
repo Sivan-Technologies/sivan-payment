@@ -987,7 +987,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${mobileMenuOpen ? 'menu-open' : ''}`}>
+    <div className={`app-shell ${hasUser ? 'authenticated' : 'public'} view-${view} ${mobileMenuOpen ? 'menu-open' : ''}`}>
       <button className="mobile-menu-overlay" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)} />
       <aside className={`sidebar app-sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <button className="mobile-menu-close" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)}>×</button>
