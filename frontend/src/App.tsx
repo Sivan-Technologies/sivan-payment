@@ -155,8 +155,18 @@ function normalizeFrontendApiBase(value: string) {
   }
   try {
     const parsed = new URL(clean);
-    if (parsed.hostname === 'test-sivan.sivantech.online') {
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'api.sivantech.online') {
       return `${parsed.origin}/api/payment`;
+    }
+    if (host === 'test-sivan.sivantech.online') {
+      return `${parsed.origin}/api/payment`;
+    }
+    if (host.includes('sivan-payments-api-live')) {
+      return 'https://api.sivantech.online/api/payment';
+    }
+    if (host.includes('sivan-payments-api-test')) {
+      return 'https://test-sivan.sivantech.online/api/payment';
     }
   } catch {
     // Keep local/relative values unchanged.
