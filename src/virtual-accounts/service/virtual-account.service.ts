@@ -217,11 +217,19 @@ export async function cleanupLegacyMockVirtualAccountData(input: { dryRun?: bool
   const mockAccounts = accounts.filter((account) => account.provider === 'mock' || mockCustomerIds.has(account.customerId || ''));
   const openMockAccounts = mockAccounts.filter((account) => account.status !== 'closed');
   const mockRequestIds = new Set(mockAccounts.map((account) => account.requestId).filter(Boolean) as string[]);
+  const requestIdsWithLiveBridgeAccounts = new Set(
+    accounts
+      .filter((account) => account.provider !== 'mock' && account.status !== 'closed')
+      .map((account) => account.requestId)
+      .filter(Boolean) as string[]
+  );
   const mockRequests = requests.filter((request) => {
     const metadata: any = request.metadata || {};
     return mockRequestIds.has(request.id) || metadata.requestedProvider === 'mock' || mockCustomerIds.has(request.customerId || '');
   });
-  const cancelableMockRequests = mockRequests.filter((request) => !['rejected', 'canceled'].includes(request.status));
+  const cancelableMockRequests = mockRequests.filter((request) =>
+    !['rejected', 'canceled'].includes(request.status) && !requestIdsWithLiveBridgeAccounts.has(request.id)
+  );
 
   if (!dryRun) {
     for (const account of openMockAccounts) {
@@ -272,6 +280,7 @@ export async function cleanupLegacyMockVirtualAccountData(input: { dryRun?: bool
     cancelableMockRequestsFound: cancelableMockRequests.length,
     closedAccountIds: openMockAccounts.map((account) => account.id),
     canceledRequestIds: cancelableMockRequests.map((request) => request.id),
+    preservedRequestIdsWithBridgeAccounts: Array.from(requestIdsWithLiveBridgeAccounts),
   };
 }
 
