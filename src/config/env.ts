@@ -51,7 +51,7 @@ const envSchema = z.object({
   R2_SECRET_ACCESS_KEY: z.string().optional().default(''),
   R2_BUCKET: z.string().optional().default(''),
   R2_PUBLIC_BASE_URL: z.string().optional().default(''),
-  BRIDGE_MOCK_MODE: booleanFromEnv.default(true),
+  BRIDGE_MOCK_MODE: booleanFromEnv.default(false),
   DEFAULT_OFFRAMP_PROVIDER: z.string().default('bridge'),
   BRIDGE_BASE_URL: z.string().url().default('https://api.sandbox.bridge.xyz/v0'),
   BRIDGE_API_KEY: z.string().optional().default(''),

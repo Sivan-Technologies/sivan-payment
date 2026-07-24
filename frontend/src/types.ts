@@ -1,4 +1,4 @@
-export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'history' | 'banks' | 'kyc' | 'settings' | 'help' | 'signup';
+export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup';
 
 export interface UserRecord {
   id: string;
@@ -46,6 +46,13 @@ export interface CustomerRecord {
   onboardingCostUsd?: string;
   onboardingCostType?: 'kyc' | 'kyb';
   onboardingCostRecordedAt?: string;
+  customerAction?: {
+    level: 'success' | 'review' | 'failed' | 'action_required' | 'processing' | 'neutral';
+    title: string;
+    message: string;
+    requirements?: string[];
+    canContinue?: boolean;
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -264,6 +271,7 @@ export interface VirtualAccountRecord {
   routingNumberMasked?: string;
   ibanMasked?: string;
   status: string;
+  rawProviderPayload?: unknown;
   createdAt: string;
   updatedAt: string;
 }

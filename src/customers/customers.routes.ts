@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
+import { AppError } from '../shared/errors.js';
 import { createBridgeCustomer, createBridgeCustomerSchema, getCustomerByUserId, refreshKycStatus, simulateSandboxKycApproval, startKyc, startKycSchema } from './customers.service.js';
 
 export async function customersRoutes(app: FastifyInstance) {
@@ -17,7 +18,15 @@ export async function customersRoutes(app: FastifyInstance) {
 
   app.get('/api/customers/:userId', async (request) => {
     const { userId } = request.params as { userId: string };
-    return { data: await getCustomerByUserId(userId) };
+    try {
+      return { data: await getCustomerByUserId(userId) };
+    } catch (error) {
+      // A newly created account does not have a customer/KYC record until the
+      // user starts verification. Return a customer-safe empty state instead of
+      // a noisy 404 that appears as an error in the browser console.
+      if (error instanceof AppError && error.code === 'not_found') return { data: null };
+      throw error;
+    }
   });
 
   app.get('/api/customers/:userId/kyc-status', async (request) => {

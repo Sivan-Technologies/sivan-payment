@@ -19,9 +19,14 @@ export function virtualAccountRequestsEnabled() {
 
 export async function listUserVirtualAccounts(userId: string) {
   const [requests, accounts] = await Promise.all([db.listVirtualAccountRequests(), db.listVirtualAccounts()]);
+  const hideLegacyMockAccounts = env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge';
   return {
     requests: requests.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    accounts: accounts.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    accounts: accounts
+      .filter((item) => item.userId === userId)
+      .filter((item) => item.status !== 'closed')
+      .filter((item) => !hideLegacyMockAccounts || item.provider !== 'mock')
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   };
 }
 
@@ -121,6 +126,69 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   await db.upsertVirtualAccountRecord(account);
   await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.approved', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
   return { request: approved, account };
+}
+
+export async function reprovisionVirtualAccountRequest(requestId: string, reviewer: string) {
+  const requests = await db.listVirtualAccountRequests();
+  const request = requests.find((item) => item.id === requestId);
+  if (!request) throw notFound('Virtual account request');
+  if (request.status !== 'approved') throw badRequest('Only approved virtual account requests can be reprovisioned.');
+
+  const data = await db.read();
+  const user = data.users.find((item) => item.id === request.userId);
+  if (!user) throw notFound('User');
+  const customer = data.customers.find((item) => item.id === request.customerId || item.userId === request.userId);
+  if (!customer?.providerCustomerId) throw badRequest('Cannot reprovision without a provider customer ID. Complete Bridge KYC first.');
+  if (env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge' && customer.provider !== 'bridge') {
+    throw badRequest('This approved request belongs to a mock sandbox customer. Create/request a virtual account from a real Bridge-KYC customer, or re-run KYC with Bridge before reprovisioning.');
+  }
+
+  const runtimeControls = await listPaymentControls();
+  const virtualAccountControl = runtimeControls.virtualAccounts.find((control) => control.currency === request.currency);
+  if (!virtualAccountControl?.enabled) throw forbidden(`${request.currency.toUpperCase()} virtual account provisioning is disabled.`);
+
+  const now = nowIso();
+  const existingAccounts = await db.listVirtualAccounts();
+  for (const account of existingAccounts.filter((item) => item.requestId === requestId && item.status === 'active')) {
+    await db.upsertVirtualAccountRecord({ ...account, status: 'closed', updatedAt: now, rawProviderPayload: { previous: account.rawProviderPayload, closedByReprovision: { reviewer, at: now, provider: env.VIRTUAL_ACCOUNT_PROVIDER } } });
+  }
+
+  const providerAccount = await provisionVirtualAccount({
+    requestId,
+    userId: request.userId,
+    customerId: request.customerId,
+    providerCustomerId: customer.providerCustomerId,
+    email: user.email,
+    fullName: user.fullName,
+    currency: request.currency,
+    country: request.country,
+    useCase: request.useCase,
+    metadata: request.metadata
+  });
+
+  const account: VirtualAccountRecord = {
+    id: id('va'),
+    requestId,
+    userId: request.userId,
+    customerId: request.customerId,
+    provider: providerAccount.provider,
+    providerAccountId: providerAccount.providerAccountId,
+    currency: providerAccount.currency,
+    country: providerAccount.country,
+    bankName: providerAccount.bankName,
+    accountName: providerAccount.accountName,
+    accountNumberMasked: providerAccount.accountNumberMasked,
+    routingNumberMasked: providerAccount.routingNumberMasked,
+    ibanMasked: providerAccount.ibanMasked,
+    status: providerAccount.status,
+    rawProviderPayload: providerAccount.rawProviderPayload,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await db.upsertVirtualAccountRecord(account);
+  await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.reprovisioned', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
+  return { request, account };
 }
 
 export async function rejectVirtualAccountRequest(requestId: string, reviewer: string, reason: string) {

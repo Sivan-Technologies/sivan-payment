@@ -1,6 +1,7 @@
 import { env } from '../../config/env.js';
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { idempotencyKey } from '../../shared/id.js';
+import { getVirtualAccountProviderSettings } from '../service/virtual-account-provider-settings.service.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountStatus } from '../types/virtual-account.types.js';
 import type { VirtualAccountProvider } from './virtual-account-provider.js';
 
@@ -22,18 +23,19 @@ function sourceCurrency(raw: any, fallback: VirtualAccountCurrency): VirtualAcco
   return fallback;
 }
 
-function destinationPayload() {
+async function destinationPayload() {
+  const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
   const destination: Record<string, string> = {
-    currency: env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY,
-    payment_rail: env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL,
+    currency: settings.defaultSettlementAsset,
+    payment_rail: settings.defaultSettlementNetwork,
   };
 
-  if (env.BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID) {
-    destination.bridge_wallet_id = env.BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID;
-  } else if (env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS) {
-    destination.address = env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS;
+  if (settings.bridgeWalletId) {
+    destination.bridge_wallet_id = settings.bridgeWalletId;
+  } else if (settings.destinationAddress) {
+    destination.address = settings.destinationAddress;
   } else {
-    throw new Error('Bridge virtual account destination is not configured. Set BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS or BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID.');
+    throw new Error('Bridge virtual account destination is not configured. Set Bridge wallet ID or destination address in Virtual Account Settlement controls.');
   }
 
   return destination;
@@ -82,7 +84,7 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
         source: {
           currency: input.currency,
         },
-        destination: destinationPayload(),
+        destination: await destinationPayload(),
       },
     });
 

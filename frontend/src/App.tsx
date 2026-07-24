@@ -7,6 +7,7 @@ const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
   { key: 'history', icon: '◷', label: 'Transactions' },
   { key: 'banks', icon: '▭', label: 'Payment methods' },
+  { key: 'virtualAccounts', icon: '▥', label: 'Virtual account' },
   { key: 'kyc', icon: '◈', label: 'Verification' },
   { key: 'settings', icon: '⚙', label: 'Settings' },
   { key: 'help', icon: '?', label: 'Support' }
@@ -26,6 +27,7 @@ const pathByView: Record<ViewKey, string> = {
   buy: '/buy',
   history: '/withdrawals',
   banks: '/bank-accounts',
+  virtualAccounts: '/virtual-account',
   kyc: '/verification',
   settings: '/settings',
   help: '/help',
@@ -39,6 +41,7 @@ function viewFromPath(pathname: string): ViewKey {
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
   if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
+  if (clean === '/virtual-account' || clean === '/virtual-accounts' || clean === '/receiving-accounts' || clean === '/app/virtual-account') return 'virtualAccounts';
   if (clean === '/verification' || clean === '/verification-complete' || clean === '/app/verification') return 'kyc';
   if (clean === '/settings' || clean === '/app/settings') return 'settings';
   if (clean === '/help' || clean === '/support' || clean === '/app/support') return 'help';
@@ -83,6 +86,23 @@ function friendlyStatus(status?: string) {
     active: 'Active'
   };
   return status ? map[status] || status.replaceAll('_', ' ') : 'Not started';
+}
+
+function kycOutcomeMessage(status?: string, customerAction?: CustomerRecord['customerAction']) {
+  if (customerAction?.message) return customerAction.message;
+  if (status === 'kyc_approved') return 'Verification successful. You can now use Sivan Payment features that require KYC.';
+  if (status === 'kyc_under_review') return 'Verification submitted. Bridge is reviewing it and this page will keep refreshing.';
+  if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) return 'Verification could not be completed. Please retry securely or contact support.';
+  if (status === 'kyc_incomplete') return 'Verification needs one more step. Continue the secure Bridge flow to finish.';
+  return 'Verification status refreshed.';
+}
+
+function kycNoticeKind(status?: string) {
+  if (status === 'kyc_approved') return 'success';
+  if (status === 'kyc_under_review') return 'review';
+  if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) return 'failed';
+  if (status === 'kyc_incomplete') return 'action';
+  return 'neutral';
 }
 
 function Badge({ children, status }: { children: string; status?: string }) {
@@ -337,12 +357,11 @@ export default function App() {
   }, []);
 
   const api = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-    let cleanPath = path;
-    if (apiBase.endsWith('/api/payment') && cleanPath.startsWith('/api/')) {
-      cleanPath = cleanPath.slice(4);
-    }
-    const response = await fetch(`${apiBase}${cleanPath}`, {
-
+    // Keep backend API paths intact. The Cloudflare payment gateway expects
+    // /api/payment + /api/... so it can strip /api/payment and forward /api/...
+    // to the payment service. Removing the second /api causes gateway 404s like
+    // /api/payment/system/status and /api/payment/offramp/controls.
+    const response = await fetch(`${apiBase}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -353,7 +372,8 @@ export default function App() {
     const json = await response.json().catch(() => ({}));
     if (!response.ok) {
       if (response.status === 401 && authToken) logout('Session expired. Please sign in again.');
-      throw new Error(json?.error?.message || 'Something went wrong. Please try again.');
+      const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
+      throw new Error(json?.error?.message || detailMessage || json?.message || 'Something went wrong. Please try again.');
     }
     return (json.data ?? json) as T;
   }, [apiBase, authToken, logout]);
@@ -374,7 +394,7 @@ export default function App() {
   }, [customer]);
 
   useEffect(() => {
-    const protectedViews: ViewKey[] = ['overview', 'buy', 'withdraw', 'history', 'banks', 'kyc', 'settings'];
+    const protectedViews: ViewKey[] = ['overview', 'buy', 'withdraw', 'history', 'banks', 'virtualAccounts', 'kyc', 'settings'];
     if (!hasUser && protectedViews.includes(view)) {
       setAuthTab('signup');
       resetPendingEmail();
@@ -435,7 +455,7 @@ export default function App() {
     try {
       const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
       setCustomer(refreshed);
-      if (showToast) notify('Verification status refreshed.');
+      if (showToast) notify(kycOutcomeMessage(refreshed.kycStatus, refreshed.customerAction), ['kyc_rejected', 'failed', 'cancelled'].includes(refreshed.kycStatus || '') ? 'error' : 'success');
       return refreshed;
     } catch (error) {
       if (showToast) notify((error as Error).message, 'error');
@@ -505,9 +525,10 @@ export default function App() {
     if (!returnedFromVerification) return;
     setView('kyc');
     if (user?.id && authToken) {
-      void loadUserData();
-      void refreshKycStatus(false);
-      notify('Welcome back. We are checking your verification status.');
+      void (async () => {
+        await loadUserData();
+        await refreshKycStatus(true);
+      })();
     } else {
       notify('Verification returned. Sign in to refresh your status.');
     }
@@ -640,7 +661,11 @@ export default function App() {
       const body = formBeforeLoading;
       const created = await api<CustomerRecord>('/api/customers/kyc-link', {
         method: 'POST',
-        body: JSON.stringify({ userId: user.id, type: body.type, redirectUri: body.redirectUri || undefined })
+        body: JSON.stringify({
+          userId: user.id,
+          type: body.type || 'individual',
+          redirectUri: body.redirectUri || verificationRedirectUri || `${window.location.origin}/verification-complete`
+        })
       });
       setCustomer(created);
       const nextVerificationUrl = created.hostedKycLink || created.kycLink;
@@ -980,7 +1005,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${mobileMenuOpen ? 'menu-open' : ''}`}>
+    <div className={`app-shell ${hasUser ? 'authenticated' : 'public'} ${mobileMenuOpen ? 'menu-open' : ''}`}>
       <button className="mobile-menu-overlay" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)} />
       <aside className={`sidebar app-sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <button className="mobile-menu-close" aria-label="Close menu" onClick={() => setMobileMenuOpen(false)}>×</button>
@@ -1019,8 +1044,8 @@ export default function App() {
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <h2>{pageTitle}</h2>
           <div className="top-actions app-top-actions">
-            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><button className="icon-btn" aria-label="Notifications"><span className="notif-dot"></span>▢</button></>}
-            {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small" onClick={() => goToPublicView('signin')}>Sign in</button>}
+            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><button className="icon-btn notification-button" aria-label="Notifications"><span className="notif-dot"></span>▢</button></>}
+            {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small topbar-signin" onClick={() => goToPublicView('signin')}>Sign in</button>}
           </div>
         </header>
 
@@ -1030,6 +1055,7 @@ export default function App() {
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
+            {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />}
             <div className={`setup-banner ${isVerified && hasBank ? 'ok' : 'warn'}`}>
               <div><h3>{isVerified && hasBank ? `Welcome back, ${firstName}.` : 'Finish setting up your account.'}</h3><p>{isVerified && hasBank ? 'Your account is ready. You can sell supported stablecoins to your bank.' : 'Complete identity verification and add a payout method to make your first transaction.'}</p></div>
               <button className="primary-btn" onClick={() => goToView(nextStepView)}>{isVerified && hasBank ? 'Sell crypto' : 'Complete setup'} →</button>
@@ -1099,9 +1125,11 @@ export default function App() {
         )}
 
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
-        {view === 'banks' && <PaymentMethodsView accounts={accounts} virtualAccountRequests={virtualAccountRequests} virtualAccounts={virtualAccounts} virtualAccountControls={paymentControls.virtualAccounts} onRequestVirtualAccount={handleVirtualAccountRequest} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
+        {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
+
+        {view === 'virtualAccounts' && <VirtualAccountsView requests={virtualAccountRequests} accounts={virtualAccounts} controls={paymentControls.virtualAccounts} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={handleVirtualAccountRequest} onRefresh={loadUserData} />}
 
         {view === 'withdraw' && (
           <OffRampWizard
@@ -1549,10 +1577,40 @@ function NeedHelpCard() {
   return <article className="panel help-card"><p className="eyebrow">Need help?</p><h3>Support for withdrawals</h3><p className="muted">If you are unsure which asset or network to use, contact support before sending funds.</p><a className="secondary-btn support-link" href="mailto:support@sivantech.online">Contact support</a></article>;
 }
 
+function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onRefresh }: { customer: CustomerRecord; hasBank: boolean; onContinue: () => void; onSupport: () => void; onRefresh: () => void }) {
+  const status = customer.kycStatus;
+  const kind = kycNoticeKind(status);
+  const verificationLink = customer.hostedKycLink || customer.kycLink;
+  const isApproved = status === 'kyc_approved';
+  const isReview = status === 'kyc_under_review';
+  const isFailed = ['kyc_rejected', 'failed', 'cancelled'].includes(status || '');
+  const isIncomplete = status === 'kyc_incomplete';
+  const copy = isApproved
+    ? { icon: '✓', title: customer.customerAction?.title || 'Verification successful', body: customer.customerAction?.message || 'Your identity has been verified. You can now use Sivan Payment features that require KYC.', primary: hasBank ? 'Sell crypto' : 'Add bank account' }
+    : isReview
+      ? { icon: '⏳', title: customer.customerAction?.title || 'Verification under review', body: customer.customerAction?.message || 'Your verification has been submitted and is being reviewed by our provider. We will update this page automatically.', primary: 'Refresh status' }
+      : isFailed
+        ? { icon: '!', title: customer.customerAction?.title || 'Verification could not be completed', body: customer.customerAction?.message || 'Your secure verification was not approved. This can happen if a document is unclear or details do not match. You can retry or contact support.', primary: verificationLink ? 'Try verification again' : 'Refresh status' }
+        : isIncomplete
+          ? { icon: '🔔', title: customer.customerAction?.title || 'Verification needs one more step', body: customer.customerAction?.message || 'Your secure verification is not fully complete yet. Continue the Bridge verification flow to finish your identity check.', primary: verificationLink ? 'Continue verification' : 'Refresh status' }
+          : { icon: '◈', title: customer.customerAction?.title || 'Verification not started', body: customer.customerAction?.message || 'Complete identity verification to unlock payments, higher limits, and account features.', primary: 'Start verification' };
+  const primaryAction = isApproved || (!isReview && !isIncomplete && !isFailed) ? onContinue : onRefresh;
+  return <article className={`kyc-outcome-notice ${kind}`}>
+    <span className="kyc-outcome-icon">{copy.icon}</span>
+    <div className="kyc-outcome-copy"><p className="eyebrow">Verification status</p><h3>{copy.title}</h3><p>{copy.body}</p>{Boolean(customer.customerAction?.requirements?.length) && <small>Needed: {customer.customerAction?.requirements?.join(', ')}</small>}</div>
+    <div className="kyc-outcome-actions">
+      {(isIncomplete || isFailed) && verificationLink ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{copy.primary}</a> : <button className="primary-btn small" onClick={primaryAction}>{copy.primary}</button>}
+      {!isApproved && <button className="secondary-btn small" onClick={onSupport}>Contact support</button>}
+    </div>
+  </article>;
+}
 
-function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onRefresh, onSupport }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onRefresh: () => void; onSupport: () => void }) {
+
+function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
   const emailDone = hasUser;
   const identityDone = customer?.kycStatus === 'kyc_approved';
+  const verificationLink = customer?.hostedKycLink || customer?.kycLink;
+  const canOpenExistingVerification = Boolean(verificationLink && customer?.id && !identityDone && !kycFailed);
   const started = Boolean(customer?.id);
   const bankDone = false;
   const steps = [emailDone, false, identityDone, customer?.tosStatus === 'approved', bankDone];
@@ -1560,6 +1618,7 @@ function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubm
   return (
     <section className="app-page verification-premium">
       <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." /><p className="legal-inline-note">Verification is required under our <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a> and provider compliance requirements.</p>
+      {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} />}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
           <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
@@ -1568,7 +1627,7 @@ function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubm
           <div className="verification-steps-list">
             <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Your email is verified" action="Completed" />
             <VerificationStep done={false} index={2} title="Phone number" sub="Required for transaction notifications" action="Continue" />
-            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '3'}</span><div><strong>Identity verification</strong><small>Government-issued ID + selfie. Takes ~3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : <form onSubmit={onSubmit} key={customer?.id || 'new-verification'}><select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{customerTypes.map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — unavailable' : ''}</option>)}</select><input name="redirectUri" type="hidden" value={verificationRedirectUri} /><button className="primary-btn small" disabled={!canSubmitKyc}>{kycActionLabel}</button></form>}</div>
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '3'}</span><div><strong>Identity verification</strong><small>Government-issued ID + selfie. Takes ~3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : <form onSubmit={onSubmit} key={customer?.id || 'new-verification'}><select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{customerTypes.map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — unavailable' : ''}</option>)}</select><input name="redirectUri" type="hidden" value={verificationRedirectUri} /><button className="primary-btn small" disabled={!canSubmitKyc}>{kycActionLabel}</button></form>}</div>
             <VerificationStep done={customer?.tosStatus === 'approved'} index={4} title="Terms acceptance" sub="Accept provider terms if required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />
             <VerificationStep done={false} index={5} title="Add a bank account" sub="Required before first payout" action="Continue" />
           </div>
@@ -1587,8 +1646,12 @@ function VerificationStep({ done, index, title, sub, action }: { done: boolean; 
   return <div className={`verification-step ${done ? 'done' : ''}`}><span>{done ? '✓' : index}</span><div><strong>{title}</strong><small>{sub}</small></div><button className={`small ${done ? 'ghost-btn' : 'primary-btn'}`} disabled>{action}</button></div>;
 }
 
-function PaymentMethodsView({ accounts, virtualAccountRequests, virtualAccounts, virtualAccountControls, onRequestVirtualAccount, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; virtualAccountRequests: VirtualAccountRequestRecord[]; virtualAccounts: VirtualAccountRecord[]; virtualAccountControls: VirtualAccountControl[]; onRequestVirtualAccount: (currency: 'usd' | 'gbp' | 'eur') => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
-  return <section className="app-page payment-methods-premium"><PageHero title="Payment methods" subtitle="Manage payout banks and request reusable virtual accounts for fiat deposits." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div><VirtualAccountsCustomerPanel requests={virtualAccountRequests} accounts={virtualAccounts} controls={virtualAccountControls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequestVirtualAccount} /></section>;
+function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
+  return <section className="app-page payment-methods-premium"><PageHero title="Payment methods" subtitle="Manage payout banks you own for crypto-to-bank withdrawals." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
+}
+
+function VirtualAccountsView({ requests, accounts, controls, loading, isVerified, canCreatePaymentActions, onRequest, onRefresh }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void; onRefresh: () => void }) {
+  return <section className="app-page payment-methods-premium"><PageHero title="Virtual accounts" subtitle="Request reusable receiving accounts for fiat deposits into Sivan." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><VirtualAccountsCustomerPanel requests={requests} accounts={accounts} controls={controls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} /></section>;
 }
 
 const vaCurrencyMeta: Record<'usd' | 'gbp' | 'eur', { title: string; rails: string; account: string; flag: string }> = {
@@ -1600,7 +1663,22 @@ const vaCurrencyMeta: Record<'usd' | 'gbp' | 'eur', { title: string; rails: stri
 function VirtualAccountsCustomerPanel({ requests, accounts, controls, loading, isVerified, canCreatePaymentActions, onRequest }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void }) {
   const currencies: Array<'usd' | 'gbp' | 'eur'> = ['usd', 'gbp', 'eur'];
   const enabledControls = controls.filter((control) => control.enabled);
-  return <article className="virtual-bank-panel"><div className="virtual-bank-head"><div><p className="eyebrow">Virtual Accounts</p><h3>Request virtual bank accounts</h3><p className="muted">After approval, Sivan shows customer-safe bank details only. Provider internals, destination wallets, and economics stay hidden.</p></div><Badge status={enabledControls.length ? 'active' : 'pending'}>{enabledControls.length ? `${enabledControls.length} enabled` : 'Disabled'}</Badge></div><div className="virtual-bank-grid">{currencies.map((currency) => <VirtualAccountCurrencyCard key={currency} currency={currency} request={requests.find((item) => item.currency === currency && !['rejected', 'canceled'].includes(item.status))} account={accounts.find((item) => item.currency === currency)} control={controls.find((item) => item.currency === currency)} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} />)}</div></article>;
+  return <article className="virtual-bank-panel"><div className="virtual-bank-head"><div><p className="eyebrow">Virtual Accounts</p><h3>Request virtual bank accounts</h3><p className="muted">After approval, Sivan shows customer-safe bank details only. Provider internals, destination wallets, and economics stay hidden.</p></div><Badge status={enabledControls.length ? 'active' : 'pending'}>{enabledControls.length ? `${enabledControls.length} enabled` : 'Disabled'}</Badge></div><div className="virtual-bank-grid">{currencies.map((currency) => <VirtualAccountCurrencyCard key={currency} currency={currency} request={requests.find((item) => item.currency === currency && !['rejected', 'canceled'].includes(item.status))} account={accounts.find((item) => item.currency === currency && item.status !== 'closed' && item.provider !== 'mock')} control={controls.find((item) => item.currency === currency)} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} />)}</div></article>;
+}
+
+function virtualAccountInstructions(account?: VirtualAccountRecord) {
+  const raw = account?.rawProviderPayload as any;
+  const instructions = raw?.source_deposit_instructions ?? raw?.sourceDepositInstructions ?? raw?.source ?? {};
+  return {
+    bankName: instructions.bank_name || account?.bankName,
+    accountName: instructions.bank_beneficiary_name || instructions.account_name || instructions.beneficiary_name || account?.accountName,
+    accountNumber: instructions.bank_account_number || instructions.account_number || instructions.clabe || instructions.account?.account_number || account?.accountNumberMasked,
+    routingNumber: instructions.bank_routing_number || instructions.routing_number || instructions.sort_code || account?.routingNumberMasked,
+    iban: instructions.iban || instructions.iban_number || account?.ibanMasked,
+    bic: instructions.bic,
+    bankAddress: [instructions.bank_address, instructions.bank_city, instructions.bank_state, instructions.bank_country].filter(Boolean).join(', '),
+    paymentRails: Array.isArray(instructions.payment_rails) ? instructions.payment_rails.join(', ') : undefined,
+  };
 }
 
 function VirtualAccountCurrencyCard({ currency, request, account, control, loading, isVerified, canCreatePaymentActions, onRequest }: { currency: 'usd' | 'gbp' | 'eur'; request?: VirtualAccountRequestRecord; account?: VirtualAccountRecord; control?: VirtualAccountControl; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void }) {
@@ -1608,7 +1686,8 @@ function VirtualAccountCurrencyCard({ currency, request, account, control, loadi
   const enabled = Boolean(control?.enabled);
   const status = account?.status || request?.status || (enabled ? 'available' : 'disabled');
   const disabledReason = !enabled ? 'Not available yet' : !isVerified ? 'Complete verification first' : !canCreatePaymentActions ? 'Temporarily unavailable' : '';
-  return <section className={`virtual-bank-card ${account ? 'active' : request ? 'pending' : ''}`}><div className="vb-card-top"><span>{meta.flag}</span><div><strong>{meta.title}</strong><small>{meta.rails} · {meta.account}</small></div></div><Badge status={status}>{friendlyStatus(status)}</Badge>{account ? <div className="vb-details"><Kv label="Bank" value={account.bankName || 'Partner bank'} /><Kv label="Account name" value={account.accountName || 'Sivan account'} />{account.ibanMasked ? <Kv label="IBAN" value={account.ibanMasked} /> : <><Kv label="Account" value={account.accountNumberMasked || 'Assigned'} /><Kv label="Routing" value={account.routingNumberMasked || meta.rails} /></>}<Kv label="Status" value={friendlyStatus(account.status)} /></div> : request ? <div className="vb-pending"><strong>{request.status === 'requested' ? 'Request received' : friendlyStatus(request.status)}</strong><small>Submitted {new Date(request.createdAt).toLocaleString()}. Sivan operations will review and approve before account details appear here.</small>{request.rejectionReason && <small className="danger-text">{request.rejectionReason}</small>}</div> : <div className="vb-empty"><p>Request a reusable {currency.toUpperCase()} virtual account for fiat deposits.</p><button className="primary-btn small" disabled={loading || Boolean(disabledReason)} onClick={() => onRequest(currency)}>{disabledReason || `Request ${currency.toUpperCase()} account`}</button></div>}</section>;
+  const instructions = virtualAccountInstructions(account);
+  return <section className={`virtual-bank-card ${account ? 'active' : request ? 'pending' : ''}`}><div className="vb-card-top"><span>{meta.flag}</span><div><strong>{meta.title}</strong><small>{meta.rails} · {meta.account}</small></div></div><Badge status={status}>{friendlyStatus(status)}</Badge>{account ? <div className="vb-details"><Kv label="Bank" value={instructions.bankName || 'Partner bank'} /><Kv label="Account name" value={instructions.accountName || 'Sivan account'} />{instructions.iban ? <><Kv label="IBAN" value={instructions.iban} />{instructions.bic && <Kv label="BIC / SWIFT" value={instructions.bic} />}</> : <><Kv label="Account" value={instructions.accountNumber || 'Assigned'} /><Kv label="Routing" value={instructions.routingNumber || meta.rails} /></>}{instructions.paymentRails && <Kv label="Rails" value={instructions.paymentRails} />}{instructions.bankAddress && <Kv label="Bank address" value={instructions.bankAddress} />}<Kv label="Provider" value={account.provider === 'mock' ? 'Sandbox mock' : account.provider} /><Kv label="Status" value={friendlyStatus(account.status)} /></div> : request ? <div className="vb-pending"><strong>{request.status === 'requested' ? 'Request received' : friendlyStatus(request.status)}</strong><small>Submitted {new Date(request.createdAt).toLocaleString()}. Sivan operations will review and approve before account details appear here.</small>{request.rejectionReason && <small className="danger-text">{request.rejectionReason}</small>}</div> : <div className="vb-empty"><p>Request a reusable {currency.toUpperCase()} virtual account for fiat deposits.</p><button className="primary-btn small" disabled={loading || Boolean(disabledReason)} onClick={() => onRequest(currency)}>{disabledReason || `Request ${currency.toUpperCase()} account`}</button></div>}</section>;
 }
 
 type CustomerTransactionRow = {
