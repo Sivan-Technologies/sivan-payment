@@ -8,6 +8,7 @@ import { getVirtualAccountCurrencyConfig } from '../config/currency-config.js';
 import { getVirtualAccountProvider } from '../provider/provider-registry.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountRecord, VirtualAccountRequestRecord } from '../types/virtual-account.types.js';
 import { checkVirtualAccountEligibility } from './virtual-account-eligibility.service.js';
+import { getVirtualAccountProviderSettings } from './virtual-account-provider-settings.service.js';
 
 export function virtualAccountsEnabled() {
   return env.VIRTUAL_ACCOUNTS_ENABLED;
@@ -17,9 +18,15 @@ export function virtualAccountRequestsEnabled() {
   return env.VIRTUAL_ACCOUNT_REQUESTS_ENABLED;
 }
 
+async function activeVirtualAccountProviderName() {
+  const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
+  return settings.enabled ? settings.provider : env.VIRTUAL_ACCOUNT_PROVIDER;
+}
+
 export async function listUserVirtualAccounts(userId: string) {
   const [requests, accounts] = await Promise.all([db.listVirtualAccountRequests(), db.listVirtualAccounts()]);
-  const hideLegacyMockAccounts = env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge';
+  const activeProvider = await activeVirtualAccountProviderName();
+  const hideLegacyMockAccounts = activeProvider === 'bridge';
   return {
     requests: requests.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     accounts: accounts
@@ -41,6 +48,7 @@ export async function requestVirtualAccount(input: { userId: string; currency: V
   if (!eligibility.eligible) throw forbidden('Virtual account request is not eligible yet.', { reasons: eligibility.reasons });
 
   const now = nowIso();
+  const activeProvider = await activeVirtualAccountProviderName();
   const record: VirtualAccountRequestRecord = {
     id: id('vareq'),
     userId: input.userId,
@@ -49,7 +57,7 @@ export async function requestVirtualAccount(input: { userId: string; currency: V
     country: input.country ?? currencyConfig.country,
     useCase: input.useCase,
     status: 'requested',
-    metadata: { accountType: currencyConfig.accountType, rails: currencyConfig.rails, requestedProvider: env.VIRTUAL_ACCOUNT_PROVIDER },
+    metadata: { accountType: currencyConfig.accountType, rails: currencyConfig.rails, requestedProvider: activeProvider },
     createdAt: now,
     updatedAt: now,
   };
@@ -81,7 +89,8 @@ export async function provisionVirtualAccount(input: CreateVirtualAccountInput):
   // redeploy just to turn a currency on/off. Provider-specific safety remains in
   // the provider adapter (for example BRIDGE_VIRTUAL_ACCOUNTS_ENABLED must still
   // be true before the Bridge adapter can create a real provider account).
-  const provider = getVirtualAccountProvider(env.VIRTUAL_ACCOUNT_PROVIDER);
+  const providerName = await activeVirtualAccountProviderName();
+  const provider = getVirtualAccountProvider(providerName);
   return provider.createVirtualAccount(input);
 }
 
@@ -139,7 +148,8 @@ export async function reprovisionVirtualAccountRequest(requestId: string, review
   if (!user) throw notFound('User');
   const customer = data.customers.find((item) => item.id === request.customerId || item.userId === request.userId);
   if (!customer?.providerCustomerId) throw badRequest('Cannot reprovision without a provider customer ID. Complete Bridge KYC first.');
-  if (env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge' && customer.provider !== 'bridge') {
+  const activeProvider = await activeVirtualAccountProviderName();
+  if (activeProvider === 'bridge' && customer.provider !== 'bridge') {
     throw badRequest('This approved request belongs to a mock sandbox customer. Create/request a virtual account from a real Bridge-KYC customer, or re-run KYC with Bridge before reprovisioning.');
   }
 
@@ -150,7 +160,7 @@ export async function reprovisionVirtualAccountRequest(requestId: string, review
   const now = nowIso();
   const existingAccounts = await db.listVirtualAccounts();
   for (const account of existingAccounts.filter((item) => item.requestId === requestId && item.status === 'active')) {
-    await db.upsertVirtualAccountRecord({ ...account, status: 'closed', updatedAt: now, rawProviderPayload: { previous: account.rawProviderPayload, closedByReprovision: { reviewer, at: now, provider: env.VIRTUAL_ACCOUNT_PROVIDER } } });
+    await db.upsertVirtualAccountRecord({ ...account, status: 'closed', updatedAt: now, rawProviderPayload: { previous: account.rawProviderPayload, closedByReprovision: { reviewer, at: now, provider: activeProvider } } });
   }
 
   const providerAccount = await provisionVirtualAccount({
