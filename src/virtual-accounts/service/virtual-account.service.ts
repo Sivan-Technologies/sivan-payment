@@ -112,7 +112,11 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   await db.upsertVirtualAccountRequestRecord(approved);
 
   const customer = data.customers.find((item) => item.id === request.customerId || item.userId === request.userId);
-  const providerAccount = await provisionVirtualAccount({ requestId, userId: request.userId, customerId: request.customerId, providerCustomerId: customer?.providerCustomerId, email: user.email, fullName: user.fullName, currency: request.currency, country: request.country, useCase: request.useCase, metadata: request.metadata });
+  if (!customer?.providerCustomerId) throw badRequest('Cannot provision without a provider customer ID. Complete Bridge KYC first.');
+  if (env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge' && customer.provider !== 'bridge') {
+    throw badRequest('This request belongs to a legacy/mock customer. Import or complete a real Bridge customer before approving virtual account provisioning.');
+  }
+  const providerAccount = await provisionVirtualAccount({ requestId, userId: request.userId, customerId: request.customerId, providerCustomerId: customer.providerCustomerId, email: user.email, fullName: user.fullName, currency: request.currency, country: request.country, useCase: request.useCase, metadata: request.metadata });
   const account: VirtualAccountRecord = {
     id: id('va'),
     requestId,
@@ -199,6 +203,75 @@ export async function reprovisionVirtualAccountRequest(requestId: string, review
   await db.upsertVirtualAccountRecord(account);
   await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.reprovisioned', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
   return { request, account };
+}
+
+
+export async function cleanupLegacyMockVirtualAccountData(input: { dryRun?: boolean; canceledBy?: string; reason?: string } = {}) {
+  const now = nowIso();
+  const dryRun = input.dryRun !== false;
+  const canceledBy = input.canceledBy || 'admin_api_key';
+  const reason = input.reason || 'Archive legacy mock virtual account data before Bridge-only provisioning';
+  const [accounts, requests, data] = await Promise.all([db.listVirtualAccounts(), db.listVirtualAccountRequests(), db.read()]);
+  const mockCustomerIds = new Set((data.customers ?? []).filter((customer: any) => customer.provider === 'mock').map((customer: any) => customer.id));
+  const mockAccounts = accounts.filter((account) => account.provider === 'mock' || mockCustomerIds.has(account.customerId || ''));
+  const openMockAccounts = mockAccounts.filter((account) => account.status !== 'closed');
+  const mockRequestIds = new Set(mockAccounts.map((account) => account.requestId).filter(Boolean) as string[]);
+  const mockRequests = requests.filter((request) => {
+    const metadata: any = request.metadata || {};
+    return mockRequestIds.has(request.id) || metadata.requestedProvider === 'mock' || mockCustomerIds.has(request.customerId || '');
+  });
+  const cancelableMockRequests = mockRequests.filter((request) => !['rejected', 'canceled'].includes(request.status));
+
+  if (!dryRun) {
+    for (const account of openMockAccounts) {
+      await db.upsertVirtualAccountRecord({
+        ...account,
+        status: 'closed',
+        updatedAt: now,
+        rawProviderPayload: {
+          previous: account.rawProviderPayload,
+          legacyMockCleanup: { closedAt: now, closedBy: canceledBy, reason }
+        }
+      });
+    }
+    for (const request of cancelableMockRequests) {
+      await db.upsertVirtualAccountRequestRecord({
+        ...request,
+        status: 'canceled',
+        reviewedBy: canceledBy,
+        reviewedAt: now,
+        rejectionReason: reason,
+        updatedAt: now,
+        metadata: { ...(request.metadata as any || {}), legacyMockCleanup: { canceledAt: now, canceledBy, reason } }
+      });
+    }
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: canceledBy,
+      action: 'virtual_account.legacy_mock_cleanup',
+      resourceType: 'virtual_account',
+      resourceId: 'legacy_mock_data',
+      severity: 'warning',
+      metadata: {
+        reason,
+        closedAccountIds: openMockAccounts.map((account) => account.id),
+        canceledRequestIds: cancelableMockRequests.map((request) => request.id),
+        mockCustomerIds: Array.from(mockCustomerIds)
+      }
+    });
+  }
+
+  return {
+    dryRun,
+    reason,
+    mockCustomers: Array.from(mockCustomerIds),
+    mockAccountsFound: mockAccounts.length,
+    openMockAccountsFound: openMockAccounts.length,
+    mockRequestsFound: mockRequests.length,
+    cancelableMockRequestsFound: cancelableMockRequests.length,
+    closedAccountIds: openMockAccounts.map((account) => account.id),
+    canceledRequestIds: cancelableMockRequests.map((request) => request.id),
+  };
 }
 
 export async function rejectVirtualAccountRequest(requestId: string, reviewer: string, reason: string) {

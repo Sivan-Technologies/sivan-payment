@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../../shared/validation.js';
 import { forbidden } from '../../shared/errors.js';
-import { approveVirtualAccountRequest, listUserVirtualAccounts, listVirtualAccountEvents, listVirtualAccountRequests, listVirtualAccounts, listVirtualAccountTransactions, rejectVirtualAccountRequest, reprovisionVirtualAccountRequest, requestVirtualAccount } from '../service/virtual-account.service.js';
+import { approveVirtualAccountRequest, cleanupLegacyMockVirtualAccountData, listUserVirtualAccounts, listVirtualAccountEvents, listVirtualAccountRequests, listVirtualAccounts, listVirtualAccountTransactions, rejectVirtualAccountRequest, reprovisionVirtualAccountRequest, requestVirtualAccount } from '../service/virtual-account.service.js';
 import { getVirtualAccountProviderSettings, updateVirtualAccountProviderSettings, virtualAccountProviderSettingsSchema } from '../service/virtual-account-provider-settings.service.js';
 
 const requestSchema = z.object({
@@ -13,6 +13,11 @@ const requestSchema = z.object({
 
 const rejectSchema = z.object({
   reason: z.string().min(3).max(500),
+});
+
+const cleanupMockSchema = z.object({
+  dryRun: z.boolean().default(true),
+  reason: z.string().min(5).max(500).optional(),
 });
 
 function actor(request: any) {
@@ -47,6 +52,11 @@ export async function virtualAccountsRoutes(app: FastifyInstance) {
   app.get('/api/admin/virtual-account-events', async () => ({ data: await listVirtualAccountEvents() }));
 
   app.get('/api/admin/virtual-account-transactions', async () => ({ data: await listVirtualAccountTransactions() }));
+
+  app.post('/api/admin/virtual-accounts/cleanup-mock', async (request) => {
+    const body = parseBody(cleanupMockSchema, request.body ?? {});
+    return { data: await cleanupLegacyMockVirtualAccountData({ ...body, canceledBy: actor(request) }) };
+  });
 
   app.post('/api/admin/virtual-account-requests/:requestId/approve', async (request) => {
     const { requestId } = request.params as { requestId: string };

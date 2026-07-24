@@ -1,3 +1,4 @@
+import { env } from '../../config/env.js';
 import { db } from '../../database/json-database.js';
 import type { VirtualAccountCurrency } from '../types/virtual-account.types.js';
 
@@ -18,6 +19,9 @@ export async function checkVirtualAccountEligibility(userId: string, currency: V
   const customer = data.customers.find((item) => item.userId === userId);
   if (!customer) reasons.push('Payment customer/KYC profile is required.');
   if (customer && customer.kycStatus !== 'kyc_approved') reasons.push('KYC must be approved before requesting a virtual account.');
+  if (customer && env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge' && customer.provider !== 'bridge') {
+    reasons.push('A real Bridge verification profile is required before requesting a virtual account.');
+  }
 
   const openRisk = (data.supportTickets ?? []).some((ticket) => ticket.userId === userId && ticket.priority === 'urgent' && !['resolved', 'closed'].includes(ticket.status));
   if (openRisk) reasons.push('Resolve urgent support/risk tickets before requesting a virtual account.');
