@@ -123,7 +123,7 @@ export async function buildApp() {
   app.addHook('preHandler', async (request, reply) => {
     if (!request.url.startsWith('/api/admin')) return;
     if (!env.ADMIN_API_KEY) return;
-    const providedKey = request.headers['x-admin-api-key'];
+    const providedKey = request.headers['x-admin-api-key'] || request.headers['x-admin-key'];
     const adminKey = Array.isArray(providedKey) ? providedKey[0] : providedKey;
     if (adminKey !== env.ADMIN_API_KEY) {
       return reply.code(401).send({ error: { code: 'admin_auth_required', message: 'Admin API key is required' } });
