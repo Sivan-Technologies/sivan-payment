@@ -6,7 +6,9 @@ import './styles.css';
 
 const sentryEnvironment = import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.VITE_APP_ENV || 'development';
 const sentryExplicitlyEnabled = import.meta.env.VITE_ENABLE_SENTRY === 'true';
-const shouldEnableSentry = Boolean(import.meta.env.VITE_SENTRY_DSN)
+const sentryExplicitlyDisabled = import.meta.env.VITE_ENABLE_SENTRY === 'false' || import.meta.env.VITE_DISABLE_SENTRY === 'true';
+const shouldEnableSentry = !sentryExplicitlyDisabled
+  && Boolean(import.meta.env.VITE_SENTRY_DSN)
   && (sentryExplicitlyEnabled || !['test', 'local', 'development'].includes(sentryEnvironment));
 
 if (shouldEnableSentry) {

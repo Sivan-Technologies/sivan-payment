@@ -123,6 +123,19 @@ function shortRef(value?: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isRetryableNetworkError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error || '').toLowerCase();
+  return message.includes('failed to fetch') || message.includes('network') || message.includes('abort') || message.includes('load failed');
+}
+
+function isRetryableHttpStatus(status: number) {
+  return [408, 425, 429, 500, 502, 503, 504, 520, 522, 523, 524, 530].includes(status);
+}
+
 const fallbackCustomerTypes = [
   { customerType: 'individual' as const, enabled: true, label: 'Individual', updatedAt: new Date().toISOString() },
   { customerType: 'business' as const, enabled: false, label: 'Business', updatedAt: new Date().toISOString() }
@@ -371,21 +384,48 @@ export default function App() {
     // /api/payment + /api/... so it can strip /api/payment and forward /api/...
     // to the payment service. Removing the second /api causes gateway 404s like
     // /api/payment/system/status and /api/payment/offramp/controls.
-    const response = await fetch(`${apiBase}${path}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-        ...(options.headers || {})
+    const method = (options.method || 'GET').toUpperCase();
+    const canRetry = method === 'GET' || method === 'HEAD';
+    const attempts = canRetry ? 3 : 1;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 20000);
+      try {
+        const response = await fetch(`${apiBase}${path}`, {
+          ...options,
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+            ...(options.headers || {})
+          }
+        });
+        window.clearTimeout(timeout);
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (canRetry && isRetryableHttpStatus(response.status) && attempt < attempts) {
+            await sleep(500 * attempt);
+            continue;
+          }
+          if (response.status === 401 && authToken) logout('Session expired. Please sign in again.');
+          const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
+          throw new Error(json?.error?.message || detailMessage || json?.message || 'Something went wrong. Please try again.');
+        }
+        return (json.data ?? json) as T;
+      } catch (error) {
+        window.clearTimeout(timeout);
+        lastError = error;
+        if (canRetry && isRetryableNetworkError(error) && attempt < attempts) {
+          await sleep(650 * attempt);
+          continue;
+        }
+        throw error;
       }
-    });
-    const json = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 401 && authToken) logout('Session expired. Please sign in again.');
-      const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
-      throw new Error(json?.error?.message || detailMessage || json?.message || 'Something went wrong. Please try again.');
     }
-    return (json.data ?? json) as T;
+
+    throw lastError instanceof Error ? lastError : new Error('Network changed while contacting Sivan. Please retry.');
   }, [apiBase, authToken, logout]);
 
   useEffect(() => {
