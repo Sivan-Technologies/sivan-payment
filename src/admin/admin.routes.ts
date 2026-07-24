@@ -8,7 +8,7 @@ import { buildReferenceReconciliationDashboard, persistReferenceReconciliationRu
 import { getWithdrawal, syncWithdrawalDrains } from '../offramp/service/withdrawals.service.js';
 import { getOnrampOrder } from '../onramp/service/onramp-orders.service.js';
 import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
-import { forceSandboxKycApproval, refreshKycStatus } from '../customers/customers.service.js';
+import { forceSandboxKycApproval, importBridgeCustomerSchema, importExistingBridgeCustomer, refreshKycStatus } from '../customers/customers.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
 import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
@@ -200,6 +200,12 @@ export async function adminRoutes(app: FastifyInstance) {
   app.post('/api/admin/customers/:userId/kyc-status', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await refreshKycStatus(userId) };
+  });
+
+  app.post('/api/admin/customers/import-bridge-customer', async (request) => {
+    const body = parseBody(importBridgeCustomerSchema, request.body);
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || body.importedBy || 'admin_api_key';
+    return { data: await importExistingBridgeCustomer({ ...body, importedBy: actor }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.post('/api/admin/customers/:userId/sandbox/force-kyc-approval', async (request) => {

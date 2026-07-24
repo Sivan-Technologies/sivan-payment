@@ -8,6 +8,8 @@ import { id, idempotencyKey, nowIso } from '../shared/id.js';
 import { requireUser } from '../users/users.service.js';
 import { mapBridgeKycStatus } from './customer-mapping.js';
 import { requireCustomerTypeEnabled } from '../controls/payment-controls.service.js';
+import { createAuditLog } from '../audit/audit.service.js';
+import type { CustomerStatus } from '../database/types.js';
 
 const optionalUrl = z.preprocess((val) => (typeof val === 'string' && val.trim() === '' ? undefined : val), z.string().url().optional());
 
@@ -23,6 +25,16 @@ export const createBridgeCustomerSchema = z.object({
   userId: z.string().min(1),
   payload: z.record(z.string(), z.unknown())
 });
+
+export const importBridgeCustomerSchema = z.object({
+  userId: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  providerCustomerId: z.string().min(1),
+  customerType: z.enum(['individual', 'business']).optional(),
+  replaceExisting: z.boolean().default(false),
+  importedBy: z.string().min(2).default('admin_api_key'),
+  reason: z.string().min(5).max(2000)
+}).refine((value) => Boolean(value.userId || value.email), { message: 'userId or email is required' });
 
 export async function startKyc(input: z.infer<typeof startKycSchema>) {
   await requireCustomerTypeEnabled(input.type);
@@ -105,6 +117,91 @@ export async function createBridgeCustomer(input: z.infer<typeof createBridgeCus
     updatedAt: now
   };
   return db.insertCustomerRecord(customer);
+}
+
+
+export async function importExistingBridgeCustomer(input: z.infer<typeof importBridgeCustomerSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+  const data = await db.read();
+  const user = input.userId
+    ? data.users.find((item) => item.id === input.userId)
+    : data.users.find((item) => item.email.toLowerCase() === input.email!.toLowerCase());
+  if (!user) throw notFound('User');
+
+  const existing = data.customers.find((item) => item.userId === user.id);
+  const sameBridgeCustomer = existing?.provider === 'bridge' && existing.providerCustomerId === input.providerCustomerId;
+  if (existing && !sameBridgeCustomer && !input.replaceExisting) {
+    throw badRequest('User already has a customer record. Set replaceExisting=true to replace a legacy/mock or different Bridge customer record.');
+  }
+
+  const bridgeCustomer: any = await new BridgeClient().request(`/customers/${input.providerCustomerId}`);
+  const customerType = input.customerType || (bridgeCustomer?.type === 'business' ? 'business' : 'individual');
+  const now = nowIso();
+  const kycStatus = mapImportedBridgeCustomerStatus(bridgeCustomer);
+  const tosStatus = bridgeTermsApproved(bridgeCustomer) ? 'approved' as const : 'pending' as const;
+  const record = {
+    id: existing?.id || id('cus'),
+    userId: user.id,
+    provider: 'bridge',
+    providerCustomerId: input.providerCustomerId,
+    customerType,
+    kycLinkId: existing?.kycLinkId,
+    kycLink: existing?.kycLink,
+    tosLink: existing?.tosLink,
+    kycStatus,
+    tosStatus,
+    onboardingCostUsd: existing?.onboardingCostUsd || (customerType === 'business' ? toMoney(env.BRIDGE_KYB_COST_USD) : toMoney(env.BRIDGE_KYC_COST_USD)),
+    onboardingCostType: customerType === 'business' ? 'kyb' as const : 'kyc' as const,
+    onboardingCostRecordedAt: existing?.onboardingCostRecordedAt || now,
+    raw: {
+      bridgeCustomer,
+      importedFromBridge: {
+        importedAt: now,
+        importedBy: input.importedBy,
+        reason: input.reason,
+        replacedExisting: Boolean(existing && !sameBridgeCustomer),
+        previousCustomer: existing ? {
+          id: existing.id,
+          provider: existing.provider,
+          providerCustomerId: existing.providerCustomerId,
+          kycStatus: existing.kycStatus,
+          tosStatus: existing.tosStatus
+        } : null
+      }
+    },
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+
+  const saved = existing ? await db.updateCustomerRecord(record) : await db.insertCustomerRecord(record);
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: input.importedBy,
+    action: 'customer.bridge_customer_imported',
+    resourceType: 'customer',
+    resourceId: saved.id,
+    severity: existing && !sameBridgeCustomer ? 'warning' : 'info',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: {
+      userId: user.id,
+      userEmail: user.email,
+      providerCustomerId: input.providerCustomerId,
+      customerType,
+      kycStatus,
+      tosStatus,
+      replaceExisting: input.replaceExisting,
+      replacedExisting: Boolean(existing && !sameBridgeCustomer),
+      reason: input.reason
+    }
+  });
+
+  const enriched = await enrichCustomerKycAction(saved);
+  return {
+    customer: enriched,
+    bridgeCustomer: summarizeImportedBridgeCustomer(bridgeCustomer),
+    virtualAccountEligible: enriched.kycStatus === 'kyc_approved' && enriched.provider === 'bridge',
+    replacedExisting: Boolean(existing && !sameBridgeCustomer)
+  };
 }
 
 export async function getCustomerByUserId(userId: string) {
@@ -220,6 +317,45 @@ function formatHumanList(values: string[]) {
   if (uniqueValues.length <= 1) return uniqueValues[0] || 'remaining verification steps';
   if (uniqueValues.length === 2) return `${uniqueValues[0]} and ${uniqueValues[1]}`;
   return `${uniqueValues.slice(0, -1).join(', ')}, and ${uniqueValues[uniqueValues.length - 1]}`;
+}
+
+
+function mapImportedBridgeCustomerStatus(bridgeCustomer: any): CustomerStatus {
+  const status = String(bridgeCustomer?.status || '').toLowerCase();
+  if (status === 'approved' || status === 'active') return 'kyc_approved';
+  if (status === 'under_review' || status === 'reviewing') return 'kyc_under_review';
+  if (status === 'rejected') return 'kyc_rejected';
+  if (status === 'not_started') return 'kyc_not_started';
+  if (status === 'paused') return 'paused';
+  if (status === 'offboarded') return 'offboarded';
+  return mapBridgeKycStatus(status || undefined);
+}
+
+function bridgeTermsApproved(bridgeCustomer: any): boolean {
+  if (bridgeCustomer?.has_accepted_terms_of_service === true) return true;
+  const requirements = JSON.stringify(bridgeCustomer?.endorsements || []);
+  return /terms_of_service/i.test(requirements) && /complete/i.test(requirements);
+}
+
+function summarizeImportedBridgeCustomer(bridgeCustomer: any) {
+  return {
+    id: bridgeCustomer?.id,
+    status: bridgeCustomer?.status,
+    type: bridgeCustomer?.type,
+    email: bridgeCustomer?.email,
+    firstName: bridgeCustomer?.first_name,
+    lastName: bridgeCustomer?.last_name,
+    createdAt: bridgeCustomer?.created_at,
+    updatedAt: bridgeCustomer?.updated_at,
+    endorsements: (bridgeCustomer?.endorsements || []).map((endorsement: any) => ({
+      name: endorsement?.name,
+      status: endorsement?.status,
+      missingRequirements: flattenRequirements(endorsement?.requirements?.missing),
+      pendingRequirements: flattenRequirements(endorsement?.requirements?.pending),
+      completedRequirements: flattenRequirements(endorsement?.requirements?.complete),
+      additionalRequirements: flattenRequirements(endorsement?.additional_requirements)
+    }))
+  };
 }
 
 export async function simulateSandboxKycApproval(userId: string) {
