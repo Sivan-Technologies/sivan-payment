@@ -90,8 +90,11 @@ export async function provisionVirtualAccount(input: CreateVirtualAccountInput):
   // the provider adapter (for example BRIDGE_VIRTUAL_ACCOUNTS_ENABLED must still
   // be true before the Bridge adapter can create a real provider account).
   const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
-  if (!settings.enabled) throw forbidden('Virtual account provider provisioning is disabled in settlement settings.');
-  const provider = getVirtualAccountProvider(settings.provider || env.VIRTUAL_ACCOUNT_PROVIDER);
+  const providerName = settings.enabled ? settings.provider : env.VIRTUAL_ACCOUNT_PROVIDER;
+  if (!settings.enabled && providerName !== 'mock') {
+    throw forbidden('Virtual account provider provisioning is disabled in settlement settings.');
+  }
+  const provider = getVirtualAccountProvider(providerName || env.VIRTUAL_ACCOUNT_PROVIDER);
   return provider.createVirtualAccount(input);
 }
 
