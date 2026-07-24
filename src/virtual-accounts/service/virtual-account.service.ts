@@ -98,11 +98,40 @@ export async function provisionVirtualAccount(input: CreateVirtualAccountInput):
   return provider.createVirtualAccount(input);
 }
 
+async function provisionVirtualAccountOrExplain(input: CreateVirtualAccountInput, context: { requestId: string; reviewer: string; activeProvider: string }) {
+  try {
+    return await provisionVirtualAccount(input);
+  } catch (error: any) {
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: context.reviewer,
+      action: 'virtual_account.provision_failed',
+      resourceType: 'virtual_account_request',
+      resourceId: context.requestId,
+      severity: 'error',
+      metadata: {
+        provider: context.activeProvider,
+        message: error?.message || String(error),
+        code: error?.code,
+        statusCode: error?.statusCode,
+        details: error?.details,
+      }
+    });
+    throw badRequest('Bridge virtual account provisioning failed. Check provider eligibility, destination wallet settings, and Bridge virtual-account approval for this customer.', {
+      provider: context.activeProvider,
+      message: error?.message || String(error),
+      code: error?.code,
+      statusCode: error?.statusCode,
+      details: error?.details,
+    });
+  }
+}
+
 export async function approveVirtualAccountRequest(requestId: string, reviewer: string) {
   const requests = await db.listVirtualAccountRequests();
   const request = requests.find((item) => item.id === requestId);
   if (!request) throw notFound('Virtual account request');
-  if (!['requested', 'under_review'].includes(request.status)) throw badRequest('Virtual account request is not pending review.');
+  if (!['requested', 'under_review', 'approved'].includes(request.status)) throw badRequest('Virtual account request is not pending review.');
   const runtimeControls = await listPaymentControls();
   const virtualAccountControl = runtimeControls.virtualAccounts.find((control) => control.currency === request.currency);
   if (!virtualAccountControl?.enabled) throw forbidden(`${request.currency.toUpperCase()} virtual account provisioning is disabled.`);
@@ -111,16 +140,21 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   const user = data.users.find((item) => item.id === request.userId);
   if (!user) throw notFound('User');
   const now = nowIso();
+  const activeProvider = await activeVirtualAccountProviderName();
 
-  const approved: VirtualAccountRequestRecord = { ...request, status: 'approved', reviewedBy: reviewer, reviewedAt: now, updatedAt: now };
+  const existingAccounts = await db.listVirtualAccounts();
+  const existingLiveAccount = existingAccounts.find((item) => item.requestId === requestId && item.provider !== 'mock' && item.status !== 'closed');
+  if (request.status === 'approved' && existingLiveAccount) throw badRequest('Virtual account request is already approved and has a live provider account.');
+
+  const approved: VirtualAccountRequestRecord = { ...request, status: 'approved', reviewedBy: reviewer, reviewedAt: request.reviewedAt || now, updatedAt: now };
   await db.upsertVirtualAccountRequestRecord(approved);
 
   const customer = data.customers.find((item) => item.id === request.customerId || item.userId === request.userId);
   if (!customer?.providerCustomerId) throw badRequest('Cannot provision without a provider customer ID. Complete Bridge KYC first.');
-  if (env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge' && customer.provider !== 'bridge') {
+  if (activeProvider === 'bridge' && customer.provider !== 'bridge') {
     throw badRequest('This request belongs to a legacy/mock customer. Import or complete a real Bridge customer before approving virtual account provisioning.');
   }
-  const providerAccount = await provisionVirtualAccount({ requestId, userId: request.userId, customerId: request.customerId, providerCustomerId: customer.providerCustomerId, email: user.email, fullName: user.fullName, currency: request.currency, country: request.country, useCase: request.useCase, metadata: request.metadata });
+  const providerAccount = await provisionVirtualAccountOrExplain({ requestId, userId: request.userId, customerId: request.customerId, providerCustomerId: customer.providerCustomerId, email: user.email, fullName: user.fullName, currency: request.currency, country: request.country, useCase: request.useCase, metadata: request.metadata }, { requestId, reviewer, activeProvider });
   const account: VirtualAccountRecord = {
     id: id('va'),
     requestId,
@@ -171,7 +205,7 @@ export async function reprovisionVirtualAccountRequest(requestId: string, review
     await db.upsertVirtualAccountRecord({ ...account, status: 'closed', updatedAt: now, rawProviderPayload: { previous: account.rawProviderPayload, closedByReprovision: { reviewer, at: now, provider: activeProvider } } });
   }
 
-  const providerAccount = await provisionVirtualAccount({
+  const providerAccount = await provisionVirtualAccountOrExplain({
     requestId,
     userId: request.userId,
     customerId: request.customerId,
@@ -182,7 +216,7 @@ export async function reprovisionVirtualAccountRequest(requestId: string, review
     country: request.country,
     useCase: request.useCase,
     metadata: request.metadata
-  });
+  }, { requestId, reviewer, activeProvider });
 
   const account: VirtualAccountRecord = {
     id: id('va'),
