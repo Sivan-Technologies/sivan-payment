@@ -69,9 +69,10 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
   constructor(private client = new BridgeClient()) {}
 
   async createVirtualAccount(input: CreateVirtualAccountInput): Promise<ProviderVirtualAccount> {
-    if (!env.BRIDGE_VIRTUAL_ACCOUNTS_ENABLED) {
-      throw new Error('Bridge virtual accounts are disabled. Set BRIDGE_VIRTUAL_ACCOUNTS_ENABLED=true only after Bridge/compliance approval.');
-    }
+    // Runtime Admin Hub provider settings are the production control plane for
+    // Bridge virtual account provisioning. The service-level env flag is no
+    // longer a hard blocker because ops can enable/disable Bridge VA safely from
+    // Virtual Account Settlement controls without a Render redeploy.
     if (!input.providerCustomerId) {
       throw new Error('Bridge virtual account creation requires providerCustomerId from the approved Bridge customer.');
     }
