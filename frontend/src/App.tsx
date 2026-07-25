@@ -1194,7 +1194,7 @@ export default function App() {
           })}
         </nav>
 
-        {!hasUser && <PublicSidebarCta onCreate={() => goToPublicView('signup')} />}
+        {hasUser ? <SidebarSetupCard setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} onContinue={() => goToView(nextStepView)} /> : <PublicSidebarCta onCreate={() => goToPublicView('signup')} />}
 
         <div className="sidebar-footer app-sidebar-footer">
           <div className="sidebar-status"><span></span>{systemStatus.mode === 'active' ? 'All systems operational' : systemStatus.mode === 'maintenance' ? 'Maintenance mode' : 'Payments paused'}</div>
@@ -1218,7 +1218,12 @@ export default function App() {
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
-            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice onVerify={() => goToView('kyc')} />}
+            {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />}
+            <div className={`setup-banner ${isVerified && hasBank ? 'ok' : 'warn'}`}>
+              <div><h3>{isVerified && hasBank ? `Welcome back, ${firstName}.` : 'Finish setting up your account.'}</h3><p>{isVerified && hasBank ? 'Your account is ready. You can sell supported stablecoins to your bank.' : 'Complete identity verification and add a payout method to make your first transaction.'}</p></div>
+              <button className="primary-btn" onClick={() => goToView(nextStepView)}>{isVerified && hasBank ? 'Sell crypto' : 'Complete setup'} →</button>
+            </div>
+
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
               <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
@@ -1234,7 +1239,7 @@ export default function App() {
             <div className="dashboard-main-grid">
               <DashboardTransactions withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onViewAll={() => goToView('history')} />
               <div className="dashboard-side-stack">
-                <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} onContinue={() => goToView(!isVerified ? 'kyc' : !hasBank ? 'banks' : 'banks')} />
+                <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} onContinue={() => goToView(nextStepView)} />
                 <SecurityReminder onSettings={() => goToView('settings')} />
               </div>
             </div>
@@ -1384,13 +1389,11 @@ function DashboardTransactions({ withdrawals, onrampOrders, onStart, onBuy, onVi
 }
 
 function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank, user, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; user: UserRecord | null; onContinue: () => void }) {
-  const whatsappLinked = Boolean(user?.whatsappNumber || user?.whatsappVerifiedAt);
-  const buttonLabel = !isVerified ? 'Start verification →' : !hasBank ? 'Add payout bank →' : 'Manage payment methods →';
-  return <article className="dashboard-setup-panel"><div className="panel-head"><div><p className="eyebrow">Setup</p><h3>Account setup</h3></div><strong className="setup-percent-pill">{setupPercent}%</strong></div><div className="setup-list"><SetupLine done={hasUser} title="Email confirmed" sub={user?.email ? 'Signed in securely' : 'Create account'} /><SetupLine done={whatsappLinked} optional title="WhatsApp linked" sub="Optional for escrow and alerts" /><SetupLine done={isVerified} title="Identity verified" sub={isVerified ? 'Ready' : '~3 minutes'} /><SetupLine done={hasBank} title="Payout bank" sub={hasBank ? 'Bank added' : 'Add a bank to sell crypto'} /></div><div className="setup-progress"><div><span style={{ width: `${setupPercent}%` }} /></div><strong>{setupPercent}%</strong></div><button className="primary-btn" onClick={onContinue}>{buttonLabel}</button></article>;
+  return <article className="dashboard-setup-panel"><h3>Account setup</h3><div className="setup-list"><SetupLine done={hasUser} title="Email confirmed" sub={user?.email || 'Create account'} /><SetupLine done={false} title="Phone verified" sub="Required for payouts" /><SetupLine done={isVerified} title="Identity verification" sub={isVerified ? 'Verified' : '~3 minutes'} /><SetupLine done={hasBank} title="Add bank account" sub={hasBank ? 'Bank added' : 'ACH, SEPA, FPS, IBAN'} /></div><div className="setup-progress"><div><span style={{ width: `${setupPercent}%` }} /></div><strong>{setupPercent}%</strong></div><button className="primary-btn" onClick={onContinue}>Continue setup →</button></article>;
 }
 
-function SetupLine({ done, title, sub, optional = false }: { done: boolean; title: string; sub: string; optional?: boolean }) {
-  return <div className={`setup-line ${done ? 'done' : ''} ${optional ? 'optional' : ''}`}><span>{done ? '✓' : optional ? '•' : '○'}</span><div><strong>{title}</strong><small>{sub}</small></div></div>;
+function SetupLine({ done, title, sub }: { done: boolean; title: string; sub: string }) {
+  return <div className={`setup-line ${done ? 'done' : ''}`}><span>{done ? '✓' : '○'}</span><div><strong>{title}</strong><small>{sub}</small></div></div>;
 }
 
 function SecurityReminder({ onSettings }: { onSettings: () => void }) {
@@ -1783,16 +1786,7 @@ function NeedHelpCard() {
   return <article className="panel help-card"><p className="eyebrow">Need help?</p><h3>Support for withdrawals</h3><p className="muted">If you are unsure which asset or network to use, contact support before sending funds.</p><a className="secondary-btn support-link" href="mailto:support@sivantech.online">Contact support</a></article>;
 }
 
-
-function DashboardAccountNotice({ onVerify }: { onVerify: () => void }) {
-  return <article className="kyc-outcome-notice action dashboard-account-notice">
-    <span className="kyc-outcome-icon">◈</span>
-    <div className="kyc-outcome-copy"><p className="eyebrow">Account status</p><h3>Verify your account</h3><p>Complete identity verification to unlock payments.</p></div>
-    <div className="kyc-outcome-actions"><button className="primary-btn" onClick={onVerify}>Start verification</button></div>
-  </article>;
-}
-
-function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onRefresh, readyPrimaryLabel = 'Transfer & pay' }: { customer: CustomerRecord; hasBank: boolean; onContinue: () => void; onSupport: () => void; onRefresh: () => void; readyPrimaryLabel?: string }) {
+function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onRefresh }: { customer: CustomerRecord; hasBank: boolean; onContinue: () => void; onSupport: () => void; onRefresh: () => void }) {
   const status = customer.kycStatus;
   const kind = kycNoticeKind(status);
   const verificationLink = customer.hostedKycLink || customer.kycLink;
@@ -1801,14 +1795,14 @@ function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onRefresh,
   const isFailed = ['kyc_rejected', 'failed', 'cancelled'].includes(status || '');
   const isIncomplete = status === 'kyc_incomplete';
   const copy = isApproved
-    ? { icon: '✓', title: customer.customerAction?.title || (hasBank ? 'Account ready' : 'Verification complete'), body: customer.customerAction?.message || (hasBank ? 'You can buy, sell, transfer, and manage payment methods.' : 'You’re verified. Add a payout bank to start selling crypto or receiving bank payouts.'), primary: hasBank ? readyPrimaryLabel : 'Add bank account' }
+    ? { icon: '✓', title: customer.customerAction?.title || 'Verification successful', body: customer.customerAction?.message || 'Your identity has been verified. You can now use Sivan Payment features that require KYC.', primary: hasBank ? 'Sell crypto' : 'Add bank account' }
     : isReview
       ? { icon: '⏳', title: customer.customerAction?.title || 'Verification under review', body: customer.customerAction?.message || 'Your verification has been submitted and is being reviewed by our provider. We will update this page automatically.', primary: 'Refresh status' }
       : isFailed
         ? { icon: '!', title: customer.customerAction?.title || 'Verification could not be completed', body: customer.customerAction?.message || 'Your secure verification was not approved. This can happen if a document is unclear or details do not match. You can retry or contact support.', primary: verificationLink ? 'Try verification again' : 'Refresh status' }
         : isIncomplete
           ? { icon: '🔔', title: customer.customerAction?.title || 'Verification needs one more step', body: customer.customerAction?.message || 'Your secure verification is not fully complete yet. Continue the Bridge verification flow to finish your identity check.', primary: verificationLink ? 'Continue verification' : 'Refresh status' }
-          : { icon: '◈', title: customer.customerAction?.title || 'Verify your account', body: customer.customerAction?.message || 'Complete identity verification to unlock payments.', primary: 'Start verification' };
+          : { icon: '◈', title: customer.customerAction?.title || 'Verification not started', body: customer.customerAction?.message || 'Complete identity verification to unlock payments, higher limits, and account features.', primary: 'Start verification' };
   const primaryAction = isApproved || (!isReview && !isIncomplete && !isFailed) ? onContinue : onRefresh;
   return <article className={`kyc-outcome-notice ${kind}`}>
     <span className="kyc-outcome-icon">{copy.icon}</span>
@@ -1833,7 +1827,7 @@ function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubm
   return (
     <section className="app-page verification-premium">
       <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." /><p className="legal-inline-note">Verification is required under our <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a> and provider compliance requirements.</p>
-      {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />}
+      {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} />}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
           <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
