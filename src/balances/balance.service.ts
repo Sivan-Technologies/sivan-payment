@@ -181,12 +181,12 @@ export async function listUserBalanceTransfers(userId: string) {
 
 export async function requestBalanceTransfer(userId: string, input: z.infer<typeof createBalanceTransferSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
   const controls = await getBalanceTransferControls();
-  if (!controls.transfersEnabled) throw forbidden('Transfers from balance are currently disabled.');
+  if (!controls.transfersEnabled) throw forbidden('Transfers from settled USDC balance are currently disabled.');
   if (!controls.supportedNetworks.includes(input.network)) throw forbidden(`${input.network} transfers are currently disabled.`);
   if (input.amount < controls.minimumSendAmount) throw badRequest(`Minimum transfer amount is ${controls.minimumSendAmount} ${input.asset.toUpperCase()}.`);
   const balance = await getUserBalance(userId);
   const assetBalance = balance.balances.find((item) => item.asset === input.asset);
-  if (amount(assetBalance?.available) < input.amount) throw badRequest('Insufficient available balance.');
+  if (amount(assetBalance?.available) < input.amount) throw badRequest('Insufficient settled USDC balance.');
   const now = nowIso();
   const transfer: TransferMetadata = {
     transferId: id('btx'),
@@ -200,7 +200,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     createdAt: now,
     updatedAt: now,
   };
-  await createBalanceLedgerEntry({ userId, asset: input.asset, amount: money(input.amount), kind: 'hold', status: 'held', sourceType: 'balance_transfer', sourceId: transfer.transferId, description: `Hold for transfer to ${input.network}`, network: input.network, destinationAddress: input.destinationAddress, transferId: transfer.transferId }, { actorType: 'user', actorId: userId });
+  await createBalanceLedgerEntry({ userId, asset: input.asset, amount: money(input.amount), kind: 'hold', status: 'held', sourceType: 'balance_transfer', sourceId: transfer.transferId, description: `Hold settled ${input.asset.toUpperCase()} for transfer to ${input.network}`, network: input.network, destinationAddress: input.destinationAddress, transferId: transfer.transferId }, { actorType: 'user', actorId: userId });
   await createAuditLog({ actorType: 'user', actorId: userId, action: 'balance.transfer_requested', resourceType: 'balance_transfer', resourceId: transfer.transferId, ipAddress: context.ipAddress, userAgent: context.userAgent, severity: 'warning', metadata: transfer });
   return transfer;
 }
