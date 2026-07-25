@@ -1327,45 +1327,51 @@ export default function App() {
 
 
         {view === 'signup' && (
-          <section className="form-layout">
-            <article className="panel form-panel">
-              <p className="eyebrow">Secure access</p>
-              <h3>{authTab === 'signup' ? 'Create your account' : 'Welcome back'}</h3>
-              <p className="muted">Use passwordless email access. We will send a short verification code.</p>
+          <section className="form-layout auth-premium-layout">
+            <article className="panel form-panel auth-card-premium">
+              <div className="auth-card-topline"><span>Secure access</span><em>Passwordless</em></div>
+              <h3>{pendingEmail ? 'Check your email' : authTab === 'signup' ? 'Create your Sivan account' : 'Welcome back to Sivan'}</h3>
+              <p className="muted auth-lead">{pendingEmail ? 'Enter the 6-digit code we sent. This keeps your account secure without passwords.' : authTab === 'signup' ? 'Start with secure email access, then complete verification when you are ready to move money.' : 'Sign in with a one-time code. No password to remember, no seed phrase ever requested.'}</p>
               <div className="auth-tabs">
-                <button className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); }}>Create account</button>
-                <button className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); }}>Sign in</button>
+                <button type="button" className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); }}>Create account</button>
+                <button type="button" className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); }}>Sign in</button>
               </div>
               {!pendingEmail ? (
-                <form className="form" onSubmit={handleEmailAuthStart}>
-                  <label>Email<input name="email" type="email" placeholder="you@example.com" required /></label>
-                  {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Ada Lovelace" required /></label>}
-                  {authTab === 'signup' && <label className="legal-checkbox"><input name="legalAccepted" type="checkbox" required /><span>I agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</span></label>}
-                  <button className="primary-btn" disabled={loading}>{loading ? 'Sending...' : authTab === 'signup' ? 'Send verification code' : 'Send login code'}</button>
+                <form className="form auth-form-premium" onSubmit={handleEmailAuthStart}>
+                  <label>Email address<input name="email" type="email" placeholder="you@example.com" autoComplete="email" required /></label>
+                  {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Olaleye Micheal Samson" autoComplete="name" required /></label>}
+                  {authTab === 'signup' && <label className="legal-checkbox auth-legal-card"><input name="legalAccepted" type="checkbox" required /><span>I agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</span></label>}
+                  <button className="primary-btn auth-submit" disabled={loading}>{loading ? 'Sending secure code…' : authTab === 'signup' ? 'Send verification code →' : 'Send login code →'}</button>
                 </form>
               ) : (
-                <form className="form" onSubmit={handleEmailAuthVerify}>
-                  <div className="email-confirmation">
+                <form className="form auth-form-premium" onSubmit={handleEmailAuthVerify}>
+                  <div className="email-confirmation auth-email-confirmation">
                     <span>Code sent to</span>
                     <strong>{pendingEmail}</strong>
                     <button type="button" onClick={resetPendingEmail}>Change email</button>
                   </div>
                   <OtpInput value={otpCode} onChange={setOtpCode} />
                   {devCode && <div className="dev-code">Test code: <strong>{devCode}</strong></div>}
-                  <button className="primary-btn" disabled={loading || otpCode.length < 6}>{loading ? 'Checking...' : 'Continue'}</button>
+                  <button className="primary-btn auth-submit" disabled={loading || otpCode.length < 6}>{loading ? 'Checking secure code…' : 'Continue to dashboard →'}</button>
                   <button type="button" className="ghost-btn" disabled={loading || resendSeconds > 0} onClick={handleResendCode}>{resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : 'Resend code'}</button>
                 </form>
               )}
+              <div className="auth-trust-row"><span>Encrypted session</span><span>No password storage</span><span>Sivan never asks for private keys</span></div>
             </article>
-            <article className="premium-card">
+            <article className="premium-card auth-showcase-card">
               <span className="orb" />
-              <h3>Fast access, no passwords.</h3>
-              <p>Sign in securely with your email today. WhatsApp sign-in will be added for existing escrow users later.</p>
-              <ul><li>Passwordless login</li><li>Auto logout after inactivity</li><li>Web and WhatsApp-ready identity</li></ul>
+              <div className="auth-showcase-badge">Sivan Payments</div>
+              <h3>Move money with a safer, cleaner payment account.</h3>
+              <p>Buy stablecoins, sell to bank, receive virtual-account deposits, and use Transfer & Pay — all after secure verification.</p>
+              <div className="auth-flow-preview">
+                <div><span>1</span><strong>Email access</strong><small>One-time secure code</small></div>
+                <div><span>2</span><strong>Verify once</strong><small>Unlock payments</small></div>
+                <div><span>3</span><strong>Transfer & pay</strong><small>Use settled USDC</small></div>
+              </div>
+              <ul className="auth-benefit-list"><li>✓ Passwordless login</li><li>✓ Customer-safe provider routing</li><li>✓ Support-ready transaction timelines</li></ul>
             </article>
           </section>
         )}
-
 
         {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
