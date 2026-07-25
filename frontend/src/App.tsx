@@ -267,18 +267,28 @@ type UserNotification = {
   view?: ViewKey;
 };
 
+type UserTwoFactorStatus = {
+  userId: string;
+  enabled: boolean;
+  enabledAt?: string;
+  lastVerifiedAt?: string;
+  recoveryCodesRemaining?: number;
+};
+
 
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
   const apiBase = useMemo(() => normalizeFrontendApiBase(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'), []);
   const appEnv = import.meta.env.VITE_APP_ENV || 'local';
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => readStorage<string[]>('sivan.readNotifications', []));
+  const [twoFactorPromptDismissedUntil, setTwoFactorPromptDismissedUntil] = useState(() => Number(localStorage.getItem('sivan.2faPromptDismissedUntil') || 0));
   const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
   const [pendingEmail, setPendingEmail] = useState('');
   const [pendingFullName, setPendingFullName] = useState('');
@@ -300,6 +310,7 @@ export default function App() {
   const [supplierPayments, setSupplierPayments] = useState<SupplierPaymentRecord[]>([]);
   const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
+  const [twoFactorStatus, setTwoFactorStatus] = useState<UserTwoFactorStatus | null>(null);
   const [pairingCode, setPairingCode] = useState('');
   const [pairingExpiresAt, setPairingExpiresAt] = useState('');
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
@@ -332,6 +343,11 @@ export default function App() {
     setNotificationOpen(false);
     const nextPath = pathByView[nextView] ?? '/dashboard';
     if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
+  };
+
+  const goToSettingsSecurity = () => {
+    setSettingsInitialTab('security');
+    goToView('settings');
   };
 
   const goToPublicView = (nextView: 'landing' | 'signup' | 'signin' | 'help') => {
@@ -367,6 +383,10 @@ export default function App() {
     localStorage.setItem('sivan.readNotifications', JSON.stringify(readNotificationIds.slice(-200)));
   }, [readNotificationIds]);
 
+  useEffect(() => {
+    localStorage.setItem('sivan.2faPromptDismissedUntil', String(twoFactorPromptDismissedUntil));
+  }, [twoFactorPromptDismissedUntil]);
+
   const notifications = useMemo<UserNotification[]>(() => {
     const items: UserNotification[] = [];
     const push = (item: UserNotification) => items.push(item);
@@ -378,6 +398,7 @@ export default function App() {
     else if (customer?.kycStatus === 'kyc_rejected') push({ id: `kyc:${customer.id}:rejected`, icon: '!', title: 'Verification needs support', message: 'Your verification could not be completed. Retry securely or contact support.', severity: 'urgent', createdAt: customer.updatedAt || now, actionLabel: 'Review', view: 'kyc' });
     else if (customer?.kycStatus === 'kyc_under_review') push({ id: `kyc:${customer.id}:review`, icon: '⏳', title: 'Verification under review', message: 'We will update your account as soon as review is complete.', severity: 'info', createdAt: customer.updatedAt || now, actionLabel: 'Check status', view: 'kyc' });
     else if (customer?.kycStatus === 'kyc_approved' && !hasBank) push({ id: `bank:${user?.id || 'me'}:missing`, icon: '▭', title: 'Add payout bank', message: 'You are verified. Add a payout bank to start selling crypto.', severity: 'action', createdAt: customer.updatedAt || now, actionLabel: 'Add bank', view: 'banks' });
+    if (customer?.kycStatus === 'kyc_approved' && !twoFactorStatus?.enabled) push({ id: `security:${user?.id || 'me'}:2fa-recommended`, icon: '⚿', title: 'Protect your Sivan account', message: 'Enable authenticator 2FA to secure transfers and payouts.', severity: 'info', createdAt: customer.updatedAt || now, actionLabel: 'Enable', view: 'settings' });
     else if (!customer && hasUser) push({ id: `kyc:${user?.id || 'me'}:not-started`, icon: '◈', title: 'Verify your account', message: 'Complete identity verification to unlock payments.', severity: 'action', createdAt: user?.createdAt || now, actionLabel: 'Start', view: 'kyc' });
 
     for (const order of onrampOrders.slice(0, 5)) {
@@ -408,7 +429,7 @@ export default function App() {
     }
     const rank = { urgent: 3, action: 2, info: 1 } as const;
     return items.sort((a, b) => rank[b.severity] - rank[a.severity] || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 12);
-  }, [systemStatus, customer, hasBank, hasUser, user, onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets]);
+  }, [systemStatus, customer, hasBank, hasUser, user, twoFactorStatus, onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets]);
 
   const unreadNotifications = notifications.filter((item) => !readNotificationIds.includes(item.id));
   const notificationDotClass = unreadNotifications.some((item) => item.severity === 'urgent') ? 'urgent' : unreadNotifications.some((item) => item.severity === 'action') ? 'action' : '';
@@ -436,6 +457,13 @@ export default function App() {
   const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
   const completedWithdrawalCount = completedWithdrawals.length;
   const completedVolume = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.destinationAmount ?? withdrawal.sourceAmount ?? 0), 0);
+  const completedActivityCount = completedWithdrawalCount
+    + onrampOrders.filter((order) => order.status === 'completed').length
+    + supplierPayments.filter((payment) => payment.status === 'completed').length
+    + balanceTransfers.filter((transfer) => transfer.status === 'completed').length
+    + virtualAccountTransactions.filter((tx) => ['completed', 'payment_processed'].includes(String(tx.status))).length;
+  const showTwoFactorRecommendation = Boolean(isVerified && !twoFactorStatus?.enabled && Date.now() > twoFactorPromptDismissedUntil);
+
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
   const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Avalanche C-Chain';
 
@@ -452,6 +480,7 @@ export default function App() {
     setBalanceTransfers([]);
     setUserPreferences(null);
     setIdentityStatus(null);
+    setTwoFactorStatus(null);
     setDepositResult(null);
     localStorage.removeItem('sivan.authToken');
     localStorage.removeItem('sivan.user');
@@ -576,7 +605,7 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
@@ -588,7 +617,8 @@ export default function App() {
       api<SupplierPaymentRecord[]>(`/api/users/${user.id}/supplier-payments`),
       api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
       api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`),
-      api<IdentityStatus>('/api/users/me/identity')
+      api<IdentityStatus>('/api/users/me/identity'),
+      api<UserTwoFactorStatus>(`/api/users/${user.id}/2fa`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
@@ -602,6 +632,7 @@ export default function App() {
     if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
     if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
     if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
+    if (twoFactorResult.status === 'fulfilled') setTwoFactorStatus(twoFactorResult.value);
   }, [api, user?.id, authToken]);
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -1361,7 +1392,7 @@ export default function App() {
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <h2>{pageTitle}</h2>
           <div className="top-actions app-top-actions">
-            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><NotificationCenter open={notificationOpen} notifications={notifications} unreadCount={unreadNotifications.length} dotClass={notificationDotClass} readIds={readNotificationIds} timeNow={timeNow} onToggle={() => { setNotificationOpen((open) => !open); setUserMenuOpen(false); }} onClose={() => setNotificationOpen(false)} onMarkAllRead={markAllNotificationsRead} onOpen={(item) => { markNotificationRead(item.id); if (item.view) goToView(item.view); }} /></>}
+            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><NotificationCenter open={notificationOpen} notifications={notifications} unreadCount={unreadNotifications.length} dotClass={notificationDotClass} readIds={readNotificationIds} timeNow={timeNow} onToggle={() => { setNotificationOpen((open) => !open); setUserMenuOpen(false); }} onClose={() => setNotificationOpen(false)} onMarkAllRead={markAllNotificationsRead} onOpen={(item) => { markNotificationRead(item.id); if (item.view === 'settings') goToSettingsSecurity(); else if (item.view) goToView(item.view); }} /></>}
             {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small topbar-signin" onClick={() => goToPublicView('signin')}>Sign in</button>}
           </div>
         </header>
@@ -1388,6 +1419,7 @@ export default function App() {
             <div className="dashboard-main-grid">
               <DashboardTransactions withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onViewAll={() => goToView('history')} />
               <div className="dashboard-side-stack">
+                {showTwoFactorRecommendation && <TwoFactorRecommendationCard completedCount={completedActivityCount} onEnable={goToSettingsSecurity} onDismiss={() => setTwoFactorPromptDismissedUntil(Date.now() + 7 * 24 * 60 * 60 * 1000)} />}
                 <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} onContinue={() => goToView(!isVerified ? 'kyc' : !hasBank ? 'banks' : 'banks')} />
                 <SecurityReminder onSettings={() => goToView('settings')} />
               </div>
@@ -1478,7 +1510,7 @@ export default function App() {
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
-        {view === 'settings' && <SettingsView api={api} user={user} preferences={userPreferences} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'settings' && <SettingsView api={api} user={user} preferences={userPreferences} initialTab={settingsInitialTab} twoFactorStatus={twoFactorStatus} onTwoFactorStatusChanged={setTwoFactorStatus} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
@@ -1547,6 +1579,11 @@ function DashboardTransactions({ withdrawals, onrampOrders, onStart, onBuy, onVi
     const open = expandedId === tx.key;
     return <div className={`dashboard-tx-card ${open ? 'open' : ''}`} key={tx.key}><button type="button" className="dashboard-tx" onClick={() => setExpandedId(open ? null : tx.key)} aria-expanded={open}><span className={`tx-icon ${tx.direction}`}>{tx.icon}</span><div><strong>{tx.title}</strong><small>{tx.sub}</small></div><div><b>{tx.amount}</b><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></div><time>{new Date(tx.createdAt).toLocaleDateString()}</time><span className="tx-chevron">⌄</span></button>{open && <div className="dashboard-tx-details"><div className="dashboard-tx-detail-grid">{tx.details.map(([label, value]) => <div className="tx-detail-chip" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><div className="dashboard-tx-detail-footer"><small>This is a quick summary. Open Transactions for the full timeline, support evidence, provider trace and downloadable records.</small><button type="button" className="ghost-btn small" onClick={onViewAll}>Open full timeline →</button></div></div>}</div>;
   })}</div><div className="button-row dashboard-start-btn"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></>}</article>;
+}
+
+function TwoFactorRecommendationCard({ completedCount, onEnable, onDismiss }: { completedCount: number; onEnable: () => void; onDismiss: () => void }) {
+  const active = completedCount > 0;
+  return <article className={`security-card two-factor-recommendation ${active ? 'after-activity' : ''}`}><div className="security-icon">⚿</div><div><p className="eyebrow">Security recommendation</p><h3>{active ? 'Secure your account before your next payment' : 'Protect your Sivan account'}</h3><p>{active ? 'You’ve completed your first Sivan transaction. Add authenticator 2FA to protect future transfers and payouts.' : 'Enable authenticator 2FA to secure transfers and payouts. You can skip this for now.'}</p><div className="recommendation-actions"><button className="primary-btn small" onClick={onEnable}>Enable 2FA</button><button className="ghost-btn small" onClick={onDismiss}>{active ? 'Not now' : 'Maybe later'}</button></div></div></article>;
 }
 
 function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank, user, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; user: UserRecord | null; onContinue: () => void }) {
@@ -2368,8 +2405,9 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
   return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
 }
 
-function SettingsView({ api, user, preferences, identityStatus, pairingCode, pairingExpiresAt, timeNow, onStartWhatsappLink, onCancelWhatsappLink, onUnlinkWhatsapp, onRefreshIdentity, onSavePreferences, onUpdatePreferences, loading, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; preferences: UserPreferencesRecord | null; identityStatus: IdentityStatus | null; pairingCode: string; pairingExpiresAt: string; timeNow: number; onStartWhatsappLink: () => void; onCancelWhatsappLink: () => void; onUnlinkWhatsapp: () => void; onRefreshIdentity: () => Promise<void>; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; onUpdatePreferences: (patch: Partial<UserPreferencesRecord>) => Promise<void>; loading: boolean; onLogout: () => void }) {
-  const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
+function SettingsView({ api, user, preferences, initialTab, twoFactorStatus, onTwoFactorStatusChanged, identityStatus, pairingCode, pairingExpiresAt, timeNow, onStartWhatsappLink, onCancelWhatsappLink, onUnlinkWhatsapp, onRefreshIdentity, onSavePreferences, onUpdatePreferences, loading, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; preferences: UserPreferencesRecord | null; initialTab: 'profile' | 'security' | 'notifications' | 'preferences'; twoFactorStatus: UserTwoFactorStatus | null; onTwoFactorStatusChanged: (status: UserTwoFactorStatus | null) => void; identityStatus: IdentityStatus | null; pairingCode: string; pairingExpiresAt: string; timeNow: number; onStartWhatsappLink: () => void; onCancelWhatsappLink: () => void; onUnlinkWhatsapp: () => void; onRefreshIdentity: () => Promise<void>; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; onUpdatePreferences: (patch: Partial<UserPreferencesRecord>) => Promise<void>; loading: boolean; onLogout: () => void }) {
+  const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>(initialTab || 'profile');
+  useEffect(() => { setTab(initialTab || 'profile'); }, [initialTab]);
   const nameParts = (user?.fullName || '').split(/\s+/);
   const currentPreferences = preferences ?? {
     userId: user?.id || '',
@@ -2381,7 +2419,7 @@ function SettingsView({ api, user, preferences, identityStatus, pairingCode, pai
     emailConfirmationsForHighValue: false,
     updatedAt: new Date().toISOString()
   };
-  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><IdentityLinkCard identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} loading={loading} onStart={onStartWhatsappLink} onCancel={onCancelWhatsappLink} onUnlink={onUnlinkWhatsapp} onRefresh={onRefreshIdentity} /><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input value={identityStatus?.link?.whatsappNumber || user?.whatsappNumber || ''} placeholder="Link WhatsApp to populate this securely" readOnly /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SecuritySettingsPanel api={api} user={user} preferences={currentPreferences} loading={loading} onUpdate={onUpdatePreferences} onLogout={onLogout} />}{tab === 'notifications' && <NotificationPreferencesPanel preferences={currentPreferences} loading={loading} onUpdate={onUpdatePreferences} />}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><IdentityLinkCard identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} loading={loading} onStart={onStartWhatsappLink} onCancel={onCancelWhatsappLink} onUnlink={onUnlinkWhatsapp} onRefresh={onRefreshIdentity} /><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input value={identityStatus?.link?.whatsappNumber || user?.whatsappNumber || ''} placeholder="Link WhatsApp to populate this securely" readOnly /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SecuritySettingsPanel api={api} user={user} preferences={currentPreferences} initialStatus={twoFactorStatus} onStatusChanged={onTwoFactorStatusChanged} loading={loading} onUpdate={onUpdatePreferences} onLogout={onLogout} />}{tab === 'notifications' && <NotificationPreferencesPanel preferences={currentPreferences} loading={loading} onUpdate={onUpdatePreferences} />}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
 }
 
 
@@ -2401,12 +2439,13 @@ function IdentityLinkCard({ identityStatus, pairingCode, pairingExpiresAt, timeN
 
 
 
-function SecuritySettingsPanel({ api, user, preferences, loading, onUpdate, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; preferences: UserPreferencesRecord; loading: boolean; onUpdate: (patch: Partial<UserPreferencesRecord>) => Promise<void>; onLogout: () => void }) {
-  const [status, setStatus] = useState<{ enabled: boolean; enabledAt?: string; lastVerifiedAt?: string; recoveryCodesRemaining?: number } | null>(null);
+function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatusChanged, loading, onUpdate, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; preferences: UserPreferencesRecord; initialStatus: UserTwoFactorStatus | null; onStatusChanged: (status: UserTwoFactorStatus | null) => void; loading: boolean; onUpdate: (patch: Partial<UserPreferencesRecord>) => Promise<void>; onLogout: () => void }) {
+  const [status, setStatus] = useState<UserTwoFactorStatus | null>(initialStatus);
   const [setup, setSetup] = useState<{ manualEntryKey: string; otpauthUrl: string } | null>(null);
   const [setupCode, setSetupCode] = useState('');
   const [disableCode, setDisableCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  useEffect(() => { setStatus(initialStatus); }, [initialStatus]);
   const [busy, setBusy] = useState(false);
   const emailConfirmations = Boolean(preferences.emailConfirmationsForHighValue);
   const securityAlerts = Boolean(preferences.securityAlerts);
@@ -2414,8 +2453,8 @@ function SecuritySettingsPanel({ api, user, preferences, loading, onUpdate, onLo
   const load2fa = useCallback(async () => {
     if (!user?.id) return;
     const result = await api<any>(`/api/users/${user.id}/2fa`).catch(() => null);
-    if (result) setStatus(result);
-  }, [api, user?.id]);
+    if (result) { setStatus(result); onStatusChanged(result); }
+  }, [api, onStatusChanged, user?.id]);
   useEffect(() => { void load2fa(); }, [load2fa]);
   async function startSetup() {
     if (!user?.id) return;
