@@ -1343,3 +1343,4 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 
 /* Virtual account copy-all helper */
 .vb-copy-actions{display:grid;gap:7px;margin-top:2px;padding:12px;border-radius:14px;border:1px solid rgba(116,221,190,.16);background:linear-gradient(180deg,rgba(116,221,190,.06),rgba(8,13,20,.92))}.vb-copy-actions .secondary-btn{width:100%;min-height:42px;border-radius:12px}.vb-copy-actions small{color:#a9b8c7;line-height:1.45;text-align:center;font-size:12px}@media(max-width:760px){.vb-copy-actions{padding:11px}.vb-copy-actions .secondary-btn{min-height:44px}}
+.vb-copy-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}.vb-copy-buttons .secondary-btn,.vb-copy-buttons .ghost-btn{width:100%;min-height:42px;border-radius:12px}@media(max-width:560px){.vb-copy-buttons{grid-template-columns:1fr}.vb-copy-buttons .secondary-btn,.vb-copy-buttons .ghost-btn{min-height:44px}}

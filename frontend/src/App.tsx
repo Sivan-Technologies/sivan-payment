@@ -2118,14 +2118,25 @@ function VirtualAccountCurrencyCard({ currency, request, account, control, loadi
     ...(instructions.bankAddress ? [['Bank address', instructions.bankAddress]] : []),
     ['Status', friendlyStatus(account?.status)]
   ].filter(([, value]) => value && value !== '—') as string[][];
+  const accountDetailsText = () => [`${currency.toUpperCase()} virtual account`, ...detailRows.map(([label, value]) => `${label}: ${value}`)].join('\n');
   const copyAll = async () => {
     if (!account) return;
-    const text = [`${currency.toUpperCase()} virtual account`, ...detailRows.map(([label, value]) => `${label}: ${value}`)].join('\n');
+    await navigator.clipboard?.writeText(accountDetailsText()).catch(() => undefined);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+  const shareAll = async () => {
+    if (!account) return;
+    const text = accountDetailsText();
+    if (navigator.share) {
+      await navigator.share({ title: `${currency.toUpperCase()} virtual account`, text }).catch(() => undefined);
+      return;
+    }
     await navigator.clipboard?.writeText(text).catch(() => undefined);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
-  return <section className={`virtual-bank-card ${account ? 'active' : request ? 'pending' : ''}`}><div className="vb-card-top"><span>{meta.flag}</span><div><strong>{meta.title}</strong><small>{meta.rails} · {meta.account}</small></div></div><Badge status={status}>{friendlyStatus(status)}</Badge>{account ? <><div className="vb-details">{detailRows.map(([label, value]) => <Kv key={label} label={label} value={value} />)}</div><div className="vb-copy-actions"><button type="button" className="secondary-btn small" onClick={copyAll}>{copied ? 'Copied account details ✓' : 'Copy all account details'}</button><small>Copy bank, account, routing/IBAN, rails, and address in one tap.</small></div></> : request ? <div className="vb-pending"><strong>{request.status === 'requested' ? 'Request received' : friendlyStatus(request.status)}</strong><small>Submitted {new Date(request.createdAt).toLocaleString()}. Sivan operations will review and approve before account details appear here.</small>{request.rejectionReason && <small className="danger-text">{request.rejectionReason}</small>}</div> : <div className="vb-empty"><p>Request a reusable {currency.toUpperCase()} virtual account for fiat deposits.</p><button className="primary-btn small" disabled={loading || Boolean(disabledReason)} onClick={() => onRequest(currency)}>{disabledReason || `Request ${currency.toUpperCase()} account`}</button></div>}</section>;
+  return <section className={`virtual-bank-card ${account ? 'active' : request ? 'pending' : ''}`}><div className="vb-card-top"><span>{meta.flag}</span><div><strong>{meta.title}</strong><small>{meta.rails} · {meta.account}</small></div></div><Badge status={status}>{friendlyStatus(status)}</Badge>{account ? <><div className="vb-details">{detailRows.map(([label, value]) => <Kv key={label} label={label} value={value} />)}</div><div className="vb-copy-actions"><div className="vb-copy-buttons"><button type="button" className="secondary-btn small" onClick={copyAll}>{copied ? 'Copied details ✓' : 'Copy all details'}</button><button type="button" className="ghost-btn small" onClick={shareAll}>Share details</button></div><small>Copy or share bank, account, routing/IBAN, rails, and address in one tap.</small></div></> : request ? <div className="vb-pending"><strong>{request.status === 'requested' ? 'Request received' : friendlyStatus(request.status)}</strong><small>Submitted {new Date(request.createdAt).toLocaleString()}. Sivan operations will review and approve before account details appear here.</small>{request.rejectionReason && <small className="danger-text">{request.rejectionReason}</small>}</div> : <div className="vb-empty"><p>Request a reusable {currency.toUpperCase()} virtual account for fiat deposits.</p><button className="primary-btn small" disabled={loading || Boolean(disabledReason)} onClick={() => onRequest(currency)}>{disabledReason || `Request ${currency.toUpperCase()} account`}</button></div>}</section>;
 }
 type CustomerTransactionRow = {
   id: string;
