@@ -2378,9 +2378,8 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
       <Kv label="Account number" value={accountNumber || 'See provider instructions'} />
       <Kv label="Routing number" value={routingNumber || '—'} />
       <Kv label="Beneficiary" value={beneficiaryName || '—'} />
-      <Kv label="Payment rail" value={rails || 'bank transfer'} />
+      <Kv label="Account type" value={String(rails || '').includes('ach') ? 'Checking' : 'Bank account'} />
       <Kv label="Bank address" value={bankAddress || '—'} />
-      <Kv label="Beneficiary address" value={beneficiaryAddress || '—'} />
       <Kv label="Order ID" value={order.id} />
     </div>
     <div className="quote-fees instruction-totals"><div><span>You pay</span><strong>{order.amount} {order.sourceCurrency.toUpperCase()}</strong></div><div><span>Sivan fee</span><strong className="danger">−{order.feeAmount || '0'} {order.sourceCurrency.toUpperCase()}</strong></div><div><span>You receive</span><strong>{order.netAmount || '—'} {order.destinationCurrency.toUpperCase()}</strong></div><div><span>Destination</span><strong>{order.destinationChain.replaceAll('_', ' ')} · {shortRef(order.destinationAddress)}</strong></div></div>
