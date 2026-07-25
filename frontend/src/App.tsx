@@ -1827,30 +1827,29 @@ function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubm
   const verificationLink = customer?.hostedKycLink || customer?.kycLink;
   const canOpenExistingVerification = Boolean(verificationLink && customer?.id && !identityDone && !kycFailed);
   const started = Boolean(customer?.id);
-  const bankDone = false;
-  const steps = [emailDone, false, identityDone, customer?.tosStatus === 'approved', bankDone];
+  const bankDone = hasBank;
+  const steps = [emailDone, identityDone, customer?.tosStatus === 'approved', bankDone];
   const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
   return (
     <section className="app-page verification-premium">
-      <PageHero title="Verification" subtitle="Complete verification to unlock buy, sell and higher limits." /><p className="legal-inline-note">Verification is required under our <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a> and provider compliance requirements.</p>
+      <PageHero title="Verification" subtitle="A short, secure check so you can use Sivan payments with confidence." />
       {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
           <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
           <div className="setup-progress big"><div><span style={{ width: `${pct}%` }} /></div></div>
-          <div className="level-grid"><div className="active"><strong>Level 0</strong><span>Email only</span></div><div className={identityDone ? 'active' : ''}><strong>Level 1</strong><span>Verified withdrawals</span></div><div><strong>Level 2</strong><span>Higher limits</span></div></div>
+          <div className="level-grid"><div className="active"><strong>Step 1</strong><span>Email confirmed</span></div><div className={identityDone ? 'active' : ''}><strong>Step 2</strong><span>Identity verified</span></div><div className={hasBank ? 'active' : ''}><strong>Step 3</strong><span>Payout ready</span></div></div>
           <div className="verification-steps-list">
-            <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Your email is verified" action="Completed" />
-            <VerificationStep done={false} index={2} title="Phone number" sub="Required for transaction notifications" action="Continue" />
-            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '3'}</span><div><strong>Identity verification</strong><small>Government-issued ID + selfie. Takes ~3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : <form onSubmit={onSubmit} key={customer?.id || 'new-verification'}><select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{customerTypes.map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — unavailable' : ''}</option>)}</select><input name="redirectUri" type="hidden" value={verificationRedirectUri} /><button className="primary-btn small" disabled={!canSubmitKyc}>{kycActionLabel}</button></form>}</div>
-            <VerificationStep done={customer?.tosStatus === 'approved'} index={4} title="Terms acceptance" sub="Accept provider terms if required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />
-            <VerificationStep done={false} index={5} title="Add a bank account" sub="Required before first payout" action="Continue" />
+            <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Signed in securely" action="Completed" />
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>Identity verification</strong><small>Government-issued ID and selfie. Usually takes about 3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : <form onSubmit={onSubmit} key={customer?.id || 'new-verification'}><select name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)}>{customerTypes.map((type) => <option key={type.customerType} value={type.customerType} disabled={!type.enabled}>{type.label}{!type.enabled ? ' — unavailable' : ''}</option>)}</select><input name="redirectUri" type="hidden" value={verificationRedirectUri} /><button className="primary-btn small" disabled={!canSubmitKyc}>{kycActionLabel}</button></form>}</div>
+            <VerificationStep done={customer?.tosStatus === 'approved'} index={3} title="Terms accepted" sub="Provider terms are accepted when required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />
+            <VerificationStep done={hasBank} index={4} title="Payout bank" sub="Add a bank when you are ready to sell crypto" action={hasBank ? 'Completed' : 'Continue'} />
           </div>
         </article>
         <div className="dashboard-side-stack">
-          <article className="panel"><h3>Why we verify</h3><p className="muted">Sivan works with regulated payment partners, which requires us to verify users before processing transactions. This keeps the platform safe and prevents fraud.</p><ul className="plain-list"><li>✓ Data is encrypted in transit and at rest</li><li>✓ Documents are used only for compliance</li><li>✓ Status refreshes automatically after Bridge updates</li></ul></article>
-          <article className="security-card"><div className="security-icon">?</div><div><h3>Need help verifying?</h3><p>If your ID is rejected or you're having trouble with the flow, our support team can help resolve it.</p><button onClick={onSupport}>Contact support →</button><button onClick={onRefresh}>Refresh status →</button></div></article>
-          {customer && <article className="panel"><div className="panel-head"><h3>Verification status</h3><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
+          {customer && <article className="panel verification-status-card"><div className="panel-head"><div><p className="eyebrow">Current status</p><h3>Verification summary</h3></div><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
+          <article className="panel verify-simple-card"><h3>Why we verify</h3><p className="muted">Verification keeps your account safe and helps Sivan meet payment partner requirements.</p><ul className="plain-list"><li>✓ Encrypted data</li><li>✓ Used only for compliance</li><li>✓ Status refreshes automatically</li></ul></article>
+          <article className="security-card verify-help-card"><div className="security-icon">?</div><div><h3>Need help?</h3><p>If you are having trouble, support can review it with you.</p><button onClick={onSupport}>Contact support →</button><button onClick={onRefresh}>Refresh status →</button></div></article>
         </div>
       </div>
     </section>
@@ -2267,35 +2266,33 @@ function CustomerDetails({ customer }: { customer: CustomerRecord }) {
   const approved = customer.kycStatus === 'kyc_approved';
   const underReview = customer.kycStatus === 'kyc_under_review';
   const termsApproved = customer.tosStatus === 'approved';
-  const actionLabel = approved ? 'Verification complete' : underReview ? 'Review in progress' : 'Open secure verification page';
+  const actionLabel = approved ? 'Verification complete' : underReview ? 'Review in progress' : 'Open verification page';
   return (
-    <div className="details-box verification-details">
-      <Kv label="Status" value={friendlyStatus(customer.kycStatus)} />
-      <Kv label="Account type" value={customer.customerType === 'business' ? 'Business' : 'Individual'} />
-      <Kv label="Terms" value={customer.tosStatus ? friendlyStatus(customer.tosStatus) : 'Pending'} />
+    <div className="verification-summary-clean">
+      <div className="verification-status-list">
+        <div><span>Status</span><strong>{friendlyStatus(customer.kycStatus)}</strong></div>
+        <div><span>Account type</span><strong>{customer.customerType === 'business' ? 'Business' : 'Individual'}</strong></div>
+        <div><span>Terms</span><strong>{customer.tosStatus ? friendlyStatus(customer.tosStatus) : 'Pending'}</strong></div>
+      </div>
       {verificationLink && !approved && !underReview && (
-        <div className="verification-link-card">
-          <div>
-            <span>Secure verification page</span>
-            <strong>Ready to continue</strong>
-            <small>Opens in a new tab. Your long secure link is hidden so this page stays clean.</small>
-          </div>
-          <a className="secondary-btn" href={verificationLink} target="_blank" rel="noreferrer">{actionLabel}</a>
-        </div>
+        <a className="verification-action-card" href={verificationLink} target="_blank" rel="noreferrer">
+          <span>Secure verification</span>
+          <strong>Continue your verification</strong>
+          <small>Your secure link opens in a new tab. We hide the long URL to keep this page clean.</small>
+          <em>{actionLabel} →</em>
+        </a>
       )}
       {termsLink && !termsApproved && (
-        <div className="verification-link-card terms-card">
-          <div>
-            <span>Terms required</span>
-            <strong>Accept terms to finish verification</strong>
-            <small>Bridge is still reporting Terms as pending. Complete this step, then return here and the status will refresh automatically.</small>
-          </div>
-          <a className="secondary-btn" href={termsLink} target="_blank" rel="noreferrer">Accept terms</a>
-        </div>
+        <a className="verification-action-card terms-card" href={termsLink} target="_blank" rel="noreferrer">
+          <span>Terms required</span>
+          <strong>Accept terms to finish</strong>
+          <small>Complete this step, then return here and refresh status.</small>
+          <em>Accept terms →</em>
+        </a>
       )}
-      {!approved && !underReview && !termsApproved && <div className="verification-note">If you already finished the identity check, Terms may still be pending. Accept the terms above and allow Bridge a few moments for post-processing.</div>}
+      {!approved && !underReview && !termsApproved && <div className="verification-note">If you already finished, allow a few moments for processing and refresh status.</div>}
       {underReview && <div className="verification-note success-note">Your verification is under review. We will update your account as soon as it is approved.</div>}
-      {approved && <div className="verification-note success-note">You are verified. You can now add a bank account and withdraw stablecoins.</div>}
+      {approved && <div className="verification-note success-note">You are verified. You can now add a bank account and use Sivan payment features.</div>}
     </div>
   );
 }
