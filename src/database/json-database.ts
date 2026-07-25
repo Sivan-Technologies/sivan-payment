@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -17,6 +17,9 @@ const emptyDb = (): DatabaseShape => ({
   liquidationAddresses: [],
   withdrawals: [],
   onrampOrders: [],
+  suppliers: [],
+  supplierPayments: [],
+  supplierControls: [],
   webhookEvents: [],
   authChallenges: [],
   auditLogs: [],
@@ -416,6 +419,52 @@ export class JsonDatabase {
       data.onrampOrders = data.onrampOrders ?? [];
       const index = data.onrampOrders.findIndex((item) => item.id === record.id);
       if (index >= 0) data.onrampOrders[index] = record;
+      return record;
+    });
+  }
+
+  async insertSupplierRecord(record: SupplierRecord) {
+    return this.mutate((data) => {
+      data.suppliers = data.suppliers ?? [];
+      data.suppliers.push(record);
+      return record;
+    });
+  }
+
+  async updateSupplierRecord(record: SupplierRecord) {
+    return this.mutate((data) => {
+      data.suppliers = data.suppliers ?? [];
+      const index = data.suppliers.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.suppliers[index] = record;
+      else data.suppliers.push(record);
+      return record;
+    });
+  }
+
+  async insertSupplierPaymentRecord(record: SupplierPaymentRecord) {
+    return this.mutate((data) => {
+      data.supplierPayments = data.supplierPayments ?? [];
+      data.supplierPayments.push(record);
+      return record;
+    });
+  }
+
+  async updateSupplierPaymentRecord(record: SupplierPaymentRecord) {
+    return this.mutate((data) => {
+      data.supplierPayments = data.supplierPayments ?? [];
+      const index = data.supplierPayments.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.supplierPayments[index] = record;
+      else data.supplierPayments.push(record);
+      return record;
+    });
+  }
+
+  async upsertSupplierControlsRecord(record: SupplierControlsRecord) {
+    return this.mutate((data) => {
+      data.supplierControls = data.supplierControls ?? [];
+      const index = data.supplierControls.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.supplierControls[index] = record;
+      else data.supplierControls.push(record);
       return record;
     });
   }

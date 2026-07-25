@@ -7,6 +7,7 @@ import { id, nowIso } from '../shared/id.js';
 import { updatePaymentControls } from '../controls/payment-controls.service.js';
 import { updateSystemStatus } from '../system/system-status.service.js';
 import { getTransactionTrace, syncPaymentTransactionReferencesForResource } from '../references/transaction-references.service.js';
+import { listSupplierRiskCases } from '../suppliers/supplier.service.js';
 
 export const adminNoteSchema = z.object({
   resourceType: z.string().min(1),
@@ -146,7 +147,9 @@ export async function getAdminOnrampOrderDetails(orderId: string) {
 export async function listRiskCases(options: { status?: string; severity?: string } = {}) {
   const data = await db.read();
   const reviews = getRiskReviews(data.auditLogs ?? []);
-  const cases = buildRiskCases(data).map((riskCase) => ({ ...riskCase, review: reviews.get(riskCase.id) ?? null, status: reviews.get(riskCase.id)?.status ?? 'open' }));
+  const coreCases = buildRiskCases(data).map((riskCase) => ({ ...riskCase, review: reviews.get(riskCase.id) ?? null, status: reviews.get(riskCase.id)?.status ?? 'open' }));
+  const supplierCases = await listSupplierRiskCases();
+  const cases = [...coreCases, ...supplierCases];
   return cases
     .filter((item) => !options.status || item.status === options.status)
     .filter((item) => !options.severity || item.severity === options.severity)

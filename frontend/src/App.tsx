@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, BalanceSummary, BalanceTransferRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
@@ -267,6 +267,8 @@ export default function App() {
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
   const [balance, setBalance] = useState<BalanceSummary | null>(null);
   const [balanceTransfers, setBalanceTransfers] = useState<BalanceTransferRecord[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
+  const [supplierPayments, setSupplierPayments] = useState<SupplierPaymentRecord[]>([]);
   const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
   const [pairingCode, setPairingCode] = useState('');
@@ -486,7 +488,7 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
@@ -494,6 +496,8 @@ export default function App() {
       api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions?: VirtualAccountTransactionRecord[]; events?: any[] }>(`/api/users/${user.id}/virtual-accounts`),
       api<BalanceSummary>(`/api/users/${user.id}/balance`),
       api<BalanceTransferRecord[]>(`/api/users/${user.id}/balance/transfers`),
+      api<SupplierRecord[]>(`/api/users/${user.id}/suppliers`),
+      api<SupplierPaymentRecord[]>(`/api/users/${user.id}/supplier-payments`),
       api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
       api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`),
       api<IdentityStatus>('/api/users/me/identity')
@@ -505,6 +509,8 @@ export default function App() {
     if (virtualAccountsResult.status === 'fulfilled') { setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []); setVirtualAccounts(virtualAccountsResult.value.accounts ?? []); setVirtualAccountTransactions(virtualAccountsResult.value.transactions ?? []); }
     if (balanceResult.status === 'fulfilled') setBalance(balanceResult.value);
     if (balanceTransfersResult.status === 'fulfilled') setBalanceTransfers(balanceTransfersResult.value);
+    if (suppliersResult.status === 'fulfilled') setSuppliers(suppliersResult.value);
+    if (supplierPaymentsResult.status === 'fulfilled') setSupplierPayments(supplierPaymentsResult.value);
     if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
     if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
     if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
@@ -777,6 +783,58 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+
+  async function handleCreateSupplier(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification before adding a supplier.', 'error');
+    setLoading(true);
+    try {
+      const data = getForm(event.currentTarget);
+      const isUsd = data.currency === 'usd';
+      const isGbp = data.currency === 'gbp';
+      const body: Record<string, unknown> = {
+        supplierName: data.supplierName,
+        supplierType: data.supplierType || 'business',
+        supplierCountry: data.supplierCountry || (isGbp ? 'GB' : isUsd ? 'US' : 'FR'),
+        currency: data.currency,
+        accountType: isUsd ? 'us' : isGbp ? 'gb' : 'iban',
+        bankName: data.bankName,
+        accountOwnerName: data.accountOwnerName,
+        businessName: data.supplierName,
+        address: isUsd
+          ? { street_line_1: data.street || '923 Folsom Street', country: 'USA', state: data.state || 'CA', city: data.city || 'San Francisco', postal_code: data.postalCode || '94107' }
+          : isGbp
+            ? { street_line_1: data.street || '1 King Street', country: 'GBR', city: data.city || 'London', postal_code: data.postalCode || 'SW1A 1AA' }
+            : { street_line_1: data.street || '2 Rue de la Paix', country: data.ibanCountry || 'FRA', city: data.city || 'Paris', postal_code: data.postalCode || '75002' }
+      };
+      if (isUsd) body.account = { routing_number: data.routingNumber, account_number: data.accountNumber, checking_or_savings: 'checking' };
+      else if (isGbp) body.account = { sort_code: data.sortCode, account_number: data.gbAccountNumber };
+      else body.iban = { account_number: data.ibanAccountNumber, bic: data.bic || undefined, country: data.ibanCountry || 'FRA' };
+      const supplier = await api<SupplierRecord>(`/api/users/${user.id}/suppliers`, { method: 'POST', body: JSON.stringify(body) });
+      setSuppliers((items) => [supplier, ...items.filter((item) => item.id !== supplier.id)]);
+      notify('Supplier added for compliance review. Admin approval is required before first payout.');
+      (event.currentTarget as HTMLFormElement).reset();
+      await loadUserData();
+    } catch (error) { notify((error as Error).message, 'error'); } finally { setLoading(false); }
+  }
+
+  async function handleSupplierPayment(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification before paying suppliers.', 'error');
+    setLoading(true);
+    try {
+      const data = getForm(event.currentTarget);
+      const supplier = suppliers.find((item) => item.id === data.supplierId);
+      const payment = await api<SupplierPaymentRecord>(`/api/users/${user.id}/supplier-payments`, { method: 'POST', body: JSON.stringify({ supplierId: data.supplierId, amount: data.amount, sourceAsset: 'usdc', destinationCurrency: supplier?.currency || data.destinationCurrency || 'usd', paymentPurpose: data.paymentPurpose, invoiceUrl: data.invoiceUrl || undefined }) });
+      setSupplierPayments((items) => [payment, ...items.filter((item) => item.id !== payment.id)]);
+      notify('Supplier payment created and held for risk review. AI can recommend, but admin/backend controls release funds.');
+      (event.currentTarget as HTMLFormElement).reset();
+      await loadUserData();
+    } catch (error) { notify((error as Error).message, 'error'); } finally { setLoading(false); }
   }
 
   async function handleBank(event: FormEvent<HTMLFormElement>) {
@@ -1241,7 +1299,7 @@ export default function App() {
         )}
 
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
-        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} transfers={balanceTransfers} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
+        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
@@ -2022,7 +2080,7 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
     <div className="warning-box compact">Send the exact amount and include the reference/memo. Missing or incorrect references can delay matching and settlement.</div>
   </div>;
 }
-function TransferCryptoView({ hasUser, isVerified, balance, transfers, enabledNetworks, loading, onSubmit, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; balance: BalanceSummary | null; transfers: BalanceTransferRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
+function TransferCryptoView({ hasUser, isVerified, balance, transfers, suppliers, supplierPayments, enabledNetworks, loading, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; balance: BalanceSummary | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
   const usdc = balance?.balances.find((item) => item.asset === 'usdc');
   const available = Number(usdc?.available || 0);
   const pending = Number(usdc?.pending || 0);
@@ -2038,6 +2096,9 @@ function TransferCryptoView({ hasUser, isVerified, balance, transfers, enabledNe
       <article className="panel transfer-balance-card"><p className="eyebrow">Settled USDC available</p><h2>{available.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</h2><div className="balance-mini-grid"><Kv label="Pending settlement" value={`${pending.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Held for review" value={`${held.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Spent" value={`${Number(usdc?.spent || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /></div><p className="muted">This is an internal mirror of settled stablecoin funds from Bridge virtual-account deposits or approved adjustments. Virtual accounts are deposit-only: fiat goes in, Bridge converts it, and only settled crypto becomes spendable.</p></article>
       <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer USDC to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={onSubmit}><label>Asset<select name="asset" defaultValue="usdc"><option value="usdc">USDC</option><option value="usdt">USDT later</option></select></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<select name="network" defaultValue={networks[0]?.network || 'base'}>{networks.map((network) => <option value={network.network} key={network.network}>{network.label}</option>)}</select></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label><div className="warning-box compact">Only send to a wallet on the selected network. Supplier/cross-border payouts will use a separate crypto-to-fiat route with saved bank details, not a stored USD fiat balance.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating transfer…' : available <= 0 ? 'No settled USDC available' : 'Review and create transfer →'}</button></form>}</article>
       <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Transfer history</p><h3>Crypto sends</h3></div></div>{!transfers.length ? <Empty>No crypto transfers from settled balance yet.</Empty> : <div className="list">{transfers.map((transfer) => <div className="list-item" key={transfer.transferId}><strong>{transfer.amount} {transfer.asset.toUpperCase()} → {transfer.network.replaceAll('_', ' ')}</strong><Badge status={transfer.status}>{friendlyStatus(transfer.status)}</Badge><small>{shortRef(transfer.destinationAddress)} · {new Date(transfer.createdAt).toLocaleString()}</small>{transfer.note && <small>{transfer.note}</small>}</div>)}</div>}</article>
+      <article className="panel form-panel supplier-form-card"><p className="eyebrow">Pay supplier / cross-border</p><h3>Add supplier bank</h3>{!hasUser || !isVerified ? <Empty>Complete verification before adding suppliers.</Empty> : <form className="form premium-form" onSubmit={onCreateSupplier}><label>Supplier business name<input name="supplierName" placeholder="ABC Trading Ltd" required /></label><div className="split"><label>Currency<select name="currency" defaultValue="gbp"><option value="gbp">GBP · Faster Payments</option><option value="usd">USD · ACH/Wire</option><option value="eur">EUR · SEPA</option></select></label><label>Supplier country<input name="supplierCountry" defaultValue="GB" /></label></div><label>Bank name<input name="bankName" placeholder="Barclays" required /></label><label>Account owner name<input name="accountOwnerName" placeholder="ABC Trading Ltd" required /></label><div className="split"><label>GBP account number<input name="gbAccountNumber" placeholder="12345678" /></label><label>GBP sort code<input name="sortCode" placeholder="123456" /></label></div><div className="split"><label>USD account number<input name="accountNumber" placeholder="Optional for USD" /></label><label>USD routing<input name="routingNumber" placeholder="Optional for USD" /></label></div><label>EUR IBAN<input name="ibanAccountNumber" placeholder="Optional for EUR" /></label><label>Invoice/business address<input name="street" placeholder="Supplier address" /></label><div className="warning-box compact">Supplier bank details are sent to Bridge as an external account. New suppliers stay pending until admin compliance review.</div><button className="primary-btn" disabled={loading}>{loading ? 'Adding supplier…' : 'Add supplier for review →'}</button></form>}</article>
+      <article className="panel form-panel supplier-form-card"><p className="eyebrow">Create supplier payment</p><h3>Pay from settled USDC</h3>{!suppliers.length ? <Empty>Add and approve a supplier before creating a payment.</Empty> : <form className="form premium-form" onSubmit={onSupplierPayment}><label>Supplier<select name="supplierId">{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.supplierName} · {supplier.currency.toUpperCase()} · {friendlyStatus(supplier.status)}</option>)}</select></label><label>Amount USDC<input name="amount" inputMode="decimal" placeholder="300" required /></label><label>Payment purpose<textarea name="paymentPurpose" placeholder="Invoice INV-1001 for software services" required /></label><label>Invoice URL<input name="invoiceUrl" placeholder="https://... optional but recommended" /></label><div className="warning-box compact">Sivan places a hold on settled USDC. Admin/backend risk controls release or reject. AI never releases funds.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating payment…' : 'Create supplier payment →'}</button></form>}</article>
+      <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Supplier payment history</p><h3>Cross-border payouts</h3></div></div>{!supplierPayments.length ? <Empty>No supplier payments yet.</Empty> : <div className="list">{supplierPayments.map((payment) => <div className="list-item" key={payment.id}><strong>{payment.amount} USDC → {payment.destinationCurrency.toUpperCase()}</strong><Badge status={payment.status}>{friendlyStatus(payment.status)}</Badge><small>{payment.supplier?.supplierName || shortRef(payment.supplierId)} · Risk {payment.riskLevel} · {new Date(payment.createdAt).toLocaleString()}</small><small>{payment.reviewReason}</small></div>)}</div>}</article>
     </div>
     <article className="panel"><div className="panel-head"><div><p className="eyebrow">Stablecoin ledger</p><h3>Deposit, hold and spend trail</h3></div></div>{!balance?.ledger?.length ? <Empty>No stablecoin ledger entries yet. Deposit to your virtual account; after Bridge settlement, USDC can become spendable.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>Type</th><th>Amount</th><th>Status</th><th>Source</th><th>Date</th></tr></thead><tbody>{balance.ledger.slice(0, 20).map((entry) => <tr key={entry.entryId}><td>{entry.kind.replaceAll('_', ' ')}</td><td>{entry.amount} {entry.asset.toUpperCase()}</td><td><Badge status={entry.status}>{friendlyStatus(entry.status)}</Badge></td><td>{entry.sourceType} · {shortRef(entry.sourceId)}</td><td>{new Date(entry.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>
   </section>;

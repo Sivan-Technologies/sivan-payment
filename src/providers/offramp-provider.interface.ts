@@ -1,4 +1,4 @@
-import type { Chain, Currency, SourceCurrency } from '../database/types.js';
+import type { Chain, Currency, SourceCurrency, SupplierPayoutCurrency } from '../database/types.js';
 
 export interface ProviderCustomer {
   id: string;
@@ -21,7 +21,7 @@ export interface ProviderKycLink {
 export interface ProviderExternalAccount {
   id: string;
   customerId: string;
-  currency: Currency;
+  currency: SupplierPayoutCurrency;
   accountType: string;
   active?: boolean;
   bankName?: string;

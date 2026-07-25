@@ -178,6 +178,7 @@ function restrictedActionForRequest(method: string, url: string): 'onramp' | 'of
   if (url.startsWith('/api/ngn/onramp')) return 'onramp';
   if (url.startsWith('/api/ngn/offramp')) return 'offramp';
   if (url.includes('/balance/transfers')) return 'onramp';
+  if (url.includes('/suppliers') || url.includes('/supplier-payments')) return 'offramp';
   return undefined;
 }
 
@@ -205,6 +206,8 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/users\/[^/]+\/support\/tickets/,
     /^\/api\/users\/[^/]+\/preferences/,
     /^\/api\/users\/[^/]+\/balance/,
+    /^\/api\/users\/[^/]+\/suppliers/,
+    /^\/api\/users\/[^/]+\/supplier-payments/,
     /^\/api\/users\/[^/]+\/virtual-accounts/,
     /^\/api\/users\/[^/]+\/legal-acceptances/,
     /^\/api\/users\/[^/]+\/external-accounts/,
@@ -232,7 +235,8 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
 
   if (url.startsWith('/api/admin/notes')) return ['ops', 'operator', 'compliance', 'finance', 'support', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/support')) return ['support', 'ops', 'operator', 'compliance'].includes(role);
-  if (url.startsWith('/api/admin/risk')) return ['compliance'].includes(role);
+  if (url.startsWith('/api/admin/risk')) return ['compliance', 'ops', 'operator'].includes(role);
+  if (url.startsWith('/api/admin/supplier')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);
   if (url.startsWith('/api/admin/fees')) return ['finance'].includes(role);
   if (url.startsWith('/api/admin/limits')) return ['ops', 'operator', 'finance'].includes(role);
   if (url.startsWith('/api/admin/settings/platform') || url.startsWith('/api/admin/offramp/controls') || url.startsWith('/api/admin/system/status') || url.startsWith('/api/admin/system/incidents')) return ['ops', 'operator'].includes(role);
