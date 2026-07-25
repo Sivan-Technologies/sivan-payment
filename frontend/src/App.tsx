@@ -1124,13 +1124,13 @@ export default function App() {
 
             <div className="dashboard-kpis">
               <KpiCard label="Total volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
-              <KpiCard label="Transactions" value={String(withdrawals.length)} sub="Lifetime" trend={withdrawals.length ? `${withdrawals.length} records` : 'Start your first'} />
+              <KpiCard label="Transactions" value={String(withdrawals.length + onrampOrders.length)} sub="Lifetime" trend={(withdrawals.length + onrampOrders.length) ? `${withdrawals.length + onrampOrders.length} records` : 'Start your first'} />
               <KpiCard label="Avg. payout time" value="1–2 days" sub="Provider + bank rail" trend="Tracked by status" />
               <KpiCard label="Verification" value={isVerified ? 'Verified' : 'Incomplete'} sub={isVerified ? 'Ready' : 'Action required'} trend={friendlyStatus(customer?.kycStatus)} />
             </div>
 
             <div className="dashboard-main-grid">
-              <DashboardTransactions withdrawals={withdrawals.slice(0, 4)} onStart={() => goToView('withdraw')} onViewAll={() => goToView('history')} />
+              <DashboardTransactions withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onViewAll={() => goToView('history')} />
               <div className="dashboard-side-stack">
                 <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} onContinue={() => goToView(nextStepView)} />
                 <SecurityReminder onSettings={() => goToView('settings')} />
@@ -1231,8 +1231,31 @@ function KpiCard({ label, value, sub, trend }: { label: string; value: string; s
   return <article className="kpi-card"><p>{label}</p><strong>{value}</strong><span>{sub}</span><small>{trend}</small></article>;
 }
 
-function DashboardTransactions({ withdrawals, onStart, onViewAll }: { withdrawals: WithdrawalRecord[]; onStart: () => void; onViewAll: () => void }) {
-  return <article className="dashboard-transactions"><div className="dash-card-head"><h3>Recent transactions</h3><button onClick={onViewAll}>View all ↗</button></div>{!withdrawals.length ? <div className="dashboard-empty"><p>No transactions yet.</p><button className="secondary-btn" onClick={onStart}>⊕ Start your first transaction</button></div> : <><div className="dashboard-tx-list">{withdrawals.map((withdrawal) => <div className="dashboard-tx" key={withdrawal.id}><span className="tx-icon">↗</span><div><strong>Sell · {withdrawal.sourceAmount || '—'} {withdrawal.sourceCurrency?.toUpperCase?.() || 'USDC'}</strong><small>To bank</small></div><div><b>{withdrawal.destinationAmount || '—'} {withdrawal.destinationCurrency?.toUpperCase()}</b><Badge status={withdrawal.status}>{friendlyStatus(withdrawal.status)}</Badge></div><time>{new Date(withdrawal.createdAt).toLocaleDateString()}</time></div>)}</div><button className="secondary-btn dashboard-start-btn" onClick={onStart}>⊕ Start your first transaction</button></>}</article>;
+function DashboardTransactions({ withdrawals, onrampOrders, onStart, onBuy, onViewAll }: { withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; onStart: () => void; onBuy: () => void; onViewAll: () => void }) {
+  const rows = [
+    ...withdrawals.map((withdrawal) => ({
+      id: withdrawal.id,
+      direction: 'sell' as const,
+      icon: '↗',
+      title: `Sell · ${withdrawal.sourceAmount || '—'} ${withdrawal.sourceCurrency?.toUpperCase?.() || 'USDC'}`,
+      sub: 'To bank',
+      amount: `${withdrawal.destinationAmount || '—'} ${withdrawal.destinationCurrency?.toUpperCase() || ''}`,
+      status: withdrawal.status,
+      createdAt: withdrawal.createdAt,
+    })),
+    ...onrampOrders.map((order) => ({
+      id: order.id,
+      direction: 'buy' as const,
+      icon: '↙',
+      title: `Buy · ${order.amount || '—'} ${order.sourceCurrency?.toUpperCase?.() || 'USD'}`,
+      sub: `${order.destinationCurrency?.toUpperCase?.() || 'USDC'} on ${String(order.destinationChain || 'network').replaceAll('_', ' ')}`,
+      amount: `${order.netAmount || '—'} ${order.destinationCurrency?.toUpperCase?.() || ''}`,
+      status: order.status,
+      createdAt: order.createdAt,
+    })),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 4);
+
+  return <article className="dashboard-transactions"><div className="dash-card-head"><h3>Recent transactions</h3><button onClick={onViewAll}>View all ↗</button></div>{!rows.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></div> : <><div className="dashboard-tx-list">{rows.map((tx) => <div className="dashboard-tx" key={`${tx.direction}:${tx.id}`}><span className={`tx-icon ${tx.direction}`}>{tx.icon}</span><div><strong>{tx.title}</strong><small>{tx.sub}</small></div><div><b>{tx.amount}</b><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></div><time>{new Date(tx.createdAt).toLocaleDateString()}</time></div>)}</div><div className="button-row dashboard-start-btn"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></>}</article>;
 }
 
 function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank, user, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; user: UserRecord | null; onContinue: () => void }) {
