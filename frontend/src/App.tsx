@@ -126,6 +126,21 @@ function shortRef(value?: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+function timeAgo(value?: string, nowMs = Date.now()) {
+  if (!value) return 'Now';
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) return 'Recently';
+  const seconds = Math.max(0, Math.floor((nowMs - then) / 1000));
+  if (seconds < 60) return 'Just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(value).toLocaleDateString();
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -241,15 +256,29 @@ const legalLinks = {
 };
 
 
+type UserNotification = {
+  id: string;
+  icon: string;
+  title: string;
+  message: string;
+  severity: 'info' | 'action' | 'urgent';
+  createdAt: string;
+  actionLabel?: string;
+  view?: ViewKey;
+};
+
+
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const apiBase = useMemo(() => normalizeFrontendApiBase(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'), []);
   const appEnv = import.meta.env.VITE_APP_ENV || 'local';
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => readStorage<string[]>('sivan.readNotifications', []));
   const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
   const [pendingEmail, setPendingEmail] = useState('');
   const [pendingFullName, setPendingFullName] = useState('');
@@ -298,6 +327,7 @@ export default function App() {
     setView(nextView);
     setMobileMenuOpen(false);
     setUserMenuOpen(false);
+    setNotificationOpen(false);
     const nextPath = pathByView[nextView] ?? '/dashboard';
     if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
   };
@@ -307,6 +337,7 @@ export default function App() {
       setView('landing');
       setMobileMenuOpen(false);
       setUserMenuOpen(false);
+      setNotificationOpen(false);
       window.history.pushState({}, '', '/');
       return;
     }
@@ -328,6 +359,59 @@ export default function App() {
   const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
+
+
+  useEffect(() => {
+    localStorage.setItem('sivan.readNotifications', JSON.stringify(readNotificationIds.slice(-200)));
+  }, [readNotificationIds]);
+
+  const notifications = useMemo<UserNotification[]>(() => {
+    const items: UserNotification[] = [];
+    const push = (item: UserNotification) => items.push(item);
+    const now = new Date().toISOString();
+    for (const incident of systemStatus.activeIncidents ?? []) {
+      push({ id: `incident:${incident.id}`, icon: incident.severity === 'critical' ? '!' : '⚠', title: incident.severity === 'critical' ? 'Service disruption' : 'Provider maintenance', message: incident.customerMessage || incident.message || 'Some payment services may be delayed.', severity: incident.severity === 'critical' ? 'urgent' : 'action', createdAt: incident.startedAt || (incident as any).createdAt || now, actionLabel: 'View support', view: 'help' });
+    }
+    if (customer?.kycStatus === 'kyc_incomplete') push({ id: `kyc:${customer.id}:incomplete`, icon: '◈', title: 'Verification needs one more step', message: customer.customerAction?.message || 'Complete the remaining verification details to continue.', severity: 'action', createdAt: customer.updatedAt || now, actionLabel: 'Continue', view: 'kyc' });
+    else if (customer?.kycStatus === 'kyc_rejected') push({ id: `kyc:${customer.id}:rejected`, icon: '!', title: 'Verification needs support', message: 'Your verification could not be completed. Retry securely or contact support.', severity: 'urgent', createdAt: customer.updatedAt || now, actionLabel: 'Review', view: 'kyc' });
+    else if (customer?.kycStatus === 'kyc_under_review') push({ id: `kyc:${customer.id}:review`, icon: '⏳', title: 'Verification under review', message: 'We will update your account as soon as review is complete.', severity: 'info', createdAt: customer.updatedAt || now, actionLabel: 'Check status', view: 'kyc' });
+    else if (customer?.kycStatus === 'kyc_approved' && !hasBank) push({ id: `bank:${user?.id || 'me'}:missing`, icon: '▭', title: 'Add payout bank', message: 'You are verified. Add a payout bank to start selling crypto.', severity: 'action', createdAt: customer.updatedAt || now, actionLabel: 'Add bank', view: 'banks' });
+    else if (!customer && hasUser) push({ id: `kyc:${user?.id || 'me'}:not-started`, icon: '◈', title: 'Verify your account', message: 'Complete identity verification to unlock payments.', severity: 'action', createdAt: user?.createdAt || now, actionLabel: 'Start', view: 'kyc' });
+
+    for (const order of onrampOrders.slice(0, 5)) {
+      if (order.status === 'awaiting_payment') push({ id: `onramp:${order.id}:awaiting`, icon: '↙', title: 'Buy order awaiting payment', message: `Send ${order.amount} ${order.sourceCurrency.toUpperCase()} using the exact reference.`, severity: 'action', createdAt: order.updatedAt || order.createdAt, actionLabel: 'View', view: 'history' });
+      if (['payment_received', 'processing'].includes(order.status)) push({ id: `onramp:${order.id}:processing`, icon: '↙', title: 'Bank payment received', message: 'We are preparing your crypto delivery.', severity: 'info', createdAt: order.updatedAt || order.createdAt, actionLabel: 'Track', view: 'history' });
+      if (order.status === 'failed') push({ id: `onramp:${order.id}:failed`, icon: '!', title: 'Buy order failed', message: 'Open the transaction timeline or contact support.', severity: 'urgent', createdAt: order.updatedAt || order.createdAt, actionLabel: 'View', view: 'history' });
+    }
+
+    for (const withdrawal of withdrawals.slice(0, 5)) {
+      if (['pending_deposit', 'deposit_received', 'payout_processing', 'requires_action'].includes(withdrawal.status)) push({ id: `withdrawal:${withdrawal.id}:${withdrawal.status}`, icon: '↗', title: withdrawal.status === 'deposit_received' ? 'Withdrawal deposit detected' : 'Withdrawal in progress', message: withdrawal.status === 'requires_action' ? 'This withdrawal needs review.' : 'Your sell transaction is moving through settlement.', severity: withdrawal.status === 'requires_action' ? 'action' : 'info', createdAt: withdrawal.updatedAt || withdrawal.createdAt, actionLabel: 'Track', view: 'history' });
+      if (withdrawal.status === 'failed') push({ id: `withdrawal:${withdrawal.id}:failed`, icon: '!', title: 'Withdrawal failed', message: 'Open the transaction timeline or contact support.', severity: 'urgent', createdAt: withdrawal.updatedAt || withdrawal.createdAt, actionLabel: 'View', view: 'history' });
+    }
+
+    for (const transfer of balanceTransfers.slice(0, 5)) {
+      if (transfer.status === 'pending_review') push({ id: `balance-transfer:${transfer.transferId}:review`, icon: '⇆', title: 'Transfer held for review', message: 'Your transfer is pending compliance review.', severity: 'action', createdAt: transfer.updatedAt || transfer.createdAt, actionLabel: 'View', view: 'transfer' });
+    }
+    for (const payment of supplierPayments.slice(0, 5)) {
+      if (payment.status === 'pending_review') push({ id: `supplier-payment:${payment.id}:review`, icon: '▭', title: 'Supplier payment held for review', message: 'Sivan is reviewing your supplier payout before provider release.', severity: 'action', createdAt: payment.updatedAt || payment.createdAt, actionLabel: 'View', view: 'transfer' });
+      if (payment.status === 'failed') push({ id: `supplier-payment:${payment.id}:failed`, icon: '!', title: 'Supplier payment failed', message: 'Open Transfer & Pay or contact support.', severity: 'urgent', createdAt: payment.updatedAt || payment.createdAt, actionLabel: 'View', view: 'transfer' });
+    }
+    for (const tx of virtualAccountTransactions.slice(0, 4)) {
+      if (!['completed', 'payment_processed'].includes(String(tx.status))) push({ id: `va-tx:${tx.id}:pending`, icon: '▥', title: 'Virtual account deposit pending', message: 'Funds are being settled before becoming available.', severity: 'info', createdAt: tx.updatedAt || tx.createdAt, actionLabel: 'View', view: 'virtualAccounts' });
+      if (['completed', 'payment_processed'].includes(String(tx.status))) push({ id: `va-tx:${tx.id}:completed`, icon: '✓', title: 'USDC balance credited', message: 'A virtual account deposit has settled into your Sivan balance.', severity: 'info', createdAt: tx.updatedAt || tx.createdAt, actionLabel: 'View', view: 'transfer' });
+    }
+    for (const ticket of supportTickets.slice(0, 5)) {
+      if (['open', 'in_review', 'waiting_on_user', 'waiting_on_provider'].includes(ticket.status)) push({ id: `support:${ticket.id}:${ticket.status}`, icon: '?', title: ticket.status === 'waiting_on_user' ? 'Support needs your response' : 'Support ticket active', message: `${ticket.subject || 'Your ticket'} · ${friendlyStatus(ticket.status)}`, severity: ticket.status === 'waiting_on_user' ? 'action' : 'info', createdAt: ticket.updatedAt || ticket.lastMessageAt || ticket.createdAt, actionLabel: 'Open', view: 'help' });
+      if (ticket.status === 'resolved') push({ id: `support:${ticket.id}:resolved`, icon: '✓', title: 'Support ticket resolved', message: ticket.subject || 'Your ticket has been marked resolved.', severity: 'info', createdAt: ticket.updatedAt || ticket.closedAt || ticket.createdAt, actionLabel: 'View', view: 'help' });
+    }
+    const rank = { urgent: 3, action: 2, info: 1 } as const;
+    return items.sort((a, b) => rank[b.severity] - rank[a.severity] || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 12);
+  }, [systemStatus, customer, hasBank, hasUser, user, onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets]);
+
+  const unreadNotifications = notifications.filter((item) => !readNotificationIds.includes(item.id));
+  const notificationDotClass = unreadNotifications.some((item) => item.severity === 'urgent') ? 'urgent' : unreadNotifications.some((item) => item.severity === 'action') ? 'action' : '';
+  const markNotificationRead = (id: string) => setReadNotificationIds((ids) => ids.includes(id) ? ids : [...ids, id]);
+  const markAllNotificationsRead = () => setReadNotificationIds((ids) => Array.from(new Set([...ids, ...notifications.map((item) => item.id)])));
   const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
   const verificationRedirectUri = useMemo(() => `${window.location.origin}/verification-complete`, []);
   const verificationUrl = customer?.hostedKycLink || customer?.kycLink;
@@ -1207,7 +1291,7 @@ export default function App() {
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <h2>{pageTitle}</h2>
           <div className="top-actions app-top-actions">
-            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><button className="icon-btn notification-button" aria-label="Notifications"><span className="notif-dot"></span>▢</button></>}
+            {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><NotificationCenter open={notificationOpen} notifications={notifications} unreadCount={unreadNotifications.length} dotClass={notificationDotClass} readIds={readNotificationIds} timeNow={timeNow} onToggle={() => { setNotificationOpen((open) => !open); setUserMenuOpen(false); }} onClose={() => setNotificationOpen(false)} onMarkAllRead={markAllNotificationsRead} onOpen={(item) => { markNotificationRead(item.id); if (item.view) goToView(item.view); }} /></>}
             {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><span className="avatar-button small-avatar">{initials(user?.fullName || user?.email)}</span><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small topbar-signin" onClick={() => goToPublicView('signin')}>Sign in</button>}
           </div>
         </header>
@@ -2151,6 +2235,28 @@ function TransferCryptoView({ hasUser, isVerified, balance, transfers, suppliers
   </section>;
 }
 
+
+
+function NotificationCenter({ open, notifications, unreadCount, dotClass, readIds, timeNow, onToggle, onClose, onMarkAllRead, onOpen }: { open: boolean; notifications: UserNotification[]; unreadCount: number; dotClass: string; readIds: string[]; timeNow: number; onToggle: () => void; onClose: () => void; onMarkAllRead: () => void; onOpen: (item: UserNotification) => void }) {
+  const visible = notifications.slice(0, 10);
+  return <div className="notification-center-wrap">
+    <button className={`icon-btn notification-button ${open ? 'active' : ''}`} aria-label="Notifications" aria-expanded={open} onClick={onToggle}>
+      {unreadCount > 0 && <span className={`notif-dot ${dotClass}`}></span>}▢
+    </button>
+    {open && <div className="notification-panel" role="dialog" aria-label="Notifications">
+      <div className="notification-head"><div><p className="eyebrow">Activity center</p><h3>Notifications</h3></div><button className="ghost-btn small" onClick={onClose}>Close</button></div>
+      <div className="notification-summary"><span>{unreadCount ? `${unreadCount} unread` : 'All read'}</span>{notifications.length > 0 && <button onClick={onMarkAllRead}>Mark all as read</button>}</div>
+      {!visible.length ? <div className="notification-empty"><strong>You’re all caught up</strong><small>Important updates about payments, verification, and support will appear here.</small></div> : <div className="notification-list">{visible.map((item) => {
+        const read = readIds.includes(item.id);
+        return <button key={item.id} className={`notification-item ${item.severity} ${read ? 'read' : 'unread'}`} onClick={() => onOpen(item)}>
+          <span className="notification-icon">{item.icon}</span>
+          <div><strong>{item.title}</strong><small>{item.message}</small><em>{timeAgo(item.createdAt, timeNow)}</em></div>
+          {item.actionLabel && <b>{item.actionLabel} →</b>}
+        </button>;
+      })}</div>}
+    </div>}
+  </div>;
+}
 
 function IncidentBanner({ systemStatus }: { systemStatus: SystemStatus }) {
   const incidents = systemStatus.activeIncidents ?? [];
