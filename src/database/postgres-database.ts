@@ -1034,6 +1034,9 @@ function mapSupplier(row: any): SupplierRecord {
     accountOwnerName: row.account_owner_name,
     accountType: row.account_type,
     accountLast4: str(row.account_last4),
+    provider: str(row.provider) ?? 'bridge',
+    providerExternalAccountId: str(row.provider_external_account_id) ?? str(row.bridge_external_account_id),
+    providerRail: str(row.provider_rail),
     bridgeExternalAccountId: str(row.bridge_external_account_id),
     status: row.status,
     riskLevel: row.risk_level,
@@ -1056,6 +1059,10 @@ function mapSupplierPayment(row: any): SupplierPaymentRecord {
     paymentPurpose: row.payment_purpose,
     invoiceUrl: str(row.invoice_url),
     status: row.status,
+    provider: str(row.provider),
+    providerTransferId: str(row.provider_transfer_id) ?? str(row.bridge_transfer_id),
+    providerRail: str(row.provider_rail),
+    executionMode: row.execution_mode,
     bridgeTransferId: str(row.bridge_transfer_id),
     riskLevel: row.risk_level,
     riskScore: Number(row.risk_score ?? 0),
@@ -1122,19 +1129,19 @@ async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord)
 
 async function upsertSupplier(client: pg.PoolClient, item: SupplierRecord) {
   await client.query(
-    `insert into payments_suppliers (id,user_id,payments_customer_id,supplier_name,supplier_type,supplier_country,currency,bank_name,account_owner_name,account_type,account_last4,bridge_external_account_id,status,risk_level,risk_score,review_reason,raw_payload,created_at,updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-     on conflict (id) do update set supplier_name=excluded.supplier_name,supplier_type=excluded.supplier_type,supplier_country=excluded.supplier_country,currency=excluded.currency,bank_name=excluded.bank_name,account_owner_name=excluded.account_owner_name,account_type=excluded.account_type,account_last4=excluded.account_last4,bridge_external_account_id=excluded.bridge_external_account_id,status=excluded.status,risk_level=excluded.risk_level,risk_score=excluded.risk_score,review_reason=excluded.review_reason,raw_payload=excluded.raw_payload,updated_at=excluded.updated_at`,
-    [item.id,item.userId,item.customerId,item.supplierName,item.supplierType,item.supplierCountry,item.currency,item.bankName,item.accountOwnerName,item.accountType,item.accountLast4,item.bridgeExternalAccountId,item.status,item.riskLevel,item.riskScore,item.reviewReason,item.raw ?? null,item.createdAt,item.updatedAt]
+    `insert into payments_suppliers (id,user_id,payments_customer_id,supplier_name,supplier_type,supplier_country,currency,bank_name,account_owner_name,account_type,account_last4,provider,provider_external_account_id,provider_rail,bridge_external_account_id,status,risk_level,risk_score,review_reason,raw_payload,created_at,updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+     on conflict (id) do update set supplier_name=excluded.supplier_name,supplier_type=excluded.supplier_type,supplier_country=excluded.supplier_country,currency=excluded.currency,bank_name=excluded.bank_name,account_owner_name=excluded.account_owner_name,account_type=excluded.account_type,account_last4=excluded.account_last4,provider=excluded.provider,provider_external_account_id=excluded.provider_external_account_id,provider_rail=excluded.provider_rail,bridge_external_account_id=excluded.bridge_external_account_id,status=excluded.status,risk_level=excluded.risk_level,risk_score=excluded.risk_score,review_reason=excluded.review_reason,raw_payload=excluded.raw_payload,updated_at=excluded.updated_at`,
+    [item.id,item.userId,item.customerId,item.supplierName,item.supplierType,item.supplierCountry,item.currency,item.bankName,item.accountOwnerName,item.accountType,item.accountLast4,item.provider ?? 'bridge',item.providerExternalAccountId ?? item.bridgeExternalAccountId,item.providerRail,item.bridgeExternalAccountId,item.status,item.riskLevel,item.riskScore,item.reviewReason,item.raw ?? null,item.createdAt,item.updatedAt]
   );
 }
 
 async function upsertSupplierPayment(client: pg.PoolClient, item: SupplierPaymentRecord) {
   await client.query(
-    `insert into payments_supplier_payments (id,user_id,supplier_id,amount,source_asset,destination_currency,payment_purpose,invoice_url,status,bridge_transfer_id,risk_level,risk_score,admin_decision,admin_decision_by,admin_decision_at,review_reason,ace_risk_review,raw_payload,created_at,updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-     on conflict (id) do update set amount=excluded.amount,source_asset=excluded.source_asset,destination_currency=excluded.destination_currency,payment_purpose=excluded.payment_purpose,invoice_url=excluded.invoice_url,status=excluded.status,bridge_transfer_id=excluded.bridge_transfer_id,risk_level=excluded.risk_level,risk_score=excluded.risk_score,admin_decision=excluded.admin_decision,admin_decision_by=excluded.admin_decision_by,admin_decision_at=excluded.admin_decision_at,review_reason=excluded.review_reason,ace_risk_review=excluded.ace_risk_review,raw_payload=excluded.raw_payload,updated_at=excluded.updated_at`,
-    [item.id,item.userId,item.supplierId,item.amount,item.sourceAsset,item.destinationCurrency,item.paymentPurpose,item.invoiceUrl,item.status,item.bridgeTransferId,item.riskLevel,item.riskScore,item.adminDecision,item.adminDecisionBy,item.adminDecisionAt,item.reviewReason,item.aceRiskReview ?? null,item.raw ?? null,item.createdAt,item.updatedAt]
+    `insert into payments_supplier_payments (id,user_id,supplier_id,amount,source_asset,destination_currency,payment_purpose,invoice_url,status,provider,provider_transfer_id,provider_rail,execution_mode,bridge_transfer_id,risk_level,risk_score,admin_decision,admin_decision_by,admin_decision_at,review_reason,ace_risk_review,raw_payload,created_at,updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+     on conflict (id) do update set amount=excluded.amount,source_asset=excluded.source_asset,destination_currency=excluded.destination_currency,payment_purpose=excluded.payment_purpose,invoice_url=excluded.invoice_url,status=excluded.status,provider=excluded.provider,provider_transfer_id=excluded.provider_transfer_id,provider_rail=excluded.provider_rail,execution_mode=excluded.execution_mode,bridge_transfer_id=excluded.bridge_transfer_id,risk_level=excluded.risk_level,risk_score=excluded.risk_score,admin_decision=excluded.admin_decision,admin_decision_by=excluded.admin_decision_by,admin_decision_at=excluded.admin_decision_at,review_reason=excluded.review_reason,ace_risk_review=excluded.ace_risk_review,raw_payload=excluded.raw_payload,updated_at=excluded.updated_at`,
+    [item.id,item.userId,item.supplierId,item.amount,item.sourceAsset,item.destinationCurrency,item.paymentPurpose,item.invoiceUrl,item.status,item.provider,item.providerTransferId ?? item.bridgeTransferId,item.providerRail,item.executionMode,item.bridgeTransferId,item.riskLevel,item.riskScore,item.adminDecision,item.adminDecisionBy,item.adminDecisionAt,item.reviewReason,item.aceRiskReview ?? null,item.raw ?? null,item.createdAt,item.updatedAt]
   );
 }
 

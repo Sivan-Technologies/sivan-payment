@@ -333,6 +333,9 @@ export interface SupplierRecord {
   accountOwnerName: string;
   accountType: SupplierAccountType;
   accountLast4?: string;
+  provider: string;
+  providerExternalAccountId?: string;
+  providerRail?: string;
   bridgeExternalAccountId?: string;
   status: SupplierStatus;
   riskLevel: SupplierRiskLevel;
@@ -353,6 +356,10 @@ export interface SupplierPaymentRecord {
   paymentPurpose: string;
   invoiceUrl?: string;
   status: SupplierPaymentStatus;
+  provider?: string;
+  providerTransferId?: string;
+  providerRail?: string;
+  executionMode?: 'provider' | 'manual_review' | 'manual_treasury';
   bridgeTransferId?: string;
   riskLevel: SupplierRiskLevel;
   riskScore: number;

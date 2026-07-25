@@ -7,6 +7,7 @@ import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../shared/id.js';
 import { createBalanceLedgerEntry, getUserBalance } from '../balances/balance.service.js';
 import { buildSupplierAceReview, defaultSupplierControls, evaluateSupplierRisk, supplierControlsSchema } from '../risk/supplier-risk.service.js';
+import { routeSupplierPayout } from './supplier-provider-routing.service.js';
 
 const currencySchema = z.enum(['usd', 'gbp', 'eur', 'mxn', 'brl']);
 const addressSchema = z.object({
@@ -154,7 +155,8 @@ export async function createSupplier(input: z.infer<typeof createSupplierSchema>
   const { data, user, customer } = await customerForUser(input.userId);
   if (customer.kycStatus !== 'kyc_approved' || customer.tosStatus !== 'approved') throw badRequest('KYC and Terms approval are required before adding a supplier.');
 
-  const provider = getOfframpProvider(customer.provider);
+  const route = routeSupplierPayout({ currency: input.currency as SupplierPayoutCurrency, country: input.supplierCountry, accountType: input.accountType });
+  const provider = getOfframpProvider(route.provider === 'bridge' ? customer.provider : route.provider);
   let providerAccount: any | undefined;
   try {
     providerAccount = await provider.createExternalAccount({ customerId: customer.providerCustomerId, payload: providerPayload(input), idempotencyKey: idempotencyKey('supplier_ea') });
@@ -176,12 +178,15 @@ export async function createSupplier(input: z.infer<typeof createSupplierSchema>
     accountOwnerName: providerAccount.accountOwnerName || input.accountOwnerName,
     accountType: input.accountType,
     accountLast4: providerAccount.last4 || last4FromInput(input),
-    bridgeExternalAccountId: providerAccount.id,
+    provider: route.provider,
+    providerExternalAccountId: providerAccount.id,
+    providerRail: route.rail,
+    bridgeExternalAccountId: route.provider === 'bridge' ? providerAccount.id : undefined,
     status: 'pending_review',
     riskLevel: 'medium',
     riskScore: 35,
     reviewReason: 'New third-party supplier requires admin review before first payout.',
-    raw: { provider: providerAccount.raw ? { id: providerAccount.id, active: providerAccount.active, currency: providerAccount.currency, account_type: providerAccount.accountType } : providerAccount, paymentRail: (input as any).paymentRail },
+    raw: { providerRoute: route, provider: providerAccount.raw ? { id: providerAccount.id, active: providerAccount.active, currency: providerAccount.currency, account_type: providerAccount.accountType } : providerAccount, paymentRail: route.rail },
     createdAt: now,
     updatedAt: now
   };
@@ -217,12 +222,13 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
   const supplier = (data.suppliers ?? []).find((item) => item.id === input.supplierId && item.userId === input.userId);
   if (!supplier) throw notFound('Supplier');
   if (input.destinationCurrency !== supplier.currency) throw badRequest(`Supplier receives ${supplier.currency.toUpperCase()}, not ${input.destinationCurrency.toUpperCase()}.`);
-  if (!supplier.bridgeExternalAccountId) throw badRequest('Supplier bank account is not provider-ready yet. Ask admin to review/provider-check this supplier.');
+  if (!supplier.providerExternalAccountId && !supplier.bridgeExternalAccountId) throw badRequest('Supplier bank account is not provider-ready yet. Ask admin to review/provider-check this supplier.');
 
   const available = (await getUserBalance(input.userId)).balances.find((item) => item.asset === input.sourceAsset)?.available ?? '0';
   if (amount(available) < input.amount) throw badRequest('Insufficient settled USDC balance for supplier payment.');
 
   const risk = evaluateSupplierRisk({ user, customer, supplier, amount: input.amount, paymentPurpose: input.paymentPurpose, invoiceUrl: input.invoiceUrl, controls, existingPayments: data.supplierPayments ?? [] });
+  const route = routeSupplierPayout({ currency: supplier.currency, country: supplier.supplierCountry, accountType: supplier.accountType });
   const now = nowIso();
   const status = risk.decision === 'block' ? 'rejected' : risk.decision === 'auto_approve' ? 'approved' : 'pending_review';
   const payment: SupplierPaymentRecord = {
@@ -235,11 +241,14 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
     paymentPurpose: input.paymentPurpose,
     invoiceUrl: input.invoiceUrl,
     status,
+    provider: route.provider,
+    providerRail: route.rail,
+    executionMode: route.executionMode,
     riskLevel: risk.riskLevel,
     riskScore: risk.riskScore,
     reviewReason: risk.reviewReason,
     aceRiskReview: buildSupplierAceReview(risk),
-    raw: { paymentRail: paymentRailForSupplier(supplier), execution: 'provider_execution_pending_phase_e' },
+    raw: { providerRoute: route, paymentRail: route.rail || paymentRailForSupplier(supplier), execution: 'provider_execution_pending_phase_e' },
     createdAt: now,
     updatedAt: now
   };

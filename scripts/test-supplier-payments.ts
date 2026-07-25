@@ -67,7 +67,8 @@ async function main() {
       address: { street_line_1: '1 King Street', country: 'GBR', city: 'London', postal_code: 'SW1A 1AA' }
     });
     assert(supplier.status === 'pending_review', 'new third-party supplier starts pending review');
-    assert(Boolean(supplier.bridgeExternalAccountId), 'supplier has provider external account id');
+    assert(supplier.provider === 'bridge', 'supplier route selects Bridge as current execution provider');
+    assert(Boolean(supplier.providerExternalAccountId || supplier.bridgeExternalAccountId), 'supplier has generic provider external account id');
 
     const approvedSupplier = await request('POST', `/api/admin/suppliers/${supplier.id}/review`, { decision: 'approve', reason: 'Invoice/business supplier verified', reviewedBy: 'compliance' }, { 'x-admin-api-key': 'supplier-admin-key' });
     assert(approvedSupplier.status === 'approved', 'admin approves supplier');
