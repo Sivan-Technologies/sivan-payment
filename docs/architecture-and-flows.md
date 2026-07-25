@@ -30,8 +30,17 @@ supplier payouts
 B2B payouts
 multi-provider routing
 wallet-based flows
+Sivan username transfers / internal ledger transfers
 additional currencies and rails
 ```
+
+See also:
+
+```text
+docs/internal-sivan-username-transfers-option-a.md
+```
+
+This document defines the future production design for Option A internal Sivan-to-Sivan settled-USDC transfers, where no blockchain transaction occurs until funds leave Sivan externally.
 
 ---
 
