@@ -24,16 +24,21 @@ async function activeVirtualAccountProviderName() {
 }
 
 export async function listUserVirtualAccounts(userId: string) {
-  const [requests, accounts] = await Promise.all([db.listVirtualAccountRequests(), db.listVirtualAccounts()]);
+  const [requests, accounts, events, transactions] = await Promise.all([db.listVirtualAccountRequests(), db.listVirtualAccounts(), db.listVirtualAccountEvents(), db.listVirtualAccountTransactions()]);
   const activeProvider = await activeVirtualAccountProviderName();
   const hideLegacyMockAccounts = activeProvider === 'bridge';
+  const userAccounts = accounts
+    .filter((item) => item.userId === userId)
+    .filter((item) => item.status !== 'closed')
+    .filter((item) => !hideLegacyMockAccounts || item.provider !== 'mock')
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const providerIds = new Set(userAccounts.map((account) => account.providerAccountId));
+  const accountIds = new Set(userAccounts.map((account) => account.id));
   return {
     requests: requests.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    accounts: accounts
-      .filter((item) => item.userId === userId)
-      .filter((item) => item.status !== 'closed')
-      .filter((item) => !hideLegacyMockAccounts || item.provider !== 'mock')
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    accounts: userAccounts,
+    events: events.filter((item) => item.virtualAccountId && accountIds.has(item.virtualAccountId) || item.providerAccountId && providerIds.has(item.providerAccountId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    transactions: transactions.filter((item) => item.userId === userId || item.virtualAccountId && accountIds.has(item.virtualAccountId) || item.providerAccountId && providerIds.has(item.providerAccountId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   };
 }
 

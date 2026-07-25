@@ -2,6 +2,7 @@ import { db } from '../../database/json-database.js';
 import { id, nowIso } from '../../shared/id.js';
 import type { BridgeWebhookPayload } from '../../webhooks/webhooks.service.js';
 import { syncPaymentTransactionReferencesForResource, upsertTransactionReference } from '../../references/transaction-references.service.js';
+import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
 import type { VirtualAccountEventRecord, VirtualAccountEventType, VirtualAccountTransactionRecord, VirtualAccountTransactionStatus, VirtualAccountCurrency } from '../types/virtual-account.types.js';
 
 function normalizeEventType(value: unknown): VirtualAccountEventType {
@@ -107,5 +108,12 @@ export async function applyBridgeVirtualAccountEvent(payload: BridgeWebhookPaylo
   };
   await db.upsertVirtualAccountTransactionRecord(transaction);
   await syncPaymentTransactionReferencesForResource('virtual_account_transaction', transaction);
+  if (transaction.userId && transaction.destinationCurrency?.toLowerCase() === 'usdc') {
+    if (status === 'completed') {
+      await createBalanceLedgerEntry({ userId: transaction.userId, customerId: transaction.customerId, asset: 'usdc', amount: transaction.destinationAmount || transaction.sourceAmount || '0', kind: 'credit_available', status: 'available', sourceType: 'virtual_account_transaction', sourceId: transaction.id, description: 'Bridge virtual account deposit settled as available balance' }, { actorType: 'provider', actorId: 'bridge' });
+    } else if (['funds_received', 'scheduled', 'submitted', 'in_review'].includes(status)) {
+      await createBalanceLedgerEntry({ userId: transaction.userId, customerId: transaction.customerId, asset: 'usdc', amount: transaction.destinationAmount || transaction.sourceAmount || '0', kind: 'credit_pending', status: 'pending', sourceType: 'virtual_account_transaction', sourceId: transaction.id, description: 'Bridge virtual account deposit pending settlement' }, { actorType: 'provider', actorId: 'bridge' });
+    }
+  }
   return { event: eventRecord, transaction };
 }

@@ -177,6 +177,7 @@ function restrictedActionForRequest(method: string, url: string): 'onramp' | 'of
   if (url === '/api/onramp/orders') return 'onramp';
   if (url.startsWith('/api/ngn/onramp')) return 'onramp';
   if (url.startsWith('/api/ngn/offramp')) return 'offramp';
+  if (url.includes('/balance/transfers')) return 'onramp';
   return undefined;
 }
 
@@ -203,6 +204,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/users\/[^/]+\/ngn-transfers/,
     /^\/api\/users\/[^/]+\/support\/tickets/,
     /^\/api\/users\/[^/]+\/preferences/,
+    /^\/api\/users\/[^/]+\/balance/,
     /^\/api\/users\/[^/]+\/virtual-accounts/,
     /^\/api\/users\/[^/]+\/legal-acceptances/,
     /^\/api\/users\/[^/]+\/external-accounts/,

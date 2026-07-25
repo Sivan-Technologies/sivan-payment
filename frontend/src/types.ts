@@ -1,4 +1,4 @@
-export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup';
+export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup';
 
 export interface UserRecord {
   id: string;
@@ -71,6 +71,44 @@ export interface ExternalAccountRecord {
   accountLast4?: string;
   paymentRail: string;
   status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+
+export interface BalanceSummary {
+  userId: string;
+  balances: Array<{ asset: string; pending: string; available: string; held: string; spent: string; totalCredited: string }>;
+  ledger: BalanceLedgerEntry[];
+  updatedAt: string;
+}
+
+export interface BalanceLedgerEntry {
+  entryId: string;
+  userId: string;
+  customerId?: string;
+  asset: 'usdc' | 'usdt';
+  amount: string;
+  kind: string;
+  status: string;
+  sourceType: string;
+  sourceId: string;
+  description?: string;
+  network?: string;
+  destinationAddress?: string;
+  transferId?: string;
+  createdAt: string;
+}
+
+export interface BalanceTransferRecord {
+  transferId: string;
+  userId: string;
+  asset: 'usdc' | 'usdt';
+  network: string;
+  amount: string;
+  destinationAddress: string;
+  status: string;
+  note?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -274,6 +312,28 @@ export interface VirtualAccountRecord {
   rawProviderPayload?: unknown;
   createdAt: string;
   updatedAt: string;
+}
+
+
+export interface VirtualAccountTransactionRecord {
+  id: string;
+  provider: string;
+  virtualAccountId?: string;
+  providerAccountId?: string;
+  depositId: string;
+  userId?: string;
+  customerId?: string;
+  sourceCurrency?: 'usd' | 'gbp' | 'eur' | 'ngn';
+  destinationCurrency?: string;
+  sourceAmount?: string;
+  destinationAmount?: string;
+  paymentRail?: string;
+  status: string;
+  depositReference?: string;
+  destinationTxHash?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }
 
 export interface OfframpControls {

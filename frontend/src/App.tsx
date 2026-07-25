@@ -1,9 +1,10 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord } from './types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, BalanceSummary, BalanceTransferRecord } from './types';
 
 const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
   { key: 'buy', icon: '↙', label: 'Buy crypto' },
+  { key: 'transfer', icon: '⇆', label: 'Transfer crypto' },
   { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
   { key: 'history', icon: '◷', label: 'Transactions' },
   { key: 'banks', icon: '▭', label: 'Payment methods' },
@@ -25,6 +26,7 @@ const pathByView: Record<ViewKey, string> = {
   overview: '/dashboard',
   withdraw: '/withdraw',
   buy: '/buy',
+  transfer: '/transfer',
   history: '/withdrawals',
   banks: '/bank-accounts',
   virtualAccounts: '/virtual-account',
@@ -38,6 +40,7 @@ function viewFromPath(pathname: string): ViewKey {
   const clean = pathname.replace(/\/$/, '') || '/';
   if (clean === '/dashboard' || clean === '/app') return 'overview';
   if (clean === '/withdraw' || clean === '/app/sell') return 'withdraw';
+  if (clean === '/transfer' || clean === '/send' || clean === '/app/transfer') return 'transfer';
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
   if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
@@ -260,7 +263,10 @@ export default function App() {
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
   const [virtualAccountRequests, setVirtualAccountRequests] = useState<VirtualAccountRequestRecord[]>([]);
   const [virtualAccounts, setVirtualAccounts] = useState<VirtualAccountRecord[]>([]);
+  const [virtualAccountTransactions, setVirtualAccountTransactions] = useState<VirtualAccountTransactionRecord[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
+  const [balance, setBalance] = useState<BalanceSummary | null>(null);
+  const [balanceTransfers, setBalanceTransfers] = useState<BalanceTransferRecord[]>([]);
   const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus | null>(null);
   const [pairingCode, setPairingCode] = useState('');
@@ -353,6 +359,9 @@ export default function App() {
     setWithdrawals([]);
     setOnrampOrders([]);
     setSupportTickets([]);
+    setVirtualAccountTransactions([]);
+    setBalance(null);
+    setBalanceTransfers([]);
     setUserPreferences(null);
     setIdentityStatus(null);
     setDepositResult(null);
@@ -444,7 +453,7 @@ export default function App() {
   }, [customer]);
 
   useEffect(() => {
-    const protectedViews: ViewKey[] = ['overview', 'buy', 'withdraw', 'history', 'banks', 'virtualAccounts', 'kyc', 'settings'];
+    const protectedViews: ViewKey[] = ['overview', 'buy', 'transfer', 'withdraw', 'history', 'banks', 'virtualAccounts', 'kyc', 'settings'];
     if (!hasUser && protectedViews.includes(view)) {
       setAuthTab('signup');
       resetPendingEmail();
@@ -477,12 +486,14 @@ export default function App() {
 
   const loadUserData = useCallback(async () => {
     if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, supportTicketsResult, preferencesResult, identityResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${user.id}`),
       api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
       api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`),
-      api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[] }>(`/api/users/${user.id}/virtual-accounts`),
+      api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions?: VirtualAccountTransactionRecord[]; events?: any[] }>(`/api/users/${user.id}/virtual-accounts`),
+      api<BalanceSummary>(`/api/users/${user.id}/balance`),
+      api<BalanceTransferRecord[]>(`/api/users/${user.id}/balance/transfers`),
       api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
       api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`),
       api<IdentityStatus>('/api/users/me/identity')
@@ -491,7 +502,9 @@ export default function App() {
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
     if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
     if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
-    if (virtualAccountsResult.status === 'fulfilled') { setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []); setVirtualAccounts(virtualAccountsResult.value.accounts ?? []); }
+    if (virtualAccountsResult.status === 'fulfilled') { setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []); setVirtualAccounts(virtualAccountsResult.value.accounts ?? []); setVirtualAccountTransactions(virtualAccountsResult.value.transactions ?? []); }
+    if (balanceResult.status === 'fulfilled') setBalance(balanceResult.value);
+    if (balanceTransfersResult.status === 'fulfilled') setBalanceTransfers(balanceTransfersResult.value);
     if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
     if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
     if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
@@ -742,6 +755,28 @@ export default function App() {
 
   async function refreshKyc() {
     await refreshKycStatus(true);
+  }
+
+
+  async function handleBalanceTransfer(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!isVerified) return notify('Please complete verification before transferring crypto.', 'error');
+    setLoading(true);
+    try {
+      const data = getForm(event.currentTarget);
+      const transfer = await api<BalanceTransferRecord>(`/api/users/${user.id}/balance/transfers`, {
+        method: 'POST',
+        body: JSON.stringify({ asset: data.asset || 'usdc', network: data.network, amount: data.amount, destinationAddress: data.destinationAddress, note: data.note || undefined })
+      });
+      setBalanceTransfers((items) => [transfer, ...items.filter((item) => item.transferId !== transfer.transferId)]);
+      await loadUserData();
+      notify('Transfer request created. Sivan will process it from your available balance.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleBank(event: FormEvent<HTMLFormElement>) {
@@ -1119,7 +1154,7 @@ export default function App() {
 
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
-              <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button>
+              <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer crypto</strong><small>Send from available Sivan balance</small></div><em>→</em></button>
             </div>
 
             <div className="dashboard-kpis">
@@ -1185,7 +1220,7 @@ export default function App() {
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 
-        {view === 'virtualAccounts' && <VirtualAccountsView requests={virtualAccountRequests} accounts={virtualAccounts} controls={paymentControls.virtualAccounts} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={handleVirtualAccountRequest} onRefresh={loadUserData} />}
+        {view === 'virtualAccounts' && <VirtualAccountsView requests={virtualAccountRequests} accounts={virtualAccounts} transactions={virtualAccountTransactions} controls={paymentControls.virtualAccounts} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={handleVirtualAccountRequest} onRefresh={loadUserData} />}
 
         {view === 'withdraw' && (
           <OffRampWizard
@@ -1206,6 +1241,7 @@ export default function App() {
         )}
 
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
+        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} transfers={balanceTransfers} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
@@ -1729,8 +1765,8 @@ function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls,
   return <section className="app-page payment-methods-premium"><PageHero title="Payment methods" subtitle="Manage payout banks you own for crypto-to-bank withdrawals." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
 }
 
-function VirtualAccountsView({ requests, accounts, controls, loading, isVerified, canCreatePaymentActions, onRequest, onRefresh }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void; onRefresh: () => void }) {
-  return <section className="app-page payment-methods-premium"><PageHero title="Virtual accounts" subtitle="Request reusable receiving accounts for fiat deposits into Sivan." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><VirtualAccountsCustomerPanel requests={requests} accounts={accounts} controls={controls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} /></section>;
+function VirtualAccountsView({ requests, accounts, transactions, controls, loading, isVerified, canCreatePaymentActions, onRequest, onRefresh }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions: VirtualAccountTransactionRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void; onRefresh: () => void }) {
+  return <section className="app-page payment-methods-premium"><PageHero title="Virtual accounts" subtitle="Request reusable receiving accounts for fiat deposits into Sivan." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><VirtualAccountsCustomerPanel requests={requests} accounts={accounts} controls={controls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} /><VirtualAccountDepositHistory transactions={transactions} /></section>;
 }
 
 const vaCurrencyMeta: Record<'usd' | 'gbp' | 'eur', { title: string; rails: string; account: string; flag: string }> = {
@@ -1743,6 +1779,11 @@ function VirtualAccountsCustomerPanel({ requests, accounts, controls, loading, i
   const currencies: Array<'usd' | 'gbp' | 'eur'> = ['usd', 'gbp', 'eur'];
   const enabledControls = controls.filter((control) => control.enabled);
   return <article className="virtual-bank-panel"><div className="virtual-bank-head"><div><p className="eyebrow">Virtual Accounts</p><h3>Request virtual bank accounts</h3><p className="muted">After approval, Sivan shows customer-safe bank details only. Provider internals, destination wallets, and economics stay hidden.</p></div><Badge status={enabledControls.length ? 'active' : 'pending'}>{enabledControls.length ? `${enabledControls.length} enabled` : 'Disabled'}</Badge></div><div className="virtual-bank-grid">{currencies.map((currency) => <VirtualAccountCurrencyCard key={currency} currency={currency} request={requests.find((item) => item.currency === currency && !['rejected', 'canceled'].includes(item.status))} account={accounts.find((item) => item.currency === currency && item.status !== 'closed' && item.provider !== 'mock')} control={controls.find((item) => item.currency === currency)} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} />)}</div></article>;
+}
+
+
+function VirtualAccountDepositHistory({ transactions }: { transactions: VirtualAccountTransactionRecord[] }) {
+  return <article className="virtual-bank-panel va-deposit-history"><div className="virtual-bank-head"><div><p className="eyebrow">Deposit history</p><h3>Virtual account deposits</h3><p className="muted">Fiat deposits and settlement events from Bridge virtual accounts. Completed deposits can credit your Sivan balance.</p></div><Badge status={transactions.length ? 'active' : 'pending'}>{transactions.length ? `${transactions.length} deposits` : 'No deposits'}</Badge></div>{!transactions.length ? <Empty>No virtual account deposits yet.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>Deposit</th><th>Amount</th><th>Settled</th><th>Status</th><th>Rail</th><th>Date</th></tr></thead><tbody>{transactions.map((tx) => <tr key={tx.id}><td>{shortRef(tx.depositId)}</td><td>{tx.sourceAmount || '—'} {tx.sourceCurrency?.toUpperCase() || ''}</td><td>{tx.destinationAmount || '—'} {tx.destinationCurrency?.toUpperCase() || ''}</td><td><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></td><td>{tx.paymentRail || '—'}</td><td>{new Date(tx.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table></div>}</article>;
 }
 
 function virtualAccountInstructions(account?: VirtualAccountRecord) {
@@ -1981,6 +2022,22 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
     <div className="warning-box compact">Send the exact amount and include the reference/memo. Missing or incorrect references can delay matching and settlement.</div>
   </div>;
 }
+function TransferCryptoView({ hasUser, isVerified, balance, transfers, enabledNetworks, loading, onSubmit, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; balance: BalanceSummary | null; transfers: BalanceTransferRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
+  const usdc = balance?.balances.find((item) => item.asset === 'usdc');
+  const available = Number(usdc?.available || 0);
+  const pending = Number(usdc?.pending || 0);
+  const held = Number(usdc?.held || 0);
+  const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
+  return <section className="app-page transfer-premium"><PageHero title="Transfer crypto" subtitle="Send from your available Sivan balance to a wallet you control." action={<button className="primary-btn small" onClick={() => void onRefresh()}>Refresh balance</button>} />
+    <div className="transfer-grid">
+      <article className="panel transfer-balance-card"><p className="eyebrow">Available balance</p><h2>{available.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</h2><div className="balance-mini-grid"><Kv label="Pending" value={`${pending.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Held" value={`${held.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Spent" value={`${Number(usdc?.spent || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /></div><p className="muted">Balances are credited from confirmed Bridge virtual account deposits. Pending deposits cannot be transferred until provider settlement is complete.</p></article>
+      <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send from balance</p><h3>Transfer crypto</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={onSubmit}><label>Asset<select name="asset" defaultValue="usdc"><option value="usdc">USDC</option><option value="usdt">USDT later</option></select></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<select name="network" defaultValue={networks[0]?.network || 'base'}>{networks.map((network) => <option value={network.network} key={network.network}>{network.label}</option>)}</select></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label><div className="warning-box compact">Only send to a wallet you control on the selected network. Transfers from balance may be held for manual review based on risk controls.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating transfer…' : available <= 0 ? 'No available balance' : 'Review and create transfer →'}</button></form>}</article>
+      <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Transfer history</p><h3>Balance sends</h3></div></div>{!transfers.length ? <Empty>No balance transfers yet.</Empty> : <div className="list">{transfers.map((transfer) => <div className="list-item" key={transfer.transferId}><strong>{transfer.amount} {transfer.asset.toUpperCase()} → {transfer.network.replaceAll('_', ' ')}</strong><Badge status={transfer.status}>{friendlyStatus(transfer.status)}</Badge><small>{shortRef(transfer.destinationAddress)} · {new Date(transfer.createdAt).toLocaleString()}</small>{transfer.note && <small>{transfer.note}</small>}</div>)}</div>}</article>
+    </div>
+    <article className="panel"><div className="panel-head"><div><p className="eyebrow">Balance ledger</p><h3>Deposit and spend trail</h3></div></div>{!balance?.ledger?.length ? <Empty>No ledger entries yet. Deposit to your virtual account to create a balance.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>Type</th><th>Amount</th><th>Status</th><th>Source</th><th>Date</th></tr></thead><tbody>{balance.ledger.slice(0, 20).map((entry) => <tr key={entry.entryId}><td>{entry.kind.replaceAll('_', ' ')}</td><td>{entry.amount} {entry.asset.toUpperCase()}</td><td><Badge status={entry.status}>{friendlyStatus(entry.status)}</Badge></td><td>{entry.sourceType} · {shortRef(entry.sourceId)}</td><td>{new Date(entry.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>
+  </section>;
+}
+
 
 function IncidentBanner({ systemStatus }: { systemStatus: SystemStatus }) {
   const incidents = systemStatus.activeIncidents ?? [];
