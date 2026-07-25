@@ -32,6 +32,12 @@ export interface ProviderExternalAccount {
   raw: unknown;
 }
 
+export interface ProviderSupplierPayout {
+  id: string;
+  status?: string;
+  raw: unknown;
+}
+
 export interface ProviderLiquidationAddress {
   id: string;
   customerId: string;
@@ -65,6 +71,19 @@ export interface CreateExternalAccountInput {
   idempotencyKey: string;
 }
 
+export interface CreateSupplierPayoutInput {
+  customerId: string;
+  bridgeWalletId: string;
+  amount: string;
+  sourceCurrency: SourceCurrency;
+  destinationCurrency: SupplierPayoutCurrency;
+  destinationPaymentRail: string;
+  externalAccountId: string;
+  clientReferenceId: string;
+  idempotencyKey: string;
+  developerFee?: string;
+}
+
 export interface CreateLiquidationAddressInput {
   customerId: string;
   sourceCurrency: SourceCurrency;
@@ -86,6 +105,8 @@ export interface OfframpProvider {
   getKycLink(kycLinkId: string): Promise<ProviderKycLink>;
   getHostedKycLink(customerId: string, redirectUri?: string, endorsement?: string): Promise<{ url: string; raw: unknown }>;
   createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount>;
+  createSupplierPayout?(input: CreateSupplierPayoutInput): Promise<ProviderSupplierPayout>;
+  getTransfer?(transferId: string): Promise<unknown>;
   simulateSandboxKycApproval?(customerId: string, idempotencyKey: string): Promise<unknown>;
   verifyExternalAccount(customerId: string, externalAccountId: string): Promise<unknown>;
   createLiquidationAddress(input: CreateLiquidationAddressInput): Promise<ProviderLiquidationAddress>;

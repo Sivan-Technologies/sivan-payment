@@ -1,5 +1,5 @@
 import { db } from '../database/json-database.js';
-import type { WebhookEventRecord, WithdrawalRecord, UnifiedWebhookLogRecord } from '../database/types.js';
+import type { WebhookEventRecord, WithdrawalRecord, UnifiedWebhookLogRecord, SupplierPaymentRecord } from '../database/types.js';
 import { getOfframpProvider } from '../providers/provider-registry.js';
 import { badRequest, conflict, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
@@ -7,6 +7,7 @@ import { mapBridgeKycStatus } from '../customers/customer-mapping.js';
 import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
 import { mapBridgeTransferState } from '../onramp/service/onramp-mapping.js';
 import { applyBridgeVirtualAccountEvent, isVirtualAccountWebhook } from '../virtual-accounts/service/virtual-account-events.service.js';
+import { createBalanceLedgerEntry } from '../balances/balance.service.js';
 
 export interface BridgeWebhookPayload {
   event_id?: string;
@@ -103,8 +104,12 @@ async function applyBridgeWebhookEffects(data: any, payload: BridgeWebhookPayloa
     if (account) await db.updateExternalAccountRecord(account);
   }
   if (eventCategory === 'transfer' || eventCategory === 'transfers') {
-    const order = applyTransferEvent(data, payload);
-    if (order) await db.updateOnrampOrderRecord(order);
+    const supplierPayment = await applySupplierPaymentTransferEvent(data, payload);
+    if (supplierPayment) await db.updateSupplierPaymentRecord(supplierPayment);
+    else {
+      const order = applyTransferEvent(data, payload);
+      if (order) await db.updateOnrampOrderRecord(order);
+    }
   }
   if (isVirtualAccountWebhook(payload)) {
     await applyBridgeVirtualAccountEvent(payload);
@@ -174,6 +179,35 @@ function applyKycLinkEvent(data: any, payload: BridgeWebhookPayload): any | unde
   customer.raw = kyc;
   customer.updatedAt = nowIso();
   return customer;
+}
+
+
+async function applySupplierPaymentTransferEvent(data: any, payload: BridgeWebhookPayload): Promise<SupplierPaymentRecord | undefined> {
+  const transfer = payload.event_object ?? {};
+  const transferId = transfer.id ?? payload.event_object_id;
+  const clientReferenceId = transfer.client_reference_id;
+  if (!transferId && !clientReferenceId) return undefined;
+  const payment = (data.supplierPayments ?? []).find((item: SupplierPaymentRecord) => item.providerTransferId === transferId || item.bridgeTransferId === transferId || item.id === clientReferenceId);
+  if (!payment) return undefined;
+  const rawStatus = String(transfer.state ?? transfer.status ?? payload.event_object_status ?? '').toLowerCase();
+  const status: SupplierPaymentRecord['status'] = ['completed', 'payment_processed', 'succeeded', 'success'].includes(rawStatus)
+    ? 'completed'
+    : ['failed', 'canceled', 'cancelled', 'rejected'].includes(rawStatus)
+      ? 'failed'
+      : 'processing';
+  payment.provider = payment.provider || 'bridge';
+  payment.providerTransferId = transferId ?? payment.providerTransferId;
+  payment.bridgeTransferId = transferId ?? payment.bridgeTransferId;
+  payment.status = status;
+  payment.raw = { ...(payment.raw as any ?? {}), providerTransfer: transfer, webhook: { eventId: payload.event_id, eventType: payload.event_type, eventCategory: payload.event_category } };
+  payment.updatedAt = nowIso();
+  if (status === 'completed') {
+    await createBalanceLedgerEntry({ userId: payment.userId, asset: payment.sourceAsset, amount: payment.amount, kind: 'debit_transfer', status: 'completed', sourceType: 'supplier_payment', sourceId: payment.id, description: 'Debit held USDC after supplier payout provider webhook completion', transferId: payment.id }, { actorType: 'provider', actorId: 'bridge' });
+  }
+  if (status === 'failed') {
+    await createBalanceLedgerEntry({ userId: payment.userId, asset: payment.sourceAsset, amount: payment.amount, kind: 'hold_release', status: 'available', sourceType: 'supplier_payment', sourceId: payment.id, description: 'Release supplier payout hold after provider failure', transferId: payment.id }, { actorType: 'provider', actorId: 'bridge' });
+  }
+  return payment;
 }
 
 

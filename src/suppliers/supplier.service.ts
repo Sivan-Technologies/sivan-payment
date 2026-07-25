@@ -8,6 +8,7 @@ import { id, idempotencyKey, nowIso } from '../shared/id.js';
 import { createBalanceLedgerEntry, getUserBalance } from '../balances/balance.service.js';
 import { buildSupplierAceReview, defaultSupplierControls, evaluateSupplierRisk, supplierControlsSchema } from '../risk/supplier-risk.service.js';
 import { routeSupplierPayout } from './supplier-provider-routing.service.js';
+import { getVirtualAccountProviderSettings } from '../virtual-accounts/service/virtual-account-provider-settings.service.js';
 
 const currencySchema = z.enum(['usd', 'gbp', 'eur', 'mxn', 'brl']);
 const addressSchema = z.object({
@@ -297,6 +298,94 @@ export async function reviewSupplierPayment(paymentId: string, input: z.infer<ty
     await createBalanceLedgerEntry({ userId: updated.userId, asset: updated.sourceAsset, amount: updated.amount, kind: 'hold_release', status: 'available', sourceType: 'supplier_payment', sourceId: updated.id, description: `Release supplier payout hold after rejection`, transferId: updated.id }, { actorType: 'admin', actorId: input.reviewedBy });
   }
   await createAuditLog({ actorType: 'admin', actorId: input.reviewedBy, action: 'supplier_payment.reviewed', resourceType: 'supplier_payment', resourceId: paymentId, severity: status === 'approved' ? 'warning' : 'info', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { decision: input.decision, reason: input.reason, payment: updated, supplier: current.supplier, execution: 'Bridge transfer execution remains disabled until Phase E provider execution is implemented.' } });
+  return updated;
+}
+
+function mapProviderTransferStatus(rawStatus?: string): SupplierPaymentRecord['status'] {
+  const status = String(rawStatus || '').toLowerCase();
+  if (['completed', 'payment_processed', 'succeeded', 'success'].includes(status)) return 'completed';
+  if (['failed', 'canceled', 'cancelled', 'rejected'].includes(status)) return 'failed';
+  return 'processing';
+}
+
+function providerTransferStatus(raw: any): string | undefined {
+  return raw?.state || raw?.status || raw?.transfer?.state || raw?.data?.state;
+}
+
+async function markSupplierPaymentCompleted(payment: SupplierPaymentRecord, raw: unknown) {
+  const updated: SupplierPaymentRecord = { ...payment, status: 'completed', raw: { ...(payment.raw as any ?? {}), providerTransfer: raw }, updatedAt: nowIso() };
+  await db.updateSupplierPaymentRecord(updated);
+  await createBalanceLedgerEntry({ userId: payment.userId, asset: payment.sourceAsset, amount: payment.amount, kind: 'debit_transfer', status: 'completed', sourceType: 'supplier_payment', sourceId: payment.id, description: `Debit held USDC after supplier payout completion`, transferId: payment.id }, { actorType: 'provider', actorId: payment.provider || 'provider' });
+  await createAuditLog({ actorType: 'provider', actorId: payment.provider || 'provider', action: 'supplier_payment.completed', resourceType: 'supplier_payment', resourceId: payment.id, severity: 'info', metadata: { payment: updated, providerTransfer: raw } });
+  return updated;
+}
+
+export const releaseSupplierPaymentSchema = z.object({
+  releasedBy: z.string().min(2).default('admin_api_key'),
+  reason: z.string().min(3).max(1000).default('Release approved supplier payment to provider')
+});
+
+export async function releaseSupplierPaymentToProvider(paymentId: string, input: z.infer<typeof releaseSupplierPaymentSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+  const data = await db.read();
+  const payment = (data.supplierPayments ?? []).find((item) => item.id === paymentId);
+  if (!payment) throw notFound('Supplier payment');
+  const supplier = (data.suppliers ?? []).find((item) => item.id === payment.supplierId);
+  if (!supplier) throw notFound('Supplier');
+  const customer = data.customers.find((item) => item.id === supplier.customerId);
+  if (!customer) throw notFound('Customer');
+  if (payment.status === 'completed') return payment;
+  if (!['approved', 'processing'].includes(payment.status)) throw badRequest('Supplier payment must be admin-approved before provider release.');
+  const providerName = payment.provider || supplier.provider || 'bridge';
+  if (providerName !== 'bridge') throw badRequest(`Provider execution is not implemented for ${providerName}. Use manual treasury fallback.`);
+  const externalAccountId = supplier.providerExternalAccountId || supplier.bridgeExternalAccountId;
+  if (!externalAccountId) throw badRequest('Supplier has no provider external account id.');
+  const settings = await getVirtualAccountProviderSettings({ includeSecrets: true }) as any;
+  if (!settings.bridgeWalletId) throw badRequest('Bridge wallet ID is required before releasing supplier payouts. Configure it in Admin Hub virtual account settlement settings.');
+  const provider = getOfframpProvider('bridge');
+  if (!provider.createSupplierPayout) throw badRequest('Current provider adapter does not support supplier payout execution.');
+
+  const providerTransfer = await provider.createSupplierPayout({
+    customerId: customer.providerCustomerId,
+    bridgeWalletId: settings.bridgeWalletId,
+    amount: payment.amount,
+    sourceCurrency: payment.sourceAsset,
+    destinationCurrency: payment.destinationCurrency,
+    destinationPaymentRail: payment.providerRail || supplier.providerRail || paymentRailForSupplier(supplier),
+    externalAccountId,
+    clientReferenceId: payment.id,
+    idempotencyKey: idempotencyKey('supplier_payout')
+  });
+  const mappedStatus = mapProviderTransferStatus(providerTransfer.status);
+  const updated: SupplierPaymentRecord = {
+    ...payment,
+    status: mappedStatus,
+    provider: 'bridge',
+    providerTransferId: providerTransfer.id,
+    bridgeTransferId: providerTransfer.id,
+    providerRail: payment.providerRail || supplier.providerRail || paymentRailForSupplier(supplier),
+    executionMode: 'provider',
+    raw: { ...(payment.raw as any ?? {}), releaseReason: input.reason, providerTransfer: providerTransfer.raw },
+    updatedAt: nowIso()
+  };
+  await db.updateSupplierPaymentRecord(updated);
+  await createAuditLog({ actorType: 'admin', actorId: input.releasedBy, action: 'supplier_payment.released_to_provider', resourceType: 'supplier_payment', resourceId: payment.id, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { reason: input.reason, payment: updated, supplier, providerTransfer: providerTransfer.raw } });
+  if (mappedStatus === 'completed') return markSupplierPaymentCompleted(updated, providerTransfer.raw);
+  return updated;
+}
+
+export async function syncSupplierPaymentProviderStatus(paymentId: string) {
+  const data = await db.read();
+  const payment = (data.supplierPayments ?? []).find((item) => item.id === paymentId);
+  if (!payment) throw notFound('Supplier payment');
+  if (!payment.providerTransferId && !payment.bridgeTransferId) throw badRequest('Supplier payment has not been released to a provider yet.');
+  const provider = getOfframpProvider(payment.provider || 'bridge');
+  if (!provider.getTransfer) throw badRequest('Current provider adapter does not support transfer sync.');
+  const raw: any = await provider.getTransfer(payment.providerTransferId || payment.bridgeTransferId!);
+  const mappedStatus = mapProviderTransferStatus(providerTransferStatus(raw));
+  if (mappedStatus === 'completed') return markSupplierPaymentCompleted(payment, raw);
+  const updated: SupplierPaymentRecord = { ...payment, status: mappedStatus, raw: { ...(payment.raw as any ?? {}), providerTransfer: raw }, updatedAt: nowIso() };
+  await db.updateSupplierPaymentRecord(updated);
+  await createAuditLog({ actorType: 'provider', actorId: payment.provider || 'provider', action: 'supplier_payment.synced', resourceType: 'supplier_payment', resourceId: payment.id, severity: mappedStatus === 'failed' ? 'error' : 'info', metadata: { payment: updated, providerTransfer: raw } });
   return updated;
 }
 

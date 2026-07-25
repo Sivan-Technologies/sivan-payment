@@ -53,6 +53,7 @@ async function main() {
     assert(controls.manualReviewThreshold === 1000, 'admin controls set dynamic supplier threshold');
 
     await request('POST', '/api/admin/balance/adjustments', { userId: user.id, asset: 'usdc', amount: 500, status: 'available', reason: 'Seed supplier payment balance', adjustedBy: 'test' }, { 'x-admin-api-key': 'supplier-admin-key' });
+    await request('PUT', '/api/admin/virtual-account-provider-settings', { provider: 'bridge', enabled: true, defaultSettlementAsset: 'usdc', defaultSettlementNetwork: 'base', bridgeWalletId: 'wallet_supplier_test_12345', updatedBy: 'test', reason: 'Configure test Bridge wallet for supplier payouts' }, { 'x-admin-api-key': 'supplier-admin-key' });
 
     const supplier = await request('POST', `/api/users/${user.id}/suppliers`, {
       supplierName: 'ABC Trading Ltd',
@@ -95,6 +96,24 @@ async function main() {
     const balanceAfterReject = await request('GET', `/api/users/${user.id}/balance`);
     const releasedUsdc = balanceAfterReject.balances.find((item: any) => item.asset === 'usdc');
     assert(Number(releasedUsdc.available) === 500, 'rejected supplier payment releases hold');
+
+    const secondPayment = await request('POST', `/api/users/${user.id}/supplier-payments`, {
+      supplierId: supplier.id,
+      amount: 100,
+      sourceAsset: 'usdc',
+      destinationCurrency: 'gbp',
+      paymentPurpose: 'Invoice INV-1002 for support services delivered to Supplier Payer Ltd',
+      invoiceUrl: 'https://example.com/invoices/inv-1002.pdf'
+    });
+    await request('POST', `/api/admin/supplier-payments/${secondPayment.id}/review`, { decision: 'approve', reason: 'Approved for provider release', reviewedBy: 'compliance' }, { 'x-admin-api-key': 'supplier-admin-key' });
+    const released = await request('POST', `/api/admin/supplier-payments/${secondPayment.id}/release`, { reason: 'Release approved supplier payment to Bridge test provider', releasedBy: 'compliance' }, { 'x-admin-api-key': 'supplier-admin-key' });
+    assert(released.status === 'completed', 'approved supplier payment releases to provider and completes in mock mode');
+    assert(Boolean(released.providerTransferId), 'provider transfer id is stored generically');
+
+    const balanceAfterRelease = await request('GET', `/api/users/${user.id}/balance`);
+    const finalUsdc = balanceAfterRelease.balances.find((item: any) => item.asset === 'usdc');
+    assert(Number(finalUsdc.available) === 400, 'provider completion debits held supplier payment');
+    assert(Number(finalUsdc.spent) === 100, 'completed supplier payout increases spent balance');
 
     const riskCases = await request('GET', '/api/admin/risk/cases', undefined, { 'x-admin-api-key': 'supplier-admin-key' });
     assert(riskCases.some((item: any) => item.resourceType === 'supplier_payment'), 'supplier payments appear in admin risk cases');

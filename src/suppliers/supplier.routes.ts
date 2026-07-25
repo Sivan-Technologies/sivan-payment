@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { createSupplier, createSupplierPayment, createSupplierPaymentSchema, createSupplierSchema, getSupplierPayment, getSupplierPaymentControls, listAdminSupplierPayments, listAdminSuppliers, listUserSupplierPayments, listUserSuppliers, reviewSupplier, reviewSupplierPayment, reviewSupplierPaymentSchema, reviewSupplierSchema, updateSupplierPaymentControls } from './supplier.service.js';
+import { createSupplier, createSupplierPayment, createSupplierPaymentSchema, createSupplierSchema, getSupplierPayment, getSupplierPaymentControls, listAdminSupplierPayments, listAdminSuppliers, listUserSupplierPayments, listUserSuppliers, reviewSupplier, releaseSupplierPaymentSchema, releaseSupplierPaymentToProvider, reviewSupplierPayment, reviewSupplierPaymentSchema, reviewSupplierSchema, syncSupplierPaymentProviderStatus, updateSupplierPaymentControls } from './supplier.service.js';
 import { supplierControlsSchema } from '../risk/supplier-risk.service.js';
 
 export async function supplierRoutes(app: FastifyInstance) {
@@ -52,5 +52,18 @@ export async function supplierRoutes(app: FastifyInstance) {
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
     const body = parseBody(reviewSupplierPaymentSchema, { ...(request.body as any), reviewedBy: (request.body as any)?.reviewedBy || actor });
     return { data: await reviewSupplierPayment(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+
+  app.post('/api/admin/supplier-payments/:id/release', async (request) => {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
+    const body = parseBody(releaseSupplierPaymentSchema, { ...(request.body as any), releasedBy: (request.body as any)?.releasedBy || actor });
+    return { data: await releaseSupplierPaymentToProvider(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/supplier-payments/:id/sync', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await syncSupplierPaymentProviderStatus(id) };
   });
 }
