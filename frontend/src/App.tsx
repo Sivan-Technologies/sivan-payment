@@ -2096,6 +2096,7 @@ function virtualAccountInstructions(account?: VirtualAccountRecord) {
     accountName: instructions.bank_beneficiary_name || instructions.account_name || instructions.beneficiary_name || account?.accountName,
     accountNumber: instructions.bank_account_number || instructions.account_number || instructions.clabe || instructions.account?.account_number || account?.accountNumberMasked,
     routingNumber: instructions.bank_routing_number || instructions.routing_number || instructions.sort_code || account?.routingNumberMasked,
+    accountType: instructions.account_type || instructions.account?.checking_or_savings || (account?.currency === 'usd' ? 'Checking' : undefined),
     iban: instructions.iban || instructions.iban_number || account?.ibanMasked,
     bic: instructions.bic,
     bankAddress: [instructions.bank_address, instructions.bank_city, instructions.bank_state, instructions.bank_country].filter(Boolean).join(', '),
@@ -2105,20 +2106,44 @@ function virtualAccountInstructions(account?: VirtualAccountRecord) {
 
 function VirtualAccountCurrencyCard({ currency, request, account, control, loading, isVerified, canCreatePaymentActions, onRequest }: { currency: 'usd' | 'gbp' | 'eur'; request?: VirtualAccountRequestRecord; account?: VirtualAccountRecord; control?: VirtualAccountControl; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void }) {
   const [copied, setCopied] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const meta = vaCurrencyMeta[currency];
   const enabled = Boolean(control?.enabled);
   const status = account?.status || request?.status || (enabled ? 'available' : 'disabled');
   const disabledReason = !enabled ? 'Not available yet' : !isVerified ? 'Complete verification first' : !canCreatePaymentActions ? 'Temporarily unavailable' : '';
   const instructions = virtualAccountInstructions(account);
-  const detailRows = [
-    ['Bank', instructions.bankName || 'Partner bank'],
+  const detailRows = (instructions.iban ? [
     ['Account name', instructions.accountName || 'Sivan account'],
-    ...(instructions.iban ? [['IBAN', instructions.iban], ...(instructions.bic ? [['BIC / SWIFT', instructions.bic]] : [])] : [['Account', instructions.accountNumber || 'Assigned'], ['Routing', instructions.routingNumber || meta.rails]]),
-    ...(instructions.paymentRails ? [['Rails', instructions.paymentRails]] : []),
+    ['Bank name', instructions.bankName || 'Partner bank'],
+    ['IBAN', instructions.iban],
+    ...(instructions.bic ? [['BIC / SWIFT', instructions.bic]] : []),
     ...(instructions.bankAddress ? [['Bank address', instructions.bankAddress]] : []),
-    ['Status', friendlyStatus(account?.status)]
-  ].filter(([, value]) => value && value !== '—') as string[][];
-  const accountDetailsText = () => [`${currency.toUpperCase()} virtual account`, ...detailRows.map(([label, value]) => `${label}: ${value}`)].join('\n');
+  ] : [
+    ['Account name', instructions.accountName || 'Sivan account'],
+    ['Bank name', instructions.bankName || 'Partner bank'],
+    ['Account number', instructions.accountNumber || 'Assigned'],
+    ...(instructions.accountType ? [['Account type', String(instructions.accountType).replaceAll('_', ' ')]] : []),
+    ['Routing number', instructions.routingNumber || meta.rails],
+    ...(instructions.bankAddress ? [['Bank address', instructions.bankAddress]] : []),
+  ]).filter(([, value]) => value && value !== '—') as string[][];
+  const accountDetailsText = () => [
+    `Hi,`,
+    ``,
+    `I’m using Sivan to receive ${currency.toUpperCase()} payments.`,
+    ``,
+    `Here are my ${currency.toUpperCase()} account details.`,
+    ``,
+    ...detailRows.map(([label, value]) => `${value}\n${label}`),
+    ``,
+    `Please make sure the beneficiary/account name matches exactly to avoid returned payments.`,
+    ``,
+    `Thanks`
+  ].join('\n\n');
+  const copyValue = async (label: string, value: string) => {
+    await navigator.clipboard?.writeText(value).catch(() => undefined);
+    setCopiedField(label);
+    window.setTimeout(() => setCopiedField(null), 1400);
+  };
   const copyAll = async () => {
     if (!account) return;
     await navigator.clipboard?.writeText(accountDetailsText()).catch(() => undefined);
@@ -2129,16 +2154,15 @@ function VirtualAccountCurrencyCard({ currency, request, account, control, loadi
     if (!account) return;
     const text = accountDetailsText();
     if (navigator.share) {
-      await navigator.share({ title: `${currency.toUpperCase()} virtual account`, text }).catch(() => undefined);
+      await navigator.share({ title: `${currency.toUpperCase()} account details`, text }).catch(() => undefined);
       return;
     }
     await navigator.clipboard?.writeText(text).catch(() => undefined);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
-  return <section className={`virtual-bank-card ${account ? 'active' : request ? 'pending' : ''}`}><div className="vb-card-top"><span>{meta.flag}</span><div><strong>{meta.title}</strong><small>{meta.rails} · {meta.account}</small></div></div><Badge status={status}>{friendlyStatus(status)}</Badge>{account ? <><div className="vb-details">{detailRows.map(([label, value]) => <Kv key={label} label={label} value={value} />)}</div><div className="vb-copy-actions"><div className="vb-copy-buttons"><button type="button" className="secondary-btn small" onClick={copyAll}>{copied ? 'Copied details ✓' : 'Copy all details'}</button><button type="button" className="ghost-btn small" onClick={shareAll}>Share details</button></div><small>Copy or share bank, account, routing/IBAN, rails, and address in one tap.</small></div></> : request ? <div className="vb-pending"><strong>{request.status === 'requested' ? 'Request received' : friendlyStatus(request.status)}</strong><small>Submitted {new Date(request.createdAt).toLocaleString()}. Sivan operations will review and approve before account details appear here.</small>{request.rejectionReason && <small className="danger-text">{request.rejectionReason}</small>}</div> : <div className="vb-empty"><p>Request a reusable {currency.toUpperCase()} virtual account for fiat deposits.</p><button className="primary-btn small" disabled={loading || Boolean(disabledReason)} onClick={() => onRequest(currency)}>{disabledReason || `Request ${currency.toUpperCase()} account`}</button></div>}</section>;
-}
-type CustomerTransactionRow = {
+  return <section className={`virtual-bank-card ${account ? 'active has-account-details' : request ? 'pending' : ''}`}><div className="vb-card-top"><span>{meta.flag}</span><div><strong>{meta.title}</strong><small>{meta.rails} · {meta.account}</small></div></div><Badge status={status}>{friendlyStatus(status)}</Badge>{account ? <><div className="va-safety-stack"><div className="va-warning-card"><strong>Beneficiary name must match</strong><span>The sender should use the account name exactly as shown. Mismatched payments may be returned or delayed.</span></div><div className="va-info-card"><strong>Transfer timing</strong><span>Deposits can take 1–2 business days depending on the sender’s bank and payment rail.</span></div></div><div className="va-detail-list">{detailRows.map(([label, value]) => <div className="va-detail-row" key={label}><div><strong>{value}</strong><span>{label}</span></div><button type="button" aria-label={`Copy ${label}`} onClick={() => copyValue(label, value)}>{copiedField === label ? '✓' : '⧉'}</button></div>)}</div><div className="vb-copy-actions va-bottom-actions"><div className="vb-copy-buttons"><button type="button" className="secondary-btn small share-button" onClick={shareAll}>↗ Share</button><button type="button" className="ghost-btn small" onClick={copyAll}>{copied ? 'Copied all ✓' : '⧉ Copy all'}</button></div><small>Copy or share all account details in one tap. Use the exact account name shown.</small></div></> : request ? <div className="vb-pending"><strong>{request.status === 'requested' ? 'Request received' : friendlyStatus(request.status)}</strong><small>Submitted {new Date(request.createdAt).toLocaleString()}. Sivan operations will review and approve before account details appear here.</small>{request.rejectionReason && <small className="danger-text">{request.rejectionReason}</small>}</div> : <div className="vb-empty"><p>Request a reusable {currency.toUpperCase()} virtual account for fiat deposits.</p><button className="primary-btn small" disabled={loading || Boolean(disabledReason)} onClick={() => onRequest(currency)}>{disabledReason || `Request ${currency.toUpperCase()} account`}</button></div>}</section>;
+}type CustomerTransactionRow = {
   id: string;
   kind: 'withdrawal' | 'onramp_order';
   label: string;
