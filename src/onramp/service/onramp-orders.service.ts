@@ -10,10 +10,12 @@ import { mapBridgeTransferState } from './onramp-mapping.js';
 import { calculateOnrampQuote } from './onramp-fees.service.js';
 import { defaultOnrampRail, bridgeRailForChain } from './onramp-rails.service.js';
 import { validateOnrampOrderInput } from './onramp-validation.service.js';
+import { requireOneTimeOnrampEnabled } from './onramp-controls.service.js';
 import type { CreateOnrampOrderInput } from '../types/onramp.schemas.js';
 import type { BridgeOnrampTransfer } from '../bridge/bridge-onramp.types.js';
 
 export async function createOnrampOrder(input: CreateOnrampOrderInput) {
+  await requireOneTimeOnrampEnabled();
   const { customer } = await validateOnrampOrderInput(input);
   const quote = await calculateOnrampQuote(input.amount);
   const orderId = id('or');

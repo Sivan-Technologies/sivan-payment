@@ -1909,9 +1909,49 @@ function BuyCryptoView({ hasUser, isVerified, feePercent, enabledControls, enabl
 
 function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
   const instructions = order.sourceDepositInstructions || {};
-  return <div className="onramp-instructions"><h3>Payment instructions</h3><div className="details-box"><Kv label="Reference" value={order.providerReference || order.id} /><Kv label="Amount" value={`${order.amount} ${order.sourceCurrency.toUpperCase()}`} /><Kv label="Fee" value={order.feeAmount ? `${order.feeAmount} ${order.sourceCurrency.toUpperCase()}` : '—'} /><Kv label="You get" value={`${order.netAmount || '—'} ${order.destinationCurrency.toUpperCase()}`} /><Kv label="Status" value={friendlyStatus(order.status)} /><Kv label="Bank" value={instructions.bank_name || instructions.bankName || 'Provided by Bridge'} /><Kv label="Account" value={instructions.account_number || instructions.iban || 'See provider instructions'} /></div>{order.transactionTimeline && <InlineTransactionTimeline timeline={order.transactionTimeline} />}<div className="warning-box compact">Use the exact payment reference. Missing or incorrect references can delay matching.</div></div>;
+  const bankName = instructions.bank_name || instructions.bankName || 'Provided by Bridge';
+  const bankAddress = instructions.bank_address || instructions.bankAddress;
+  const accountNumber = instructions.bank_account_number || instructions.account_number || instructions.iban;
+  const routingNumber = instructions.bank_routing_number || instructions.routing_number;
+  const beneficiaryName = instructions.bank_beneficiary_name || instructions.account_name || instructions.beneficiary_name;
+  const beneficiaryAddress = instructions.bank_beneficiary_address || instructions.beneficiary_address;
+  const depositMessage = instructions.deposit_message || instructions.reference || order.providerReference || order.id;
+  const rails = Array.isArray(instructions.payment_rails) ? instructions.payment_rails.join(', ') : (instructions.payment_rail || order.sourcePaymentRail);
+  const copyValue = async (label: string, value?: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      // Clipboard can be blocked in some browsers; the value remains visible.
+    }
+  };
+  const paymentMemo = [
+    `Amount: ${order.amount} ${order.sourceCurrency.toUpperCase()}`,
+    `Reference: ${depositMessage}`,
+    `Bank: ${bankName}`,
+    accountNumber ? `Account: ${accountNumber}` : undefined,
+    routingNumber ? `Routing: ${routingNumber}` : undefined,
+    beneficiaryName ? `Beneficiary: ${beneficiaryName}` : undefined,
+  ].filter(Boolean).join('\n');
+  return <div className="onramp-instructions premium-onramp-instructions">
+    <div className="onramp-instruction-head"><div><p className="eyebrow">One-time payment instructions</p><h3>Send exactly {order.amount} {order.sourceCurrency.toUpperCase()}</h3><p>Use these bank details once for this buy order. Bridge will deliver {order.netAmount || '—'} {order.destinationCurrency.toUpperCase()} to your wallet after payment clears.</p></div><Badge status={order.status}>{friendlyStatus(order.status)}</Badge></div>
+    <div className="payment-reference-callout"><span>Required payment reference / memo</span><strong>{depositMessage}</strong><button className="secondary-btn small" type="button" onClick={() => copyValue('reference', depositMessage)}>Copy reference</button></div>
+    <div className="onramp-bank-grid">
+      <Kv label="Bank" value={bankName} />
+      <Kv label="Account number" value={accountNumber || 'See provider instructions'} />
+      <Kv label="Routing number" value={routingNumber || '—'} />
+      <Kv label="Beneficiary" value={beneficiaryName || '—'} />
+      <Kv label="Payment rail" value={rails || 'bank transfer'} />
+      <Kv label="Bank address" value={bankAddress || '—'} />
+      <Kv label="Beneficiary address" value={beneficiaryAddress || '—'} />
+      <Kv label="Order ID" value={order.id} />
+    </div>
+    <div className="quote-fees instruction-totals"><div><span>You pay</span><strong>{order.amount} {order.sourceCurrency.toUpperCase()}</strong></div><div><span>Sivan fee</span><strong className="danger">−{order.feeAmount || '0'} {order.sourceCurrency.toUpperCase()}</strong></div><div><span>You receive</span><strong>{order.netAmount || '—'} {order.destinationCurrency.toUpperCase()}</strong></div><div><span>Destination</span><strong>{order.destinationChain.replaceAll('_', ' ')} · {shortRef(order.destinationAddress)}</strong></div></div>
+    <div className="split-actions"><button className="secondary-btn" type="button" onClick={() => copyValue('payment instructions', paymentMemo)}>Copy all details</button></div>
+    {order.transactionTimeline && <InlineTransactionTimeline timeline={order.transactionTimeline} />}
+    <div className="warning-box compact">Send the exact amount and include the reference/memo. Missing or incorrect references can delay matching and settlement.</div>
+  </div>;
 }
-
 
 function IncidentBanner({ systemStatus }: { systemStatus: SystemStatus }) {
   const incidents = systemStatus.activeIncidents ?? [];

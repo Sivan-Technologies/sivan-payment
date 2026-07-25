@@ -3,10 +3,17 @@ import { createOnrampOrder, getOnrampOrder, listOnrampOrders } from '../service/
 import { createOnrampOrderSchema } from '../types/onramp.schemas.js';
 import { getOnrampFeePercent } from '../service/onramp-fees.service.js';
 import { syncOnrampOrder } from '../service/onramp-sync.service.js';
+import { getOnrampControls, onrampControlsSchema, updateOnrampControls } from '../service/onramp-controls.service.js';
 import { parseBody } from '../../shared/validation.js';
 
 export async function onrampOrdersRoutes(app: FastifyInstance) {
   app.get('/api/onramp/fees', async () => ({ data: { percent: await getOnrampFeePercent(), type: 'percentage' } }));
+  app.get('/api/onramp/controls', async () => ({ data: await getOnrampControls() }));
+  app.get('/api/admin/onramp/controls', async () => ({ data: await getOnrampControls() }));
+  app.put('/api/admin/onramp/controls', async (request) => {
+    const body = parseBody(onrampControlsSchema, request.body);
+    return { data: await updateOnrampControls(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
 
   app.post('/api/onramp/orders', async (request, reply) => {
     const body = parseBody(createOnrampOrderSchema, request.body);
