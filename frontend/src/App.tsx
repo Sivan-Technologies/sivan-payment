@@ -308,6 +308,8 @@ export default function App() {
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
   const [withdrawalReview, setWithdrawalReview] = useState<null | { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string }>(null);
   const [otpCode, setOtpCode] = useState('');
+  const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
+  const [twoFactorCode, setTwoFactorCode] = useState('');
   const [loading, setLoading] = useState(false);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
@@ -470,6 +472,8 @@ export default function App() {
     setPendingEmail('');
     setPendingFullName('');
     setOtpCode('');
+    setTwoFactorCode('');
+    setPendingTwoFactorToken('');
     setDevCode(undefined);
     setResendAvailableAt(0);
   }, []);
@@ -766,17 +770,54 @@ export default function App() {
     setLoading(true);
     try {
       const body = getForm(event.currentTarget);
-      const result = await api<{ token: string; user: UserRecord; expiresInMinutes: number }>('/api/auth/email/verify', {
+      const result = await api<{ token?: string; user?: UserRecord; expiresInMinutes?: number; requiresTwoFactor?: boolean; twoFactorToken?: string; email?: string; expiresAt?: string }>('/api/auth/email/verify', {
         method: 'POST',
         body: JSON.stringify({ email: pendingEmail, code: body.code || otpCode })
+      });
+      if (result.requiresTwoFactor && result.twoFactorToken) {
+        setPendingTwoFactorToken(result.twoFactorToken);
+        setOtpCode('');
+        notify('Enter your authenticator code to finish signing in.');
+        return;
+      }
+      if (!result.token || !result.user) throw new Error('Authentication response was incomplete.');
+      setAuthToken(result.token);
+      setUser(result.user);
+      setPendingEmail('');
+      setOtpCode('');
+      setTwoFactorCode('');
+      setPendingTwoFactorToken('');
+      setDevCode(undefined);
+      localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
+      notify(authTab === 'signup' ? 'Account verified. Continue your setup.' : 'Welcome back.');
+      goToView('overview');
+      window.setTimeout(() => void loadUserData(), 0);
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  async function handleTwoFactorLoginVerify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pendingTwoFactorToken) return notify('Two-factor session expired. Sign in again.', 'error');
+    setLoading(true);
+    try {
+      const result = await api<{ token: string; user: UserRecord; expiresInMinutes: number }>('/api/auth/2fa/verify', {
+        method: 'POST',
+        body: JSON.stringify({ twoFactorToken: pendingTwoFactorToken, code: twoFactorCode })
       });
       setAuthToken(result.token);
       setUser(result.user);
       setPendingEmail('');
       setOtpCode('');
+      setTwoFactorCode('');
+      setPendingTwoFactorToken('');
       setDevCode(undefined);
       localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
-      notify(authTab === 'signup' ? 'Account verified. Continue your setup.' : 'Welcome back.');
+      notify('Two-factor verified. Welcome back.');
       goToView('overview');
       window.setTimeout(() => void loadUserData(), 0);
     } catch (error) {
@@ -1372,6 +1413,12 @@ export default function App() {
                   {authTab === 'signup' && <label className="legal-checkbox auth-legal-card"><input name="legalAccepted" type="checkbox" required /><span>I agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</span></label>}
                   <button className="primary-btn auth-submit" disabled={loading}>{loading ? 'Sending secure code…' : authTab === 'signup' ? 'Send verification code →' : 'Send login code →'}</button>
                 </form>
+              ) : pendingTwoFactorToken ? (
+                <form className="form auth-form-premium" onSubmit={handleTwoFactorLoginVerify}>
+                  <div className="email-confirmation auth-email-confirmation"><span>Two-factor required</span><strong>{pendingEmail}</strong><button type="button" onClick={resetPendingEmail}>Start over</button></div>
+                  <label>Authenticator or recovery code<input value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} placeholder="123456 or recovery code" autoComplete="one-time-code" required /></label>
+                  <button className="primary-btn auth-submit" disabled={loading || twoFactorCode.replace(/\s/g, '').length < 6}>{loading ? 'Verifying…' : 'Verify and continue →'}</button>
+                </form>
               ) : (
                 <form className="form auth-form-premium" onSubmit={handleEmailAuthVerify}>
                   <div className="email-confirmation auth-email-confirmation">
@@ -1431,7 +1478,7 @@ export default function App() {
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
-        {view === 'settings' && <SettingsView user={user} preferences={userPreferences} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'settings' && <SettingsView api={api} user={user} preferences={userPreferences} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
@@ -2321,7 +2368,7 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
   return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
 }
 
-function SettingsView({ user, preferences, identityStatus, pairingCode, pairingExpiresAt, timeNow, onStartWhatsappLink, onCancelWhatsappLink, onUnlinkWhatsapp, onRefreshIdentity, onSavePreferences, onUpdatePreferences, loading, onLogout }: { user: UserRecord | null; preferences: UserPreferencesRecord | null; identityStatus: IdentityStatus | null; pairingCode: string; pairingExpiresAt: string; timeNow: number; onStartWhatsappLink: () => void; onCancelWhatsappLink: () => void; onUnlinkWhatsapp: () => void; onRefreshIdentity: () => Promise<void>; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; onUpdatePreferences: (patch: Partial<UserPreferencesRecord>) => Promise<void>; loading: boolean; onLogout: () => void }) {
+function SettingsView({ api, user, preferences, identityStatus, pairingCode, pairingExpiresAt, timeNow, onStartWhatsappLink, onCancelWhatsappLink, onUnlinkWhatsapp, onRefreshIdentity, onSavePreferences, onUpdatePreferences, loading, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; preferences: UserPreferencesRecord | null; identityStatus: IdentityStatus | null; pairingCode: string; pairingExpiresAt: string; timeNow: number; onStartWhatsappLink: () => void; onCancelWhatsappLink: () => void; onUnlinkWhatsapp: () => void; onRefreshIdentity: () => Promise<void>; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; onUpdatePreferences: (patch: Partial<UserPreferencesRecord>) => Promise<void>; loading: boolean; onLogout: () => void }) {
   const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
   const nameParts = (user?.fullName || '').split(/\s+/);
   const currentPreferences = preferences ?? {
@@ -2334,7 +2381,7 @@ function SettingsView({ user, preferences, identityStatus, pairingCode, pairingE
     emailConfirmationsForHighValue: false,
     updatedAt: new Date().toISOString()
   };
-  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><IdentityLinkCard identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} loading={loading} onStart={onStartWhatsappLink} onCancel={onCancelWhatsappLink} onUnlink={onUnlinkWhatsapp} onRefresh={onRefreshIdentity} /><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input value={identityStatus?.link?.whatsappNumber || user?.whatsappNumber || ''} placeholder="Link WhatsApp to populate this securely" readOnly /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SecuritySettingsPanel user={user} preferences={currentPreferences} loading={loading} onUpdate={onUpdatePreferences} onLogout={onLogout} />}{tab === 'notifications' && <NotificationPreferencesPanel preferences={currentPreferences} loading={loading} onUpdate={onUpdatePreferences} />}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
+  return <section className="app-page settings-premium"><PageHero title="Settings" subtitle="Manage your account, security and preferences." /><div className="settings-grid-premium"><aside className="settings-tabs"><button className={tab === 'profile' ? 'active' : ''} onClick={() => setTab('profile')}>♙ Profile</button><button className={tab === 'security' ? 'active' : ''} onClick={() => setTab('security')}>▣ Security</button><button className={tab === 'notifications' ? 'active' : ''} onClick={() => setTab('notifications')}>♢ Notifications</button><button className={tab === 'preferences' ? 'active' : ''} onClick={() => setTab('preferences')}>◎ Preferences</button></aside><article className="settings-panel">{tab === 'profile' && <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><div className="avatar-lg">{initials(user?.fullName || user?.email)}</div><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><button className="ghost-btn small">Upload new photo</button></div></div><div className="split"><label>First name<input defaultValue={nameParts[0] || ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} /></label></div><label>Email<input defaultValue={user?.email || ''} /></label><IdentityLinkCard identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} loading={loading} onStart={onStartWhatsappLink} onCancel={onCancelWhatsappLink} onUnlink={onUnlinkWhatsapp} onRefresh={onRefreshIdentity} /><div className="split"><label>Country<select defaultValue="NG"><option value="NG">Nigeria</option><option value="US">United States</option><option value="GB">United Kingdom</option></select></label><label>Phone<input value={identityStatus?.link?.whatsappNumber || user?.whatsappNumber || ''} placeholder="Link WhatsApp to populate this securely" readOnly /></label></div><button className="primary-btn">Save changes</button></>}{tab === 'security' && <SecuritySettingsPanel api={api} user={user} preferences={currentPreferences} loading={loading} onUpdate={onUpdatePreferences} onLogout={onLogout} />}{tab === 'notifications' && <NotificationPreferencesPanel preferences={currentPreferences} loading={loading} onUpdate={onUpdatePreferences} />}{tab === 'preferences' && <form onSubmit={onSavePreferences}><h3>Preferences</h3><p className="muted">Customize your experience.</p><label>Default fiat currency<select name="defaultFiatCurrency" defaultValue={currentPreferences.defaultFiatCurrency}><option value="usd">USD — US Dollar</option><option value="gbp">GBP — British Pound</option><option value="eur">EUR — Euro</option><option value="ngn">NGN — Coming soon</option></select></label><label>Language<select name="language" defaultValue={currentPreferences.language}><option value="en-US">English — United States</option><option value="en-GB">English — United Kingdom</option><option value="fr-FR">French — European Union</option><option value="de-DE">German — European Union</option><option value="es-ES">Spanish — European Union</option><option value="it-IT">Italian — European Union</option><option value="nl-NL">Dutch — European Union</option><option value="pt-PT">Portuguese — European Union</option></select><span className="field-hint">App language rollout for US, UK, and EU markets. Provider verification pages may use the closest supported language.</span></label><input type="hidden" name="transactionUpdates" value="on" checked={currentPreferences.transactionUpdates} readOnly /><input type="hidden" name="marketingEmails" value="on" checked={currentPreferences.marketingEmails} readOnly /><input type="hidden" name="securityAlerts" value="on" checked={currentPreferences.securityAlerts} readOnly /><input type="hidden" name="emailConfirmationsForHighValue" value="on" checked={currentPreferences.emailConfirmationsForHighValue} readOnly /><button className="primary-btn" disabled={loading}>{loading ? 'Saving...' : 'Save preferences'}</button><button type="button" className="secondary-btn" onClick={onLogout}>Sign out</button></form>}<LegalResources compact /></article></div></section>;
 }
 
 
@@ -2354,20 +2401,68 @@ function IdentityLinkCard({ identityStatus, pairingCode, pairingExpiresAt, timeN
 
 
 
-function SecuritySettingsPanel({ user, preferences, loading, onUpdate, onLogout }: { user: UserRecord | null; preferences: UserPreferencesRecord; loading: boolean; onUpdate: (patch: Partial<UserPreferencesRecord>) => Promise<void>; onLogout: () => void }) {
+function SecuritySettingsPanel({ api, user, preferences, loading, onUpdate, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; preferences: UserPreferencesRecord; loading: boolean; onUpdate: (patch: Partial<UserPreferencesRecord>) => Promise<void>; onLogout: () => void }) {
+  const [status, setStatus] = useState<{ enabled: boolean; enabledAt?: string; lastVerifiedAt?: string; recoveryCodesRemaining?: number } | null>(null);
+  const [setup, setSetup] = useState<{ manualEntryKey: string; otpauthUrl: string } | null>(null);
+  const [setupCode, setSetupCode] = useState('');
+  const [disableCode, setDisableCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
   const emailConfirmations = Boolean(preferences.emailConfirmationsForHighValue);
   const securityAlerts = Boolean(preferences.securityAlerts);
+  const enabled = Boolean(status?.enabled);
+  const load2fa = useCallback(async () => {
+    if (!user?.id) return;
+    const result = await api<any>(`/api/users/${user.id}/2fa`).catch(() => null);
+    if (result) setStatus(result);
+  }, [api, user?.id]);
+  useEffect(() => { void load2fa(); }, [load2fa]);
+  async function startSetup() {
+    if (!user?.id) return;
+    setBusy(true);
+    try {
+      const result = await api<any>(`/api/users/${user.id}/2fa/setup`, { method: 'POST', body: '{}' });
+      setSetup(result);
+      setRecoveryCodes([]);
+    } finally { setBusy(false); }
+  }
+  async function enableSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return;
+    setBusy(true);
+    try {
+      const result = await api<any>(`/api/users/${user.id}/2fa/enable`, { method: 'POST', body: JSON.stringify({ code: setupCode }) });
+      setRecoveryCodes(result.recoveryCodes || []);
+      setSetup(null);
+      setSetupCode('');
+      await load2fa();
+    } finally { setBusy(false); }
+  }
+  async function disable2fa(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return;
+    setBusy(true);
+    try {
+      await api<any>(`/api/users/${user.id}/2fa/disable`, { method: 'POST', body: JSON.stringify({ code: disableCode }) });
+      setDisableCode('');
+      setRecoveryCodes([]);
+      await load2fa();
+    } finally { setBusy(false); }
+  }
+  const score = enabled && emailConfirmations && securityAlerts ? 'Excellent' : enabled && securityAlerts ? 'Strong' : emailConfirmations && securityAlerts ? 'Strong' : 'Good';
   return <div className="security-settings-panel">
-    <div className="settings-section-head"><h3>Security</h3><p className="muted">Protect access to your Sivan account. Passwordless email is active today; stronger controls are shown with their real status.</p></div>
-    <div className="security-health-card"><span>Security score</span><strong>{emailConfirmations && securityAlerts ? 'Strong' : 'Good'}</strong><small>{emailConfirmations ? 'High-value email confirmation is enabled.' : 'Enable high-value email confirmations for stronger protection.'}</small></div>
+    <div className="settings-section-head"><h3>Security</h3><p className="muted">Protect access to your Sivan account with passwordless email, authenticator 2FA, and high-value confirmations.</p></div>
+    <div className="security-health-card"><span>Security score</span><strong>{score}</strong><small>{enabled ? `Authenticator 2FA is enabled${status?.lastVerifiedAt ? ` · last verified ${new Date(status.lastVerifiedAt).toLocaleDateString()}` : ''}.` : 'Enable authenticator 2FA for stronger account protection.'}</small></div>
     <div className="security-settings-list">
       <div className="security-setting-row connected"><span>▣</span><div><strong>Passwordless email access</strong><small>Sign in with a one-time code sent to {user?.email || 'your verified email'}. Sivan does not store a password for your account.</small><em>Active</em></div><button type="button" className="ghost-btn small" onClick={onLogout}>Sign out</button></div>
-      <div className="security-setting-row planned"><span>⚿</span><div><strong>Authenticator 2FA</strong><small>Authenticator-app two-factor authentication is planned. Until then, use email codes and keep your email account protected.</small><em>Coming soon</em></div><button type="button" className="ghost-btn small" disabled>Not available yet</button></div>
+      <div className={`security-setting-row connected ${enabled ? 'enabled' : ''}`}><span>⚿</span><div><strong>Authenticator 2FA</strong><small>{enabled ? `Enabled. Recovery codes remaining: ${status?.recoveryCodesRemaining ?? 0}.` : 'Use Google Authenticator, 1Password, Authy, iCloud Passwords, or any TOTP app.'}</small><em>{enabled ? 'Enabled' : 'Recommended'}</em></div>{enabled ? <form className="inline-security-form" onSubmit={disable2fa}><input value={disableCode} onChange={(event) => setDisableCode(event.target.value)} placeholder="Code to disable" /><button className="ghost-btn small" disabled={busy || disableCode.length < 6}>Disable</button></form> : <button type="button" className="secondary-btn small" disabled={busy} onClick={startSetup}>{busy ? 'Starting…' : 'Enable 2FA'}</button>}</div>
+      {setup && <form className="two-factor-setup-card" onSubmit={enableSetup}><div><p className="eyebrow">Authenticator setup</p><h3>Add Sivan to your authenticator app</h3><p className="muted">Enter this setup key manually in your authenticator app, then type the 6-digit code it generates.</p></div><div className="manual-key-box"><span>Manual setup key</span><strong>{setup.manualEntryKey}</strong><button type="button" className="ghost-btn small" onClick={() => navigator.clipboard?.writeText(setup.manualEntryKey)}>Copy key</button></div><label>Authenticator code<input value={setupCode} onChange={(event) => setSetupCode(event.target.value.replace(/\s/g, ''))} placeholder="123456" inputMode="numeric" autoComplete="one-time-code" /></label><button className="primary-btn" disabled={busy || setupCode.length < 6}>{busy ? 'Verifying…' : 'Verify and enable 2FA'}</button></form>}
+      {recoveryCodes.length > 0 && <div className="recovery-code-card"><p className="eyebrow">Save these recovery codes now</p><h3>Recovery codes</h3><p className="muted">Store these securely. Each code works once if you lose your authenticator app.</p><div>{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-btn small" onClick={() => navigator.clipboard?.writeText(recoveryCodes.join('\n'))}>Copy recovery codes</button></div>}
       <div className={`security-setting-row connected ${emailConfirmations ? 'enabled' : ''}`}><span>✉</span><div><strong>Email confirmations for high-value actions</strong><small>Require email confirmation for high-value transfers and sensitive payment actions where supported.</small><em>{emailConfirmations ? 'Enabled' : 'Disabled'}</em></div><label className="switch-toggle connected"><input type="checkbox" checked={emailConfirmations} disabled={loading} onChange={(event) => void onUpdate({ emailConfirmationsForHighValue: event.target.checked })} /><i /></label></div>
       <div className={`security-setting-row connected ${securityAlerts ? 'enabled' : ''}`}><span>◈</span><div><strong>Security alerts</strong><small>Receive notices about verification, account changes, risk events, support escalations, and important account safety updates.</small><em>{securityAlerts ? 'Enabled' : 'Disabled'}</em></div><label className="switch-toggle connected"><input type="checkbox" checked={securityAlerts} disabled={loading} onChange={(event) => void onUpdate({ securityAlerts: event.target.checked })} /><i /></label></div>
       <div className="security-setting-row"><span>◷</span><div><strong>Active session</strong><small>Current browser session active. Sign out if this is not your device.</small><em>Current device</em></div><button type="button" className="secondary-btn small" onClick={onLogout}>Sign out</button></div>
     </div>
-    <div className="notification-settings-foot"><strong>Connected</strong><span>These controls are connected to saved preferences where supported. Authenticator 2FA will be enabled after backend enrollment is added.</span></div>
+    <div className="notification-settings-foot"><strong>Connected</strong><span>Authenticator 2FA is enforced during sign-in after email-code verification.</span></div>
   </div>;
 }
 

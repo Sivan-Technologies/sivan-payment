@@ -162,6 +162,17 @@ export interface UserPreferencesRecord {
   updatedAt: string;
 }
 
+export interface UserTwoFactorRecord {
+  userId: string;
+  enabled: boolean;
+  secretEncrypted: string;
+  recoveryCodeHashes: string[];
+  enabledAt?: string;
+  lastVerifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserRecord {
   id: string;
   email: string;
@@ -545,6 +556,7 @@ export interface DatabaseShape {
   customerIdentityLinks: CustomerIdentityLinkRecord[];
   identityPairingTokens: IdentityPairingTokenRecord[];
   userPreferences: UserPreferencesRecord[];
+  userTwoFactor: UserTwoFactorRecord[];
   legalAcceptances: LegalAcceptanceRecord[];
   customers: CustomerRecord[];
   externalAccounts: ExternalAccountRecord[];

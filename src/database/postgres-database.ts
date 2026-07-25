@@ -18,6 +18,7 @@ import type {
   SupplierControlsRecord,
   UserRecord,
   UserPreferencesRecord,
+  UserTwoFactorRecord,
   WebhookEventRecord,
   WithdrawalRecord,
   AuthChallengeRecord,
@@ -137,6 +138,7 @@ export class PostgresDatabase {
       const users = await client.query('select * from users order by created_at asc');
       const userPreferences = await optionalQuery(client, 'select * from payments_user_preferences order by user_id asc');
       const legalAcceptances = await optionalQuery(client, 'select * from payments_legal_acceptances order by accepted_at asc');
+      const userTwoFactor = await optionalQuery(client, 'select * from payments_user_two_factor order by user_id asc');
       const customers = await client.query('select * from payments_customers order by created_at asc');
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
@@ -189,6 +191,7 @@ export class PostgresDatabase {
         ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
         ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
+        userTwoFactor: userTwoFactor.rows.map(mapUserTwoFactor),
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
@@ -257,6 +260,20 @@ export class PostgresDatabase {
   async upsertUserPreferencesRecord(record: UserPreferencesRecord) {
     const client = await this.pool.connect();
     try { await upsertUserPreferences(client, record); return record; } finally { client.release(); }
+  }
+
+
+  async getUserTwoFactorRecord(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_user_two_factor where user_id=$1 limit 1', [userId]);
+      return result.rows[0] ? mapUserTwoFactor(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async upsertUserTwoFactorRecord(record: UserTwoFactorRecord) {
+    const client = await this.pool.connect();
+    try { await upsertUserTwoFactor(client, record); return record; } finally { client.release(); }
   }
 
   async getAdminOverviewView() {
@@ -787,6 +804,7 @@ export class PostgresDatabase {
       await client.query('begin');
       for (const user of data.users) await upsertUser(client, user);
       for (const preferences of data.userPreferences ?? []) await upsertUserPreferences(client, preferences);
+      for (const twoFactor of data.userTwoFactor ?? []) await upsertUserTwoFactor(client, twoFactor);
       for (const acceptance of data.legalAcceptances ?? []) await upsertLegalAcceptance(client, acceptance);
       for (const customer of data.customers) await upsertCustomer(client, customer);
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
@@ -878,6 +896,35 @@ async function upsertUserPreferences(client: pg.PoolClient, item: UserPreference
        email_confirmations_for_high_value=excluded.email_confirmations_for_high_value,
        updated_at=excluded.updated_at`,
     [item.userId, item.defaultFiatCurrency, item.language, item.transactionUpdates, item.marketingEmails, item.securityAlerts, item.emailConfirmationsForHighValue, item.updatedAt]
+  );
+}
+
+
+function mapUserTwoFactor(row: any): UserTwoFactorRecord {
+  return {
+    userId: row.user_id,
+    enabled: Boolean(row.enabled),
+    secretEncrypted: row.secret_encrypted,
+    recoveryCodeHashes: row.recovery_code_hashes ?? [],
+    enabledAt: optionalIso(row.enabled_at),
+    lastVerifiedAt: optionalIso(row.last_verified_at),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertUserTwoFactor(client: pg.PoolClient, item: UserTwoFactorRecord) {
+  await client.query(
+    `insert into payments_user_two_factor (user_id, enabled, secret_encrypted, recovery_code_hashes, enabled_at, last_verified_at, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (user_id) do update set
+       enabled=excluded.enabled,
+       secret_encrypted=excluded.secret_encrypted,
+       recovery_code_hashes=excluded.recovery_code_hashes,
+       enabled_at=excluded.enabled_at,
+       last_verified_at=excluded.last_verified_at,
+       updated_at=excluded.updated_at`,
+    [item.userId, item.enabled, item.secretEncrypted, item.recoveryCodeHashes, item.enabledAt ?? null, item.lastVerifiedAt ?? null, item.createdAt, item.updatedAt]
   );
 }
 

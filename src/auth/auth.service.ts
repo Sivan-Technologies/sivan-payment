@@ -10,6 +10,7 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { buildOtpEmail, sendEmail } from '../notifications/email.service.js';
 import { buildChallengeLegalAcceptance, legalAcceptancePayloadSchema, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
 import { getAdminPlatformSettings } from '../admin/admin-settings.service.js';
+import { maybeCreateTwoFactorChallenge } from './two-factor.service.js';
 
 export const startEmailAuthSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
@@ -139,6 +140,9 @@ export async function verifyEmailAuth(input: z.infer<typeof verifyEmailAuthSchem
     resourceId: freshUser.id,
     metadata: { email: input.email }
   });
+
+  const twoFactor = await maybeCreateTwoFactorChallenge(freshUser);
+  if (twoFactor) return twoFactor;
 
   return {
     token: signUserJwt({ userId: freshUser.id, email: freshUser.email }),

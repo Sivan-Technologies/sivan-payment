@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -11,6 +11,7 @@ const emptyDb = (): DatabaseShape => ({
   customerIdentityLinks: [],
   identityPairingTokens: [],
   userPreferences: [],
+  userTwoFactor: [],
   legalAcceptances: [],
   customers: [],
   externalAccounts: [],
@@ -114,6 +115,21 @@ export class JsonDatabase {
       const index = data.userPreferences.findIndex((item) => item.userId === record.userId);
       if (index >= 0) data.userPreferences[index] = record;
       else data.userPreferences.push(record);
+      return record;
+    });
+  }
+
+  async getUserTwoFactorRecord(userId: string) {
+    const data = await this.read();
+    return (data.userTwoFactor ?? []).find((item) => item.userId === userId);
+  }
+
+  async upsertUserTwoFactorRecord(record: UserTwoFactorRecord) {
+    return this.mutate((data) => {
+      data.userTwoFactor = data.userTwoFactor ?? [];
+      const index = data.userTwoFactor.findIndex((item) => item.userId === record.userId);
+      if (index >= 0) data.userTwoFactor[index] = record;
+      else data.userTwoFactor.push(record);
       return record;
     });
   }
