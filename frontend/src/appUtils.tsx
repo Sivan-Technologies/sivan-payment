@@ -3,13 +3,13 @@ import type { CustomerRecord, AssetControl, NetworkControl, OfframpControls, Pay
 
 export const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
-  { key: 'buy', icon: '↙', label: 'Buy crypto' },
-  { key: 'transfer', icon: '⇆', label: 'Transfer & pay' },
+  { key: 'buy', icon: '↙', label: 'Buy stablecoins' },
+  { key: 'transfer', icon: '⇆', label: 'Send & transfer' },
   { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
   { key: 'history', icon: '◷', label: 'Transactions' },
   { key: 'banks', icon: '▭', label: 'Payment methods' },
   { key: 'virtualAccounts', icon: '▥', label: 'Virtual account' },
-  { key: 'kyc', icon: '◈', label: 'Verification' },
+  { key: 'kyc', icon: '◈', label: 'Identity verification' },
   { key: 'settings', icon: '⚙', label: 'Settings' },
   { key: 'help', icon: '?', label: 'Support' }
 ];
@@ -93,11 +93,11 @@ export function friendlyStatus(status?: string) {
 
 export function kycOutcomeMessage(status?: string, customerAction?: CustomerRecord['customerAction']) {
   if (customerAction?.message) return customerAction.message;
-  if (status === 'kyc_approved') return 'Verification successful. You can now use Sivan Payment features that require KYC.';
-  if (status === 'kyc_under_review') return 'Verification submitted. Bridge is reviewing it and this page will keep refreshing.';
-  if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) return 'Verification could not be completed. Please retry securely or contact support.';
-  if (status === 'kyc_incomplete') return 'Verification needs one more step. Continue the secure Bridge flow to finish.';
-  return 'Verification status refreshed.';
+  if (status === 'kyc_approved') return 'Identity verification successful. You can now use Sivan Payment features that require verification.';
+  if (status === 'kyc_under_review') return 'Identity verification submitted. Our compliance team is reviewing it and this page will keep refreshing.';
+  if (['kyc_rejected', 'failed', 'cancelled'].includes(status || '')) return 'Identity verification could not be completed. Please retry securely or contact support.';
+  if (status === 'kyc_incomplete') return 'Identity verification needs one more step. Continue the secure verification flow to finish.';
+  return 'Identity verification status refreshed.';
 }
 
 export function kycNoticeKind(status?: string) {
