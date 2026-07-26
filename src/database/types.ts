@@ -1,6 +1,7 @@
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 export type Currency = 'usd' | 'gbp' | 'eur';
+export type SupplierPayoutCurrency = Currency | 'mxn' | 'brl';
 export type SourceCurrency = 'usdc' | 'usdt';
 export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism' | 'avalanche_c_chain';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
@@ -161,6 +162,17 @@ export interface UserPreferencesRecord {
   updatedAt: string;
 }
 
+export interface UserTwoFactorRecord {
+  userId: string;
+  enabled: boolean;
+  secretEncrypted: string;
+  recoveryCodeHashes: string[];
+  enabledAt?: string;
+  lastVerifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserRecord {
   id: string;
   email: string;
@@ -313,6 +325,82 @@ export interface OnrampOrderRecord {
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
+}
+
+export type SupplierStatus = 'draft' | 'pending_review' | 'approved' | 'rejected' | 'disabled';
+export type SupplierPaymentStatus = 'draft' | 'pending_review' | 'approved' | 'processing' | 'completed' | 'rejected' | 'failed';
+export type SupplierRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type SupplierAccountType = 'us' | 'gb' | 'iban' | 'clabe' | 'pix' | 'unknown';
+
+export interface SupplierRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  supplierName: string;
+  supplierType: 'individual' | 'business';
+  supplierCountry: string;
+  currency: SupplierPayoutCurrency;
+  bankName: string;
+  accountOwnerName: string;
+  accountType: SupplierAccountType;
+  accountLast4?: string;
+  provider: string;
+  providerExternalAccountId?: string;
+  providerRail?: string;
+  bridgeExternalAccountId?: string;
+  status: SupplierStatus;
+  riskLevel: SupplierRiskLevel;
+  riskScore: number;
+  reviewReason?: string;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplierPaymentRecord {
+  id: string;
+  userId: string;
+  supplierId: string;
+  amount: string;
+  sourceAsset: SourceCurrency;
+  destinationCurrency: SupplierPayoutCurrency;
+  paymentPurpose: string;
+  invoiceUrl?: string;
+  status: SupplierPaymentStatus;
+  provider?: string;
+  providerTransferId?: string;
+  providerRail?: string;
+  executionMode?: 'provider' | 'manual_review' | 'manual_treasury';
+  bridgeTransferId?: string;
+  riskLevel: SupplierRiskLevel;
+  riskScore: number;
+  adminDecision?: 'approved' | 'rejected';
+  adminDecisionBy?: string;
+  adminDecisionAt?: string;
+  reviewReason?: string;
+  aceRiskReview?: unknown;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplierControlsRecord {
+  id: 'global';
+  supplierPaymentsEnabled: boolean;
+  thirdPartySupplierPayoutsEnabled: boolean;
+  autoApproveApprovedSuppliers: boolean;
+  requireInvoiceForSupplierPayouts: boolean;
+  manualReviewThreshold: number;
+  newSupplierFirstPaymentReview: boolean;
+  newCustomerReviewWindowDays: number;
+  newCustomerReviewThreshold: number;
+  highRiskCountries: string[];
+  blockedCountries: string[];
+  dailySupplierPayoutLimit: number;
+  monthlySupplierPayoutLimit: number;
+  updatedBy?: string;
+  reason?: string;
+  updatedAt: string;
 }
 
 
@@ -468,12 +556,16 @@ export interface DatabaseShape {
   customerIdentityLinks: CustomerIdentityLinkRecord[];
   identityPairingTokens: IdentityPairingTokenRecord[];
   userPreferences: UserPreferencesRecord[];
+  userTwoFactor: UserTwoFactorRecord[];
   legalAcceptances: LegalAcceptanceRecord[];
   customers: CustomerRecord[];
   externalAccounts: ExternalAccountRecord[];
   liquidationAddresses: LiquidationAddressRecord[];
   withdrawals: WithdrawalRecord[];
   onrampOrders: OnrampOrderRecord[];
+  suppliers: SupplierRecord[];
+  supplierPayments: SupplierPaymentRecord[];
+  supplierControls: SupplierControlsRecord[];
   webhookEvents: WebhookEventRecord[];
   authChallenges: AuthChallengeRecord[];
   auditLogs: AuditLogRecord[];

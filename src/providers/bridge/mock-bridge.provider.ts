@@ -8,7 +8,8 @@ import type {
   ProviderCustomer,
   ProviderExternalAccount,
   ProviderKycLink,
-  ProviderLiquidationAddress
+  ProviderLiquidationAddress,
+  ProviderSupplierPayout
 } from '../offramp-provider.interface.js';
 import type { Chain, Currency, SourceCurrency } from '../../database/types.js';
 
@@ -96,6 +97,22 @@ export class MockBridgeProvider implements OfframpProvider {
 
   async getTransfer(transferId: string): Promise<unknown> {
     return { id: transferId, state: 'completed', receipt: { destination_tx_hash: `0x${'ab'.repeat(32)}` }, updated_at: new Date().toISOString() };
+  }
+
+  async createSupplierPayout(input: any): Promise<ProviderSupplierPayout> {
+    const raw = {
+      id: `mock_supplier_transfer_${crypto.randomUUID()}`,
+      state: 'completed',
+      amount: input.amount,
+      on_behalf_of: input.customerId,
+      client_reference_id: input.clientReferenceId,
+      source: { payment_rail: 'bridge_wallet', currency: input.sourceCurrency, bridge_wallet_id: input.bridgeWalletId },
+      destination: { payment_rail: input.destinationPaymentRail, currency: input.destinationCurrency, external_account_id: input.externalAccountId },
+      receipt: { destination_tx_hash: `mock_${crypto.randomBytes(12).toString('hex')}` },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    return { id: raw.id, status: raw.state, raw };
   }
 
   async createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount> {

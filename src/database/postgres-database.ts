@@ -12,8 +12,13 @@ import type {
   ExternalAccountRecord,
   LiquidationAddressRecord,
   SourceCurrency,
+  SupplierPayoutCurrency,
+  SupplierRecord,
+  SupplierPaymentRecord,
+  SupplierControlsRecord,
   UserRecord,
   UserPreferencesRecord,
+  UserTwoFactorRecord,
   WebhookEventRecord,
   WithdrawalRecord,
   AuthChallengeRecord,
@@ -133,11 +138,15 @@ export class PostgresDatabase {
       const users = await client.query('select * from users order by created_at asc');
       const userPreferences = await optionalQuery(client, 'select * from payments_user_preferences order by user_id asc');
       const legalAcceptances = await optionalQuery(client, 'select * from payments_legal_acceptances order by accepted_at asc');
+      const userTwoFactor = await optionalQuery(client, 'select * from payments_user_two_factor order by user_id asc');
       const customers = await client.query('select * from payments_customers order by created_at asc');
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
       const withdrawals = await client.query('select * from payments_withdrawals order by created_at asc');
       const onrampOrders = await optionalQuery(client, 'select * from payments_onramp_orders order by created_at asc');
+      const suppliers = await optionalQuery(client, 'select * from payments_suppliers order by created_at asc');
+      const supplierPayments = await optionalQuery(client, 'select * from payments_supplier_payments order by created_at asc');
+      const supplierControls = await optionalQuery(client, 'select * from payments_supplier_controls order by id asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
       const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
       const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
@@ -182,12 +191,16 @@ export class PostgresDatabase {
         ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
         ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
+        userTwoFactor: userTwoFactor.rows.map(mapUserTwoFactor),
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
         onrampOrders: onrampOrders.rows.map(mapOnrampOrder),
+        suppliers: suppliers.rows.map(mapSupplier),
+        supplierPayments: supplierPayments.rows.map(mapSupplierPayment),
+        supplierControls: supplierControls.rows.map(mapSupplierControls),
         webhookEvents: webhookEvents.rows.map(mapWebhookEvent),
         authChallenges: authChallenges.rows.map(mapAuthChallenge),
         auditLogs: auditLogs.rows.map(mapAuditLog),
@@ -247,6 +260,20 @@ export class PostgresDatabase {
   async upsertUserPreferencesRecord(record: UserPreferencesRecord) {
     const client = await this.pool.connect();
     try { await upsertUserPreferences(client, record); return record; } finally { client.release(); }
+  }
+
+
+  async getUserTwoFactorRecord(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_user_two_factor where user_id=$1 limit 1', [userId]);
+      return result.rows[0] ? mapUserTwoFactor(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async upsertUserTwoFactorRecord(record: UserTwoFactorRecord) {
+    const client = await this.pool.connect();
+    try { await upsertUserTwoFactor(client, record); return record; } finally { client.release(); }
   }
 
   async getAdminOverviewView() {
@@ -671,6 +698,31 @@ export class PostgresDatabase {
     try { await upsertOnrampOrder(client, record); return record; } finally { client.release(); }
   }
 
+  async insertSupplierRecord(record: SupplierRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupplier(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateSupplierRecord(record: SupplierRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupplier(client, record); return record; } finally { client.release(); }
+  }
+
+  async insertSupplierPaymentRecord(record: SupplierPaymentRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupplierPayment(client, record); return record; } finally { client.release(); }
+  }
+
+  async updateSupplierPaymentRecord(record: SupplierPaymentRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupplierPayment(client, record); return record; } finally { client.release(); }
+  }
+
+  async upsertSupplierControlsRecord(record: SupplierControlsRecord) {
+    const client = await this.pool.connect();
+    try { await upsertSupplierControls(client, record); return record; } finally { client.release(); }
+  }
+
 
   async updatePaymentControlsSnapshot(input: { customerTypes: CustomerTypeControlRecord[]; payoutCurrencies: PaymentControlRecord[]; virtualAccounts: VirtualAccountControlRecord[]; sourceAssets: AssetControlRecord[]; sourceNetworks: NetworkControlRecord[] }) {
     const client = await this.pool.connect();
@@ -752,12 +804,16 @@ export class PostgresDatabase {
       await client.query('begin');
       for (const user of data.users) await upsertUser(client, user);
       for (const preferences of data.userPreferences ?? []) await upsertUserPreferences(client, preferences);
+      for (const twoFactor of data.userTwoFactor ?? []) await upsertUserTwoFactor(client, twoFactor);
       for (const acceptance of data.legalAcceptances ?? []) await upsertLegalAcceptance(client, acceptance);
       for (const customer of data.customers) await upsertCustomer(client, customer);
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
       for (const address of data.liquidationAddresses) await upsertLiquidationAddress(client, address);
       for (const withdrawal of data.withdrawals) await upsertWithdrawal(client, withdrawal);
       for (const order of data.onrampOrders ?? []) await upsertOnrampOrder(client, order);
+      for (const supplier of data.suppliers ?? []) await upsertSupplier(client, supplier);
+      for (const payment of data.supplierPayments ?? []) await upsertSupplierPayment(client, payment);
+      for (const control of data.supplierControls ?? []) await upsertSupplierControls(client, control);
       for (const event of data.webhookEvents) await upsertWebhookEvent(client, event);
       for (const challenge of data.authChallenges ?? []) await upsertAuthChallenge(client, challenge);
       for (const auditLog of data.auditLogs ?? []) await upsertAuditLog(client, auditLog);
@@ -840,6 +896,35 @@ async function upsertUserPreferences(client: pg.PoolClient, item: UserPreference
        email_confirmations_for_high_value=excluded.email_confirmations_for_high_value,
        updated_at=excluded.updated_at`,
     [item.userId, item.defaultFiatCurrency, item.language, item.transactionUpdates, item.marketingEmails, item.securityAlerts, item.emailConfirmationsForHighValue, item.updatedAt]
+  );
+}
+
+
+function mapUserTwoFactor(row: any): UserTwoFactorRecord {
+  return {
+    userId: row.user_id,
+    enabled: Boolean(row.enabled),
+    secretEncrypted: row.secret_encrypted,
+    recoveryCodeHashes: row.recovery_code_hashes ?? [],
+    enabledAt: optionalIso(row.enabled_at),
+    lastVerifiedAt: optionalIso(row.last_verified_at),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertUserTwoFactor(client: pg.PoolClient, item: UserTwoFactorRecord) {
+  await client.query(
+    `insert into payments_user_two_factor (user_id, enabled, secret_encrypted, recovery_code_hashes, enabled_at, last_verified_at, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (user_id) do update set
+       enabled=excluded.enabled,
+       secret_encrypted=excluded.secret_encrypted,
+       recovery_code_hashes=excluded.recovery_code_hashes,
+       enabled_at=excluded.enabled_at,
+       last_verified_at=excluded.last_verified_at,
+       updated_at=excluded.updated_at`,
+    [item.userId, item.enabled, item.secretEncrypted, item.recoveryCodeHashes, item.enabledAt ?? null, item.lastVerifiedAt ?? null, item.createdAt, item.updatedAt]
   );
 }
 
@@ -983,6 +1068,83 @@ function mapOnrampOrder(row: any): OnrampOrderRecord {
   };
 }
 
+function mapSupplier(row: any): SupplierRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: row.payments_customer_id,
+    supplierName: row.supplier_name,
+    supplierType: row.supplier_type,
+    supplierCountry: row.supplier_country,
+    currency: row.currency as SupplierPayoutCurrency,
+    bankName: row.bank_name,
+    accountOwnerName: row.account_owner_name,
+    accountType: row.account_type,
+    accountLast4: str(row.account_last4),
+    provider: str(row.provider) ?? 'bridge',
+    providerExternalAccountId: str(row.provider_external_account_id) ?? str(row.bridge_external_account_id),
+    providerRail: str(row.provider_rail),
+    bridgeExternalAccountId: str(row.bridge_external_account_id),
+    status: row.status,
+    riskLevel: row.risk_level,
+    riskScore: Number(row.risk_score ?? 0),
+    reviewReason: str(row.review_reason),
+    raw: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapSupplierPayment(row: any): SupplierPaymentRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    supplierId: row.supplier_id,
+    amount: numberString(row.amount) ?? '0',
+    sourceAsset: row.source_asset,
+    destinationCurrency: row.destination_currency as SupplierPayoutCurrency,
+    paymentPurpose: row.payment_purpose,
+    invoiceUrl: str(row.invoice_url),
+    status: row.status,
+    provider: str(row.provider),
+    providerTransferId: str(row.provider_transfer_id) ?? str(row.bridge_transfer_id),
+    providerRail: str(row.provider_rail),
+    executionMode: row.execution_mode,
+    bridgeTransferId: str(row.bridge_transfer_id),
+    riskLevel: row.risk_level,
+    riskScore: Number(row.risk_score ?? 0),
+    adminDecision: row.admin_decision,
+    adminDecisionBy: str(row.admin_decision_by),
+    adminDecisionAt: optionalIso(row.admin_decision_at),
+    reviewReason: str(row.review_reason),
+    aceRiskReview: row.ace_risk_review,
+    raw: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapSupplierControls(row: any): SupplierControlsRecord {
+  return {
+    id: 'global',
+    supplierPaymentsEnabled: Boolean(row.supplier_payments_enabled),
+    thirdPartySupplierPayoutsEnabled: Boolean(row.third_party_supplier_payouts_enabled),
+    autoApproveApprovedSuppliers: Boolean(row.auto_approve_approved_suppliers),
+    requireInvoiceForSupplierPayouts: Boolean(row.require_invoice_for_supplier_payouts),
+    manualReviewThreshold: Number(row.manual_review_threshold ?? 1000),
+    newSupplierFirstPaymentReview: Boolean(row.new_supplier_first_payment_review),
+    newCustomerReviewWindowDays: Number(row.new_customer_review_window_days ?? 7),
+    newCustomerReviewThreshold: Number(row.new_customer_review_threshold ?? 250),
+    highRiskCountries: row.high_risk_countries ?? [],
+    blockedCountries: row.blocked_countries ?? [],
+    dailySupplierPayoutLimit: Number(row.daily_supplier_payout_limit ?? 5000),
+    monthlySupplierPayoutLimit: Number(row.monthly_supplier_payout_limit ?? 25000),
+    updatedBy: str(row.updated_by),
+    reason: str(row.reason),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
 async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord) {
   await client.query(
     `insert into payments_onramp_orders (id, user_id, payments_customer_id, provider, provider_transfer_id, source_currency, source_payment_rail, destination_currency, destination_chain, destination_address, amount, fee_percent, fee_amount, net_amount, provider_reference, source_deposit_instructions, destination_tx_hash, status, status_reason, receipt, raw_payload, created_at, updated_at, completed_at)
@@ -1008,6 +1170,34 @@ async function upsertOnrampOrder(client: pg.PoolClient, item: OnrampOrderRecord)
        updated_at=excluded.updated_at,
        completed_at=excluded.completed_at`,
     [item.id, item.userId, item.customerId, item.provider, item.providerTransferId, item.sourceCurrency, item.sourcePaymentRail, item.destinationCurrency, item.destinationChain, item.destinationAddress, item.amount, item.feePercent, item.feeAmount, item.netAmount, item.providerReference, item.sourceDepositInstructions ?? null, item.destinationTxHash, item.status, item.statusReason, item.receipt ?? null, item.raw ?? null, item.createdAt, item.updatedAt, item.completedAt]
+  );
+}
+
+
+async function upsertSupplier(client: pg.PoolClient, item: SupplierRecord) {
+  await client.query(
+    `insert into payments_suppliers (id,user_id,payments_customer_id,supplier_name,supplier_type,supplier_country,currency,bank_name,account_owner_name,account_type,account_last4,provider,provider_external_account_id,provider_rail,bridge_external_account_id,status,risk_level,risk_score,review_reason,raw_payload,created_at,updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+     on conflict (id) do update set supplier_name=excluded.supplier_name,supplier_type=excluded.supplier_type,supplier_country=excluded.supplier_country,currency=excluded.currency,bank_name=excluded.bank_name,account_owner_name=excluded.account_owner_name,account_type=excluded.account_type,account_last4=excluded.account_last4,provider=excluded.provider,provider_external_account_id=excluded.provider_external_account_id,provider_rail=excluded.provider_rail,bridge_external_account_id=excluded.bridge_external_account_id,status=excluded.status,risk_level=excluded.risk_level,risk_score=excluded.risk_score,review_reason=excluded.review_reason,raw_payload=excluded.raw_payload,updated_at=excluded.updated_at`,
+    [item.id,item.userId,item.customerId,item.supplierName,item.supplierType,item.supplierCountry,item.currency,item.bankName,item.accountOwnerName,item.accountType,item.accountLast4,item.provider ?? 'bridge',item.providerExternalAccountId ?? item.bridgeExternalAccountId,item.providerRail,item.bridgeExternalAccountId,item.status,item.riskLevel,item.riskScore,item.reviewReason,item.raw ?? null,item.createdAt,item.updatedAt]
+  );
+}
+
+async function upsertSupplierPayment(client: pg.PoolClient, item: SupplierPaymentRecord) {
+  await client.query(
+    `insert into payments_supplier_payments (id,user_id,supplier_id,amount,source_asset,destination_currency,payment_purpose,invoice_url,status,provider,provider_transfer_id,provider_rail,execution_mode,bridge_transfer_id,risk_level,risk_score,admin_decision,admin_decision_by,admin_decision_at,review_reason,ace_risk_review,raw_payload,created_at,updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+     on conflict (id) do update set amount=excluded.amount,source_asset=excluded.source_asset,destination_currency=excluded.destination_currency,payment_purpose=excluded.payment_purpose,invoice_url=excluded.invoice_url,status=excluded.status,provider=excluded.provider,provider_transfer_id=excluded.provider_transfer_id,provider_rail=excluded.provider_rail,execution_mode=excluded.execution_mode,bridge_transfer_id=excluded.bridge_transfer_id,risk_level=excluded.risk_level,risk_score=excluded.risk_score,admin_decision=excluded.admin_decision,admin_decision_by=excluded.admin_decision_by,admin_decision_at=excluded.admin_decision_at,review_reason=excluded.review_reason,ace_risk_review=excluded.ace_risk_review,raw_payload=excluded.raw_payload,updated_at=excluded.updated_at`,
+    [item.id,item.userId,item.supplierId,item.amount,item.sourceAsset,item.destinationCurrency,item.paymentPurpose,item.invoiceUrl,item.status,item.provider,item.providerTransferId ?? item.bridgeTransferId,item.providerRail,item.executionMode,item.bridgeTransferId,item.riskLevel,item.riskScore,item.adminDecision,item.adminDecisionBy,item.adminDecisionAt,item.reviewReason,item.aceRiskReview ?? null,item.raw ?? null,item.createdAt,item.updatedAt]
+  );
+}
+
+async function upsertSupplierControls(client: pg.PoolClient, item: SupplierControlsRecord) {
+  await client.query(
+    `insert into payments_supplier_controls (id,supplier_payments_enabled,third_party_supplier_payouts_enabled,auto_approve_approved_suppliers,require_invoice_for_supplier_payouts,manual_review_threshold,new_supplier_first_payment_review,new_customer_review_window_days,new_customer_review_threshold,high_risk_countries,blocked_countries,daily_supplier_payout_limit,monthly_supplier_payout_limit,updated_by,reason,updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     on conflict (id) do update set supplier_payments_enabled=excluded.supplier_payments_enabled,third_party_supplier_payouts_enabled=excluded.third_party_supplier_payouts_enabled,auto_approve_approved_suppliers=excluded.auto_approve_approved_suppliers,require_invoice_for_supplier_payouts=excluded.require_invoice_for_supplier_payouts,manual_review_threshold=excluded.manual_review_threshold,new_supplier_first_payment_review=excluded.new_supplier_first_payment_review,new_customer_review_window_days=excluded.new_customer_review_window_days,new_customer_review_threshold=excluded.new_customer_review_threshold,high_risk_countries=excluded.high_risk_countries,blocked_countries=excluded.blocked_countries,daily_supplier_payout_limit=excluded.daily_supplier_payout_limit,monthly_supplier_payout_limit=excluded.monthly_supplier_payout_limit,updated_by=excluded.updated_by,reason=excluded.reason,updated_at=excluded.updated_at`,
+    [item.id,item.supplierPaymentsEnabled,item.thirdPartySupplierPayoutsEnabled,item.autoApproveApprovedSuppliers,item.requireInvoiceForSupplierPayouts,item.manualReviewThreshold,item.newSupplierFirstPaymentReview,item.newCustomerReviewWindowDays,item.newCustomerReviewThreshold,item.highRiskCountries,item.blockedCountries,item.dailySupplierPayoutLimit,item.monthlySupplierPayoutLimit,item.updatedBy,item.reason,item.updatedAt]
   );
 }
 

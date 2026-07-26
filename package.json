@@ -38,7 +38,9 @@
     "bridge:virtual-account-smoke": "tsx scripts/bridge-virtual-account-smoke.ts",
     "test:bridge-kyc-no-mock-fallback": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-bridge-kyc-no-mock-fallback.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=false tsx scripts/test-bridge-kyc-no-mock-fallback.ts",
     "test:bridge-customer-import": "tsx scripts/test-bridge-customer-import.ts",
-    "test:balance-transfer": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-balance-transfer.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock ADMIN_API_KEY=balance-admin-key tsx scripts/test-balance-transfer.ts"
+    "test:balance-transfer": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-balance-transfer.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock ADMIN_API_KEY=balance-admin-key tsx scripts/test-balance-transfer.ts",
+    "test:supplier-payments": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-supplier-payments.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=supplier-admin-key tsx scripts/test-supplier-payments.ts",
+    "test:two-factor": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-two-factor.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true tsx scripts/test-two-factor.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

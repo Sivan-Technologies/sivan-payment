@@ -1,4 +1,4 @@
-import type { Chain, Currency, SourceCurrency } from '../database/types.js';
+import type { Chain, Currency, SourceCurrency, SupplierPayoutCurrency } from '../database/types.js';
 
 export interface ProviderCustomer {
   id: string;
@@ -21,7 +21,7 @@ export interface ProviderKycLink {
 export interface ProviderExternalAccount {
   id: string;
   customerId: string;
-  currency: Currency;
+  currency: SupplierPayoutCurrency;
   accountType: string;
   active?: boolean;
   bankName?: string;
@@ -29,6 +29,12 @@ export interface ProviderExternalAccount {
   accountOwnerName: string;
   last4?: string;
   verificationStatus?: string;
+  raw: unknown;
+}
+
+export interface ProviderSupplierPayout {
+  id: string;
+  status?: string;
   raw: unknown;
 }
 
@@ -65,6 +71,19 @@ export interface CreateExternalAccountInput {
   idempotencyKey: string;
 }
 
+export interface CreateSupplierPayoutInput {
+  customerId: string;
+  bridgeWalletId: string;
+  amount: string;
+  sourceCurrency: SourceCurrency;
+  destinationCurrency: SupplierPayoutCurrency;
+  destinationPaymentRail: string;
+  externalAccountId: string;
+  clientReferenceId: string;
+  idempotencyKey: string;
+  developerFee?: string;
+}
+
 export interface CreateLiquidationAddressInput {
   customerId: string;
   sourceCurrency: SourceCurrency;
@@ -86,6 +105,8 @@ export interface OfframpProvider {
   getKycLink(kycLinkId: string): Promise<ProviderKycLink>;
   getHostedKycLink(customerId: string, redirectUri?: string, endorsement?: string): Promise<{ url: string; raw: unknown }>;
   createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount>;
+  createSupplierPayout?(input: CreateSupplierPayoutInput): Promise<ProviderSupplierPayout>;
+  getTransfer?(transferId: string): Promise<unknown>;
   simulateSandboxKycApproval?(customerId: string, idempotencyKey: string): Promise<unknown>;
   verifyExternalAccount(customerId: string, externalAccountId: string): Promise<unknown>;
   createLiquidationAddress(input: CreateLiquidationAddressInput): Promise<ProviderLiquidationAddress>;

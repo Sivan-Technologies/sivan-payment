@@ -7,7 +7,8 @@ import type {
   ProviderCustomer,
   ProviderExternalAccount,
   ProviderKycLink,
-  ProviderLiquidationAddress
+  ProviderLiquidationAddress,
+  ProviderSupplierPayout
 } from '../offramp-provider.interface.js';
 import { BridgeClient } from './bridge.client.js';
 import { verifyBridgeWebhookSignature } from './bridge.webhooks.js';
@@ -85,6 +86,30 @@ export class BridgeProvider implements OfframpProvider {
 
   async getTransfer(transferId: string): Promise<unknown> {
     return this.client.request(`/transfers/${transferId}`);
+  }
+
+  async createSupplierPayout(input: { customerId: string; bridgeWalletId: string; amount: string; sourceCurrency: string; destinationCurrency: string; destinationPaymentRail: string; externalAccountId: string; clientReferenceId: string; idempotencyKey: string; developerFee?: string }): Promise<ProviderSupplierPayout> {
+    const raw: any = await this.client.request('/transfers', {
+      method: 'POST',
+      idempotencyKey: input.idempotencyKey,
+      body: {
+        amount: input.amount,
+        on_behalf_of: input.customerId,
+        developer_fee: input.developerFee,
+        client_reference_id: input.clientReferenceId,
+        source: {
+          payment_rail: 'bridge_wallet',
+          currency: input.sourceCurrency,
+          bridge_wallet_id: input.bridgeWalletId
+        },
+        destination: {
+          payment_rail: input.destinationPaymentRail,
+          currency: input.destinationCurrency,
+          external_account_id: input.externalAccountId
+        }
+      }
+    });
+    return { id: raw.id, status: raw.state || raw.status, raw };
   }
 
   async createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount> {

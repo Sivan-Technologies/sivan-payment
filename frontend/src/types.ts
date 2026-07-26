@@ -76,6 +76,55 @@ export interface ExternalAccountRecord {
 }
 
 
+
+export interface SupplierRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  supplierName: string;
+  supplierType: 'individual' | 'business';
+  supplierCountry: string;
+  currency: 'usd' | 'gbp' | 'eur' | 'mxn' | 'brl';
+  bankName: string;
+  accountOwnerName: string;
+  accountType: string;
+  accountLast4?: string;
+  provider: string;
+  providerExternalAccountId?: string;
+  providerRail?: string;
+  bridgeExternalAccountId?: string;
+  status: string;
+  riskLevel: string;
+  riskScore: number;
+  reviewReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupplierPaymentRecord {
+  id: string;
+  userId: string;
+  supplierId: string;
+  amount: string;
+  sourceAsset: 'usdc';
+  destinationCurrency: 'usd' | 'gbp' | 'eur' | 'mxn' | 'brl';
+  paymentPurpose: string;
+  invoiceUrl?: string;
+  status: string;
+  provider?: string;
+  providerTransferId?: string;
+  providerRail?: string;
+  executionMode?: string;
+  bridgeTransferId?: string;
+  riskLevel: string;
+  riskScore: number;
+  reviewReason?: string;
+  aceRiskReview?: any;
+  createdAt: string;
+  updatedAt: string;
+  supplier?: SupplierRecord | null;
+}
+
 export interface BalanceSummary {
   userId: string;
   balances: Array<{ asset: string; pending: string; available: string; held: string; spent: string; totalCredited: string }>;
