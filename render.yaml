@@ -198,3 +198,17 @@ services:
         value: "3500"
       - key: SIVAN_AI_FALLBACK_ENABLED
         value: "true"
+      - key: VIRTUAL_ACCOUNTS_ENABLED
+        value: "true"
+      - key: VIRTUAL_ACCOUNT_REQUESTS_ENABLED
+        value: "true"
+      - key: VIRTUAL_ACCOUNT_PROVIDER
+        value: bridge
+      - key: BRIDGE_VIRTUAL_ACCOUNTS_ENABLED
+        value: "true"
+      - key: BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY
+        value: usdc
+      - key: BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL
+        value: solana
+      - key: BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID
+        sync: false
