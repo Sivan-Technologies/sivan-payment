@@ -1,9 +1,12 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import type { UserRecord } from '../database/types.js';
 import { badRequest, conflict, notFound } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
+import { sendEmail } from '../notifications/email.service.js';
+import { env } from '../config/env.js';
 import { checkUsernameAvailability, validateUsername } from '../users/username.service.js';
 import { restrictUser } from './admin-hardening.service.js';
 
@@ -37,10 +40,15 @@ export const adminEmailChangeRequestSchema = recoveryBaseSchema.extend({
 });
 
 export const adminUnlinkWhatsappSchema = recoveryBaseSchema;
+export const userEmailChangeConfirmSchema = z.object({ requestId: z.string().min(6), code: z.string().min(4).max(12) });
 
 function requireEvidence(input: { supportTicketId?: string; evidenceUrl?: string }, action: string) {
   if (!input.supportTicketId && !input.evidenceUrl) throw badRequest(`${action} requires a support ticket ID or evidence URL.`);
 }
+
+function recoveryId(prefix = 'ar') { return `${prefix}_${crypto.randomUUID()}`; }
+function generateCode() { return String(crypto.randomInt(100000, 1000000)); }
+function hashEmailChangeCode(userId: string, newEmail: string, code: string) { return crypto.createHash('sha256').update(`${userId}:${newEmail}:${code}:${env.USER_JWT_SECRET}`).digest('hex'); }
 
 async function getUserOrThrow(userId: string) {
   const user = await db.findUserById(userId);
@@ -141,8 +149,29 @@ export async function adminStartEmailChange(userId: string, input: z.infer<typeo
   requireEvidence(input, 'Email change');
   const data = await db.read();
   if (data.users.some((item) => item.email?.toLowerCase() === input.newEmail && item.id !== userId)) throw conflict('A user with this email already exists.');
-  await audit({ actorId: input.actorId, action: 'user.email_change_started', userId, reason: input.reason, supportTicketId: input.supportTicketId, evidenceUrl: input.evidenceUrl, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { currentEmail: user.email, newEmail: input.newEmail, emergencyOverride: input.emergencyOverride, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation' } });
-  return { started: true, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation', currentEmail: user.email, newEmail: input.newEmail };
+  const requestId = recoveryId('email');
+  const code = generateCode();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  await sendEmail({ to: input.newEmail, subject: 'Confirm your Sivan email change', text: `Your Sivan email change code is ${code}. It expires in 15 minutes. If you did not request this, contact Sivan Support.`, html: `<p>Your Sivan email change code is <strong>${code}</strong>.</p><p>It expires in 15 minutes.</p>` });
+  await audit({ actorId: input.actorId, action: 'user.email_change_started', userId, reason: input.reason, supportTicketId: input.supportTicketId, evidenceUrl: input.evidenceUrl, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { requestId, currentEmail: user.email, newEmail: input.newEmail, emergencyOverride: input.emergencyOverride, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation', codeHash: hashEmailChangeCode(userId, input.newEmail, code), expiresAt } });
+  return { started: true, requestId, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation', currentEmail: user.email, newEmail: input.newEmail, expiresAt, devCode: env.AUTH_DEV_SHOW_OTP ? code : undefined };
+}
+
+export async function confirmUserEmailChange(userId: string, input: z.infer<typeof userEmailChangeConfirmSchema>) {
+  const user = await getUserOrThrow(userId);
+  const data = await db.read();
+  const started = (data.auditLogs ?? []).filter((log) => log.action === 'user.email_change_started' && log.resourceId === userId && (log.metadata as any)?.requestId === input.requestId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!started) throw notFound('Email change request');
+  const metadata = started.metadata as any;
+  if (metadata.status !== 'pending_user_confirmation') throw badRequest('Email change request is not waiting for user confirmation.');
+  if (new Date(metadata.expiresAt).getTime() < Date.now()) throw badRequest('Email change code has expired. Ask support to start again.');
+  if (hashEmailChangeCode(userId, metadata.newEmail, input.code) !== metadata.codeHash) throw badRequest('Invalid email change code.');
+  if (data.users.some((item) => item.email?.toLowerCase() === String(metadata.newEmail).toLowerCase() && item.id !== userId)) throw conflict('Another Sivan user already uses this email.');
+  const now = nowIso();
+  const updated = { ...user, email: metadata.newEmail, emailVerifiedAt: now, updatedAt: now };
+  await db.updateUserRecord(updated);
+  await createAuditLog({ actorType: 'user', actorId: userId, action: 'user.email_change_confirmed', resourceType: 'account_recovery', resourceId: userId, severity: 'warning', metadata: { requestId: input.requestId, oldEmail: metadata.currentEmail, newEmail: metadata.newEmail } });
+  return updated;
 }
 
 export async function adminUnlinkWhatsapp(userId: string, input: z.infer<typeof adminUnlinkWhatsappSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
