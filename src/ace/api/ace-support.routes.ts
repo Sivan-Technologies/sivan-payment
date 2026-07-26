@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../../shared/validation.js';
 import { env } from '../../config/env.js';
-import { forbidden } from '../../shared/errors.js';
+import { AppError, forbidden } from '../../shared/errors.js';
+import { db } from '../../database/json-database.js';
 import { answerAceSupport } from '../service/ace-support.service.js';
 import { answerWhatsappAceSupport } from '../service/ace-whatsapp.service.js';
 import { aceSupportRequestSchema } from '../types/ace.types.js';
@@ -18,9 +19,29 @@ function requireAceServiceSecret(request: any) {
   if (value !== configured) throw forbidden('Invalid Ace WhatsApp service secret.');
 }
 
+const userMinuteBuckets = new Map<string, { count: number; resetAt: number }>();
+const maxUserAcePerMinute = 5;
+const maxUserAcePerDay = 10;
+
+async function enforceUserAceBudget(userId: string) {
+  const now = Date.now();
+  const minute = userMinuteBuckets.get(userId);
+  if (!minute || minute.resetAt <= now) userMinuteBuckets.set(userId, { count: 1, resetAt: now + 60_000 });
+  else {
+    minute.count += 1;
+    if (minute.count > maxUserAcePerMinute) throw new AppError(429, 'Ask Sivan is rate limited. Please wait a minute or create a support ticket.', 'ace_rate_limited', { retryAfterSeconds: Math.ceil((minute.resetAt - now) / 1000) });
+  }
+
+  const since = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+  const data = await db.read();
+  const usedToday = (data.aceSupportSessions ?? []).filter((session) => session.userId === userId && session.channel === 'web_dashboard' && session.createdAt >= since).length;
+  if (usedToday >= maxUserAcePerDay) throw new AppError(429, 'Daily Ask Sivan limit reached. Create a support ticket and Sivan Support will follow up.', 'ace_daily_limit_reached', { maxPerDay: maxUserAcePerDay });
+}
+
 export async function aceSupportRoutes(app: FastifyInstance) {
   app.post('/api/users/:userId/ace/support', async (request) => {
     const { userId } = request.params as { userId: string };
+    await enforceUserAceBudget(userId);
     const body = parseBody(aceSupportRequestSchema, request.body);
     return { data: await answerAceSupport({ userId, ...body, admin: false }) };
   });
