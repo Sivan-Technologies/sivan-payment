@@ -45,8 +45,8 @@ type UserNotification = { id: string; icon: string; title: string; message: stri
 type UserTwoFactorStatus = { userId: string; enabled: boolean; enabledAt?: string; lastVerifiedAt?: string; recoveryCodesRemaining?: number; };
 
 
-export { LandingPage } from './LandingPage';
-export { PublicSidebarCta, KpiCard, DashboardTransactions, TwoFactorRecommendationCard, DashboardSetupPanel } from './DashboardSections';
+export { LandingPage } from './landing/LandingPage';
+export { PublicSidebarCta, KpiCard, DashboardTransactions, TwoFactorRecommendationCard, DashboardSetupPanel } from './dashboard/DashboardSections';
 
 function OnRampView({ hasUser, isVerified, onGetStarted }: { hasUser: boolean; isVerified: boolean; onGetStarted: () => void }) {
   return (
@@ -460,9 +460,9 @@ function VirtualAccountCurrencyCard({ currency, request, account, control, loadi
 
 
 
-import { InlineTransactionTimeline } from './TransactionsSection';
-export { TransactionsView, InlineTransactionTimeline } from './TransactionsSection';
-export { BuyCryptoView, TransferCryptoView } from './TradeTransferSections';
+import { InlineTransactionTimeline } from './transactions/TransactionsSection';
+export { TransactionsView, InlineTransactionTimeline } from './transactions/TransactionsSection';
+export { BuyCryptoView, TransferCryptoView } from './transfer/TradeTransferSections';
 
 export function NotificationCenter({ open, notifications, unreadCount, dotClass, readIds, timeNow, onToggle, onClose, onMarkAllRead, onOpen }: { open: boolean; notifications: UserNotification[]; unreadCount: number; dotClass: string; readIds: string[]; timeNow: number; onToggle: () => void; onClose: () => void; onMarkAllRead: () => void; onOpen: (item: UserNotification) => void }) {
   const visible = notifications.slice(0, 10);

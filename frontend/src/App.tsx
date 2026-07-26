@@ -1,8 +1,11 @@
-import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
-import type { UserNotification, UserTwoFactorStatus } from './appUtils';
+import type { UserTwoFactorStatus } from './appUtils';
+import { useNotifications } from './hooks/useNotifications';
+import { useSessionActivity } from './hooks/useAuth';
+import { usePaymentDataLoader } from './hooks/usePaymentData';
 
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
@@ -15,7 +18,6 @@ export default function App() {
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
-  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => readStorage<string[]>('sivan.readNotifications', []));
   const [twoFactorPromptDismissedUntil, setTwoFactorPromptDismissedUntil] = useState(() => Number(localStorage.getItem('sivan.2faPromptDismissedUntil') || 0));
   const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
   const [pendingEmail, setPendingEmail] = useState('');
@@ -107,62 +109,7 @@ export default function App() {
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
 
 
-  useEffect(() => {
-    localStorage.setItem('sivan.readNotifications', JSON.stringify(readNotificationIds.slice(-200)));
-  }, [readNotificationIds]);
-
-  useEffect(() => {
-    localStorage.setItem('sivan.2faPromptDismissedUntil', String(twoFactorPromptDismissedUntil));
-  }, [twoFactorPromptDismissedUntil]);
-
-  const notifications = useMemo<UserNotification[]>(() => {
-    const items: UserNotification[] = [];
-    const push = (item: UserNotification) => items.push(item);
-    const now = new Date().toISOString();
-    for (const incident of systemStatus.activeIncidents ?? []) {
-      push({ id: `incident:${incident.id}`, icon: incident.severity === 'critical' ? '!' : '⚠', title: incident.severity === 'critical' ? 'Service disruption' : 'Provider maintenance', message: incident.customerMessage || incident.message || 'Some payment services may be delayed.', severity: incident.severity === 'critical' ? 'urgent' : 'action', createdAt: incident.startedAt || (incident as any).createdAt || now, actionLabel: 'View support', view: 'help' });
-    }
-    if (customer?.kycStatus === 'kyc_incomplete') push({ id: `kyc:${customer.id}:incomplete`, icon: '◈', title: 'Verification needs one more step', message: customer.customerAction?.message || 'Complete the remaining verification details to continue.', severity: 'action', createdAt: customer.updatedAt || now, actionLabel: 'Continue', view: 'kyc' });
-    else if (customer?.kycStatus === 'kyc_rejected') push({ id: `kyc:${customer.id}:rejected`, icon: '!', title: 'Verification needs support', message: 'Your verification could not be completed. Retry securely or contact support.', severity: 'urgent', createdAt: customer.updatedAt || now, actionLabel: 'Review', view: 'kyc' });
-    else if (customer?.kycStatus === 'kyc_under_review') push({ id: `kyc:${customer.id}:review`, icon: '⏳', title: 'Verification under review', message: 'We will update your account as soon as review is complete.', severity: 'info', createdAt: customer.updatedAt || now, actionLabel: 'Check status', view: 'kyc' });
-    else if (customer?.kycStatus === 'kyc_approved' && !hasBank) push({ id: `bank:${user?.id || 'me'}:missing`, icon: '▭', title: 'Add payout bank', message: 'You are verified. Add a payout bank to start selling crypto.', severity: 'action', createdAt: customer.updatedAt || now, actionLabel: 'Add bank', view: 'banks' });
-    if (customer?.kycStatus === 'kyc_approved' && !twoFactorStatus?.enabled) push({ id: `security:${user?.id || 'me'}:2fa-recommended`, icon: '⚿', title: 'Protect your Sivan account', message: 'Enable authenticator 2FA to secure transfers and payouts.', severity: 'info', createdAt: customer.updatedAt || now, actionLabel: 'Enable', view: 'settings' });
-    else if (!customer && hasUser) push({ id: `kyc:${user?.id || 'me'}:not-started`, icon: '◈', title: 'Verify your account', message: 'Complete identity verification to unlock payments.', severity: 'action', createdAt: user?.createdAt || now, actionLabel: 'Start', view: 'kyc' });
-
-    for (const order of onrampOrders.slice(0, 5)) {
-      if (order.status === 'awaiting_payment') push({ id: `onramp:${order.id}:awaiting`, icon: '↙', title: 'Buy order awaiting payment', message: `Send ${order.amount} ${order.sourceCurrency.toUpperCase()} using the exact reference.`, severity: 'action', createdAt: order.updatedAt || order.createdAt, actionLabel: 'View', view: 'history' });
-      if (['payment_received', 'processing'].includes(order.status)) push({ id: `onramp:${order.id}:processing`, icon: '↙', title: 'Bank payment received', message: 'We are preparing your crypto delivery.', severity: 'info', createdAt: order.updatedAt || order.createdAt, actionLabel: 'Track', view: 'history' });
-      if (order.status === 'failed') push({ id: `onramp:${order.id}:failed`, icon: '!', title: 'Buy order failed', message: 'Open the transaction timeline or contact support.', severity: 'urgent', createdAt: order.updatedAt || order.createdAt, actionLabel: 'View', view: 'history' });
-    }
-
-    for (const withdrawal of withdrawals.slice(0, 5)) {
-      if (['pending_deposit', 'deposit_received', 'payout_processing', 'requires_action'].includes(withdrawal.status)) push({ id: `withdrawal:${withdrawal.id}:${withdrawal.status}`, icon: '↗', title: withdrawal.status === 'deposit_received' ? 'Withdrawal deposit detected' : 'Withdrawal in progress', message: withdrawal.status === 'requires_action' ? 'This withdrawal needs review.' : 'Your sell transaction is moving through settlement.', severity: withdrawal.status === 'requires_action' ? 'action' : 'info', createdAt: withdrawal.updatedAt || withdrawal.createdAt, actionLabel: 'Track', view: 'history' });
-      if (withdrawal.status === 'failed') push({ id: `withdrawal:${withdrawal.id}:failed`, icon: '!', title: 'Withdrawal failed', message: 'Open the transaction timeline or contact support.', severity: 'urgent', createdAt: withdrawal.updatedAt || withdrawal.createdAt, actionLabel: 'View', view: 'history' });
-    }
-
-    for (const transfer of balanceTransfers.slice(0, 5)) {
-      if (transfer.status === 'pending_review') push({ id: `balance-transfer:${transfer.transferId}:review`, icon: '⇆', title: 'Transfer held for review', message: 'Your transfer is pending compliance review.', severity: 'action', createdAt: transfer.updatedAt || transfer.createdAt, actionLabel: 'View', view: 'transfer' });
-    }
-    for (const payment of supplierPayments.slice(0, 5)) {
-      if (payment.status === 'pending_review') push({ id: `supplier-payment:${payment.id}:review`, icon: '▭', title: 'Supplier payment held for review', message: 'Sivan is reviewing your supplier payout before provider release.', severity: 'action', createdAt: payment.updatedAt || payment.createdAt, actionLabel: 'View', view: 'transfer' });
-      if (payment.status === 'failed') push({ id: `supplier-payment:${payment.id}:failed`, icon: '!', title: 'Supplier payment failed', message: 'Open Transfer & Pay or contact support.', severity: 'urgent', createdAt: payment.updatedAt || payment.createdAt, actionLabel: 'View', view: 'transfer' });
-    }
-    for (const tx of virtualAccountTransactions.slice(0, 4)) {
-      if (!['completed', 'payment_processed'].includes(String(tx.status))) push({ id: `va-tx:${tx.id}:pending`, icon: '▥', title: 'Virtual account deposit pending', message: 'Funds are being settled before becoming available.', severity: 'info', createdAt: tx.updatedAt || tx.createdAt, actionLabel: 'View', view: 'virtualAccounts' });
-      if (['completed', 'payment_processed'].includes(String(tx.status))) push({ id: `va-tx:${tx.id}:completed`, icon: '✓', title: 'USDC balance credited', message: 'A virtual account deposit has settled into your Sivan balance.', severity: 'info', createdAt: tx.updatedAt || tx.createdAt, actionLabel: 'View', view: 'transfer' });
-    }
-    for (const ticket of supportTickets.slice(0, 5)) {
-      if (['open', 'in_review', 'waiting_on_user', 'waiting_on_provider'].includes(ticket.status)) push({ id: `support:${ticket.id}:${ticket.status}`, icon: '?', title: ticket.status === 'waiting_on_user' ? 'Support needs your response' : 'Support ticket active', message: `${ticket.subject || 'Your ticket'} · ${friendlyStatus(ticket.status)}`, severity: ticket.status === 'waiting_on_user' ? 'action' : 'info', createdAt: ticket.updatedAt || ticket.lastMessageAt || ticket.createdAt, actionLabel: 'Open', view: 'help' });
-      if (ticket.status === 'resolved') push({ id: `support:${ticket.id}:resolved`, icon: '✓', title: 'Support ticket resolved', message: ticket.subject || 'Your ticket has been marked resolved.', severity: 'info', createdAt: ticket.updatedAt || ticket.closedAt || ticket.createdAt, actionLabel: 'View', view: 'help' });
-    }
-    const rank = { urgent: 3, action: 2, info: 1 } as const;
-    return items.sort((a, b) => rank[b.severity] - rank[a.severity] || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 12);
-  }, [systemStatus, customer, hasBank, hasUser, user, twoFactorStatus, onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets]);
-
-  const unreadNotifications = notifications.filter((item) => !readNotificationIds.includes(item.id));
-  const notificationDotClass = unreadNotifications.some((item) => item.severity === 'urgent') ? 'urgent' : unreadNotifications.some((item) => item.severity === 'action') ? 'action' : '';
-  const markNotificationRead = (id: string) => setReadNotificationIds((ids) => ids.includes(id) ? ids : [...ids, id]);
-  const markAllNotificationsRead = () => setReadNotificationIds((ids) => Array.from(new Set([...ids, ...notifications.map((item) => item.id)])));
+  const { notifications, readNotificationIds, unreadNotifications, notificationDotClass, markNotificationRead, markAllNotificationsRead } = useNotifications({ systemStatus, customer, hasBank, hasUser, user, twoFactorEnabled: Boolean(twoFactorStatus?.enabled), onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets });
   const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
   const verificationRedirectUri = useMemo(() => `${window.location.origin}/verification-complete`, []);
   const verificationUrl = customer?.hostedKycLink || customer?.kycLink;
@@ -313,55 +260,28 @@ export default function App() {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
   }, [accounts]);
 
-  useEffect(() => {
-    if (!authToken) return;
-    const timeoutMs = 30 * 60 * 1000;
-    const updateActivity = () => localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
-    const checkActivity = () => {
-      const last = Number(localStorage.getItem('sivan.lastActivityAt') || Date.now());
-      if (Date.now() - last > timeoutMs) logout('Signed out after 30 minutes of inactivity.');
-    };
-    updateActivity();
-    const events = ['click', 'keydown', 'mousemove', 'touchstart'];
-    events.forEach((event) => window.addEventListener(event, updateActivity, { passive: true }));
-    const interval = window.setInterval(checkActivity, 60_000);
-    return () => {
-      events.forEach((event) => window.removeEventListener(event, updateActivity));
-      window.clearInterval(interval);
-    };
-  }, [authToken, logout]);
+  useSessionActivity(authToken, logout);
 
-  const loadUserData = useCallback(async () => {
-    if (!user?.id || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult] = await Promise.allSettled([
-      api<CustomerRecord>(`/api/customers/${user.id}`),
-      api<ExternalAccountRecord[]>(`/api/users/${user.id}/external-accounts`),
-      api<WithdrawalRecord[]>(`/api/users/${user.id}/withdrawals`),
-      api<OnrampOrderRecord[]>(`/api/users/${user.id}/onramp-orders`),
-      api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions?: VirtualAccountTransactionRecord[]; events?: any[] }>(`/api/users/${user.id}/virtual-accounts`),
-      api<BalanceSummary>(`/api/users/${user.id}/balance`),
-      api<BalanceTransferRecord[]>(`/api/users/${user.id}/balance/transfers`),
-      api<SupplierRecord[]>(`/api/users/${user.id}/suppliers`),
-      api<SupplierPaymentRecord[]>(`/api/users/${user.id}/supplier-payments`),
-      api<SupportTicketRecord[]>(`/api/users/${user.id}/support/tickets`),
-      api<UserPreferencesRecord>(`/api/users/${user.id}/preferences`),
-      api<IdentityStatus>('/api/users/me/identity'),
-      api<UserTwoFactorStatus>(`/api/users/${user.id}/2fa`)
-    ]);
-    if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
-    if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
-    if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
-    if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
-    if (virtualAccountsResult.status === 'fulfilled') { setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []); setVirtualAccounts(virtualAccountsResult.value.accounts ?? []); setVirtualAccountTransactions(virtualAccountsResult.value.transactions ?? []); }
-    if (balanceResult.status === 'fulfilled') setBalance(balanceResult.value);
-    if (balanceTransfersResult.status === 'fulfilled') setBalanceTransfers(balanceTransfersResult.value);
-    if (suppliersResult.status === 'fulfilled') setSuppliers(suppliersResult.value);
-    if (supplierPaymentsResult.status === 'fulfilled') setSupplierPayments(supplierPaymentsResult.value);
-    if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
-    if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
-    if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
-    if (twoFactorResult.status === 'fulfilled') setTwoFactorStatus(twoFactorResult.value);
-  }, [api, user?.id, authToken]);
+  const loadUserData = usePaymentDataLoader({
+    userId: user?.id,
+    authToken,
+    api,
+    setCustomer,
+    setAccounts,
+    setWithdrawals,
+    setOnrampOrders,
+    setVirtualAccountRequests,
+    setVirtualAccounts,
+    setVirtualAccountTransactions,
+    setBalance,
+    setBalanceTransfers,
+    setSuppliers,
+    setSupplierPayments,
+    setSupportTickets,
+    setUserPreferences,
+    setIdentityStatus,
+    setTwoFactorStatus
+  });
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
     if (!user?.id || !authToken) {
