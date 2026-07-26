@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { createUser, createUserSchema, getUser } from './users.service.js';
 import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema } from './user-preferences.service.js';
+import { confirmAvatarUpload, confirmAvatarUploadSchema, createAvatarUploadUrl, createAvatarUploadUrlSchema, removeAvatar } from './user-avatar.service.js';
 import { legalAcceptancePayloadSchema, listUserLegalAcceptances, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
 
 const createUserWithLegalSchema = createUserSchema.extend({
@@ -42,6 +43,24 @@ export async function usersRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = parseBody(updateUserPreferencesSchema, request.body);
     return { data: await updateUserPreferences(userId, body) };
+  });
+
+
+  app.post('/api/users/:userId/avatar/upload-url', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(createAvatarUploadUrlSchema, request.body);
+    return { data: await createAvatarUploadUrl(userId, body) };
+  });
+
+  app.post('/api/users/:userId/avatar/confirm', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(confirmAvatarUploadSchema, request.body);
+    return { data: await confirmAvatarUpload(userId, body) };
+  });
+
+  app.delete('/api/users/:userId/avatar', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await removeAvatar(userId) };
   });
 
   app.get('/api/users/:userId', async (request) => {
