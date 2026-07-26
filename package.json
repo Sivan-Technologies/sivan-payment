@@ -42,7 +42,8 @@
     "test:supplier-payments": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-supplier-payments.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=supplier-admin-key tsx scripts/test-supplier-payments.ts",
     "test:two-factor": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-two-factor.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true tsx scripts/test-two-factor.ts",
     "test:avatar-upload": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-avatar-upload.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true tsx scripts/test-avatar-upload.ts",
-    "test:username": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-username.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true tsx scripts/test-username.ts"
+    "test:username": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-username.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true tsx scripts/test-username.ts",
+    "test:account-recovery": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-account-recovery.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=recovery-admin-key tsx scripts/test-account-recovery.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
