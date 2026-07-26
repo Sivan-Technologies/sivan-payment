@@ -938,6 +938,9 @@ function mapUser(row: any): UserRecord {
     whatsappNumber: str(row.whatsapp_number),
     fullName: [first, last].filter(Boolean).join(' ') || displayIdentity,
     primaryChannel: row.primary_channel,
+    avatarUrl: str(row.avatar_url),
+    avatarObjectKey: str(row.avatar_object_key),
+    avatarUpdatedAt: optionalIso(row.avatar_updated_at),
     emailVerifiedAt: optionalIso(row.email_verified_at),
     whatsappVerifiedAt: optionalIso(row.whatsapp_verified_at),
     createdAt: iso(row.created_at),
@@ -1672,18 +1675,21 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
   const { firstName, lastName } = splitName(user.fullName);
   const primaryChannel = user.primaryChannel ?? inferPrimaryChannel(user.email, user.whatsappNumber);
   await client.query(
-    `insert into users (user_id, whatsapp_number, email, first_name, last_name, role_history, primary_channel, email_verified_at, whatsapp_verified_at, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `insert into users (user_id, whatsapp_number, email, first_name, last_name, role_history, primary_channel, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      on conflict (user_id) do update set
        whatsapp_number = excluded.whatsapp_number,
        email = excluded.email,
        first_name = excluded.first_name,
        last_name = excluded.last_name,
        primary_channel = excluded.primary_channel,
+       avatar_url = excluded.avatar_url,
+       avatar_object_key = excluded.avatar_object_key,
+       avatar_updated_at = excluded.avatar_updated_at,
        email_verified_at = excluded.email_verified_at,
        whatsapp_verified_at = excluded.whatsapp_verified_at,
        updated_at = excluded.updated_at`,
-    [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, JSON.stringify(['payments_user']), primaryChannel, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
+    [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, JSON.stringify(['payments_user']), primaryChannel, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
   );
 }
 

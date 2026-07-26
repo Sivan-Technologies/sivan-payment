@@ -179,6 +179,9 @@ export interface UserRecord {
   whatsappNumber?: string;
   fullName: string;
   primaryChannel?: 'email' | 'whatsapp' | 'both';
+  avatarUrl?: string;
+  avatarObjectKey?: string;
+  avatarUpdatedAt?: string;
   emailVerifiedAt?: string;
   whatsappVerifiedAt?: string;
   createdAt: string;
