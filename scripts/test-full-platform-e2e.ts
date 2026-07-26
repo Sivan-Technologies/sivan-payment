@@ -60,6 +60,7 @@ const paymentSteps: Step[] = [
   { name: 'System incidents E2E', cwd: paymentRoot, command: 'npm run test:system-incidents' },
   { name: 'Ace support triage E2E', cwd: paymentRoot, command: 'npm run test:ace-support' },
   { name: 'Ace WhatsApp support E2E', cwd: paymentRoot, command: 'npm run test:ace-whatsapp' },
+  { name: 'Remote Sivan AI support integration E2E', cwd: paymentRoot, command: 'npm run test:sivan-ai-remote-support' },
   { name: 'NGN pipeline E2E', cwd: paymentRoot, command: 'npm run test:ngn-pipeline' },
   { name: 'Bridge customer import E2E', cwd: paymentRoot, command: 'npm run test:bridge-customer-import' },
   { name: 'Bridge KYC no-mock-fallback regression', cwd: paymentRoot, command: 'npm run test:bridge-kyc-no-mock-fallback' },
