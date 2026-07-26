@@ -517,6 +517,7 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
 
 
 export { SettingsView, UserAvatar } from './settings/SettingsSection';
+export { EmailRecoveryConfirmView } from './recovery/EmailRecoveryConfirmView';
 export { SupportView } from './support/SupportSection';
 
 function ProgressItem({ done, label }: { done: boolean; label: string }) {

@@ -33,7 +33,8 @@ export const pathByView: Record<ViewKey, string> = {
   kyc: '/verification',
   settings: '/settings',
   help: '/help',
-  signup: '/signup'
+  signup: '/signup',
+  emailRecovery: '/email-recovery/confirm'
 };
 
 export function viewFromPath(pathname: string): ViewKey {
@@ -48,6 +49,7 @@ export function viewFromPath(pathname: string): ViewKey {
   if (clean === '/verification' || clean === '/verification-complete' || clean === '/app/verification') return 'kyc';
   if (clean === '/settings' || clean === '/app/settings') return 'settings';
   if (clean === '/help' || clean === '/support' || clean === '/app/support') return 'help';
+  if (clean === '/email-recovery/confirm' || clean === '/recover-email') return 'emailRecovery';
   if (clean === '/signup' || clean === '/login') return 'signup';
   return 'landing';
 }

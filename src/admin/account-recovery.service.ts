@@ -49,6 +49,16 @@ function requireEvidence(input: { supportTicketId?: string; evidenceUrl?: string
 function recoveryId(prefix = 'ar') { return `${prefix}_${crypto.randomUUID()}`; }
 function generateCode() { return String(crypto.randomInt(100000, 1000000)); }
 function hashEmailChangeCode(userId: string, newEmail: string, code: string) { return crypto.createHash('sha256').update(`${userId}:${newEmail}:${code}:${env.USER_JWT_SECRET}`).digest('hex'); }
+function customerAppUrl() {
+  const firstCorsOrigin = env.CORS_ORIGIN.split(',').map((item) => item.trim()).find((item) => item && item !== '*');
+  return (env.CUSTOMER_APP_URL || firstCorsOrigin || env.APP_URL).replace(/\/$/, '');
+}
+function emailChangeConfirmationUrl(userId: string, requestId: string) {
+  const url = new URL('/email-recovery/confirm', customerAppUrl());
+  url.searchParams.set('userId', userId);
+  url.searchParams.set('requestId', requestId);
+  return url.toString();
+}
 
 async function getUserOrThrow(userId: string) {
   const user = await db.findUserById(userId);
@@ -152,9 +162,17 @@ export async function adminStartEmailChange(userId: string, input: z.infer<typeo
   const requestId = recoveryId('email');
   const code = generateCode();
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-  await sendEmail({ to: input.newEmail, subject: 'Confirm your Sivan email change', text: `Your Sivan email change code is ${code}. It expires in 15 minutes. If you did not request this, contact Sivan Support.`, html: `<p>Your Sivan email change code is <strong>${code}</strong>.</p><p>It expires in 15 minutes.</p>` });
-  await audit({ actorId: input.actorId, action: 'user.email_change_started', userId, reason: input.reason, supportTicketId: input.supportTicketId, evidenceUrl: input.evidenceUrl, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { requestId, currentEmail: user.email, newEmail: input.newEmail, emergencyOverride: input.emergencyOverride, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation', codeHash: hashEmailChangeCode(userId, input.newEmail, code), expiresAt } });
-  return { started: true, requestId, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation', currentEmail: user.email, newEmail: input.newEmail, expiresAt, devCode: env.AUTH_DEV_SHOW_OTP ? code : undefined };
+  const confirmationUrl = emailChangeConfirmationUrl(userId, requestId);
+  if (!input.emergencyOverride) {
+    await sendEmail({
+      to: input.newEmail,
+      subject: 'Confirm your Sivan email change',
+      text: `Sivan Support started an email change for your account. Your confirmation code is ${code}. It expires in 15 minutes. Recovery reference: ${requestId}. Confirm here: ${confirmationUrl}. If you did not request this, contact Sivan Support immediately.`,
+      html: `<div style="font-family: Inter, Arial, sans-serif; background:#07090d; color:#eef3f7; padding:32px;"><div style="max-width:560px; margin:0 auto; background:#0e141b; border:1px solid rgba(154,179,202,.18); border-radius:16px; padding:28px;"><p style="color:#74ddbe; text-transform:uppercase; letter-spacing:.12em; font-size:12px; font-weight:800; margin:0 0 12px;">Sivan Payments</p><h1 style="margin:0 0 12px; font-size:26px; line-height:1.15;">Confirm your email change</h1><p style="color:#a9b8c7; line-height:1.6;">Sivan Support started an email recovery request for your account. Use this code to confirm the new email address.</p><div style="font-size:34px; letter-spacing:.24em; font-weight:900; color:#74ddbe; background:rgba(116,221,190,.08); border:1px solid rgba(116,221,190,.28); border-radius:12px; padding:18px 20px; text-align:center; margin:24px 0;">${code}</div><p style="color:#a9b8c7;">Recovery reference: <strong>${requestId}</strong></p><p style="color:#a9b8c7;">This code expires in 15 minutes.</p><p><a href="${confirmationUrl}" style="display:inline-block; color:#06110f; background:#74ddbe; padding:12px 18px; border-radius:999px; text-decoration:none; font-weight:800;">Confirm email change</a></p><p style="color:#71809c; font-size:13px; line-height:1.6;">If you did not request this, do not share the code. Contact Sivan Support immediately.</p></div></div>`
+    });
+  }
+  await audit({ actorId: input.actorId, action: 'user.email_change_started', userId, reason: input.reason, supportTicketId: input.supportTicketId, evidenceUrl: input.evidenceUrl, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { requestId, currentEmail: user.email, newEmail: input.newEmail, emergencyOverride: input.emergencyOverride, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation', codeHash: input.emergencyOverride ? undefined : hashEmailChangeCode(userId, input.newEmail, code), expiresAt, confirmationUrl } });
+  return { started: true, requestId, status: input.emergencyOverride ? 'maker_checker_required' : 'pending_user_confirmation', currentEmail: user.email, newEmail: input.newEmail, expiresAt, confirmationUrl, devCode: env.AUTH_DEV_SHOW_OTP && !input.emergencyOverride ? code : undefined };
 }
 
 export async function confirmUserEmailChange(userId: string, input: z.infer<typeof userEmailChangeConfirmSchema>) {
@@ -171,6 +189,15 @@ export async function confirmUserEmailChange(userId: string, input: z.infer<type
   const updated = { ...user, email: metadata.newEmail, emailVerifiedAt: now, updatedAt: now };
   await db.updateUserRecord(updated);
   await createAuditLog({ actorType: 'user', actorId: userId, action: 'user.email_change_confirmed', resourceType: 'account_recovery', resourceId: userId, severity: 'warning', metadata: { requestId: input.requestId, oldEmail: metadata.currentEmail, newEmail: metadata.newEmail } });
+  await createAuditLog({ actorType: 'admin', actorId: started.actorId, action: 'user.email_admin_changed', resourceType: 'account_recovery', resourceId: userId, severity: 'warning', metadata: { requestId: input.requestId, oldEmail: metadata.currentEmail, newEmail: metadata.newEmail, confirmationMethod: 'new_email_otp' } });
+  if (metadata.currentEmail) {
+    void sendEmail({
+      to: metadata.currentEmail,
+      subject: 'Sivan account email changed',
+      text: `The email on your Sivan account was changed to ${metadata.newEmail}. If this was not you, contact Sivan Support immediately. Recovery reference: ${input.requestId}.`,
+      html: `<p>The email on your Sivan account was changed to <strong>${metadata.newEmail}</strong>.</p><p>If this was not you, contact Sivan Support immediately.</p><p>Recovery reference: <strong>${input.requestId}</strong></p>`
+    }).catch((error) => console.warn('Failed to send old-email change alert', error));
+  }
   return updated;
 }
 

@@ -41,8 +41,11 @@ async function main() {
 
     const emailReq = await request('POST', `/api/admin/users/${user.id}/account-controls/email-change-request`, { newEmail: `new-${email}`, reason: 'Customer lost email and passed support verification', supportTicketId: 'sup_ticket_1' }, true);
     assert(emailReq.started === true && emailReq.requestId && emailReq.devCode, 'admin can start email change request');
+    assert(String(emailReq.confirmationUrl).includes('/email-recovery/confirm') && String(emailReq.confirmationUrl).includes(emailReq.requestId), 'email change request returns customer confirmation link');
     const changedEmailUser = await request('POST', `/api/users/${user.id}/email-change/confirm`, { requestId: emailReq.requestId, code: emailReq.devCode });
     assert(changedEmailUser.email === `new-${email}`, 'user can confirm admin-started email change');
+    const postEmailControls = await request('GET', `/api/admin/users/${user.id}/account-controls`, undefined, true);
+    assert(postEmailControls.recoveryAudit.some((log: any) => log.action === 'user.email_admin_changed'), 'old-email alert/admin-completed email change is audited');
 
     const reset = await request('POST', `/api/admin/users/${user.id}/account-controls/reset-2fa`, { reason: 'Customer lost authenticator and recovery codes', supportTicketId: 'sup_ticket_1', identityReverified: true, createTemporaryHold: true }, true);
     assert(reset.reset === true && reset.temporaryHoldCreated === true, 'admin can reset 2FA and create temporary hold');

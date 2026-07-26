@@ -1,4 +1,4 @@
-export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup';
+export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery';
 
 export interface UserRecord {
   id: string;

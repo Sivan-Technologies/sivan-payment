@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
-import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
+import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
 import { useNotifications } from './hooks/useNotifications';
@@ -53,7 +53,7 @@ export default function App() {
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
+  const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
   const hasUser = Boolean(user?.id && authToken);
   const isVerified = customer?.kycStatus === 'kyc_approved';
@@ -142,7 +142,7 @@ export default function App() {
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
   const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Avalanche C-Chain';
 
-  const logout = useCallback((message = 'You have been signed out.') => {
+  const clearLocalSession = useCallback(() => {
     setAuthToken('');
     setUser(null);
     setCustomer(null);
@@ -150,9 +150,13 @@ export default function App() {
     setWithdrawals([]);
     setOnrampOrders([]);
     setSupportTickets([]);
+    setVirtualAccountRequests([]);
+    setVirtualAccounts([]);
     setVirtualAccountTransactions([]);
     setBalance(null);
     setBalanceTransfers([]);
+    setSuppliers([]);
+    setSupplierPayments([]);
     setUserPreferences(null);
     setIdentityStatus(null);
     setTwoFactorStatus(null);
@@ -161,11 +165,15 @@ export default function App() {
     localStorage.removeItem('sivan.user');
     localStorage.removeItem('sivan.customer');
     localStorage.removeItem('sivan.accounts');
+  }, []);
+
+  const logout = useCallback((message = 'You have been signed out.') => {
+    clearLocalSession();
     setView('landing');
     window.history.pushState({}, '', '/');
     setToast({ message, type: 'success' });
     window.setTimeout(() => setToast(null), 4200);
-  }, []);
+  }, [clearLocalSession]);
 
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -180,6 +188,25 @@ export default function App() {
     setPendingTwoFactorToken('');
     setDevCode(undefined);
     setResendAvailableAt(0);
+  }, []);
+
+  const handleEmailRecoveryConfirmed = useCallback((updatedUser: UserRecord) => {
+    clearLocalSession();
+    resetPendingEmail();
+    setAuthTab('signin');
+    setView('signup');
+    window.history.pushState({}, '', '/login');
+    notify(`Email confirmed. Sign in with ${updatedUser.email}.`);
+  }, [clearLocalSession, notify, resetPendingEmail]);
+
+  const handleEmailRecoverySignIn = useCallback(() => {
+    resetPendingEmail();
+    setAuthTab('signin');
+    goToView('signup');
+  }, [resetPendingEmail]);
+
+  const handleEmailRecoverySupport = useCallback(() => {
+    goToView('help');
   }, []);
 
   const api = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -1048,6 +1075,8 @@ export default function App() {
         {toast && <section className={`toast ${toast.type === 'error' ? 'error' : ''}`}>{toast.message}</section>}
 
         {(systemStatus.activeIncidents?.length || systemStatus.mode !== 'active') && <IncidentBanner systemStatus={systemStatus} />}
+
+        {view === 'emailRecovery' && <EmailRecoveryConfirmView api={api} loading={loading} onConfirmed={handleEmailRecoveryConfirmed} onSignIn={handleEmailRecoverySignIn} onSupport={handleEmailRecoverySupport} />}
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
