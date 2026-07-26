@@ -3,6 +3,7 @@ import { parseBody } from '../shared/validation.js';
 import { createUser, createUserSchema, getUser } from './users.service.js';
 import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema } from './user-preferences.service.js';
 import { confirmAvatarUpload, confirmAvatarUploadSchema, createAvatarUploadUrl, createAvatarUploadUrlSchema, removeAvatar } from './user-avatar.service.js';
+import { checkUsernameAvailability, updateUsername, usernameSchema } from './username.service.js';
 import { legalAcceptancePayloadSchema, listUserLegalAcceptances, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
 
 const createUserWithLegalSchema = createUserSchema.extend({
@@ -45,6 +46,19 @@ export async function usersRoutes(app: FastifyInstance) {
     return { data: await updateUserPreferences(userId, body) };
   });
 
+
+
+  app.get('/api/users/:userId/username/availability', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const query = request.query as { username?: string };
+    return { data: await checkUsernameAvailability(query.username || '', userId) };
+  });
+
+  app.put('/api/users/:userId/username', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(usernameSchema, request.body);
+    return { data: await updateUsername(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
 
   app.post('/api/users/:userId/avatar/upload-url', async (request) => {
     const { userId } = request.params as { userId: string };

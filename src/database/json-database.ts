@@ -177,6 +177,12 @@ export class JsonDatabase {
     return data.users.find((user) => user.email?.toLowerCase() === email.toLowerCase());
   }
 
+
+  async findUserByUsername(username: string) {
+    const data = await this.read();
+    return data.users.find((user) => user.username?.toLowerCase() === username.toLowerCase());
+  }
+
   async findUserByWhatsappNumber(whatsappNumber: string) {
     const data = await this.read();
     return data.users.find((user) => user.whatsappNumber === whatsappNumber);

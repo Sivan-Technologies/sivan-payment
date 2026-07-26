@@ -15,6 +15,10 @@ export function UserAvatar({ user, className = '' }: { user: UserRecord | null; 
 
 function ProfileSettingsPanel({ api, user, isVerified, identityStatus, pairingCode, pairingExpiresAt, timeNow, loading, onUserUpdated, onStartWhatsappLink, onCancelWhatsappLink, onUnlinkWhatsapp, onRefreshIdentity }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; isVerified: boolean; identityStatus: IdentityStatus | null; pairingCode: string; pairingExpiresAt: string; timeNow: number; loading: boolean; onUserUpdated: (user: UserRecord) => void; onStartWhatsappLink: () => void; onCancelWhatsappLink: () => void; onUnlinkWhatsapp: () => void; onRefreshIdentity: () => Promise<void> }) {
   const [uploading, setUploading] = useState(false);
+  const [usernameDraft, setUsernameDraft] = useState(user?.username || '');
+  const [usernameMessage, setUsernameMessage] = useState('');
+  const [usernameBusy, setUsernameBusy] = useState(false);
+  useEffect(() => { setUsernameDraft(user?.username || ''); }, [user?.username]);
   const nameParts = (user?.fullName || '').split(/\s+/);
   async function uploadAvatar(file?: File) {
     if (!file || !user?.id) return;
@@ -48,7 +52,36 @@ function ProfileSettingsPanel({ api, user, isVerified, identityStatus, pairingCo
       setUploading(false);
     }
   }
-  return <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><UserAvatar user={user} className="avatar-lg" /><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><div className="avatar-actions"><label className="ghost-btn small avatar-upload-button"><input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => void uploadAvatar(event.target.files?.[0])} />{uploading ? 'Uploading...' : user?.avatarUrl ? 'Change photo' : 'Upload photo'}</label>{user?.avatarUrl && <button type="button" className="ghost-btn small" disabled={uploading} onClick={removeAvatar}>Remove photo</button>}</div></div></div>{isVerified && <div className="verified-profile-lock"><strong>Verified legal name locked</strong><span>Your name is linked to your verified identity. Contact Sivan Support if it needs to be corrected.</span></div>}<div className="split"><label>First name<input defaultValue={nameParts[0] || ''} readOnly={isVerified} aria-readonly={isVerified} className={isVerified ? 'locked-input' : ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} readOnly={isVerified} aria-readonly={isVerified} className={isVerified ? 'locked-input' : ''} /></label></div><label>Email<input defaultValue={user?.email || ''} readOnly /></label><IdentityLinkCard identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} loading={loading} onStart={onStartWhatsappLink} onCancel={onCancelWhatsappLink} onUnlink={onUnlinkWhatsapp} onRefresh={onRefreshIdentity} /><div className="split"><label>Country<CustomSelect name="country" defaultValue="NG" options={[{ value: 'NG', label: 'Nigeria' }, { value: 'US', label: 'United States' }, { value: 'GB', label: 'United Kingdom' }]} /></label><label>Phone<input value={identityStatus?.link?.whatsappNumber || user?.whatsappNumber || ''} placeholder="Link WhatsApp to populate this securely" readOnly /></label></div>{isVerified ? <a className="secondary-btn support-link" href="mailto:support@sivantech.online?subject=Verified%20name%20correction">Contact support to change name →</a> : <button className="primary-btn">Save changes</button>}</>;
+
+  async function saveUsername() {
+    if (!user?.id) return;
+    setUsernameBusy(true);
+    setUsernameMessage('');
+    try {
+      const updated = await api<UserRecord>(`/api/users/${user.id}/username`, { method: 'PUT', body: JSON.stringify({ username: usernameDraft }) });
+      onUserUpdated(updated);
+      setUsernameMessage(`Your Sivan username is @${updated.username}.`);
+    } catch (error) {
+      setUsernameMessage(error instanceof Error ? error.message : 'Could not update username.');
+    } finally {
+      setUsernameBusy(false);
+    }
+  }
+  async function checkUsername() {
+    if (!user?.id || !usernameDraft.trim()) return;
+    setUsernameBusy(true);
+    setUsernameMessage('');
+    try {
+      const result = await api<any>(`/api/users/${user.id}/username/availability?username=${encodeURIComponent(usernameDraft)}`);
+      setUsernameMessage(result.available ? `@${result.username} is available.` : `@${result.username} is already taken.`);
+    } catch (error) {
+      setUsernameMessage(error instanceof Error ? error.message : 'Could not check username.');
+    } finally {
+      setUsernameBusy(false);
+    }
+  }
+  const usernameLocked = Boolean(isVerified && user?.username);
+  return <><h3>Profile</h3><p className="muted">Your personal information.</p><div className="profile-row"><UserAvatar user={user} className="avatar-lg" /><div><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email || '—'} · {user ? 'Verified email' : 'Guest'}</small><div className="avatar-actions"><label className="ghost-btn small avatar-upload-button"><input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => void uploadAvatar(event.target.files?.[0])} />{uploading ? 'Uploading...' : user?.avatarUrl ? 'Change photo' : 'Upload photo'}</label>{user?.avatarUrl && <button type="button" className="ghost-btn small" disabled={uploading} onClick={removeAvatar}>Remove photo</button>}</div></div></div><div className="username-settings-card"><div><p className="eyebrow">Sivan username</p><h3>{user?.username ? `@${user.username}` : 'Choose your username'}</h3><p className="muted">Usernames are used for future Sivan-to-Sivan transfers and support lookup. Choose carefully.</p></div><label>Username<div className="username-input-row"><span>@</span><input value={usernameDraft} onChange={(event) => setUsernameDraft(event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))} placeholder="michael" readOnly={usernameLocked} className={usernameLocked ? 'locked-input' : ''} /><button type="button" className="ghost-btn small" disabled={usernameBusy || usernameLocked || !usernameDraft.trim()} onClick={checkUsername}>Check</button><button type="button" className="secondary-btn small" disabled={usernameBusy || usernameLocked || !usernameDraft.trim()} onClick={saveUsername}>{usernameBusy ? 'Saving...' : user?.username ? 'Update' : 'Save'}</button></div></label><small>{usernameLocked ? 'Username changes are locked after verification. Contact support if this needs to change.' : '3–30 characters. Lowercase letters, numbers, and underscores. Reserved names are blocked.'}</small>{usernameMessage && <strong className="username-message">{usernameMessage}</strong>}</div>{isVerified && <div className="verified-profile-lock"><strong>Verified legal name locked</strong><span>Your name is linked to your verified identity. Contact Sivan Support if it needs to be corrected.</span></div>}<div className="split"><label>First name<input defaultValue={nameParts[0] || ''} readOnly={isVerified} aria-readonly={isVerified} className={isVerified ? 'locked-input' : ''} /></label><label>Last name<input defaultValue={nameParts.slice(1).join(' ')} readOnly={isVerified} aria-readonly={isVerified} className={isVerified ? 'locked-input' : ''} /></label></div><label>Email<input defaultValue={user?.email || ''} readOnly /></label><IdentityLinkCard identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} loading={loading} onStart={onStartWhatsappLink} onCancel={onCancelWhatsappLink} onUnlink={onUnlinkWhatsapp} onRefresh={onRefreshIdentity} /><div className="split"><label>Country<CustomSelect name="country" defaultValue="NG" options={[{ value: 'NG', label: 'Nigeria' }, { value: 'US', label: 'United States' }, { value: 'GB', label: 'United Kingdom' }]} /></label><label>Phone<input value={identityStatus?.link?.whatsappNumber || user?.whatsappNumber || ''} placeholder="Link WhatsApp to populate this securely" readOnly /></label></div>{isVerified ? <a className="secondary-btn support-link" href="mailto:support@sivantech.online?subject=Verified%20name%20correction">Contact support to change name →</a> : <button className="primary-btn">Save changes</button>}</>;
 }
 export function SettingsView({ api, user, isVerified, onUserUpdated, preferences, initialTab, twoFactorStatus, onTwoFactorStatusChanged, identityStatus, pairingCode, pairingExpiresAt, timeNow, onStartWhatsappLink, onCancelWhatsappLink, onUnlinkWhatsapp, onRefreshIdentity, onSavePreferences, onUpdatePreferences, loading, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; isVerified: boolean; onUserUpdated: (user: UserRecord) => void; preferences: UserPreferencesRecord | null; initialTab: 'profile' | 'security' | 'notifications' | 'preferences'; twoFactorStatus: UserTwoFactorStatus | null; onTwoFactorStatusChanged: (status: UserTwoFactorStatus | null) => void; identityStatus: IdentityStatus | null; pairingCode: string; pairingExpiresAt: string; timeNow: number; onStartWhatsappLink: () => void; onCancelWhatsappLink: () => void; onUnlinkWhatsapp: () => void; onRefreshIdentity: () => Promise<void>; onSavePreferences: (event: FormEvent<HTMLFormElement>) => void; onUpdatePreferences: (patch: Partial<UserPreferencesRecord>) => Promise<void>; loading: boolean; onLogout: () => void }) {
   const [tab, setTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>(initialTab || 'profile');

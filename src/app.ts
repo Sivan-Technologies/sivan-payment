@@ -205,6 +205,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/users\/[^/]+\/ngn-transfers/,
     /^\/api\/users\/[^/]+\/support\/tickets/,
     /^\/api\/users\/[^/]+\/preferences/,
+    /^\/api\/users\/[^/]+\/username/,
     /^\/api\/users\/[^/]+\/avatar/,
     /^\/api\/users\/[^/]+\/2fa/,
     /^\/api\/users\/[^/]+\/balance/,

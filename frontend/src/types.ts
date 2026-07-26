@@ -5,6 +5,8 @@ export interface UserRecord {
   email: string;
   whatsappNumber?: string;
   fullName: string;
+  username?: string;
+  usernameUpdatedAt?: string;
   primaryChannel?: 'email' | 'whatsapp' | 'both';
   avatarUrl?: string;
   avatarObjectKey?: string;
