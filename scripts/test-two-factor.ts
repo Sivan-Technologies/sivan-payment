@@ -48,17 +48,32 @@ async function main() {
     assert(Boolean(setup.manualEntryKey && setup.otpauthUrl), '2FA setup returns manual key and otpauth URL');
     const enabled = await request('POST', `/api/users/${user.id}/2fa/enable`, { code: totp(setup.manualEntryKey) });
     assert(enabled.enabled === true && enabled.recoveryCodes.length === 10, '2FA enables with authenticator code and returns recovery codes');
+    assert(enabled.recoveryQuestionsRequired === true && enabled.recoveryQuestionCatalog.length >= 2, '2FA enable prompts recovery questions');
+
+    const savedQuestions = await request('PUT', `/api/users/${user.id}/2fa/recovery-questions`, { answers: [{ questionId: 'private_phrase', answer: 'My private mango phrase' }, { questionId: 'mentor_name', answer: 'Mrs Okafor' }] });
+    assert(savedQuestions.configured === true && savedQuestions.count === 2, 'user can save hashed 2FA recovery questions');
+    assert(!JSON.stringify(savedQuestions).includes('mango') && !JSON.stringify(savedQuestions).includes('Okafor'), 'recovery question answers are never returned');
+
+    const updatedStatus = await request('GET', `/api/users/${user.id}/2fa`);
+    assert(updatedStatus.recoveryQuestionsConfigured === true && updatedStatus.recoveryQuestionsCount === 2, '2FA status includes recovery question configuration');
 
     token = '';
     const signin = await request('POST', '/api/auth/email/start', { email, intent: 'signin' });
     const challenge = await request('POST', '/api/auth/email/verify', { email, code: signin.devCode });
     assert(challenge.requiresTwoFactor === true && challenge.twoFactorToken, 'signin requires second factor after email OTP');
+
+    const challengeQuestions = await request('POST', '/api/auth/2fa/recovery-questions/challenge', { twoFactorToken: challenge.twoFactorToken });
+    assert(challengeQuestions.questions.length === 2 && challengeQuestions.questions.every((item: any) => !('answerHash' in item)), 'lost-2FA challenge returns only question text');
+    const recoveryVerified = await request('POST', '/api/auth/2fa/recovery-questions/verify', { twoFactorToken: challenge.twoFactorToken, answers: [{ questionId: 'private_phrase', answer: ' my   private mango phrase ' }, { questionId: 'mentor_name', answer: 'MRS OKAFOR' }] });
+    assert(recoveryVerified.verified === true && recoveryVerified.recoveryVerificationId, 'user can verify recovery questions for support review');
+
     const login = await request('POST', '/api/auth/2fa/verify', { twoFactorToken: challenge.twoFactorToken, code: totp(setup.manualEntryKey) });
     assert(Boolean(login.token && login.user.id === user.id), '2FA login returns user JWT');
     token = login.token;
 
     const status = await request('GET', `/api/users/${user.id}/2fa`);
     assert(status.enabled === true, '2FA status is enabled');
+    assert(status.recoveryQuestionsConfigured === true, '2FA status remains recovery-question ready after login');
 
     await app.close();
     console.log('\n✅ Two-factor authentication E2E passed');

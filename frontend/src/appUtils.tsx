@@ -290,6 +290,8 @@ export type UserTwoFactorStatus = {
   enabledAt?: string;
   lastVerifiedAt?: string;
   recoveryCodesRemaining?: number;
+  recoveryQuestionsConfigured?: boolean;
+  recoveryQuestionsCount?: number;
 };
 
 

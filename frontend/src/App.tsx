@@ -51,6 +51,10 @@ export default function App() {
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorRecoveryMode, setTwoFactorRecoveryMode] = useState(false);
+  const [twoFactorRecoveryQuestions, setTwoFactorRecoveryQuestions] = useState<Array<{ questionId: string; questionText: string }>>([]);
+  const [twoFactorRecoveryAnswers, setTwoFactorRecoveryAnswers] = useState<Record<string, string>>({});
+  const [twoFactorRecoveryMessage, setTwoFactorRecoveryMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
@@ -186,6 +190,10 @@ export default function App() {
     setOtpCode('');
     setTwoFactorCode('');
     setPendingTwoFactorToken('');
+    setTwoFactorRecoveryMode(false);
+    setTwoFactorRecoveryQuestions([]);
+    setTwoFactorRecoveryAnswers({});
+    setTwoFactorRecoveryMessage('');
     setDevCode(undefined);
     setResendAvailableAt(0);
   }, []);
@@ -521,6 +529,10 @@ export default function App() {
       setOtpCode('');
       setTwoFactorCode('');
       setPendingTwoFactorToken('');
+      setTwoFactorRecoveryMode(false);
+      setTwoFactorRecoveryQuestions([]);
+      setTwoFactorRecoveryAnswers({});
+      setTwoFactorRecoveryMessage('');
       setDevCode(undefined);
       localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
       notify('Two-factor verified. Welcome back.');
@@ -528,6 +540,44 @@ export default function App() {
       window.setTimeout(() => void loadUserData(), 0);
     } catch (error) {
       notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startTwoFactorRecovery() {
+    if (!pendingTwoFactorToken) return notify('Two-factor session expired. Sign in again.', 'error');
+    setLoading(true);
+    setTwoFactorRecoveryMessage('');
+    try {
+      const result = await api<{ questions: Array<{ questionId: string; questionText: string }> }>('/api/auth/2fa/recovery-questions/challenge', {
+        method: 'POST',
+        body: JSON.stringify({ twoFactorToken: pendingTwoFactorToken })
+      });
+      setTwoFactorRecoveryQuestions(result.questions || []);
+      setTwoFactorRecoveryAnswers({});
+      setTwoFactorRecoveryMode(true);
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitTwoFactorRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pendingTwoFactorToken) return notify('Two-factor session expired. Sign in again.', 'error');
+    setLoading(true);
+    setTwoFactorRecoveryMessage('');
+    try {
+      const result = await api<{ verified: boolean; recoveryVerificationId: string; message: string }>('/api/auth/2fa/recovery-questions/verify', {
+        method: 'POST',
+        body: JSON.stringify({ twoFactorToken: pendingTwoFactorToken, answers: twoFactorRecoveryQuestions.map((question) => ({ questionId: question.questionId, answer: twoFactorRecoveryAnswers[question.questionId] || '' })) })
+      });
+      setTwoFactorRecoveryMessage(`${result.message} Reference: ${result.recoveryVerificationId}`);
+      notify('Recovery questions verified. Contact support to complete 2FA reset review.');
+    } catch (error) {
+      setTwoFactorRecoveryMessage(error instanceof Error ? error.message : 'Recovery questions could not be verified.');
     } finally {
       setLoading(false);
     }
@@ -1122,11 +1172,21 @@ export default function App() {
                   <button className="primary-btn auth-submit" disabled={loading}>{loading ? 'Sending secure code…' : authTab === 'signup' ? 'Send verification code →' : 'Send login code →'}</button>
                 </form>
               ) : pendingTwoFactorToken ? (
-                <form className="form auth-form-premium" onSubmit={handleTwoFactorLoginVerify}>
-                  <div className="email-confirmation auth-email-confirmation"><span>Two-factor required</span><strong>{pendingEmail}</strong><button type="button" onClick={resetPendingEmail}>Start over</button></div>
-                  <label>Authenticator or recovery code<input value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} placeholder="123456 or recovery code" autoComplete="one-time-code" required /></label>
-                  <button className="primary-btn auth-submit" disabled={loading || twoFactorCode.replace(/\s/g, '').length < 6}>{loading ? 'Verifying…' : 'Verify and continue →'}</button>
-                </form>
+                <div className="two-factor-login-stack">
+                  {!twoFactorRecoveryMode ? <form className="form auth-form-premium" onSubmit={handleTwoFactorLoginVerify}>
+                    <div className="email-confirmation auth-email-confirmation"><span>Two-factor required</span><strong>{pendingEmail}</strong><button type="button" onClick={resetPendingEmail}>Start over</button></div>
+                    <label>Authenticator or recovery code<input value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} placeholder="123456 or recovery code" autoComplete="one-time-code" required /></label>
+                    <button className="primary-btn auth-submit" disabled={loading || twoFactorCode.replace(/\s/g, '').length < 6}>{loading ? 'Verifying…' : 'Verify and continue →'}</button>
+                    <button type="button" className="ghost-btn" disabled={loading} onClick={startTwoFactorRecovery}>Lost authenticator? Verify recovery questions</button>
+                  </form> : <form className="form auth-form-premium recovery-login-form" onSubmit={submitTwoFactorRecovery}>
+                    <div className="email-confirmation auth-email-confirmation"><span>Recover 2FA access</span><strong>{pendingEmail}</strong><button type="button" onClick={() => setTwoFactorRecoveryMode(false)}>Use authenticator</button></div>
+                    <p className="muted">Answer your recovery questions. If verified, Sivan Support can review and reset 2FA. This does not automatically disable 2FA.</p>
+                    {twoFactorRecoveryQuestions.map((question) => <label key={question.questionId}>{question.questionText}<input value={twoFactorRecoveryAnswers[question.questionId] || ''} onChange={(event) => setTwoFactorRecoveryAnswers((answers) => ({ ...answers, [question.questionId]: event.target.value }))} placeholder="Private answer" autoComplete="off" required /></label>)}
+                    {twoFactorRecoveryMessage && <div className={twoFactorRecoveryMessage.includes('Reference:') ? 'success-note' : 'form-error'}>{twoFactorRecoveryMessage}</div>}
+                    <button className="primary-btn auth-submit" disabled={loading || twoFactorRecoveryQuestions.some((question) => !(twoFactorRecoveryAnswers[question.questionId] || '').trim())}>{loading ? 'Verifying…' : 'Verify recovery questions →'}</button>
+                    <button type="button" className="ghost-btn" onClick={() => goToView('help')}>Contact support</button>
+                  </form>}
+                </div>
               ) : (
                 <form className="form auth-form-premium" onSubmit={handleEmailAuthVerify}>
                   <div className="email-confirmation auth-email-confirmation">

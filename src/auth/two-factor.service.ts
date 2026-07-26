@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
 import { db } from '../database/json-database.js';
-import type { UserRecord, UserTwoFactorRecord } from '../database/types.js';
+import type { UserRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord } from '../database/types.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
@@ -16,6 +16,24 @@ const base32Alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 export const twoFactorVerifySchema = z.object({ code: z.string().min(6).max(32) });
 export const twoFactorLoginVerifySchema = z.object({ twoFactorToken: z.string().min(20), code: z.string().min(6).max(32) });
+
+export const recoveryQuestionCatalog = [
+  { id: 'private_phrase', question: 'What is a private phrase only you would remember?' },
+  { id: 'childhood_friend_nickname', question: 'What was the nickname of your childhood best friend?' },
+  { id: 'first_personal_project', question: 'What was the name of your first personal project?' },
+  { id: 'first_paid_event', question: 'What was the first concert or event you paid for yourself?' },
+  { id: 'memorable_childhood_street', question: 'What is a memorable street name from your childhood?' },
+  { id: 'first_app_or_website_account', question: 'What was the first app or website you created an account on?' },
+  { id: 'first_non_school_email_username', question: 'What was your first non-school email username?' },
+  { id: 'memorable_family_phrase', question: 'What is a memorable family phrase?' },
+  { id: 'mentor_name', question: 'What was the name of a teacher or mentor who changed your life?' },
+  { id: 'first_job_word', question: 'What is a word you associate with your first job?' }
+] as const;
+
+const recoveryAnswerSchema = z.object({ questionId: z.string().min(3).max(80), answer: z.string().min(3).max(200) });
+export const setRecoveryQuestionsSchema = z.object({ answers: z.array(recoveryAnswerSchema).length(2) });
+export const twoFactorRecoveryQuestionsChallengeSchema = z.object({ twoFactorToken: z.string().min(20) });
+export const verifyRecoveryQuestionsSchema = z.object({ twoFactorToken: z.string().min(20), answers: z.array(recoveryAnswerSchema).length(2), supportTicketId: z.string().min(2).max(120).optional() });
 
 function base32Encode(buffer: Buffer) {
   let bits = '';
@@ -91,6 +109,24 @@ function hashRecoveryCode(userId: string, code: string) {
   return crypto.createHash('sha256').update(`${userId}:${code.replace(/\s|-/g, '').toUpperCase()}:${env.USER_JWT_SECRET}`).digest('hex');
 }
 
+function recoveryQuestionId() { return `rq_${crypto.randomUUID()}`; }
+function recoveryVerificationId() { return `rqv_${crypto.randomUUID()}`; }
+function normalizeRecoveryAnswer(value: string) { return value.trim().toLowerCase().replace(/\s+/g, ' '); }
+function recoveryQuestionById(questionId: string) { return recoveryQuestionCatalog.find((item) => item.id === questionId); }
+function hashRecoveryAnswer(userId: string, questionId: string, answer: string, salt = crypto.randomBytes(16).toString('base64url')) {
+  const normalized = normalizeRecoveryAnswer(answer);
+  const peppered = `${userId}:${questionId}:${normalized}:${env.USER_JWT_SECRET}`;
+  const answerHash = crypto.scryptSync(peppered, salt, 32, { N: 16384, r: 8, p: 1 }).toString('base64url');
+  return { answerHash, answerSalt: salt, algorithm: 'scrypt-sha256-v1' as const };
+}
+function verifyRecoveryAnswer(userId: string, record: UserTwoFactorRecoveryQuestionRecord, answer: string) {
+  const hashed = hashRecoveryAnswer(userId, record.questionId, answer, record.answerSalt);
+  return secureEqual(hashed.answerHash, record.answerHash);
+}
+function safeRecoveryQuestions(records: UserTwoFactorRecoveryQuestionRecord[]) {
+  return records.map((item) => ({ id: item.id, questionId: item.questionId, questionText: item.questionText, createdAt: item.createdAt, updatedAt: item.updatedAt }));
+}
+
 function otpauthUrl(user: UserRecord, secret: string) {
   const label = encodeURIComponent(`${issuer}:${user.email || user.id}`);
   const params = new URLSearchParams({ secret, issuer, algorithm: 'SHA1', digits: String(digits), period: String(stepSeconds) });
@@ -120,12 +156,15 @@ function verifyTwoFactorToken(token: string) {
 export async function getTwoFactorStatus(userId: string) {
   await getUser(userId).catch(() => { throw notFound('User'); });
   const record = await db.getUserTwoFactorRecord(userId);
+  const questions = await db.listUserTwoFactorRecoveryQuestionRecords(userId);
   return {
     userId,
     enabled: Boolean(record?.enabled),
     enabledAt: record?.enabledAt,
     lastVerifiedAt: record?.lastVerifiedAt,
-    recoveryCodesRemaining: record?.recoveryCodeHashes?.length ?? 0
+    recoveryCodesRemaining: record?.recoveryCodeHashes?.length ?? 0,
+    recoveryQuestionsConfigured: questions.length >= 2,
+    recoveryQuestionsCount: questions.length
   };
 }
 
@@ -157,7 +196,74 @@ export async function enableTwoFactor(userId: string, code: string) {
   const next: UserTwoFactorRecord = { ...record, enabled: true, enabledAt: record.enabledAt ?? now, lastVerifiedAt: now, recoveryCodeHashes: recoveryCodes.map((item) => hashRecoveryCode(userId, item)), updatedAt: now };
   await db.upsertUserTwoFactorRecord(next);
   await createAuditLog({ actorType: 'user', actorId: userId, action: 'auth.2fa_enabled', resourceType: 'payments_user_two_factor', resourceId: userId, severity: 'warning' });
-  return { enabled: true, recoveryCodes };
+  return { enabled: true, recoveryCodes, recoveryQuestionsRequired: true, recoveryQuestionCatalog };
+}
+
+export function getRecoveryQuestionCatalog() {
+  return recoveryQuestionCatalog;
+}
+
+export async function listUserRecoveryQuestions(userId: string) {
+  await getUser(userId).catch(() => { throw notFound('User'); });
+  const records = await db.listUserTwoFactorRecoveryQuestionRecords(userId);
+  return { configured: records.length >= 2, count: records.length, questions: safeRecoveryQuestions(records), catalog: recoveryQuestionCatalog };
+}
+
+export async function setUserRecoveryQuestions(userId: string, input: z.infer<typeof setRecoveryQuestionsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+  await getUser(userId).catch(() => { throw notFound('User'); });
+  const twoFactor = await db.getUserTwoFactorRecord(userId);
+  if (!twoFactor?.enabled) throw badRequest('Enable authenticator 2FA before setting recovery questions.');
+  const uniqueQuestionIds = new Set(input.answers.map((item) => item.questionId));
+  if (uniqueQuestionIds.size !== input.answers.length) throw badRequest('Choose two different recovery questions.');
+  const now = nowIso();
+  const records = input.answers.map((item) => {
+    const question = recoveryQuestionById(item.questionId);
+    if (!question) throw badRequest('Choose a supported recovery question.');
+    const hashed = hashRecoveryAnswer(userId, item.questionId, item.answer);
+    return {
+      id: recoveryQuestionId(),
+      userId,
+      questionId: item.questionId,
+      questionText: question.question,
+      answerHash: hashed.answerHash,
+      answerSalt: hashed.answerSalt,
+      algorithm: hashed.algorithm,
+      createdAt: now,
+      updatedAt: now
+    } satisfies UserTwoFactorRecoveryQuestionRecord;
+  });
+  await db.replaceUserTwoFactorRecoveryQuestionRecords(userId, records);
+  await createAuditLog({ actorType: 'user', actorId: userId, action: 'auth.2fa_recovery_questions_set', resourceType: 'payments_user_two_factor_recovery_questions', resourceId: userId, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { questionIds: records.map((item) => item.questionId), count: records.length } });
+  return { configured: true, count: records.length, questions: safeRecoveryQuestions(records) };
+}
+
+export async function getTwoFactorRecoveryChallengeQuestions(input: z.infer<typeof twoFactorRecoveryQuestionsChallengeSchema>) {
+  const payload = verifyTwoFactorToken(input.twoFactorToken);
+  const user = await getUser(payload.sub);
+  const twoFactor = await db.getUserTwoFactorRecord(user.id);
+  if (!twoFactor?.enabled) throw forbidden('Two-factor authentication is not enabled for this account');
+  const records = await db.listUserTwoFactorRecoveryQuestionRecords(user.id);
+  if (records.length < 2) throw badRequest('Recovery questions are not configured for this account. Contact Sivan Support.');
+  return { email: user.email, questions: safeRecoveryQuestions(records) };
+}
+
+export async function verifyTwoFactorRecoveryQuestions(input: z.infer<typeof verifyRecoveryQuestionsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+  const payload = verifyTwoFactorToken(input.twoFactorToken);
+  const user = await getUser(payload.sub);
+  const twoFactor = await db.getUserTwoFactorRecord(user.id);
+  if (!twoFactor?.enabled) throw forbidden('Two-factor authentication is not enabled for this account');
+  const records = await db.listUserTwoFactorRecoveryQuestionRecords(user.id);
+  if (records.length < 2) throw badRequest('Recovery questions are not configured for this account. Contact Sivan Support.');
+  const answerByQuestion = new Map(input.answers.map((item) => [item.questionId, item.answer]));
+  const passedQuestionIds = records.filter((record) => {
+    const answer = answerByQuestion.get(record.questionId);
+    return answer ? verifyRecoveryAnswer(user.id, record, answer) : false;
+  }).map((record) => record.questionId);
+  const verified = passedQuestionIds.length >= Math.min(2, records.length);
+  const verificationId = verified ? recoveryVerificationId() : undefined;
+  await createAuditLog({ actorType: 'user', actorId: user.id, action: verified ? 'auth.2fa_recovery_questions_verified' : 'auth.2fa_recovery_questions_failed', resourceType: 'payments_user_two_factor_recovery_questions', resourceId: user.id, severity: verified ? 'warning' : 'error', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { verificationId, supportTicketId: input.supportTicketId, passedCount: passedQuestionIds.length, requiredCount: 2, questionIds: records.map((item) => item.questionId) } });
+  if (!verified) throw badRequest('Recovery answers could not be verified. Contact Sivan Support.');
+  return { verified: true, recoveryVerificationId: verificationId, message: 'Recovery questions verified. Sivan Support can now review your 2FA reset request. This does not automatically disable 2FA.' };
 }
 
 export async function disableTwoFactor(userId: string, code: string) {

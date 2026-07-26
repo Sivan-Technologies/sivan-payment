@@ -24,6 +24,7 @@ export const adminChangeUsernameSchema = recoveryBaseSchema.extend({
 
 export const adminResetTwoFactorSchema = recoveryBaseSchema.extend({
   identityReverified: z.boolean().default(false),
+  recoveryVerificationId: z.string().min(4).max(120).optional(),
   createTemporaryHold: z.boolean().default(true)
 });
 
@@ -92,13 +93,17 @@ export async function getAccountRecoveryControls(userId: string) {
   const customer = data.customers.find((item) => item.userId === userId) ?? null;
   const twoFactor = await db.getUserTwoFactorRecord(userId);
   const identityLink = (data.customerIdentityLinks ?? []).find((item) => item.paymentUserId === userId && item.status === 'linked') ?? null;
+  const recoveryQuestions = await db.listUserTwoFactorRecoveryQuestionRecords(userId);
+  const twoFactorRecoveryQuestionAudit = (data.auditLogs ?? []).filter((log) => String(log.resourceType) === 'payments_user_two_factor_recovery_questions' && log.resourceId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const latestRecoveryQuestionVerification = twoFactorRecoveryQuestionAudit.find((log) => log.action === 'auth.2fa_recovery_questions_verified') ?? null;
+  const failedRecoveryQuestionAttempts = twoFactorRecoveryQuestionAudit.filter((log) => log.action === 'auth.2fa_recovery_questions_failed').length;
   const restrictions = (data.auditLogs ?? []).filter((log) => ['admin.user_restricted', 'admin.user_unrestricted'].includes(log.action) && log.resourceId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const recoveryAudit = (data.auditLogs ?? []).filter((log) => String(log.resourceType) === 'account_recovery' && log.resourceId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
+  const recoveryAudit = (data.auditLogs ?? []).filter((log) => (String(log.resourceType) === 'account_recovery' || String(log.resourceType) === 'payments_user_two_factor_recovery_questions') && log.resourceId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
   const supportTickets = (data.supportTickets ?? []).filter((ticket) => ticket.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 20);
   return {
     user,
     customer,
-    twoFactor: twoFactor ? { enabled: twoFactor.enabled, enabledAt: twoFactor.enabledAt, lastVerifiedAt: twoFactor.lastVerifiedAt, recoveryCodesRemaining: twoFactor.recoveryCodeHashes.length } : { enabled: false, recoveryCodesRemaining: 0 },
+    twoFactor: twoFactor ? { enabled: twoFactor.enabled, enabledAt: twoFactor.enabledAt, lastVerifiedAt: twoFactor.lastVerifiedAt, recoveryCodesRemaining: twoFactor.recoveryCodeHashes.length, recoveryQuestionsConfigured: recoveryQuestions.length >= 2, recoveryQuestionsCount: recoveryQuestions.length, latestRecoveryQuestionVerification, failedRecoveryQuestionAttempts } : { enabled: false, recoveryCodesRemaining: 0, recoveryQuestionsConfigured: recoveryQuestions.length >= 2, recoveryQuestionsCount: recoveryQuestions.length, latestRecoveryQuestionVerification, failedRecoveryQuestionAttempts },
     identityLink,
     restrictions,
     supportTickets,
@@ -106,6 +111,7 @@ export async function getAccountRecoveryControls(userId: string) {
     warnings: [
       customer?.kycStatus === 'kyc_approved' ? 'Verified legal identity: name/email changes require support evidence and provider review.' : undefined,
       twoFactor?.enabled ? '2FA reset is high risk and should require identity re-verification.' : undefined,
+      twoFactor?.enabled && recoveryQuestions.length < 2 ? '2FA recovery questions are not configured; support must use stronger manual identity evidence.' : undefined,
       identityLink ? 'WhatsApp identity is linked; unlink only after support verification.' : undefined
     ].filter(Boolean)
   };
@@ -143,7 +149,7 @@ export async function adminResetTwoFactor(userId: string, input: z.infer<typeof 
   if (input.createTemporaryHold) {
     await restrictUser(userId, { reason: `Temporary 24h hold after admin 2FA reset: ${input.reason}`, restrictedBy: input.actorId, restrictionType: 'all_payment_actions', expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() }, context);
   }
-  await audit({ actorId: input.actorId, action: 'user.2fa_admin_reset', userId, reason: input.reason, supportTicketId: input.supportTicketId, evidenceUrl: input.evidenceUrl, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { userEmail: user.email, previousEnabled: Boolean(current?.enabled), temporaryHoldCreated: input.createTemporaryHold } });
+  await audit({ actorId: input.actorId, action: 'user.2fa_admin_reset', userId, reason: input.reason, supportTicketId: input.supportTicketId, evidenceUrl: input.evidenceUrl, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { userEmail: user.email, previousEnabled: Boolean(current?.enabled), temporaryHoldCreated: input.createTemporaryHold, recoveryVerificationId: input.recoveryVerificationId } });
   return { reset: true, twoFactorEnabled: false, temporaryHoldCreated: input.createTemporaryHold };
 }
 

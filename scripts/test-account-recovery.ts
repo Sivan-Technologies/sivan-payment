@@ -1,7 +1,26 @@
 import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
+
+
+const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+function base32Decode(value: string) {
+  let bits = '';
+  for (const char of value.replace(/=+$/g, '').toUpperCase()) bits += alphabet.indexOf(char).toString(2).padStart(5, '0');
+  const bytes: number[] = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return Buffer.from(bytes);
+}
+function totp(secret: string) {
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 1000 / 30)));
+  const hmac = crypto.createHmac('sha1', base32Decode(secret)).update(msg).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const code = ((hmac[offset] & 0x7f) << 24) | ((hmac[offset + 1] & 0xff) << 16) | ((hmac[offset + 2] & 0xff) << 8) | (hmac[offset + 3] & 0xff);
+  return String(code % 1_000_000).padStart(6, '0');
+}
 
 async function main() {
   const dbPath = path.isAbsolute(env.DATABASE_FILE) ? env.DATABASE_FILE : path.join(process.cwd(), env.DATABASE_FILE);
@@ -47,8 +66,17 @@ async function main() {
     const postEmailControls = await request('GET', `/api/admin/users/${user.id}/account-controls`, undefined, true);
     assert(postEmailControls.recoveryAudit.some((log: any) => log.action === 'user.email_admin_changed'), 'old-email alert/admin-completed email change is audited');
 
-    const reset = await request('POST', `/api/admin/users/${user.id}/account-controls/reset-2fa`, { reason: 'Customer lost authenticator and recovery codes', supportTicketId: 'sup_ticket_1', identityReverified: true, createTemporaryHold: true }, true);
-    assert(reset.reset === true && reset.temporaryHoldCreated === true, 'admin can reset 2FA and create temporary hold');
+    const setup2fa = await request('POST', `/api/users/${user.id}/2fa/setup`, {});
+    await request('POST', `/api/users/${user.id}/2fa/enable`, { code: totp(setup2fa.manualEntryKey) });
+    await request('PUT', `/api/users/${user.id}/2fa/recovery-questions`, { answers: [{ questionId: 'private_phrase', answer: 'Recovery phrase one' }, { questionId: 'mentor_name', answer: 'Mentor two' }] });
+    token = '';
+    const recoverySignin = await request('POST', '/api/auth/email/start', { email: `new-${email}`, intent: 'signin' });
+    const recoveryChallenge = await request('POST', '/api/auth/email/verify', { email: `new-${email}`, code: recoverySignin.devCode });
+    const recoveryVerification = await request('POST', '/api/auth/2fa/recovery-questions/verify', { twoFactorToken: recoveryChallenge.twoFactorToken, answers: [{ questionId: 'private_phrase', answer: 'recovery phrase one' }, { questionId: 'mentor_name', answer: 'mentor two' }] });
+    assert(recoveryVerification.recoveryVerificationId, 'user recovery-question verification creates support reference');
+
+    const reset = await request('POST', `/api/admin/users/${user.id}/account-controls/reset-2fa`, { reason: 'Customer lost authenticator and recovery codes', supportTicketId: 'sup_ticket_1', identityReverified: true, recoveryVerificationId: recoveryVerification.recoveryVerificationId, createTemporaryHold: true }, true);
+    assert(reset.reset === true && reset.temporaryHoldCreated === true, 'admin can reset 2FA after recovery-question verification and create temporary hold');
 
     await app.close();
     console.log('\n✅ Account recovery admin E2E passed');

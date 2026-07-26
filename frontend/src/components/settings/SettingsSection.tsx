@@ -5,7 +5,7 @@ function CustomSelect({ name, options, value, defaultValue, onChange, disabled =
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 const legalLinks = { terms: 'https://www.sivantech.online/legal/terms', privacy: 'https://www.sivantech.online/legal/privacy', risk: 'https://www.sivantech.online/legal/risk-disclosure', dataRetention: 'https://www.sivantech.online/legal/data-retention', amlKyc: 'https://www.sivantech.online/legal/aml-kyc', jurisdictions: 'https://www.sivantech.online/legal/supported-jurisdictions', wrongNetwork: 'https://www.sivantech.online/legal/wrong-network', complaints: 'https://www.sivantech.online/legal/complaints', cookies: 'https://www.sivantech.online/legal/cookies' };
 function LegalResources({ compact = false }: { compact?: boolean }) { const links=[['Terms','https://www.sivantech.online/legal/terms'],['Privacy','https://www.sivantech.online/legal/privacy'],['Risk Disclosure','https://www.sivantech.online/legal/risk-disclosure'],['Data Retention','https://www.sivantech.online/legal/data-retention'],['AML/KYC Policy','https://www.sivantech.online/legal/aml-kyc'],['Supported Jurisdictions','https://www.sivantech.online/legal/supported-jurisdictions'],['Wrong Network Policy','https://www.sivantech.online/legal/wrong-network'],['Complaints Policy','https://www.sivantech.online/legal/complaints'],['Cookie Policy','https://www.sivantech.online/legal/cookies']]; return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map(([label,href])=><a key={label} href={href} target="_blank" rel="noreferrer">{label} ↗</a>)}</div></article>; }
-type UserTwoFactorStatus = { userId: string; enabled: boolean; enabledAt?: string; lastVerifiedAt?: string; recoveryCodesRemaining?: number; };
+type UserTwoFactorStatus = { userId: string; enabled: boolean; enabledAt?: string; lastVerifiedAt?: string; recoveryCodesRemaining?: number; recoveryQuestionsConfigured?: boolean; recoveryQuestionsCount?: number; };
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 export function UserAvatar({ user, className = '' }: { user: UserRecord | null; className?: string }) {
@@ -117,23 +117,46 @@ function IdentityLinkCard({ identityStatus, pairingCode, pairingExpiresAt, timeN
 
 
 
+type RecoveryQuestionOption = { id: string; question: string };
+type SafeRecoveryQuestion = { id: string; questionId: string; questionText: string; createdAt?: string; updatedAt?: string };
+
 function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatusChanged, loading, onUpdate, onLogout }: { api: <T>(path: string, options?: RequestInit) => Promise<T>; user: UserRecord | null; preferences: UserPreferencesRecord; initialStatus: UserTwoFactorStatus | null; onStatusChanged: (status: UserTwoFactorStatus | null) => void; loading: boolean; onUpdate: (patch: Partial<UserPreferencesRecord>) => Promise<void>; onLogout: () => void }) {
   const [status, setStatus] = useState<UserTwoFactorStatus | null>(initialStatus);
   const [setup, setSetup] = useState<{ manualEntryKey: string; otpauthUrl: string } | null>(null);
   const [setupCode, setSetupCode] = useState('');
   const [disableCode, setDisableCode] = useState('');
   const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [recoveryCatalog, setRecoveryCatalog] = useState<RecoveryQuestionOption[]>([]);
+  const [savedRecoveryQuestions, setSavedRecoveryQuestions] = useState<SafeRecoveryQuestion[]>([]);
+  const [showRecoveryQuestionSetup, setShowRecoveryQuestionSetup] = useState(false);
+  const [recoveryQuestionOne, setRecoveryQuestionOne] = useState('private_phrase');
+  const [recoveryQuestionTwo, setRecoveryQuestionTwo] = useState('childhood_friend_nickname');
+  const [recoveryAnswerOne, setRecoveryAnswerOne] = useState('');
+  const [recoveryAnswerTwo, setRecoveryAnswerTwo] = useState('');
+  const [recoveryQuestionMessage, setRecoveryQuestionMessage] = useState('');
   useEffect(() => { setStatus(initialStatus); }, [initialStatus]);
   const [busy, setBusy] = useState(false);
   const emailConfirmations = Boolean(preferences.emailConfirmationsForHighValue);
   const securityAlerts = Boolean(preferences.securityAlerts);
   const enabled = Boolean(status?.enabled);
+  const recoveryQuestionsConfigured = Boolean(status?.recoveryQuestionsConfigured);
   const load2fa = useCallback(async () => {
     if (!user?.id) return;
     const result = await api<any>(`/api/users/${user.id}/2fa`).catch(() => null);
     if (result) { setStatus(result); onStatusChanged(result); }
   }, [api, onStatusChanged, user?.id]);
+  const loadRecoveryQuestions = useCallback(async () => {
+    if (!user?.id) return;
+    const result = await api<any>(`/api/users/${user.id}/2fa/recovery-questions`).catch(() => null);
+    if (!result) return;
+    setRecoveryCatalog(result.catalog || []);
+    setSavedRecoveryQuestions(result.questions || []);
+    setShowRecoveryQuestionSetup(Boolean(result.configured === false && status?.enabled));
+    if (result.catalog?.[0]?.id) setRecoveryQuestionOne(result.catalog[0].id);
+    if (result.catalog?.[1]?.id) setRecoveryQuestionTwo(result.catalog[1].id);
+  }, [api, status?.enabled, user?.id]);
   useEffect(() => { void load2fa(); }, [load2fa]);
+  useEffect(() => { void loadRecoveryQuestions(); }, [loadRecoveryQuestions]);
   async function startSetup() {
     if (!user?.id) return;
     setBusy(true);
@@ -141,6 +164,7 @@ function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatus
       const result = await api<any>(`/api/users/${user.id}/2fa/setup`, { method: 'POST', body: '{}' });
       setSetup(result);
       setRecoveryCodes([]);
+      setRecoveryQuestionMessage('');
     } finally { setBusy(false); }
   }
   async function enableSetup(event: FormEvent<HTMLFormElement>) {
@@ -150,8 +174,11 @@ function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatus
     try {
       const result = await api<any>(`/api/users/${user.id}/2fa/enable`, { method: 'POST', body: JSON.stringify({ code: setupCode }) });
       setRecoveryCodes(result.recoveryCodes || []);
+      if (result.recoveryQuestionCatalog?.length) setRecoveryCatalog(result.recoveryQuestionCatalog);
       setSetup(null);
       setSetupCode('');
+      setShowRecoveryQuestionSetup(true);
+      setRecoveryQuestionMessage('Authenticator is enabled. Save your recovery codes, then set 2 recovery questions to finish recovery protection.');
       await load2fa();
     } finally { setBusy(false); }
   }
@@ -166,20 +193,42 @@ function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatus
       await load2fa();
     } finally { setBusy(false); }
   }
-  const score = enabled && emailConfirmations && securityAlerts ? 'Excellent' : enabled && securityAlerts ? 'Strong' : emailConfirmations && securityAlerts ? 'Strong' : 'Good';
+  async function saveRecoveryQuestions(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!user?.id) return;
+    if (recoveryQuestionOne === recoveryQuestionTwo) return setRecoveryQuestionMessage('Choose two different recovery questions.');
+    setBusy(true);
+    setRecoveryQuestionMessage('');
+    try {
+      const result = await api<any>(`/api/users/${user.id}/2fa/recovery-questions`, { method: 'PUT', body: JSON.stringify({ answers: [{ questionId: recoveryQuestionOne, answer: recoveryAnswerOne }, { questionId: recoveryQuestionTwo, answer: recoveryAnswerTwo }] }) });
+      setSavedRecoveryQuestions(result.questions || []);
+      setShowRecoveryQuestionSetup(false);
+      setRecoveryAnswerOne('');
+      setRecoveryAnswerTwo('');
+      setRecoveryQuestionMessage('Recovery questions saved securely. Sivan staff cannot view your answers.');
+      await load2fa();
+    } catch (error) {
+      setRecoveryQuestionMessage(error instanceof Error ? error.message : 'Could not save recovery questions.');
+    } finally { setBusy(false); }
+  }
+  const score = enabled && recoveryQuestionsConfigured && emailConfirmations && securityAlerts ? 'Excellent' : enabled && recoveryQuestionsConfigured && securityAlerts ? 'Strong' : enabled && securityAlerts ? 'Strong' : emailConfirmations && securityAlerts ? 'Strong' : 'Good';
+  const questionOptions = recoveryCatalog.length ? recoveryCatalog : [{ id: 'private_phrase', question: 'What is a private phrase only you would remember?' }, { id: 'childhood_friend_nickname', question: 'What was the nickname of your childhood best friend?' }];
   return <div className="security-settings-panel">
-    <div className="settings-section-head"><h3>Security</h3><p className="muted">Protect access to your Sivan account with passwordless email, authenticator 2FA, and high-value confirmations.</p></div>
-    <div className="security-health-card"><span>Security score</span><strong>{score}</strong><small>{enabled ? `Authenticator 2FA is enabled${status?.lastVerifiedAt ? ` · last verified ${new Date(status.lastVerifiedAt).toLocaleDateString()}` : ''}.` : 'Enable authenticator 2FA for stronger account protection.'}</small></div>
+    <div className="settings-section-head"><h3>Security</h3><p className="muted">Protect access to your Sivan account with passwordless email, authenticator 2FA, recovery questions, and high-value confirmations.</p></div>
+    <div className="security-health-card"><span>Security score</span><strong>{score}</strong><small>{enabled ? `Authenticator 2FA is enabled${status?.lastVerifiedAt ? ` · last verified ${new Date(status.lastVerifiedAt).toLocaleDateString()}` : ''}. ${recoveryQuestionsConfigured ? 'Recovery questions are configured.' : 'Set recovery questions to strengthen support recovery.'}` : 'Enable authenticator 2FA for stronger account protection.'}</small></div>
     <div className="security-settings-list">
       <div className="security-setting-row connected"><span>▣</span><div><strong>Passwordless email access</strong><small>Sign in with a one-time code sent to {user?.email || 'your verified email'}. Sivan does not store a password for your account.</small><em>Active</em></div><button type="button" className="ghost-btn small" onClick={onLogout}>Sign out</button></div>
       <div className={`security-setting-row connected ${enabled ? 'enabled' : ''}`}><span>⚿</span><div><strong>Authenticator 2FA</strong><small>{enabled ? `Enabled. Recovery codes remaining: ${status?.recoveryCodesRemaining ?? 0}.` : 'Use Google Authenticator, 1Password, Authy, iCloud Passwords, or any TOTP app.'}</small><em>{enabled ? 'Enabled' : 'Recommended'}</em></div>{enabled ? <form className="inline-security-form" onSubmit={disable2fa}><input value={disableCode} onChange={(event) => setDisableCode(event.target.value)} placeholder="Code to disable" /><button className="ghost-btn small" disabled={busy || disableCode.length < 6}>Disable</button></form> : <button type="button" className="secondary-btn small" disabled={busy} onClick={startSetup}>{busy ? 'Starting…' : 'Enable 2FA'}</button>}</div>
       {setup && <form className="two-factor-setup-card" onSubmit={enableSetup}><div><p className="eyebrow">Authenticator setup</p><h3>Add Sivan to your authenticator app</h3><p className="muted">Enter this setup key manually in your authenticator app, then type the 6-digit code it generates.</p></div><div className="manual-key-box"><span>Manual setup key</span><strong>{setup.manualEntryKey}</strong><button type="button" className="ghost-btn small" onClick={() => navigator.clipboard?.writeText(setup.manualEntryKey)}>Copy key</button></div><label>Authenticator code<input value={setupCode} onChange={(event) => setSetupCode(event.target.value.replace(/\s/g, ''))} placeholder="123456" inputMode="numeric" autoComplete="one-time-code" /></label><button className="primary-btn" disabled={busy || setupCode.length < 6}>{busy ? 'Verifying…' : 'Verify and enable 2FA'}</button></form>}
       {recoveryCodes.length > 0 && <div className="recovery-code-card"><p className="eyebrow">Save these recovery codes now</p><h3>Recovery codes</h3><p className="muted">Store these securely. Each code works once if you lose your authenticator app.</p><div>{recoveryCodes.map((code) => <code key={code}>{code}</code>)}</div><button className="secondary-btn small" onClick={() => navigator.clipboard?.writeText(recoveryCodes.join('\n'))}>Copy recovery codes</button></div>}
+      {enabled && <div className={`security-setting-row connected ${recoveryQuestionsConfigured ? 'enabled' : ''}`}><span>?</span><div><strong>Recovery questions</strong><small>{recoveryQuestionsConfigured ? `${status?.recoveryQuestionsCount ?? savedRecoveryQuestions.length} secure recovery questions configured. Answers are hashed and cannot be viewed by Sivan staff.` : 'Set 2 private questions to help Sivan Support verify you if you lose your authenticator.'}</small><em>{recoveryQuestionsConfigured ? 'Configured' : 'Required'}</em></div><button type="button" className="secondary-btn small" onClick={() => setShowRecoveryQuestionSetup((value) => !value)}>{recoveryQuestionsConfigured ? 'Update' : 'Set now'}</button></div>}
+      {enabled && showRecoveryQuestionSetup && <form className="recovery-question-card" onSubmit={saveRecoveryQuestions}><div><p className="eyebrow">Secure recovery questions</p><h3>Set 2 private recovery questions</h3><p className="muted">These help Sivan Support verify you if you lose your authenticator app. They do not automatically disable 2FA or unlock payments.</p></div><div className="split"><label>Question 1<select value={recoveryQuestionOne} onChange={(event) => setRecoveryQuestionOne(event.target.value)}>{questionOptions.map((item) => <option key={item.id} value={item.id}>{item.question}</option>)}</select></label><label>Answer 1<input value={recoveryAnswerOne} onChange={(event) => setRecoveryAnswerOne(event.target.value)} placeholder="Private answer" autoComplete="off" required minLength={3} /></label></div><div className="split"><label>Question 2<select value={recoveryQuestionTwo} onChange={(event) => setRecoveryQuestionTwo(event.target.value)}>{questionOptions.map((item) => <option key={item.id} value={item.id}>{item.question}</option>)}</select></label><label>Answer 2<input value={recoveryAnswerTwo} onChange={(event) => setRecoveryAnswerTwo(event.target.value)} placeholder="Private answer" autoComplete="off" required minLength={3} /></label></div><div className="warning-box compact">Use answers that cannot be found on social media or public records. Sivan stores only secure hashes, never plain answers.</div><button className="primary-btn" disabled={busy || recoveryAnswerOne.trim().length < 3 || recoveryAnswerTwo.trim().length < 3}>{busy ? 'Saving…' : 'Save recovery questions'}</button></form>}
+      {recoveryQuestionMessage && <div className="success-note recovery-question-message">{recoveryQuestionMessage}</div>}
       <div className={`security-setting-row connected ${emailConfirmations ? 'enabled' : ''}`}><span>✉</span><div><strong>Email confirmations for high-value actions</strong><small>Require email confirmation for high-value transfers and sensitive payment actions where supported.</small><em>{emailConfirmations ? 'Enabled' : 'Disabled'}</em></div><label className="switch-toggle connected"><input type="checkbox" checked={emailConfirmations} disabled={loading} onChange={(event) => void onUpdate({ emailConfirmationsForHighValue: event.target.checked })} /><i /></label></div>
       <div className={`security-setting-row connected ${securityAlerts ? 'enabled' : ''}`}><span>◈</span><div><strong>Security alerts</strong><small>Receive notices about verification, account changes, risk events, support escalations, and important account safety updates.</small><em>{securityAlerts ? 'Enabled' : 'Disabled'}</em></div><label className="switch-toggle connected"><input type="checkbox" checked={securityAlerts} disabled={loading} onChange={(event) => void onUpdate({ securityAlerts: event.target.checked })} /><i /></label></div>
       <div className="security-setting-row"><span>◷</span><div><strong>Active session</strong><small>Current browser session active. Sign out if this is not your device.</small><em>Current device</em></div><button type="button" className="secondary-btn small" onClick={onLogout}>Sign out</button></div>
     </div>
-    <div className="notification-settings-foot"><strong>Connected</strong><span>Authenticator 2FA is enforced during sign-in after email-code verification.</span></div>
+    <div className="notification-settings-foot"><strong>Connected</strong><span>2FA recovery questions are a support verification factor — not an automatic 2FA bypass.</span></div>
   </div>;
 }
 
