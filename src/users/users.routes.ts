@@ -5,6 +5,7 @@ import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema 
 import { confirmAvatarUpload, confirmAvatarUploadSchema, createAvatarUploadUrl, createAvatarUploadUrlSchema, removeAvatar } from './user-avatar.service.js';
 import { checkUsernameAvailability, updateUsername, usernameSchema } from './username.service.js';
 import { legalAcceptancePayloadSchema, listUserLegalAcceptances, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
+import { confirmUserEmailChange, userEmailChangeConfirmSchema } from '../admin/account-recovery.service.js';
 
 const createUserWithLegalSchema = createUserSchema.extend({
   legalAcceptance: legalAcceptancePayloadSchema
@@ -75,6 +76,13 @@ export async function usersRoutes(app: FastifyInstance) {
   app.delete('/api/users/:userId/avatar', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await removeAvatar(userId) };
+  });
+
+
+  app.post('/api/users/:userId/email-change/confirm', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(userEmailChangeConfirmSchema, request.body);
+    return { data: await confirmUserEmailChange(userId, body) };
   });
 
   app.get('/api/users/:userId', async (request) => {

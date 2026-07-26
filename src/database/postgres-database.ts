@@ -19,6 +19,7 @@ import type {
   UserRecord,
   UserPreferencesRecord,
   UserTwoFactorRecord,
+  UserTwoFactorRecoveryQuestionRecord,
   WebhookEventRecord,
   WithdrawalRecord,
   AuthChallengeRecord,
@@ -139,6 +140,7 @@ export class PostgresDatabase {
       const userPreferences = await optionalQuery(client, 'select * from payments_user_preferences order by user_id asc');
       const legalAcceptances = await optionalQuery(client, 'select * from payments_legal_acceptances order by accepted_at asc');
       const userTwoFactor = await optionalQuery(client, 'select * from payments_user_two_factor order by user_id asc');
+      const userTwoFactorRecoveryQuestions = await optionalQuery(client, 'select * from payments_user_two_factor_recovery_questions order by user_id asc, created_at asc');
       const customers = await client.query('select * from payments_customers order by created_at asc');
       const externalAccounts = await client.query('select * from payments_external_accounts order by created_at asc');
       const liquidationAddresses = await client.query('select * from payments_liquidation_addresses order by created_at asc');
@@ -192,6 +194,7 @@ export class PostgresDatabase {
         ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
         userTwoFactor: userTwoFactor.rows.map(mapUserTwoFactor),
+        userTwoFactorRecoveryQuestions: userTwoFactorRecoveryQuestions.rows.map(mapUserTwoFactorRecoveryQuestion),
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
@@ -274,6 +277,28 @@ export class PostgresDatabase {
   async upsertUserTwoFactorRecord(record: UserTwoFactorRecord) {
     const client = await this.pool.connect();
     try { await upsertUserTwoFactor(client, record); return record; } finally { client.release(); }
+  }
+
+  async listUserTwoFactorRecoveryQuestionRecords(userId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_user_two_factor_recovery_questions where user_id=$1 order by created_at asc', [userId]);
+      return result.rows.map(mapUserTwoFactorRecoveryQuestion);
+    } finally { client.release(); }
+  }
+
+  async replaceUserTwoFactorRecoveryQuestionRecords(userId: string, records: UserTwoFactorRecoveryQuestionRecord[]) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await optionalQuery(client, 'delete from payments_user_two_factor_recovery_questions where user_id=$1', [userId]);
+      for (const record of records) await upsertUserTwoFactorRecoveryQuestion(client, record);
+      await client.query('commit');
+      return records;
+    } catch (error) {
+      await client.query('rollback').catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
   }
 
   async getAdminOverviewView() {
@@ -814,6 +839,7 @@ export class PostgresDatabase {
       for (const user of data.users) await upsertUser(client, user);
       for (const preferences of data.userPreferences ?? []) await upsertUserPreferences(client, preferences);
       for (const twoFactor of data.userTwoFactor ?? []) await upsertUserTwoFactor(client, twoFactor);
+      for (const question of data.userTwoFactorRecoveryQuestions ?? []) await upsertUserTwoFactorRecoveryQuestion(client, question);
       for (const acceptance of data.legalAcceptances ?? []) await upsertLegalAcceptance(client, acceptance);
       for (const customer of data.customers) await upsertCustomer(client, customer);
       for (const account of data.externalAccounts) await upsertExternalAccount(client, account);
@@ -934,6 +960,35 @@ async function upsertUserTwoFactor(client: pg.PoolClient, item: UserTwoFactorRec
        last_verified_at=excluded.last_verified_at,
        updated_at=excluded.updated_at`,
     [item.userId, item.enabled, item.secretEncrypted, item.recoveryCodeHashes, item.enabledAt ?? null, item.lastVerifiedAt ?? null, item.createdAt, item.updatedAt]
+  );
+}
+
+function mapUserTwoFactorRecoveryQuestion(row: any): UserTwoFactorRecoveryQuestionRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    questionId: row.question_id,
+    questionText: row.question_text,
+    answerHash: row.answer_hash,
+    answerSalt: row.answer_salt,
+    algorithm: row.algorithm || 'scrypt-sha256-v1',
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+async function upsertUserTwoFactorRecoveryQuestion(client: pg.PoolClient, item: UserTwoFactorRecoveryQuestionRecord) {
+  await client.query(
+    `insert into payments_user_two_factor_recovery_questions (id, user_id, question_id, question_text, answer_hash, answer_salt, algorithm, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     on conflict (id) do update set
+       question_id=excluded.question_id,
+       question_text=excluded.question_text,
+       answer_hash=excluded.answer_hash,
+       answer_salt=excluded.answer_salt,
+       algorithm=excluded.algorithm,
+       updated_at=excluded.updated_at`,
+    [item.id, item.userId, item.questionId, item.questionText, item.answerHash, item.answerSalt, item.algorithm, item.createdAt, item.updatedAt]
   );
 }
 

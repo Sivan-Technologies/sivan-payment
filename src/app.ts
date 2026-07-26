@@ -237,6 +237,7 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
   if (readOnly) return true;
 
   if (url.startsWith('/api/admin/notes')) return ['ops', 'operator', 'compliance', 'finance', 'support', 'engineering'].includes(role);
+  if (url.startsWith('/api/admin/users') && url.includes('/account-controls')) return ['support', 'ops', 'operator', 'compliance', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/support')) return ['support', 'ops', 'operator', 'compliance'].includes(role);
   if (url.startsWith('/api/admin/risk')) return ['compliance', 'ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/supplier')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);

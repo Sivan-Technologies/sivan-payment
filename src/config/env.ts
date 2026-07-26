@@ -16,6 +16,7 @@ const envSchema = z.object({
   APP_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   APP_URL: z.string().url().default('http://localhost:3000'),
+  CUSTOMER_APP_URL: z.string().url().optional().default('https://app.sivantech.online'),
   CORS_ORIGIN: z.string().default('*'),
   LOG_LEVEL: z.string().default('info'),
   SENTRY_DSN: z.string().optional().default(''),

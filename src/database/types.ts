@@ -173,6 +173,18 @@ export interface UserTwoFactorRecord {
   updatedAt: string;
 }
 
+export interface UserTwoFactorRecoveryQuestionRecord {
+  id: string;
+  userId: string;
+  questionId: string;
+  questionText: string;
+  answerHash: string;
+  answerSalt: string;
+  algorithm: 'scrypt-sha256-v1';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UserRecord {
   id: string;
   email: string;
@@ -562,6 +574,7 @@ export interface DatabaseShape {
   identityPairingTokens: IdentityPairingTokenRecord[];
   userPreferences: UserPreferencesRecord[];
   userTwoFactor: UserTwoFactorRecord[];
+  userTwoFactorRecoveryQuestions: UserTwoFactorRecoveryQuestionRecord[];
   legalAcceptances: LegalAcceptanceRecord[];
   customers: CustomerRecord[];
   externalAccounts: ExternalAccountRecord[];

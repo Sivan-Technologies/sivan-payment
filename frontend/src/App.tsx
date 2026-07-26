@@ -1,6 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
-import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
+import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
 import { useNotifications } from './hooks/useNotifications';
@@ -51,9 +51,13 @@ export default function App() {
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorRecoveryMode, setTwoFactorRecoveryMode] = useState(false);
+  const [twoFactorRecoveryQuestions, setTwoFactorRecoveryQuestions] = useState<Array<{ questionId: string; questionText: string }>>([]);
+  const [twoFactorRecoveryAnswers, setTwoFactorRecoveryAnswers] = useState<Record<string, string>>({});
+  const [twoFactorRecoveryMessage, setTwoFactorRecoveryMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
+  const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
   const hasUser = Boolean(user?.id && authToken);
   const isVerified = customer?.kycStatus === 'kyc_approved';
@@ -142,7 +146,7 @@ export default function App() {
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
   const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Avalanche C-Chain';
 
-  const logout = useCallback((message = 'You have been signed out.') => {
+  const clearLocalSession = useCallback(() => {
     setAuthToken('');
     setUser(null);
     setCustomer(null);
@@ -150,9 +154,13 @@ export default function App() {
     setWithdrawals([]);
     setOnrampOrders([]);
     setSupportTickets([]);
+    setVirtualAccountRequests([]);
+    setVirtualAccounts([]);
     setVirtualAccountTransactions([]);
     setBalance(null);
     setBalanceTransfers([]);
+    setSuppliers([]);
+    setSupplierPayments([]);
     setUserPreferences(null);
     setIdentityStatus(null);
     setTwoFactorStatus(null);
@@ -161,11 +169,15 @@ export default function App() {
     localStorage.removeItem('sivan.user');
     localStorage.removeItem('sivan.customer');
     localStorage.removeItem('sivan.accounts');
+  }, []);
+
+  const logout = useCallback((message = 'You have been signed out.') => {
+    clearLocalSession();
     setView('landing');
     window.history.pushState({}, '', '/');
     setToast({ message, type: 'success' });
     window.setTimeout(() => setToast(null), 4200);
-  }, []);
+  }, [clearLocalSession]);
 
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -178,8 +190,31 @@ export default function App() {
     setOtpCode('');
     setTwoFactorCode('');
     setPendingTwoFactorToken('');
+    setTwoFactorRecoveryMode(false);
+    setTwoFactorRecoveryQuestions([]);
+    setTwoFactorRecoveryAnswers({});
+    setTwoFactorRecoveryMessage('');
     setDevCode(undefined);
     setResendAvailableAt(0);
+  }, []);
+
+  const handleEmailRecoveryConfirmed = useCallback((updatedUser: UserRecord) => {
+    clearLocalSession();
+    resetPendingEmail();
+    setAuthTab('signin');
+    setView('signup');
+    window.history.pushState({}, '', '/login');
+    notify(`Email confirmed. Sign in with ${updatedUser.email}.`);
+  }, [clearLocalSession, notify, resetPendingEmail]);
+
+  const handleEmailRecoverySignIn = useCallback(() => {
+    resetPendingEmail();
+    setAuthTab('signin');
+    goToView('signup');
+  }, [resetPendingEmail]);
+
+  const handleEmailRecoverySupport = useCallback(() => {
+    goToView('help');
   }, []);
 
   const api = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
@@ -494,6 +529,10 @@ export default function App() {
       setOtpCode('');
       setTwoFactorCode('');
       setPendingTwoFactorToken('');
+      setTwoFactorRecoveryMode(false);
+      setTwoFactorRecoveryQuestions([]);
+      setTwoFactorRecoveryAnswers({});
+      setTwoFactorRecoveryMessage('');
       setDevCode(undefined);
       localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
       notify('Two-factor verified. Welcome back.');
@@ -501,6 +540,44 @@ export default function App() {
       window.setTimeout(() => void loadUserData(), 0);
     } catch (error) {
       notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startTwoFactorRecovery() {
+    if (!pendingTwoFactorToken) return notify('Two-factor session expired. Sign in again.', 'error');
+    setLoading(true);
+    setTwoFactorRecoveryMessage('');
+    try {
+      const result = await api<{ questions: Array<{ questionId: string; questionText: string }> }>('/api/auth/2fa/recovery-questions/challenge', {
+        method: 'POST',
+        body: JSON.stringify({ twoFactorToken: pendingTwoFactorToken })
+      });
+      setTwoFactorRecoveryQuestions(result.questions || []);
+      setTwoFactorRecoveryAnswers({});
+      setTwoFactorRecoveryMode(true);
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitTwoFactorRecovery(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!pendingTwoFactorToken) return notify('Two-factor session expired. Sign in again.', 'error');
+    setLoading(true);
+    setTwoFactorRecoveryMessage('');
+    try {
+      const result = await api<{ verified: boolean; recoveryVerificationId: string; message: string }>('/api/auth/2fa/recovery-questions/verify', {
+        method: 'POST',
+        body: JSON.stringify({ twoFactorToken: pendingTwoFactorToken, answers: twoFactorRecoveryQuestions.map((question) => ({ questionId: question.questionId, answer: twoFactorRecoveryAnswers[question.questionId] || '' })) })
+      });
+      setTwoFactorRecoveryMessage(`${result.message} Reference: ${result.recoveryVerificationId}`);
+      notify('Recovery questions verified. Contact support to complete 2FA reset review.');
+    } catch (error) {
+      setTwoFactorRecoveryMessage(error instanceof Error ? error.message : 'Recovery questions could not be verified.');
     } finally {
       setLoading(false);
     }
@@ -1049,6 +1126,8 @@ export default function App() {
 
         {(systemStatus.activeIncidents?.length || systemStatus.mode !== 'active') && <IncidentBanner systemStatus={systemStatus} />}
 
+        {view === 'emailRecovery' && <EmailRecoveryConfirmView api={api} loading={loading} onConfirmed={handleEmailRecoveryConfirmed} onSignIn={handleEmailRecoverySignIn} onSupport={handleEmailRecoverySupport} />}
+
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
             {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice onVerify={() => goToView('kyc')} />}
@@ -1093,11 +1172,21 @@ export default function App() {
                   <button className="primary-btn auth-submit" disabled={loading}>{loading ? 'Sending secure code…' : authTab === 'signup' ? 'Send verification code →' : 'Send login code →'}</button>
                 </form>
               ) : pendingTwoFactorToken ? (
-                <form className="form auth-form-premium" onSubmit={handleTwoFactorLoginVerify}>
-                  <div className="email-confirmation auth-email-confirmation"><span>Two-factor required</span><strong>{pendingEmail}</strong><button type="button" onClick={resetPendingEmail}>Start over</button></div>
-                  <label>Authenticator or recovery code<input value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} placeholder="123456 or recovery code" autoComplete="one-time-code" required /></label>
-                  <button className="primary-btn auth-submit" disabled={loading || twoFactorCode.replace(/\s/g, '').length < 6}>{loading ? 'Verifying…' : 'Verify and continue →'}</button>
-                </form>
+                <div className="two-factor-login-stack">
+                  {!twoFactorRecoveryMode ? <form className="form auth-form-premium" onSubmit={handleTwoFactorLoginVerify}>
+                    <div className="email-confirmation auth-email-confirmation"><span>Two-factor required</span><strong>{pendingEmail}</strong><button type="button" onClick={resetPendingEmail}>Start over</button></div>
+                    <label>Authenticator or recovery code<input value={twoFactorCode} onChange={(event) => setTwoFactorCode(event.target.value)} placeholder="123456 or recovery code" autoComplete="one-time-code" required /></label>
+                    <button className="primary-btn auth-submit" disabled={loading || twoFactorCode.replace(/\s/g, '').length < 6}>{loading ? 'Verifying…' : 'Verify and continue →'}</button>
+                    <button type="button" className="ghost-btn" disabled={loading} onClick={startTwoFactorRecovery}>Lost authenticator? Verify recovery questions</button>
+                  </form> : <form className="form auth-form-premium recovery-login-form" onSubmit={submitTwoFactorRecovery}>
+                    <div className="email-confirmation auth-email-confirmation"><span>Recover 2FA access</span><strong>{pendingEmail}</strong><button type="button" onClick={() => setTwoFactorRecoveryMode(false)}>Use authenticator</button></div>
+                    <p className="muted">Answer your recovery questions. If verified, Sivan Support can review and reset 2FA. This does not automatically disable 2FA.</p>
+                    {twoFactorRecoveryQuestions.map((question) => <label key={question.questionId}>{question.questionText}<input value={twoFactorRecoveryAnswers[question.questionId] || ''} onChange={(event) => setTwoFactorRecoveryAnswers((answers) => ({ ...answers, [question.questionId]: event.target.value }))} placeholder="Private answer" autoComplete="off" required /></label>)}
+                    {twoFactorRecoveryMessage && <div className={twoFactorRecoveryMessage.includes('Reference:') ? 'success-note' : 'form-error'}>{twoFactorRecoveryMessage}</div>}
+                    <button className="primary-btn auth-submit" disabled={loading || twoFactorRecoveryQuestions.some((question) => !(twoFactorRecoveryAnswers[question.questionId] || '').trim())}>{loading ? 'Verifying…' : 'Verify recovery questions →'}</button>
+                    <button type="button" className="ghost-btn" onClick={() => goToView('help')}>Contact support</button>
+                  </form>}
+                </div>
               ) : (
                 <form className="form auth-form-premium" onSubmit={handleEmailAuthVerify}>
                   <div className="email-confirmation auth-email-confirmation">
@@ -1158,7 +1247,7 @@ export default function App() {
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
         {view === 'settings' && <SettingsView api={api} user={user} isVerified={isVerified} onUserUpdated={(updated) => { setUser(updated); localStorage.setItem('sivan.user', JSON.stringify(updated)); }} preferences={userPreferences} initialTab={settingsInitialTab} twoFactorStatus={twoFactorStatus} onTwoFactorStatusChanged={setTwoFactorStatus} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
-        {view === 'help' && <SupportView hasUser={hasUser} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
+        {view === 'help' && <SupportView hasUser={hasUser} user={user} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
     </div>

@@ -1,0 +1,52 @@
+name: Sivan Payment CI
+
+on:
+  push:
+    branches:
+      - main
+      - airspexta
+  pull_request:
+    branches:
+      - main
+      - airspexta
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sivan-payment-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-regression:
+    name: Typecheck, build, audit, and E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend dependencies
+        run: npm ci
+
+      - name: Run full platform regression suite
+        env:
+          CI: true
+          DATABASE_PROVIDER: json
+          EMAIL_PROVIDER: console
+          SUPPORT_UPLOAD_PROVIDER: mock
+          BRIDGE_MOCK_MODE: true
+          AUTH_DEV_SHOW_OTP: true
+          CUSTOMER_APP_URL: https://app.sivantech.online
+        run: npm run test:full-platform-e2e

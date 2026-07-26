@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../shared/validation.js';
+import { adminChangeUsername, adminChangeUsernameSchema, adminEmailChangeRequestSchema, adminRemoveAvatar, adminRemoveAvatarSchema, adminNameCorrectionRequestSchema, adminRequestNameCorrection, adminResetTwoFactor, adminResetTwoFactorSchema, adminStartEmailChange, adminUnlinkWhatsapp, adminUnlinkWhatsappSchema, getAccountRecoveryControls } from './account-recovery.service.js';
 import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWithdrawals, listAdminAuditLogs, listAdminReconciliationRuns, listAdminOnrampOrders } from './admin.service.js';
 import { getAdminAnalytics } from './analytics.service.js';
 import { runOfframpReconciliation } from '../reconciliation/reconciliation.service.js';
@@ -44,6 +45,52 @@ export async function adminRoutes(app: FastifyInstance) {
   app.get('/api/admin/users/:id/details', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await getAdminUserDetails(id) };
+  });
+  app.get('/api/admin/users/:id/account-controls', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await getAccountRecoveryControls(id) };
+  });
+
+  app.post('/api/admin/users/:id/account-controls/username', async (request) => {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
+    const body = parseBody(adminChangeUsernameSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
+    return { data: await adminChangeUsername(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/users/:id/account-controls/remove-avatar', async (request) => {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
+    const body = parseBody(adminRemoveAvatarSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
+    return { data: await adminRemoveAvatar(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/users/:id/account-controls/reset-2fa', async (request) => {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
+    const body = parseBody(adminResetTwoFactorSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
+    return { data: await adminResetTwoFactor(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/users/:id/account-controls/name-correction-request', async (request) => {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
+    const body = parseBody(adminNameCorrectionRequestSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
+    return { data: await adminRequestNameCorrection(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/users/:id/account-controls/email-change-request', async (request) => {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
+    const body = parseBody(adminEmailChangeRequestSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
+    return { data: await adminStartEmailChange(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/users/:id/account-controls/unlink-whatsapp', async (request) => {
+    const { id } = request.params as { id: string };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
+    const body = parseBody(adminUnlinkWhatsappSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
+    return { data: await adminUnlinkWhatsapp(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.get('/api/admin/users/:id/timeline', async (request) => {
