@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { forbidden } from '../../shared/errors.js';
+import { badRequest, forbidden } from '../../shared/errors.js';
 import { parseBody } from '../../shared/validation.js';
 import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
 import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
+import { PajNgnProvider } from '../provider/paj.provider.js';
 import { getNgnReconciliationSummary } from '../service/ngn-reconciliation.service.js';
 import { listNgnSettlementQueue } from '../service/ngn-settlement.service.js';
 import { listNgnWebhooks, recordNgnWebhook } from '../service/ngn-webhooks.service.js';
@@ -41,6 +42,29 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await listNgnTransfers({ userId }) };
   });
 
+
+  app.get('/api/ngn/paj/banks', async (request) => {
+    const query = request.query as { userId?: string };
+    if (query.userId) ensureOwnUser(request, query.userId);
+    return { data: await new PajNgnProvider().getBanks() };
+  });
+
+  app.get('/api/ngn/paj/bank-account/resolve', async (request) => {
+    const query = request.query as { userId?: string; bankId?: string; accountNumber?: string };
+    if (query.userId) ensureOwnUser(request, query.userId);
+    if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
+    return { data: await new PajNgnProvider().resolveBankAccount(query.bankId, query.accountNumber) };
+  });
+
+  app.get('/api/admin/ngn/paj/banks', async () => ({ data: await new PajNgnProvider().getBanks() }));
+  app.get('/api/admin/ngn/paj/bank-account/resolve', async (request) => {
+    const query = request.query as { bankId?: string; accountNumber?: string };
+    if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
+    return { data: await new PajNgnProvider().resolveBankAccount(query.bankId, query.accountNumber) };
+  });
+
+  app.post('/api/webhooks/paj', async (request) => ({ data: await recordNgnWebhook('paj', request.body, request.headers) }));
+
   app.get('/api/admin/ngn/controls', async () => ({ data: await getNgnControls() }));
   app.put('/api/admin/ngn/controls', async (request) => ({ data: await updateNgnControls(parseBody(updateNgnControlsSchema, request.body)) }));
   app.get('/api/admin/ngn/quotes', async (request) => {
@@ -65,7 +89,7 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await retryNgnTransfer(id, (request as any).adminActor?.email || 'admin_api_key') };
   });
   app.post('/api/admin/ngn/webhooks/:provider', async (request) => {
-    const { provider } = request.params as { provider: 'mock' | 'linkio' | 'eversend' | 'nomba' };
+    const { provider } = request.params as { provider: 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' };
     return { data: await recordNgnWebhook(provider, request.body, request.headers) };
   });
 }

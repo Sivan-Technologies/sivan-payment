@@ -82,8 +82,22 @@ const envSchema = z.object({
   SIVAN_AI_API_KEY: z.string().optional().default(''),
   SIVAN_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(3500),
   SIVAN_AI_FALLBACK_ENABLED: booleanFromEnv.default(true),
-  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba']).default('mock'),
-  NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false)
+  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj']).default('mock'),
+  NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false),
+  PAJ_RAMP_ENV: z.enum(['staging', 'production']).default('staging'),
+  PAJ_RAMP_BASE_URL: z.string().url().optional().default('https://api-staging.paj.cash'),
+  PAJ_RAMP_API_KEY: z.string().optional().default(''),
+  PAJ_RAMP_WEBHOOK_URL: z.string().url().optional().default('https://api.sivantech.online/api/payment/api/webhooks/paj'),
+  PAJ_RAMP_DEFAULT_CURRENCY: z.string().default('NGN'),
+  PAJ_RAMP_DEFAULT_CHAIN: z.enum(['SOLANA', 'MONAD']).default('SOLANA'),
+  PAJ_RAMP_USDC_MINT: z.string().optional().default(''),
+  PAJ_RAMP_BUSINESS_USDC_FEE: z.string().default('0'),
+  PAJ_RAMP_REQUIRE_SIVAN_KYC: booleanFromEnv.default(true),
+  PAJ_RAMP_SESSION_MODE: z.enum(['merchant', 'user_otp']).default('merchant'),
+  PAJ_RAMP_MERCHANT_TOKEN: z.string().optional().default(''),
+  PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
+  PAJ_RAMP_DEFAULT_BANK_ID: z.string().optional().default(''),
+  PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default('')
 });
 
 export const env = envSchema.parse(process.env);

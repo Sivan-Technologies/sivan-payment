@@ -1,4 +1,4 @@
-export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba';
+export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj';
 export type NgnDirection = 'onramp' | 'offramp';
 export type NgnQuoteStatus = 'quote_created' | 'quote_accepted' | 'expired' | 'failed';
 export type NgnTransferStatus =
