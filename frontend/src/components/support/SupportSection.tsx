@@ -104,9 +104,12 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
       setChatMessages((items) => [...items, { id: chatId(), role: 'assistant', text: result.answer, createdAt: new Date().toISOString(), meta: result }]);
       if (result.needsHuman || result.confidence === 'low') addSystemMessage('I should get Sivan Support to review this. You can create a support ticket with this chat attached.');
     } catch (error) {
-      const text = error instanceof Error ? error.message : 'Sivan Assistant could not respond right now.';
-      setChatError(text);
-      addSystemMessage('Sivan Assistant could not complete this request. You can still create a support ticket and support will follow up.');
+      const raw = error instanceof Error ? error.message : 'Sivan Assistant could not respond right now.';
+      const friendly = /signal is aborted|aborted without reason|timed out|taking longer/i.test(raw)
+        ? 'Sivan Assistant is taking longer than expected. No problem — create a support ticket and Sivan Support will review this.'
+        : raw;
+      setChatError('');
+      addSystemMessage(friendly);
     } finally {
       setChatBusy(false);
     }

@@ -227,9 +227,10 @@ export default function App() {
     const attempts = canRetry ? 3 : 1;
     let lastError: unknown;
 
+    const timeoutMs = path.includes('/ace/support') ? 60000 : 20000;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 20000);
+      const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch(`${apiBase}${path}`, {
           ...options,
@@ -258,6 +259,13 @@ export default function App() {
         if (canRetry && isRetryableNetworkError(error) && attempt < attempts) {
           await sleep(650 * attempt);
           continue;
+        }
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          throw new Error(path.includes('/ace/support') ? 'Sivan Assistant is taking longer than expected. Please try again or create a support ticket.' : 'Request timed out. Please try again.');
+        }
+        const message = error instanceof Error ? error.message.toLowerCase() : String(error || '').toLowerCase();
+        if (message.includes('signal is aborted') || message.includes('aborted without reason')) {
+          throw new Error(path.includes('/ace/support') ? 'Sivan Assistant is taking longer than expected. Please try again or create a support ticket.' : 'Request timed out. Please try again.');
         }
         throw error;
       }
