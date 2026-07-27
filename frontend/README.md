@@ -1,4 +1,4 @@
-# Sivan Off-Ramp User Frontend
+# Sivan Dashboard User Frontend
 
 Premium responsive React + TypeScript user frontend for the Sivan off-ramp MVP.
 
