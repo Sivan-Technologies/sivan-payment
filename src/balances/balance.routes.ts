@@ -33,6 +33,37 @@ export async function balanceRoutes(app: FastifyInstance) {
     };
   });
 
+  // ─── WhatsApp-authenticated payout account gate check (used by whatsapp-bot) ──
+  app.get('/api/users/whatsapp-payout-account', async (request, reply) => {
+    const secret = request.headers['x-sivan-identity-link-secret'];
+    if (!secret || secret !== process.env.PAYMENT_IDENTITY_LINK_SECRET) {
+      return reply.code(403).send({ error: 'Forbidden' });
+    }
+    const { whatsapp } = request.query as { whatsapp?: string };
+    if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
+    const normalized = normalizeWhatsappNumber(whatsapp);
+    const data = await db.read();
+    const user = (data.users ?? []).find((u: any) => u.whatsappNumber === normalized);
+    if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
+    
+    const userAccounts = (data.externalAccounts ?? []).filter(
+      (acc: any) => acc.userId === user.id && ['active', 'verified', 'created'].includes(acc.status)
+    );
+    const primaryAccount = userAccounts[0] || null;
+    return {
+      data: {
+        userId: user.id,
+        hasVerifiedAccount: Boolean(primaryAccount || (user as any).bankAccount || (user as any).payoutAccount),
+        account: primaryAccount ? {
+          id: primaryAccount.id,
+          bankName: primaryAccount.bankName,
+          currency: primaryAccount.currency,
+          accountOwnerName: primaryAccount.accountOwnerName,
+        } : null,
+      }
+    };
+  });
+
   app.get('/api/users/:userId/balance', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await getUserBalance(userId) };
