@@ -43,7 +43,7 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           <div className="landing-copy">
             <p className="eyebrow">Crypto to fiat. Fiat to crypto.</p>
             <h1>Buy and sell crypto<br /><span>the simple way.</span></h1>
-            <p className="lead">Convert supported stablecoins on Avalanche C-Chain directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
+            <p className="lead">Convert supported stablecoins across major networks directly to your bank account or prepare to buy crypto with a transfer. One verification, transparent fees, and clear payout tracking.</p>
             <div className="landing-actions">
               <button className="primary-btn" onClick={onGetStarted}>Get started →</button>
               <a className="secondary-btn" href="#how">See how it works</a>
