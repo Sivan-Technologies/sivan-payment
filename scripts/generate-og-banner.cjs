@@ -50,9 +50,8 @@ const svg = `
   <!-- OFFICIAL SIVAN LOGO ICON -->
   <image href="${iconDataUri}" x="120" y="98" width="86" height="86" />
 
-  <!-- SIVAN Brand Label & Main Title -->
-  <text x="226" y="126" font-family="Inter, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#10b981" letter-spacing="3">SIVAN</text>
-  <text x="226" y="176" font-family="Inter, -apple-system, sans-serif" font-size="52" font-weight="800" fill="#ffffff" letter-spacing="-1">Sivan</text>
+  <!-- SIVAN Main Title -->
+  <text x="226" y="158" font-family="Inter, -apple-system, sans-serif" font-size="56" font-weight="800" fill="#ffffff" letter-spacing="-1">Sivan</text>
 
   <!-- Subtitle Text - EXACT 2 LINES -->
   <text font-family="Inter, -apple-system, sans-serif" font-size="24" font-weight="500" fill="#94a3b8" letter-spacing="-0.2">
