@@ -43,9 +43,15 @@ function pajChain() {
   return env.PAJ_RAMP_DEFAULT_CHAIN || 'SOLANA';
 }
 
-function pajMint() {
-  if (!env.PAJ_RAMP_USDC_MINT) throw forbidden('PAJ USDC mint is not configured.');
-  return env.PAJ_RAMP_USDC_MINT;
+function pajMint(asset: 'usdc' | 'usdt' = 'usdc') {
+  const mint = asset === 'usdt' ? env.PAJ_RAMP_USDT_MINT : env.PAJ_RAMP_USDC_MINT;
+  if (!mint) throw forbidden(`PAJ ${asset.toUpperCase()} mint is not configured.`);
+  return mint;
+}
+
+function mintForQuote(quote: Pick<NgnQuoteRecord, 'direction' | 'sourceCurrency' | 'destinationCurrency'>) {
+  const asset = quote.direction === 'onramp' ? quote.destinationCurrency : quote.sourceCurrency;
+  return pajMint(asset === 'usdt' ? 'usdt' : 'usdc');
 }
 
 function pajWebhookUrl() {
@@ -115,7 +121,7 @@ export class PajNgnProvider implements NgnProviderAdapter {
       destinationAmount: money(destination),
       rate: money(Number(rate)),
       feeAmount: money(fee, 6),
-      metadata: { paj: true, environment: env.PAJ_RAMP_ENV, chain: pajChain(), mint: env.PAJ_RAMP_USDC_MINT, sessionMode: env.PAJ_RAMP_SESSION_MODE }
+      metadata: { paj: true, environment: env.PAJ_RAMP_ENV, chain: pajChain(), usdcMint: env.PAJ_RAMP_USDC_MINT, usdtMint: env.PAJ_RAMP_USDT_MINT, sessionMode: env.PAJ_RAMP_SESSION_MODE }
     } satisfies Pick<NgnQuoteRecord, 'provider' | 'providerQuoteId' | 'sourceAmount' | 'destinationAmount' | 'rate' | 'feeAmount' | 'metadata'>;
   }
 
@@ -132,7 +138,7 @@ export class PajNgnProvider implements NgnProviderAdapter {
         fiatAmount: Number(quote.sourceAmount),
         currency: env.PAJ_RAMP_DEFAULT_CURRENCY || 'NGN',
         recipient,
-        mint: pajMint(),
+        mint: mintForQuote(quote),
         chain: pajChain(),
         webhookURL: pajWebhookUrl(),
         businessUSDCFee: pajFee()
@@ -162,7 +168,7 @@ export class PajNgnProvider implements NgnProviderAdapter {
         accountNumber,
         currency: env.PAJ_RAMP_DEFAULT_CURRENCY || 'NGN',
         amount: Number(quote.sourceAmount),
-        mint: pajMint(),
+        mint: mintForQuote(quote),
         chain: pajChain(),
         description: 'Sivan NGN payout',
         webhookURL: pajWebhookUrl(),

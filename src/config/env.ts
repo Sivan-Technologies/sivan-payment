@@ -91,6 +91,7 @@ const envSchema = z.object({
   PAJ_RAMP_DEFAULT_CURRENCY: z.string().default('NGN'),
   PAJ_RAMP_DEFAULT_CHAIN: z.enum(['SOLANA', 'MONAD']).default('SOLANA'),
   PAJ_RAMP_USDC_MINT: z.string().optional().default(''),
+  PAJ_RAMP_USDT_MINT: z.string().optional().default(''),
   PAJ_RAMP_BUSINESS_USDC_FEE: z.string().default('0'),
   PAJ_RAMP_REQUIRE_SIVAN_KYC: booleanFromEnv.default(true),
   PAJ_RAMP_SESSION_MODE: z.enum(['merchant', 'user_otp']).default('merchant'),
