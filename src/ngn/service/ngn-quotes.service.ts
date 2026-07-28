@@ -4,9 +4,10 @@ import { getCustomerByUserId } from '../../customers/customers.service.js';
 import { badRequest, forbidden, notFound } from '../../shared/errors.js';
 import { id, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
+import { env } from '../../config/env.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
 import { getNgnControls } from './ngn-controls.service.js';
-import type { NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
+import type { NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
 
 export const createNgnQuoteSchema = z.object({
   userId: z.string().min(1),
@@ -15,6 +16,15 @@ export const createNgnQuoteSchema = z.object({
   destinationCurrency: z.enum(['ngn', 'usdc', 'usdt']),
   sourceAmount: z.string().min(1)
 });
+
+
+function requireSivanVerifiedForProvider(customer: any, providerName: NgnProviderName) {
+  if (providerName !== 'paj' || !env.PAJ_RAMP_REQUIRE_SIVAN_KYC) return;
+  if (!customer) throw forbidden('Complete verification before using NGN transfers.');
+  if (customer.provider !== 'bridge' || customer.kycStatus !== 'kyc_approved' || customer.tosStatus !== 'approved') {
+    throw forbidden('Complete verification before using NGN transfers.');
+  }
+}
 
 function validateCurrencyPair(input: NgnQuoteInput) {
   if (input.direction === 'onramp' && (input.sourceCurrency !== 'ngn' || !['usdc', 'usdt'].includes(input.destinationCurrency))) throw badRequest('NGN on-ramp must quote NGN to USDC/USDT.');
@@ -31,6 +41,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   if (Number(input.sourceAmount) > Number(controls.maxTransactionNgn) && input.sourceCurrency === 'ngn') throw forbidden('NGN amount exceeds current transaction limit.');
   const customer = await getCustomerByUserId(input.userId);
   if (customer.kycStatus !== 'kyc_approved') throw forbidden('KYC must be approved before NGN transactions.');
+  requireSivanVerifiedForProvider(customer, controls.activeProvider);
   const provider = getNgnProvider(controls.activeProvider);
   const quote = await provider.createQuote({ ...input, customerId: customer.id });
   const now = nowIso();
