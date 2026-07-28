@@ -170,3 +170,44 @@ Bridge programmatic transfer path to PAJ deposit address is confirmed
 Admin controls/manual review policy is confirmed
 Small live test transaction succeeds
 ```
+
+## Staging preflight result
+
+Use:
+
+```bash
+npm run paj:staging-smoke
+```
+
+Current staging findings with the provided PAJ key:
+
+```txt
+GET /pub/rate -> works
+GET /pub/bank with Authorization: Bearer <apiKey> -> works
+POST /pub/offramp with Authorization: Bearer <apiKey> and invalid body -> 401 Session is invalid or expired
+GET /token/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v?chain=SOLANA -> 400 token metadata lookup failed
+```
+
+Meaning:
+
+```txt
+The API key can read public/auth utility data like banks.
+The API key is not accepted as an order Bearer token on staging.
+Order endpoints currently require a PAJ session token, or PAJ must issue a separate merchant/server token.
+```
+
+Do not run live order creation until PAJ confirms one of:
+
+```txt
+PAJ_RAMP_MERCHANT_TOKEN for server-to-server order creation
+or
+required user OTP session flow for Sivan users
+```
+
+The SDK examples identify Solana USDC as:
+
+```txt
+EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+```
+
+However, PAJ staging token metadata currently rejects the token-info lookup, so PAJ should confirm whether this endpoint is broken in staging or whether they require a different token identifier for order creation.
