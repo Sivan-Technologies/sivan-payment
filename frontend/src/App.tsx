@@ -69,7 +69,7 @@ export default function App() {
   const activeStep = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank' : 'Ready to withdraw';
   const nextStepView: ViewKey = !hasUser ? 'signup' : !isVerified ? 'kyc' : !hasBank ? 'banks' : 'withdraw';
   const nextStepLabel = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank account' : 'Withdraw stablecoins';
-  const environmentLabel = appEnv === 'test' ? '⚠ Test environment — no real money moves' : isLiveEnv ? '● Live' : 'Local environment';
+  const environmentLabel = appEnv === 'test' ? '⚠ Test environment: no real money moves' : isLiveEnv ? '● Live' : 'Local environment';
   const goToView = (nextView: ViewKey) => {
     setView(nextView);
     setMobileMenuOpen(false);
@@ -843,7 +843,7 @@ export default function App() {
     } catch (error) {
       if (isRetryableNetworkError(error)) {
         await loadUserData();
-        notify('Network changed while creating the order. I refreshed your latest buy orders — check payment instructions below.', 'error');
+        notify('Network changed while creating the order. I refreshed your latest buy orders: check payment instructions below.', 'error');
       } else {
         notify((error as Error).message, 'error');
       }
@@ -1214,7 +1214,7 @@ export default function App() {
               <span className="orb" />
               <div className="auth-showcase-badge">Sivan Payments</div>
               <h3>Move money with a safer, cleaner payment account.</h3>
-              <p>Buy stablecoins, sell to bank, receive virtual-account deposits, and use Transfer & Pay — all after secure verification.</p>
+              <p>Buy stablecoins, sell to bank, receive virtual-account deposits, and use Transfer & Pay, all after secure verification.</p>
               <div className="auth-flow-preview">
                 <div><span>1</span><strong>Email access</strong><small>One-time secure code</small></div>
                 <div><span>2</span><strong>Verify once</strong><small>Unlock payments</small></div>

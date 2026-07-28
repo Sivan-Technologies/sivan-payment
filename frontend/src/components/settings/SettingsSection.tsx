@@ -228,7 +228,7 @@ function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatus
       <div className={`security-setting-row connected ${securityAlerts ? 'enabled' : ''}`}><span>◈</span><div><strong>Security alerts</strong><small>Receive notices about verification, account changes, risk events, support escalations, and important account safety updates.</small><em>{securityAlerts ? 'Enabled' : 'Disabled'}</em></div><label className="switch-toggle connected"><input type="checkbox" checked={securityAlerts} disabled={loading} onChange={(event) => void onUpdate({ securityAlerts: event.target.checked })} /><i /></label></div>
       <div className="security-setting-row"><span>◷</span><div><strong>Active session</strong><small>Current browser session active. Sign out if this is not your device.</small><em>Current device</em></div><button type="button" className="secondary-btn small" onClick={onLogout}>Sign out</button></div>
     </div>
-    <div className="notification-settings-foot"><strong>Connected</strong><span>2FA recovery questions are a support verification factor — not an automatic 2FA bypass.</span></div>
+    <div className="notification-settings-foot"><strong>Connected</strong><span>2FA recovery questions are a support verification factor, not an automatic 2FA bypass.</span></div>
   </div>;
 }
 

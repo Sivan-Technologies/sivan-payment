@@ -320,7 +320,7 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
       {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
-          <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1 — Verified' : 'Level 0 — Starter'}</Badge></div>
+          <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1: Verified' : 'Level 0: Starter'}</Badge></div>
           <div className="setup-progress big"><div><span style={{ width: `${pct}%` }} /></div></div>
           <div className="level-grid"><div className="active"><strong>Step 1</strong><span>Email confirmed</span></div><div className={identityDone ? 'active' : ''}><strong>Step 2</strong><span>Identity verified</span></div><div className={hasBank ? 'active' : ''}><strong>Step 3</strong><span>Payout ready</span></div></div>
           <div className="verification-steps-list">

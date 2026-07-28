@@ -106,7 +106,7 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
     } catch (error) {
       const raw = error instanceof Error ? error.message : 'Sivan Assistant could not respond right now.';
       const friendly = /signal is aborted|aborted without reason|timed out|taking longer/i.test(raw)
-        ? 'Sivan Assistant is taking longer than expected. No problem — create a support ticket and Sivan Support will review this.'
+        ? 'Sivan Assistant is taking longer than expected. No problem: create a support ticket and Sivan Support will review this.'
         : raw;
       setChatError('');
       addSystemMessage(friendly);
@@ -167,7 +167,7 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
   function quickPrompt(kind: 'transaction' | 'verification' | 'virtual_account' | 'recovery' | 'human') {
     openAssistant();
     if (kind === 'human') {
-      addSystemMessage('No problem — create a support ticket and Sivan Support will review this. The assistant will not move funds or change your account.');
+      addSystemMessage('No problem: create a support ticket and Sivan Support will review this. The assistant will not move funds or change your account.');
       setChatContext({ resourceType: 'general', ticketType: 'other', subject: 'Customer requested human support' });
       return;
     }
