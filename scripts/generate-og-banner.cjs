@@ -1,6 +1,5 @@
 const sharp = require('/Users/user/Documents/Project X/Sivan/sivan-admin-hub/node_modules/sharp');
 const fs = require('fs');
-const path = require('path');
 
 const iconPath = '/Users/user/Documents/Project X/Sivan/sivan-payment/frontend/public/icon.png';
 const iconBase64 = fs.readFileSync(iconPath).toString('base64');
@@ -56,53 +55,74 @@ const svg = `
   <text x="226" y="174" font-family="Inter, -apple-system, sans-serif" font-size="48" font-weight="800" fill="#ffffff" letter-spacing="-1">Sivan Dashboard</text>
 
   <!-- Subtitle Text - EXACT 2 LINES -->
-  <text font-family="Inter, -apple-system, sans-serif" font-size="25" font-weight="500" fill="#94a3b8" letter-spacing="-0.2">
-    <tspan x="120" y="252">Payments, stablecoins, &amp; virtual accounts</tspan>
-    <tspan x="120" y="292">with instant global transfers.</tspan>
+  <text font-family="Inter, -apple-system, sans-serif" font-size="24" font-weight="500" fill="#94a3b8" letter-spacing="-0.2">
+    <tspan x="120" y="250">Payments, stablecoins, &amp; virtual accounts</tspan>
+    <tspan x="120" y="288">with instant global transfers.</tspan>
   </text>
 
   <!-- Action Pill Buttons (2x2 Grid) -->
   <!-- Row 1 -->
-  <g transform="translate(120, 360)">
+  <g transform="translate(120, 355)">
     <rect width="215" height="52" rx="26" fill="#0d1522" stroke="#10b981" stroke-width="1.5"/>
     <text x="107" y="32" font-family="Inter, -apple-system, sans-serif" font-size="18" font-weight="600" fill="#ffffff" text-anchor="middle">Buy stablecoins</text>
   </g>
-  <g transform="translate(350, 360)">
+  <g transform="translate(350, 355)">
     <rect width="175" height="52" rx="26" fill="#0d1522" stroke="#10b981" stroke-width="1.5"/>
     <text x="87" y="32" font-family="Inter, -apple-system, sans-serif" font-size="18" font-weight="600" fill="#ffffff" text-anchor="middle">Sell crypto</text>
   </g>
 
   <!-- Row 2 -->
-  <g transform="translate(120, 428)">
+  <g transform="translate(120, 423)">
     <rect width="195" height="52" rx="26" fill="#0d1522" stroke="#10b981" stroke-width="1.5"/>
     <text x="97" y="32" font-family="Inter, -apple-system, sans-serif" font-size="18" font-weight="600" fill="#ffffff" text-anchor="middle">Transfer &amp; pay</text>
   </g>
-  <g transform="translate(330, 428)">
+  <g transform="translate(330, 423)">
     <rect width="215" height="52" rx="26" fill="#0d1522" stroke="#10b981" stroke-width="1.5"/>
     <text x="107" y="32" font-family="Inter, -apple-system, sans-serif" font-size="18" font-weight="600" fill="#ffffff" text-anchor="middle">Virtual accounts</text>
   </g>
 
-  <!-- Right Side Sleek Dashboard UI Graphic -->
-  <g transform="translate(680, 210)" opacity="0.5">
-    <rect width="400" height="310" rx="20" fill="#0d1522" stroke="#1e293b" stroke-width="1.5"/>
-    <!-- Search Bar -->
-    <rect x="25" y="25" width="350" height="36" rx="10" fill="#131c2e" stroke="#1e293b" stroke-width="1"/>
-    <!-- List Items -->
-    <rect x="25" y="80" width="350" height="42" rx="10" fill="#131c2e"/>
-    <rect x="25" y="132" width="350" height="42" rx="10" fill="#131c2e"/>
-    <rect x="25" y="184" width="350" height="42" rx="10" fill="#131c2e"/>
-    <rect x="25" y="236" width="350" height="42" rx="10" fill="#131c2e"/>
+  <!-- Right Side: Sleek Global Infrastructure Card -->
+  <g transform="translate(630, 195)">
+    <rect width="460" height="330" rx="20" fill="#0d1522" stroke="#1e293b" stroke-width="1.5"/>
     
-    <!-- Accent indicators -->
-    <rect x="40" y="93" width="16" height="16" rx="8" fill="#10b981"/>
-    <rect x="40" y="145" width="16" height="16" rx="8" fill="#00e5ff"/>
-    <rect x="40" y="197" width="16" height="16" rx="8" fill="#10b981"/>
-    <rect x="40" y="249" width="16" height="16" rx="8" fill="#00e5ff"/>
-    
-    <rect x="70" y="96" width="120" height="10" rx="5" fill="#334155"/>
-    <rect x="70" y="148" width="140" height="10" rx="5" fill="#334155"/>
-    <rect x="70" y="200" width="100" height="10" rx="5" fill="#334155"/>
-    <rect x="70" y="252" width="130" height="10" rx="5" fill="#334155"/>
+    <!-- Card Header Badge -->
+    <g transform="translate(24, 22)">
+      <rect width="230" height="32" rx="8" fill="#131c2e" stroke="#10b981" stroke-width="1" stroke-opacity="0.4"/>
+      <circle cx="16" cy="16" r="4" fill="#10b981"/>
+      <text x="28" y="21" font-family="Inter, -apple-system, sans-serif" font-size="12" font-weight="700" fill="#10b981" letter-spacing="1.2">GLOBAL INFRASTRUCTURE</text>
+    </g>
+
+    <!-- Item 1: USD -->
+    <g transform="translate(24, 72)">
+      <rect width="412" height="52" rx="12" fill="#131c2e" stroke="#1e293b" stroke-width="1"/>
+      <rect x="12" y="10" width="52" height="32" rx="6" fill="#1e293b"/>
+      <text x="38" y="31" font-family="Inter, -apple-system, sans-serif" font-size="14" font-weight="800" fill="#60a5fa" text-anchor="middle">USD</text>
+      <text x="78" y="31" font-family="Inter, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#ffffff">Virtual Accounts (ACH / Wire)</text>
+    </g>
+
+    <!-- Item 2: GBP -->
+    <g transform="translate(24, 134)">
+      <rect width="412" height="52" rx="12" fill="#131c2e" stroke="#1e293b" stroke-width="1"/>
+      <rect x="12" y="10" width="52" height="32" rx="6" fill="#1e293b"/>
+      <text x="38" y="31" font-family="Inter, -apple-system, sans-serif" font-size="14" font-weight="800" fill="#a78bfa" text-anchor="middle">GBP</text>
+      <text x="78" y="31" font-family="Inter, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#ffffff">Faster Payments</text>
+    </g>
+
+    <!-- Item 3: NGN -->
+    <g transform="translate(24, 196)">
+      <rect width="412" height="52" rx="12" fill="#131c2e" stroke="#1e293b" stroke-width="1"/>
+      <rect x="12" y="10" width="52" height="32" rx="6" fill="#1e293b"/>
+      <text x="38" y="31" font-family="Inter, -apple-system, sans-serif" font-size="14" font-weight="800" fill="#34d399" text-anchor="middle">NGN</text>
+      <text x="78" y="31" font-family="Inter, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#ffffff">Direct Instant Payouts</text>
+    </g>
+
+    <!-- Item 4: USDC -->
+    <g transform="translate(24, 258)">
+      <rect width="412" height="52" rx="12" fill="#131c2e" stroke="#1e293b" stroke-width="1"/>
+      <rect x="12" y="10" width="52" height="32" rx="6" fill="#1e293b"/>
+      <text x="38" y="31" font-family="Inter, -apple-system, sans-serif" font-size="14" font-weight="800" fill="#38bdf8" text-anchor="middle">USDC</text>
+      <text x="78" y="31" font-family="Inter, -apple-system, sans-serif" font-size="15" font-weight="600" fill="#ffffff">Instant Settlement</text>
+    </g>
   </g>
 </svg>
 `;
@@ -111,7 +131,7 @@ sharp(Buffer.from(svg))
   .png({ quality: 100 })
   .toFile('/Users/user/Documents/Project X/Sivan/sivan-payment/frontend/public/og-sivan-dashboard.png')
   .then(() => {
-    console.log('Successfully generated og-sivan-dashboard.png with official icon.png logo!');
+    console.log('Successfully generated Global Infrastructure og-sivan-dashboard.png!');
   })
   .catch(err => {
     console.error('Error generating image:', err);
