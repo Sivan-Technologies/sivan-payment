@@ -110,6 +110,8 @@ services:
         value: SOLANA
       - key: PAJ_RAMP_USDC_MINT
         sync: false
+      - key: PAJ_RAMP_USDT_MINT
+        sync: false
       - key: PAJ_RAMP_BUSINESS_USDC_FEE
         value: "0"
       - key: PAJ_RAMP_REQUIRE_SIVAN_KYC
@@ -249,6 +251,8 @@ services:
       - key: PAJ_RAMP_DEFAULT_CHAIN
         value: SOLANA
       - key: PAJ_RAMP_USDC_MINT
+        sync: false
+      - key: PAJ_RAMP_USDT_MINT
         sync: false
       - key: PAJ_RAMP_BUSINESS_USDC_FEE
         value: "0"
