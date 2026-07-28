@@ -1,8 +1,13 @@
 const sharp = require('/Users/user/Documents/Project X/Sivan/sivan-admin-hub/node_modules/sharp');
 const fs = require('fs');
+const path = require('path');
+
+const iconPath = '/Users/user/Documents/Project X/Sivan/sivan-payment/frontend/public/icon.png';
+const iconBase64 = fs.readFileSync(iconPath).toString('base64');
+const iconDataUri = `data:image/png;base64,${iconBase64}`;
 
 const svg = `
-<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#07090d"/>
@@ -17,10 +22,6 @@ const svg = `
     <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#0a0e17" stop-opacity="0.85"/>
       <stop offset="100%" stop-color="#06090e" stop-opacity="0.95"/>
-    </linearGradient>
-    <linearGradient id="sivanLogoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00e5ff"/>
-      <stop offset="100%" stop-color="#0066ff"/>
     </linearGradient>
     <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
       <feGaussianBlur stdDeviation="20" result="blur" />
@@ -47,17 +48,14 @@ const svg = `
     <text x="120" y="27" font-family="Inter, -apple-system, sans-serif" font-size="16" font-weight="600" fill="#10b981" text-anchor="middle">app.sivantech.online</text>
   </g>
 
-  <!-- Sivan Icon Logo -->
-  <g transform="translate(120, 100)">
-    <rect width="84" height="84" rx="22" fill="url(#sivanLogoGrad)"/>
-    <path d="M 58 24 C 42 20, 26 28, 26 42 C 26 58, 58 52, 58 66 C 58 76, 42 80, 26 74" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round"/>
-  </g>
+  <!-- OFFICIAL SIVAN LOGO ICON -->
+  <image href="${iconDataUri}" x="120" y="98" width="86" height="86" />
 
   <!-- SIVAN Brand Label & Dashboard Title -->
-  <text x="224" y="128" font-family="Inter, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#10b981" letter-spacing="3">SIVAN</text>
-  <text x="224" y="176" font-family="Inter, -apple-system, sans-serif" font-size="48" font-weight="800" fill="#ffffff" letter-spacing="-1">Sivan Dashboard</text>
+  <text x="226" y="126" font-family="Inter, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#10b981" letter-spacing="3">SIVAN</text>
+  <text x="226" y="174" font-family="Inter, -apple-system, sans-serif" font-size="48" font-weight="800" fill="#ffffff" letter-spacing="-1">Sivan Dashboard</text>
 
-  <!-- Subtitle Text - EXACT 2 LINES FIT TO PERFECT FONT SIZE AS SPECIFIED BY USER -->
+  <!-- Subtitle Text - EXACT 2 LINES -->
   <text font-family="Inter, -apple-system, sans-serif" font-size="25" font-weight="500" fill="#94a3b8" letter-spacing="-0.2">
     <tspan x="120" y="252">Payments, stablecoins, &amp; virtual accounts</tspan>
     <tspan x="120" y="292">with instant global transfers.</tspan>
@@ -113,7 +111,7 @@ sharp(Buffer.from(svg))
   .png({ quality: 100 })
   .toFile('/Users/user/Documents/Project X/Sivan/sivan-payment/frontend/public/og-sivan-dashboard.png')
   .then(() => {
-    console.log('Successfully generated pixel-perfect og-sivan-dashboard.png via CJS sharp!');
+    console.log('Successfully generated og-sivan-dashboard.png with official icon.png logo!');
   })
   .catch(err => {
     console.error('Error generating image:', err);
