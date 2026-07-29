@@ -4,6 +4,7 @@ import type { CustomerRecord, AssetControl, NetworkControl, OfframpControls, Pay
 export const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'overview', icon: '▦', label: 'Dashboard' },
   { key: 'buy', icon: '↙', label: 'Buy stablecoins' },
+  { key: 'receive', icon: '↓', label: 'Receive' },
   { key: 'transfer', icon: '⇆', label: 'Send & transfer' },
   { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
   { key: 'history', icon: '◷', label: 'Transactions' },
@@ -26,6 +27,7 @@ export const pathByView: Record<ViewKey, string> = {
   overview: '/dashboard',
   withdraw: '/withdraw',
   buy: '/buy',
+  receive: '/receive',
   transfer: '/transfer',
   history: '/withdrawals',
   banks: '/bank-accounts',
@@ -43,6 +45,7 @@ export function viewFromPath(pathname: string): ViewKey {
   if (clean === '/withdraw' || clean === '/app/sell') return 'withdraw';
   if (clean === '/transfer' || clean === '/send' || clean === '/app/transfer') return 'transfer';
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
+  if (clean === '/receive' || clean === '/deposit' || clean === '/app/receive') return 'receive';
   if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
   if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
   if (clean === '/virtual-account' || clean === '/virtual-accounts' || clean === '/receiving-accounts' || clean === '/app/virtual-account') return 'virtualAccounts';

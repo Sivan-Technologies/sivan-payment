@@ -1,6 +1,7 @@
 import { env } from '../../config/env.js';
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { idempotencyKey } from '../../shared/id.js';
+import { resolveSettlementWalletId } from '../../wallets/user-wallet.service.js';
 import { getVirtualAccountProviderSettings } from '../service/virtual-account-provider-settings.service.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountStatus } from '../types/virtual-account.types.js';
 import type { VirtualAccountProvider } from './virtual-account-provider.js';
@@ -23,22 +24,35 @@ function sourceCurrency(raw: any, fallback: VirtualAccountCurrency): VirtualAcco
   return fallback;
 }
 
-async function destinationPayload() {
+/**
+ * Where a virtual account's converted stablecoin is delivered.
+ *
+ * Per Bridge's documented pattern this must be THAT customer's own wallet:
+ *
+ *   POST /customers/{id}/virtual_accounts
+ *        destination.bridge_wallet_id = that customer's wallet
+ *
+ * Previously this returned a single pooled Sivan wallet for every user, which
+ * made Sivan the custodian of user funds and moved ownership tracking into
+ * Sivan's database. Bridge ToS 2.1(m) prohibits holding funds on behalf of
+ * users, so settlement is now per customer and Bridge stays the custodian.
+ *
+ * `userWalletId` is required. There is intentionally no pooled fallback: a
+ * misconfiguration must fail loudly rather than silently route a user's money
+ * into a shared treasury wallet.
+ */
+async function destinationPayload(userWalletId: string) {
   const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
-  const destination: Record<string, string> = {
-    currency: settings.defaultSettlementAsset,
-    payment_rail: settings.defaultSettlementNetwork,
-  };
 
-  if (settings.bridgeWalletId) {
-    destination.bridge_wallet_id = settings.bridgeWalletId;
-  } else if (settings.destinationAddress) {
-    destination.address = settings.destinationAddress;
-  } else {
-    throw new Error('Bridge virtual account destination is not configured. Set Bridge wallet ID or destination address in Virtual Account Settlement controls.');
+  if (!userWalletId) {
+    throw new Error('Virtual account settlement requires the customer\'s own Bridge wallet id.');
   }
 
-  return destination;
+  return {
+    currency: settings.defaultSettlementAsset,
+    payment_rail: settings.defaultSettlementNetwork,
+    bridge_wallet_id: userWalletId,
+  } as Record<string, string>;
 }
 
 export function mapBridgeVirtualAccount(raw: any, fallbackCurrency: VirtualAccountCurrency): ProviderVirtualAccount {
@@ -77,6 +91,11 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
       throw new Error('Bridge virtual account creation requires providerCustomerId from the approved Bridge customer.');
     }
 
+    // Ensure this customer has their own wallet, then settle into it.
+    // ensureUserWallet is idempotent, so re-requesting a virtual account does
+    // not create a second wallet.
+    const userWalletId = await resolveSettlementWalletId(input.userId);
+
     const raw: any = await this.client.request(`/customers/${input.providerCustomerId}/virtual_accounts`, {
       method: 'POST',
       idempotencyKey: idempotencyKey(`bridge-va-${input.userId}-${input.currency}`),
@@ -85,7 +104,7 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
         source: {
           currency: input.currency,
         },
-        destination: await destinationPayload(),
+        destination: await destinationPayload(userWalletId),
       },
     });
 

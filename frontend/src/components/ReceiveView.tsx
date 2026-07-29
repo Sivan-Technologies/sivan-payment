@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { AssetControl, NetworkControl } from '../types';
+import type { AssetControl, NetworkControl, UserWalletRecord } from '../types';
 
 /**
  * Receive (deposit) screen.
@@ -21,14 +21,8 @@ import type { AssetControl, NetworkControl } from '../types';
 export type ReceiveChain = 'solana' | 'base' | 'ethereum';
 export type ReceiveAsset = 'usdc' | 'usdt';
 
-export interface WalletRecord {
-  id: string;
-  chain: ReceiveChain;
-  address: string;
-  status: 'provisioning' | 'active' | 'suspended' | 'closed' | 'failed';
-  custodyModel: 'custodial' | 'non_custodial';
-  balances?: Array<{ asset: ReceiveAsset; chain: ReceiveChain; amount: string }>;
-}
+/** Re-exported so callers do not need to know the record shape. */
+export type WalletRecord = UserWalletRecord;
 
 /**
  * Mirrors CHAIN_ASSET_SUPPORT in
@@ -179,7 +173,11 @@ export function ReceiveView({
   const meta = CHAIN_META[activeChain];
   const wallet = wallets.find((w) => w.chain === activeChain && w.status !== 'closed');
 
-  const assetsOnChain = CHAIN_ASSETS[activeChain].filter((asset) =>
+  // The server returns acceptedAssets per wallet and is authoritative. Fall
+  // back to the local matrix before a wallet exists so the warning copy is
+  // still correct on the pre-generation screen.
+  const chainAssets = wallet?.acceptedAssets ?? CHAIN_ASSETS[activeChain];
+  const assetsOnChain = chainAssets.filter((asset) =>
     enabledAssets.some((a) => a.asset === asset && a.enabled)
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
@@ -187,7 +185,7 @@ export function ReceiveView({
   // Assets enabled globally but unavailable on this specific chain. Naming
   // them prevents the "why can't I see USDT?" support ticket.
   const unavailableHere = enabledAssets
-    .filter((a) => a.enabled && !CHAIN_ASSETS[activeChain].includes(a.asset))
+    .filter((a) => a.enabled && !chainAssets.includes(a.asset))
     .map((a) => a.asset.toUpperCase());
 
   function copyAddress() {
@@ -341,7 +339,7 @@ export function ReceiveView({
                 <Fact label="Arrival" value={meta.confirmations} />
                 <Fact
                   label="Custody"
-                  value={wallet.custodyModel === 'custodial' ? 'Held by our partner' : 'You control it'}
+                  value={wallet.custodial ? 'Held by our licensed partner' : 'You control it'}
                 />
               </div>
 

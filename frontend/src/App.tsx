@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
+import type { UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
+import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
@@ -30,6 +31,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
+  const [userWallets, setUserWallets] = useState<UserWalletRecord[]>([]);
   const [virtualAccountRequests, setVirtualAccountRequests] = useState<VirtualAccountRequestRecord[]>([]);
   const [virtualAccounts, setVirtualAccounts] = useState<VirtualAccountRecord[]>([]);
   const [virtualAccountTransactions, setVirtualAccountTransactions] = useState<VirtualAccountTransactionRecord[]>([]);
@@ -357,11 +359,32 @@ export default function App() {
     if (fee) setFeePolicy(fee);
   }, [api]);
 
+  /**
+   * Fetch the caller's wallets. Failures are swallowed because a missing
+   * wallet list must not break the page: the Receive screen renders a
+   * "generate address" state instead.
+   */
+  const loadUserWallets = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const wallets = await api<UserWalletRecord[]>(`/api/users/${user.id}/wallets`);
+      setUserWallets(Array.isArray(wallets) ? wallets : []);
+    } catch {
+      setUserWallets([]);
+    }
+  }, [api, user?.id]);
+
   useEffect(() => {
     void loadFee();
     void loadControls();
     void loadUserData();
   }, [loadFee, loadControls, loadUserData]);
+
+  // Wallets are fetched separately from loadUserData because they depend on an
+  // authenticated user and must refresh when that user changes.
+  useEffect(() => {
+    void loadUserWallets();
+  }, [loadUserWallets]);
 
   useEffect(() => {
     const onPopState = () => setView(viewFromPath(window.location.pathname));
@@ -809,6 +832,28 @@ export default function App() {
     }
   }
 
+
+  /**
+   * Create the user's wallet for a chain. Idempotent server-side, so a double
+   * click cannot produce two addresses.
+   */
+  async function handleCreateWallet(chain: 'solana' | 'base' | 'ethereum') {
+    if (!user?.id) return;
+    setLoading(true);
+    try {
+      const wallet = await api<UserWalletRecord>(`/api/users/${user.id}/wallets`, {
+        method: 'POST',
+        body: JSON.stringify({ chain })
+      });
+      setUserWallets((current) => [...current.filter((w) => w.id !== wallet.id), wallet]);
+      notify('Deposit address ready.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleOnramp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
@@ -1249,6 +1294,7 @@ export default function App() {
           />
         )}
 
+        {view === 'receive' && <ReceiveView wallets={userWallets} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={loadUserWallets} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 

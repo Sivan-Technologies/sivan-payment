@@ -4,6 +4,7 @@ import { usersRoutes } from '../users/users.routes.js';
 import { customersRoutes } from '../customers/customers.routes.js';
 import { externalAccountsRoutes } from '../offramp/api/external-accounts.routes.js';
 import { liquidationAddressesRoutes } from '../offramp/api/liquidation-addresses.routes.js';
+import { walletRoutes } from '../wallets/wallet.routes.js';
 import { withdrawalsRoutes } from '../offramp/api/withdrawals.routes.js';
 import { webhooksRoutes } from '../webhooks/webhooks.routes.js';
 import { feesRoutes } from '../offramp/api/fees.routes.js';
@@ -34,6 +35,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await customersRoutes(app);
   await externalAccountsRoutes(app);
   await liquidationAddressesRoutes(app);
+  await walletRoutes(app);
   await withdrawalsRoutes(app);
   await onrampOrdersRoutes(app);
   await feesRoutes(app);

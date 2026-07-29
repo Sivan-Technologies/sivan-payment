@@ -250,6 +250,48 @@ export interface CustomerRecord {
   updatedAt: string;
 }
 
+/**
+ * A Bridge wallet belonging to ONE customer.
+ *
+ * Per Bridge's documented pattern, each customer gets their own wallet and
+ * their virtual account settles into it:
+ *
+ *   POST /customers/{id}/wallets              -> wallet for that customer
+ *   POST /customers/{id}/virtual_accounts
+ *        destination.bridge_wallet_id = that customer's wallet
+ *
+ * This matters beyond tidiness. If every user's virtual account settled into
+ * one pooled Sivan wallet, Sivan would be holding user funds on its own books
+ * and tracking ownership in its own database - which Bridge ToS 2.1(m)
+ * prohibits. With per-customer wallets Bridge is the custodian and the source
+ * of truth for balances, and Sivan is only an interface.
+ */
+export interface UserWalletRecord {
+  id: string;
+  userId: string;
+  customerId: string;
+  provider: string;
+  /** Bridge wallet id, used as destination.bridge_wallet_id. */
+  providerWalletId: string;
+  chain: WalletChain;
+  /** On-chain address the user can be shown and can deposit to. */
+  address: string;
+  status: 'provisioning' | 'active' | 'suspended' | 'closed' | 'failed';
+  /** True when the provider holds the keys. Drives what the UI may claim. */
+  custodial: boolean;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Solana is the default because it is the only supported chain that carries
+ * BOTH USDC and USDT, and it has the lowest fees. Base cannot hold USDT.
+ */
+export type WalletChain = 'solana' | 'base' | 'ethereum';
+
+export const DEFAULT_WALLET_CHAIN: WalletChain = 'solana';
+
 export interface ExternalAccountRecord {
   id: string;
   userId: string;
@@ -579,6 +621,7 @@ export interface DatabaseShape {
   customers: CustomerRecord[];
   externalAccounts: ExternalAccountRecord[];
   liquidationAddresses: LiquidationAddressRecord[];
+  userWallets: UserWalletRecord[];
   withdrawals: WithdrawalRecord[];
   onrampOrders: OnrampOrderRecord[];
   suppliers: SupplierRecord[];
