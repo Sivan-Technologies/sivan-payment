@@ -55,7 +55,8 @@
     "test:va-reprovision": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-va-reprovision.json APP_ENV=development tsx scripts/test-va-reprovision.ts",
     "va:reprovision-solana": "tsx scripts/reprovision-va-to-solana.ts",
     "test:reprovision-approval": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-reprovision-approval.json APP_ENV=development tsx scripts/test-reprovision-approval.ts",
-    "va:audit": "tsx scripts/audit-virtual-accounts.ts"
+    "va:audit": "tsx scripts/audit-virtual-accounts.ts",
+    "va:fix-live": "tsx scripts/fix-live-virtual-account.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
