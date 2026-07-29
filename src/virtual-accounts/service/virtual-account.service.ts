@@ -184,7 +184,68 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   return { request: approved, account };
 }
 
-export async function reprovisionVirtualAccountRequest(requestId: string, reviewer: string) {
+/**
+ * Raise a maker-checker approval for a reprovision. Does NOT reprovision.
+ *
+ * Reprovisioning is not a refresh. It provisions a brand new virtual account at
+ * the provider, with a new bank account number, and the previous account keeps
+ * accepting deposits because Bridge is never told to deactivate it. Each USD
+ * virtual account also bills $2/month.
+ *
+ * On 2026-07-29 a single approved request accumulated 16 live Bridge accounts
+ * for one user, partly because the admin hub retried a failed POST. Making this
+ * a two-admin action means a stray click, a retry, or a double submit can no
+ * longer mint a real bank account.
+ *
+ * The actual work lives in executeVirtualAccountReprovision, which is only
+ * reachable through the approval flow.
+ */
+export async function requestVirtualAccountReprovision(
+  requestId: string,
+  requestedBy: string,
+  reason?: string
+) {
+  const requests = await db.listVirtualAccountRequests();
+  const request = requests.find((item) => item.id === requestId);
+  if (!request) throw notFound('Virtual account request');
+  if (request.status !== 'approved') {
+    throw badRequest('Only approved virtual account requests can be reprovisioned.');
+  }
+
+  // Surface the cost of the action in the approval itself, so the checker sees
+  // what they are agreeing to rather than a bare resource id.
+  const existingAccounts = await db.listVirtualAccounts();
+  const forThisRequest = existingAccounts.filter((item) => item.requestId === requestId);
+  const stillOpenAtProvider = forThisRequest.filter((item) => item.provider !== 'mock').length;
+
+  const { createApprovalRequest } = await import('../../admin/admin-ops.service.js');
+
+  return createApprovalRequest({
+    action: 'virtual_account.reprovision',
+    resourceType: 'virtual_account_request',
+    resourceId: requestId,
+    reason:
+      reason ||
+      `Reprovision virtual account for request ${requestId}. This creates a NEW account at the provider with a new account number.`,
+    requestedBy,
+    requestedChange: {
+      requestId,
+      userId: request.userId,
+      currency: request.currency,
+      existingAccountsForThisRequest: forThisRequest.length,
+      accountsStillOpenAtProvider: stillOpenAtProvider,
+      warning:
+        'Creates a new provider virtual account with a new bank account number. Previous accounts are marked closed in Sivan but are NOT deactivated at Bridge, so they continue to accept deposits. Each USD virtual account bills $2/month.',
+    },
+    riskLevel: 'high',
+  });
+}
+
+/**
+ * Perform the reprovision. Only called by the approval flow after a second
+ * admin has approved; it is deliberately not exposed on a route.
+ */
+export async function executeVirtualAccountReprovision(requestId: string, reviewer: string) {
   const requests = await db.listVirtualAccountRequests();
   const request = requests.find((item) => item.id === requestId);
   if (!request) throw notFound('Virtual account request');

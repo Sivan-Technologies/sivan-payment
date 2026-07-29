@@ -53,7 +53,9 @@
     "test:mock-wallet-guard": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-mock-wallet-guard.json tsx scripts/test-mock-wallet-guard.ts",
     "test:bridge-wallet-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-bridge-wallet-e2e.json APP_ENV=development tsx scripts/test-bridge-wallet-e2e.ts",
     "test:va-reprovision": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-va-reprovision.json APP_ENV=development tsx scripts/test-va-reprovision.ts",
-    "va:reprovision-solana": "tsx scripts/reprovision-va-to-solana.ts"
+    "va:reprovision-solana": "tsx scripts/reprovision-va-to-solana.ts",
+    "test:reprovision-approval": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-reprovision-approval.json APP_ENV=development tsx scripts/test-reprovision-approval.ts",
+    "va:audit": "tsx scripts/audit-virtual-accounts.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

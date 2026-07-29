@@ -24,7 +24,20 @@ export const riskReviewSchema = z.object({
 });
 
 export const approvalRequestSchema = z.object({
-  action: z.enum(['controls.update', 'system_status.update', 'fee_change.request', 'admin_user_change.request', 'manual_status_change.request', 'refund_recovery.request']),
+  action: z.enum([
+    'controls.update',
+    'system_status.update',
+    'fee_change.request',
+    'admin_user_change.request',
+    'manual_status_change.request',
+    'refund_recovery.request',
+    // Reprovisioning provisions a NEW virtual account at the provider. The old
+    // one keeps accepting deposits (Bridge has no "close" that we call), and a
+    // USD virtual account bills $2/month. On 2026-07-29 a single request ended
+    // up with 16 live Bridge accounts for one user. It is a money-moving action
+    // and now requires a second admin.
+    'virtual_account.reprovision'
+  ]),
   resourceType: z.string().min(1),
   resourceId: z.string().optional(),
   reason: z.string().min(5).max(2000),
@@ -406,6 +419,18 @@ export async function buildExport(type: string) {
 async function applyApprovalChange(request: any, reviewer: string) {
   if (request.action === 'controls.update') return updatePaymentControls(request.requestedChange as any, reviewer);
   if (request.action === 'system_status.update') return updateSystemStatus(request.requestedChange as any, reviewer);
+  if (request.action === 'virtual_account.reprovision') {
+    const requestId = request.resourceId || (request.requestedChange as any)?.requestId;
+    if (!requestId) {
+      throw new Error('virtual_account.reprovision approval is missing the virtual account request id');
+    }
+    // Imported lazily: virtual-account.service imports admin-ops for approval
+    // helpers, so a top-level import here would be circular.
+    const { executeVirtualAccountReprovision } = await import(
+      '../virtual-accounts/service/virtual-account.service.js'
+    );
+    return executeVirtualAccountReprovision(requestId, reviewer);
+  }
   return { queuedOnly: true, message: 'This approval was recorded. The requested action requires manual execution by the relevant ops owner.' };
 }
 

@@ -128,11 +128,60 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
     throw new Error(`Bridge virtual account lookup requires customer context for ${providerAccountId}. Use stored raw provider payload or add customer-scoped lookup when needed.`);
   }
 
-  async suspendVirtualAccount(_providerAccountId: string, _reason: string): Promise<void> {
-    throw new Error('Bridge virtual account suspend is not enabled. Confirm Bridge-supported lifecycle endpoint before enabling.');
+  /**
+   * Deactivate at Bridge so the account stops accepting deposits.
+   *
+   *   POST /customers/{customerID}/virtual_accounts/{virtualAccountID}/deactivate
+   *
+   * Both suspend and close map to the same Bridge call; Bridge has one
+   * deactivate, plus a reactivate to undo it. The distinction is Sivan's, not
+   * theirs.
+   *
+   * Until this existed, marking an account "closed" only changed a row in
+   * Sivan's database. The account stayed live at Bridge, kept accepting
+   * deposits into an address nothing was watching, and kept billing $2/month.
+   *
+   * customerId is required because every Bridge virtual account endpoint is
+   * customer-scoped. It is read from the stored rawProviderPayload by the
+   * caller; without it there is no way to address the account and the call
+   * must fail loudly rather than silently skip the deactivation.
+   */
+  private async deactivate(providerAccountId: string, customerId: string, reason: string): Promise<void> {
+    if (!customerId) {
+      throw new Error(
+        `Cannot deactivate Bridge virtual account ${providerAccountId}: the Bridge customer id is ` +
+        'unknown. Every Bridge virtual account endpoint is scoped to /customers/{customerID}.'
+      );
+    }
+
+    await this.client.request(
+      `/customers/${customerId}/virtual_accounts/${providerAccountId}/deactivate`,
+      {
+        method: 'POST',
+        // Deterministic so a retry cannot be mistaken for a second action.
+        idempotencyKey: `sivan-va-deactivate-${providerAccountId}`,
+      }
+    );
+
+    void reason;
   }
 
-  async closeVirtualAccount(_providerAccountId: string, _reason: string): Promise<void> {
-    throw new Error('Bridge virtual account close is not enabled. Confirm Bridge-supported lifecycle endpoint before enabling.');
+  async suspendVirtualAccount(providerAccountId: string, reason: string, customerId?: string): Promise<void> {
+    await this.deactivate(providerAccountId, customerId ?? '', reason);
+  }
+
+  async closeVirtualAccount(providerAccountId: string, reason: string, customerId?: string): Promise<void> {
+    await this.deactivate(providerAccountId, customerId ?? '', reason);
+  }
+
+  /** Undo a deactivation. Exposed so an accidental close is recoverable. */
+  async reactivateVirtualAccount(providerAccountId: string, customerId: string): Promise<void> {
+    if (!customerId) {
+      throw new Error(`Cannot reactivate Bridge virtual account ${providerAccountId}: customer id is required.`);
+    }
+    await this.client.request(
+      `/customers/${customerId}/virtual_accounts/${providerAccountId}/reactivate`,
+      { method: 'POST', idempotencyKey: `sivan-va-reactivate-${providerAccountId}` }
+    );
   }
 }
