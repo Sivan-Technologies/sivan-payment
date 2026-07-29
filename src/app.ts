@@ -246,6 +246,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/users\/[^/]+\/external-accounts/,
     /^\/api\/users\/[^/]+\/withdrawals/,
     /^\/api\/users\/[^/]+\/deposit-addresses/,
+    /^\/api\/users\/[^/]+\/wallets/,
     /^\/api\/deposit-addresses\//
   ];
   return protectedPatterns.some((pattern) => pattern.test(url));
