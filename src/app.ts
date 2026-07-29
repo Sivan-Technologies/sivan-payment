@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import rawBody from 'fastify-raw-body';
+import crypto from 'node:crypto';
 import { env } from './config/env.js';
 import { registerRoutes } from './api/routes.js';
 import { AppError } from './shared/errors.js';
@@ -11,8 +12,23 @@ import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './s
 import { getAdminPlatformSettings, isPlatformMutationBlocked } from './admin/admin-settings.service.js';
 import { getActiveRestrictionForUser } from './admin/admin-hardening.service.js';
 
+/** Constant-time admin key comparison, length-guarded so it cannot throw. */
+function safeKeyEquals(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 export async function buildApp() {
   const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
+
+  // Refuse to start a production deployment with admin auth disabled, so a
+  // missing env var surfaces as a failed deploy rather than an open admin API.
+  if ((env.APP_ENV === 'production' || env.APP_ENV === 'staging') && !env.ADMIN_API_KEY) {
+    throw new Error(
+      'ADMIN_API_KEY is required in production. Refusing to start with unauthenticated /api/admin routes.'
+    );
+  }
 
   await app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
@@ -122,10 +138,24 @@ export async function buildApp() {
 
   app.addHook('preHandler', async (request, reply) => {
     if (!request.url.startsWith('/api/admin')) return;
-    if (!env.ADMIN_API_KEY) return;
+
+    // FAIL CLOSED. Previously this returned early when ADMIN_API_KEY was unset,
+    // which silently exposed every /api/admin/* route - reads AND writes - to
+    // anonymous callers on any deployment where the variable was missing.
+    // An unconfigured admin key is a misconfiguration, never a reason to skip auth.
+    if (!env.ADMIN_API_KEY) {
+      request.log.error('ADMIN_API_KEY is not configured; refusing all admin requests');
+      return reply.code(503).send({
+        error: {
+          code: 'admin_auth_not_configured',
+          message: 'Admin authentication is not configured on this server. Set ADMIN_API_KEY.',
+        },
+      });
+    }
+
     const providedKey = request.headers['x-admin-api-key'] || request.headers['x-admin-key'];
     const adminKey = Array.isArray(providedKey) ? providedKey[0] : providedKey;
-    if (adminKey !== env.ADMIN_API_KEY) {
+    if (!adminKey || !safeKeyEquals(adminKey, env.ADMIN_API_KEY)) {
       return reply.code(401).send({ error: { code: 'admin_auth_required', message: 'Admin API key is required' } });
     }
 
