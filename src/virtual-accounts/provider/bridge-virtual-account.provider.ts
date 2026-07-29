@@ -100,8 +100,10 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
     // not create a second wallet.
     const userWallet = await ensureUserWallet(input.userId);
 
-    // Bridge fixes developer_fee_percent when the account is created and it
-    // cannot be changed afterwards, so this must be correct on the first call.
+    // Set the fee correctly on the first call. It IS changeable afterwards via
+    // PUT /customers/{id}/virtual_accounts/{vaId} (UpdateVirtualAccount accepts
+    // developer_fee_percent), but every deposit landing before that update is
+    // billed at whatever was set here, and those cannot be reclaimed.
     // Previously it read a hardcoded env default of '0.0', which meant every
     // virtual account was provisioned earning Sivan nothing. It is now an
     // admin-controlled setting alongside the other fees.
