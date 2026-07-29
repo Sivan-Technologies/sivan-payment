@@ -1455,6 +1455,22 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .receive-warning span { color: var(--soft); font-size: 13px; line-height: 1.55; }
 .receive-warning-sub { color: var(--muted) !important; font-size: 12.5px !important; }
 
+/*
+ * Red, unlike .receive-warning: the amber caution says "be careful which
+ * network". This says "this address is not real". It must not read as the
+ * same class of message, so it uses the danger palette and is unmissable
+ * directly above the address itself.
+ */
+.receive-mock-banner {
+  display: grid; gap: 8px; padding: 16px; border-radius: var(--radius);
+  background: rgba(255, 71, 87, .10); border: 1px solid rgba(255, 71, 87, .45);
+  margin-bottom: 16px;
+}
+.receive-mock-banner strong {
+  color: #ff7b86; font-size: 15px; letter-spacing: .2px; text-transform: uppercase;
+}
+.receive-mock-banner span { color: var(--soft); font-size: 13px; line-height: 1.55; }
+
 .receive-ack {
   display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
   padding: 14px; border-radius: var(--radius);

@@ -310,6 +310,17 @@ export function ReceiveView({
             </div>
           ) : (
             <>
+              {wallet.provider === 'mock' && (
+                <div className="receive-mock-banner" role="alert">
+                  <strong>Test address — do not send funds</strong>
+                  <span>
+                    This is a simulated address generated for testing. It is not a real{' '}
+                    {meta.label} account and nobody controls it. Any {assetLabel} sent here
+                    is permanently lost and cannot be recovered by Sivan or anyone else.
+                  </span>
+                </div>
+              )}
+
               <div className="receive-address-wrap">
                 <div className="receive-qr" style={{ borderColor: meta.accent }}>
                   <img src={qrUrl(wallet.address)} alt={`${meta.label} deposit address QR code`} />

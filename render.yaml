@@ -11,6 +11,11 @@ services:
     envVars:
       - key: APP_ENV
         value: staging
+      # Test only. Wallet addresses on this service are simulated and belong to
+      # nobody; the Receive screen shows a red "do not send funds" banner while
+      # this is true. Remove once WALLET_PROVIDER=bridge is approved and live.
+      - key: ALLOW_MOCK_WALLETS
+        value: "true"
       - key: SENTRY_DSN
         sync: false
       - key: SENTRY_ENVIRONMENT

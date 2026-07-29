@@ -494,6 +494,12 @@ export interface UserWalletRecord {
   chain: 'solana' | 'base' | 'ethereum';
   address: string;
   status: 'provisioning' | 'active' | 'suspended' | 'closed' | 'failed';
+  /**
+   * Which vendor issued the address. 'mock' means it is a simulated address
+   * that belongs to nobody: the UI must say so loudly rather than presenting
+   * it as somewhere real money can be sent.
+   */
+  provider?: 'mock' | 'bridge' | 'privy';
   custodial: boolean;
   /** Assets the chain can actually carry. Base cannot hold USDT. */
   acceptedAssets?: Array<'usdc' | 'usdt'>;
