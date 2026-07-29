@@ -12,10 +12,15 @@
 -- Sivan's own database. Bridge ToS 2.1(m) prohibits holding funds on behalf of
 -- users. With per-customer wallets Bridge is custodian and source of truth.
 
+-- Note on the foreign keys: the shared `users` table is keyed on `user_id`,
+-- not `id` (see 000_create_users_table.sql). Every other payments table
+-- references users(user_id) and payments_customers(id); this follows suit.
+-- An earlier draft referenced users(id), which does not exist and would have
+-- failed on apply.
 create table if not exists payments_user_wallets (
   id                    text primary key,
-  user_id               text not null references users(id) on delete cascade,
-  payments_customer_id  text not null,
+  user_id               text not null references users(user_id) on delete cascade,
+  payments_customer_id  text not null references payments_customers(id),
   provider              text not null default 'bridge',
   provider_wallet_id    text not null,
   chain                 text not null,
