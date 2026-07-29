@@ -50,7 +50,8 @@
     "paj:staging-smoke": "tsx scripts/paj-staging-smoke.ts",
     "test:wallet-isolation": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-wallet-isolation.json WALLET_PROVIDER=mock APP_ENV=development BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID=bridge_wallet_SIVAN_POOL_TEST tsx scripts/test-wallet-isolation.ts",
     "test:virtual-account-fee": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-va-fee.json APP_ENV=development tsx scripts/test-virtual-account-fee.ts",
-    "test:mock-wallet-guard": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-mock-wallet-guard.json tsx scripts/test-mock-wallet-guard.ts"
+    "test:mock-wallet-guard": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-mock-wallet-guard.json tsx scripts/test-mock-wallet-guard.ts",
+    "test:bridge-wallet-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-bridge-wallet-e2e.json APP_ENV=development tsx scripts/test-bridge-wallet-e2e.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

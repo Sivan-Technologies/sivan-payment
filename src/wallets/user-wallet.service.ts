@@ -124,16 +124,27 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   if (!wallet) return null;
 
   const provider = getWalletProvider();
-  let balances: Array<{ asset: string; chain: string; amount: string }> = [];
+
+  // undefined means "could not load", [] means "loaded, and it is genuinely
+  // zero". Collapsing the two would show a confirmed $0.00 to a user whose
+  // funds are fine and whose provider is merely unreachable.
+  let balances: Array<{ asset: string; chain: string; amount: string }> | undefined;
+  let balancesUnavailable = false;
   try {
     balances = await provider.getBalances(wallet.providerWalletId, wallet.customerId);
   } catch {
     // A provider outage must not blank the deposit address. The user can still
     // receive funds; only the balance figure is unavailable.
-    balances = [];
+    balances = undefined;
+    balancesUnavailable = true;
   }
 
-  return { ...wallet, balances, acceptedAssets: assetsForChain(wallet.chain) };
+  return {
+    ...wallet,
+    balances,
+    balancesUnavailable,
+    acceptedAssets: assetsForChain(wallet.chain),
+  };
 }
 
 /**

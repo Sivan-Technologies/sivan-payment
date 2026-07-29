@@ -354,9 +354,25 @@ export function ReceiveView({
                 />
               </div>
 
-              {wallet.balances && wallet.balances.length > 0 && (
-                <div className="receive-balances">
-                  <p className="eyebrow">Current balance</p>
+              {/*
+                Three distinct states, deliberately not collapsed into two.
+                Showing "0.00" when the provider is simply unreachable would
+                tell a user with funds that their money is gone.
+              */}
+              <div className="receive-balances">
+                <p className="eyebrow">Current balance</p>
+                {wallet.balancesUnavailable ? (
+                  <p className="muted receive-balance-note">
+                    Balance temporarily unavailable. Your funds are safe and the address above
+                    still works — try refreshing in a moment.
+                  </p>
+                ) : !wallet.balances ? (
+                  <p className="muted receive-balance-note">Loading…</p>
+                ) : wallet.balances.length === 0 ? (
+                  <p className="muted receive-balance-note">
+                    Nothing received yet. Deposits appear here once confirmed on {meta.label}.
+                  </p>
+                ) : (
                   <div className="receive-balance-row">
                     {wallet.balances.map((balance) => (
                       <div className="receive-balance" key={`${balance.asset}-${balance.chain}`}>
@@ -365,8 +381,8 @@ export function ReceiveView({
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </>
           )}
         </article>

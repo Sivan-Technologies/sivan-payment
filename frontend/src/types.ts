@@ -503,7 +503,13 @@ export interface UserWalletRecord {
   custodial: boolean;
   /** Assets the chain can actually carry. Base cannot hold USDT. */
   acceptedAssets?: Array<'usdc' | 'usdt'>;
+  /**
+   * Undefined means the balance could not be loaded. An empty array means it
+   * loaded and is genuinely zero. The UI must not show the first as "0.00".
+   */
   balances?: Array<{ asset: 'usdc' | 'usdt'; chain: string; amount: string }>;
+  /** True when the provider was unreachable, so no balance figure is trustworthy. */
+  balancesUnavailable?: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -367,7 +367,10 @@ export default function App() {
   const loadUserWallets = useCallback(async () => {
     if (!user?.id) return;
     try {
-      const wallets = await api<UserWalletRecord[]>(`/api/users/${user.id}/wallets`);
+      // balances=true costs one upstream call per wallet, because Bridge's
+      // list endpoint does not include balances. Worth it here: the Receive
+      // screen is where the user expects to see what has arrived.
+      const wallets = await api<UserWalletRecord[]>(`/api/users/${user.id}/wallets?balances=true`);
       setUserWallets(Array.isArray(wallets) ? wallets : []);
     } catch {
       setUserWallets([]);

@@ -1519,6 +1519,7 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .receive-balance { display: flex; align-items: baseline; gap: 6px; }
 .receive-balance strong { font-size: 22px; color: var(--text); }
 .receive-balance small { color: var(--muted); font-size: 13px; }
+.receive-balance-note { margin-top: 8px; font-size: 13px; line-height: 1.55; }
 
 .receive-empty { display: grid; gap: 10px; justify-items: start; padding: 8px 0; }
 .receive-empty h3 { margin: 0; }

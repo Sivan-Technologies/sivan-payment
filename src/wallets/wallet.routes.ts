@@ -34,17 +34,41 @@ function assertSelf(request: any, userId: string) {
 }
 
 export async function walletRoutes(app: FastifyInstance) {
-  /** List the caller's wallets, one per chain. */
+  /**
+   * List the caller's wallets, one per chain.
+   *
+   * `?balances=true` reads live balances from the provider. It is opt-in
+   * because Bridge's list endpoint does NOT return balances: each wallet needs
+   * its own GET, so N wallets means N upstream calls. The Receive screen asks
+   * for them; anything that only needs addresses should not pay that cost.
+   */
   app.get('/api/users/:userId/wallets', async (request) => {
     const { userId } = request.params as { userId: string };
     assertSelf(request, userId);
+    const { balances } = request.query as { balances?: string };
     const wallets = await listUserWallets(userId);
-    return {
-      data: wallets.map((wallet) => ({
-        ...wallet,
-        acceptedAssets: assetsForChain(wallet.chain),
-      })),
-    };
+
+    if (String(balances).toLowerCase() !== 'true') {
+      return {
+        data: wallets.map((wallet) => ({
+          ...wallet,
+          acceptedAssets: assetsForChain(wallet.chain),
+        })),
+      };
+    }
+
+    // One slow or failing chain must not blank the others, so these resolve
+    // independently and a failure yields undefined balances rather than an
+    // empty array. Undefined means "not loaded"; [] would render as a
+    // confirmed zero, which is a different and possibly false claim.
+    const withBalances = await Promise.all(
+      wallets.map(async (wallet) => {
+        const detailed = await getUserWalletWithBalances(userId, wallet.chain).catch(() => null);
+        return detailed ?? { ...wallet, acceptedAssets: assetsForChain(wallet.chain) };
+      })
+    );
+
+    return { data: withBalances };
   });
 
   /**

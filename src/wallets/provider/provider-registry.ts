@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { BridgeWalletProvider } from './bridge-wallet.provider.js';
 import { MockWalletProvider } from './mock-wallet.provider.js';
 import type { WalletProvider } from './wallet-provider.js';
 import type { WalletProviderName } from '../types/wallet.types.js';
@@ -61,10 +62,17 @@ export function getWalletProvider(
   }
 
   if (normalized === 'bridge') {
-    throw new Error(
-      'Bridge wallet provider is not implemented yet. Pending Bridge Legal & Compliance approval ' +
-      'of the wallet fund flow and confirmation of per-wallet pricing.'
-    );
+    // Bridge Custodial Wallets require Legal & Compliance sign-off on the fund
+    // flow before production use (apidocs.bridge.xyz/platform/wallets/overview).
+    // The adapter is implemented and tested, but production stays gated behind
+    // an explicit acknowledgement so it cannot be switched on by accident.
+    if (env.APP_ENV === 'production' && String(process.env.BRIDGE_WALLETS_APPROVED || '').toLowerCase() !== 'true') {
+      throw new Error(
+        'Bridge wallets are not approved for production. Bridge Legal & Compliance must approve ' +
+        'the wallet fund flow first; set BRIDGE_WALLETS_APPROVED=true once they have.'
+      );
+    }
+    return new BridgeWalletProvider();
   }
 
   if (normalized === 'privy') {
