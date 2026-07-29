@@ -1,13 +1,16 @@
 import { db } from '../../database/json-database.js';
 import type { Chain } from '../../database/types.js';
 import { badRequest, notFound } from '../../shared/errors.js';
-import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled } from '../../controls/payment-controls.service.js';
+import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled, requireAssetSupportedOnChain } from '../../controls/payment-controls.service.js';
 import type { CreateOnrampOrderInput } from '../types/onramp.schemas.js';
 
 export async function validateOnrampOrderInput(input: CreateOnrampOrderInput) {
   await requireCurrencyEnabled(input.sourceCurrency);
   await requireSourceAssetEnabled(input.destinationCurrency);
   await requireSourceNetworkEnabled(input.destinationChain as Chain);
+  // Reject impossible pairs such as USDT on Base before an order is created
+  // and a deposit address is handed to the customer.
+  await requireAssetSupportedOnChain(input.destinationCurrency, input.destinationChain as Chain);
 
   const data = await db.read();
   const user = data.users.find((item) => item.id === input.userId);

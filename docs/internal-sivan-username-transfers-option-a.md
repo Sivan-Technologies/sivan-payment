@@ -1,14 +1,60 @@
 # Sivan Username Transfers — Option A Internal Ledger Transfer
 
+> ## ⚠️ Addendum — 2026-07-29: reassess before building
+>
+> Two findings materially change this plan. Read this section before Section 1.
+>
+> ### 1. Bridge already provides wallet-to-wallet transfers
+>
+> [Bridge Custodial Wallets](https://apidocs.bridge.xyz/platform/wallets/overview)
+> lists as a key feature:
+>
+> > *"Wallet-to-wallet transfers — instantly move funds between Bridge-hosted wallets."*
+>
+> That is the core primitive this entire document sets out to build. Adopting it
+> would move the atomicity, double-spend and reconciliation burden onto Bridge.
+>
+> | | Option A (this doc) | Bridge wallet-to-wallet |
+> |---|---|---|
+> | Build effort | Ledger + atomicity + reconciliation from scratch | API call |
+> | Double-spend risk | Ours to solve | Bridge's |
+> | Source of truth | Our DB | Bridge |
+> | Custody position | We hold beneficial ownership | Bridge is custodian |
+> | Cost | Free | TBC — ask Bridge |
+> | Lock-in | Low | Higher |
+>
+> **Action:** confirm with Bridge whether user-to-user transfers between two of
+> our KYC-approved customers are permitted, and at what price, before
+> committing to Option A. See `BRIDGE-COMPLIANCE-EMAIL.md`, question 3.
+>
+> ### 2. Precision must be 2 decimal places, not 18
+>
+> Bridge Custodial Wallets *"only process and express amounts in whole U.S.
+> cents"* (2 dp). Any ledger we build to mirror Bridge balances must use
+> `numeric(20,2)` or integer cents. An 18-decimal ledger will accumulate
+> permanent drift against Bridge and produce phantom reconciliation breaks.
+>
+> ### 3. Prerequisite that has not moved
+>
+> Section 11 (Ledger Accounting) and Section 13 (Atomicity) assume a durable
+> balance ledger. As of this addendum, balances are still derived by replaying
+> `auditLogs[]` metadata, with a reproducible double-spend via concurrent
+> `requestBalanceTransfer` calls, and are destroyed by audit-log rotation.
+>
+> **Option A must not ship on the current ledger.** See `LEDGER-VERDICT.md`.
+
 ## Status
 
 ```txt
 Document type: Future production implementation plan
 Implementation status: Not implemented yet
 Target product area: Transfer & Pay
-Recommended first version: Option A — internal Sivan ledger transfer
-External blockchain movement: No immediate blockchain movement
-Provider execution: Not required for first version
+Recommended first version: UNDER REVIEW — Option A internal ledger vs Bridge wallet-to-wallet
+External blockchain movement: No immediate blockchain movement (Option A)
+Provider execution: Not required for Option A; required if Bridge wallet-to-wallet is adopted
+Blocking prerequisite: durable balance ledger with atomic writes (not yet built)
+Open question: Bridge Legal & Compliance approval for user-to-user wallet transfers
+Last reviewed: 2026-07-29
 ```
 
 This document defines how Sivan should implement **Sivan-to-Sivan username transfers** in a production-grade way using the existing settled-USDC balance ledger.
@@ -376,6 +422,26 @@ But v1 should start with:
 ```txt
 USDC only
 ```
+
+### Amount precision — corrected 2026-07-29
+
+Bridge Custodial Wallets express all amounts in **whole U.S. cents (2 decimal
+places)**. If Sivan balances are ever reconciled against Bridge wallet
+balances, the ledger must match that precision:
+
+```sql
+amount numeric(20,2) NOT NULL CHECK (amount > 0)
+```
+
+Do **not** use `numeric(38,18)`. Storing 18 decimals against a 2-decimal
+provider guarantees rounding drift and permanent phantom reconciliation
+breaks. Storing integer cents (`bigint`) is also acceptable and avoids
+floating-point issues entirely.
+
+Chain/asset availability is also not uniform — **USDT is not available on
+Base**. See `CHAIN_ASSET_SUPPORT` in
+`src/controls/payment-controls.service.ts`, which enforces Bridge's supported
+matrix at the API boundary.
 
 ---
 

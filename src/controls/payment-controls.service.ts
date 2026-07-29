@@ -136,6 +136,56 @@ export async function requireSourceAssetEnabled(asset: SourceCurrency) {
   return control;
 }
 
+/**
+ * Which stablecoins actually exist on each chain, per Bridge's supported
+ * chains and tokens matrix:
+ *   https://apidocs.bridge.xyz/platform/wallets/overview#supported-chains-and-tokens
+ *
+ * Asset controls and network controls are configured independently, so without
+ * this check a combination like USDT on Base is selectable in the admin panel
+ * and passes both guards - then fails at Bridge, or worse, a user sends funds
+ * to an address for a token that does not exist on that chain.
+ *
+ * NOTE: USDT is NOT available on Base. Base carries USDB, USDC and EURC only.
+ */
+export const CHAIN_ASSET_SUPPORT: Record<string, SourceCurrency[]> = {
+  base: ['usdc'],
+  ethereum: ['usdc', 'usdt'],
+  solana: ['usdc', 'usdt'],
+  polygon: ['usdc', 'usdt'],
+  arbitrum: ['usdc', 'usdt'],
+  optimism: ['usdc', 'usdt'],
+  avalanche_c_chain: ['usdc', 'usdt'],
+};
+
+export function isAssetSupportedOnChain(asset: SourceCurrency, network: Chain): boolean {
+  const supported = CHAIN_ASSET_SUPPORT[network];
+  // Unknown chain: do not silently allow it.
+  if (!supported) return false;
+  return supported.includes(asset);
+}
+
+/**
+ * Guard the asset/network pair. Call this in addition to the individual
+ * asset and network guards, not instead of them.
+ */
+export async function requireAssetSupportedOnChain(asset: SourceCurrency, network: Chain) {
+  if (!isAssetSupportedOnChain(asset, network)) {
+    const supported = CHAIN_ASSET_SUPPORT[network];
+    const label = network.replace(/_/g, ' ');
+    const alternatives = Object.entries(CHAIN_ASSET_SUPPORT)
+      .filter(([, assets]) => assets.includes(asset))
+      .map(([chain]) => chain.replace(/_/g, ' '))
+      .join(', ');
+    throw badRequest(
+      supported?.length
+        ? `${asset.toUpperCase()} is not available on ${label}. ${label} supports ${supported.map((a) => a.toUpperCase()).join(', ')}.` +
+          (alternatives ? ` Send ${asset.toUpperCase()} on: ${alternatives}.` : '')
+        : `${label} is not a supported deposit network.`
+    );
+  }
+}
+
 export async function requireSourceNetworkEnabled(network: Chain) {
   const controls = await listPaymentControls();
   const control = controls.sourceNetworks.find((item) => item.network === network);
