@@ -1399,3 +1399,110 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 
 /* Final avatar action alignment: force identical mobile button geometry. */
 @media(max-width:760px){.settings-premium .profile-row .avatar-actions{display:grid!important;grid-template-columns:1fr 1fr!important;align-items:stretch!important;gap:8px!important;width:100%!important;max-width:280px!important}.settings-premium .profile-row .avatar-actions>label,.settings-premium .profile-row .avatar-actions>button{box-sizing:border-box!important;width:100%!important;height:44px!important;min-height:44px!important;max-height:44px!important;margin:0!important;padding:0 12px!important;display:flex!important;align-items:center!important;justify-content:center!important;border-radius:13px!important;line-height:1!important;font-size:13px!important;font-weight:850!important;white-space:nowrap!important;appearance:none!important;-webkit-appearance:none!important}.settings-premium .profile-row .avatar-actions>label input{display:none!important}}
+
+/* ============================================================
+   Receive (deposit) screen
+   Wrong-network deposits are the single largest source of
+   irrecoverable loss in any wallet product, so the network is
+   restated at every step and the address stays hidden until the
+   user has explicitly acknowledged it.
+   ============================================================ */
+
+.receive-page { display: grid; gap: 18px; }
+
+.receive-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+}
+
+.receive-chain-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; margin-bottom: 16px;
+}
+.receive-chain-head h3 { margin: 4px 0 0; }
+
+.receive-chain-pill {
+  padding: 6px 12px; border-radius: 999px; color: #fff;
+  font-size: 12px; font-weight: 700; letter-spacing: .02em; white-space: nowrap;
+}
+
+.receive-chain-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.receive-chain-card {
+  display: grid; gap: 6px; justify-items: start; text-align: left;
+  padding: 16px; border-radius: var(--radius); cursor: pointer;
+  background: var(--surface-2); border: 1.5px solid var(--border);
+  color: var(--text); transition: border-color .15s ease, background .15s ease;
+}
+.receive-chain-card:hover { background: var(--surface-3); }
+.receive-chain-card.selected { background: var(--surface-3); }
+.receive-chain-card strong { font-size: 15px; }
+.receive-chain-card small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.receive-chain-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* Amber, not red: this is a caution the user must read, not an error state. */
+.receive-warning {
+  display: grid; gap: 8px; padding: 16px; border-radius: var(--radius);
+  background: rgba(255, 176, 32, .08); border: 1px solid rgba(255, 176, 32, .32);
+  margin-bottom: 16px;
+}
+.receive-warning strong { color: #ffcf7a; font-size: 15px; }
+.receive-warning span { color: var(--soft); font-size: 13px; line-height: 1.55; }
+.receive-warning-sub { color: var(--muted) !important; font-size: 12.5px !important; }
+
+.receive-ack {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  padding: 14px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.receive-ack input { margin-top: 3px; width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; }
+.receive-ack span { color: var(--soft); font-size: 13.5px; line-height: 1.5; }
+
+.receive-address-wrap {
+  display: grid; gap: 20px; align-items: start;
+  grid-template-columns: auto 1fr;
+}
+@media (max-width: 640px) { .receive-address-wrap { grid-template-columns: 1fr; } }
+
+.receive-qr {
+  display: grid; gap: 8px; justify-items: center; padding: 12px;
+  background: #fff; border-radius: var(--radius); border: 2px solid var(--border);
+}
+.receive-qr img { display: block; width: 180px; height: 180px; }
+.receive-qr-chain { font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+
+.receive-address-detail { display: grid; gap: 10px; align-content: start; }
+
+.receive-address {
+  word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px; line-height: 1.5; color: var(--green);
+  background: rgba(116, 221, 190, .08); padding: 14px;
+  border-radius: var(--radius); border: 1px solid rgba(116, 221, 190, .24);
+}
+.receive-address-short {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; color: var(--muted);
+}
+
+.receive-facts {
+  display: grid; gap: 12px; margin-top: 20px; padding-top: 18px;
+  border-top: 1px solid var(--border);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+.receive-fact { display: grid; gap: 3px; }
+.receive-fact span { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+.receive-fact strong { color: var(--text); font-size: 14px; }
+
+.receive-balances { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.receive-balance-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 8px; }
+.receive-balance { display: flex; align-items: baseline; gap: 6px; }
+.receive-balance strong { font-size: 22px; color: var(--text); }
+.receive-balance small { color: var(--muted); font-size: 13px; }
+
+.receive-empty { display: grid; gap: 10px; justify-items: start; padding: 8px 0; }
+.receive-empty h3 { margin: 0; }
