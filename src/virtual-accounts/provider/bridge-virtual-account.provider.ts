@@ -1,7 +1,7 @@
 import { env } from '../../config/env.js';
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { idempotencyKey } from '../../shared/id.js';
-import { resolveSettlementWalletId } from '../../wallets/user-wallet.service.js';
+import { ensureUserWallet } from '../../wallets/user-wallet.service.js';
 import { getVirtualAccountProviderSettings } from '../service/virtual-account-provider-settings.service.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountStatus } from '../types/virtual-account.types.js';
 import type { VirtualAccountProvider } from './virtual-account-provider.js';
@@ -41,17 +41,21 @@ function sourceCurrency(raw: any, fallback: VirtualAccountCurrency): VirtualAcco
  * misconfiguration must fail loudly rather than silently route a user's money
  * into a shared treasury wallet.
  */
-async function destinationPayload(userWalletId: string) {
+async function destinationPayload(wallet: { providerWalletId: string; chain: string }) {
   const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
 
-  if (!userWalletId) {
+  if (!wallet?.providerWalletId) {
     throw new Error('Virtual account settlement requires the customer\'s own Bridge wallet id.');
   }
 
   return {
     currency: settings.defaultSettlementAsset,
-    payment_rail: settings.defaultSettlementNetwork,
-    bridge_wallet_id: userWalletId,
+    // The rail MUST be the chain the destination wallet actually lives on.
+    // Taking it from defaultSettlementNetwork instead allowed a mismatch:
+    // a Solana wallet told to receive over the "base" rail. Bridge would
+    // reject that at best, and misroute funds at worst.
+    payment_rail: wallet.chain,
+    bridge_wallet_id: wallet.providerWalletId,
   } as Record<string, string>;
 }
 
@@ -94,7 +98,7 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
     // Ensure this customer has their own wallet, then settle into it.
     // ensureUserWallet is idempotent, so re-requesting a virtual account does
     // not create a second wallet.
-    const userWalletId = await resolveSettlementWalletId(input.userId);
+    const userWallet = await ensureUserWallet(input.userId);
 
     const raw: any = await this.client.request(`/customers/${input.providerCustomerId}/virtual_accounts`, {
       method: 'POST',
@@ -104,7 +108,7 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
         source: {
           currency: input.currency,
         },
-        destination: await destinationPayload(userWalletId),
+        destination: await destinationPayload(userWallet),
       },
     });
 
