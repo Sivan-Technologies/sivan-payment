@@ -34,7 +34,31 @@
 > `numeric(20,2)` or integer cents. An 18-decimal ledger will accumulate
 > permanent drift against Bridge and produce phantom reconciliation breaks.
 >
-> ### 3. Prerequisite that has not moved
+> ### 🔴 3. Bridge ToS 2.1(m) may prohibit Option A outright
+>
+> The Bridge Terms of Service state:
+>
+> > **2.1(m)** Developer will **not** ... **hold or control any crypto-assets or
+> > funds on behalf of Users** (other than Developer's own funds held in a
+> > Prefunded Cryptocurrency Wallet) ...
+>
+> and in the preamble:
+>
+> > *"Developer does not provide any crypto-asset services ... and acts
+> > **solely as a technical and commercial interface**."*
+>
+> Section 1 of this document describes moving *"beneficial ownership inside
+> Sivan's internal ledger"* while *"total customer liability remains
+> unchanged"* — i.e. Sivan holding balances on behalf of Users. That appears
+> to be exactly what 2.1(m) prohibits.
+>
+> **Do not build Option A until Bridge confirms in writing whether maintaining
+> user balance records is permitted.** See `BRIDGE-COMPLIANCE-EMAIL.md`,
+> question 9. If the answer is no, the correct design is Bridge custodial
+> wallets with wallet-to-wallet transfers, and most of this document becomes
+> obsolete.
+>
+> ### 4. Prerequisite that has not moved
 >
 > Section 11 (Ledger Accounting) and Section 13 (Atomicity) assume a durable
 > balance ledger. As of this addendum, balances are still derived by replaying
@@ -49,11 +73,11 @@
 Document type: Future production implementation plan
 Implementation status: Not implemented yet
 Target product area: Transfer & Pay
-Recommended first version: UNDER REVIEW — Option A internal ledger vs Bridge wallet-to-wallet
+Recommended first version: BLOCKED — Bridge ToS 2.1(m) may prohibit Sivan holding user funds
 External blockchain movement: No immediate blockchain movement (Option A)
 Provider execution: Not required for Option A; required if Bridge wallet-to-wallet is adopted
 Blocking prerequisite: durable balance ledger with atomic writes (not yet built)
-Open question: Bridge Legal & Compliance approval for user-to-user wallet transfers
+Open question: Bridge ToS 2.1(m) — is an internal user balance ledger permitted at all?
 Last reviewed: 2026-07-29
 ```
 
