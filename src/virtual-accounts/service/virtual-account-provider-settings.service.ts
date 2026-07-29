@@ -10,11 +10,11 @@ export const virtualAccountProviderSettingsSchema = z.object({
   provider: z.enum(['mock', 'bridge', 'nomba', 'monnify', 'flutterwave']).default('bridge'),
   enabled: z.boolean().default(false),
   defaultSettlementAsset: z.enum(['usdc', 'usdt']).default('usdc'),
-  defaultSettlementNetwork: z.enum(['base', 'avalanche_c_chain', 'polygon', 'ethereum']).default('base'),
+  defaultSettlementNetwork: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum']).default('base'),
   bridgeWalletId: optionalSecretString,
   destinationAddress: optionalSecretString,
   fallbackSettlementAsset: z.enum(['usdc', 'usdt']).optional(),
-  fallbackSettlementNetwork: z.enum(['base', 'avalanche_c_chain', 'polygon', 'ethereum']).optional(),
+  fallbackSettlementNetwork: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum']).optional(),
   highRiskAutoDisable: z.boolean().default(true),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -41,8 +41,22 @@ function envDefaultSettings(): VirtualAccountProviderSettings {
   };
 }
 
+const SUPPORTED_SETTLEMENT_NETWORKS = ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum'] as const;
+
 function normalizeNetwork(value: string): VirtualAccountProviderSettings['defaultSettlementNetwork'] {
-  if (value === 'avalanche_c_chain' || value === 'polygon' || value === 'ethereum') return value;
+  const candidate = String(value ?? '').trim().toLowerCase();
+  if ((SUPPORTED_SETTLEMENT_NETWORKS as readonly string[]).includes(candidate)) {
+    return candidate as VirtualAccountProviderSettings['defaultSettlementNetwork'];
+  }
+  // Previously this fell back to 'base' silently, so a typo or an unsupported
+  // value in BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL looked like it had
+  // applied while settlement quietly kept using Base. Warn loudly instead.
+  if (candidate) {
+    console.warn(
+      `[virtual-accounts] Unsupported settlement network "${value}" — falling back to "base". ` +
+      `Supported: ${SUPPORTED_SETTLEMENT_NETWORKS.join(', ')}`
+    );
+  }
   return 'base';
 }
 
