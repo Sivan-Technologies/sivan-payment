@@ -29,6 +29,16 @@ export const promotionSchema = z.object({
 export const feeSettingsSchema = z.object({
   onrampFeePercent: z.coerce.number().min(0).max(100),
   offrampFeePercent: z.coerce.number().min(0).max(100),
+  /**
+   * Fee taken on fiat arriving through a virtual account, passed to Bridge as
+   * developer_fee_percent when the account is created.
+   *
+   * This is a separate lever from the off-ramp fee because the underlying cost
+   * differs: Bridge charges 0.50% VA orchestration versus 0.25% basic. It also
+   * cannot be changed retroactively - Bridge fixes the fee at virtual account
+   * creation - so getting it right before provisioning matters.
+   */
+  virtualAccountFeePercent: z.coerce.number().min(0).max(100),
   bridgeOfframpCostPercent: z.coerce.number().min(0).max(100),
   rateSources: z.array(z.object({ name: z.string().min(1), weightPercent: z.coerce.number().min(0).max(100), live: z.boolean().default(true) })).default([]),
   feeTiers: z.array(feeTierSchema).min(1),
@@ -45,9 +55,19 @@ function percent(value: number) { return Number(value.toFixed(6)).toString(); }
 export function defaultAdminFeeSettings(): AdminFeeSettings {
   const offramp = env.SIVAN_OFFRAMP_FEE_PERCENT || 0;
   const onramp = env.SIVAN_ONRAMP_FEE_PERCENT || offramp;
+  // Default the VA fee to the off-ramp fee rather than 0. The env var itself
+  // defaults to the string '0.0', so a plain truthiness check would never fall
+  // through - only treat it as configured when it parses to a positive number.
+  // Previously every virtual account was provisioned at 0%, earning Sivan
+  // nothing, and Bridge fixes the fee at creation so it could not be corrected.
+  const configuredVaFee = Number(env.BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT);
+  const virtualAccount = Number.isFinite(configuredVaFee) && configuredVaFee > 0
+    ? configuredVaFee
+    : offramp;
   return {
     onrampFeePercent: Number(percent(onramp)),
     offrampFeePercent: Number(percent(offramp)),
+    virtualAccountFeePercent: Number(percent(Number.isFinite(virtualAccount) ? virtualAccount : offramp)),
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
       { name: 'Bridge', weightPercent: 40, live: true },

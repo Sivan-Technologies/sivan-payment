@@ -48,7 +48,8 @@
     "test:sivan-ai-remote-support": "tsx scripts/test-sivan-ai-remote-support.ts",
     "test:paj-ngn-provider": "tsx scripts/test-paj-ngn-provider.ts",
     "paj:staging-smoke": "tsx scripts/paj-staging-smoke.ts",
-    "test:wallet-isolation": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-wallet-isolation.json WALLET_PROVIDER=mock APP_ENV=development BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID=bridge_wallet_SIVAN_POOL_TEST tsx scripts/test-wallet-isolation.ts"
+    "test:wallet-isolation": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-wallet-isolation.json WALLET_PROVIDER=mock APP_ENV=development BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID=bridge_wallet_SIVAN_POOL_TEST tsx scripts/test-wallet-isolation.ts",
+    "test:virtual-account-fee": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-va-fee.json APP_ENV=development tsx scripts/test-virtual-account-fee.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

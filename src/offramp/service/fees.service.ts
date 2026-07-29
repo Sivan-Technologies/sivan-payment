@@ -55,6 +55,21 @@ export async function getBridgeCostPolicy(): Promise<CostPolicy> {
   };
 }
 
+/**
+ * Sivan's fee on fiat arriving through a virtual account, sent to Bridge as
+ * developer_fee_percent at creation time.
+ *
+ * Bridge fixes this when the virtual account is provisioned, so it cannot be
+ * corrected later for accounts already issued. Returns undefined when the fee
+ * is zero so we omit the field rather than explicitly asking Bridge for 0%.
+ */
+export async function getVirtualAccountFeePercent(): Promise<string | undefined> {
+  const settings = await getAdminFeeSettings();
+  const percent = normalizePercent(settings.virtualAccountFeePercent);
+  if (!(Number(percent) > 0)) return undefined;
+  return percent;
+}
+
 export async function getLiquidationAddressFeePercent(_input: {
   destinationCurrency: Currency;
   destinationPaymentRail: string;
