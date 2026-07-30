@@ -11,10 +11,13 @@ services:
     envVars:
       - key: APP_ENV
         value: staging
-      # Test only. Wallet addresses on this service are simulated and belong to
-      # nobody; the Receive screen shows a red "do not send funds" banner while
-      # this is true. Remove once WALLET_PROVIDER=bridge is approved and live.
-      - key: ALLOW_MOCK_WALLETS
+      # Real Bridge sandbox wallets, not simulated ones. ALLOW_MOCK_WALLETS was
+      # set here while the wallet adapter was unfinished; it is deliberately
+      # gone now, so a missing WALLET_PROVIDER fails loudly instead of quietly
+      # handing out an address nobody controls.
+      - key: WALLET_PROVIDER
+        value: bridge
+      - key: BRIDGE_WALLETS_APPROVED
         value: "true"
       - key: SENTRY_DSN
         sync: false
@@ -206,8 +209,26 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      # No mock providers in production, ever. The off-ramp registry refuses a
+      # mock regardless of this flag when APP_ENV=production, but it is stated
+      # here so the intent is visible in config rather than only in code.
       - key: BRIDGE_MOCK_MODE
         value: "false"
+      # Real Bridge custodial wallets. Without this the registry defaults to
+      # the mock adapter, whose addresses belong to nobody; in production the
+      # guard then throws rather than serving a fake address.
+      - key: WALLET_PROVIDER
+        value: bridge
+      # Bridge require Legal & Compliance sign-off on the wallet fund flow
+      # before production use. Set only because that approval is in place.
+      - key: BRIDGE_WALLETS_APPROVED
+        value: "true"
+      # Was unset, and env.ts defaults VIRTUAL_ACCOUNT_PROVIDER to mock. A
+      # production virtual account must be issued by Bridge, not fabricated.
+      - key: VIRTUAL_ACCOUNT_PROVIDER
+        value: bridge
+      - key: BRIDGE_VIRTUAL_ACCOUNTS_ENABLED
+        value: "true"
       - key: DEFAULT_OFFRAMP_PROVIDER
         value: bridge
       - key: BRIDGE_BASE_URL
