@@ -39,6 +39,32 @@ export const feeSettingsSchema = z.object({
    * creation - so getting it right before provisioning matters.
    */
   virtualAccountFeePercent: z.coerce.number().min(0).max(100),
+  /**
+   * Floor and ceiling on the virtual account fee, in USD.
+   *
+   * Why a floor: at 1.25% a $50 deposit earns $0.62 while Bridge charges
+   * $0.25 and the customer cost $2 to onboard. Small deposits never pay their
+   * way. A $1 floor is still cheaper than Grey, whose minimum is $2.
+   *
+   * Why a ceiling: Nigerian competitors cap deposit fees ($10 Grey, $15
+   * Raenest), so an uncapped percentage makes Sivan look expensive on large
+   * deposits. Note Bridge's own 0.50% is NOT capped, so a cap set too low
+   * loses money: at a $25 cap the break-even deposit is $5,000. Large money
+   * typically arrives by wire, which is why the cap is applied per rail.
+   *
+   * Both require Bridge to enable `fee_config` on the developer account. It is
+   * in beta and gated; until then Bridge rejects the field outright and Sivan
+   * falls back to a plain percentage. Zero means "not set".
+   */
+  virtualAccountMinimumFeeUsd: z.coerce.number().min(0).max(1000).default(0),
+  virtualAccountMaximumFeeUsd: z.coerce.number().min(0).max(100000).default(0),
+  /**
+   * Whether Bridge has enabled fee_config for this account. Sending the field
+   * before then fails the whole provisioning call with
+   * `"fee_config": "is not yet available"`, so this must stay false until they
+   * confirm, and the value is verified at runtime rather than assumed.
+   */
+  virtualAccountFeeConfigEnabled: z.boolean().default(false),
   bridgeOfframpCostPercent: z.coerce.number().min(0).max(100),
   rateSources: z.array(z.object({ name: z.string().min(1), weightPercent: z.coerce.number().min(0).max(100), live: z.boolean().default(true) })).default([]),
   feeTiers: z.array(feeTierSchema).min(1),
@@ -68,6 +94,11 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     onrampFeePercent: Number(percent(onramp)),
     offrampFeePercent: Number(percent(offramp)),
     virtualAccountFeePercent: Number(percent(Number.isFinite(virtualAccount) ? virtualAccount : offramp)),
+    // Off by default. Bridge has not enabled fee_config, and sending a floor
+    // or cap before they do fails the entire provisioning request.
+    virtualAccountMinimumFeeUsd: 0,
+    virtualAccountMaximumFeeUsd: 0,
+    virtualAccountFeeConfigEnabled: false,
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
       { name: 'Bridge', weightPercent: 40, live: true },

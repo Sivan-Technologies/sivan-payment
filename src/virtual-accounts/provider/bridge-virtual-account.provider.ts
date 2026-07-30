@@ -1,7 +1,7 @@
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { idempotencyKey } from '../../shared/id.js';
 import { ensureUserWallet } from '../../wallets/user-wallet.service.js';
-import { getVirtualAccountFeePercent } from '../../offramp/service/fees.service.js';
+import { getVirtualAccountFeeSelection } from '../../offramp/service/fees.service.js';
 import { getVirtualAccountProviderSettings } from '../service/virtual-account-provider-settings.service.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountStatus } from '../types/virtual-account.types.js';
 import type { VirtualAccountProvider } from './virtual-account-provider.js';
@@ -107,13 +107,19 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
     // Previously it read a hardcoded env default of '0.0', which meant every
     // virtual account was provisioned earning Sivan nothing. It is now an
     // admin-controlled setting alongside the other fees.
-    const feePercent = await getVirtualAccountFeePercent();
+    // One resolver decides between developer_fee_percent and fee_config.
+    // Bridge rejects both in the same request, and each clears the other on
+    // update, so the choice must be made in a single place.
+    const feeSelection = await getVirtualAccountFeeSelection();
 
     const raw: any = await this.client.request(`/customers/${input.providerCustomerId}/virtual_accounts`, {
       method: 'POST',
       idempotencyKey: idempotencyKey(`bridge-va-${input.userId}-${input.currency}`),
       body: {
-        ...(feePercent ? { developer_fee_percent: feePercent } : {}),
+        ...(feeSelection.developerFeePercent
+          ? { developer_fee_percent: feeSelection.developerFeePercent }
+          : {}),
+        ...(feeSelection.feeConfig ? { fee_config: feeSelection.feeConfig } : {}),
         source: {
           currency: input.currency,
         },

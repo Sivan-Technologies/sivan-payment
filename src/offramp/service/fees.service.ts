@@ -70,6 +70,95 @@ export async function getVirtualAccountFeePercent(): Promise<string | undefined>
   return percent;
 }
 
+/**
+ * Rails a USD/GBP/EUR virtual account can receive on.
+ *
+ * GBP arrives only via faster_payments and EUR only via sepa, so for those two
+ * a per-rail config is effectively per-currency. USD has both ach_push and
+ * wire, which is the only place the distinction bites.
+ */
+const CAPPED_RAILS = ['ach_push', 'faster_payments', 'sepa'] as const;
+
+export interface VirtualAccountFeeSelection {
+  /** Send exactly one of these to Bridge. They are mutually exclusive. */
+  developerFeePercent?: string;
+  feeConfig?: { source: Record<string, Record<string, string>> };
+  /** Why this shape was chosen, for logging and for the admin UI. */
+  reason: string;
+}
+
+/**
+ * Decide how to express the virtual account fee to Bridge.
+ *
+ * Bridge offers two mutually exclusive shapes, and their docs are explicit
+ * that "updating developer_fee_percent clears fee_config, and updating
+ * fee_config clears developer_fee_percent". Sending both in one request is
+ * rejected. So the choice is made here, once, rather than at each call site
+ * where the two could drift apart and silently wipe each other.
+ *
+ * fee_config is beta and gated per developer account. Sending it before Bridge
+ * enables it fails the whole provisioning call with
+ * `"fee_config": "is not yet available"` - verified against sandbox on
+ * 2026-07-29. A floor or cap is therefore ignored unless
+ * virtualAccountFeeConfigEnabled is explicitly true, so a half-configured
+ * setting degrades to a working plain percentage instead of breaking
+ * provisioning entirely.
+ */
+export async function getVirtualAccountFeeSelection(): Promise<VirtualAccountFeeSelection> {
+  const settings = await getAdminFeeSettings();
+  const percent = normalizePercent(settings.virtualAccountFeePercent);
+
+  if (!(Number(percent) > 0)) {
+    return { reason: 'No virtual account fee configured; Bridge treats a missing fee as 0%.' };
+  }
+
+  const min = Number(settings.virtualAccountMinimumFeeUsd ?? 0);
+  const max = Number(settings.virtualAccountMaximumFeeUsd ?? 0);
+  const wantsLimits = min > 0 || max > 0;
+
+  if (!wantsLimits) {
+    return {
+      developerFeePercent: percent,
+      reason: `Flat ${percent}% with no floor or cap.`,
+    };
+  }
+
+  if (!settings.virtualAccountFeeConfigEnabled) {
+    // Deliberately degrade rather than fail. An operator who sets a floor
+    // before Bridge enables the feature should still get working virtual
+    // accounts, and should be told plainly why the floor is not applied.
+    return {
+      developerFeePercent: percent,
+      reason:
+        `Floor/cap ignored: Bridge has not enabled fee_config for this account. ` +
+        `Falling back to a flat ${percent}%. Request enablement from Bridge, then set ` +
+        `virtualAccountFeeConfigEnabled.`,
+    };
+  }
+
+  // A cap below Bridge's own uncapped 0.50% orchestration cost turns large
+  // deposits into a loss. Surfaced rather than silently accepted.
+  const lossAbove = max > 0 ? max / 0.005 : Infinity;
+
+  const params: Record<string, string> = { fee_percent: percent };
+  if (min > 0) params.minimum_fee = min.toFixed(2);
+
+  const source: Record<string, Record<string, string>> = {};
+  for (const rail of CAPPED_RAILS) {
+    source[rail] = max > 0 ? { ...params, maximum_fee: max.toFixed(2) } : { ...params };
+  }
+  // Wire is left uncapped on purpose: large deposits arrive this way, and
+  // Bridge's cost on them is uncapped too.
+  source.wire = { fee_percent: percent, ...(min > 0 ? { minimum_fee: Math.max(min, 5).toFixed(2) } : {}) };
+
+  return {
+    feeConfig: { source },
+    reason:
+      `${percent}% with ${min > 0 ? `$${min.toFixed(2)} floor` : 'no floor'}` +
+      `${max > 0 ? `, $${max.toFixed(2)} cap on ACH/FPS/SEPA (loss above a $${lossAbove.toLocaleString()} deposit), wire uncapped` : ''}.`,
+  };
+}
+
 export async function getLiquidationAddressFeePercent(_input: {
   destinationCurrency: Currency;
   destinationPaymentRail: string;
