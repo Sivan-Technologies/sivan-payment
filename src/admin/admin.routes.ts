@@ -16,6 +16,7 @@ import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSch
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
+import { previewOnrampFees, validateTiers } from './fee-policy.js';
 import { getCustomerKycDiagnostics, getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, getBusinessKpis, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
 
 
@@ -196,6 +197,42 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = parseBody(feeSettingsSchema, request.body);
     return { data: await updateAdminFeeSettings(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
+  /**
+   * Preview what a fee configuration would charge, without saving it.
+   *
+   * A tier table is easy to get subtly wrong, and the failure mode is real
+   * customers charged the wrong amount. This lets the Admin Hub show the
+   * consequences before anyone commits.
+   */
+  app.post('/api/admin/fees/preview', async (request) => {
+    const body = (request.body ?? {}) as {
+      basePercent?: number;
+      minimumFeeUsd?: number;
+      tiers?: Array<{ minAmount: number; maxAmount: number | null; percent: number }>;
+      amounts?: number[];
+    };
+    const current = await getAdminFeeSettings();
+    const tiers = body.tiers ?? current.onrampFeeTiers ?? [];
+    const errors = validateTiers(tiers);
+    return {
+      data: {
+        valid: errors.length === 0,
+        errors,
+        rows: errors.length
+          ? []
+          : previewOnrampFees(
+              {
+                basePercent: body.basePercent ?? current.onrampFeePercent,
+                minimumFeeUsd: body.minimumFeeUsd ?? current.onrampMinimumFeeUsd ?? 0,
+                tiers,
+                transactionMinimumUsd: 1,
+              },
+              body.amounts
+            ),
+      },
+    };
+  });
+
   app.get('/api/admin/settings/platform', async () => ({ data: await getAdminPlatformSettings() }));
   app.put('/api/admin/settings/platform', async (request) => {
     const body = parseBody(adminPlatformSettingsSchema, request.body);
