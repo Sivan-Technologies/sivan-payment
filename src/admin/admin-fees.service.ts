@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { db } from '../database/json-database.js';
 import { createAuditLog } from '../audit/audit.service.js';
+import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
+import { validateTiers } from './fee-policy.js';
 
 export const feeTierSchema = z.object({
   tier: z.enum(['starter', 'verified', 'pro', 'vip']),
@@ -26,8 +28,28 @@ export const promotionSchema = z.object({
   status: z.enum(['active', 'scheduled', 'paused']).default('active')
 });
 
+export const onrampTierSchema = z.object({
+  minAmount: z.coerce.number().min(0),
+  maxAmount: z.coerce.number().min(0).nullable(),
+  percent: z.coerce.number().min(0).max(100),
+});
+
 export const feeSettingsSchema = z.object({
   onrampFeePercent: z.coerce.number().min(0).max(100),
+  /**
+   * Minimum on-ramp fee in USD, and optional amount tiers.
+   *
+   * These apply to ON-RAMP ONLY, and that is a property of Bridge's API rather
+   * than a product choice. On-ramp sends `developer_fee` as a fixed USD amount
+   * that Sivan computes per order, so any shape is expressible. Off-ramp and
+   * virtual accounts send a flat percentage fixed before any amount exists, so
+   * a floor or tier is impossible there - see fee-policy.ts.
+   *
+   * Tiers must start at 0, must not overlap or leave gaps, and the last must be
+   * open-ended. Validated on save rather than trusted.
+   */
+  onrampMinimumFeeUsd: z.coerce.number().min(0).max(1000).default(0),
+  onrampFeeTiers: z.array(onrampTierSchema).default([]),
   offrampFeePercent: z.coerce.number().min(0).max(100),
   /**
    * Fee taken on fiat arriving through a virtual account, passed to Bridge as
@@ -93,6 +115,10 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
   return {
     onrampFeePercent: Number(percent(onramp)),
     offrampFeePercent: Number(percent(offramp)),
+    // No floor and no tiers by default. A flat percentage is the behaviour
+    // every existing deployment already has; anything else must be chosen.
+    onrampMinimumFeeUsd: 0,
+    onrampFeeTiers: [],
     virtualAccountFeePercent: Number(percent(Number.isFinite(virtualAccount) ? virtualAccount : offramp)),
     // Off by default. Bridge has not enabled fee_config, and sending a floor
     // or cap before they do fails the entire provisioning request.
@@ -141,6 +167,15 @@ export async function getAdminFeeSettings(): Promise<AdminFeeSettings> {
 export async function updateAdminFeeSettings(input: z.infer<typeof feeSettingsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
   const previous = await getAdminFeeSettings();
   const { updatedBy, reason, ...settings } = input;
+
+  // A tier table with a gap or an overlap makes the fee depend on array order.
+  // That surfaces months later as a customer charged the wrong amount, so it is
+  // rejected at the boundary rather than stored and discovered.
+  const tierErrors = validateTiers(settings.onrampFeeTiers ?? []);
+  if (tierErrors.length) {
+    throw badRequest(`On-ramp fee tiers are invalid: ${tierErrors.join(' ')}`);
+  }
+
   const next: AdminFeeSettings = { ...previous, ...settings, updatedBy, reason, updatedAt: nowIso() };
   await createAuditLog({
     actorType: 'admin',
