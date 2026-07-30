@@ -333,12 +333,24 @@ export function ReceiveView({
                   <span className="address-label">
                     {meta.label} address · {assetLabel}
                   </span>
-                  <div className="receive-address" title={wallet.address}>
+                  <div
+                    className="receive-address clickable-address"
+                    title="Click or tap to copy address"
+                    onClick={copyAddress}
+                    style={{ cursor: 'pointer' }}
+                  >
                     {wallet.address}
                   </div>
-                  <div className="receive-address-short">{truncateMiddle(wallet.address)}</div>
+                  <div
+                    className="receive-address-short clickable-address"
+                    title="Click or tap to copy address"
+                    onClick={copyAddress}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    {truncateMiddle(wallet.address)}
+                  </div>
                   <button className="primary-btn" onClick={copyAddress}>
-                    {copied ? 'Copied' : 'Copy address'}
+                    {copied ? '✓ Copied to clipboard' : 'Copy address'}
                   </button>
                   <small className="muted">{meta.addressFormat}</small>
                 </div>
