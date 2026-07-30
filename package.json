@@ -60,7 +60,8 @@
     "test:no-pooled-settlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-no-pooled.json APP_ENV=development tsx scripts/test-no-pooled-settlement.ts",
     "sandbox:e2e-wallet-va": "tsx scripts/sandbox-e2e-wallet-va.ts",
     "test:receive-no-mock": "tsx scripts/test-receive-no-mock.ts",
-    "test:va-fee-limits": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-va-fee-limits.json APP_ENV=development tsx scripts/test-va-fee-limits.ts"
+    "test:va-fee-limits": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-va-fee-limits.json APP_ENV=development tsx scripts/test-va-fee-limits.ts",
+    "test:no-mock-in-production": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-no-mock.json tsx scripts/test-no-mock-in-production.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
