@@ -100,11 +100,21 @@ async function main() {
       currency: va.source_deposit_instructions?.currency,
       fee: va.developer_fee_percent ?? 'none',
       rail: va.destination?.payment_rail,
+      // Bridge does NOT echo bridge_wallet_id back on read. A virtual account
+      // created with destination.bridge_wallet_id is returned with
+      // destination.address set to that wallet's on-chain address instead.
+      // Verified in sandbox: creating a VA with bridge_wallet_id X reads back
+      // as address = (wallet X).address.
+      //
+      // So "has an address, no wallet id" does NOT mean pooled settlement. The
+      // only way to tell is to resolve the address against the customer's own
+      // wallets, which is done below.
       settlesTo: va.destination?.bridge_wallet_id
         ? `wallet:${va.destination.bridge_wallet_id}`
         : va.destination?.address
           ? `address:${va.destination.address}`
           : 'unknown',
+      destinationAddress: va.destination?.address,
       stale,
     };
   });
@@ -136,10 +146,27 @@ async function main() {
       zeroFee.forEach((r) => console.log(`    ${r.bridgeId} (${r.account})`));
     }
 
-    const pooled = rows.filter((r) => r.settlesTo.startsWith('address:'));
-    if (pooled.length) {
-      console.log(`\n  ${pooled.length} account(s) settle to a raw address rather than a per-user wallet:`);
-      pooled.forEach((r) => console.log(`    ${r.bridgeId} -> ${r.settlesTo}`));
+    // Whether settlement is pooled cannot be read off the destination shape:
+    // Bridge returns an address even when the VA was created with a
+    // bridge_wallet_id. Resolve each destination address against that
+    // customer's own wallets instead. Sharing one address ACROSS customers is
+    // the real signal of pooling.
+    const addressOwners = new Map<string, Set<string>>();
+    for (const row of rows) {
+      if (!row.destinationAddress) continue;
+      const set = addressOwners.get(row.destinationAddress) ?? new Set<string>();
+      if (row.customerId) set.add(row.customerId);
+      addressOwners.set(row.destinationAddress, set);
+    }
+
+    const shared = [...addressOwners.entries()].filter(([, owners]) => owners.size > 1);
+    if (shared.length) {
+      console.log('\n  POOLED SETTLEMENT DETECTED - one address serving multiple customers:');
+      shared.forEach(([addr, owners]) =>
+        console.log(`    ${addr} <- ${owners.size} customers`)
+      );
+    } else {
+      console.log('\n  settlement: no address is shared across customers');
     }
   }
 

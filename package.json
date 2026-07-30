@@ -57,7 +57,8 @@
     "test:reprovision-approval": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-reprovision-approval.json APP_ENV=development tsx scripts/test-reprovision-approval.ts",
     "va:audit": "tsx scripts/audit-virtual-accounts.ts",
     "va:fix-live": "tsx scripts/fix-live-virtual-account.ts",
-    "test:no-pooled-settlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-no-pooled.json APP_ENV=development tsx scripts/test-no-pooled-settlement.ts"
+    "test:no-pooled-settlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-no-pooled.json APP_ENV=development tsx scripts/test-no-pooled-settlement.ts",
+    "sandbox:e2e-wallet-va": "tsx scripts/sandbox-e2e-wallet-va.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
