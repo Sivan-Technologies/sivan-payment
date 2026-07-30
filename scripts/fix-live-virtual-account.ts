@@ -61,9 +61,29 @@ function mask(value?: string) {
 }
 
 async function main() {
+  const base = process.env.BRIDGE_BASE_URL || '';
+
+  // This writes to whatever Bridge environment BRIDGE_BASE_URL points at, and
+  // production virtual accounts are real bank accounts. Require the target to
+  // be stated explicitly rather than inherited from a stale shell or .env.
+  if (!base) {
+    console.error('\nBRIDGE_BASE_URL is not set. Refusing to guess which Bridge environment to write to.\n');
+    process.exit(1);
+  }
+  if (APPLY && base.includes('api.bridge.xyz') && !args.includes('--i-understand-this-is-production')) {
+    console.error(
+      '\nREFUSING TO WRITE TO PRODUCTION.\n\n' +
+      `BRIDGE_BASE_URL is "${base}".\n` +
+      'This updates live virtual accounts. Re-run with --i-understand-this-is-production\n' +
+      'once the dry run output is what you expect.\n'
+    );
+    process.exit(1);
+  }
+
   const client = new BridgeClient();
 
   console.log('\nLive virtual account repair');
+  console.log(`TARGET: ${base}`);
   console.log(APPLY ? 'MODE: APPLY (will write)\n' : 'MODE: DRY RUN (no changes)\n');
 
   const list = await client.request<{ count: number; data: BridgeVa[] }>('/virtual_accounts');
@@ -76,8 +96,12 @@ async function main() {
 
   const needsWork = live.filter((va) => {
     const feeMissing = !va.developer_fee_percent || Number(va.developer_fee_percent) <= 0;
-    const pooled = !va.destination?.bridge_wallet_id;
-    return feeMissing || pooled;
+    // Do NOT infer "pooled" from a missing bridge_wallet_id: Bridge returns an
+    // address even when the account was created with a wallet id, so that test
+    // flags every healthy account. Whether settlement is pooled is decided by
+    // resolving the address against the customer's own wallets, which happens
+    // per account below. Here, only a missing or zero fee marks work to do.
+    return feeMissing;
   });
 
   for (const va of live) {
@@ -152,14 +176,21 @@ async function main() {
     );
 
     const okFee = Number(updated?.developer_fee_percent) === Number(FEE);
-    const okWallet = updated?.destination?.bridge_wallet_id === wallet?.id;
+    // Bridge does NOT echo bridge_wallet_id back on read. A virtual account
+    // created or updated with bridge_wallet_id reads back with
+    // destination.address set to that wallet's on-chain address instead.
+    // Verified in sandbox 2026-07-29. Comparing the id would always report a
+    // false failure, so compare whichever field Bridge actually returned.
+    const okWallet =
+      updated?.destination?.bridge_wallet_id === wallet?.id ||
+      (Boolean(wallet?.address) && updated?.destination?.address === wallet?.address);
     const okRail = String(updated?.destination?.payment_rail).toLowerCase() === TARGET_CHAIN;
     const sameBank =
       updated?.source_deposit_instructions?.bank_account_number ===
       va.source_deposit_instructions?.bank_account_number;
 
     console.log(`  fee         ${updated?.developer_fee_percent} ${okFee ? 'OK' : 'FAILED'}`);
-    console.log(`  wallet      ${updated?.destination?.bridge_wallet_id} ${okWallet ? 'OK' : 'FAILED'}`);
+    console.log(`  wallet      ${updated?.destination?.bridge_wallet_id ?? updated?.destination?.address} ${okWallet ? 'OK' : 'FAILED'}`);
     console.log(`  rail        ${updated?.destination?.payment_rail} ${okRail ? 'OK' : 'FAILED'}`);
     console.log(`  bank details ${sameBank ? 'unchanged OK' : 'CHANGED - investigate'}`);
   }
