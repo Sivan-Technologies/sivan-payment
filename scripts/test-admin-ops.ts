@@ -13,13 +13,17 @@ async function main() {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   let token = '';
 
-  async function request(method: string, url: string, body?: unknown, admin = false, expect = 200) {
+  async function request(method: string, url: string, body?: unknown, admin: boolean | string = false, expect = 200) {
     const res = await fetch(`${baseUrl}${url}`, {
       method,
       headers: {
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(admin ? { 'x-admin-api-key': env.ADMIN_API_KEY } : {})
+        ...(admin ? { 'x-admin-api-key': env.ADMIN_API_KEY } : {}),
+        // Maker-checker compares the AUTHENTICATED admin identity, not the
+        // reviewer field in the body. Pass a real email so separation of
+        // duties can actually be exercised; a generic identity is rejected.
+        ...(typeof admin === 'string' ? { 'x-sivan-admin-email': admin, 'x-sivan-admin-role': 'ops' } : {})
       },
       body: body === undefined ? undefined : JSON.stringify(body)
     });
@@ -66,9 +70,9 @@ async function main() {
     const userWithNote = await request('GET', `/api/admin/users/${user.id}/details`, undefined, true);
     assert(userWithNote.data.notes.length === 1, 'admin notes persist through audit log');
 
-    const approval = await request('POST', '/api/admin/approvals', { action: 'system_status.update', resourceType: 'payments_system_status', resourceId: 'global', reason: 'Admin ops test maintenance approval', requestedBy: 'ops', riskLevel: 'high', requestedChange: { mode: 'maintenance', message: 'Admin ops test' } }, true);
+    const approval = await request('POST', '/api/admin/approvals', { action: 'system_status.update', resourceType: 'payments_system_status', resourceId: 'global', reason: 'Admin ops test maintenance approval', requestedBy: 'ops', riskLevel: 'high', requestedChange: { mode: 'maintenance', message: 'Admin ops test' } }, 'maker@sivan.test');
     assert(approval.data.status === 'pending', 'approval request starts pending');
-    const approved = await request('POST', `/api/admin/approvals/${approval.data.id}/approve`, { reviewer: 'owner', reason: 'Approved for admin ops test', apply: false }, true);
+    const approved = await request('POST', `/api/admin/approvals/${approval.data.id}/approve`, { reviewer: 'owner', reason: 'Approved for admin ops test', apply: false }, 'checker@sivan.test');
     assert(approved.data.status === 'approved', 'approval can be approved by checker');
 
     const limits = await request('PUT', '/api/admin/limits', { newUserDailyLimitUsd: 500, verifiedUserDailyLimitUsd: 5000, businessDailyLimitUsd: 0, minTransactionAmountUsd: 10, maxOnrampAmountUsd: 5000, maxOfframpAmountUsd: 5000, highValueApprovalThresholdUsd: 10000, monthlyUserLimitUsd: 25000, updatedBy: 'ops', reason: 'Admin ops test limits' }, true);

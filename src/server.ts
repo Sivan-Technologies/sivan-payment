@@ -14,7 +14,18 @@ process.on('uncaughtException', async (error) => {
   process.exit(1);
 });
 
-const app = await buildApp();
+let app;
+try {
+  app = await buildApp();
+} catch (error) {
+  // Startup misconfiguration (e.g. missing ADMIN_API_KEY in production).
+  // Print it plainly so the failure is obvious in Render/CI logs instead of
+  // exiting with a bare non-zero code.
+  console.error('[startup] Failed to build app:', error instanceof Error ? error.message : error);
+  captureError(error as Error, { source: 'build_app' });
+  await flushMonitoring();
+  process.exit(1);
+}
 
 try {
   await app.listen({ port: env.PORT, host: '0.0.0.0' });

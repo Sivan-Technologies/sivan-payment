@@ -7,7 +7,7 @@ import { getOfframpProvider, routeOfframpProvider } from '../../providers/provid
 import { badRequest, notFound } from '../../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
-import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled } from '../../controls/payment-controls.service.js';
+import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled, requireAssetSupportedOnChain } from '../../controls/payment-controls.service.js';
 import { syncPaymentTransactionReferencesForResource } from '../../references/transaction-references.service.js';
 import { attachWithdrawalTimeline } from '../../timeline/transaction-timeline.service.js';
 
@@ -27,6 +27,9 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
   await requireCurrencyEnabled(input.destinationCurrency);
   await requireSourceAssetEnabled(input.sourceCurrency);
   await requireSourceNetworkEnabled(input.sourceChain as Chain);
+  // Asset and network are enabled independently, so also confirm the token
+  // actually exists on that chain (e.g. USDT is not available on Base).
+  await requireAssetSupportedOnChain(input.sourceCurrency, input.sourceChain as Chain);
   const externalAccount = await getExternalAccount(input.externalAccountId);
   if (externalAccount.userId !== input.userId) throw notFound('External account');
   if (!['active', 'verified'].includes(externalAccount.status)) {

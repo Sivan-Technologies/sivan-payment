@@ -26,7 +26,10 @@ async function main() {
     ? all.find((item: any) => item.id === requestedCustomerId)
     : all.find((item: any) => item.status === 'active' && hasApprovedBase(item)) ?? all.find((item: any) => item.status === 'active');
 
-  const destinationConfigured = Boolean(env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS || env.BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID);
+  // Settlement no longer depends on a configured pooled wallet. Each virtual
+  // account settles into the user's own Bridge wallet, created on demand, so
+  // readiness is a question of whether the customer can hold one at all.
+  const destinationConfigured = Boolean(customer?.id);
   const createEnabled = process.env.BRIDGE_VIRTUAL_ACCOUNT_CREATE_SMOKE === 'true';
 
   const readiness = {
@@ -49,7 +52,7 @@ async function main() {
       ok: false,
       phase: 'preflight',
       readiness,
-      error: 'Bridge virtual account destination is missing. Set BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS or BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID before creating a real virtual account.',
+      error: 'No eligible Bridge customer found. A virtual account settles into that customer\'s own Bridge wallet, so an approved customer is required before one can be created.',
       note: 'The API key and approved customer were verified. No provider-side virtual account was created.',
     }, null, 2));
     process.exit(2);

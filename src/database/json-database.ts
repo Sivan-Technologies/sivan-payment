@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -17,6 +17,7 @@ const emptyDb = (): DatabaseShape => ({
   customers: [],
   externalAccounts: [],
   liquidationAddresses: [],
+  userWallets: [],
   withdrawals: [],
   onrampOrders: [],
   suppliers: [],
@@ -434,6 +435,29 @@ export class JsonDatabase {
       if (index >= 0) data.externalAccounts[index] = record;
       return record;
     });
+  }
+
+  async insertUserWallet(record: UserWalletRecord) {
+    return this.mutate((data) => {
+      data.userWallets = data.userWallets ?? [];
+      // Idempotent on (userId, chain): a user must never end up with two
+      // wallets on the same chain, or deposits could land somewhere the UI
+      // is not showing.
+      const existing = data.userWallets.find((w) => w.userId === record.userId && w.chain === record.chain && w.status !== 'closed');
+      if (existing) return existing;
+      data.userWallets.push(record);
+      return record;
+    });
+  }
+
+  async listUserWallets(userId: string): Promise<UserWalletRecord[]> {
+    const data = await this.read();
+    return (data.userWallets ?? []).filter((w) => w.userId === userId);
+  }
+
+  async findUserWallet(userId: string, chain: UserWalletRecord['chain']): Promise<UserWalletRecord | undefined> {
+    const data = await this.read();
+    return (data.userWallets ?? []).find((w) => w.userId === userId && w.chain === chain && w.status !== 'closed');
   }
 
   async createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord) {

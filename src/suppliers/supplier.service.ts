@@ -9,6 +9,7 @@ import { createBalanceLedgerEntry, getUserBalance } from '../balances/balance.se
 import { buildSupplierAceReview, defaultSupplierControls, evaluateSupplierRisk, supplierControlsSchema } from '../risk/supplier-risk.service.js';
 import { routeSupplierPayout } from './supplier-provider-routing.service.js';
 import { getVirtualAccountProviderSettings } from '../virtual-accounts/service/virtual-account-provider-settings.service.js';
+import { resolveSettlementWalletId } from '../wallets/user-wallet.service.js';
 
 const currencySchema = z.enum(['usd', 'gbp', 'eur', 'mxn', 'brl']);
 const addressSchema = z.object({
@@ -339,14 +340,18 @@ export async function releaseSupplierPaymentToProvider(paymentId: string, input:
   if (providerName !== 'bridge') throw badRequest(`Provider execution is not implemented for ${providerName}. Use manual treasury fallback.`);
   const externalAccountId = supplier.providerExternalAccountId || supplier.bridgeExternalAccountId;
   if (!externalAccountId) throw badRequest('Supplier has no provider external account id.');
-  const settings = await getVirtualAccountProviderSettings({ includeSecrets: true }) as any;
-  if (!settings.bridgeWalletId) throw badRequest('Bridge wallet ID is required before releasing supplier payouts. Configure it in Admin Hub virtual account settlement settings.');
+  // Fund the payout from THIS customer's own Bridge wallet, never a pooled
+  // Sivan wallet. Previously this used the global settlement wallet while
+  // passing the user's customerId, so one user's supplier payment was drawn
+  // from a treasury balance holding every user's funds. That is Sivan holding
+  // and moving funds on behalf of users, which Bridge ToS 2.1(m) prohibits.
+  const userWalletId = await resolveSettlementWalletId(payment.userId);
   const provider = getOfframpProvider('bridge');
   if (!provider.createSupplierPayout) throw badRequest('Current provider adapter does not support supplier payout execution.');
 
   const providerTransfer = await provider.createSupplierPayout({
     customerId: customer.providerCustomerId,
-    bridgeWalletId: settings.bridgeWalletId,
+    bridgeWalletId: userWalletId,
     amount: payment.amount,
     sourceCurrency: payment.sourceAsset,
     destinationCurrency: payment.destinationCurrency,

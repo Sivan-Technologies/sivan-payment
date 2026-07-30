@@ -1,6 +1,7 @@
-import { env } from '../../config/env.js';
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { idempotencyKey } from '../../shared/id.js';
+import { ensureUserWallet } from '../../wallets/user-wallet.service.js';
+import { getVirtualAccountFeeSelection } from '../../offramp/service/fees.service.js';
 import { getVirtualAccountProviderSettings } from '../service/virtual-account-provider-settings.service.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountStatus } from '../types/virtual-account.types.js';
 import type { VirtualAccountProvider } from './virtual-account-provider.js';
@@ -23,22 +24,39 @@ function sourceCurrency(raw: any, fallback: VirtualAccountCurrency): VirtualAcco
   return fallback;
 }
 
-async function destinationPayload() {
+/**
+ * Where a virtual account's converted stablecoin is delivered.
+ *
+ * Per Bridge's documented pattern this must be THAT customer's own wallet:
+ *
+ *   POST /customers/{id}/virtual_accounts
+ *        destination.bridge_wallet_id = that customer's wallet
+ *
+ * Previously this returned a single pooled Sivan wallet for every user, which
+ * made Sivan the custodian of user funds and moved ownership tracking into
+ * Sivan's database. Bridge ToS 2.1(m) prohibits holding funds on behalf of
+ * users, so settlement is now per customer and Bridge stays the custodian.
+ *
+ * `userWalletId` is required. There is intentionally no pooled fallback: a
+ * misconfiguration must fail loudly rather than silently route a user's money
+ * into a shared treasury wallet.
+ */
+async function destinationPayload(wallet: { providerWalletId: string; chain: string }) {
   const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
-  const destination: Record<string, string> = {
-    currency: settings.defaultSettlementAsset,
-    payment_rail: settings.defaultSettlementNetwork,
-  };
 
-  if (settings.bridgeWalletId) {
-    destination.bridge_wallet_id = settings.bridgeWalletId;
-  } else if (settings.destinationAddress) {
-    destination.address = settings.destinationAddress;
-  } else {
-    throw new Error('Bridge virtual account destination is not configured. Set Bridge wallet ID or destination address in Virtual Account Settlement controls.');
+  if (!wallet?.providerWalletId) {
+    throw new Error('Virtual account settlement requires the customer\'s own Bridge wallet id.');
   }
 
-  return destination;
+  return {
+    currency: settings.defaultSettlementAsset,
+    // The rail MUST be the chain the destination wallet actually lives on.
+    // Taking it from defaultSettlementNetwork instead allowed a mismatch:
+    // a Solana wallet told to receive over the "base" rail. Bridge would
+    // reject that at best, and misroute funds at worst.
+    payment_rail: wallet.chain,
+    bridge_wallet_id: wallet.providerWalletId,
+  } as Record<string, string>;
 }
 
 export function mapBridgeVirtualAccount(raw: any, fallbackCurrency: VirtualAccountCurrency): ProviderVirtualAccount {
@@ -77,15 +95,35 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
       throw new Error('Bridge virtual account creation requires providerCustomerId from the approved Bridge customer.');
     }
 
+    // Ensure this customer has their own wallet, then settle into it.
+    // ensureUserWallet is idempotent, so re-requesting a virtual account does
+    // not create a second wallet.
+    const userWallet = await ensureUserWallet(input.userId);
+
+    // Set the fee correctly on the first call. It IS changeable afterwards via
+    // PUT /customers/{id}/virtual_accounts/{vaId} (UpdateVirtualAccount accepts
+    // developer_fee_percent), but every deposit landing before that update is
+    // billed at whatever was set here, and those cannot be reclaimed.
+    // Previously it read a hardcoded env default of '0.0', which meant every
+    // virtual account was provisioned earning Sivan nothing. It is now an
+    // admin-controlled setting alongside the other fees.
+    // One resolver decides between developer_fee_percent and fee_config.
+    // Bridge rejects both in the same request, and each clears the other on
+    // update, so the choice must be made in a single place.
+    const feeSelection = await getVirtualAccountFeeSelection();
+
     const raw: any = await this.client.request(`/customers/${input.providerCustomerId}/virtual_accounts`, {
       method: 'POST',
       idempotencyKey: idempotencyKey(`bridge-va-${input.userId}-${input.currency}`),
       body: {
-        developer_fee_percent: env.BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT,
+        ...(feeSelection.developerFeePercent
+          ? { developer_fee_percent: feeSelection.developerFeePercent }
+          : {}),
+        ...(feeSelection.feeConfig ? { fee_config: feeSelection.feeConfig } : {}),
         source: {
           currency: input.currency,
         },
-        destination: await destinationPayload(),
+        destination: await destinationPayload(userWallet),
       },
     });
 
@@ -96,11 +134,60 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
     throw new Error(`Bridge virtual account lookup requires customer context for ${providerAccountId}. Use stored raw provider payload or add customer-scoped lookup when needed.`);
   }
 
-  async suspendVirtualAccount(_providerAccountId: string, _reason: string): Promise<void> {
-    throw new Error('Bridge virtual account suspend is not enabled. Confirm Bridge-supported lifecycle endpoint before enabling.');
+  /**
+   * Deactivate at Bridge so the account stops accepting deposits.
+   *
+   *   POST /customers/{customerID}/virtual_accounts/{virtualAccountID}/deactivate
+   *
+   * Both suspend and close map to the same Bridge call; Bridge has one
+   * deactivate, plus a reactivate to undo it. The distinction is Sivan's, not
+   * theirs.
+   *
+   * Until this existed, marking an account "closed" only changed a row in
+   * Sivan's database. The account stayed live at Bridge, kept accepting
+   * deposits into an address nothing was watching, and kept billing $2/month.
+   *
+   * customerId is required because every Bridge virtual account endpoint is
+   * customer-scoped. It is read from the stored rawProviderPayload by the
+   * caller; without it there is no way to address the account and the call
+   * must fail loudly rather than silently skip the deactivation.
+   */
+  private async deactivate(providerAccountId: string, customerId: string, reason: string): Promise<void> {
+    if (!customerId) {
+      throw new Error(
+        `Cannot deactivate Bridge virtual account ${providerAccountId}: the Bridge customer id is ` +
+        'unknown. Every Bridge virtual account endpoint is scoped to /customers/{customerID}.'
+      );
+    }
+
+    await this.client.request(
+      `/customers/${customerId}/virtual_accounts/${providerAccountId}/deactivate`,
+      {
+        method: 'POST',
+        // Deterministic so a retry cannot be mistaken for a second action.
+        idempotencyKey: `sivan-va-deactivate-${providerAccountId}`,
+      }
+    );
+
+    void reason;
   }
 
-  async closeVirtualAccount(_providerAccountId: string, _reason: string): Promise<void> {
-    throw new Error('Bridge virtual account close is not enabled. Confirm Bridge-supported lifecycle endpoint before enabling.');
+  async suspendVirtualAccount(providerAccountId: string, reason: string, customerId?: string): Promise<void> {
+    await this.deactivate(providerAccountId, customerId ?? '', reason);
+  }
+
+  async closeVirtualAccount(providerAccountId: string, reason: string, customerId?: string): Promise<void> {
+    await this.deactivate(providerAccountId, customerId ?? '', reason);
+  }
+
+  /** Undo a deactivation. Exposed so an accidental close is recoverable. */
+  async reactivateVirtualAccount(providerAccountId: string, customerId: string): Promise<void> {
+    if (!customerId) {
+      throw new Error(`Cannot reactivate Bridge virtual account ${providerAccountId}: customer id is required.`);
+    }
+    await this.client.request(
+      `/customers/${customerId}/virtual_accounts/${providerAccountId}/reactivate`,
+      { method: 'POST', idempotencyKey: `sivan-va-reactivate-${providerAccountId}` }
+    );
   }
 }

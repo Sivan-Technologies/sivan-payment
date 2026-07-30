@@ -8,6 +8,7 @@ import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
 import { mapBridgeTransferState } from '../onramp/service/onramp-mapping.js';
 import { applyBridgeVirtualAccountEvent, isVirtualAccountWebhook } from '../virtual-accounts/service/virtual-account-events.service.js';
 import { createBalanceLedgerEntry } from '../balances/balance.service.js';
+import { applyWalletActivityEvent, isWalletActivityWebhook } from '../wallets/wallet-events.service.js';
 
 export interface BridgeWebhookPayload {
   event_id?: string;
@@ -113,6 +114,11 @@ async function applyBridgeWebhookEffects(data: any, payload: BridgeWebhookPayloa
   }
   if (isVirtualAccountWebhook(payload)) {
     await applyBridgeVirtualAccountEvent(payload);
+  }
+  // Deposits into a user's own Bridge wallet. Without this, stablecoin sent to
+  // a Sivan-issued address arrives with nothing in the platform noticing.
+  if (isWalletActivityWebhook(payload)) {
+    await applyWalletActivityEvent(payload);
   }
 }
 

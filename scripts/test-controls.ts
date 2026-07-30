@@ -120,11 +120,20 @@ async function main() {
       assert(controls.payoutCurrencies.find((x: any) => x.currency === currency).enabled === true, `${currency.toUpperCase()} re-enabled`);
     }
 
-    await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'base', 'usd', 400);
+    // USDT does not exist on Base - Bridge supports USDB, USDC and EURC there.
+    // Solana is used instead because it carries both USDC and USDT.
+    await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'solana', 'usd', 400);
     assert(true, 'USDT withdrawal blocked while USDT default disabled');
-    await updateControls({ sourceAssets: [{ asset: 'usdt', enabled: true }], sourceNetworks: [{ network: 'base', enabled: true }] });
-    await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'base', 'usd', 201);
+    await updateControls({ sourceAssets: [{ asset: 'usdt', enabled: true }], sourceNetworks: [{ network: 'solana', enabled: true }] });
+    await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'solana', 'usd', 201);
     assert(true, 'USDT withdrawal succeeds after admin enables USDT');
+
+    // Even with both USDT and Base enabled, the pair itself is invalid and
+    // must be rejected. Without this guard a user would be handed a Base
+    // deposit address for a token that does not exist on Base.
+    await updateControls({ sourceNetworks: [{ network: 'base', enabled: true }] });
+    await createWithdrawal(user.id, accounts.usd.id, 'usdt', 'base', 'usd', 400);
+    assert(true, 'USDT on Base rejected even when both are individually enabled');
 
     await updateControls({ sourceAssets: [{ asset: 'usdc', enabled: false }] });
     await createWithdrawal(user.id, accounts.usd.id, 'usdc', 'base', 'usd', 400);

@@ -11,6 +11,7 @@ import type {
   DatabaseShape,
   ExternalAccountRecord,
   LiquidationAddressRecord,
+  UserWalletRecord,
   SourceCurrency,
   SupplierPayoutCurrency,
   SupplierRecord,
@@ -179,6 +180,7 @@ export class PostgresDatabase {
       const ngnQuotes = await optionalQuery(client, 'select * from payments_ngn_quotes order by created_at asc');
       const ngnTransfers = await optionalQuery(client, 'select * from payments_ngn_transfers order by created_at asc');
       const ngnWebhooks = await optionalQuery(client, 'select * from payments_ngn_webhook_events order by created_at asc');
+      const userWallets = await optionalQuery(client, 'select * from payments_user_wallets order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -199,6 +201,7 @@ export class PostgresDatabase {
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
+        userWallets: userWallets.rows.map(mapUserWallet),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
         onrampOrders: onrampOrders.rows.map(mapOnrampOrder),
         suppliers: suppliers.rows.map(mapSupplier),
@@ -711,6 +714,42 @@ export class PostgresDatabase {
     try { await upsertExternalAccount(client, record); return record; } finally { client.release(); }
   }
 
+  async insertUserWallet(record: UserWalletRecord): Promise<UserWalletRecord> {
+    const client = await this.pool.connect();
+    try {
+      // Unique index on (user_id, chain) where status <> 'closed' makes this
+      // idempotent: a retry returns the existing wallet rather than issuing a
+      // second address the UI would not be showing.
+      const result = await client.query(
+        `insert into payments_user_wallets
+           (id, user_id, payments_customer_id, provider, provider_wallet_id, chain, address, status, custodial, raw, created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now(), now())
+         on conflict (user_id, chain) where status <> 'closed'
+         do update set updated_at = now()
+         returning *`,
+        [record.id, record.userId, record.customerId, record.provider, record.providerWalletId,
+         record.chain, record.address, record.status, record.custodial, record.raw ?? null]
+      );
+      return mapUserWallet(result.rows[0]);
+    } finally { client.release(); }
+  }
+
+  async listUserWallets(userId: string): Promise<UserWalletRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_user_wallets where user_id = $1 order by created_at asc', [userId]);
+      return result.rows.map(mapUserWallet);
+    } finally { client.release(); }
+  }
+
+  async findUserWallet(userId: string, chain: UserWalletRecord['chain']): Promise<UserWalletRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, `select * from payments_user_wallets where user_id = $1 and chain = $2 and status <> 'closed' limit 1`, [userId, chain]);
+      return result.rows[0] ? mapUserWallet(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
   async createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord) {
     const client = await this.pool.connect();
     try {
@@ -1053,6 +1092,23 @@ function mapExternalAccount(row: any): ExternalAccountRecord {
     raw: row.raw_payload,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapUserWallet(row: any): UserWalletRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    customerId: row.payments_customer_id,
+    provider: row.provider,
+    providerWalletId: row.provider_wallet_id,
+    chain: row.chain,
+    address: row.address,
+    status: row.status,
+    custodial: row.custodial,
+    raw: row.raw ?? undefined,
+    createdAt: row.created_at?.toISOString?.() ?? row.created_at,
+    updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
   };
 }
 

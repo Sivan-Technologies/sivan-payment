@@ -7,7 +7,12 @@ export interface VirtualAccountProvider {
 
   getVirtualAccount(providerAccountId: string): Promise<ProviderVirtualAccount>;
 
-  suspendVirtualAccount(providerAccountId: string, reason: string): Promise<void>;
+  /**
+   * `customerId` is the PROVIDER's customer id. Bridge scopes every virtual
+   * account endpoint to /customers/{customerID}, so without it the account
+   * cannot be addressed at all.
+   */
+  suspendVirtualAccount(providerAccountId: string, reason: string, customerId?: string): Promise<void>;
 
-  closeVirtualAccount(providerAccountId: string, reason: string): Promise<void>;
+  closeVirtualAccount(providerAccountId: string, reason: string, customerId?: string): Promise<void>;
 }

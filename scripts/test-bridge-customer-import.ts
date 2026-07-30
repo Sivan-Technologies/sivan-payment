@@ -73,7 +73,6 @@ async function main() {
   process.env.VIRTUAL_ACCOUNT_REQUESTS_ENABLED = 'true';
   process.env.VIRTUAL_ACCOUNT_PROVIDER = 'bridge';
   process.env.BRIDGE_VIRTUAL_ACCOUNTS_ENABLED = 'true';
-  process.env.BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID = 'bridge-wallet-import-test';
   process.env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY = 'usdc';
   process.env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL = 'base';
 

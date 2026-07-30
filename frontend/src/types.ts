@@ -1,4 +1,4 @@
-export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery';
+export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'receive' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery';
 
 export interface UserRecord {
   id: string;
@@ -478,5 +478,38 @@ export interface UserPreferencesRecord {
   marketingEmails: boolean;
   securityAlerts: boolean;
   emailConfirmationsForHighValue: boolean;
+  updatedAt: string;
+}
+
+/**
+ * A wallet belonging to this user, one per chain.
+ *
+ * Bridge issues a wallet per customer and the user's virtual account settles
+ * into it, so this address is genuinely theirs rather than a shared Sivan
+ * treasury address.
+ */
+export interface UserWalletRecord {
+  id: string;
+  userId: string;
+  chain: 'solana' | 'base' | 'ethereum';
+  address: string;
+  status: 'provisioning' | 'active' | 'suspended' | 'closed' | 'failed';
+  /**
+   * Which vendor issued the address. 'mock' means it is a simulated address
+   * that belongs to nobody: the UI must say so loudly rather than presenting
+   * it as somewhere real money can be sent.
+   */
+  provider?: 'mock' | 'bridge' | 'privy';
+  custodial: boolean;
+  /** Assets the chain can actually carry. Base cannot hold USDT. */
+  acceptedAssets?: Array<'usdc' | 'usdt'>;
+  /**
+   * Undefined means the balance could not be loaded. An empty array means it
+   * loaded and is genuinely zero. The UI must not show the first as "0.00".
+   */
+  balances?: Array<{ asset: 'usdc' | 'usdt'; chain: string; amount: string }>;
+  /** True when the provider was unreachable, so no balance figure is trustworthy. */
+  balancesUnavailable?: boolean;
+  createdAt: string;
   updatedAt: string;
 }

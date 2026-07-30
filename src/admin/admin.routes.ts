@@ -135,19 +135,28 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.post('/api/admin/approvals', async (request) => {
     const body = parseBody(approvalRequestSchema, request.body);
-    return { data: await createApprovalRequest(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+    // Trust the authenticated admin identity over any client-supplied value.
+    // The admin hub previously hardcoded requestedBy: 'ops', which both
+    // falsified the audit trail and broke maker/checker separation.
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
+    const payload = actor ? { ...body, requestedBy: actor } : body;
+    return { data: await createApprovalRequest(payload, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.post('/api/admin/approvals/:id/approve', async (request) => {
     const { id } = request.params as { id: string };
     const body = parseBody(approvalReviewSchema, request.body);
-    return { data: await approveRequest(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
+    const payload = actor ? { ...body, reviewer: actor } : body;
+    return { data: await approveRequest(id, payload, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.post('/api/admin/approvals/:id/reject', async (request) => {
     const { id } = request.params as { id: string };
     const body = parseBody(approvalReviewSchema, request.body);
-    return { data: await rejectRequest(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
+    const payload = actor ? { ...body, reviewer: actor } : body;
+    return { data: await rejectRequest(id, payload, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.post('/api/admin/notes', async (request) => {

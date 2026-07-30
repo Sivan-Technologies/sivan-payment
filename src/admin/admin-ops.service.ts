@@ -24,7 +24,20 @@ export const riskReviewSchema = z.object({
 });
 
 export const approvalRequestSchema = z.object({
-  action: z.enum(['controls.update', 'system_status.update', 'fee_change.request', 'admin_user_change.request', 'manual_status_change.request', 'refund_recovery.request']),
+  action: z.enum([
+    'controls.update',
+    'system_status.update',
+    'fee_change.request',
+    'admin_user_change.request',
+    'manual_status_change.request',
+    'refund_recovery.request',
+    // Reprovisioning provisions a NEW virtual account at the provider. The old
+    // one keeps accepting deposits (Bridge has no "close" that we call), and a
+    // USD virtual account bills $2/month. On 2026-07-29 a single request ended
+    // up with 16 live Bridge accounts for one user. It is a money-moving action
+    // and now requires a second admin.
+    'virtual_account.reprovision'
+  ]),
   resourceType: z.string().min(1),
   resourceId: z.string().optional(),
   reason: z.string().min(5).max(2000),
@@ -38,6 +51,25 @@ export const approvalReviewSchema = z.object({
   reason: z.string().min(3).max(2000),
   apply: z.boolean().default(true)
 });
+
+/**
+ * Normalise an admin identity for maker-checker comparison.
+ *
+ * Identities arrive from several places (authenticated admin email, admin role,
+ * or a free-text name typed into the review form). Comparing them raw allowed
+ * the same human to act as both maker and checker simply by changing case,
+ * padding, or by typing a different label than the one the UI submitted.
+ */
+function normaliseAdminIdentity(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/** Identities that never represent a specific human and so can never satisfy separation of duties. */
+const NON_ATTRIBUTABLE_IDENTITIES = new Set(['', 'admin_api_key', 'admin', 'ops', 'unknown', 'system']);
+
+function isAttributableIdentity(value: string): boolean {
+  return !NON_ATTRIBUTABLE_IDENTITIES.has(value);
+}
 
 export const limitControlsSchema = z.object({
   newUserDailyLimitUsd: z.coerce.number().positive().default(500),
@@ -227,10 +259,49 @@ export async function approveRequest(approvalId: string, input: z.infer<typeof a
   const request = requests.find((item) => item.id === approvalId);
   if (!request) throw notFound('Approval request');
   if (request.status !== 'pending') throw badRequest('Approval request is no longer pending');
-  const requestedBy = String((request.request as any)?.requestedBy ?? request.requestedBy ?? '');
-  if (requestedBy && requestedBy === input.reviewer) throw badRequest('Maker and checker must be different admins');
+
+  // --- Separation of duties -------------------------------------------------
+  // Compare every identity we know about for the maker against the checker, so
+  // a single admin cannot approve their own request by relabelling themselves.
+  const makerIdentities = [
+    (request.request as any)?.requestedBy,
+    (request.request as any)?.requestedByEmail,
+    (request as any).requestedBy
+  ].map(normaliseAdminIdentity).filter(Boolean);
+
+  const checkerIdentity = normaliseAdminIdentity(input.reviewer);
+
+  if (!isAttributableIdentity(checkerIdentity)) {
+    throw badRequest('Checker must be a specific named admin. Generic identities such as "ops" or "admin_api_key" cannot approve changes.');
+  }
+  if (makerIdentities.includes(checkerIdentity)) {
+    throw badRequest('Maker and checker must be different admins');
+  }
+
   let applied: unknown = undefined;
-  if (input.apply) applied = await applyApprovalChange(request.request as any, input.reviewer);
+  let applyError: string | undefined;
+  if (input.apply) {
+    // Apply BEFORE writing the audit log. Previously a failure here still
+    // recorded the request as "approved", leaving the control unchanged with
+    // no indication anything had gone wrong.
+    try {
+      applied = await applyApprovalChange(request.request as any, input.reviewer);
+    } catch (error) {
+      applyError = error instanceof Error ? error.message : String(error);
+      await createAuditLog({
+        actorType: 'admin',
+        actorId: input.reviewer,
+        action: 'admin.approval_apply_failed',
+        resourceType: 'admin_approval_request',
+        resourceId: approvalId,
+        severity: 'error',
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+        metadata: { approvalId, reason: input.reason, error: applyError }
+      });
+      throw badRequest(`Approval could not be applied: ${applyError}`);
+    }
+  }
   await createAuditLog({
     actorType: 'admin',
     actorId: input.reviewer,
@@ -242,7 +313,18 @@ export async function approveRequest(approvalId: string, input: z.infer<typeof a
     userAgent: context.userAgent,
     metadata: { approvalId, reason: input.reason, applied: input.apply, result: applied }
   });
-  return { id: approvalId, status: 'approved', applied };
+  return {
+    id: approvalId,
+    status: 'approved',
+    // `applied` is the raw result of the change; `changeApplied` states plainly
+    // whether anything was actually mutated so callers/UI cannot mistake an
+    // "approved but not applied" outcome for a completed change.
+    applied,
+    changeApplied: Boolean(input.apply),
+    message: input.apply
+      ? 'Approval applied. The requested change is now live.'
+      : 'Approval recorded WITHOUT applying. The requested change has NOT taken effect.'
+  };
 }
 
 export async function rejectRequest(approvalId: string, input: z.infer<typeof approvalReviewSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
@@ -337,6 +419,18 @@ export async function buildExport(type: string) {
 async function applyApprovalChange(request: any, reviewer: string) {
   if (request.action === 'controls.update') return updatePaymentControls(request.requestedChange as any, reviewer);
   if (request.action === 'system_status.update') return updateSystemStatus(request.requestedChange as any, reviewer);
+  if (request.action === 'virtual_account.reprovision') {
+    const requestId = request.resourceId || (request.requestedChange as any)?.requestId;
+    if (!requestId) {
+      throw new Error('virtual_account.reprovision approval is missing the virtual account request id');
+    }
+    // Imported lazily: virtual-account.service imports admin-ops for approval
+    // helpers, so a top-level import here would be circular.
+    const { executeVirtualAccountReprovision } = await import(
+      '../virtual-accounts/service/virtual-account.service.js'
+    );
+    return executeVirtualAccountReprovision(requestId, reviewer);
+  }
   return { queuedOnly: true, message: 'This approval was recorded. The requested action requires manual execution by the relevant ops owner.' };
 }
 
