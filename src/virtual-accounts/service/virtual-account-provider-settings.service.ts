@@ -11,8 +11,20 @@ export const virtualAccountProviderSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   defaultSettlementAsset: z.enum(['usdc', 'usdt']).default('usdc'),
   defaultSettlementNetwork: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum']).default('base'),
-  bridgeWalletId: optionalSecretString,
-  destinationAddress: optionalSecretString,
+  /**
+   * REMOVED, deliberately rejected rather than ignored.
+   *
+   * These configured a single pooled wallet/address that every virtual account
+   * settled into. That made Sivan the holder of user funds, which Bridge ToS
+   * 2.1(m) prohibits. Settlement is now always the individual user's own Bridge
+   * wallet, resolved per customer at provisioning time.
+   *
+   * They are listed here so a stale client, script or saved payload that still
+   * sends them fails loudly instead of appearing to configure something that no
+   * longer has any effect.
+   */
+  bridgeWalletId: z.never({ message: 'Pooled settlement wallets are no longer supported. Virtual accounts settle into each user\'s own Bridge wallet.' }).optional(),
+  destinationAddress: z.never({ message: 'Pooled settlement addresses are no longer supported. Virtual accounts settle into each user\'s own Bridge wallet.' }).optional(),
   fallbackSettlementAsset: z.enum(['usdc', 'usdt']).optional(),
   fallbackSettlementNetwork: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum']).optional(),
   highRiskAutoDisable: z.boolean().default(true),
@@ -30,8 +42,8 @@ function envDefaultSettings(): VirtualAccountProviderSettings {
     enabled: env.VIRTUAL_ACCOUNTS_ENABLED && env.BRIDGE_VIRTUAL_ACCOUNTS_ENABLED,
     defaultSettlementAsset: (env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY === 'usdt' ? 'usdt' : 'usdc'),
     defaultSettlementNetwork: normalizeNetwork(env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL),
-    bridgeWalletId: env.BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID || undefined,
-    destinationAddress: env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS || undefined,
+    // No pooled wallet or address. Settlement resolves to the user's own
+    // wallet at provisioning time; see bridge-virtual-account.provider.ts.
     fallbackSettlementAsset: undefined,
     fallbackSettlementNetwork: undefined,
     highRiskAutoDisable: true,
@@ -78,17 +90,27 @@ export async function getVirtualAccountProviderSettings(options: { includeSecret
     updatedAt: latest?.createdAt ?? saved?.updatedAt ?? envDefaultSettings().updatedAt,
   };
 
+  // Settings saved before per-user wallets may still carry a pooled wallet or
+  // address in the audit log. Strip them on read so an old record can never
+  // resurrect the pooled design.
+  delete (merged as any).bridgeWalletId;
+  delete (merged as any).destinationAddress;
+
   if (options.includeSecrets) return merged;
   return redactVirtualAccountProviderSettings(merged);
 }
 
 export function redactVirtualAccountProviderSettings(settings: VirtualAccountProviderSettings) {
+  const { ...rest } = settings;
+  delete (rest as any).bridgeWalletId;
+  delete (rest as any).destinationAddress;
   return {
-    ...settings,
-    bridgeWalletId: maskSecret(settings.bridgeWalletId),
-    destinationAddress: maskSecret(settings.destinationAddress),
-    bridgeWalletIdConfigured: Boolean(settings.bridgeWalletId),
-    destinationAddressConfigured: Boolean(settings.destinationAddress),
+    ...rest,
+    // Stated explicitly so the Admin Hub can show where money actually goes,
+    // rather than leaving ops to infer it from an absent field.
+    settlementModel: 'per_user_wallet' as const,
+    settlementNote:
+      "Each virtual account settles into that user's own Bridge wallet. Sivan does not pool user funds.",
   };
 }
 
@@ -98,8 +120,6 @@ export async function updateVirtualAccountProviderSettings(input: z.infer<typeof
   const next: VirtualAccountProviderSettings = {
     ...current,
     ...parsed,
-    bridgeWalletId: parsed.bridgeWalletId || current.bridgeWalletId,
-    destinationAddress: parsed.destinationAddress || current.destinationAddress,
     updatedAt: nowIso(),
   };
 

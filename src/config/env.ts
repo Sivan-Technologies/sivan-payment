@@ -74,8 +74,13 @@ const envSchema = z.object({
   BRIDGE_VIRTUAL_ACCOUNTS_ENABLED: booleanFromEnv.default(false),
   BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY: z.string().default('usdc'),
   BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL: z.string().default('base'),
-  BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS: z.string().optional().default(''),
-  BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID: z.string().optional().default(''),
+  // Removed: these named a single pooled wallet/address that every virtual
+  // account settled into, making Sivan the holder of user funds contrary to
+  // Bridge ToS 2.1(m). Settlement is now each user's own Bridge wallet.
+  // Deliberately left out of the schema so a stale value in a Render env or
+  // .env file has no effect and cannot silently restore pooled settlement.
+  //   BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS
+  //   BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID
   BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT: z.string().default('0.0'),
   ACE_PROVIDER: z.enum(['local', 'remote']).default('local'),
   SIVAN_AI_API_URL: z.string().url().optional(),

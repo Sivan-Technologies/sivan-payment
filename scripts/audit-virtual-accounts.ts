@@ -49,10 +49,34 @@ async function main() {
   const remote = await client.request<{ count: number; data: BridgeVa[] }>('/virtual_accounts');
   const accounts = Array.isArray(remote?.data) ? remote.data : [];
 
-  // What Sivan thinks. Read straight from the database rather than the admin
-  // API so the audit does not depend on the service being awake.
+  // What Sivan thinks.
+  //
+  // This MUST read the same database production uses. An earlier version
+  // imported the JSON database unconditionally; run against production Bridge
+  // with an empty local file, every account came back "unknown to Sivan" and
+  // was therefore classed as stale - including the live one. Deactivating on
+  // that basis would have closed a working account.
+  // json-database.ts exports the Postgres adapter automatically when
+  // DATABASE_PROVIDER=postgres and DATABASE_URL is set, so this respects
+  // whatever the environment points at. Do NOT override DATABASE_PROVIDER on
+  // the command line when auditing production.
   const { db } = await import('../src/database/json-database.js');
   const local = await db.listVirtualAccounts();
+
+  // A production Bridge key with an empty local database means the comparison
+  // is meaningless. Refuse rather than guess: the whole safety model rests on
+  // knowing which accounts Sivan still considers active.
+  const looksLikeProduction = String(process.env.BRIDGE_BASE_URL || '').includes('api.bridge.xyz');
+  if (looksLikeProduction && accounts.length > 0 && local.length === 0) {
+    console.error(
+      '\nREFUSING TO CONTINUE.\n\n' +
+      `Bridge returned ${accounts.length} virtual account(s) but this database has 0.\n` +
+      'Every account would be classified as stale, including any that are live.\n\n' +
+      'Point DATABASE_PROVIDER/DATABASE_URL at the production database, or use\n' +
+      '--force-empty-db if you have genuinely verified the database is empty.\n'
+    );
+    if (!args.includes('--force-empty-db')) process.exit(1);
+  }
 
   const localByProviderId = new Map(local.map((item: any) => [item.providerAccountId, item]));
 
@@ -136,6 +160,15 @@ async function main() {
   for (const row of staleRows) {
     if (row.localStatus === 'active') {
       console.log(`  SKIP ${row.bridgeId}: Sivan considers this active.`);
+      continue;
+    }
+    // Belt and braces. "Unknown to Sivan" is not the same as "known to be
+    // closed": it may simply mean we are looking at the wrong database. Only
+    // deactivate accounts we can positively confirm are closed.
+    if (row.localStatus === 'UNKNOWN_TO_SIVAN' && !args.includes('--force-empty-db')) {
+      console.log(
+        `  SKIP ${row.bridgeId}: not found in this database. Cannot confirm it is closed.`
+      );
       continue;
     }
     if (!row.customerId) {
