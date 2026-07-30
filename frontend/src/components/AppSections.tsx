@@ -615,13 +615,20 @@ function BankList({ accounts }: { accounts: ExternalAccountRecord[] }) {
 }
 
 function DepositCard({ result }: { result: DepositResponse | null }) {
+  const [copied, setCopied] = useState(false);
   if (!result) return <article className="deposit-card"><p className="eyebrow">Deposit address</p><h3>Ready when you are</h3><p className="muted">Create a withdrawal to receive a deposit address. You will review the asset, network, fee, and payout currency before sending.</p></article>;
+  const copyDepositAddress = () => {
+    if (!result.deposit?.address) return;
+    navigator.clipboard?.writeText(result.deposit.address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2200);
+  };
   return (
     <article className="deposit-card live-deposit-card">
       <p className="eyebrow">Step 3</p>
       <h3>Deposit address created</h3>
       <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</p>
-      <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address">{result.deposit.address}</div><button className="secondary-btn" onClick={() => { navigator.clipboard?.writeText(result.deposit.address); }}>Copy address</button></div></div>
+      <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address clickable-address" title="Click or tap to copy address" onClick={copyDepositAddress} style={{ cursor: 'pointer' }}>{result.deposit.address}</div><button className="secondary-btn" onClick={copyDepositAddress}>{copied ? '✓ Copied to clipboard' : 'Copy address'}</button></div></div>
       <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Payout currency" value={result.withdrawal.destinationCurrency.toUpperCase()} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></div>
       {result.withdrawal.transactionTimeline ? <InlineTransactionTimeline timeline={result.withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
         <TimelineItem done title="Address created" body="A unique provider-backed deposit address is ready." />
