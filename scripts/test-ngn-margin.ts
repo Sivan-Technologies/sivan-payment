@@ -185,6 +185,85 @@ async function main() {
       'the provider is not admin-controlled');
   }
 
+
+  console.log('\nNGN has its own fee lever, independent of the Bridge fees');
+  {
+    const { getAdminFeeSettings, updateAdminFeeSettings } =
+      await import('../src/admin/admin-fees.service.js');
+    const base = await getAdminFeeSettings();
+
+    // Set a distinctly different NGN rate so a fallback would be obvious.
+    await updateAdminFeeSettings({
+      ...base,
+      onrampFeePercent: 1.25,
+      offrampFeePercent: 1.25,
+      ngnOnrampFeePercent: 2.0,
+      ngnOfframpFeePercent: 3.0,
+      ngnMinimumFeeNgn: 0,
+      updatedBy: 'test',
+      reason: 'test ngn fee separation',
+    } as any);
+
+    const on = await applySivanMargin({
+      direction: 'onramp', grossAmount: 100_000, providerFeeAmount: 500,
+    });
+    check('on-ramp uses the NGN rate (2%), not the Bridge rate (1.25%)',
+      on.sivanMargin === 2_000, `got ${on.sivanMargin}, expected 2000`);
+
+    const off = await applySivanMargin({
+      direction: 'offramp', grossAmount: 100_000, providerFeeAmount: 500,
+    });
+    check('off-ramp uses its own NGN rate (3%), independent of on-ramp',
+      off.sivanMargin === 3_000, `got ${off.sivanMargin}, expected 3000`);
+    check('and says which rate was applied',
+      /NGN rate/.test(off.explanation), off.explanation);
+
+    // Changing the Bridge fee must not move the NGN fee. Sharing one percentage
+    // is exactly what this separation prevents.
+    await updateAdminFeeSettings({
+      ...base, onrampFeePercent: 9, offrampFeePercent: 9,
+      ngnOnrampFeePercent: 2.0, ngnOfframpFeePercent: 3.0, ngnMinimumFeeNgn: 0,
+      updatedBy: 'test', reason: 'move bridge fee only',
+    } as any);
+    const stillTwo = await applySivanMargin({
+      direction: 'onramp', grossAmount: 100_000, providerFeeAmount: 500,
+    });
+    check('raising the Bridge fee to 9% does NOT change the NGN margin',
+      stillTwo.sivanMargin === 2_000, `got ${stillTwo.sivanMargin}`);
+
+    // Zero means "not set" - fall back rather than silently zero the margin.
+    await updateAdminFeeSettings({
+      ...base, onrampFeePercent: 1.25, offrampFeePercent: 1.25,
+      ngnOnrampFeePercent: 0, ngnOfframpFeePercent: 0, ngnMinimumFeeNgn: 0,
+      updatedBy: 'test', reason: 'unset ngn fees',
+    } as any);
+    const fellBack = await applySivanMargin({
+      direction: 'onramp', grossAmount: 100_000, providerFeeAmount: 500,
+    });
+    check('an unset NGN fee falls back to the Bridge rate, not to zero',
+      fellBack.sivanMargin === 1_250, `got ${fellBack.sivanMargin}, expected 1250`);
+
+    // The naira floor, for transfers too small to cover fixed costs.
+    await updateAdminFeeSettings({
+      ...base, onrampFeePercent: 1.25, offrampFeePercent: 1.25,
+      ngnOnrampFeePercent: 1.0, ngnOfframpFeePercent: 1.0,
+      ngnMinimumFeeNgn: 500,
+      updatedBy: 'test', reason: 'ngn floor',
+    } as any);
+    const tiny = await applySivanMargin({
+      direction: 'onramp', grossAmount: 10_000, providerFeeAmount: 50,
+    });
+    check('a NGN 500 floor lifts the margin on a small transfer',
+      tiny.sivanMargin === 500, `1% of 10,000 is 100; floor should make it 500, got ${tiny.sivanMargin}`);
+    const large = await applySivanMargin({
+      direction: 'onramp', grossAmount: 1_000_000, providerFeeAmount: 5_000,
+    });
+    check('but the floor does not apply once the percentage exceeds it',
+      large.sivanMargin === 10_000, `got ${large.sivanMargin}`);
+
+    await updateAdminFeeSettings({ ...base, updatedBy: 'test', reason: 'restore' } as any);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail === 0 ? 0 : 1);
 }

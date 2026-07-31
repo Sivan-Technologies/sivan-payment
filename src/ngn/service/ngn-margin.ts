@@ -92,14 +92,29 @@ export async function applySivanMargin(input: MarginInput): Promise<MarginResult
     };
   }
 
+  // NGN has its own fee lever, because it is a different rail with a different
+  // cost base and different competition. Zero means "not set", in which case it
+  // falls back to the Bridge percentage - preserving the behaviour every
+  // existing deployment already has rather than silently zeroing the margin.
+  const ngnOnramp = Number(settings.ngnOnrampFeePercent ?? 0);
+  const ngnOfframp = Number(settings.ngnOfframpFeePercent ?? 0);
+  const minimumNgn = Number(settings.ngnMinimumFeeNgn ?? 0);
+
   if (input.direction === 'onramp') {
-    // Same engine as the rest of the platform, so tiers and the USD minimum
-    // apply exactly as an admin configured them.
+    const usingNgnRate = ngnOnramp > 0;
+
+    // Same engine as the rest of the platform, so tiers and the minimum behave
+    // exactly as configured. The NGN minimum is denominated in naira and the
+    // on-ramp gross IS naira, so it maps onto minimumFeeUsd directly - the
+    // field is a floor in the fee's own currency, not specifically dollars.
     const result = calculateOnrampFee({
       amount: gross,
-      basePercent: Number(settings.onrampFeePercent ?? 0),
-      minimumFeeUsd: Number(settings.onrampMinimumFeeUsd ?? 0),
-      tiers: settings.onrampFeeTiers ?? [],
+      basePercent: usingNgnRate ? ngnOnramp : Number(settings.onrampFeePercent ?? 0),
+      minimumFeeUsd: usingNgnRate ? minimumNgn : Number(settings.onrampMinimumFeeUsd ?? 0),
+      // Tiers are a Bridge-side concept keyed to USD amounts. Applying them to
+      // a naira gross would compare NGN 50,000 against a $50 tier boundary and
+      // silently pick the wrong band, so they are not carried over.
+      tiers: usingNgnRate ? [] : (settings.onrampFeeTiers ?? []),
     });
 
     const sivanMargin = Number(result.feeAmount);
@@ -115,7 +130,7 @@ export async function applySivanMargin(input: MarginInput): Promise<MarginResult
     };
   }
 
-  const percent = Number(settings.offrampFeePercent ?? 0);
+  const percent = ngnOfframp > 0 ? ngnOfframp : Number(settings.offrampFeePercent ?? 0);
   const sivanMargin = round((gross * percent) / 100, 6);
   const totalFee = round(providerFee + sivanMargin, 6);
 
@@ -125,6 +140,6 @@ export async function applySivanMargin(input: MarginInput): Promise<MarginResult
     totalFee,
     effectivePercent: round((totalFee / gross) * 100, 4),
     appliedRule: 'base_percent',
-    explanation: `${percent}% Sivan margin`,
+    explanation: `${percent}% Sivan margin${ngnOfframp > 0 ? ' (NGN rate)' : ' (default rate)'}`,
   };
 }

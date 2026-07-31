@@ -91,6 +91,11 @@ const envSchema = z.object({
   NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false),
   PAJ_RAMP_ENV: z.enum(['staging', 'production']).default('staging'),
   // Breet - primary NGN provider. https://docs.breet.io
+  // Sivan's own margin on the NGN rail, separate from the Bridge percentages.
+  // 0 means "not set" and the NGN flows fall back to the Bridge fees.
+  SIVAN_NGN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
+  SIVAN_NGN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
+  SIVAN_NGN_MINIMUM_FEE_NGN: z.coerce.number().min(0).default(0),
   BREET_APP_ID: z.string().optional().default(''),
   BREET_APP_SECRET: z.string().optional().default(''),
   // Required header on every request; Breet rejects a missing or invalid value.

@@ -87,6 +87,38 @@ export const feeSettingsSchema = z.object({
    * confirm, and the value is verified at runtime rather than assumed.
    */
   virtualAccountFeeConfigEnabled: z.boolean().default(false),
+  /**
+   * NGN rail fees, separate from the Bridge on/off-ramp fees above.
+   *
+   * A separate lever because it is a different rail with a different cost base
+   * and different competition:
+   *
+   *   - the provider differs. Bridge charges ~0.25-0.50%; Breet charges 0.50%
+   *     on the NGN rail. Sharing one percentage means a change to one provider
+   *     silently reprices the other.
+   *   - the flows differ. Bridge moves USD/EUR/GBP; this moves naira between
+   *     Nigerian banks and stablecoin.
+   *   - the competition differs. Nigerian naira on/off-ramp is priced against
+   *     local players, not against a USD wire.
+   *
+   * These are SIVAN'S MARGIN ONLY. The provider's own fee is added on top by
+   * the quote path and reported separately, so the user pays
+   * ngnOnrampFeePercent + the provider's cut. Blending them would make a
+   * provider price rise indistinguishable from Sivan earning more.
+   *
+   * Zero means "not set" and the flow falls back to the Bridge on/off-ramp
+   * percentages, which is the behaviour every existing deployment already has.
+   */
+  ngnOnrampFeePercent: z.coerce.number().min(0).max(100).default(0),
+  ngnOfframpFeePercent: z.coerce.number().min(0).max(100).default(0),
+  /**
+   * Minimum NGN margin per transaction, in naira.
+   *
+   * Same reasoning as the on-ramp USD floor: a percentage of a small transfer
+   * does not cover the fixed cost of processing it. Unlike Bridge's virtual
+   * accounts there is no provider restriction here, so this can be set freely.
+   */
+  ngnMinimumFeeNgn: z.coerce.number().min(0).max(10_000_000).default(0),
   bridgeOfframpCostPercent: z.coerce.number().min(0).max(100),
   rateSources: z.array(z.object({ name: z.string().min(1), weightPercent: z.coerce.number().min(0).max(100), live: z.boolean().default(true) })).default([]),
   feeTiers: z.array(feeTierSchema).min(1),
@@ -125,6 +157,11 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     virtualAccountMinimumFeeUsd: 0,
     virtualAccountMaximumFeeUsd: 0,
     virtualAccountFeeConfigEnabled: false,
+    // Zero means "not set": the NGN flows fall back to the Bridge percentages
+    // above, preserving existing behaviour until an admin chooses otherwise.
+    ngnOnrampFeePercent: Number(percent(env.SIVAN_NGN_ONRAMP_FEE_PERCENT || 0)),
+    ngnOfframpFeePercent: Number(percent(env.SIVAN_NGN_OFFRAMP_FEE_PERCENT || 0)),
+    ngnMinimumFeeNgn: Number(env.SIVAN_NGN_MINIMUM_FEE_NGN || 0),
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
       { name: 'Bridge', weightPercent: 40, live: true },
