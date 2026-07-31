@@ -272,30 +272,52 @@ async function main() {
 
   console.log('\nSIVAN networks vs BREET capability - the mismatch that matters');
   {
-    // Sivan's DEFAULT enabled networks.
-    const sivanDefaults = ['base', 'solana', 'avalanche_c_chain'] as any;
+    // The OLD defaults, kept as a regression guard: this is the configuration
+    // that produced failures, and it must never be silently restored.
+    const oldDefaults = ['base', 'solana', 'avalanche_c_chain'] as any;
+    const oldReport = reconcileWithControls(oldDefaults);
+    check('the OLD defaults could on-ramp on only 1 of 3 networks',
+      oldReport.onrampCapable.length === 1 && oldReport.onrampCapable[0] === 'solana',
+      JSON.stringify(oldReport.onrampCapable));
+    check('and Avalanche was unusable in both directions',
+      oldReport.unsupported.includes('avalanche_c_chain' as any));
+
+    // The NEW defaults: avalanche dropped, ethereum and tron added.
+    const sivanDefaults = ['base', 'solana', 'ethereum', 'tron'] as any;
     const report = reconcileWithControls(sivanDefaults);
 
-    // Only Solana of the three can receive a Breet on-ramp. Without this map an
-    // on-ramp to Base would be accepted and then fail at Breet - after Sivan's
-    // float had already been committed.
-    check("only Solana of Sivan's 3 defaults can receive a Breet on-ramp",
-      report.onrampCapable.length === 1 && report.onrampCapable[0] === 'solana',
+    check('the new defaults on-ramp on 3 networks, not 1',
+      report.onrampCapable.length === 3, JSON.stringify(report.onrampCapable));
+    check('solana, ethereum and tron all on-ramp',
+      ['solana', 'ethereum', 'tron'].every((n) => report.onrampCapable.includes(n as any)),
       JSON.stringify(report.onrampCapable));
+    check('no enabled network is completely unusable any more',
+      report.unsupported.length === 0, JSON.stringify(report.unsupported));
+    check('avalanche is no longer enabled',
+      !sivanDefaults.includes('avalanche_c_chain'));
+
+    // Tron is USDT-only for deposits at Breet, though it withdraws both.
+    check('tron off-ramps USDT but not USDC',
+      canDeposit('tron' as any, 'usdt') && !canDeposit('tron' as any, 'usdc'));
+    check('tron on-ramps both', canWithdraw('tron' as any, 'usdc') && canWithdraw('tron' as any, 'usdt'));
 
     check('Base can off-ramp (USDC deposit) but NOT on-ramp',
       canDeposit('base' as any, 'usdc') && !canWithdraw('base' as any, 'usdc'));
 
     // Breet takes AVAX the coin, but no stablecoin on Avalanche either way.
+    // Asserted directly now that avalanche is no longer in the defaults.
     check('Avalanche supports no stablecoin at all through Breet',
-      report.unsupported.includes('avalanche_c_chain' as any),
-      JSON.stringify(report.unsupported));
+      !canDeposit('avalanche_c_chain' as any, 'usdc') &&
+      !canDeposit('avalanche_c_chain' as any, 'usdt') &&
+      !canWithdraw('avalanche_c_chain' as any, 'usdc') &&
+      !canWithdraw('avalanche_c_chain' as any, 'usdt'));
 
     check('Solana works in both directions',
       canDeposit('solana' as any, 'usdc') && canWithdraw('solana' as any, 'usdc'));
 
-    check('usableForOnramp filters an enabled list to what actually works',
-      usableForOnramp(sivanDefaults, 'usdc').join() === 'solana',
+    // Base is enabled and off-ramps fine, but must be filtered OUT for on-ramp.
+    check('usableForOnramp drops Base from an on-ramp list',
+      usableForOnramp(sivanDefaults, 'usdc').join() === 'solana,ethereum,tron',
       usableForOnramp(sivanDefaults, 'usdc').join());
   }
 

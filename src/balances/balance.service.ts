@@ -5,7 +5,15 @@ import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 
 export type BalanceAsset = 'usdc' | 'usdt';
-export type BalanceNetwork = 'base' | 'solana' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum';
+/**
+ * Networks Sivan knows about.
+ *
+ * avalanche_c_chain stays in the union deliberately even though it is no longer
+ * enabled: historical ledger rows and transfers reference it, and removing the
+ * member would make that stored data unreadable. It is excluded from the
+ * DEFAULTS instead, which is the switch that actually governs new activity.
+ */
+export type BalanceNetwork = 'base' | 'solana' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
 export type BalanceLedgerKind = 'credit_pending' | 'credit_available' | 'debit_transfer' | 'hold' | 'hold_release' | 'adjustment';
 export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing' | 'completed' | 'rejected' | 'failed';
 
@@ -14,7 +22,7 @@ export const balanceTransferControlsSchema = z.object({
   minimumSendAmount: z.coerce.number().positive().default(10),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'])).default(['base', 'solana', 'avalanche_c_chain']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['base', 'solana', 'ethereum', 'tron']),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
 });
@@ -100,7 +108,13 @@ export async function getBalanceTransferControls() {
     minimumSendAmount: Number(process.env.BALANCE_TRANSFER_MIN_AMOUNT || 10),
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    supportedNetworks: ['base', 'solana', 'avalanche_c_chain'] as BalanceNetwork[],
+    // Defaults chosen against Breet's actual capability, not aspiration:
+    //   solana / ethereum / tron - work in BOTH directions
+    //   base                     - off-ramp only; Breet cannot withdraw to it
+    //   avalanche_c_chain        - DROPPED. Breet supports AVAX the coin but no
+    //                              USDC or USDT on that chain, either way, so
+    //                              enabling it only produced failures.
+    supportedNetworks: ['base', 'solana', 'ethereum', 'tron'] as BalanceNetwork[],
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),

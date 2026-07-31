@@ -65,6 +65,16 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     withdrawal: { usdc: true, usdt: true },
   },
   {
+    network: 'tron',
+    breetWithdrawalNetwork: 'TRC20',
+    deposit: {
+      usdt: { mainnet: 'TRX_USDT_S2UZ', testnet: 'USDT_TRX_TEST2', minUsd: 20 },
+      // Breet withdraws USDC over TRC20 but publishes no USDC-on-Tron DEPOSIT
+      // asset, so this is deliberately asymmetric rather than an oversight.
+    },
+    withdrawal: { usdc: true, usdt: true },
+  },
+  {
     // Deposit only. Breet lists no Base withdrawal, so an on-ramp to a Base
     // address is impossible - and Base is one of Sivan's DEFAULT networks.
     network: 'base',
