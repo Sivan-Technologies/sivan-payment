@@ -34,6 +34,18 @@ import type { BalanceNetwork } from '../../balances/balance.service.js';
 
 export type StableAsset = 'usdc' | 'usdt';
 
+/**
+ * Breet's asset ID is a Mongo ObjectId, NOT the identifier in their docs.
+ *
+ * Verified against the live sandbox: the supported-assets page lists
+ * `SOL_USDC_JKVK`, but the API returns that string as `identifier` and a
+ * separate `id` of `69b3e33d5aef202395e800e8`. Endpoints keyed by asset take
+ * the ObjectId - passing the identifier returns "id is not a valid id".
+ *
+ * ObjectIds are per-integration and can change, so they are NOT hardcoded.
+ * The identifier is stable and human-readable, so it is stored here and
+ * resolved to an id at runtime via GET /trades/assets. resolveAssetId() below.
+ */
 export interface BreetNetworkCapability {
   /** Sivan's name for the network. */
   network: BalanceNetwork;
@@ -162,6 +174,29 @@ export function breetMinimumDepositUsd(
   if (!entry) return undefined;
   // Every test asset has a $1 minimum, per Breet's docs.
   return environment === 'production' ? entry.minUsd : 1;
+}
+
+/**
+ * Resolve a doc identifier to Breet's real asset id, from the live list.
+ *
+ * Cached per process: the list is stable within a run, and re-fetching it on
+ * every quote would add a network round trip to a latency-sensitive path.
+ */
+const assetIdCache = new Map<string, string>();
+
+export function cacheAssetIds(assets: Array<{ id?: string; identifier?: string }>): void {
+  for (const asset of assets) {
+    if (asset?.id && asset?.identifier) assetIdCache.set(asset.identifier, asset.id);
+  }
+}
+
+export function resolveAssetId(identifier: string): string | undefined {
+  return assetIdCache.get(identifier);
+}
+
+/** Test seam. */
+export function clearAssetIdCache(): void {
+  assetIdCache.clear();
 }
 
 /** Networks from a controls list that Breet can actually on-ramp to. */

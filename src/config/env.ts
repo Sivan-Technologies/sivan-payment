@@ -106,6 +106,9 @@ const envSchema = z.object({
   // Required header on every request; Breet rejects a missing or invalid value.
   BREET_ENV: z.enum(['development', 'production']).default('development'),
   BREET_WEBHOOK_SECRET: z.string().optional().default(''),
+  // Breet's merchant reference for this integration. Identifies Sivan to Breet
+  // in support and reconciliation; not a credential.
+  BREET_MERCHANT_REFERENCE: z.string().optional().default(''),
   // Asset to quote and generate deposit addresses for. From Breet's fetch-assets endpoint.
   BREET_DEFAULT_ASSET_ID: z.string().optional().default(''),
   BREET_DEFAULT_BANK_ID: z.string().optional().default(''),

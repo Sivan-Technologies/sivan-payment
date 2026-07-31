@@ -77,17 +77,13 @@ async function main() {
 
   // 1. Credentials. Everything else is meaningless if this fails.
   console.log('authentication');
-  const account = await call('/integration');
+  // /integration, /account and /integrations/me all 400 in the sandbox despite
+  // the docs. /trades/assets is authenticated and real, so it proves the
+  // credentials without depending on an endpoint that may not exist.
+  const account = await call('/trades/assets');
   if (account.ok) {
     ok('credentials accepted');
-    const usd = account.body?.data?.balances?.usd ?? account.body?.data?.usdBalance;
-    if (usd === undefined) {
-      note('USD balance not found in the response', 'on-ramp float cannot be pre-checked');
-    } else {
-      ok('USD balance readable', String(usd));
-      // On-ramp spends Sivan's own float. Zero means on-ramp will 403.
-      if (Number(usd) <= 0) note('USD balance is zero', 'on-ramp will fail until funded');
-    }
+    note('no account/balance endpoint found', 'on-ramp float cannot be pre-checked from the API');
   } else {
     bad('credentials rejected', `${account.status} ${account.body?.message ?? ''}`);
     console.log('\n  Stopping: nothing below can be trusted without auth.\n');
@@ -104,26 +100,29 @@ async function main() {
     const list: any[] = assets.body?.data ?? assets.body ?? [];
     ok('asset list fetched', `${list.length} assets`);
 
-    const byId = new Map(list.map((a: any) => [String(a.id ?? a.symbol), a]));
+    // Keyed by IDENTIFIER. Breet returns both: `identifier` is the stable
+    // doc-style string the capability map stores, `id` is the ObjectId that
+    // asset-keyed endpoints actually require.
+    const byIdentifier = new Map(list.map((a: any) => [String(a.identifier), a]));
 
     // Every testnet id the map claims must actually exist and be active.
     for (const entry of BREET_NETWORKS) {
       for (const asset of ['usdc', 'usdt'] as const) {
         const id = breetDepositAssetId(entry.network, asset, 'development');
         if (!id) continue;
-        const live = byId.get(id);
+        const live = byIdentifier.get(id);
         if (!live) {
           bad(`${entry.network}/${asset} id not in Breet's list`, id);
         } else if (live.isActive === false) {
           note(`${entry.network}/${asset} exists but is inactive`, id);
         } else {
-          ok(`${entry.network}/${asset} id confirmed`, id);
+          ok(`${entry.network}/${asset} confirmed`, `${id} -> ${live.id} (min $${live.minimum})`);
         }
       }
     }
 
     if (process.env.BREET_DEFAULT_ASSET_ID) {
-      const configured = byId.get(String(process.env.BREET_DEFAULT_ASSET_ID));
+      const configured = byIdentifier.get(String(process.env.BREET_DEFAULT_ASSET_ID));
       if (configured) ok('BREET_DEFAULT_ASSET_ID is a real asset');
       else bad('BREET_DEFAULT_ASSET_ID is not in the live list', String(process.env.BREET_DEFAULT_ASSET_ID));
     }
@@ -146,9 +145,11 @@ async function main() {
 
   // 4. Rates. Quotes are priced from this, so a shape change misprices users.
   console.log('\nrate calculator');
-  const assetId = process.env.BREET_DEFAULT_ASSET_ID || breetDepositAssetId('solana', 'usdc', 'development');
+  const identifier = process.env.BREET_DEFAULT_ASSET_ID || breetDepositAssetId('solana', 'usdc', 'development');
+  const liveList: any[] = (assets.body?.data ?? []) as any[];
+  const assetId = liveList.find((a: any) => a.identifier === identifier)?.id;
   if (!assetId) {
-    note('no asset id available to price with');
+    note('no asset id available to price with', String(identifier));
   } else {
     const rate = await call(`/trades/pbc/sell/rate-calculator/${encodeURIComponent(assetId)}`, {
       method: 'POST',
@@ -165,7 +166,8 @@ async function main() {
 
   // 5. Banks. Needed for payout and for Sivan's Level 1 identity evidence.
   console.log('\nbanks');
-  const banks = await call('/payments/banks');
+  // currency is REQUIRED - omitting it returns 422, which the docs omit.
+  const banks = await call('/payments/banks?currency=ngn');
   if (banks.ok) {
     const list: any[] = banks.body?.data ?? banks.body ?? [];
     if (list.length) ok('bank list fetched', `${list.length} banks, e.g. ${list[0]?.name}`);

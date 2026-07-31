@@ -5,6 +5,8 @@ import type { NgnProviderAdapter } from './ngn-provider.js';
 import type { NgnProviderHealth, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
 import type { BalanceNetwork } from '../../balances/balance.service.js';
 import {
+  cacheAssetIds,
+  resolveAssetId,
   breetDepositAssetId,
   breetMinimumDepositUsd,
   breetWithdrawalNetwork,
@@ -101,9 +103,43 @@ function money(value: number, dp = 2) {
 export class BreetNgnProvider implements NgnProviderAdapter {
   name: NgnProviderName = 'breet';
 
-  /** Banks, for payout selection and name resolution. */
-  async listBanks() {
-    return breetRequest<Array<{ id: string; name: string; code?: string }>>('/payments/banks');
+  /**
+   * Live asset list, cached.
+   *
+   * Breet's asset ID is a Mongo ObjectId, not the identifier printed in their
+   * docs. Verified in the sandbox: SOL_USDC_JKVK is the `identifier`, while
+   * `id` is 69b3e33d5aef202395e800e8, and asset-keyed endpoints reject the
+   * identifier with "id is not a valid id". So the id must be looked up rather
+   * than assumed.
+   */
+  async loadAssets() {
+    const assets = await breetRequest<Array<{ id: string; identifier: string; minimum?: number }>>(
+      '/trades/assets'
+    );
+    cacheAssetIds(assets ?? []);
+    return assets ?? [];
+  }
+
+  /** Identifier -> ObjectId, loading the list on first use. */
+  private async assetIdFor(identifier: string): Promise<string> {
+    const cached = resolveAssetId(identifier);
+    if (cached) return cached;
+    await this.loadAssets();
+    const resolved = resolveAssetId(identifier);
+    if (!resolved) throw forbidden(`Breet has no asset ${identifier} in this environment.`);
+    return resolved;
+  }
+
+  /**
+   * Banks, for payout selection and name resolution.
+   *
+   * `currency` is REQUIRED - omitting it returns 422 "currency ISO code should
+   * be one of ngn, ghs, usd", which the docs do not mention.
+   */
+  async listBanks(currency: 'ngn' | 'ghs' | 'usd' = 'ngn') {
+    return breetRequest<Array<{ id: string; name: string; slug?: string; type?: string }>>(
+      `/payments/banks?currency=${currency}`
+    );
   }
 
   /**
@@ -134,8 +170,14 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * Breet's rate would show a number Sivan cannot honour.
    */
   async createQuote(input: NgnQuoteInput) {
-    const assetId = env.BREET_DEFAULT_ASSET_ID;
-    if (!assetId) throw forbidden('BREET_DEFAULT_ASSET_ID is not configured.');
+    const identifier =
+      breetDepositAssetId(
+        String(env.BREET_DEFAULT_NETWORK || 'solana').toLowerCase() as BalanceNetwork,
+        'usdc',
+        breetEnvironment()
+      ) ?? env.BREET_DEFAULT_ASSET_ID;
+    if (!identifier) throw forbidden('No Breet asset configured to price with.');
+    const assetId = await this.assetIdFor(identifier);
 
     const source = Number(input.sourceAmount);
     if (!Number.isFinite(source) || source <= 0) throw new Error('Breet: invalid source amount.');
@@ -345,9 +387,10 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       );
     }
 
-    const assetId =
+    const identifier =
       breetDepositAssetId(sivanNetwork, asset, breetEnvironment()) ?? env.BREET_DEFAULT_ASSET_ID;
-    if (!assetId) throw forbidden('No Breet asset id for that network and asset.');
+    if (!identifier) throw forbidden('No Breet asset for that network and asset.');
+    const assetId = await this.assetIdFor(identifier);
 
     // Below Breet's minimum a deposit is FLAGGED: confirmed on-chain, funds
     // held, NOT credited. The user must be told before they send, not after.
@@ -530,7 +573,10 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     }
 
     try {
-      await breetRequest('/account');
+      // /integration, /account and /integrations/me all return 400 in the
+      // sandbox. /trades/assets is authenticated and real, so it is the
+      // liveness probe.
+      await breetRequest('/trades/assets');
       return {
         provider: this.name,
         available: true,
