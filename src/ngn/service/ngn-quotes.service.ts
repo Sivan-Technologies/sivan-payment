@@ -10,6 +10,7 @@ import { getNgnControls } from './ngn-controls.service.js';
 import { decide, requiresBridgeCustomer } from '../../kyc/service/verification-policy.js';
 import { getVerificationState, getCumulativeNgnVolume } from '../../kyc/service/verification-state.js';
 import { VOLUME_WINDOW_DAYS } from '../../kyc/types/verification.types.js';
+import { applySivanMargin } from './ngn-margin.js';
 import type { NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
 
 export const createNgnQuoteSchema = z.object({
@@ -94,8 +95,46 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
 
   const provider = getNgnProvider(controls.activeProvider);
   const quote = await provider.createQuote({ ...input, customerId: customer?.id });
+
+  // The provider quote carries the PROVIDER's fee only. Sivan's margin is added
+  // here, on top. Without this the NGN path ran at cost: Breet took 0.5%, Sivan
+  // took nothing, on every naira transaction.
+  //
+  // Margin is charged on the GROSS, not on what is left after the provider's
+  // cut - otherwise a provider raising its rate would quietly shrink Sivan's
+  // revenue, which is the opposite of what a margin is for.
+  const grossForMargin = Number(quote.sourceAmount);
+  const margin = await applySivanMargin({
+    direction: input.direction,
+    grossAmount: grossForMargin,
+    providerFeeAmount: Number(quote.feeAmount ?? 0),
+  });
+
+  // The user receives less by exactly Sivan's margin. Recomputed rather than
+  // re-quoted so the number shown is the number charged.
+  const providerDestination = Number(quote.destinationAmount);
+  const rate = Number(quote.rate) || 0;
+  const destinationAfterMargin =
+    input.direction === 'onramp'
+      ? Math.max(providerDestination - (rate > 0 ? margin.sivanMargin / rate : 0), 0)
+      : Math.max(providerDestination - margin.sivanMargin, 0);
+
   const now = nowIso();
-  const record: NgnQuoteRecord = { id: id('ngnq'), userId: input.userId, customerId: customer?.id, direction: input.direction, provider: quote.provider, sourceCurrency: input.sourceCurrency, destinationCurrency: input.destinationCurrency, sourceAmount: quote.sourceAmount, destinationAmount: quote.destinationAmount, rate: quote.rate, feeAmount: quote.feeAmount, status: 'quote_created', providerQuoteId: quote.providerQuoteId, expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), metadata: quote.metadata, createdAt: now, updatedAt: now };
+  const record: NgnQuoteRecord = { id: id('ngnq'), userId: input.userId, customerId: customer?.id, direction: input.direction, provider: quote.provider, sourceCurrency: input.sourceCurrency, destinationCurrency: input.destinationCurrency, sourceAmount: quote.sourceAmount, destinationAmount: destinationAfterMargin.toFixed(input.destinationCurrency === 'ngn' ? 2 : 6), rate: quote.rate, feeAmount: String(margin.totalFee), status: 'quote_created', providerQuoteId: quote.providerQuoteId, expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), metadata: {
+    ...(typeof quote.metadata === 'object' && quote.metadata ? quote.metadata : {}),
+    // Kept separate on purpose. One blended number makes it impossible to tell
+    // a provider price rise from Sivan earning more, and a support agent cannot
+    // explain a fee they cannot break down.
+    fees: {
+      providerFee: margin.providerFee,
+      providerName: quote.provider,
+      sivanMargin: margin.sivanMargin,
+      totalFee: margin.totalFee,
+      effectivePercent: margin.effectivePercent,
+      appliedRule: margin.appliedRule,
+      explanation: margin.explanation,
+    },
+  }, createdAt: now, updatedAt: now };
   await db.upsertNgnQuoteRecord(record);
   await createAuditLog({ actorType: 'user', actorId: input.userId, action: 'ngn.quote_created', resourceType: 'payments_ngn_quote', resourceId: record.id, metadata: { direction: record.direction, provider: record.provider } });
   return record;

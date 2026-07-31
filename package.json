@@ -67,7 +67,8 @@
     "test:kyc-policy": "tsx scripts/test-kyc-verification-policy.ts",
     "test:kyc-ngn-gate": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-kyc-ngn-gate.json tsx scripts/test-kyc-ngn-gate.ts",
     "test:kyc-ledger": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-kyc-ledger.json tsx scripts/test-kyc-ledger.ts",
-    "test:breet-identity": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-breet-identity.json BREET_APP_ID=test_app_id BREET_APP_SECRET=test_app_secret BREET_WEBHOOK_SECRET=whsec_breet_test BREET_DEFAULT_ASSET_ID=asset_usdt_sol tsx scripts/test-breet-and-identity-toggle.ts"
+    "test:breet-identity": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-breet-identity.json BREET_APP_ID=test_app_id BREET_APP_SECRET=test_app_secret BREET_WEBHOOK_SECRET=whsec_breet_test BREET_DEFAULT_ASSET_ID=asset_usdt_sol tsx scripts/test-breet-and-identity-toggle.ts",
+    "test:ngn-margin": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-ngn-margin.json tsx scripts/test-ngn-margin.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
