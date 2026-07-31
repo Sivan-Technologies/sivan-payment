@@ -78,6 +78,8 @@ export async function buildApp() {
 
   app.addHook('preHandler', async (request, reply) => {
     if (isFastHealthRequest(request.method, request.url)) return;
+    // Provider webhooks bypass the platform-status reads. See isProviderWebhook.
+    if (isProviderWebhook(request.method, request.url)) return;
     const status = await getSystemStatus();
     if (isUserMutationBlocked(status.mode, request.method, request.url)) {
       return reply.code(503).send({
@@ -198,6 +200,38 @@ export async function buildApp() {
 function isFastHealthRequest(method: string, url: string): boolean {
   const path = url.split('?')[0];
   return ['GET', 'HEAD'].includes(method) && ['/', '/ping', '/health', '/health/db'].includes(path);
+}
+
+/**
+ * Inbound provider webhooks, which skip the platform-status preHandlers.
+ *
+ * MEASURED, not assumed: a rejected Breet webhook took ~6s while /health took
+ * 0.11s. The cost is getSystemStatus() plus getAdminPlatformSettings(), both of
+ * which read the database on every non-health request - before the webhook's
+ * own secret is even checked.
+ *
+ * Wrong on three counts:
+ *
+ *   1. A FORGED request must cost nothing. Two database reads before rejecting
+ *      an unauthenticated caller is a free denial-of-service.
+ *
+ *   2. Breet retries any non-2xx with backoff for 24 hours, then marks the
+ *      event permanently failed. The Cloudflare worker times out at 12s, so a
+ *      6s handler plus one retry exceeds it, and a webhook the API handled
+ *      correctly gets recorded as a failure.
+ *
+ *   3. Those checks do not apply here anyway. They gate USER mutations behind
+ *      maintenance mode and platform switches. A provider reporting that a
+ *      transaction settled is not a user action, and dropping it during
+ *      maintenance loses money rather than protecting it.
+ *
+ * Authentication is NOT skipped. Each provider's verifyWebhook still compares
+ * its secret in constant time, and Breet's re-fetches the transaction from
+ * Breet before anything is credited.
+ */
+function isProviderWebhook(method: string, url: string): boolean {
+  const path = url.split('?')[0];
+  return method === 'POST' && (path.startsWith('/api/webhooks/') || path.startsWith('/webhooks/'));
 }
 
 function restrictedActionForRequest(method: string, url: string): 'onramp' | 'offramp' | 'kyc' | undefined {
