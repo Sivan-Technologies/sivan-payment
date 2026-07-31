@@ -132,11 +132,32 @@ $10,000/transaction, $100,000-lifetime database-check allowance is **US-only**.
 No equivalent carve-out is documented for Nigeria, so we should assume Nigerian
 onboarding needs the national ID number and be ready for ID verification.
 
-**Open question — must be answered before build:** does Bridge accept a Nigerian
-NIN as `national_id`, and does it require a photo ID for Nigerian individuals?
-The country table lists per-country identification types; Nigeria's exact
-accepted types need reading off that table directly. Getting this wrong means
-paying $2 per rejection.
+**ANSWERED 2026-07-31 — VERIFIED** against Bridge's country table at
+`apidocs.bridge.xyz/platform/customers/compliance/individuals`:
+
+| Region | Accepted identification types |
+|---|---|
+| **Nigeria** (`Nga`) | `tin` — Tax Identification Number<br>`nin` — **National Identification Number**<br>`bvn` — **Bank Verification Number** |
+
+Bridge accepts **both NIN and BVN** for Nigeria, natively, as first-class
+identification types. Nigeria is one of the few countries in that table with
+three accepted types — most get only `tin`.
+
+This is the single most important fact in this document, because it means
+**Layer 1 and Layer 2 verify against the same identifiers.** The cheap Nigerian
+check is not a different question from Bridge's question; it is the same
+question asked earlier and cheaper. So a Layer 1 pass is a genuine predictor of
+a Layer 2 pass, and pre-screening actually works rather than merely feeling
+prudent.
+
+Note also `passport`, `national_id` and `other` are valid for all countries
+except the USA, so there is a documentary fallback if a NIN lookup fails.
+
+Still open: whether Bridge requires photo ID / liveness for Nigerian individuals
+on top of the number. The documented "database checks without a photo ID"
+allowance ($10,000 per transaction, $100,000 lifetime) is **explicitly US-only**,
+and no Nigerian equivalent is published. Assume photo ID may be required and ask
+Bridge to confirm in writing.
 
 ---
 
@@ -353,9 +374,11 @@ Levers, in order of impact:
 
 ## 9. Open questions — answer before building
 
-1. **Does Bridge accept Nigerian NIN as `national_id`, and is photo ID required
-   for Nigerian individuals?** Decides whether Layer 1 can pre-screen accurately
-   or whether every Nigerian needs full document verification.
+1. ~~Does Bridge accept Nigerian NIN?~~ **ANSWERED: yes — `nin`, `bvn` and
+   `tin` are all accepted for `Nga` (VERIFIED, §3).** Layer 1 and Layer 2 check
+   the same identifiers, so pre-screening genuinely predicts the Bridge outcome.
+   Still open: whether photo ID / liveness is additionally required for Nigerian
+   individuals. The no-photo-ID allowance is documented as US-only.
 2. **Which Layer 1 provider?** Needs NIN + BVN + bank name match. The NGN
    on/off-ramp provider is still undecided (0.50% rate, own markup allowed) —
    possibly the same vendor.
