@@ -189,15 +189,58 @@ async function main() {
     check('and include a known Breet address', BREET_WEBHOOK_IPS.includes('46.101.201.155'));
   }
 
-  console.log('\nBreet on-ramp refuses rather than inventing an instruction');
+  console.log('\nBreet on-ramp: validation before any float leaves');
   {
     const breet = new BreetNgnProvider();
-    // Breet's documented surface is crypto-in / fiat-out. Nothing describes
-    // collecting naira from a user. A fake instruction would send someone's
-    // money somewhere that will not credit them.
-    const error = await threwAsync(() => breet.createOnrampTransfer({} as any));
-    check('on-ramp throws', error !== undefined);
-    check('and names PajRamp as the route that works', /PajRamp/i.test(error ?? ''), error);
+    const quote = (over: any = {}) => ({
+      id: 'q_on_1', userId: 'u_bank', destinationAmount: '10',
+      destinationCurrency: 'usdc', metadata: {}, ...over,
+    }) as any;
+
+    // Breet's on-ramp spends SIVAN'S pre-funded USD balance. Every guard here
+    // exists because getting it wrong sends real working capital somewhere
+    // unrecoverable.
+    const noAddress = await threwAsync(() => breet.createOnrampTransfer(quote()));
+    check('refuses with no destination wallet', noAddress !== undefined);
+    check('and says so plainly', /destination wallet/i.test(noAddress ?? ''), noAddress);
+
+    const badToken = await threwAsync(() =>
+      breet.createOnrampTransfer(quote({ metadata: { recipientAddress: 'A1', token: 'DAI' } }))
+    );
+    check('refuses an unsupported token', /USDC and USDT/i.test(badToken ?? ''), badToken);
+
+    // Breet documents USDC as unavailable on TON.
+    const usdcOnTon = await threwAsync(() =>
+      breet.createOnrampTransfer(quote({ metadata: { recipientAddress: 'A1', token: 'USDC', network: 'TON' } }))
+    );
+    check('refuses USDC on TON, which Breet does not support',
+      /USDC on TON/i.test(usdcOnTon ?? ''), usdcOnTon);
+
+    const badAmount = await threwAsync(() =>
+      breet.createOnrampTransfer(quote({
+        destinationAmount: '0', metadata: { recipientAddress: 'A1', token: 'USDC' },
+      }))
+    );
+    check('refuses a zero amount', /invalid on-ramp amount/i.test(badAmount ?? ''), badAmount);
+  }
+
+  console.log('\nBreet on-ramp is float-funded, and says so');
+  {
+    // Stated in code because it is a commercial commitment, not a detail:
+    // Breet's on-ramp spends Sivan's own pre-funded USD balance, so every
+    // on-ramp draws down working capital.
+    const source = await import('node:fs').then((fs) =>
+      fs.readFileSync(new URL('../src/ngn/provider/breet.provider.ts', import.meta.url), 'utf8')
+    );
+    check('the float model is documented at the call site',
+      /FLOAT MODEL, NOT A PASS-THROUGH/.test(source));
+    check('the balance is checked before sending',
+      /insufficient balance|usdBalance < amountUsd/.test(source));
+    check('transfers are marked as float-funded for operations',
+      /fundedFromSivanFloat: true/.test(source));
+    check('externalId is the quote id, so a retry cannot double-send',
+      /externalId = `sivan_onramp_\$\{quote\.id\}`/.test(source),
+      'retrying a quote could send stablecoin twice');
   }
 
   console.log('\nBreet requires configuration before it will act');

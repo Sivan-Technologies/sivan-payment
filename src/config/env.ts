@@ -101,6 +101,9 @@ const envSchema = z.object({
   BREET_DEFAULT_BANK_ID: z.string().optional().default(''),
   BREET_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
   BREET_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
+  // On-ramp destination network. ERC20 | TRC20 | BSC | SOL | TON (USDC not on TON).
+  BREET_DEFAULT_NETWORK: z.string().optional().default('SOL'),
+  BREET_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
   PAJ_RAMP_BASE_URL: z.string().url().optional().default('https://api-staging.paj.cash'),
   PAJ_RAMP_API_KEY: z.string().optional().default(''),
   PAJ_RAMP_WEBHOOK_URL: z.string().url().optional().default('https://api.sivantech.online/api/payment/api/webhooks/paj'),

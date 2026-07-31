@@ -173,23 +173,118 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     } satisfies Partial<NgnQuoteRecord> as any;
   }
 
+  /** Sivan's own balances at Breet. The float that funds on-ramp. */
+  async getIntegrationBalance() {
+    return breetRequest<any>('/integration');
+  }
+
   /**
-   * On-ramp: naira in, stablecoin out.
+   * On-ramp: stablecoin out to the user's wallet.
    *
-   * NOT IMPLEMENTED, and failing loudly is the point.
+   * THIS IS A FLOAT MODEL, NOT A PASS-THROUGH. Read before enabling.
    *
-   * Breet's documented surface is crypto-in / fiat-out: deposit addresses,
-   * auto-settlement to bank, fiat withdrawals. Nothing in their API reference
-   * describes collecting naira from an end user and delivering stablecoin.
+   * Breet's on-ramp is documented as "buy stablecoins with your Breet USD
+   * balance and send them to any external wallet address". The balance is
+   * SIVAN'S, not the user's. Their own example journey is a company funding its
+   * Breet balance via an assigned virtual account, converting NGN to USD, then
+   * paying a supplier in USDT.
    *
-   * Returning a fake instruction here would tell a user to send naira somewhere
-   * that will not credit them. Until the collection mechanism is confirmed with
-   * Breet, on-ramp routes to PajRamp.
+   * So the sequence is:
+   *
+   *   user sends NGN to Sivan  (Sivan's own collection - NOT part of this call)
+   *              ↓
+   *   Sivan's Breet NGN balance  →  /payments/fiat-to-usd  →  USD balance
+   *              ↓
+   *   POST /payments/withdraw/address  →  USDC/USDT to the user's wallet
+   *
+   * What that means commercially, stated plainly because it is a real
+   * commitment and not a detail: Sivan must PRE-FUND a USD balance at Breet.
+   * That is working capital at risk, and every on-ramp draws it down. Breet
+   * documents a 403 "insufficient balance", so the float running dry is a
+   * user-visible failure, not a background one. It is checked before sending.
+   *
+   * There is still no documented PER-USER naira collection at Breet - the
+   * virtual account in their example belongs to the business. Collecting the
+   * user's naira remains Sivan's problem, which is why PajRamp stays wired for
+   * flows that need a per-user collection account.
    */
-  async createOnrampTransfer(_quote: NgnQuoteRecord): Promise<never> {
-    throw forbidden(
-      'Breet on-ramp is not enabled yet. NGN collection is not part of Breet\'s documented API; use PajRamp for on-ramp.'
+  async createOnrampTransfer(quote: NgnQuoteRecord) {
+    const destination = (quote.metadata as any)?.recipientAddress
+      ?? env.BREET_DEFAULT_RECIPIENT_ADDRESS;
+    if (!destination) {
+      throw forbidden('No destination wallet address for the Breet on-ramp.');
+    }
+
+    const token = String((quote.metadata as any)?.token ?? quote.destinationCurrency ?? 'usdc').toUpperCase();
+    if (token !== 'USDC' && token !== 'USDT') {
+      throw forbidden(`Breet on-ramp supports USDC and USDT, not ${token}.`);
+    }
+
+    const network = String((quote.metadata as any)?.network ?? env.BREET_DEFAULT_NETWORK ?? 'SOL').toUpperCase();
+    // USDC is not available on TON, per Breet's supported networks.
+    if (token === 'USDC' && network === 'TON') {
+      throw forbidden('Breet does not support USDC on TON.');
+    }
+
+    const amountUsd = Number(quote.destinationAmount);
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      throw new Error('Breet: invalid on-ramp amount.');
+    }
+
+    // Check the float BEFORE sending. Breet returns 403 "insufficient balance",
+    // and finding that out mid-send gives the user a failure with no
+    // explanation. Advisory only - the balance can move between check and send,
+    // so the 403 is still handled below.
+    try {
+      const account: any = await this.getIntegrationBalance();
+      const usdBalance = Number(
+        account?.balances?.usd ?? account?.usdBalance ?? account?.balance?.usd ?? NaN
+      );
+      if (Number.isFinite(usdBalance) && usdBalance < amountUsd) {
+        throw forbidden(
+          'This on-ramp is temporarily unavailable. Please try a smaller amount or try again shortly.'
+        );
+      }
+    } catch (error: any) {
+      // A failed balance READ must not block the send - only an actual
+      // shortfall should. Rethrow our own refusal, swallow anything else.
+      if (error?.statusCode === 403) throw error;
+    }
+
+    // externalId is Breet's deduplication key. Using the quote id means a retry
+    // of the same quote cannot send stablecoin twice - which for an on-ramp is
+    // Sivan's float leaving the building for free.
+    const externalId = `sivan_onramp_${quote.id}`;
+
+    const result = await breetRequest<{ id?: string; status?: string; reference?: string }>(
+      '/payments/withdraw/address',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          amount: amountUsd,
+          walletAddress: destination,
+          token,
+          network,
+          externalId,
+        }),
+      }
     );
+
+    return {
+      providerTransferId: result?.id ?? result?.reference ?? externalId,
+      status: 'processing' as const,
+      metadata: {
+        breet: true,
+        environment: breetEnvironment(),
+        token,
+        network,
+        destination,
+        externalId,
+        amountUsd,
+        // Flagged so operations can see which flows consume working capital.
+        fundedFromSivanFloat: true,
+      },
+    };
   }
 
   /**
