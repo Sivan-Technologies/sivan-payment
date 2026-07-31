@@ -3,6 +3,15 @@ import { env } from '../../config/env.js';
 import { forbidden } from '../../shared/errors.js';
 import type { NgnProviderAdapter } from './ngn-provider.js';
 import type { NgnProviderHealth, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
+import type { BalanceNetwork } from '../../balances/balance.service.js';
+import {
+  breetDepositAssetId,
+  breetMinimumDepositUsd,
+  breetWithdrawalNetwork,
+  canDeposit,
+  canWithdraw,
+  type StableAsset,
+} from './breet-networks.js';
 
 /**
  * Breet NGN provider.
@@ -220,11 +229,29 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       throw forbidden(`Breet on-ramp supports USDC and USDT, not ${token}.`);
     }
 
-    const network = String((quote.metadata as any)?.network ?? env.BREET_DEFAULT_NETWORK ?? 'SOL').toUpperCase();
-    // USDC is not available on TON, per Breet's supported networks.
-    if (token === 'USDC' && network === 'TON') {
-      throw forbidden('Breet does not support USDC on TON.');
+    // Sivan's network vocabulary, not Breet's. The map translates, and refuses
+    // pairs Breet cannot actually service.
+    //
+    // This matters more than it looks: Sivan's DEFAULT enabled networks are
+    // base, solana and avalanche_c_chain, and Breet can withdraw stablecoin to
+    // NONE of those except Solana. Without this check an on-ramp to a Base
+    // address would be accepted and then fail at Breet - after Sivan's float
+    // had been committed.
+    const sivanNetwork = String(
+      (quote.metadata as any)?.network ?? env.BREET_DEFAULT_NETWORK ?? 'solana'
+    ).toLowerCase() as BalanceNetwork;
+
+    const asset = token.toLowerCase() as StableAsset;
+
+    if (!canWithdraw(sivanNetwork, asset)) {
+      throw forbidden(
+        `Breet cannot send ${token} on ${sivanNetwork}. Supported for on-ramp: Solana, Ethereum, Tron, BSC` +
+          (asset === 'usdt' ? ', TON.' : ' (USDC is not available on TON).')
+      );
     }
+
+    const network = breetWithdrawalNetwork(sivanNetwork);
+    if (!network) throw forbidden(`No Breet withdrawal network mapping for ${sivanNetwork}.`);
 
     const amountUsd = Number(quote.destinationAmount);
     if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
@@ -278,6 +305,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
         environment: breetEnvironment(),
         token,
         network,
+        sivanNetwork,
         destination,
         externalId,
         amountUsd,
@@ -300,8 +328,30 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * surfaced.
    */
   async createOfframpTransfer(quote: NgnQuoteRecord) {
-    const assetId = env.BREET_DEFAULT_ASSET_ID;
-    if (!assetId) throw forbidden('BREET_DEFAULT_ASSET_ID is not configured.');
+    // Asset id per (network, asset, environment) rather than one env var.
+    // Breet's testnet and mainnet ids are entirely different strings, so a
+    // single configured id is wrong in one of the two environments - and being
+    // wrong means generating a deposit address for the wrong asset.
+    const sivanNetwork = String(
+      (quote.metadata as any)?.network ?? env.BREET_DEFAULT_NETWORK ?? 'solana'
+    ).toLowerCase() as BalanceNetwork;
+    const asset = String(quote.sourceCurrency ?? 'usdc').toLowerCase() as StableAsset;
+
+    if (!canDeposit(sivanNetwork, asset)) {
+      throw forbidden(
+        `Breet cannot receive ${asset.toUpperCase()} on ${sivanNetwork}. ` +
+          'Supported: USDC on Solana, Ethereum, Base, Arbitrum, Polygon; ' +
+          'USDT on Solana, Ethereum, Tron, BSC, Polygon, TON.'
+      );
+    }
+
+    const assetId =
+      breetDepositAssetId(sivanNetwork, asset, breetEnvironment()) ?? env.BREET_DEFAULT_ASSET_ID;
+    if (!assetId) throw forbidden('No Breet asset id for that network and asset.');
+
+    // Below Breet's minimum a deposit is FLAGGED: confirmed on-chain, funds
+    // held, NOT credited. The user must be told before they send, not after.
+    const minimumUsd = breetMinimumDepositUsd(sivanNetwork, asset, breetEnvironment());
 
     const label = `sivan_${quote.userId}_${assetId}`;
     const bankId = (quote.metadata as any)?.bankId ?? env.BREET_DEFAULT_BANK_ID;
@@ -348,6 +398,11 @@ export class BreetNgnProvider implements NgnProviderAdapter {
         breet: true,
         environment: breetEnvironment(),
         assetId,
+        sivanNetwork,
+        asset,
+        // Surfaced so the UI can warn BEFORE the user sends. Under this, Breet
+        // flags the deposit and holds the funds without crediting.
+        minimumDepositUsd: minimumUsd,
         label,
         autoSettlement: Boolean(bankId && accountNumber),
         // Stated plainly because it changes how callers must reconcile: this

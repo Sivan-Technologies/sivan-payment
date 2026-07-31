@@ -101,8 +101,11 @@ const envSchema = z.object({
   BREET_DEFAULT_BANK_ID: z.string().optional().default(''),
   BREET_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
   BREET_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
-  // On-ramp destination network. ERC20 | TRC20 | BSC | SOL | TON (USDC not on TON).
-  BREET_DEFAULT_NETWORK: z.string().optional().default('SOL'),
+  // On-ramp destination network, in SIVAN's vocabulary (solana, ethereum,
+  // base, ...), not Breet's. breet-networks.ts translates and refuses pairs
+  // Breet cannot service. Defaulting to Breet's own 'SOL' here would not match
+  // the map and every on-ramp would be refused.
+  BREET_DEFAULT_NETWORK: z.string().optional().default('solana'),
   BREET_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
   PAJ_RAMP_BASE_URL: z.string().url().optional().default('https://api-staging.paj.cash'),
   PAJ_RAMP_API_KEY: z.string().optional().default(''),

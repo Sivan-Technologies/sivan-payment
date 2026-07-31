@@ -21,6 +21,14 @@ process.env.BREET_DEFAULT_ASSET_ID = process.env.BREET_DEFAULT_ASSET_ID || 'asse
 
 import { db } from '../src/database/json-database.js';
 import { BreetNgnProvider, BREET_WEBHOOK_IPS } from '../src/ngn/provider/breet.provider.js';
+import {
+  canDeposit,
+  canWithdraw,
+  breetDepositAssetId,
+  breetMinimumDepositUsd,
+  reconcileWithControls,
+  usableForOnramp,
+} from '../src/ngn/provider/breet-networks.js';
 import { getNgnProvider } from '../src/ngn/provider/ngn-provider-registry.js';
 import { getVerificationState } from '../src/kyc/service/verification-state.js';
 import { VerificationLevel } from '../src/kyc/types/verification.types.js';
@@ -260,6 +268,78 @@ async function main() {
     check('every request requires both credentials',
       /if \(!appId \|\| !appSecret\) throw forbidden\('Breet credentials are not configured/.test(source),
       'headers() does not guard on credentials');
+  }
+
+  console.log('\nSIVAN networks vs BREET capability - the mismatch that matters');
+  {
+    // Sivan's DEFAULT enabled networks.
+    const sivanDefaults = ['base', 'solana', 'avalanche_c_chain'] as any;
+    const report = reconcileWithControls(sivanDefaults);
+
+    // Only Solana of the three can receive a Breet on-ramp. Without this map an
+    // on-ramp to Base would be accepted and then fail at Breet - after Sivan's
+    // float had already been committed.
+    check("only Solana of Sivan's 3 defaults can receive a Breet on-ramp",
+      report.onrampCapable.length === 1 && report.onrampCapable[0] === 'solana',
+      JSON.stringify(report.onrampCapable));
+
+    check('Base can off-ramp (USDC deposit) but NOT on-ramp',
+      canDeposit('base' as any, 'usdc') && !canWithdraw('base' as any, 'usdc'));
+
+    // Breet takes AVAX the coin, but no stablecoin on Avalanche either way.
+    check('Avalanche supports no stablecoin at all through Breet',
+      report.unsupported.includes('avalanche_c_chain' as any),
+      JSON.stringify(report.unsupported));
+
+    check('Solana works in both directions',
+      canDeposit('solana' as any, 'usdc') && canWithdraw('solana' as any, 'usdc'));
+
+    check('usableForOnramp filters an enabled list to what actually works',
+      usableForOnramp(sivanDefaults, 'usdc').join() === 'solana',
+      usableForOnramp(sivanDefaults, 'usdc').join());
+  }
+
+  console.log('\nasset ids differ between environments');
+  {
+    // One configured id is wrong in one of the two environments, and being
+    // wrong means addressing an entirely different asset.
+    const main = breetDepositAssetId('solana' as any, 'usdc', 'production');
+    const test = breetDepositAssetId('solana' as any, 'usdc', 'development');
+    check('mainnet and testnet Solana USDC ids differ', main !== test, `${main} / ${test}`);
+    check("mainnet id matches Breet's published value", main === 'SOL_USDC_PTHX', String(main));
+    check("testnet id matches Breet's published value", test === 'SOL_USDC_JKVK', String(test));
+    check('Base USDC has a real mainnet id',
+      breetDepositAssetId('base' as any, 'usdc', 'production') === 'USDC_BASECHAIN_ETH_5I5C');
+    check('Avalanche has no stablecoin id',
+      breetDepositAssetId('avalanche_c_chain' as any, 'usdc', 'production') === undefined);
+  }
+
+  console.log('\ndeposit minimums are known, so a user can be warned first');
+  {
+    // Under the minimum Breet FLAGS the deposit: on-chain, held, not credited.
+    check('Solana USDC mainnet minimum is $15',
+      breetMinimumDepositUsd('solana' as any, 'usdc', 'production') === 15);
+    check('testnet minimum is $1 for every asset',
+      breetMinimumDepositUsd('solana' as any, 'usdc', 'development') === 1);
+  }
+
+  console.log('\non-ramp refuses networks Breet cannot send to');
+  {
+    const breet = new BreetNgnProvider();
+    const q = (over: any = {}) => ({
+      id: 'q_net', userId: 'u_bank', destinationAmount: '10',
+      destinationCurrency: 'usdc', metadata: {}, ...over,
+    }) as any;
+
+    const toBase = await threwAsync(() => breet.createOnrampTransfer(q({
+      metadata: { recipientAddress: '0xabc', token: 'USDC', network: 'base' },
+    })));
+    check('refuses an on-ramp to Base', /cannot send USDC on base/i.test(toBase ?? ''), toBase);
+
+    const toAvax = await threwAsync(() => breet.createOnrampTransfer(q({
+      metadata: { recipientAddress: '0xabc', token: 'USDC', network: 'avalanche_c_chain' },
+    })));
+    check('refuses an on-ramp to Avalanche', /cannot send USDC/i.test(toAvax ?? ''), toAvax);
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
