@@ -19,6 +19,7 @@
  *   BREET_DEFAULT_ASSET_ID   verified against the live asset list here
  */
 
+import { config as loadEnv } from 'dotenv';
 import { BreetNgnProvider } from '../src/ngn/provider/breet.provider.js';
 import {
   BREET_NETWORKS,
@@ -62,6 +63,13 @@ async function call(path: string, init: RequestInit = {}) {
 }
 
 async function main() {
+  // Load .env imperatively, not as a hoisted `import 'dotenv/config'`.
+  // ESM hoists all imports before any run, so the side-effect import did NOT
+  // reliably beat the provider import. The script then ran unauthenticated and
+  // still printed "credentials accepted", because the asset list is readable
+  // without auth - a false green, which is worse than a failure.
+  loadEnv();
+
   const appId = process.env.BREET_APP_ID;
   const appSecret = process.env.BREET_APP_SECRET;
 
@@ -80,10 +88,56 @@ async function main() {
   // /integration, /account and /integrations/me all 400 in the sandbox despite
   // the docs. /trades/assets is authenticated and real, so it proves the
   // credentials without depending on an endpoint that may not exist.
-  const account = await call('/trades/assets');
+  // The account path is /users/fetch-integration. /integration, /account and
+  // /integrations/me all 400 - the earlier conclusion that no account endpoint
+  // exists was wrong, and came from probing paths that do not.
+  const account = await call('/users/fetch-integration');
   if (account.ok) {
     ok('credentials accepted');
-    note('no account/balance endpoint found', 'on-ramp float cannot be pre-checked from the API');
+    const d: any = account.body?.data ?? {};
+    ok('integration active', `${d.merchantReference} active=${d.isActive}`);
+
+    // The on-ramp float. It IS readable - an earlier note said otherwise
+    // because the wrong path was probed.
+    const usd = (d.fiatWallets ?? []).find((w: any) => String(w?.currency).toLowerCase() === 'usd');
+    if (usd) {
+      ok('USD float readable', String(usd.balance));
+      if (Number(usd.balance) <= 0) note('USD float is zero', 'on-ramp will 403 until funded');
+    } else {
+      note('no USD wallet on the integration');
+    }
+
+    // A TIERED array, not a scalar. Flat 0.5% today, but the shape lets Breet
+    // vary it by size - reading a scalar would take the wrong number silently.
+    const fee = d.platformFeePercent;
+    if (Array.isArray(fee)) {
+      ok('platform fee is a tier table', fee.map((t: any) => `${t.min}-${t.max}:${t.rate}%`).join(' '));
+      const rates = [...new Set(fee.map((t: any) => Number(t.rate)))];
+      if (rates.length === 1 && rates[0] !== Number(process.env.BREET_FEE_PERCENT ?? 0.5)) {
+        note('BREET_FEE_PERCENT disagrees with Breet', `configured ${process.env.BREET_FEE_PERCENT}, live ${rates[0]}`);
+      } else if (rates.length === 1) {
+        ok('BREET_FEE_PERCENT matches the live rate', `${rates[0]}%`);
+      }
+    } else {
+      note('platform fee is not a tier table', JSON.stringify(fee));
+    }
+
+    // Breet's own markup is applied INSIDE their conversion, so it blends into
+    // the rate. Sivan adds margin separately instead. Non-zero here means users
+    // are charged twice and Sivan's numbers would not show it.
+    const markup = Number(d.markupPercent ?? d.markup ?? 0);
+    if (markup > 0) {
+      bad('Breet markup is set', `${markup}% - users pay this ON TOP of Sivan's margin, invisibly`);
+    } else {
+      ok('Breet markup is 0', 'margin is applied by Sivan, visibly, as its own line');
+    }
+
+    // The webhook secret Sivan must hold to verify inbound events.
+    const hook = d.webhook ?? {};
+    if (hook.url) ok('webhook url configured', hook.url);
+    else note('no webhook url set in the Breet dashboard', 'inbound events will not arrive');
+    if (hook.secret) ok('webhook secret present', 'copy it into BREET_WEBHOOK_SECRET');
+    else note('no webhook secret yet', 'set the webhook URL in the dashboard to generate one');
   } else {
     bad('credentials rejected', `${account.status} ${account.body?.message ?? ''}`);
     console.log('\n  Stopping: nothing below can be trusted without auth.\n');

@@ -224,9 +224,85 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     } satisfies Partial<NgnQuoteRecord> as any;
   }
 
-  /** Sivan's own balances at Breet. The float that funds on-ramp. */
+  /**
+   * Sivan's integration at Breet: balances, fee schedule, webhook config.
+   *
+   * The path is /users/fetch-integration, NOT /integration - that, /account and
+   * /integrations/me all return 400. Verified live.
+   *
+   * Worth knowing what this returns, because two fields change decisions:
+   *
+   *   platformFeePercent  a TIERED ARRAY, not a scalar. Live sandbox value is
+   *                       [{min:0,max:999,rate:0.5},{min:1000,max:4999,rate:0.5},
+   *                        {min:5000,max:...,rate:0.5}] - flat 0.5% today, but
+   *                       the shape allows Breet to vary it by size without
+   *                       telling anyone. Reading a scalar would silently take
+   *                       the wrong number the day they do.
+   *
+   *   fiatWallets         ngn / usd / ghs balances. This is the on-ramp float,
+   *                       and it IS readable after all - the earlier note that
+   *                       it could not be pre-checked was wrong, caused by
+   *                       probing the wrong path.
+   */
+  async getIntegration() {
+    return breetRequest<any>('/users/fetch-integration');
+  }
+
+  /** Back-compat alias; on-ramp reads the float through this. */
   async getIntegrationBalance() {
-    return breetRequest<any>('/integration');
+    return this.getIntegration();
+  }
+
+  /**
+   * Breet's fee for a given USD amount, from their live tier table.
+   *
+   * Returns a percentage. Falls back to BREET_FEE_PERCENT when the schedule
+   * cannot be read, so a Breet outage does not silently price at zero.
+   */
+  async platformFeePercentFor(amountUsd: number): Promise<number> {
+    try {
+      const integration: any = await this.getIntegration();
+      const schedule = integration?.platformFeePercent;
+
+      if (Array.isArray(schedule)) {
+        const tier = schedule.find(
+          (t: any) => amountUsd >= Number(t?.min ?? 0) && amountUsd <= Number(t?.max ?? Infinity)
+        );
+        const rate = Number(tier?.rate);
+        if (Number.isFinite(rate)) return rate;
+      }
+
+      // Older shape, or a future change back to a scalar.
+      const flat = Number(schedule);
+      if (Number.isFinite(flat)) return flat;
+    } catch {
+      // fall through
+    }
+    return Number(env.BREET_FEE_PERCENT ?? 0);
+  }
+
+  /**
+   * Breet's own markup, set per integration (dashboard: Business → Markup).
+   *
+   * Sivan does NOT use it, deliberately. Breet's markup is applied inside their
+   * conversion, so it arrives blended into the rate: Sivan could not then tell
+   * a provider price change from its own revenue, and a support agent could not
+   * break a fee down for a user. Sivan's margin is added in ngn-margin.ts
+   * instead, where cost and revenue stay separate line items on the quote.
+   *
+   * Exposed read-only so an operator can SEE it. If it is ever set to a
+   * non-zero value in the dashboard, users are being charged twice - once by
+   * Breet's markup and once by Sivan's margin - and nothing in Sivan's numbers
+   * would reveal it.
+   */
+  async getBreetMarkupPercent(): Promise<number> {
+    try {
+      const integration: any = await this.getIntegration();
+      const markup = Number(integration?.markupPercent ?? integration?.markup ?? 0);
+      return Number.isFinite(markup) ? markup : 0;
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -306,8 +382,10 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     // so the 403 is still handled below.
     try {
       const account: any = await this.getIntegrationBalance();
+      // Live shape: fiatWallets: [{ currency: 'usd', balance: n }, ...]
+      const wallets: any[] = account?.fiatWallets ?? [];
       const usdBalance = Number(
-        account?.balances?.usd ?? account?.usdBalance ?? account?.balance?.usd ?? NaN
+        wallets.find((w: any) => String(w?.currency).toLowerCase() === 'usd')?.balance ?? NaN
       );
       if (Number.isFinite(usdBalance) && usdBalance < amountUsd) {
         throw forbidden(
