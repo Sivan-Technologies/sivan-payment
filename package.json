@@ -64,7 +64,8 @@
     "test:no-mock-in-production": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-no-mock.json tsx scripts/test-no-mock-in-production.ts",
     "test:onramp-fee-policy": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-onramp-fee.json APP_ENV=development tsx scripts/test-onramp-fee-policy.ts",
     "test:fee-api-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-fee-api.json APP_ENV=development tsx scripts/test-fee-api-e2e.ts",
-    "test:kyc-policy": "tsx scripts/test-kyc-verification-policy.ts"
+    "test:kyc-policy": "tsx scripts/test-kyc-verification-policy.ts",
+    "test:kyc-ngn-gate": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-kyc-ngn-gate.json tsx scripts/test-kyc-ngn-gate.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

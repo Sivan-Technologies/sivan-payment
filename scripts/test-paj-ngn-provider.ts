@@ -88,6 +88,14 @@ try {
   const app = await buildApp();
   await app.listen({ port: 0, host: '127.0.0.1' });
   const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
+  // Sivan's own Level 1 evidence: a payout account resolved against the bank.
+  // Holding a Bridge customer is no longer what grants NGN access.
+  await db.mutate((data: any) => {
+    data.externalAccounts = [
+      { id: 'ext_paj_ok', userId: 'usr_paj_ok', customerId: 'cus_paj_ok', provider: 'paj', providerExternalAccountId: 'paj_ext_ok', currency: 'ngn', status: 'verified', createdAt: now, updatedAt: now },
+    ];
+  });
+
   const token = signUserJwt({ userId: 'usr_paj_ok', email: 'paj-ok@sivan.test' });
   const badToken = signUserJwt({ userId: 'usr_paj_bad', email: 'paj-bad@sivan.test' });
   const auth = { Authorization: `Bearer ${token}` };
@@ -108,8 +116,11 @@ try {
   console.log('✓ PAJ bank list and resolve endpoints work');
 
   const badQuote = await req('/api/ngn/quote?userId=usr_paj_bad&direction=onramp&sourceCurrency=ngn&destinationCurrency=usdc&sourceAmount=15000', { headers: badAuth }, 403);
-  assert.match(JSON.stringify(badQuote), /Complete verification before using NGN transfers|KYC must be approved/);
-  console.log('✓ PAJ quotes are blocked for users without Sivan/Bridge verification');
+  // The block is now Sivan's own verification, not "you lack a Bridge
+  // customer". The message names the cheapest way forward rather than pointing
+  // at a provider the user has no relationship with.
+  assert.match(JSON.stringify(badQuote), /payout bank account|NIN or BVN/);
+  console.log('✓ PAJ quotes are blocked by Sivan verification, not by Bridge');
 
   const quote = await req('/api/ngn/quote?userId=usr_paj_ok&direction=onramp&sourceCurrency=ngn&destinationCurrency=usdc&sourceAmount=15000', { headers: auth });
   assert.equal(quote.provider, 'paj');

@@ -21,7 +21,13 @@ const adminHeaders = { 'x-admin-api-key': process.env.ADMIN_API_KEY || 'ngn-admi
 
 await db.mutate((data) => {
   data.users = [{ id: 'usr_ngn', email: 'ngn@sivan.test', fullName: 'NGN User', role: 'user', createdAt: now, updatedAt: now } as any];
-  data.customers = [{ id: 'cus_ngn', userId: 'usr_ngn', provider: 'bridge', providerCustomerId: 'bridge_cus_ngn', kycStatus: 'kyc_approved', createdAt: now, updatedAt: now } as any];
+  data.customers = [{ id: 'cus_ngn', userId: 'usr_ngn', provider: 'bridge', providerCustomerId: 'bridge_cus_ngn', kycStatus: 'kyc_approved', tosStatus: 'approved', createdAt: now, updatedAt: now } as any];
+  // NGN access is now decided by Sivan's own verification, not by holding a
+  // Bridge customer. A verified payout account is Level 1; this fixture quotes
+  // NGN 150,000, which is above the Level 1 ceiling, so it relies on the Bridge
+  // uplift - and that uplift requires Sivan's floor (bank + identity) to be met
+  // as well, which is exactly what these two records represent.
+  data.externalAccounts = [{ id: 'ext_ngn', userId: 'usr_ngn', customerId: 'cus_ngn', provider: 'bridge', providerExternalAccountId: 'bridge_ext_ngn', currency: 'ngn', status: 'verified', createdAt: now, updatedAt: now } as any];
   data.ngnControls = [];
   data.ngnQuotes = [];
   data.ngnTransfers = [];
