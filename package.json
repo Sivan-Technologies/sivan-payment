@@ -63,7 +63,8 @@
     "test:va-fee-limits": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-va-fee-limits.json APP_ENV=development tsx scripts/test-va-fee-limits.ts",
     "test:no-mock-in-production": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-no-mock.json tsx scripts/test-no-mock-in-production.ts",
     "test:onramp-fee-policy": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-onramp-fee.json APP_ENV=development tsx scripts/test-onramp-fee-policy.ts",
-    "test:fee-api-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-fee-api.json APP_ENV=development tsx scripts/test-fee-api-e2e.ts"
+    "test:fee-api-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-fee-api.json APP_ENV=development tsx scripts/test-fee-api-e2e.ts",
+    "test:kyc-policy": "tsx scripts/test-kyc-verification-policy.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
