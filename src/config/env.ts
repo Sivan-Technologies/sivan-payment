@@ -96,6 +96,11 @@ const envSchema = z.object({
   SIVAN_NGN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_NGN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_NGN_MINIMUM_FEE_NGN: z.coerce.number().min(0).default(0),
+  // Privy - embedded wallet layer. https://docs.privy.io
+  // Wallets are USER-OWNED: Sivan holds neither funds nor keys, so a transfer
+  // needs the user's signature. See privy-wallet.provider.ts for why.
+  PRIVY_APP_ID: z.string().optional().default(''),
+  PRIVY_APP_SECRET: z.string().optional().default(''),
   BREET_APP_ID: z.string().optional().default(''),
   BREET_APP_SECRET: z.string().optional().default(''),
   // Required header on every request; Breet rejects a missing or invalid value.

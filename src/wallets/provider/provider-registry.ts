@@ -1,6 +1,7 @@
 import { env } from '../../config/env.js';
 import { BridgeWalletProvider } from './bridge-wallet.provider.js';
 import { MockWalletProvider } from './mock-wallet.provider.js';
+import { PrivyWalletProvider } from './privy-wallet.provider.js';
 import type { WalletProvider } from './wallet-provider.js';
 import type { WalletProviderName } from '../types/wallet.types.js';
 
@@ -76,10 +77,10 @@ export function getWalletProvider(
   }
 
   if (normalized === 'privy') {
-    throw new Error(
-      'Privy wallet provider is not implemented yet. Pending evaluation of Solana support depth ' +
-      'and gas sponsorship approach.'
-    );
+    // Non-custodial: the user owns the key, Sivan holds neither funds nor
+    // keys. Transfers therefore return pending_user_signature rather than
+    // submitting server-side - see privy-wallet.provider.ts.
+    return new PrivyWalletProvider();
   }
 
   throw new Error(`Unsupported wallet provider: ${providerName}`);
