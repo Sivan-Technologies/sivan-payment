@@ -64,6 +64,11 @@ export async function ngnRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/webhooks/paj', async (request) => ({ data: await recordNgnWebhook('paj', request.body, request.headers) }));
+  // Breet delivers to its own path so the two providers' secrets and payload
+  // shapes never reach the wrong verifier. Breet's verifyWebhook checks the
+  // x-webhook-secret header and then re-fetches the transaction from Breet, so
+  // a forged amount in the body cannot be credited.
+  app.post('/api/webhooks/breet', async (request) => ({ data: await recordNgnWebhook('breet', request.body, request.headers) }));
 
   app.get('/api/admin/ngn/controls', async () => ({ data: await getNgnControls() }));
   app.put('/api/admin/ngn/controls', async (request) => ({ data: await updateNgnControls(parseBody(updateNgnControlsSchema, request.body)) }));
