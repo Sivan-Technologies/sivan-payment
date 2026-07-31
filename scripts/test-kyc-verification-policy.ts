@@ -24,6 +24,7 @@ import {
   levelIsIntact,
   requiresBridgeCustomer,
 } from '../src/kyc/service/verification-policy.js';
+import { bridgeUpliftApplies } from '../src/kyc/types/verification.types.js';
 
 let pass = 0;
 let fail = 0;
@@ -258,6 +259,103 @@ console.log('\nthe ladder asks for the least that unblocks');
     lowestSufficientLevel('escrow', 'ngn', 600_000) === VerificationLevel.IDENTITY);
   check('NGN 5,000,000 escrow -> enhanced',
     lowestSufficientLevel('escrow', 'ngn', 5_000_000) === VerificationLevel.ENHANCED);
+}
+
+console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
+{
+  // The intended case: Bridge approved AND Sivan's floor complete.
+  const full = state({
+    level: VerificationLevel.IDENTITY,
+    bankStatus: CheckStatus.VERIFIED,
+    identityStatus: CheckStatus.VERIFIED,
+    ninStatus: CheckStatus.VERIFIED,
+    bridgeKycStatus: 'kyc_approved',
+    bridgeTosStatus: 'approved',
+  });
+  check('Bridge approved + basics done = uplift applies', bridgeUpliftApplies(full));
+
+  const big = decide(full, { flow: 'offramp', rail: 'ngn', amountNgn: 40_000_000, priorVolumeNgn: 900_000_000 });
+  check('NGN 40m off-ramp is allowed despite only being Level 2', big.allowed);
+  check('the ceiling is reported as removed', big.limitNgn === null);
+  check('and the reason is attributed to Bridge, not to the level', big.bridgeUplift === true);
+
+  // THE GUARD. Bridge approved, but no payout bank verified.
+  const noBank = state({
+    level: VerificationLevel.NONE,
+    ninStatus: CheckStatus.VERIFIED,
+    identityStatus: CheckStatus.VERIFIED,
+    bridgeKycStatus: 'kyc_approved',
+    bridgeTosStatus: 'approved',
+  });
+  check('Bridge approval WITHOUT a verified payout bank gives no uplift',
+    !bridgeUpliftApplies(noBank));
+  check('and such a user still cannot move NGN 5,000',
+    !decide(noBank, { flow: 'offramp', rail: 'ngn', amountNgn: 5_000, priorVolumeNgn: 0 }).allowed);
+
+  // Bridge approved, bank done, but Sivan holds no identity of its own.
+  const noIdentity = state({
+    level: VerificationLevel.BANK,
+    bankStatus: CheckStatus.VERIFIED,
+    bridgeKycStatus: 'kyc_approved',
+    bridgeTosStatus: 'approved',
+  });
+  check('Bridge approval WITHOUT Sivan holding NIN/BVN gives no uplift',
+    !bridgeUpliftApplies(noIdentity));
+  const capped = decide(noIdentity, { flow: 'escrow', rail: 'ngn', amountNgn: 500_000, priorVolumeNgn: 0 });
+  check('that user is still held to the Level 1 ceiling', !capped.allowed);
+  check('and is asked for NIN/BVN', capped.requiredLevel === VerificationLevel.IDENTITY);
+
+  // Bridge TOS outstanding.
+  const noTos = state({
+    level: VerificationLevel.IDENTITY,
+    bankStatus: CheckStatus.VERIFIED,
+    identityStatus: CheckStatus.VERIFIED,
+    bvnStatus: CheckStatus.VERIFIED,
+    bridgeKycStatus: 'kyc_approved',
+    bridgeTosStatus: 'pending',
+  });
+  check('Bridge KYC without Bridge terms accepted gives no uplift', !bridgeUpliftApplies(noTos));
+
+  // Rejected by Bridge must not read as approved.
+  const rejected = state({
+    level: VerificationLevel.IDENTITY,
+    bankStatus: CheckStatus.VERIFIED,
+    identityStatus: CheckStatus.VERIFIED,
+    ninStatus: CheckStatus.VERIFIED,
+    bridgeKycStatus: 'kyc_rejected',
+  });
+  check('a Bridge rejection gives no uplift', !bridgeUpliftApplies(rejected));
+  check('and the user falls back to their Level 2 ceiling',
+    !decide(rejected, { flow: 'escrow', rail: 'ngn', amountNgn: 2_000_000, priorVolumeNgn: 0 }).allowed);
+
+  // A failed underlying check still wins, even with Bridge approval.
+  const revokedBank = state({
+    level: VerificationLevel.IDENTITY,
+    bankStatus: CheckStatus.EXPIRED,
+    identityStatus: CheckStatus.VERIFIED,
+    ninStatus: CheckStatus.VERIFIED,
+    bridgeKycStatus: 'kyc_approved',
+    bridgeTosStatus: 'approved',
+  });
+  check('an expired bank check blocks even a Bridge-approved user',
+    !decide(revokedBank, { flow: 'escrow', rail: 'ngn', amountNgn: 1_000, priorVolumeNgn: 0 }).allowed);
+
+  // High risk is a decision about the person and outranks Bridge.
+  const risky = state({
+    level: VerificationLevel.IDENTITY,
+    bankStatus: CheckStatus.VERIFIED,
+    identityStatus: CheckStatus.VERIFIED,
+    ninStatus: CheckStatus.VERIFIED,
+    bridgeKycStatus: 'kyc_approved',
+    bridgeTosStatus: 'approved',
+    riskLevel: 'high',
+  });
+  check('high risk still blocks a Bridge-approved user',
+    !decide(risky, { flow: 'escrow', rail: 'ngn', amountNgn: 1_000, priorVolumeNgn: 0 }).allowed);
+
+  // 'active' is Bridge's own spelling of approved.
+  const activeSpelling = { ...full, bridgeKycStatus: 'active', bridgeTosStatus: 'approved' };
+  check("Bridge's 'active' spelling also grants uplift", bridgeUpliftApplies(activeSpelling));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

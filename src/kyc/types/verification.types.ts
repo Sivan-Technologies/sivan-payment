@@ -110,6 +110,51 @@ export interface VerificationState {
    */
   providerRef?: string;
   verifiedAt?: string;
+
+  /**
+   * Bridge's own verification result, when the user has one.
+   *
+   * Bridge runs a full KYC programme - document, database and sanctions checks
+   * - and charges $2 for it. A user who has passed it has been verified more
+   * thoroughly than Sivan's Level 2, so it would be perverse to keep capping
+   * them at NGN 1,000,000.
+   *
+   * BUT IT IS AN UPLIFT, NEVER A BYPASS. See bridgeUpliftApplies().
+   */
+  bridgeKycStatus?: string;
+  /** Bridge requires its own terms acceptance separately from KYC. */
+  bridgeTosStatus?: string;
+}
+
+/**
+ * Does Bridge approval lift this user to unlimited?
+ *
+ * Bridge approval alone is NOT enough, and this is the whole point of the
+ * function. Sivan's basics must be complete too:
+ *
+ *   - a resolved payout bank account. Bridge verifies WHO someone is; it has no
+ *     opinion on where their naira should land. Paying out to an unverified
+ *     account because Bridge said the person is real is how money reaches the
+ *     wrong bank account with a perfectly valid KYC record attached.
+ *
+ *   - an identity check Sivan holds itself. If Bridge ever offboards the user,
+ *     changes its risk appetite, or the relationship ends, Sivan must still
+ *     know who this person is. Verification that evaporates with a vendor is
+ *     not verification.
+ *
+ * So Bridge lifts the CEILING. It does not replace the FLOOR. A user cannot use
+ * Bridge as a shortcut past the basic process.
+ */
+export function bridgeUpliftApplies(state: VerificationState): boolean {
+  if (!isApprovedKycStatus(state.bridgeKycStatus)) return false;
+  // Bridge treats terms acceptance as a separate gate; so does Sivan.
+  if (state.bridgeTosStatus && !isApprovedKycStatus(state.bridgeTosStatus)) return false;
+
+  // The floor. Non-negotiable regardless of what Bridge says.
+  if (state.bankStatus !== CheckStatus.VERIFIED) return false;
+  if (state.ninStatus !== CheckStatus.VERIFIED && state.bvnStatus !== CheckStatus.VERIFIED) return false;
+
+  return true;
 }
 
 export interface FlowLimit {

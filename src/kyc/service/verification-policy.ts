@@ -21,6 +21,7 @@ import {
   FLOW_LIMITS,
   VerificationLevel,
   VOLUME_WINDOW_DAYS,
+  bridgeUpliftApplies,
   type FlowType,
   type RailFamily,
   type VerificationState,
@@ -54,6 +55,8 @@ export interface Decision {
   remainingNgn: number | null;
   /** User-facing, no internal detail. */
   reason: string;
+  /** True when the ceiling was removed by Bridge approval rather than by level. */
+  bridgeUplift?: boolean;
 }
 
 /** Ceiling for a (flow, rail, level), or 0 if the combination is not permitted. */
@@ -163,6 +166,21 @@ export function decide(state: VerificationState, request: TransactionRequest): D
       limitNgn: 0,
       remainingNgn: 0,
       reason: 'This account needs a manual review before it can transact.',
+    };
+  }
+
+  // Bridge-verified users are uncapped - but only once Sivan's own floor is
+  // met. bridgeUpliftApplies() enforces that; Bridge raises the ceiling, it
+  // never replaces the basics.
+  if (bridgeUpliftApplies(state)) {
+    return {
+      allowed: true,
+      code: 'allowed',
+      currentLevel,
+      limitNgn: null,
+      remainingNgn: null,
+      bridgeUplift: true,
+      reason: 'Allowed.',
     };
   }
 
