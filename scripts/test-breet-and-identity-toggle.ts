@@ -282,24 +282,22 @@ async function main() {
     check('and Avalanche was unusable in both directions',
       oldReport.unsupported.includes('avalanche_c_chain' as any));
 
-    // The NEW defaults: avalanche dropped, ethereum and tron added.
-    const sivanDefaults = ['base', 'solana', 'ethereum', 'tron'] as any;
+    // The NEW defaults: avalanche dropped, ethereum added. Tron is NOT enabled
+    // - see the wallet-layer test below for why.
+    const sivanDefaults = ['base', 'solana', 'ethereum'] as any;
     const report = reconcileWithControls(sivanDefaults);
 
-    check('the new defaults on-ramp on 3 networks, not 1',
-      report.onrampCapable.length === 3, JSON.stringify(report.onrampCapable));
-    check('solana, ethereum and tron all on-ramp',
-      ['solana', 'ethereum', 'tron'].every((n) => report.onrampCapable.includes(n as any)),
+    check('the new defaults on-ramp on 2 networks, not 1',
+      report.onrampCapable.length === 2, JSON.stringify(report.onrampCapable));
+    check('solana and ethereum both on-ramp',
+      ['solana', 'ethereum'].every((n) => report.onrampCapable.includes(n as any)),
       JSON.stringify(report.onrampCapable));
-    check('no enabled network is completely unusable any more',
+    check('every enabled network is usable in at least one direction',
       report.unsupported.length === 0, JSON.stringify(report.unsupported));
     check('avalanche is no longer enabled',
       !sivanDefaults.includes('avalanche_c_chain'));
-
-    // Tron is USDT-only for deposits at Breet, though it withdraws both.
-    check('tron off-ramps USDT but not USDC',
-      canDeposit('tron' as any, 'usdt') && !canDeposit('tron' as any, 'usdc'));
-    check('tron on-ramps both', canWithdraw('tron' as any, 'usdc') && canWithdraw('tron' as any, 'usdt'));
+    check('base is enabled for off-ramp',
+      report.offrampCapable.includes('base' as any), JSON.stringify(report.offrampCapable));
 
     check('Base can off-ramp (USDC deposit) but NOT on-ramp',
       canDeposit('base' as any, 'usdc') && !canWithdraw('base' as any, 'usdc'));
@@ -317,8 +315,30 @@ async function main() {
 
     // Base is enabled and off-ramps fine, but must be filtered OUT for on-ramp.
     check('usableForOnramp drops Base from an on-ramp list',
-      usableForOnramp(sivanDefaults, 'usdc').join() === 'solana,ethereum,tron',
+      usableForOnramp(sivanDefaults, 'usdc').join() === 'solana,ethereum',
       usableForOnramp(sivanDefaults, 'usdc').join());
+  }
+
+  console.log('\nTron: capable at Breet, but not enabled - and that is the point');
+  {
+    // Breet can do Tron perfectly well. It is off because of the WALLET layer:
+    // Privy's documented chains are EVM, Solana, Bitcoin and Stellar. Tron uses
+    // its own address encoding and account model, so an EVM key does not yield
+    // a Tron address - enabling Tron would mean a second wallet provider for
+    // one chain.
+    check('Breet still supports Tron in both directions',
+      canDeposit('tron' as any, 'usdt') && canWithdraw('tron' as any, 'usdt'));
+    check('and the asymmetry is preserved - USDT deposit, both on withdrawal',
+      !canDeposit('tron' as any, 'usdc') && canWithdraw('tron' as any, 'usdc'));
+
+    // Left in the map on purpose: enabling it later is a one-line controls
+    // change, not a re-integration.
+    check('tron remains in the capability map, ready to enable',
+      breetDepositAssetId('tron' as any, 'usdt', 'production') === 'TRX_USDT_S2UZ');
+
+    // But it must NOT be reachable while it is off the enabled list.
+    check('tron is absent from the enabled defaults',
+      !usableForOnramp(['base', 'solana', 'ethereum'] as any, 'usdt').includes('tron' as any));
   }
 
   console.log('\nasset ids differ between environments');

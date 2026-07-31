@@ -22,7 +22,7 @@ export const balanceTransferControlsSchema = z.object({
   minimumSendAmount: z.coerce.number().positive().default(10),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['base', 'solana', 'ethereum', 'tron']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['base', 'solana', 'ethereum']),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
 });
@@ -108,13 +108,26 @@ export async function getBalanceTransferControls() {
     minimumSendAmount: Number(process.env.BALANCE_TRANSFER_MIN_AMOUNT || 10),
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    // Defaults chosen against Breet's actual capability, not aspiration:
-    //   solana / ethereum / tron - work in BOTH directions
-    //   base                     - off-ramp only; Breet cannot withdraw to it
-    //   avalanche_c_chain        - DROPPED. Breet supports AVAX the coin but no
-    //                              USDC or USDT on that chain, either way, so
-    //                              enabling it only produced failures.
-    supportedNetworks: ['base', 'solana', 'ethereum', 'tron'] as BalanceNetwork[],
+    // Defaults chosen against what BOTH Breet and the wallet layer can service.
+    //
+    //   solana / ethereum  - work in both directions at Breet, and Privy issues
+    //                        keys for both (ed25519 for Solana, secp256k1 EVM)
+    //   base               - off-ramp only; Breet publishes no Base withdrawal,
+    //                        but the EVM key already covers the address
+    //
+    // NOT enabled, each for a different reason:
+    //
+    //   tron              - Breet handles it fine, but Privy's documented chains
+    //                       are EVM, Solana, Bitcoin and Stellar. Tron uses its
+    //                       own address encoding and account model, so an EVM
+    //                       key does not yield a Tron address. Enabling it would
+    //                       mean a second wallet provider purely for one chain,
+    //                       which defeats having a single wallet layer. Kept in
+    //                       the Breet map so it is one line to enable if Privy
+    //                       adds support.
+    //   avalanche_c_chain - Breet supports AVAX the coin but no USDC or USDT on
+    //                       that chain, either direction.
+    supportedNetworks: ['base', 'solana', 'ethereum'] as BalanceNetwork[],
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
