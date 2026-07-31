@@ -450,16 +450,60 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       throw forbidden('Invalid Breet webhook secret.');
     }
 
+    // CONFIRM AGAINST BREET'S API BEFORE TRUSTING THE BODY.
+    //
+    // Breet does not SIGN webhook bodies - the secret is a static shared value
+    // in a header. So a valid secret proves the caller knows the secret; it
+    // does NOT prove this particular payload is the one Breet sent. Anything
+    // that has ever seen the header, including a proxy or a log, can replay it
+    // with an altered amount.
+    //
+    // Breet's own recommended verification flow says the same: "As an extra
+    // check, call Fetch Transaction by ID or Fetch Withdrawal by ID to confirm
+    // the transaction exists on Breet before taking any action." Their support
+    // team repeated it: fetch on every webhook rather than relying on the
+    // payload alone.
+    //
+    // So the authoritative record is fetched here and returned as `payload`.
+    // Whatever credits a ledger downstream reads Breet's own numbers, not the
+    // caller's.
+    const eventName = String(payload?.event ?? '');
+    const resourceId = payload?.id;
+    let confirmed: any;
+    let confirmationError: string | undefined;
+
+    if (resourceId) {
+      const path = eventName.startsWith('withdrawal')
+        ? `/payments/withdrawal/${encodeURIComponent(String(resourceId))}`
+        : `/transactions/${encodeURIComponent(String(resourceId))}`;
+      try {
+        confirmed = await breetRequest<any>(path);
+      } catch (error: any) {
+        confirmationError = String(error?.message ?? error);
+      }
+    }
+
+    // A 404 means Breet has no such transaction, so the event is fabricated.
+    // Refuse it. Any other failure is Breet being unreachable, which must NOT
+    // be treated as a forgery - the event is passed through unconfirmed and
+    // flagged so nothing downstream silently credits on an unverified body.
+    if (confirmationError && /not found|404/i.test(confirmationError)) {
+      throw forbidden('Breet webhook references a transaction that does not exist.');
+    }
+
     return {
       // Breet's own guidance: "Use the id and event fields together to detect
       // duplicates". They retry with exponential backoff up to 24 hours, so
       // duplicates are expected, not exceptional.
       id: `ngnwh_${crypto.randomUUID()}`,
       provider: this.name,
-      providerEventId: `${payload?.id ?? crypto.randomUUID()}:${payload?.event ?? 'unknown'}`,
+      providerEventId: `${resourceId ?? crypto.randomUUID()}:${payload?.event ?? 'unknown'}`,
       eventType: payload?.event ?? 'breet.unknown',
-      transferId: payload?.id,
-      payload,
+      transferId: resourceId,
+      // Breet's record when confirmed, the delivered body otherwise.
+      payload: confirmed
+        ? { ...payload, ...confirmed, event: payload?.event, breetConfirmed: true }
+        : { ...payload, breetConfirmed: false, breetConfirmationError: confirmationError },
       createdAt: new Date().toISOString(),
     };
   }

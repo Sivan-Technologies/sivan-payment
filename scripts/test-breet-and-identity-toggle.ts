@@ -384,6 +384,84 @@ async function main() {
     check('refuses an on-ramp to Avalanche', /cannot send USDC/i.test(toAvax ?? ''), toAvax);
   }
 
+
+  console.log('\nwebhook bodies are confirmed against Breet, not trusted');
+  {
+    // Breet does NOT sign webhook bodies - the secret is a static header. So a
+    // valid secret proves the caller knows the secret, not that this payload is
+    // genuine. Their own docs and their support team both say to fetch the
+    // transaction by id before acting on it.
+    const breet = new BreetNgnProvider();
+    const realFetch = globalThis.fetch;
+    let fetched: string[] = [];
+
+    // Breet's record says $10. The delivered body claims $10,000.
+    globalThis.fetch = (async (url: any) => {
+      fetched.push(String(url));
+      return new Response(JSON.stringify({
+        success: true,
+        data: { id: 'trade_9', amountInUSD: 10, status: 'completed' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as any;
+
+    const forged = await breet.verifyWebhook(
+      { id: 'trade_9', event: 'trade.completed', amountInUSD: 10000 },
+      { 'x-webhook-secret': 'whsec_breet_test' }
+    );
+
+    check('the transaction is fetched from Breet',
+      fetched.some((u) => u.includes('/transactions/trade_9')), JSON.stringify(fetched));
+    check("a forged amount does NOT survive - Breet's value wins",
+      (forged.payload as any).amountInUSD === 10,
+      `credited ${(forged.payload as any).amountInUSD} instead of 10`);
+    check('and the record is marked confirmed', (forged.payload as any).breetConfirmed === true);
+    check('while the event name is preserved from the delivery',
+      (forged.payload as any).event === 'trade.completed');
+
+    // Withdrawals live on a different endpoint.
+    fetched = [];
+    await breet.verifyWebhook(
+      { id: 'wd_1', event: 'withdrawal.completed' },
+      { 'x-webhook-secret': 'whsec_breet_test' }
+    );
+    check('withdrawal events are fetched from the withdrawal endpoint',
+      fetched.some((u) => u.includes('/payments/withdrawal/wd_1')), JSON.stringify(fetched));
+
+    // A transaction Breet has never heard of is fabricated - refuse it.
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      success: false, message: 'transaction not found',
+    }), { status: 404, headers: { 'Content-Type': 'application/json' } })) as any;
+
+    const bogus = await threwAsync(() => breet.verifyWebhook(
+      { id: 'ghost', event: 'trade.completed', amountInUSD: 5000 },
+      { 'x-webhook-secret': 'whsec_breet_test' }
+    ));
+    check('an event for a non-existent transaction is refused', bogus !== undefined);
+    check('and says why', /does not exist/i.test(bogus ?? ''), bogus);
+
+    // Breet being unreachable is NOT forgery. Pass it through, but flagged, so
+    // nothing downstream credits on an unverified body by accident.
+    globalThis.fetch = (async () => { throw new Error('ECONNREFUSED'); }) as any;
+    const unreachable = await breet.verifyWebhook(
+      { id: 'trade_x', event: 'trade.pending' },
+      { 'x-webhook-secret': 'whsec_breet_test' }
+    );
+    check('an outage does not reject the event', unreachable !== undefined);
+    check('but it is flagged unconfirmed',
+      (unreachable.payload as any).breetConfirmed === false);
+
+    globalThis.fetch = realFetch;
+  }
+
+  console.log('\nthe platform fee matches what Breet quoted');
+  {
+    // Their team confirmed 0.5%, applied on top of the rate rather than baked
+    // into the spread. A default of 0 would quote a rate Sivan cannot settle at.
+    const { env: liveEnv } = await import('../src/config/env.js');
+    check('BREET_FEE_PERCENT defaults to 0.5', Number(liveEnv.BREET_FEE_PERCENT) === 0.5,
+      String(liveEnv.BREET_FEE_PERCENT));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail === 0 ? 0 : 1);
 }

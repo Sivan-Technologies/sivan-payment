@@ -100,7 +100,11 @@ const envSchema = z.object({
   BREET_DEFAULT_ASSET_ID: z.string().optional().default(''),
   BREET_DEFAULT_BANK_ID: z.string().optional().default(''),
   BREET_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
-  BREET_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
+  // Breet's platform fee, confirmed by their team: 0.5%, applied ON TOP of the
+  // rate rather than baked into the spread, computed as
+  // (feePercentage / 100) x amountInUSD. Defaulting to 0 would have quoted
+  // users a rate Sivan cannot settle at and eaten the difference.
+  BREET_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0.5),
   // On-ramp destination network, in SIVAN's vocabulary (solana, ethereum,
   // base, ...), not Breet's. breet-networks.ts translates and refuses pairs
   // Breet cannot service. Defaulting to Breet's own 'SOL' here would not match
