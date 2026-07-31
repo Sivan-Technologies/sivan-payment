@@ -1,4 +1,4 @@
-export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj';
+export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' | 'breet';
 export type NgnDirection = 'onramp' | 'offramp';
 export type NgnQuoteStatus = 'quote_created' | 'quote_accepted' | 'expired' | 'failed';
 export type NgnTransferStatus =
@@ -27,6 +27,18 @@ export interface NgnControlsRecord {
   virtualAccountEnabled: boolean;
   activeProvider: NgnProviderName;
   backupProvider?: NgnProviderName;
+  /**
+   * Master switch for NIN/BVN identity verification.
+   *
+   * OFF for MVP. No NIN/BVN provider is integrated yet, so requiring it would
+   * block every user at Level 1 and there would be no way to clear them. With
+   * it off, Level 2 is reachable on the bank check alone.
+   *
+   * This is a deliberate, visible, auditable compromise rather than a silent
+   * one - an admin can see it is off, and turning it on is one toggle once a
+   * provider exists.
+   */
+  identityVerificationEnabled: boolean;
   maxTransactionNgn: string;
   dailyLimitNgn: string;
   highValueReviewThresholdNgn: string;

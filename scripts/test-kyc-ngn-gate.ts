@@ -106,8 +106,11 @@ async function main() {
       none.bridgeKycStatus === undefined);
 
     const bank = await getVerificationState('usr_bank');
-    check('a verified payout account alone reaches Level 1',
-      bank.level === VerificationLevel.BANK, `level ${bank.level}`);
+    // identityVerificationEnabled defaults to false for MVP, so a verified
+    // payout account alone reaches Level 2. With the toggle on this is Level 1;
+    // that transition is covered in test:breet-identity.
+    check('a verified payout account reaches Level 2 while identity is toggled off',
+      bank.level === VerificationLevel.IDENTITY, `level ${bank.level}`);
   }
 
   console.log('\nthe old blocker is gone: no Bridge customer, naira still moves');
@@ -128,9 +131,10 @@ async function main() {
 
   console.log('\nthe ceiling is cumulative, not per-transaction');
   {
-    // Bank level on-ramp ceiling is NGN 100,000.
-    const first = await quoteFails('usr_bank', '99000');
-    check('first NGN 99,000 passes', first === undefined, first);
+    // With identity toggled off the user is Level 2, so the on-ramp ceiling is
+    // NGN 1,000,000. Slice it in 999,000 chunks.
+    const first = await quoteFails('usr_bank', '999000');
+    check('first NGN 999,000 passes', first === undefined, first);
 
     // Record it as completed volume, as a settled transfer would.
     await db.mutate((data: any) => {
@@ -143,7 +147,7 @@ async function main() {
         provider: 'paj',
         sourceCurrency: 'ngn',
         destinationCurrency: 'usdc',
-        sourceAmount: '99000',
+        sourceAmount: '999000',
         destinationAmount: '60',
         rate: '1650',
         feeAmount: '0',
@@ -155,10 +159,10 @@ async function main() {
     });
 
     const volume = await getCumulativeNgnVolume('usr_bank', VOLUME_WINDOW_DAYS);
-    check('completed volume is counted', volume === 99_000, `got ${volume}`);
+    check('completed volume is counted', volume === 999_000, `got ${volume}`);
 
-    const second = await quoteFails('usr_bank', '99000');
-    check('a second NGN 99,000 is refused - slicing does not work',
+    const second = await quoteFails('usr_bank', '999000');
+    check('a second NGN 999,000 is refused - slicing does not work',
       second !== undefined, 'it was allowed');
     check('and the message names the remaining headroom',
       /1,000/.test(second ?? ''), second);
@@ -171,21 +175,22 @@ async function main() {
   {
     await db.mutate((data: any) => { (data.ngnTransfers as any) = []; });
 
-    // Off-ramp ceiling at BANK is NGN 50,000; on-ramp is NGN 100,000.
+    // At Level 2 the off-ramp ceiling is NGN 500,000 and on-ramp NGN 1,000,000.
     //
     // NOTE the units. An off-ramp's SOURCE is USDC, so these amounts are USDC
     // and the naira figure that gets measured is the destination. At the mock
     // rate (~1650) 24 USDC is roughly NGN 40,000 and 48 USDC roughly NGN 80,000.
     // Passing '40000' here would be 40,000 USDC - about NGN 66 million - which
     // is exactly the confusion that hid the bug this test caught.
-    const offOk = await quoteFails('usr_bank', '24', 'offramp');
-    check('~NGN 40,000 off-ramp passes', offOk === undefined, offOk);
+    const offOk = await quoteFails('usr_bank', '200', 'offramp');
+    check('~NGN 300,000 off-ramp passes', offOk === undefined, offOk);
 
-    const offOver = await quoteFails('usr_bank', '48', 'offramp');
-    check('~NGN 80,000 off-ramp is refused', offOver !== undefined, 'it was allowed');
+    const offOver = await quoteFails('usr_bank', '400', 'offramp');
+    check('~NGN 600,000 off-ramp is refused (Level 2 off-ramp ceiling is 500,000)',
+      offOver !== undefined, 'it was allowed');
 
-    const onOk = await quoteFails('usr_bank', '80000', 'onramp');
-    check('while NGN 80,000 on-ramp is allowed', onOk === undefined, onOk);
+    const onOk = await quoteFails('usr_bank', '600000', 'onramp');
+    check('while NGN 600,000 on-ramp is allowed - on-ramp sits higher', onOk === undefined, onOk);
   }
 
   console.log('\nBridge is never consulted for a naira quote');

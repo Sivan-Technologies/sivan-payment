@@ -17,6 +17,7 @@
  */
 
 import { db } from '../../database/json-database.js';
+import { getNgnControls } from '../../ngn/service/ngn-controls.service.js';
 import {
   CheckStatus,
   VerificationLevel,
@@ -58,23 +59,40 @@ export async function getVerificationState(userId: string): Promise<Verification
     (a: any) => a.status === 'verified' || a.status === 'active'
   );
 
-  // No NIN/BVN provider is integrated yet - that is step 3. Until it lands,
-  // Sivan cannot collect these itself.
+  // IDENTITY VERIFICATION IS ADMIN-TOGGLEABLE.
   //
-  // The one exception: a user Bridge has already approved. Bridge requires a
-  // national identity number for every non-US resident, and for Nigeria it
-  // accepts nin, bvn and tin (verified in Bridge's country table). So a
-  // Bridge-approved Nigerian HAS had a national identity number verified - by
-  // Bridge, at the $2 Sivan already paid. Treating that as unknown would strand
-  // every existing verified user at Level 1 and re-ask them for something
-  // already on file.
+  // No NIN/BVN provider is integrated yet. Requiring identity while nothing can
+  // satisfy it would strand every user at Level 1 with no way to clear - so for
+  // MVP the toggle is OFF by default and Level 2 is reachable on the bank check
+  // alone.
   //
-  // This is an inherited result, not a Sivan-performed check, so providerRef
-  // records Bridge as the source. When step 3 lands, Sivan performs its own and
-  // stops depending on the vendor for it.
+  // That is a real compromise, so it is a visible one: an admin can see the
+  // switch, it is recorded on the controls record, and flipping it on is a
+  // single change once a provider exists. Far better than a hardcoded `true`
+  // nobody can find later.
+  //
+  // When ON, identity must be genuinely satisfied. A Bridge-approved user
+  // counts: Bridge requires a national identity number for every non-US
+  // resident and accepts nin, bvn and tin for Nigeria, so that person HAS had
+  // one verified - at the $2 already spent. It is inherited, not
+  // Sivan-performed, which is why step 3 still matters: if Bridge offboards
+  // them, that identity goes with it.
+  const controls = await getNgnControls();
+  const identityRequired = controls.identityVerificationEnabled === true;
   const bridgeApproved = isApprovedKycStatus(customer?.kycStatus);
-  const identityVerified = bridgeApproved;
-  const ninStatus = bridgeApproved ? CheckStatus.VERIFIED : CheckStatus.NOT_STARTED;
+
+  const identityVerified = identityRequired ? bridgeApproved : bankVerified;
+
+  // When the toggle is OFF, the level is granted without a NIN/BVN check - so
+  // the per-check statuses must say so too, or levelIsIntact() sees a Level 2
+  // user with no identity evidence underneath and blocks every transaction.
+  //
+  // Caught by test: with the toggle off, every NGN quote failed with "one of
+  // your verification checks needs attention", which was true and useless -
+  // there was no check to attend to. The level and the evidence have to agree.
+  const ninStatus = bridgeApproved || (identityVerified && !identityRequired)
+    ? CheckStatus.VERIFIED
+    : CheckStatus.NOT_STARTED;
   const bvnStatus = CheckStatus.NOT_STARTED;
   const addressVerified = false;
 

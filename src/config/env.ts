@@ -90,6 +90,17 @@ const envSchema = z.object({
   NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj']).default('mock'),
   NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false),
   PAJ_RAMP_ENV: z.enum(['staging', 'production']).default('staging'),
+  // Breet - primary NGN provider. https://docs.breet.io
+  BREET_APP_ID: z.string().optional().default(''),
+  BREET_APP_SECRET: z.string().optional().default(''),
+  // Required header on every request; Breet rejects a missing or invalid value.
+  BREET_ENV: z.enum(['development', 'production']).default('development'),
+  BREET_WEBHOOK_SECRET: z.string().optional().default(''),
+  // Asset to quote and generate deposit addresses for. From Breet's fetch-assets endpoint.
+  BREET_DEFAULT_ASSET_ID: z.string().optional().default(''),
+  BREET_DEFAULT_BANK_ID: z.string().optional().default(''),
+  BREET_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
+  BREET_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   PAJ_RAMP_BASE_URL: z.string().url().optional().default('https://api-staging.paj.cash'),
   PAJ_RAMP_API_KEY: z.string().optional().default(''),
   PAJ_RAMP_WEBHOOK_URL: z.string().url().optional().default('https://api.sivantech.online/api/payment/api/webhooks/paj'),
