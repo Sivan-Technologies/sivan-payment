@@ -146,8 +146,17 @@ services:
       # custom domain is added.
       #
       # NOT '*': the browser sends the user's JWT on these requests.
+      # BOTH deployments are live: Vercel (from frontend/vercel.json, which
+      # predates the Render static site) and Render. The Vercel one was
+      # silently blocked - every API call failed CORS while the page itself
+      # loaded fine, which reads as "the backend is broken" rather than "this
+      # origin is not allowed".
+      #
+      # Listing both until one is retired. Pick one before launch: two
+      # frontends against one API means a fix deployed to one is invisible on
+      # the other, and users will be on whichever link they were sent.
       - key: CORS_ORIGIN
-        value: https://sivan-payments-user-test.onrender.com,http://localhost:5173
+        value: https://sivan-payments-user-test.onrender.com,https://sivan-payments-user-test.vercel.app,http://localhost:5173
       - key: ADMIN_API_KEY
         sync: false
       - key: USER_JWT_SECRET
