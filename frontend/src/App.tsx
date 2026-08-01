@@ -60,6 +60,10 @@ export default function App() {
   // TWO lists, not one: Base can off-ramp but cannot on-ramp, so a shared list
   // would offer a user a network naira cannot settle to.
   const [ngnNetworks, setNgnNetworks] = useState<NgnNetworkLists | null>(null);
+  // Naira withdrawal is a different first step, not a variation of the Bridge
+  // one: it needs a NUBAN and a quote rather than a saved external account.
+  const [ngnMode, setNgnMode] = useState(false);
+  const [ngnNetwork, setNgnNetwork] = useState('solana');
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
@@ -1004,6 +1008,33 @@ export default function App() {
    * than templating a URL - Bridge takes an external account and returns a
    * deposit address, Breet takes a quote and returns its own.
    */
+  /**
+   * Quote priced and account verified - move to the review step.
+   *
+   * The bank is already bound to the quote server-side, so only the quote id
+   * travels on to confirmation. The account details are carried purely so the
+   * review screen can show the user where their money is going.
+   */
+  function handleNgnReady({ quote, account }: { quote: any; account: any }) {
+    if (!user?.id) return;
+    setWithdrawalReview({
+      userId: user.id,
+      externalAccountId: '',
+      sourceCurrency: quote.sourceCurrency ?? 'usdc',
+      sourceChain: ngnNetwork,
+      destinationCurrency: 'ngn',
+      bankLabel: `${account.bankName ?? 'Bank'} · ${account.accountName}`,
+      assetLabel: String(quote.sourceCurrency ?? 'usdc').toUpperCase(),
+      networkLabel: ngnNetwork,
+      quoteId: quote.id,
+      bankId: account.bankId,
+      accountNumber: account.accountNumber,
+      minimumUsd: ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd,
+      estimatedGasUsd: typicalGasUsd(ngnNetwork)
+    });
+    setDepositResult(null);
+  }
+
   async function confirmWithdrawal() {
     if (!withdrawalReview) return;
     setLoading(true);
@@ -1011,14 +1042,22 @@ export default function App() {
       const currency = withdrawalReview.destinationCurrency as PayoutCurrency;
       const rail = payoutRailFor(currency);
 
+      if (rail === 'breet' && !withdrawalReview.quoteId) {
+        // The NGN endpoint settles an ACCEPTED QUOTE. Without one there is
+        // nothing to accept, and posting anyway produces a validation error
+        // the user cannot act on.
+        throw new Error('Get a quote before confirming this withdrawal.');
+      }
+
       const result = rail === 'breet'
         ? await api<DepositResponse>(withdrawalEndpointFor(currency), {
             method: 'POST',
+            // acceptNgnQuoteSchema takes userId and quoteId, nothing else.
+            // The bank is already bound to the quote server-side; sending it
+            // again was wrong and would be rejected as an unknown field.
             body: JSON.stringify({
               userId: withdrawalReview.userId,
               quoteId: withdrawalReview.quoteId,
-              bankId: withdrawalReview.bankId,
-              accountNumber: withdrawalReview.accountNumber,
             })
           })
         : await api<DepositResponse>(withdrawalEndpointFor(currency), {
@@ -1374,6 +1413,16 @@ export default function App() {
             onSubmit={handleWithdraw}
             onCancelReview={() => setWithdrawalReview(null)}
             onConfirm={confirmWithdrawal}
+            ngnMode={ngnMode}
+            ngnUserId={user?.id}
+            ngnApi={api}
+            ngnNetwork={ngnNetwork}
+            ngnAsset="usdc"
+            ngnMinimumUsd={ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd}
+            onNgnReady={handleNgnReady}
+            onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
+            onEnterNgn={() => setNgnMode(true)}
+            ngnAvailable={(ngnNetworks?.offramp.length ?? 0) > 0}
           />
         )}
 

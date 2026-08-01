@@ -1,0 +1,263 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  filterBanks,
+  isValidNuban,
+  maskAccountNumber,
+  quoteSecondsRemaining,
+  shouldResolveAccount,
+  type NgnBank,
+  type NgnQuote,
+  type ResolvedNgnBankAccount,
+} from '../../ngnBank';
+import { formatPayoutAmount } from '../../rails';
+import { offrampClears, typicalGasUsd } from '../../ngnMinimum';
+
+/**
+ * Where the naira goes, and what it is worth.
+ *
+ * The NGN off-ramp had neither of these. A Nigerian user could not say which
+ * bank to pay - Bridge external accounts are routing numbers, sort codes and
+ * IBANs, and a NUBAN is none of those - and nothing produced the quote that
+ * POST /api/ngn/offramp/orders settles against.
+ *
+ * The order of the steps is the point: pick a bank, prove the account is real,
+ * see the rate, then commit. Each step is blocked until the one before it
+ * succeeds, because every one of them can fail for a reason the user can fix.
+ */
+export function NgnPayoutForm({
+  userId,
+  api,
+  network,
+  asset,
+  breetMinimumUsd,
+  onReady,
+  onCancel,
+}: {
+  userId: string;
+  api: <T>(path: string, options?: RequestInit) => Promise<T>;
+  network: string;
+  asset: 'usdc' | 'usdt';
+  breetMinimumUsd?: number;
+  onReady: (payload: { quote: NgnQuote; account: ResolvedNgnBankAccount }) => void;
+  onCancel: () => void;
+}) {
+  const [banks, setBanks] = useState<NgnBank[]>([]);
+  const [bankQuery, setBankQuery] = useState('');
+  const [bankId, setBankId] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [resolved, setResolved] = useState<ResolvedNgnBankAccount | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [quote, setQuote] = useState<NgnQuote | null>(null);
+  const [quoting, setQuoting] = useState(false);
+  const [error, setError] = useState('');
+  const [now, setNow] = useState(Date.now());
+
+  const estimatedGasUsd = typicalGasUsd(network);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<NgnBank[]>(`/api/ngn/banks?userId=${encodeURIComponent(userId)}`)
+      .then((list) => { if (!cancelled) setBanks(list ?? []); })
+      .catch(() => { if (!cancelled) setError('Could not load the bank list. Try again shortly.'); });
+    return () => { cancelled = true; };
+  }, [api, userId]);
+
+  // Drives the quote countdown. A quote is priced against a moving rate, so a
+  // stale one must visibly expire rather than silently settle at a number the
+  // user was never shown.
+  useEffect(() => {
+    if (!quote?.expiresAt) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [quote?.expiresAt]);
+
+  const visibleBanks = useMemo(() => filterBanks(banks, bankQuery).slice(0, 40), [banks, bankQuery]);
+  const secondsLeft = quoteSecondsRemaining(quote, now);
+  const quoteExpired = Boolean(quote?.expiresAt) && secondsLeft <= 0;
+
+  /**
+   * Resolve the account to its registered name.
+   *
+   * Only fires on a complete 10-digit NUBAN with a bank chosen. Resolution is
+   * a paid, rate-limited call at the provider; firing per keystroke spends a
+   * request per digit and shows failures for a number still being typed.
+   */
+  const resolveAccount = useCallback(async () => {
+    if (!shouldResolveAccount(bankId, accountNumber)) return;
+    setResolving(true);
+    setError('');
+    setResolved(null);
+    // A changed account invalidates any quote priced against the old one.
+    setQuote(null);
+    try {
+      const result = await api<ResolvedNgnBankAccount>(
+        `/api/ngn/bank-account/resolve?userId=${encodeURIComponent(userId)}&bankId=${encodeURIComponent(bankId)}&accountNumber=${encodeURIComponent(accountNumber)}`
+      );
+      setResolved(result);
+    } catch (err) {
+      setError((err as Error).message || 'That account could not be verified.');
+    } finally {
+      setResolving(false);
+    }
+  }, [api, userId, bankId, accountNumber]);
+
+  useEffect(() => {
+    if (shouldResolveAccount(bankId, accountNumber)) void resolveAccount();
+    else setResolved(null);
+  }, [bankId, accountNumber, resolveAccount]);
+
+  const amountUsd = Number(amount || 0);
+  const floorVerdict = breetMinimumUsd !== undefined && amountUsd > 0
+    ? offrampClears({ amountUsd, breetMinimumUsd, estimatedGasUsd })
+    : undefined;
+
+  async function getQuote() {
+    setError('');
+    if (!resolved) return setError('Verify your bank account first.');
+    if (!(amountUsd > 0)) return setError('Enter an amount.');
+    // Checked before spending a quote on an amount that cannot settle.
+    if (floorVerdict && !floorVerdict.clears) return setError(floorVerdict.reason ?? 'Amount is below the minimum.');
+
+    setQuoting(true);
+    try {
+      const result = await api<NgnQuote>(
+        `/api/ngn/quote?userId=${encodeURIComponent(userId)}&direction=offramp&sourceCurrency=${asset}&destinationCurrency=ngn&sourceAmount=${encodeURIComponent(amount)}`
+      );
+      setQuote(result);
+    } catch (err) {
+      setError((err as Error).message || 'Could not price that withdrawal.');
+    } finally {
+      setQuoting(false);
+    }
+  }
+
+  const selectedBank = banks.find((bank) => bank.id === bankId);
+
+  return (
+    <article className="panel form-panel trade-card">
+      <p className="eyebrow">Step 1</p>
+      <h3>Where should the naira go?</h3>
+      <p className="muted">Choose your bank and enter your account number. We confirm the account name before anything is sent.</p>
+
+      <div className="form premium-form">
+        <label>Bank
+          <input
+            placeholder="Search your bank, e.g. GTB or Access"
+            value={bankQuery}
+            onChange={(event) => setBankQuery(event.target.value)}
+          />
+        </label>
+
+        {!bankId && (
+          <div className="bank-list">
+            {!banks.length && !error && <p className="muted">Loading banks…</p>}
+            {visibleBanks.map((bank) => (
+              <button
+                type="button"
+                key={bank.id}
+                className="bank-option"
+                onClick={() => { setBankId(bank.id); setBankQuery(bank.name); }}
+              >
+                {bank.logoUrl && <img src={bank.logoUrl} alt="" width={20} height={20} />}
+                <span>{bank.name}</span>
+              </button>
+            ))}
+            {Boolean(bankQuery) && !visibleBanks.length && <p className="muted">No bank matches “{bankQuery}”.</p>}
+          </div>
+        )}
+
+        {bankId && (
+          <>
+            <div className="details-box compact">
+              <span>{selectedBank?.name}</span>
+              <button type="button" className="ghost-btn small" onClick={() => { setBankId(''); setBankQuery(''); setResolved(null); setQuote(null); }}>Change</button>
+            </div>
+
+            <label>Account number
+              <input
+                inputMode="numeric"
+                maxLength={10}
+                placeholder="10-digit NUBAN"
+                value={accountNumber}
+                onChange={(event) => setAccountNumber(event.target.value.replace(/\D/g, '').slice(0, 10))}
+              />
+              {Boolean(accountNumber) && !isValidNuban(accountNumber) && (
+                <span className="field-hint">A Nigerian account number is exactly 10 digits.</span>
+              )}
+            </label>
+          </>
+        )}
+
+        {resolving && <p className="muted">Checking that account…</p>}
+
+        {resolved && (
+          <div className="details-box">
+            <strong>{resolved.accountName}</strong>
+            <span className="muted">{resolved.bankName ?? selectedBank?.name} · {maskAccountNumber(resolved.accountNumber)}</span>
+            {!resolved.trustworthy && (
+              // Sandbox resolves ANY account number to a plausible name, so
+              // presenting this as confirmation would be a lie.
+              <span className="field-hint">Test environment — this name is simulated and does not confirm a real account.</span>
+            )}
+          </div>
+        )}
+
+        {resolved && (
+          <label>Amount to withdraw ({asset.toUpperCase()})
+            <input
+              inputMode="decimal"
+              placeholder={breetMinimumUsd ? String(breetMinimumUsd) : '20'}
+              value={amount}
+              onChange={(event) => { setAmount(event.target.value.replace(/[^0-9.]/g, '')); setQuote(null); }}
+            />
+            {floorVerdict && !floorVerdict.clears && (
+              <span className="field-hint danger">{floorVerdict.reason}</span>
+            )}
+            {breetMinimumUsd !== undefined && !amount && (
+              <span className="field-hint">Minimum about ${offrampClears({ amountUsd: 0, breetMinimumUsd, estimatedGasUsd }).minimumUsd.toFixed(2)} on {network}, network fee included.</span>
+            )}
+          </label>
+        )}
+
+        {error && <div className="warning-box compact">{error}</div>}
+
+        {quote && !quoteExpired && (
+          <div className="details-box">
+            <div><span>You send</span><strong>{quote.sourceAmount} {asset.toUpperCase()}</strong></div>
+            <div><span>You receive</span><strong>{formatPayoutAmount(quote.destinationAmount, 'ngn')}</strong></div>
+            <div><span>Rate</span><strong>1 {asset.toUpperCase()} ≈ {formatPayoutAmount(quote.rate, 'ngn')}</strong></div>
+            <div><span>Fee</span><strong>{quote.feeAmount}</strong></div>
+            {Boolean(quote.expiresAt) && <div><span>Expires in</span><strong>{secondsLeft}s</strong></div>}
+          </div>
+        )}
+
+        {quoteExpired && (
+          <div className="warning-box compact">That quote expired. Get a new one so you settle at the rate you were shown.</div>
+        )}
+
+        <div className="split-actions">
+          <button type="button" className="ghost-btn" onClick={onCancel}>Back</button>
+          {!quote || quoteExpired ? (
+            <button
+              type="button"
+              className="primary-btn"
+              disabled={quoting || !resolved || !(amountUsd > 0) || Boolean(floorVerdict && !floorVerdict.clears)}
+              onClick={() => void getQuote()}
+            >
+              {quoting ? 'Pricing…' : quoteExpired ? 'Refresh quote' : 'Get quote →'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => onReady({ quote, account: resolved! })}
+            >
+              Continue →
+            </button>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}

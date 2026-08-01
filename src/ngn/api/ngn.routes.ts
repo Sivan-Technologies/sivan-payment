@@ -5,6 +5,7 @@ import { parseBody } from '../../shared/validation.js';
 import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
 import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
+import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
 import { listPaymentControls } from '../../controls/payment-controls.service.js';
 import {
   usableForOnramp,
@@ -57,17 +58,50 @@ export async function ngnRoutes(app: FastifyInstance) {
   });
 
 
+  /**
+   * Banks and account resolution, on whichever provider is ACTIVE.
+   *
+   * These were '/api/ngn/paj/*' and constructed `new PajNgnProvider()`
+   * directly, ignoring NGN_PROVIDER entirely. With Breet as the default that
+   * meant the only bank endpoints in the product talked to the wrong provider:
+   * a user would pick from PajRamp's bank list and hand a PajRamp bank id to
+   * Breet, which does not recognise it.
+   *
+   * The provider-specific paths are kept as aliases so nothing already
+   * pointing at them breaks, but they now resolve through the registry too.
+   */
+  app.get('/api/ngn/banks', async (request) => {
+    const query = request.query as { userId?: string; currency?: 'ngn' | 'ghs' };
+    if (query.userId) ensureOwnUser(request, query.userId);
+    return { data: await listNgnBanks(query.currency ?? 'ngn') };
+  });
+
+  /**
+   * Resolve an account number to the name the bank holds for it.
+   *
+   * This is Sivan's Level 1 identity evidence: since the CBN directive of
+   * 1 March 2024 a Nigerian account cannot transact without BVN/NIN linkage,
+   * so an account that resolves has already been verified by a licensed bank.
+   */
+  app.get('/api/ngn/bank-account/resolve', async (request) => {
+    const query = request.query as { userId?: string; bankId?: string; accountNumber?: string; currency?: 'ngn' | 'ghs' };
+    if (query.userId) ensureOwnUser(request, query.userId);
+    if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
+    return { data: await resolveNgnBankAccount(query.bankId, query.accountNumber, query.currency ?? 'ngn') };
+  });
+
+  // Legacy aliases. Same registry-backed implementation, not PajRamp.
   app.get('/api/ngn/paj/banks', async (request) => {
     const query = request.query as { userId?: string };
     if (query.userId) ensureOwnUser(request, query.userId);
-    return { data: await new PajNgnProvider().getBanks() };
+    return { data: await listNgnBanks('ngn') };
   });
 
   app.get('/api/ngn/paj/bank-account/resolve', async (request) => {
     const query = request.query as { userId?: string; bankId?: string; accountNumber?: string };
     if (query.userId) ensureOwnUser(request, query.userId);
     if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
-    return { data: await new PajNgnProvider().resolveBankAccount(query.bankId, query.accountNumber) };
+    return { data: await resolveNgnBankAccount(query.bankId, query.accountNumber, 'ngn') };
   });
 
   app.get('/api/admin/ngn/paj/banks', async () => ({ data: await new PajNgnProvider().getBanks() }));

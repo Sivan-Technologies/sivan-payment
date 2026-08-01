@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from '../types';
 import { BRIDGE_CURRENCIES, CURRENCY_LABELS, RAIL_LABELS, formatPayoutAmount, isNgnCurrency, payoutRailFor, type PayoutCurrency } from '../rails';
+import { NgnPayoutForm } from './sell/NgnPayoutForm';
 
 function statusClass(status?: string) {
   if (!status) return 'pending';
@@ -109,7 +110,19 @@ export type WithdrawalReviewState = {
   estimatedGasUsd?: number;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork = 'solana', ngnAsset = 'usdc', ngnMinimumUsd, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+  /** True when the user is withdrawing to a Nigerian bank. */
+  ngnMode?: boolean;
+  ngnUserId?: string;
+  ngnApi?: <T>(path: string, options?: RequestInit) => Promise<T>;
+  ngnNetwork?: string;
+  ngnAsset?: 'usdc' | 'usdt';
+  ngnMinimumUsd?: number;
+  onNgnReady?: (payload: { quote: any; account: any }) => void;
+  onExitNgn?: () => void;
+  onEnterNgn?: () => void;
+  /** Whether the NGN rail has any usable off-ramp network right now. */
+  ngnAvailable?: boolean;
   accounts: ExternalAccountRecord[];
   enabledControls: PaymentControl[];
   enabledAssets: AssetControl[];
@@ -140,9 +153,23 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
           <StepDot active={step === 3} done={false} label="Deposit" />
         </div>
       </div>
+      {step === 1 && ngnAvailable && (
+        // The rail is chosen explicitly rather than inferred from a saved
+        // account, because a Nigerian user has no saved account to infer from
+        // until this flow creates one.
+        <div className="seg">
+          <button type="button" className={!ngnMode ? 'active' : ''} onClick={onExitNgn}>Bank transfer (USD · GBP · EUR)</button>
+          <button type="button" className={ngnMode ? 'active' : ''} onClick={onEnterNgn}>Nigerian bank (NGN)</button>
+        </div>
+      )}
       <div className="trade-grid">
         <div>
-          {step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
+          {step === 1 && ngnMode
+            // Naira needs a different first step entirely: a NUBAN and a
+            // quote, not a saved Bridge external account. Bridge account
+            // shapes (routing number, sort code, IBAN) cannot express one.
+            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} onReady={onNgnReady!} onCancel={onExitNgn!} />
+            : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} />}
         </div>

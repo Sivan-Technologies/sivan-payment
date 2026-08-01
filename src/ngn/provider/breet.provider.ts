@@ -153,11 +153,34 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * BVN/NIN linkage, so an account that resolves is one a licensed bank has
    * already verified.
    */
-  async verifyBankAccount(bankId: string, accountNumber: string) {
-    return breetRequest<{ accountName: string; accountNumber: string; bankId?: string }>(
-      '/payments/banks/verify',
-      { method: 'POST', body: JSON.stringify({ bankId, accountNumber }) }
-    );
+  async verifyBankAccount(bankId: string, accountNumber: string, currency: 'ngn' | 'ghs' = 'ngn') {
+    // TWO things here were wrong until they were run against the live API.
+    //
+    // The path was '/payments/banks/verify', which 404s - "requested URL POST
+    // /v1/payments/banks/verify not found". The real path is
+    // '/payments/banks/validate'.
+    //
+    // The bank field is `id`, NOT `bankId`. Sending bankId returns 422
+    // "unknown fields detected" naming the field. So this method had never
+    // succeeded once; it was written from assumption and the 404 was hidden
+    // because nothing called it.
+    const result = await breetRequest<{
+      accountNumber: string;
+      type?: string;
+      bankName?: string;
+      accountName: string;
+    }>('/payments/banks/validate', {
+      method: 'POST',
+      body: JSON.stringify({ id: bankId, accountNumber, currency }),
+    });
+
+    return {
+      accountName: result?.accountName,
+      accountNumber: result?.accountNumber ?? accountNumber,
+      bankName: result?.bankName,
+      bankId,
+      type: result?.type,
+    };
   }
 
   /**
