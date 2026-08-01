@@ -287,6 +287,19 @@ export interface UserWalletRecord {
   status: 'provisioning' | 'active' | 'suspended' | 'closed' | 'failed';
   /** True when the provider holds the keys. Drives what the UI may claim. */
   custodial: boolean;
+  /**
+   * Whether Sivan holds a delegated signer on this wallet.
+   *
+   * Persisted because it is immutable at Privy and therefore permanent per
+   * wallet: additional signers are set AT CREATION, and adding one later needs
+   * the owner's signature, which Sivan does not have. A wallet provisioned
+   * before delegated signing existed can never gain it, so the code must be
+   * able to tell the two apart and degrade honestly rather than failing at
+   * signing time.
+   */
+  delegatedSigningEnabled?: boolean;
+  /** Key quorum id acting as signer, for audit and reconciliation. */
+  delegatedSignerId?: string;
   raw?: unknown;
   createdAt: string;
   updatedAt: string;

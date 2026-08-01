@@ -72,6 +72,22 @@ export interface ProviderWallet {
    * than promising an automatic transfer.
    */
   requiresUserSignature: boolean;
+  /**
+   * Whether Sivan can move funds from this wallet without the user present.
+   *
+   * NOT a property of the provider - a property of THIS wallet. Privy attaches
+   * additional signers at creation and refuses to add one afterwards: a PATCH
+   * must be signed by the wallet's OWNER, which is the user, and Sivan has no
+   * way to produce that signature. Verified live - both an app-credentialled
+   * PATCH and one signed by the key being added return 401.
+   *
+   * So two wallets from the same provider can differ permanently, and the
+   * difference decides whether off-ramp is one tap or a manual send. It has to
+   * be stored rather than inferred from the provider name.
+   */
+  delegatedSigningEnabled?: boolean;
+  /** The key quorum acting as signer, when there is one. */
+  delegatedSignerId?: string;
   balances?: WalletBalance[];
   rawProviderPayload?: unknown;
   createdAt?: string;

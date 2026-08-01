@@ -326,6 +326,22 @@ export function encodeErc20Transfer(to: string, amount: string, decimals: number
   );
 }
 
+
+/**
+ * Signer ids on a wallet payload, from whichever shape Privy returned it in.
+ *
+ * POST /v1/wallets and GET /v1/wallets/{id} carry `additional_signers`. A
+ * wallet read back from `user.linked_accounts` does NOT - it is a different
+ * projection with no signer information at all. Returning [] there would
+ * report a delegated wallet as non-delegated, so the reuse path re-reads the
+ * wallet rather than trusting the linked-account view.
+ */
+function signersOf(raw: any): string[] {
+  const signers = raw?.additional_signers;
+  if (!Array.isArray(signers)) return [];
+  return signers.map((signer: any) => signer?.signer_id).filter(Boolean);
+}
+
 export class PrivyWalletProvider implements WalletProvider {
   readonly name: WalletProviderName = 'privy';
 
@@ -473,7 +489,21 @@ export class PrivyWalletProvider implements WalletProvider {
     );
     if (!wallet) return undefined;
 
-    return this.toProviderWallet(wallet, chainType === 'solana' ? 'solana' : 'ethereum');
+    const chain = chainType === 'solana' ? 'solana' : 'ethereum';
+
+    // Re-read the wallet rather than returning the linked-account projection.
+    //
+    // `user.linked_accounts` does NOT carry `additional_signers` - verified
+    // live, the field is absent entirely, not empty. Returning that projection
+    // would report every REUSED wallet as non-delegated, which is almost all
+    // of them after the first call, and Sivan would fall back to asking the
+    // user to sign on wallets it can actually sign for itself.
+    if (wallet?.id) {
+      const full = await privyRequest<any>(`/wallets/${encodeURIComponent(wallet.id)}`).catch(() => undefined);
+      if (full) return this.toProviderWallet(full, chain);
+    }
+
+    return this.toProviderWallet(wallet, chain);
   }
 
   private toProviderWallet(raw: any, chain: WalletChain): ProviderWallet {
@@ -491,6 +521,11 @@ export class PrivyWalletProvider implements WalletProvider {
       // without the user, and the UI must not imply otherwise.
       requiresUserSignature: true,
       rawProviderPayload: raw,
+      // Read from the wallet Privy actually returned, never assumed from
+      // config. A configured quorum means new wallets GET a signer; it says
+      // nothing about a wallet created before that config existed.
+      delegatedSigningEnabled: signersOf(raw).length > 0,
+      delegatedSignerId: signersOf(raw)[0],
       // A wallet read back from `user.linked_accounts` carries NO `created_at`
       // key whatsoever - it has `verified_at`, and in seconds rather than the
       // milliseconds `POST /wallets` returns. Without this fallback every
@@ -579,6 +614,40 @@ export class PrivyWalletProvider implements WalletProvider {
       };
     }
 
+    // THE KEY IS NOT ENOUGH - THIS WALLET MUST ALSO HAVE THE SIGNER.
+    //
+    // Holding a signing key says nothing about any particular wallet. Privy
+    // attaches additional signers AT CREATION and refuses to add one later:
+    // the PATCH must be signed by the wallet's OWNER, which is the user.
+    // Verified live - both an app-credentialled PATCH and one signed by the
+    // key being added return 401, and the signer list stays empty.
+    //
+    // So a wallet provisioned before delegated signing existed can NEVER gain
+    // it. Checked here rather than discovered at the signing call, because the
+    // honest outcome for such a wallet is pending_user_signature, not a 401
+    // the caller cannot interpret.
+    const wallet = await this.getWallet(input.providerWalletId).catch(() => undefined);
+    if (wallet && wallet.delegatedSigningEnabled === false) {
+      return {
+        provider: this.name,
+        providerTransferId: `privy_pending_${input.idempotencyKey || crypto.randomUUID()}`,
+        status: 'pending_user_signature',
+        userSignaturePayload: {
+          walletId: input.providerWalletId,
+          chain: input.chain,
+          caip2,
+          asset: input.asset,
+          amount: input.amount,
+          toAddress: input.toAddress,
+          reference: input.reference,
+          rpcMethod: input.chain === 'solana' ? 'signAndSendTransaction' : 'eth_sendTransaction',
+          // Stated so a caller can explain the difference to the user, and so
+          // an operator can see which wallets need reprovisioning.
+          reason: 'This wallet was created without a Sivan signer and cannot be signed for automatically.',
+        },
+      };
+    }
+
     // Solana needs a fully built, blockhash-bearing transaction, which is a
     // different construction path entirely. Refusing beats submitting
     // something malformed against a user's funds.
@@ -639,10 +708,15 @@ export class PrivyWalletProvider implements WalletProvider {
 
       // Named explicitly because the fix is a dashboard toggle, not a code
       // change, and the raw message does not say that.
-      if (/gas sponsorship is not enabled/i.test(message)) {
+      // Privy words this two ways depending on where the gap is: "not
+      // enabled" when the app has no sponsorship at all, and "not configured
+      // for chain <caip2>" when it is on but that specific network is not
+      // covered. Both are dashboard settings rather than code faults, and the
+      // raw message does not say so.
+      if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
         throw forbidden(
-          'Gas sponsorship is not enabled for this Privy app. Enable it in the Privy dashboard, ' +
-            'or the wallet must hold native currency to pay its own gas.'
+          `Gas sponsorship is not available for ${caip2}. Enable it for this network in the Privy ` +
+            'dashboard, or the wallet must hold native currency to pay its own gas.'
         );
       }
       throw new Error(`Privy: ${message}`);

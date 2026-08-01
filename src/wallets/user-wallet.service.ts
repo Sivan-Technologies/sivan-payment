@@ -116,6 +116,10 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     address: providerWallet.address,
     status: providerWallet.status,
     custodial: providerWallet.custodyModel === 'custodial',
+    // Recorded from what the provider actually returned. Immutable at Privy,
+    // so this is a permanent property of the wallet, not of the provider.
+    delegatedSigningEnabled: providerWallet.delegatedSigningEnabled ?? false,
+    delegatedSignerId: providerWallet.delegatedSignerId,
     raw: providerWallet.rawProviderPayload,
     createdAt: now,
     updatedAt: now,

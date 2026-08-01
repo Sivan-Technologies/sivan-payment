@@ -223,12 +223,15 @@ async function main() {
       });
       const sponsoredResult: any = await sponsored.json();
       const sponsorMessage = String(sponsoredResult?.error ?? '');
-      const disabled = /gas sponsorship is not enabled/i.test(sponsorMessage);
+      // Two wordings, both meaning "a dashboard setting is missing": "not
+      // enabled" (no sponsorship on the app) and "not configured for chain"
+      // (sponsorship on, this network not covered).
+      const disabled = /gas sponsorship is not (enabled|configured)/i.test(sponsorMessage);
 
       check('sponsorship either works or says it is disabled',
         sponsored.status === 200 || disabled || /exceeds balance|insufficient/i.test(sponsorMessage),
         `HTTP ${sponsored.status} ${sponsorMessage.slice(0, 160)}`);
-      if (disabled) console.log('       NOT ENABLED - turn on gas sponsorship in the Privy dashboard');
+      if (disabled) console.log(`       NOT AVAILABLE - ${sponsorMessage}`);
     }
   }
 

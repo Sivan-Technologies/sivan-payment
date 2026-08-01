@@ -72,6 +72,7 @@
     "breet:smoke": "tsx scripts/breet-sandbox-smoke.ts",
     "privy:smoke": "tsx scripts/privy-live-smoke.ts",
     "privy:delegated": "tsx scripts/privy-delegated-signer-smoke.ts",
+    "test:delegated-capability": "tsx scripts/test-delegated-capability.ts",
     "test:rail-separation": "tsx scripts/test-rail-separation.ts",
     "test:offramp-minimum": "tsx scripts/test-offramp-minimum.ts",
     "test:admin-verification-limits": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-admin-vlimits.json tsx scripts/test-admin-verification-limits.ts",
