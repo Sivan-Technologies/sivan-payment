@@ -171,6 +171,15 @@ function privyTimestampToIso(value: unknown): string | undefined {
  * So: page the list and match locally. Failures are NOT caught here - a lookup
  * that errors must not be reported as "user does not exist", because the
  * caller's response to that is to create a duplicate.
+ *
+ * COST, STATED PLAINLY: this is O(users) per call, 100 per page. Correct at
+ * Sivan's current size and unacceptable at 50,000 users. The fix is not a
+ * better search - Privy does not offer one - it is to persist the returned
+ * `did:privy:...` id on the Sivan user record and look the user up directly
+ * via GET /v1/users/{id}, which is verified to work. This function then
+ * becomes the fallback for records predating that column. Deliberately not
+ * done here: it needs a migration and a backfill, and shipping it silently
+ * inside a bug fix is how migrations get missed.
  */
 async function findPrivyUser(userId: string): Promise<any | undefined> {
   let cursor: string | undefined;
