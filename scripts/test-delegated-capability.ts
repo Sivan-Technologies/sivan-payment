@@ -98,8 +98,11 @@ async function main() {
     // inferring capability off config. With config and reality agreeing, a
     // naive `Boolean(QUORUM_ID)` implementation passes and the test proves
     // nothing - so the two are deliberately put in conflict here.
+    const { env: envModule } = await import('../src/config/env.js');
     const savedQuorumId = process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID;
+    const savedEnvQuorumId = (envModule as any).PRIVY_AUTHORIZATION_KEY_QUORUM_ID;
     process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = 'quorum_that_is_configured_but_not_on_this_wallet';
+    (envModule as any).PRIVY_AUTHORIZATION_KEY_QUORUM_ID = 'quorum_that_is_configured_but_not_on_this_wallet';
 
     const legacyUser: any = await (await fetch(`${BASE}/users`, {
       method: 'POST', headers: headers(),
@@ -119,6 +122,7 @@ async function main() {
 
     if (savedQuorumId) process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = savedQuorumId;
     else delete process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID;
+    (envModule as any).PRIVY_AUTHORIZATION_KEY_QUORUM_ID = savedEnvQuorumId;
 
     // getWallet is the path createTransfer uses to decide.
     const reread = await provider.getWallet(withoutSigner.providerWalletId);
@@ -162,10 +166,17 @@ async function main() {
     // With a signing key configured but a wallet that has no signer, the right
     // answer is pending_user_signature - not a 401 the caller cannot read.
     const { generateAuthorizationKeyPair } = await import('../src/wallets/provider/privy-authorization.js');
+    // Blanking process.env is NOT enough: the provider falls back to the
+    // PARSED env object, so once a quorum is configured in .env the wallet
+    // gets a signer and this scenario stops being a legacy wallet at all.
+    // Both sources have to be cleared for "no signer" to mean anything.
+    const { env } = await import('../src/config/env.js');
     const saved = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
     const savedQuorum = process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID;
+    const savedEnvQuorum = (env as any).PRIVY_AUTHORIZATION_KEY_QUORUM_ID;
     process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY = generateAuthorizationKeyPair().privateKeyPem;
     delete process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID;
+    (env as any).PRIVY_AUTHORIZATION_KEY_QUORUM_ID = '';
 
     const legacy = await provider.createWallet({ userId: `cap_degrade_${stamp}`, chain: 'base' } as any);
     check('the wallet has no signer', legacy.delegatedSigningEnabled === false);
@@ -203,6 +214,7 @@ async function main() {
     if (saved) process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY = saved;
     else delete process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
     if (savedQuorum) process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = savedQuorum;
+    (env as any).PRIVY_AUTHORIZATION_KEY_QUORUM_ID = savedEnvQuorum;
   }
 
   // Tidy up: Privy bills per monthly-active wallet and wallets cannot be

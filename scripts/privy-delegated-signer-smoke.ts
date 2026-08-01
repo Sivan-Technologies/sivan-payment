@@ -239,7 +239,63 @@ async function main() {
     await fetch(`${BASE}/users/${userId}`, { method: 'DELETE', headers: headers() }).catch(() => undefined);
   }
 
-  console.log(`\n${pass} passed, ${fail} failed\n`);
+console.log('\nSPONSORED TRANSFERS HAVE A USABLE IDENTIFIER');
+{
+  // A sponsored EVM transfer is an ERC-4337 user operation. Privy returns
+  // `hash: ""` - an EMPTY STRING, not null - because the real transaction hash
+  // does not exist until a bundler includes it on chain.
+  //
+  // The provider used `result?.transaction_id ?? result?.data?.hash`, and `??`
+  // only falls through on null/undefined. So the empty string passed straight
+  // through and EVERY sponsored transfer was stored with an empty id, leaving
+  // nothing to reconcile or look up. Caught live through the service path.
+  // Asserted through the REAL provider, not a local copy of the logic. An
+  // earlier version of this test reimplemented the selection inline, so
+  // breaking the provider left it green - it was testing itself.
+  const { PrivyWalletProvider } = await import('../src/wallets/provider/privy-wallet.provider.js');
+  const liveProvider = new PrivyWalletProvider();
+
+  // The funded e2e wallet, because an empty one cannot produce a sponsored
+  // response to inspect. Skipped cleanly when it has not been provisioned.
+  const e2eWallet = await liveProvider
+    .createWallet({ userId: 'sivan_base_e2e_wallet', chain: 'base' } as any)
+    .catch(() => undefined);
+
+  const sponsoredTransfer = !e2eWallet ? ({ error: 'no e2e wallet provisioned' } as any) : await liveProvider.createTransfer({
+    providerWalletId: e2eWallet.providerWalletId,
+    chain: 'base',
+    asset: 'usdc',
+    amount: '0.01',
+    toAddress: '0x000000000000000000000000000000000000dEaD',
+    idempotencyKey: `idcheck_${stamp}`,
+    reference: 'id-shape',
+  } as any).catch((error: any) => ({ error: String(error?.message ?? error) } as any));
+
+  if ((sponsoredTransfer as any).error) {
+    // An unfunded or unprovisioned wallet cannot transfer, and neither is what
+    // is under test here. An AUTH failure, however, would be a real problem.
+    check('the failure is not an authorization one',
+      !/authorization|not configured/i.test((sponsoredTransfer as any).error),
+      (sponsoredTransfer as any).error);
+  } else {
+    check('the transfer id is never an empty string',
+      typeof sponsoredTransfer.providerTransferId === 'string' &&
+      sponsoredTransfer.providerTransferId.length > 0,
+      JSON.stringify(sponsoredTransfer.providerTransferId));
+    check('a sponsored transfer is flagged as sponsored',
+      sponsoredTransfer.sponsored === true, String(sponsoredTransfer.sponsored));
+    check('it carries a user operation hash',
+      typeof sponsoredTransfer.userOperationHash === 'string' &&
+      sponsoredTransfer.userOperationHash.length > 0,
+      String(sponsoredTransfer.userOperationHash));
+    // '' would read as "we have a hash" to every downstream caller.
+    check('txHash is undefined rather than an empty string',
+      sponsoredTransfer.txHash === undefined || sponsoredTransfer.txHash.length > 0,
+      JSON.stringify(sponsoredTransfer.txHash));
+  }
+}
+
+console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail === 0 ? 0 : 1);
 }
 

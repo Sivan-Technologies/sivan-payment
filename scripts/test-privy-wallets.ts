@@ -151,13 +151,24 @@ async function main() {
       ['solana', 'ethereum', 'base'].every((c) => privy.supportedChains.includes(c)),
       privy.supportedChains.join());
 
-    // The honest consequence of user-owned wallets: Sivan CANNOT sign.
+    // WITHOUT a delegated signer, Sivan cannot move a user-owned wallet and
+    // says so. This asserted unconditionally before, which encoded the
+    // signer-less state as permanent - so configuring a signer broke it by
+    // making the provider correctly attempt a real transfer against a
+    // fictional wallet id. Both env sources must be cleared, because the
+    // provider falls back to the parsed env object.
+    const savedKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
+    const savedEnvKey = (env as any).PRIVY_AUTHORIZATION_PRIVATE_KEY;
+    delete process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
+    (env as any).PRIVY_AUTHORIZATION_PRIVATE_KEY = '';
+
     const transfer = await privy.createTransfer({
       providerWalletId: 'w1', asset: 'usdc', chain: 'solana',
       amount: '10', toAddress: 'Abc', idempotencyKey: 'k1',
     });
-    check('a transfer returns pending_user_signature, not submitted',
+    check('with no signer, a transfer returns pending_user_signature',
       transfer.status === 'pending_user_signature', transfer.status);
+
     check('and carries a payload the client can sign',
       Boolean(transfer.userSignaturePayload));
     check('with the right RPC method for the chain',
@@ -176,6 +187,12 @@ async function main() {
       typeof (evmTransfer.userSignaturePayload as any)?.caip2 === 'string' &&
       (evmTransfer.userSignaturePayload as any).caip2.startsWith('eip155:'),
       String((evmTransfer.userSignaturePayload as any)?.caip2));
+
+    // Restored only now: every assertion above describes the NO-SIGNER path,
+    // and restoring earlier made the provider attempt a real transfer against
+    // a fictional wallet and a fake recipient address.
+    if (savedKey) process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY = savedKey;
+    (env as any).PRIVY_AUTHORIZATION_PRIVATE_KEY = savedEnvKey;
 
     // Polling something never submitted must not invent a status.
     const polled = await privy.getTransfer(transfer.providerTransferId);

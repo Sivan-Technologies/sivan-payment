@@ -124,6 +124,12 @@ export interface WalletTransferInput {
   reference?: string;
 }
 
+/**
+ * A sponsored EVM transfer is an ERC-4337 user operation, so it has a user
+ * operation hash BEFORE it has a transaction hash - the latter does not exist
+ * until a bundler includes it on chain. Modelled separately because treating
+ * them as one field is what produced empty transaction ids.
+ */
 export type WalletTransferStatus =
   | 'pending_user_signature'
   | 'submitted'
@@ -139,6 +145,23 @@ export interface WalletTransfer {
    * needs the user to sign in the client. Non-custodial providers use this.
    */
   userSignaturePayload?: unknown;
+  /**
+   * The on-chain transaction hash. ABSENT on a freshly sponsored transfer.
+   *
+   * A sponsored EVM transfer is an ERC-4337 user operation: it is accepted by
+   * a bundler first and only gets a transaction hash once included on chain.
+   * Privy returns `hash: ""` in the meantime, and an empty string here would
+   * read as "we have a hash" to every caller.
+   */
   txHash?: string;
+  /**
+   * The user operation hash, present instead of txHash while sponsored.
+   *
+   * This is the only identifier a sponsored transfer has at submit time, so it
+   * is what reconciliation must key on until the transaction lands.
+   */
+  userOperationHash?: string;
+  /** True when a paymaster covered gas rather than the wallet. */
+  sponsored?: boolean;
   rawProviderPayload?: unknown;
 }

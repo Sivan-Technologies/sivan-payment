@@ -722,9 +722,24 @@ export class PrivyWalletProvider implements WalletProvider {
 
     return {
       provider: this.name,
-      providerTransferId: result?.transaction_id ?? result?.data?.hash ?? `privy_tx_${crypto.randomUUID()}`,
+      // `??` was wrong here. A SPONSORED transaction is an ERC-4337 user
+      // operation, and Privy returns `hash: ""` - an EMPTY STRING, not null -
+      // because the real transaction hash does not exist until a bundler
+      // includes it on chain. `??` only falls through on null/undefined, so
+      // the empty string passed straight through and every sponsored transfer
+      // was stored with an EMPTY id. Nothing could then be reconciled or
+      // looked up. Confirmed live through the service path.
+      providerTransferId:
+        result?.transaction_id ||
+        result?.data?.user_operation_hash ||
+        result?.data?.hash ||
+        `privy_tx_${crypto.randomUUID()}`,
       status: 'submitted',
-      txHash: result?.data?.hash ?? result?.hash,
+      // Deliberately left undefined rather than '' when sponsored: there is no
+      // transaction hash yet, and an empty string reads as "we have one".
+      txHash: result?.data?.hash || result?.hash || undefined,
+      userOperationHash: result?.data?.user_operation_hash || undefined,
+      sponsored: Boolean(result?.data?.sponsorship_provider),
       rawProviderPayload: result,
     };
   }
@@ -815,9 +830,12 @@ export class PrivyWalletProvider implements WalletProvider {
 
     return {
       provider: this.name,
-      providerTransferId: result?.transaction_id ?? result?.data?.signature ?? `privy_sol_${crypto.randomUUID()}`,
+      // Same empty-string trap as the EVM path above.
+      providerTransferId:
+        result?.transaction_id || result?.data?.signature || `privy_sol_${crypto.randomUUID()}`,
       status: 'submitted',
-      txHash: result?.data?.signature ?? result?.signature,
+      txHash: result?.data?.signature || result?.signature || undefined,
+      sponsored: Boolean(result?.data?.sponsorship_provider),
       rawProviderPayload: {
         ...result,
         // Carried so a caller can explain a slightly larger SOL deduction: the

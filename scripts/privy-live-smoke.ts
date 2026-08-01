@@ -214,6 +214,16 @@ async function main() {
 
   console.log('\nTRANSFERS ADMIT THEY NEED THE USER');
   {
+    // Asserts the NO-SIGNER behaviour, so the signing key is cleared first.
+    // Otherwise the provider correctly attempts a real sponsored transfer and
+    // this fails on an empty wallet - a true result, but not what is tested
+    // here. The parsed env object must be cleared too, not just process.env.
+    const { env: envModule } = await import('../src/config/env.js');
+    const savedKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
+    const savedEnvKey = (envModule as any).PRIVY_AUTHORIZATION_PRIVATE_KEY;
+    delete process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
+    (envModule as any).PRIVY_AUTHORIZATION_PRIVATE_KEY = '';
+
     const transfer = await provider.createTransfer({
       providerWalletId: walletA.providerWalletId,
       chain: 'ethereum',
@@ -226,6 +236,9 @@ async function main() {
 
     check('status is pending_user_signature', transfer?.status === 'pending_user_signature', transfer?.status);
     check('a signature payload is handed back', Boolean(transfer?.userSignaturePayload));
+
+    if (savedKey) process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY = savedKey;
+    (envModule as any).PRIVY_AUTHORIZATION_PRIVATE_KEY = savedEnvKey;
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
