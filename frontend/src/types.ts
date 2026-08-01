@@ -7,6 +7,13 @@ export interface UserRecord {
   email: string;
   whatsappNumber?: string;
   fullName: string;
+  /**
+   * ISO 3166-1 alpha-2, uppercase. Set from the verification modal, not at
+   * signup. Undefined for every user who existed before it was collected, and
+   * an undefined country routes to Bridge - never to the Nigerian path, which
+   * their account number could not pass.
+   */
+  country?: string;
   username?: string;
   usernameUpdatedAt?: string;
   primaryChannel?: 'email' | 'whatsapp' | 'both';

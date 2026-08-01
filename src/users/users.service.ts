@@ -3,14 +3,31 @@ import { db } from '../database/json-database.js';
 import { badRequest, conflict, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 
+/**
+ * An ISO 3166-1 alpha-2 country code.
+ *
+ * .length(2) is NOT sufficient, which is easy to miss: '12', 'n1' and '!!' all
+ * have length two and all violate the users_country_iso2 check constraint, so
+ * they escape Zod and come back as a 500 from Postgres instead of a 400 the
+ * caller can act on. Trimmed and uppercased so 'ng', 'NG' and ' ng ' cannot
+ * coexist as three different stored values that compare unequal.
+ */
+const countryCodeSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.toUpperCase())
+  .refine((v) => /^[A-Z]{2}$/.test(v), {
+    message: 'country must be an ISO 3166-1 alpha-2 code, e.g. NG'
+  });
+
 export const createUserSchema = z
   .object({
     email: z.string().email().transform((v) => v.toLowerCase()).optional(),
     whatsappNumber: z.string().min(6).optional(),
     fullName: z.string().min(2),
-    // Uppercased here so 'ng', 'NG' and 'Ng' cannot coexist and route
-    // differently. Optional: existing users have none and must not be blocked.
-    country: z.string().length(2).transform((v) => v.toUpperCase()).optional(),
+    // Optional: country is collected in the verification modal, not at signup,
+    // so almost every user is created without one.
+    country: countryCodeSchema.optional(),
     primaryChannel: z.enum(['email', 'whatsapp', 'both']).optional()
   })
   .refine((value) => value.email || value.whatsappNumber, {
@@ -42,6 +59,31 @@ export async function createUser(input: z.infer<typeof createUserSchema>) {
     updatedAt: now
   };
   return db.insertUserRecord(user);
+}
+
+/**
+ * Country, set from the verification modal rather than at signup.
+ *
+ * Deliberately NOT part of the signup form. Country is only ever consumed to
+ * decide a verification path, and that decision is made at the moment a user
+ * starts verifying - which is usually days after signup. Asking at signup adds
+ * a field to the highest-drop-off screen on the site to answer a question
+ * nothing reads until much later.
+ *
+ * .length(2) is not enough on its own: 'g1' and '  ' both have length 2 and
+ * both violate the users_country_iso2 check constraint, which would surface as
+ * a 500 from Postgres instead of a 400 here.
+ */
+export const setUserCountrySchema = z.object({ country: countryCodeSchema });
+
+export async function setUserCountry(userId: string, input: z.infer<typeof setUserCountrySchema>) {
+  const user = await getUser(userId);
+  // Idempotent on purpose. A user who reopens the modal and picks the same
+  // country should not get an error, and re-picking a DIFFERENT one is allowed:
+  // country is a routing hint, not evidence, so changing it changes which form
+  // they see and nothing about what they are permitted to do.
+  const updated = { ...user, country: input.country, updatedAt: nowIso() };
+  return db.updateUserRecord(updated);
 }
 
 export async function getUser(userId: string) {

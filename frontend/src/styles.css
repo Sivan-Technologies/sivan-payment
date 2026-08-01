@@ -1732,6 +1732,57 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   border-radius: 10px; padding: 11px 13px;
 }
 
+/* Step 1 of the modal: country.
+
+   A grid rather than a <select> because there are ten options and one of them
+   behaves completely differently. A native select hides that difference behind
+   a tap, so a Nigerian user cannot see that their path is the fast one until
+   after they have committed to it. */
+.sv-country-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px; max-height: 280px; overflow-y: auto;
+}
+.sv-country {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 12px 13px; border-radius: 12px; cursor: pointer; text-align: left;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #eef3f7; font-size: 14px;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.sv-country:hover:not(:disabled) {
+  background: rgba(52, 211, 153, 0.07);
+  border-color: rgba(52, 211, 153, 0.28);
+  transform: translateY(-1px);
+}
+.sv-country:disabled { opacity: 0.5; cursor: default }
+/* Nigeria is pre-highlighted: it is the only instant path and the majority of
+   the userbase, so it should read as the default rather than one of ten. */
+.sv-country.primary {
+  background: rgba(52, 211, 153, 0.07);
+  border-color: rgba(52, 211, 153, 0.26);
+}
+.sv-country-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sv-flag { font-size: 19px; line-height: 1; flex-shrink: 0 }
+.sv-country-tag {
+  font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: #34d399; flex-shrink: 0;
+}
+.sv-country-tag.muted { color: #5f6b78; font-weight: 500 }
+
+.sv-chosen-country {
+  display: flex; align-items: center; gap: 10px; margin-top: 18px;
+  padding: 10px 13px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 13px; color: #eef3f7;
+}
+.sv-chosen-country strong { flex: 1; font-weight: 500 }
+.sv-chosen-country button {
+  background: none; border: none; color: #34d399; cursor: pointer; font-size: 12px; padding: 0;
+}
+.sv-spinner.small { width: 11px; height: 11px; border-width: 1.5px }
+
 @media (max-width: 520px) {
   .sv-modal { padding: 22px 18px; border-radius: 18px; max-height: calc(100vh - 24px) }
   .sv-modal-head h2 { font-size: 21px }
@@ -1739,4 +1790,7 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
      position without wrapping the row. */
   .sv-step { font-size: 0; padding: 8px; justify-content: center }
   .sv-step span { font-size: 10px }
+  /* One column on a phone: two 14px country names side by side truncate to
+     nothing useful at 360px. */
+  .sv-country-grid { grid-template-columns: 1fr }
 }

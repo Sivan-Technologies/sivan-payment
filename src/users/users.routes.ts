@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { createUser, createUserSchema, getUser } from './users.service.js';
+import { createUser, createUserSchema, getUser, setUserCountry, setUserCountrySchema } from './users.service.js';
 import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema } from './user-preferences.service.js';
 import { confirmAvatarUpload, confirmAvatarUploadSchema, createAvatarUploadUrl, createAvatarUploadUrlSchema, removeAvatar } from './user-avatar.service.js';
 import { checkUsernameAvailability, updateUsername, usernameSchema } from './username.service.js';
@@ -83,6 +83,19 @@ export async function usersRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = parseBody(userEmailChangeConfirmSchema, request.body);
     return { data: await confirmUserEmailChange(userId, body) };
+  });
+
+  /**
+   * Set the user's country, from step 1 of the verification modal.
+   *
+   * PUT rather than PATCH because the whole value is replaced and the call is
+   * idempotent - reopening the modal and picking the same country again must
+   * not be an error.
+   */
+  app.put('/api/users/:userId/country', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(setUserCountrySchema, request.body);
+    return { data: await setUserCountry(userId, body) };
   });
 
   app.get('/api/users/:userId', async (request) => {

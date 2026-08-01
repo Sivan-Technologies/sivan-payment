@@ -5,6 +5,9 @@ import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTr
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
 import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
+import { VerificationModal } from './components/verification/VerificationModal';
+import { localVerificationPlan, type VerificationPathPlan } from './verificationPath';
+import type { ResolvedNgnBankAccount } from './ngnBank';
 import { offrampClears, typicalGasUsd } from './ngnMinimum';
 import type { NgnNetworkLists } from './rails';
 import type { WithdrawalReviewState } from './components/AppSections';
@@ -72,6 +75,13 @@ export default function App() {
   const [twoFactorRecoveryAnswers, setTwoFactorRecoveryAnswers] = useState<Record<string, string>>({});
   const [twoFactorRecoveryMessage, setTwoFactorRecoveryMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  // Level 1 verification lives in a modal so it can be opened from anywhere -
+  // the dashboard, the verification page, or halfway through a withdrawal -
+  // without losing the screen the user was on.
+  const [verificationOpen, setVerificationOpen] = useState(false);
+  // The server's plan. Authoritative, but arrives a round trip late, so the
+  // modal renders a local mirror of the same routing rule until it lands.
+  const [verificationPlan, setVerificationPlan] = useState<VerificationPathPlan | null>(null);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
@@ -707,6 +717,100 @@ export default function App() {
     await refreshKycStatus(true);
   }
 
+  /**
+   * Start Bridge KYC without a form event.
+   *
+   * handleKyc reads the customer type out of a submitted <form>. The modal has
+   * no form - the country step already decided the path - so this is the same
+   * call with 'individual' assumed. Business verification stays on the full
+   * verification page, where the type can actually be chosen.
+   */
+  const startBridgeVerification = useCallback(async () => {
+    if (!user?.id) return notify('Create your account first.', 'error');
+    if (!canStartKyc) return notify(systemStatus.message || 'Verification is temporarily paused.', 'error');
+    if (kycApproved) return notify('Your identity is already verified.');
+    if (kycUnderReview) return notify('Verification is under review. We will update this page once it is complete.');
+
+    // Opened BEFORE the await. A window.open that happens after an async gap
+    // is not attributable to the click any more and Safari blocks it.
+    const verificationWindow = window.open('', '_blank');
+    setLoading(true);
+    try {
+      const created = await api<CustomerRecord>('/api/customers/kyc-link', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: user.id,
+          type: 'individual',
+          redirectUri: verificationRedirectUri || `${window.location.origin}/verification-complete`
+        })
+      });
+      setCustomer(created);
+      const nextVerificationUrl = created.hostedKycLink || created.kycLink;
+      if (nextVerificationUrl) {
+        if (verificationWindow) {
+          verificationWindow.opener = null;
+          verificationWindow.location.assign(nextVerificationUrl);
+        } else {
+          window.open(nextVerificationUrl, '_blank', 'noopener,noreferrer');
+        }
+        notify('Verification opened in a new tab. Return here when you finish.');
+      } else {
+        verificationWindow?.close();
+        notify('Verification started. Return here after completing the secure verification steps.');
+      }
+      setVerificationOpen(false);
+      setView('kyc');
+    } catch (error) {
+      verificationWindow?.close();
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [api, canStartKyc, kycApproved, kycUnderReview, notify, systemStatus.message, user?.id, verificationRedirectUri]);
+
+  /**
+   * Persist the country picked in the modal.
+   *
+   * Deliberately re-fetches the plan afterwards rather than trusting the local
+   * mirror: the server owns the routing rule, and if the two ever drift the
+   * one that decides what the user is actually allowed to do must win.
+   */
+  const handleCountryChange = useCallback(async (country: string) => {
+    if (!user?.id) throw new Error('Create your account first.');
+    const updated = await api<UserRecord>(`/api/users/${user.id}/country`, {
+      method: 'PUT',
+      body: JSON.stringify({ country })
+    });
+    setUser(updated);
+    const plan = await api<VerificationPathPlan>(`/api/users/${user.id}/verification-plan`);
+    setVerificationPlan(plan);
+  }, [api, user?.id]);
+
+  /**
+   * A resolved Nigerian bank account, confirmed by the user as theirs.
+   *
+   * NOTE: this does not yet persist the account or run the name match server
+   * side - NGN payout accounts have no table, and ExternalAccountRecord is
+   * Bridge-shaped (us/gb/iban) and cannot hold a NUBAN. Until that exists this
+   * confirms to the user and reloads, and Level 1 is not actually granted.
+   */
+  const handleNgnVerified = useCallback(async (account: ResolvedNgnBankAccount) => {
+    setVerificationOpen(false);
+    notify(`Confirmed ${account.accountName}. We will use this account for naira payouts.`);
+    await loadUserData();
+  }, [loadUserData, notify]);
+
+  /** Open the modal, fetching the server's plan for this user. */
+  const openVerification = useCallback(() => {
+    setVerificationOpen(true);
+    if (!user?.id) return;
+    void api<VerificationPathPlan>(`/api/users/${user.id}/verification-plan`)
+      .then(setVerificationPlan)
+      // Silent: the modal already renders the local mirror of the same rule,
+      // so a failed fetch degrades to a correct screen rather than an error.
+      .catch(() => undefined);
+  }, [api, user?.id]);
+
 
   async function handleBalanceTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1305,7 +1409,7 @@ export default function App() {
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
-            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice onVerify={() => goToView('kyc')} />}
+            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice onVerify={openVerification} />}
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
               <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
@@ -1392,7 +1496,7 @@ export default function App() {
           </section>
         )}
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onStartVerification={openVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 
@@ -1436,6 +1540,22 @@ export default function App() {
         {view === 'help' && <SupportView hasUser={hasUser} user={user} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>
+
+      {/* Rendered at the root, outside <main>, so the overlay covers the whole
+          viewport rather than being clipped by the scroll container. */}
+      <VerificationModal
+        open={verificationOpen}
+        plan={verificationPlan ?? localVerificationPlan(user?.country)}
+        userId={user?.id ?? ''}
+        fullName={user?.fullName ?? ''}
+        country={user?.country}
+        api={api}
+        loading={loading}
+        onClose={() => setVerificationOpen(false)}
+        onCountryChange={handleCountryChange}
+        onVerified={handleNgnVerified}
+        onStartBridge={startBridgeVerification}
+      />
     </div>
   );
 }

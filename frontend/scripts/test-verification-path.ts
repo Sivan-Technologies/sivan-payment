@@ -17,6 +17,7 @@ import {
   canRequestVirtualAccount,
   virtualAccountBlockedReason,
   SIGNUP_COUNTRIES,
+  planToRender,
 } from '../src/verificationPath';
 
 let pass = 0;
@@ -96,6 +97,48 @@ console.log('\nVIRTUAL ACCOUNTS NEED BRIDGE APPROVAL, NOT JUST A BANK CHECK');
     /support/i.test(virtualAccountBlockedReason('rejected', 'bridge_kyc') ?? ''));
   check('an approved user has no blocker',
     virtualAccountBlockedReason('approved', 'bridge_kyc') === undefined);
+}
+
+console.log('\nTHE MODAL RENDERS THE RIGHT PLAN WHILE THE SERVER CATCHES UP');
+{
+  // The scenario: server said NG, user changes the dropdown to US, refetch has
+  // not landed. Rendering the server plan here shows an American the Nigerian
+  // bank form - a check their account number cannot pass.
+  const serverNg = localVerificationPlan('NG');
+  const serverUs = localVerificationPlan('US');
+
+  check('no selection yet -> the server plan is used',
+    planToRender(serverNg, undefined) === serverNg);
+  check('selection matches the server -> the server plan wins',
+    planToRender(serverNg, 'NG') === serverNg);
+  check('an empty string counts as no selection',
+    planToRender(serverNg, '') === serverNg);
+
+  const switched = planToRender(serverNg, 'US');
+  check('switching NG -> US immediately stops showing the bank form',
+    switched.path === 'bridge_kyc', switched.path);
+  check('and the stale server plan is discarded, not mutated',
+    serverNg.path === 'ngn_bank');
+
+  const back = planToRender(serverUs, 'NG');
+  check('switching US -> NG immediately shows the bank form',
+    back.path === 'ngn_bank', back.path);
+  check('a locally chosen country is never a fallback',
+    back.isFallback === false);
+
+  // Case must not force a needless local plan: 'ng' and 'NG' are one country,
+  // and treating them as different would throw away the server's richer copy.
+  check('case differences do not make the server plan look stale',
+    planToRender(serverNg, 'ng') === serverNg);
+
+  // A server plan with no country (the user has none on file) is stale the
+  // moment they pick one.
+  const serverUnknown = localVerificationPlan(undefined);
+  const picked = planToRender(serverUnknown, 'NG');
+  check('picking a country replaces the no-country plan',
+    picked.path === 'ngn_bank', picked.path);
+  check('and it stops claiming to be a fallback',
+    picked.isFallback === false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -376,7 +376,7 @@ export function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onR
 }
 
 
-export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
+export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onStartVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
   const emailDone = hasUser;
   const identityDone = customer?.kycStatus === 'kyc_approved';
   const verificationLink = customer?.hostedKycLink || customer?.kycLink;
@@ -396,7 +396,12 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
           <div className="level-grid"><div className="active"><strong>Step 1</strong><span>Email confirmed</span></div><div className={identityDone ? 'active' : ''}><strong>Step 2</strong><span>Identity verified</span></div><div className={hasBank ? 'active' : ''}><strong>Step 3</strong><span>Payout ready</span></div></div>
           <div className="verification-steps-list">
             <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Signed in securely" action="Completed" />
-            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>Identity verification</strong><small>Government-issued ID and selfie. Usually takes about 3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : <form onSubmit={onSubmit} key={customer?.id || 'new-verification'}><CustomSelect name="type" defaultValue={customer?.customerType || 'individual'} disabled={Boolean(customer?.id && !kycFailed)} options={customerTypes.map((type) => ({ value: type.customerType, label: type.label, helper: type.enabled ? undefined : 'Unavailable', disabled: !type.enabled }))} /><input name="redirectUri" type="hidden" value={verificationRedirectUri} /><button className="primary-btn small" disabled={!canSubmitKyc}>{kycActionLabel}</button></form>}</div>
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>Identity verification</strong><small>Government-issued ID and selfie. Usually takes about 3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : /* Individual verification opens the modal, which asks for the country
+   first and then routes: Nigeria to the bank-name check, everywhere else to
+   Bridge. Business verification still uses the form below, because the modal
+   has no customer-type step and a business cannot be verified by a personal
+   bank account. */
+<button className="primary-btn small" onClick={onStartVerification} disabled={!canSubmitKyc}>{kycActionLabel}</button>}</div>
             <VerificationStep done={customer?.tosStatus === 'approved'} index={3} title="Terms accepted" sub="Provider terms are accepted when required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />
             <VerificationStep done={hasBank} index={4} title="Payout bank" sub="Add a bank when you are ready to sell crypto" action={hasBank ? 'Completed' : 'Continue'} />
           </div>

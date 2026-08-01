@@ -80,6 +80,7 @@
     "test:wallet-health": "tsx scripts/test-wallet-health.ts",
     "test:name-match": "tsx scripts/test-name-match.ts",
     "test:verification-path": "tsx scripts/test-verification-path.ts",
+    "test:user-country": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-user-country.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true tsx scripts/test-user-country.ts",
     "test:solana-transfer": "tsx scripts/test-solana-transfer.ts",
     "test:rail-separation": "tsx scripts/test-rail-separation.ts",
     "test:offramp-minimum": "tsx scripts/test-offramp-minimum.ts",

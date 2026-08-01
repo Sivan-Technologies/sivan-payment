@@ -133,3 +133,28 @@ export function virtualAccountBlockedReason(
     ? 'USD, GBP and EUR accounts need identity verification with our partner Bridge.'
     : 'Complete identity verification to unlock virtual accounts.';
 }
+
+/**
+ * Which plan the modal should render.
+ *
+ * The server owns the routing rule, so its plan wins - but only while it still
+ * describes the country the user has selected. The instant they pick a
+ * different one the server's plan is STALE: it would show a US user the
+ * Nigerian bank form until the refetch lands, which is a check their account
+ * cannot pass. So a mismatch falls back to the local mirror of the same rule.
+ *
+ * Extracted from the component rather than left inline because this is the one
+ * piece of the modal that can be wrong in a way the user pays for, and logic
+ * inside a useMemo cannot be tested.
+ */
+export function planToRender(
+  serverPlan: VerificationPathPlan,
+  chosenCountry: string | undefined | null
+): VerificationPathPlan {
+  const chosen = normalizeCountry(chosenCountry);
+  // No selection yet: nothing to be stale against.
+  if (!chosen) return serverPlan;
+  // Same country: the server's copy is richer and authoritative.
+  if (normalizeCountry(serverPlan.country) === chosen) return serverPlan;
+  return localVerificationPlan(chosen);
+}

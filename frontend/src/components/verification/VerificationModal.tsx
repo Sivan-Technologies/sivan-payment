@@ -7,7 +7,12 @@ import {
   type NgnBank,
   type ResolvedNgnBankAccount,
 } from '../../ngnBank';
-import type { VerificationPathPlan } from '../../verificationPath';
+import {
+  SIGNUP_COUNTRIES,
+  normalizeCountry,
+  planToRender,
+  type VerificationPathPlan,
+} from '../../verificationPath';
 
 /**
  * Level 1 verification, as a modal.
@@ -27,22 +32,40 @@ export function VerificationModal({
   plan,
   userId,
   fullName,
+  country,
   api,
   loading,
   onClose,
+  onCountryChange,
   onVerified,
   onStartBridge,
 }: {
   open: boolean;
+  /** The server's plan for the country already on file, if any. */
   plan: VerificationPathPlan;
   userId: string;
   fullName: string;
+  /** Country on the user record. Undefined for everyone who signed up before this existed. */
+  country?: string;
   api: <T>(path: string, options?: RequestInit) => Promise<T>;
   loading: boolean;
   onClose: () => void;
+  /** Persisted so the choice survives a reload and the server can re-plan. */
+  onCountryChange: (country: string) => Promise<void> | void;
   onVerified: (account: ResolvedNgnBankAccount) => void;
   onStartBridge: () => void;
 }) {
+  // The country the modal is currently acting on. Seeded from the record, then
+  // owned locally so picking a country re-routes the modal instantly rather
+  // than waiting on a round trip - the save happens in the background.
+  const [chosenCountry, setChosenCountry] = useState<string | undefined>(() => normalizeCountry(country));
+  const [savingCountry, setSavingCountry] = useState(false);
+  const [countryError, setCountryError] = useState('');
+
+  // A user who reopens the modal after their country was saved elsewhere must
+  // not see a stale local value.
+  useEffect(() => { setChosenCountry(normalizeCountry(country)); }, [country, open]);
+
   // Escape closes, because a modal that traps you is worse than no modal.
   useEffect(() => {
     if (!open) return;
@@ -58,7 +81,42 @@ export function VerificationModal({
     };
   }, [open, onClose]);
 
+  /**
+   * Which plan to render.
+   *
+   * The server's plan wins while the country it was computed for still matches
+   * what the user has selected. The moment they pick a different one it is
+   * stale - it would describe the wrong path - so the local mirror takes over
+   * until the parent refetches. Both come from the same routing rule, so they
+   * cannot disagree about which path a country maps to.
+   */
+  const activePlan = useMemo<VerificationPathPlan>(
+    () => planToRender(plan, chosenCountry),
+    [plan, chosenCountry]
+  );
+
+  const chooseCountry = useCallback(async (code: string) => {
+    const normalized = normalizeCountry(code);
+    if (!normalized) return;
+    // Set first, save second. The branch is a UI decision; making the user
+    // wait on a network call to see the right form is latency for nothing.
+    setChosenCountry(normalized);
+    setCountryError('');
+    setSavingCountry(true);
+    try {
+      await onCountryChange(normalized);
+    } catch (err) {
+      // The path shown is still correct - it is derived from the selection,
+      // not from the save - so this warns without tearing the form away.
+      setCountryError((err as Error).message || 'We could not save your country. Verification still works.');
+    } finally {
+      setSavingCountry(false);
+    }
+  }, [onCountryChange]);
+
   if (!open) return null;
+
+  const needsCountry = !chosenCountry;
 
   return (
     <div className="sv-modal-backdrop" onClick={onClose} role="presentation">
@@ -75,27 +133,143 @@ export function VerificationModal({
 
         <div className="sv-modal-head">
           <span className="sv-modal-eyebrow">
-            {plan.path === 'ngn_bank' ? 'Level 1 · Bank check' : 'Identity verification'}
+            {needsCountry
+              ? 'Verification'
+              : activePlan.path === 'ngn_bank' ? 'Level 1 · Bank check' : 'Identity verification'}
           </span>
-          <h2 id="sv-modal-title">{plan.title}</h2>
-          <p className="sv-modal-sub">{plan.description}</p>
+          <h2 id="sv-modal-title">{needsCountry ? 'Where are you based?' : activePlan.title}</h2>
+          <p className="sv-modal-sub">
+            {needsCountry
+              ? 'Your country decides how we verify you. Nigeria takes under a minute with a bank account; everywhere else needs a photo ID.'
+              : activePlan.description}
+          </p>
         </div>
 
-        {plan.path === 'ngn_bank' ? (
-          <NgnBankVerification
-            userId={userId}
-            fullName={fullName}
-            api={api}
-            onVerified={onVerified}
-          />
+        {needsCountry ? (
+          <CountryStep saving={savingCountry} error={countryError} onChoose={chooseCountry} />
         ) : (
-          <BridgeVerification plan={plan} loading={loading} onStart={onStartBridge} />
-        )}
+          <>
+            <ChosenCountry
+              country={chosenCountry}
+              saving={savingCountry}
+              // Clearing the local choice re-shows the picker. The saved value
+              // is left alone until they pick again, so an abandoned change
+              // does not wipe a country that was already on file.
+              onChange={() => setChosenCountry(undefined)}
+            />
 
-        <ul className="sv-modal-unlocks">
-          {plan.unlocks.map((item) => <li key={item}>{item}</li>)}
-        </ul>
+            {Boolean(countryError) && <p className="sv-warn">{countryError}</p>}
+
+            {activePlan.path === 'ngn_bank' ? (
+              <NgnBankVerification
+                userId={userId}
+                fullName={fullName}
+                api={api}
+                onVerified={onVerified}
+              />
+            ) : (
+              <BridgeVerification plan={activePlan} loading={loading} onStart={onStartBridge} />
+            )}
+
+            <ul className="sv-modal-unlocks">
+              {activePlan.unlocks.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Step 1: the country.
+ *
+ * Asked here rather than at signup because it is only ever read to pick a
+ * verification path, and that happens days later. Adding a field to the
+ * signup screen to answer a question nothing consumes until verification
+ * costs conversion on the highest-drop-off page for no gain.
+ *
+ * Nigeria is first and visually distinct because it is the only country with
+ * a different flow, and it is the majority of the userbase.
+ */
+function CountryStep({
+  saving,
+  error,
+  onChoose,
+}: {
+  saving: boolean;
+  error: string;
+  onChoose: (code: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+
+  const visible = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return SIGNUP_COUNTRIES;
+    return SIGNUP_COUNTRIES.filter(
+      (item) => item.name.toLowerCase().includes(term) || item.code.toLowerCase() === term
+    );
+  }, [query]);
+
+  return (
+    <div className="sv-modal-body">
+      <label className="sv-field">
+        <span>Country</span>
+        <input
+          autoFocus
+          placeholder="Search — Nigeria, United States…"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+
+      <div className="sv-country-grid">
+        {visible.map((item) => (
+          <button
+            key={item.code}
+            type="button"
+            className={`sv-country ${item.code === 'NG' ? 'primary' : ''}`}
+            disabled={saving}
+            onClick={() => onChoose(item.code)}
+          >
+            <span className="sv-flag" aria-hidden="true">{item.flag}</span>
+            <span className="sv-country-name">{item.name}</span>
+            {item.code === 'NG'
+              ? <em className="sv-country-tag">Instant</em>
+              : <em className="sv-country-tag muted">ID check</em>}
+          </button>
+        ))}
+        {!visible.length && (
+          <p className="sv-muted">
+            We do not verify {query.trim()} directly yet. Pick the country on your ID and our
+            partner Bridge will handle it.
+          </p>
+        )}
+      </div>
+
+      {saving && <div className="sv-resolving"><span className="sv-spinner" />Saving…</div>}
+      {Boolean(error) && <p className="sv-error">{error}</p>}
+    </div>
+  );
+}
+
+/** The chosen country, kept visible so a wrong pick is obvious and reversible. */
+function ChosenCountry({
+  country,
+  saving,
+  onChange,
+}: {
+  country?: string;
+  saving: boolean;
+  onChange: () => void;
+}) {
+  const match = SIGNUP_COUNTRIES.find((item) => item.code === country);
+  return (
+    <div className="sv-chosen-country">
+      <span className="sv-flag" aria-hidden="true">{match?.flag ?? '🌐'}</span>
+      <strong>{match?.name ?? country}</strong>
+      {saving && <span className="sv-spinner small" />}
+      <button type="button" onClick={onChange}>Change</button>
     </div>
   );
 }
