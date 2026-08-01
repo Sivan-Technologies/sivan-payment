@@ -1,4 +1,85 @@
 services:
+  # ---------------------------------------------------------------------------
+  # USER FRONTEND
+  #
+  # Deployed on Render alongside the API rather than Vercel, so there is one
+  # platform to operate, one place to read logs, and no second vendor to keep
+  # in sync. vercel.json is kept for anyone who prefers that route.
+  #
+  # A static site, not a web service: Vite emits plain files and there is no
+  # server to run. That also means no cold start, which matters because the
+  # API on the free tier already takes ~40s to wake and a slow shell on top of
+  # that would be unusable.
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: sivan-payments-user-test
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    # The app routes client-side with history.pushState across /dashboard,
+    # /withdraw, /verification and others. Without this rewrite those paths
+    # 404 on a hard refresh or a shared link - the page only works if the user
+    # arrives at / first and clicks, which is not how anyone uses a link.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      # A payments app has no business being embedded, and the JWT lives in
+      # localStorage where a framing attack could reach it.
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://sivan-payments-api-test-x9xq.onrender.com
+      - key: VITE_APP_ENV
+        value: test
+      - key: VITE_SENTRY_DSN
+        sync: false
+
+  - type: web
+    name: sivan-payments-user-live
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    # Matches the live API, which is also manual. A frontend that auto-deploys
+    # against a hand-deployed API drifts the moment they disagree.
+    autoDeploy: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=31536000; includeSubDomains
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://sivan-payments-api-live-cgqi.onrender.com
+      - key: VITE_APP_ENV
+        value: live
+      - key: VITE_SENTRY_DSN
+        sync: false
+
   - type: web
     name: sivan-payments-api-test
     runtime: node
@@ -45,10 +126,18 @@ services:
         value: postgres
       - key: DATABASE_URL
         sync: false
-      # Add your Vercel frontend URLs here after deploying the user frontend and Admin Hub.
-      # Example: https://sivan-payments-user-test.vercel.app,https://sivan-admin-hub-test.vercel.app
+      # MUST list the frontend origin or every browser request fails, and it
+      # fails in a way that looks like the API is down rather than
+      # misconfigured - the request never arrives, so there is nothing in the
+      # API logs to find.
+      #
+      # Comma-separated, no trailing slash, scheme included. Render assigns
+      # onrender.com subdomains from the service names above; update these if a
+      # custom domain is added.
+      #
+      # NOT '*': the browser sends the user's JWT on these requests.
       - key: CORS_ORIGIN
-        sync: false
+        value: https://sivan-payments-user-test.onrender.com,http://localhost:5173
       - key: ADMIN_API_KEY
         sync: false
       - key: USER_JWT_SECRET
@@ -271,10 +360,10 @@ services:
         value: postgres
       - key: DATABASE_URL
         sync: false
-      # Add your Vercel frontend URLs here after deploying the user frontend and Admin Hub.
-      # Example: https://app.sivantech.online,https://admin.sivantech.online
+      # No localhost here. A developer machine must not be able to drive the
+      # production API from a browser session.
       - key: CORS_ORIGIN
-        sync: false
+        value: https://sivan-payments-user-live.onrender.com
       - key: ADMIN_API_KEY
         sync: false
       - key: USER_JWT_SECRET
