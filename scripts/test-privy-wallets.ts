@@ -19,6 +19,7 @@ import {
 } from '../src/wallets/wallet-eligibility.js';
 import { PrivyWalletProvider, chainsPerKey } from '../src/wallets/provider/privy-wallet.provider.js';
 import { getWalletProvider } from '../src/wallets/provider/provider-registry.js';
+import { env } from '../src/config/env.js';
 import { CheckStatus, VerificationLevel } from '../src/kyc/types/verification.types.js';
 import type { VerificationState } from '../src/kyc/types/verification.types.js';
 
@@ -199,15 +200,32 @@ async function main() {
     check('it is no longer the "not implemented" stub',
       resolved instanceof PrivyWalletProvider);
 
+    // Blanking process.env is NOT enough, and the difference matters.
+    //
+    // `credentials()` falls back to the parsed `env` object, which is built
+    // from .env at import time. Once real Privy keys landed in .env this test
+    // stopped exercising the missing-credentials path and instead made a LIVE
+    // network call to Privy - it failed with "Wallet not found", a real 404
+    // for wallet 'w1', which is a unit test quietly hitting a vendor API.
+    //
+    // Both sources have to be neutralised for the assertion to mean anything.
     const savedId = process.env.PRIVY_APP_ID;
     const savedSecret = process.env.PRIVY_APP_SECRET;
+    const savedEnvId = (env as any).PRIVY_APP_ID;
+    const savedEnvSecret = (env as any).PRIVY_APP_SECRET;
     delete process.env.PRIVY_APP_ID;
     delete process.env.PRIVY_APP_SECRET;
+    (env as any).PRIVY_APP_ID = '';
+    (env as any).PRIVY_APP_SECRET = '';
+
     const err = await threwAsync(() => new PrivyWalletProvider().getWallet('w1'));
     check('a call without credentials fails clearly',
       /credentials are not configured/i.test(err ?? ''), err);
+
     if (savedId) process.env.PRIVY_APP_ID = savedId;
     if (savedSecret) process.env.PRIVY_APP_SECRET = savedSecret;
+    (env as any).PRIVY_APP_ID = savedEnvId;
+    (env as any).PRIVY_APP_SECRET = savedEnvSecret;
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);

@@ -229,9 +229,21 @@ function isFastHealthRequest(method: string, url: string): boolean {
  * its secret in constant time, and Breet's re-fetches the transaction from
  * Breet before anything is credited.
  */
-function isProviderWebhook(method: string, url: string): boolean {
+function isProviderWebhook(_method: string, url: string): boolean {
   const path = url.split('?')[0];
-  return method === 'POST' && (path.startsWith('/api/webhooks/') || path.startsWith('/webhooks/'));
+
+  // The method is deliberately NOT checked.
+  //
+  // This guard first read `method === 'POST'`, which left the hole it was
+  // written to close. A GET on a webhook path matches no route, but it still
+  // ran getSystemStatus() and getAdminPlatformSettings() before Fastify could
+  // 404 it: measured at ~5.8s against the deployed test service, versus 4ms
+  // for the POST fast path. Past the worker's 12s ceiling that surfaced as a
+  // 503.
+  //
+  // Anything aimed at a webhook path is provider traffic or noise. Neither
+  // deserves two database reads, and the 404 is the same either way.
+  return path.startsWith('/api/webhooks/') || path.startsWith('/webhooks/');
 }
 
 function restrictedActionForRequest(method: string, url: string): 'onramp' | 'offramp' | 'kyc' | undefined {

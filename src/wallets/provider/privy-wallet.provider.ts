@@ -119,6 +119,84 @@ function isProduction(): boolean {
   return (process.env.APP_ENV || env.APP_ENV) === 'production';
 }
 
+/**
+ * Privy returns created_at in TWO different units, in the same API.
+ *
+ * `POST /v1/wallets` answers `created_at: 1785563814490` - milliseconds.
+ * `POST /v1/users`   answers `created_at: 1785563768`    - seconds.
+ * Both were captured live in the same minute, which is how the discrepancy
+ * became visible at all.
+ *
+ * Feeding the seconds value to `new Date(Number(...))` dates the record to
+ * January 1970, so a wallet created today sorts before every other row and any
+ * "created in the last 24h" query silently misses it.
+ *
+ * Ten digits is seconds, thirteen is milliseconds - unambiguous until the year
+ * 2286.
+ */
+function privyTimestampToIso(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+
+  const milliseconds = numeric < 1e11 ? numeric * 1000 : numeric;
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+/**
+ * Find the Privy user carrying a given Sivan user id.
+ *
+ * THREE THINGS HERE WERE WRONG UNTIL THEY WERE RUN AGAINST REAL PRIVY.
+ *
+ * 1. `GET /v1/users/search` does not exist. It answers 405 Method Not Allowed.
+ *    The search endpoint is a POST, and it accepts only `searchTerm`, `emails`,
+ *    `phoneNumbers` or `walletAddresses` - a POST carrying `custom_user_id` is
+ *    rejected 400 with "unrecognized_keys". There is NO server-side lookup by
+ *    custom_user_id at all.
+ *
+ * 2. `GET /v1/users?custom_user_id=...` answers 200 and looks like it worked.
+ *    It is a lie: the parameter is IGNORED and every user in the app comes
+ *    back. Verified by creating two users and asking for one - both returned,
+ *    and a deliberately bogus id also returned both. The previous code read
+ *    `data[0].id` off that response, so it would hand whichever user happens
+ *    to sort first to whoever asked. That is one user receiving another user's
+ *    wallet and, eventually, another user's money.
+ *
+ * 3. The old code wrapped the call in `.catch(() => undefined)`, so the 405
+ *    was swallowed and read as "no such user", meaning every call would have
+ *    created a fresh user.
+ *
+ * So: page the list and match locally. Failures are NOT caught here - a lookup
+ * that errors must not be reported as "user does not exist", because the
+ * caller's response to that is to create a duplicate.
+ */
+async function findPrivyUser(userId: string): Promise<any | undefined> {
+  let cursor: string | undefined;
+
+  // Bounded so a large app cannot spin forever; 100 pages x 100 users.
+  for (let page = 0; page < 100; page += 1) {
+    const query = new URLSearchParams({ limit: '100' });
+    if (cursor) query.set('cursor', cursor);
+
+    const response = await privyRequest<any>(`/users?${query.toString()}`);
+    const users: any[] = response?.data ?? [];
+
+    const match = users.find((user) =>
+      (user?.linked_accounts ?? []).some(
+        (account: any) => account?.type === 'custom_auth' && account?.custom_user_id === userId
+      )
+    );
+    if (match) return match;
+
+    cursor = response?.next_cursor ?? undefined;
+    if (!cursor || users.length === 0) return undefined;
+  }
+
+  return undefined;
+}
+
 export class PrivyWalletProvider implements WalletProvider {
   readonly name: WalletProviderName = 'privy';
 
@@ -157,7 +235,11 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const created = await privyRequest<any>('/wallets', {
       method: 'POST',
-      idempotencyKey: input.idempotencyKey,
+      // NEVER left to the caller. Privy happily issues a second wallet for the
+      // same user and chain when this is absent - verified live - so an absent
+      // key is a duplicate address waiting to happen. Derived from the Sivan
+      // user id and chain type so a retry always replays the first wallet.
+      idempotencyKey: input.idempotencyKey || `sivan_wallet_${input.userId}_${chainType}`,
       body: JSON.stringify({
         chain_type: chainType,
         // Ties the Privy wallet back to the Sivan user. Without this the only
@@ -177,12 +259,8 @@ export class PrivyWalletProvider implements WalletProvider {
    * their email, and the mapping must not break when they do.
    */
   private async ensurePrivyUser(userId: string, metadata?: Record<string, unknown>): Promise<string> {
-    const search = await privyRequest<any>(
-      `/users/search?custom_user_id=${encodeURIComponent(userId)}`
-    ).catch(() => undefined);
-
-    const found = search?.data?.[0]?.id ?? search?.[0]?.id;
-    if (found) return found;
+    const found = await findPrivyUser(userId);
+    if (found) return found.id;
 
     const created = await privyRequest<any>('/users', {
       method: 'POST',
@@ -201,12 +279,18 @@ export class PrivyWalletProvider implements WalletProvider {
     return id;
   }
 
+  /**
+   * The user's existing wallet of a chain type, if any.
+   *
+   * Deliberately NOT error-tolerant. Privy does not deduplicate wallets:
+   * verified live by posting the same {chain_type, owner} twice without an
+   * idempotency key, which produced a second Ethereum address for one user.
+   * A swallowed error here therefore does not degrade gracefully, it mints a
+   * second address that receives deposits nothing is watching.
+   */
   private async findWallet(userId: string, chainType: string): Promise<ProviderWallet | undefined> {
-    const search = await privyRequest<any>(
-      `/users/search?custom_user_id=${encodeURIComponent(userId)}`
-    ).catch(() => undefined);
+    const user = await findPrivyUser(userId);
 
-    const user = search?.data?.[0] ?? search?.[0];
     const wallet = (user?.linked_accounts ?? []).find(
       (account: any) => account?.type === 'wallet' && account?.chain_type === chainType
     );
@@ -230,7 +314,12 @@ export class PrivyWalletProvider implements WalletProvider {
       // without the user, and the UI must not imply otherwise.
       requiresUserSignature: true,
       rawProviderPayload: raw,
-      createdAt: raw?.created_at ? new Date(Number(raw.created_at)).toISOString() : undefined,
+      // A wallet read back from `user.linked_accounts` carries NO `created_at`
+      // key whatsoever - it has `verified_at`, and in seconds rather than the
+      // milliseconds `POST /wallets` returns. Without this fallback every
+      // wallet Sivan reuses (i.e. almost all of them after the first call)
+      // reports an undefined creation time.
+      createdAt: privyTimestampToIso(raw?.created_at ?? raw?.first_verified_at ?? raw?.verified_at),
     };
   }
 
@@ -240,11 +329,8 @@ export class PrivyWalletProvider implements WalletProvider {
   }
 
   async listWallets(providerCustomerId: string): Promise<ProviderWallet[]> {
-    const search = await privyRequest<any>(
-      `/users/search?custom_user_id=${encodeURIComponent(providerCustomerId)}`
-    ).catch(() => undefined);
+    const user = await findPrivyUser(providerCustomerId);
 
-    const user = search?.data?.[0] ?? search?.[0];
     return (user?.linked_accounts ?? [])
       .filter((account: any) => account?.type === 'wallet')
       .map((account: any) =>

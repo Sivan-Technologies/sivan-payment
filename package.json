@@ -70,6 +70,7 @@
     "test:breet-identity": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-breet-identity.json BREET_APP_ID=test_app_id BREET_APP_SECRET=test_app_secret BREET_WEBHOOK_SECRET=whsec_breet_test BREET_DEFAULT_ASSET_ID=asset_usdt_sol tsx scripts/test-breet-and-identity-toggle.ts",
     "test:ngn-margin": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-ngn-margin.json tsx scripts/test-ngn-margin.ts",
     "breet:smoke": "tsx scripts/breet-sandbox-smoke.ts",
+    "privy:smoke": "tsx scripts/privy-live-smoke.ts",
     "test:privy-wallets": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-privy.json tsx scripts/test-privy-wallets.ts",
     "test:privy-provisioning": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-privy-prov.json WALLET_PROVIDER=mock APP_ENV=development tsx scripts/test-privy-provisioning.ts"
   },
