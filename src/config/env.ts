@@ -105,6 +105,17 @@ const envSchema = z.object({
   // needs the user's signature. See privy-wallet.provider.ts for why.
   PRIVY_APP_ID: z.string().optional().default(''),
   PRIVY_APP_SECRET: z.string().optional().default(''),
+  /**
+   * P-256 private key (PKCS#8 PEM) for Sivan's delegated signer.
+   *
+   * Its presence is what makes one-tap off-ramp possible: with it the backend
+   * can move USDC out of a user-owned Privy wallet as an ADDITIONAL SIGNER;
+   * without it createTransfer honestly returns pending_user_signature. Absent
+   * by default so the safe behaviour is the default.
+   */
+  PRIVY_AUTHORIZATION_PRIVATE_KEY: z.string().optional().default(''),
+  /** Key quorum id holding that public key, attached to wallets at creation. */
+  PRIVY_AUTHORIZATION_KEY_QUORUM_ID: z.string().optional().default(''),
   BREET_APP_ID: z.string().optional().default(''),
   BREET_APP_SECRET: z.string().optional().default(''),
   // Required header on every request; Breet rejects a missing or invalid value.

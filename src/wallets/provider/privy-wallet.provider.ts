@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
 import { forbidden } from '../../shared/errors.js';
+import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import type { WalletProvider } from './wallet-provider.js';
 import type {
   CreateWalletInput,
@@ -240,6 +241,91 @@ async function findPrivyUser(userId: string): Promise<any | undefined> {
   return undefined;
 }
 
+
+/**
+ * USDC and USDT contracts, per chain and environment.
+ *
+ * Hardcoded on purpose and worth being careful about: an address that is
+ * merely PLAUSIBLE sends the user's funds to a contract that is not the token
+ * they chose, and there is no recovering that. Mainnet values are Circle's and
+ * Tether's official deployments; testnet values are Circle's published test
+ * tokens.
+ *
+ * Deliberately incomplete rather than guessed. USDT has no Circle-style
+ * canonical testnet, and Base has no native USDT at all - Breet publishes no
+ * Base USDT asset either, so the gap is consistent across the stack. A missing
+ * entry makes createTransfer refuse, which is the correct outcome.
+ */
+const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
+  'ethereum:usdc': {
+    mainnet: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    testnet: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', // Sepolia
+  },
+  'ethereum:usdt': {
+    mainnet: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+  },
+  'base:usdc': {
+    mainnet: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+    testnet: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // Base Sepolia
+  },
+};
+
+export function erc20TokenAddress(
+  chain: WalletChain,
+  asset: string,
+  production: boolean
+): string | undefined {
+  const entry = ERC20_TOKENS[`${chain}:${String(asset).toLowerCase()}`];
+  if (!entry) return undefined;
+  return production ? entry.mainnet : entry.testnet;
+}
+
+/** USDC and USDT are 6-decimal tokens on every chain Sivan supports. */
+export function decimalsFor(asset: string): number {
+  return ['usdc', 'usdt'].includes(String(asset).toLowerCase()) ? 6 : 18;
+}
+
+/**
+ * Convert a decimal amount to base units without floating point.
+ *
+ * `Number(amount) * 10 ** decimals` is the obvious version and it is wrong:
+ * 1.1 * 1e6 is 1100000.0000000001, and once that becomes a BigInt the user
+ * moves a different sum than the one they approved. Parsing the string
+ * directly avoids the representation entirely.
+ */
+export function toBaseUnits(amount: string, decimals: number): bigint {
+  const trimmed = String(amount).trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) throw new Error(`Invalid amount: ${amount}`);
+
+  const [whole, fraction = ''] = trimmed.split('.');
+  if (fraction.length > decimals) {
+    // Silently truncating would move less than the user asked for, and the
+    // difference is invisible on the confirmation screen.
+    throw new Error(`${amount} has more than ${decimals} decimal places.`);
+  }
+  return BigInt(whole + fraction.padEnd(decimals, '0'));
+}
+
+/**
+ * ABI-encode transfer(address,uint256).
+ *
+ * Selector 0xa9059cbb, then the recipient and amount each left-padded to 32
+ * bytes. Written out rather than pulling in a web3 library for one call.
+ */
+export function encodeErc20Transfer(to: string, amount: string, decimals: number): string {
+  const address = to.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(address)) throw new Error(`Invalid recipient address: ${to}`);
+
+  const value = toBaseUnits(amount, decimals);
+  if (value <= 0n) throw new Error('Transfer amount must be greater than zero.');
+
+  return (
+    '0xa9059cbb' +
+    address.slice(2).padStart(64, '0') +
+    value.toString(16).padStart(64, '0')
+  );
+}
+
 export class PrivyWalletProvider implements WalletProvider {
   readonly name: WalletProviderName = 'privy';
 
@@ -276,6 +362,8 @@ export class PrivyWalletProvider implements WalletProvider {
     const existing = await this.findWallet(input.userId, chainType);
     if (existing) return existing;
 
+    const quorumId = (process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || '').trim();
+
     const created = await privyRequest<any>('/wallets', {
       method: 'POST',
       // ALWAYS derived, and deliberately NOT `input.idempotencyKey ||  ...`.
@@ -302,6 +390,17 @@ export class PrivyWalletProvider implements WalletProvider {
         // link is a row in Sivan's database, and a lost row means an orphaned
         // wallet with funds in it.
         owner: { user_id: await this.ensurePrivyUser(input.userId, input.metadata) },
+        // Sivan as an ADDITIONAL SIGNER, when one is configured.
+        //
+        // Note what this is not: the owner is still the user. An additional
+        // signer is a narrower grant that can be scoped by policy and revoked,
+        // and it is what allows a one-tap NGN off-ramp without Sivan taking
+        // custody.
+        //
+        // It must be set AT CREATION. Attaching a signer later is a PATCH that
+        // itself requires the wallet owner's signature - which Sivan does not
+        // have - so a wallet created without this can never be delegated to.
+        ...(quorumId ? { additional_signers: [{ signer_id: quorumId }] } : {}),
       }),
     });
 
@@ -450,22 +549,111 @@ export class PrivyWalletProvider implements WalletProvider {
     const caip = CAIP2[input.chain];
     if (!caip) throw forbidden(`No CAIP-2 chain id for ${input.chain}.`);
 
+    const caip2 = isProduction() ? caip.mainnet : caip.testnet;
+    const signingKey = loadAuthorizationPrivateKey(
+      process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY || env.PRIVY_AUTHORIZATION_PRIVATE_KEY
+    );
+
+    // WITHOUT A SIGNING KEY, SAY SO - DO NOT PRETEND.
+    //
+    // This branch is the honest one and stays. A user-owned Privy wallet
+    // cannot be moved by app credentials alone: signing returns 401 "No valid
+    // authorization keys or user signing keys available". If Sivan holds no
+    // delegated signer, the transaction genuinely needs the user, and
+    // returning a payload for them to sign is the truthful shape.
+    if (!signingKey) {
+      return {
+        provider: this.name,
+        providerTransferId: `privy_pending_${input.idempotencyKey || crypto.randomUUID()}`,
+        status: 'pending_user_signature',
+        userSignaturePayload: {
+          walletId: input.providerWalletId,
+          chain: input.chain,
+          caip2,
+          asset: input.asset,
+          amount: input.amount,
+          toAddress: input.toAddress,
+          reference: input.reference,
+          rpcMethod: input.chain === 'solana' ? 'signAndSendTransaction' : 'eth_sendTransaction',
+        },
+      };
+    }
+
+    // Solana needs a fully built, blockhash-bearing transaction, which is a
+    // different construction path entirely. Refusing beats submitting
+    // something malformed against a user's funds.
+    if (input.chain === 'solana') {
+      throw forbidden(
+        'Delegated signing is not implemented for Solana yet. Use an EVM network or have the user sign.'
+      );
+    }
+
+    const token = erc20TokenAddress(input.chain, input.asset, isProduction());
+    if (!token) {
+      throw forbidden(`No ${input.asset.toUpperCase()} contract known for ${input.chain}.`);
+    }
+
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const body = {
+      method: 'eth_sendTransaction',
+      caip2,
+      // Gas sponsorship. On EVM Privy can also charge gas to the wallet's own
+      // USDC, but that is a dashboard setting rather than a request flag, so
+      // this asks for sponsorship and reports clearly when it is switched off.
+      sponsor: true,
+      params: {
+        transaction: {
+          to: token,
+          // ERC-20 transfer(address,uint256). Encoded here rather than pulling
+          // in a web3 library for one 68-byte call.
+          data: encodeErc20Transfer(input.toAddress, input.amount, decimalsFor(input.asset)),
+          value: '0x0',
+        },
+      },
+    };
+
+    const { appId } = credentials();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          // MUST match the header actually sent. The signature covers privy-
+          // prefixed headers, so including one here that is not on the request
+          // (or omitting one that is) fails as an opaque 401.
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result: any = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
+
+      // Named explicitly because the fix is a dashboard toggle, not a code
+      // change, and the raw message does not say that.
+      if (/gas sponsorship is not enabled/i.test(message)) {
+        throw forbidden(
+          'Gas sponsorship is not enabled for this Privy app. Enable it in the Privy dashboard, ' +
+            'or the wallet must hold native currency to pay its own gas.'
+        );
+      }
+      throw new Error(`Privy: ${message}`);
+    }
+
     return {
       provider: this.name,
-      providerTransferId: `privy_pending_${input.idempotencyKey || crypto.randomUUID()}`,
-      status: 'pending_user_signature',
-      userSignaturePayload: {
-        walletId: input.providerWalletId,
-        chain: input.chain,
-        caip2: isProduction() ? caip.mainnet : caip.testnet,
-        asset: input.asset,
-        amount: input.amount,
-        toAddress: input.toAddress,
-        reference: input.reference,
-        // The client passes this straight to Privy, which is what makes the
-        // signature the user's rather than Sivan's.
-        rpcMethod: input.chain === 'solana' ? 'signAndSendTransaction' : 'eth_sendTransaction',
-      },
+      providerTransferId: result?.transaction_id ?? result?.data?.hash ?? `privy_tx_${crypto.randomUUID()}`,
+      status: 'submitted',
+      txHash: result?.data?.hash ?? result?.hash,
+      rawProviderPayload: result,
     };
   }
 

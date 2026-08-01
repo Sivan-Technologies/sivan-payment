@@ -194,6 +194,18 @@ services:
         sync: false
       - key: PRIVY_APP_SECRET
         sync: false
+      # Delegated signer. Its PRESENCE is what turns on one-tap off-ramp: with
+      # it the backend moves USDC out of a user-owned wallet as an ADDITIONAL
+      # SIGNER; without it createTransfer returns pending_user_signature and
+      # the user must sign. Absent by default, so the safe behaviour is the
+      # default. P-256 PKCS#8 PEM - generate with generateAuthorizationKeyPair.
+      - key: PRIVY_AUTHORIZATION_PRIVATE_KEY
+        sync: false
+      # The key quorum holding that public key. Attached to wallets AT
+      # CREATION - a wallet made without it can never be delegated to, because
+      # adding a signer later needs the owner's signature, which Sivan lacks.
+      - key: PRIVY_AUTHORIZATION_KEY_QUORUM_ID
+        sync: false
       - key: VIRTUAL_ACCOUNTS_ENABLED
         value: "true"
       - key: VIRTUAL_ACCOUNT_REQUESTS_ENABLED
@@ -408,4 +420,16 @@ services:
       - key: PRIVY_APP_ID
         sync: false
       - key: PRIVY_APP_SECRET
+        sync: false
+      # Delegated signer. Its PRESENCE is what turns on one-tap off-ramp: with
+      # it the backend moves USDC out of a user-owned wallet as an ADDITIONAL
+      # SIGNER; without it createTransfer returns pending_user_signature and
+      # the user must sign. Absent by default, so the safe behaviour is the
+      # default. P-256 PKCS#8 PEM - generate with generateAuthorizationKeyPair.
+      - key: PRIVY_AUTHORIZATION_PRIVATE_KEY
+        sync: false
+      # The key quorum holding that public key. Attached to wallets AT
+      # CREATION - a wallet made without it can never be delegated to, because
+      # adding a signer later needs the owner's signature, which Sivan lacks.
+      - key: PRIVY_AUTHORIZATION_KEY_QUORUM_ID
         sync: false
