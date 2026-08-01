@@ -1,4 +1,7 @@
 import { db } from '../database/json-database.js';
+import { canProvisionWallet } from './wallet-eligibility.js';
+import { getVerificationState } from '../kyc/service/verification-state.js';
+import { isApprovedKycStatus } from '../kyc/types/verification.types.js';
 import { DEFAULT_WALLET_CHAIN, type UserWalletRecord, type WalletChain } from '../database/types.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
@@ -24,21 +27,52 @@ export function assetsForChain(chain: WalletChain): Array<'usdc' | 'usdt'> {
   return (['usdc', 'usdt'] as const).filter((asset) => isAssetSupportedOnChain(asset, chain as any));
 }
 
-async function requireApprovedCustomer(userId: string) {
+/**
+ * Who may be issued a wallet.
+ *
+ * REPLACES a gate that required a Bridge customer with kycStatus
+ * 'kyc_approved' and a providerCustomerId. That was wrong for two reasons:
+ *
+ *   1. It cost $2. Bridge bills per KYC, so provisioning a wallet forced a
+ *      Bridge onboarding even for a user who would only ever hold USDC and
+ *      off-ramp to naira - a flow Bridge plays no part in.
+ *
+ *   2. It coupled the wallet to KYC. A wallet address is not a financial
+ *      permission; it is somewhere to receive tokens. What a user may DO with
+ *      what arrives is decided at the point of action by verification level
+ *      and the ledger. Coupling the two is why every KYC-approved record in
+ *      production carries a mock_cust_* id and Receive 404s for all of them.
+ *
+ * Sivan's own Level 1 decides instead: a payout bank account that resolved to
+ * a real account name. Since the CBN directive effective 1 March 2024 a
+ * Nigerian bank account cannot transact without BVN/NIN linkage, so an account
+ * that resolves is one a licensed bank has already verified.
+ *
+ * The Bridge customer is still REQUIRED for Bridge's own custodial wallets,
+ * because their API is customer-scoped - there is nowhere to put a wallet
+ * without one. That requirement belongs to the provider, not to Sivan, so it
+ * is checked per provider rather than for everybody.
+ */
+async function requireWalletEligibility(userId: string, providerName: string) {
   const data = await db.read();
   const user = data.users.find((item) => item.id === userId);
   if (!user) throw notFound('User');
 
+  const state = await getVerificationState(userId);
+  const eligibility = canProvisionWallet(state);
+  if (!eligibility.eligible) throw badRequest(eligibility.reason);
+
   const customer = data.customers.find((item) => item.userId === userId);
-  if (!customer) throw badRequest('Complete verification before creating a wallet');
-  // A wallet is a place to receive money. Issuing one before KYC would let an
-  // unverified user receive funds, which our providers do not permit.
-  if (customer.kycStatus !== 'kyc_approved') {
-    throw badRequest('Verification must be approved before a wallet can be created');
+
+  if (providerName === 'bridge') {
+    if (!customer?.providerCustomerId) {
+      throw badRequest('Bridge wallets require a Bridge customer. Complete verification first.');
+    }
+    if (!isApprovedKycStatus(customer.kycStatus)) {
+      throw badRequest('Bridge requires approved verification before a wallet can be created.');
+    }
   }
-  if (!customer.providerCustomerId) {
-    throw badRequest('Customer is not yet registered with the payment provider');
-  }
+
   return { user, customer };
 }
 
@@ -53,8 +87,8 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const existing = await db.findUserWallet(userId, chain);
   if (existing) return existing;
 
-  const { customer } = await requireApprovedCustomer(userId);
   const provider = getWalletProvider();
+  const { customer } = await requireWalletEligibility(userId, provider.name);
 
   if (!provider.supportedChains.includes(chain)) {
     throw badRequest(`${chain} wallets are not supported by the current provider`);
@@ -62,7 +96,7 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
 
   const providerWallet = await provider.createWallet({
     userId,
-    providerCustomerId: customer.providerCustomerId,
+    providerCustomerId: customer?.providerCustomerId,
     chain,
     // Deliberately deterministic, NOT shared/id.ts idempotencyKey() which
     // appends a random UUID. A retry must reuse the same key so the provider
@@ -75,7 +109,7 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const record: UserWalletRecord = {
     id: id('uw'),
     userId,
-    customerId: customer.id,
+    customerId: customer?.id,
     provider: providerWallet.provider,
     providerWalletId: providerWallet.providerWalletId,
     chain: providerWallet.chain,

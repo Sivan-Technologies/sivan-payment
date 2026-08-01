@@ -269,7 +269,15 @@ export interface CustomerRecord {
 export interface UserWalletRecord {
   id: string;
   userId: string;
-  customerId: string;
+  /**
+   * Bridge customer id. OPTIONAL, because a wallet no longer implies one.
+   *
+   * Bridge's custodial wallets are customer-scoped, so a Bridge wallet always
+   * has this. A Privy wallet does not: Privy wallets are user-owned and cost
+   * Sivan no Bridge onboarding, so a user can hold one having never been
+   * registered with Bridge at all.
+   */
+  customerId?: string;
   provider: string;
   /** Bridge wallet id, used as destination.bridge_wallet_id. */
   providerWalletId: string;
