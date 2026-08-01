@@ -135,9 +135,24 @@ async function main() {
     process.exit(1);
   }
 
-  const hash = result?.data?.hash ?? result?.hash;
-  console.log(`\n  SENT. tx ${hash}`);
-  console.log(`  https://sepolia.basescan.org/tx/${hash}`);
+  // A SPONSORED transaction is an ERC-4337 user operation, so `hash` comes
+  // back EMPTY and the identifier is `user_operation_hash` - the real
+  // transaction hash does not exist until a bundler includes it on chain.
+  // Printing the empty `hash` produced a broken explorer link that looked like
+  // a failure when the transfer had in fact succeeded.
+  const userOpHash = result?.data?.user_operation_hash;
+  const txHash = result?.data?.hash || result?.hash;
+  const sponsoredBy = result?.data?.sponsorship_provider;
+
+  if (txHash) {
+    console.log(`\n  SENT. tx ${txHash}`);
+    console.log(`  https://sepolia.basescan.org/tx/${txHash}`);
+  } else if (userOpHash) {
+    console.log(`\n  SENT as a sponsored user operation`);
+    console.log(`  userOpHash ${userOpHash}`);
+    console.log(`  sponsor    ${sponsoredBy ?? 'unknown'}`);
+    console.log(`  https://sepolia.basescan.org/address/${wallet.address}`);
+  }
 
   // Confirm on chain rather than trusting the API response.
   console.log('\n  waiting for the balance to change...');
