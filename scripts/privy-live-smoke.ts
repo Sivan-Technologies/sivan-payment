@@ -119,6 +119,47 @@ async function main() {
       `${walletA?.address} vs ${base?.address}`);
   }
 
+  console.log('\nCONCURRENCY - TWO TAPS MUST NOT BUY TWO WALLETS');
+  {
+    // Sequential reuse is the easy case and the findWallet lookup covers it.
+    // Concurrency is where it broke: both branches saw "no user", both created
+    // one, and the loser threw "Input conflict caused by an existing user".
+    // Then, once fixed, the loser threw "idempotency key is still in progress".
+    // Both are real errors seen live, and both surfaced as a failed wallet
+    // request for a user who did nothing wrong.
+    //
+    // The idempotencyKey passed here is EXACTLY what user-wallet.service.ts
+    // sends. It is keyed on the Sivan chain name, so ethereum and base arrive
+    // with different keys for what is one secp256k1 wallet - the provider must
+    // ignore it and derive its own, or this buys two billable wallets.
+    const raceUser = `sivan_smoke_race_${stamp}`;
+
+    const [eth, base] = await Promise.all([
+      provider.createWallet({
+        userId: raceUser, chain: 'ethereum',
+        idempotencyKey: `sivan-wallet-${raceUser}-ethereum`,
+      } as any),
+      provider.createWallet({
+        userId: raceUser, chain: 'base',
+        idempotencyKey: `sivan-wallet-${raceUser}-base`,
+      } as any),
+    ]);
+    check('concurrent ethereum+base settle on ONE address', eth?.address === base?.address,
+      `${eth?.address} vs ${base?.address}`);
+
+    const triple = await Promise.all([1, 2, 3].map(() =>
+      provider.createWallet({ userId: raceUser, chain: 'ethereum' } as any)));
+    check('three concurrent identical calls return one address',
+      new Set(triple.map((w) => w.address)).size === 1,
+      triple.map((w) => w.address).join(' '));
+
+    // The assertion that actually costs money if it regresses: Privy bills per
+    // wallet and they cannot be deleted.
+    const held = await provider.listWallets(raceUser);
+    check('Privy holds exactly ONE wallet for the raced user', held.length === 1,
+      `${held.length}: ${held.map((w) => w.address).join(' ')}`);
+  }
+
   console.log('\nUSERS ARE NOT CONFUSED WITH ONE ANOTHER');
   {
     // Privy ignores ?custom_user_id= and returns everybody, so a lookup that

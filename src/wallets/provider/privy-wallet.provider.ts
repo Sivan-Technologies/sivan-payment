@@ -101,18 +101,52 @@ function headers(idempotencyKey?: string) {
   };
 }
 
+const IN_PROGRESS = /idempotency key is still in progress/i;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A single Privy call.
+ *
+ * Retries ONLY "Previous request with matching idempotency key is still in
+ * progress", and only that. This is not general-purpose retry logic: blindly
+ * retrying wallet creation is how duplicates get minted.
+ *
+ * Why it is needed: an idempotency key makes concurrent duplicate requests
+ * safe at the far end, but Privy does not block the loser until the winner
+ * finishes - it rejects it outright. Two parallel provisioning calls for the
+ * same user therefore turned into a thrown error rather than two callers
+ * receiving one wallet. Observed live once ethereum and base correctly began
+ * sharing a key.
+ *
+ * Retrying is safe precisely BECAUSE the key is set: the replay returns the
+ * winner's wallet instead of creating another.
+ */
 async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKey?: string } = {}): Promise<T> {
   const { idempotencyKey, ...rest } = init;
-  const response = await fetch(`${PRIVY_BASE}${path}`, {
-    ...rest,
-    headers: { ...headers(idempotencyKey), ...(rest.headers ?? {}) },
-  });
 
-  const body: any = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`Privy: ${body?.error ?? body?.message ?? `HTTP ${response.status}`}`);
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const response = await fetch(`${PRIVY_BASE}${path}`, {
+      ...rest,
+      headers: { ...headers(idempotencyKey), ...(rest.headers ?? {}) },
+    });
+
+    const body: any = await response.json().catch(() => ({}));
+    if (response.ok) return body as T;
+
+    const message = String(body?.error ?? body?.message ?? `HTTP ${response.status}`);
+    lastError = new Error(`Privy: ${message}`);
+
+    // Anything else - 401, 404, validation - is final. Surface it immediately.
+    if (!IN_PROGRESS.test(message)) throw lastError;
+
+    // The winner is mid-flight. Back off and replay the same key.
+    await sleep(150 * 2 ** attempt);
   }
-  return body as T;
+
+  throw lastError ?? new Error('Privy: request failed.');
 }
 
 function isProduction(): boolean {
@@ -244,11 +278,24 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const created = await privyRequest<any>('/wallets', {
       method: 'POST',
-      // NEVER left to the caller. Privy happily issues a second wallet for the
-      // same user and chain when this is absent - verified live - so an absent
-      // key is a duplicate address waiting to happen. Derived from the Sivan
-      // user id and chain type so a retry always replays the first wallet.
-      idempotencyKey: input.idempotencyKey || `sivan_wallet_${input.userId}_${chainType}`,
+      // ALWAYS derived, and deliberately NOT `input.idempotencyKey ||  ...`.
+      //
+      // Privy issues a second wallet for the same user and chain when this is
+      // absent - verified live - so the key is the last line of defence behind
+      // the findWallet reuse check above.
+      //
+      // Letting the caller win defeated it. user-wallet.service.ts sends
+      // `sivan-wallet-${userId}-${chain}` using the SIVAN chain name, so
+      // 'ethereum' and 'base' produce two DIFFERENT keys for what is one
+      // secp256k1 wallet at Privy. Sequentially the reuse lookup hides that;
+      // concurrently it does not, and the user ends up with two EVM addresses.
+      //
+      // Keying on chainType collapses ethereum and base onto one key, which is
+      // the truth of the underlying key material. input.idempotencyKey is now
+      // ignored here on purpose: there is no legitimate reason for a caller to
+      // ask for a SECOND wallet on a chain the user already has, and every
+      // accidental one costs a billable wallet that cannot be deleted.
+      idempotencyKey: `sivan_wallet_${input.userId}_${chainType}`,
       body: JSON.stringify({
         chain_type: chainType,
         // Ties the Privy wallet back to the Sivan user. Without this the only
@@ -281,6 +328,28 @@ export class PrivyWalletProvider implements WalletProvider {
           ...(metadata?.email ? [{ type: 'email', address: String(metadata.email) }] : []),
         ],
       }),
+    }).catch(async (error: any) => {
+      // LOST A RACE. Not a hypothetical: provisioning ethereum and base
+      // concurrently for a new user made both branches find no Privy user,
+      // both POST /users, and the loser threw
+      //   "Input conflict caused by an existing user: did:privy:..."
+      // straight out of createWallet. A user double-tapping "create wallet"
+      // hits this too.
+      //
+      // Sequential duplicates are fine - Privy answers 200 with the existing
+      // user, verified live - so this is purely a concurrency edge, and the
+      // right response is to adopt the winner rather than fail the request.
+      const message = String(error?.message ?? '');
+      if (!/conflict/i.test(message)) throw error;
+
+      // Privy names the winning user in the error text; prefer re-reading it
+      // over trusting a parsed string, and fall back to a fresh lookup.
+      const did = message.match(/did:privy:[a-z0-9]+/i)?.[0];
+      if (did) return { id: did };
+
+      const retry = await findPrivyUser(userId);
+      if (retry) return retry;
+      throw error;
     });
 
     const id = created?.id;
