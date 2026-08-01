@@ -172,8 +172,107 @@ export function breetMinimumDepositUsd(
 ): number | undefined {
   const entry = capability(network)?.deposit?.[asset];
   if (!entry) return undefined;
-  // Every test asset has a $1 minimum, per Breet's docs.
-  return environment === 'production' ? entry.minUsd : 1;
+
+  // LIVE VALUE FIRST. This function used to return `entry.minUsd` (hardcoded
+  // 15 everywhere) in production and a flat 1 in development. Both were wrong:
+  // GET /trades/assets reports `minimum: 50` for every USDC/USDT asset in the
+  // sandbox, and the docs' $1 claim does not match the API. A floor derived
+  // from 15 would sit below Breet's real minimum, so every withdrawal built on
+  // it would be FLAGGED - funds confirmed on-chain, held, not credited, and
+  // charged the flag fee to recover.
+  const identifier = environment === 'production' ? entry.mainnet : entry.testnet;
+  const live = assetEconomics(identifier);
+  if (live) return live.minimumUsd;
+
+  // Not loaded yet. The static number is a last resort and is known to be
+  // unreliable, so callers that can refuse should refuse instead.
+  return environment === 'production' ? entry.minUsd : undefined;
+}
+
+/**
+ * The smallest off-ramp that will actually clear, all-in.
+ *
+ * Three numbers, none of them optional:
+ *
+ *   Breet's minimum  - below it the deposit is flagged, held and NOT credited
+ *   gas              - user-pays deducts it from the USDC being sent, so the
+ *                      amount that ARRIVES is less than the amount signed
+ *   buffer           - Privy's paymaster collects the EXACT fee after
+ *                      execution, so the pre-flight figure is an estimate; if
+ *                      actual lands above it, the arriving amount dips under
+ *                      the minimum and the user pays the flag fee
+ *
+ * The failure this prevents is the expensive one: money leaves the user's
+ * wallet, does not arrive as naira, and costs a fee to retrieve.
+ */
+export function minimumOfframpUsd(input: {
+  breetMinimumUsd: number;
+  estimatedGasUsd: number;
+  /** Fraction of gas held back. 0.2 = 20%. */
+  bufferPercent?: number;
+  /** Floor for the buffer, so near-zero gas still leaves headroom. */
+  minimumBufferUsd?: number;
+}): {
+  minimumUsd: number;
+  breakdown: { breetMinimumUsd: number; estimatedGasUsd: number; bufferUsd: number };
+} {
+  const bufferPercent = input.bufferPercent ?? 0.2;
+  const minimumBufferUsd = input.minimumBufferUsd ?? 0.5;
+
+  // Buffer is a floor, not a choice between the two: on Solana gas is
+  // ~$0.001, so 20% of it is nothing and the flat amount does the work.
+  const bufferUsd = Math.max(input.estimatedGasUsd * bufferPercent, minimumBufferUsd);
+  const minimumUsd = input.breetMinimumUsd + input.estimatedGasUsd + bufferUsd;
+
+  return {
+    // Rounded UP, to the cent. Rounding down would reintroduce the exact
+    // sub-minimum case this exists to prevent.
+    minimumUsd: Math.ceil(minimumUsd * 100) / 100,
+    breakdown: {
+      breetMinimumUsd: input.breetMinimumUsd,
+      estimatedGasUsd: input.estimatedGasUsd,
+      bufferUsd: Math.round(bufferUsd * 100) / 100,
+    },
+  };
+}
+
+/**
+ * Will this withdrawal clear, and if not, why?
+ *
+ * Returns the shortfall so the UI can say "add $2.40" rather than "too small".
+ */
+export function offrampClears(input: {
+  amountUsd: number;
+  breetMinimumUsd: number;
+  estimatedGasUsd: number;
+  bufferPercent?: number;
+  minimumBufferUsd?: number;
+}): {
+  clears: boolean;
+  minimumUsd: number;
+  arrivesUsd: number;
+  shortfallUsd: number;
+  reason?: string;
+} {
+  const { minimumUsd } = minimumOfframpUsd(input);
+
+  // What Breet actually receives, which is the number that matters - not the
+  // number the user typed.
+  const arrivesUsd = Math.round((input.amountUsd - input.estimatedGasUsd) * 100) / 100;
+  const clears = input.amountUsd >= minimumUsd;
+
+  return {
+    clears,
+    minimumUsd,
+    arrivesUsd,
+    shortfallUsd: clears ? 0 : Math.round((minimumUsd - input.amountUsd) * 100) / 100,
+    reason: clears
+      ? undefined
+      : `After ${input.estimatedGasUsd.toFixed(2)} USD of network fees only ` +
+        `${arrivesUsd.toFixed(2)} USD would reach Breet, below its ` +
+        `${input.breetMinimumUsd.toFixed(2)} USD minimum. Send at least ` +
+        `${minimumUsd.toFixed(2)} USD.`,
+  };
 }
 
 /**
@@ -184,9 +283,47 @@ export function breetMinimumDepositUsd(
  */
 const assetIdCache = new Map<string, string>();
 
-export function cacheAssetIds(assets: Array<{ id?: string; identifier?: string }>): void {
+/**
+ * Live economics per asset, read from the same GET /trades/assets response.
+ *
+ * These are NOT static facts and must never be hardcoded again. The table in
+ * this file claimed `minUsd: 15` for every asset; the live sandbox reports
+ * `minimum: 50` on every USDC/USDT asset except USDC_BSC_TEST, which is 10.
+ * A threshold built on 15 would have put every withdrawal under Breet's floor.
+ */
+export interface BreetAssetEconomics {
+  /** Breet's `minimum`, in USD. Below this a deposit is FLAGGED, not credited. */
+  minimumUsd: number;
+  /** Breet's `flagFeeUSD`. What recovering a flagged deposit costs the user. */
+  flagFeeUsd: number;
+  /** Confirmations before Breet credits. Drives the "how long" the UI promises. */
+  confirmations?: number;
+}
+
+const assetEconomicsCache = new Map<string, BreetAssetEconomics>();
+
+export function cacheAssetIds(
+  assets: Array<{
+    id?: string;
+    identifier?: string;
+    minimum?: number;
+    flagFeeUSD?: number;
+    confirmations?: number;
+  }>
+): void {
   for (const asset of assets) {
     if (asset?.id && asset?.identifier) assetIdCache.set(asset.identifier, asset.id);
+
+    // Cached separately from the id: an asset can be resolvable while Breet
+    // omits its economics, and a missing minimum must read as "unknown" rather
+    // than silently becoming 0 - which would let every amount through.
+    if (asset?.identifier && typeof asset.minimum === 'number') {
+      assetEconomicsCache.set(asset.identifier, {
+        minimumUsd: asset.minimum,
+        flagFeeUsd: typeof asset.flagFeeUSD === 'number' ? asset.flagFeeUSD : 0,
+        confirmations: asset.confirmations,
+      });
+    }
   }
 }
 
@@ -194,9 +331,20 @@ export function resolveAssetId(identifier: string): string | undefined {
   return assetIdCache.get(identifier);
 }
 
+/**
+ * Live minimum and flag fee for an asset, or undefined if not yet loaded.
+ *
+ * Undefined is meaningful: the caller must refuse to quote rather than assume
+ * a floor. Guessing low flags the user's deposit and costs them the flag fee.
+ */
+export function assetEconomics(identifier: string): BreetAssetEconomics | undefined {
+  return assetEconomicsCache.get(identifier);
+}
+
 /** Test seam. */
 export function clearAssetIdCache(): void {
   assetIdCache.clear();
+  assetEconomicsCache.clear();
 }
 
 /** Networks from a controls list that Breet can actually on-ramp to. */

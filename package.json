@@ -71,6 +71,8 @@
     "test:ngn-margin": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-ngn-margin.json tsx scripts/test-ngn-margin.ts",
     "breet:smoke": "tsx scripts/breet-sandbox-smoke.ts",
     "privy:smoke": "tsx scripts/privy-live-smoke.ts",
+    "test:rail-separation": "tsx scripts/test-rail-separation.ts",
+    "test:offramp-minimum": "tsx scripts/test-offramp-minimum.ts",
     "test:privy-wallets": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-privy.json tsx scripts/test-privy-wallets.ts",
     "test:privy-provisioning": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-privy-prov.json WALLET_PROVIDER=mock APP_ENV=development tsx scripts/test-privy-provisioning.ts"
   },

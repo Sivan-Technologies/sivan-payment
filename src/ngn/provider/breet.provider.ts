@@ -9,6 +9,8 @@ import {
   resolveAssetId,
   breetDepositAssetId,
   breetMinimumDepositUsd,
+  assetEconomics,
+  offrampClears,
   breetWithdrawalNetwork,
   canDeposit,
   canWithdraw,
@@ -471,8 +473,43 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     const assetId = await this.assetIdFor(identifier);
 
     // Below Breet's minimum a deposit is FLAGGED: confirmed on-chain, funds
-    // held, NOT credited. The user must be told before they send, not after.
+    // held, NOT credited, and the flag fee charged to recover it. Surfacing
+    // the number to the UI was not enough - nothing refused, so an
+    // under-minimum quote still produced a deposit address and invited the
+    // user to send into a hold. This now blocks before an address exists.
+    //
+    // assetIdFor() above has already loaded /trades/assets, so the live
+    // minimum is populated by the time this runs.
     const minimumUsd = breetMinimumDepositUsd(sivanNetwork, asset, breetEnvironment());
+
+    const economics = assetEconomics(identifier);
+    const estimatedGasUsd = Number((quote.metadata as any)?.estimatedGasUsd ?? 0);
+    const amountUsd = Number(quote.sourceAmount);
+
+    if (minimumUsd === undefined) {
+      // Refuse rather than guess. A wrong floor costs the user the flag fee.
+      throw forbidden(
+        `Breet has not published a minimum for ${asset.toUpperCase()} on ${sivanNetwork}. ` +
+          'Refusing to generate a deposit address without it.'
+      );
+    }
+
+    if (Number.isFinite(amountUsd) && amountUsd > 0) {
+      const verdict = offrampClears({
+        amountUsd,
+        breetMinimumUsd: minimumUsd,
+        estimatedGasUsd: Number.isFinite(estimatedGasUsd) ? estimatedGasUsd : 0,
+      });
+
+      if (!verdict.clears) {
+        throw forbidden(
+          `${verdict.reason} ` +
+            (economics?.flagFeeUsd
+              ? `A flagged deposit costs ${economics.flagFeeUsd.toFixed(2)} USD to recover.`
+              : '')
+        );
+      }
+    }
 
     const label = `sivan_${quote.userId}_${assetId}`;
     const bankId = (quote.metadata as any)?.bankId ?? env.BREET_DEFAULT_BANK_ID;

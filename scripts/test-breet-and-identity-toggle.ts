@@ -26,6 +26,8 @@ import {
   canWithdraw,
   breetDepositAssetId,
   breetMinimumDepositUsd,
+  cacheAssetIds,
+  clearAssetIdCache,
   reconcileWithControls,
   usableForOnramp,
 } from '../src/ngn/provider/breet-networks.js';
@@ -356,13 +358,31 @@ async function main() {
       breetDepositAssetId('avalanche_c_chain' as any, 'usdc', 'production') === undefined);
   }
 
-  console.log('\ndeposit minimums are known, so a user can be warned first');
+  console.log('\ndeposit minimums come from Breet, not from this repo');
   {
     // Under the minimum Breet FLAGS the deposit: on-chain, held, not credited.
-    check('Solana USDC mainnet minimum is $15',
-      breetMinimumDepositUsd('solana' as any, 'usdc', 'production') === 15);
-    check('testnet minimum is $1 for every asset',
-      breetMinimumDepositUsd('solana' as any, 'usdc', 'development') === 1);
+    //
+    // This block used to assert $15 mainnet and $1 testnet. Both were wrong.
+    // GET /trades/assets reports `minimum: 50` for every USDC and USDT asset
+    // in the sandbox (USDC_BSC_TEST is 10), so the numbers this test was
+    // protecting came from the docs and never matched the API. The test passed
+    // precisely because it asserted the same fiction the code contained.
+    //
+    // The rule now is: the live value wins, and when nothing has been loaded
+    // the answer is "unknown" rather than a guess - because a floor set too
+    // low flags the user's deposit and costs them the flag fee.
+    clearAssetIdCache();
+    check('with nothing loaded, development refuses to invent a minimum',
+      breetMinimumDepositUsd('solana' as any, 'usdc', 'development') === undefined,
+      String(breetMinimumDepositUsd('solana' as any, 'usdc', 'development')));
+
+    cacheAssetIds([
+      { id: '69b3e33d5aef202395e800e8', identifier: 'SOL_USDC_JKVK', minimum: 50, flagFeeUSD: 1 },
+    ]);
+    check('the live minimum is used once loaded',
+      breetMinimumDepositUsd('solana' as any, 'usdc', 'development') === 50,
+      String(breetMinimumDepositUsd('solana' as any, 'usdc', 'development')));
+    clearAssetIdCache();
   }
 
   console.log('\non-ramp refuses networks Breet cannot send to');
