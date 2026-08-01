@@ -96,8 +96,18 @@ services:
       # set here while the wallet adapter was unfinished; it is deliberately
       # gone now, so a missing WALLET_PROVIDER fails loudly instead of quietly
       # handing out an address nobody controls.
+      #
+      # sync:false, NOT a hardcoded value. A literal here is re-applied on
+      # every blueprint sync, so it silently reverts whatever an operator set
+      # in the dashboard - which is exactly what happened: WALLET_PROVIDER was
+      # changed to privy, verified reading 'privy', and was back to 'bridge'
+      # after the next deploy with no error anywhere.
+      #
+      # This is only the FALLBACK now. The live choice is the admin control at
+      # PUT /api/admin/wallets/controls, which is stored in the database and
+      # survives deploys.
       - key: WALLET_PROVIDER
-        value: bridge
+        sync: false
       - key: BRIDGE_WALLETS_APPROVED
         value: "true"
       - key: SENTRY_DSN
@@ -189,8 +199,12 @@ services:
       - key: SIVAN_AI_FALLBACK_ENABLED
         value: "true"
 
+      # sync:false, not a literal. Same trap as WALLET_PROVIDER: a hardcoded
+      # value is re-applied on every blueprint sync and silently overwrites
+      # the dashboard, so switching paj -> breet would revert on the next
+      # deploy with no error to notice.
       - key: NGN_PROVIDER
-        value: paj
+        sync: false
       - key: NGN_LIVE_PROVIDER_ENABLED
         value: "true"
       - key: PAJ_RAMP_ENV
@@ -390,8 +404,10 @@ services:
       # Real Bridge custodial wallets. Without this the registry defaults to
       # the mock adapter, whose addresses belong to nobody; in production the
       # guard then throws rather than serving a fake address.
+      # sync:false for the same reason as the test service: a literal is
+      # re-applied on every blueprint sync and overwrites the dashboard.
       - key: WALLET_PROVIDER
-        value: bridge
+        sync: false
       # Bridge require Legal & Compliance sign-off on the wallet fund flow
       # before production use. Set only because that approval is in place.
       - key: BRIDGE_WALLETS_APPROVED
@@ -433,8 +449,12 @@ services:
       - key: SIVAN_AI_FALLBACK_ENABLED
         value: "true"
 
+      # sync:false, not a literal. Same trap as WALLET_PROVIDER: a hardcoded
+      # value is re-applied on every blueprint sync and silently overwrites
+      # the dashboard, so switching paj -> breet would revert on the next
+      # deploy with no error to notice.
       - key: NGN_PROVIDER
-        value: paj
+        sync: false
       - key: NGN_LIVE_PROVIDER_ENABLED
         value: "true"
       - key: PAJ_RAMP_ENV
