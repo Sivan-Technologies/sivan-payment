@@ -1,3 +1,5 @@
+import type { PayoutCurrency } from './rails';
+
 export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'receive' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery';
 
 export interface UserRecord {
@@ -322,7 +324,10 @@ export interface NetworkControl {
 }
 
 export interface VirtualAccountControl {
-  currency: 'usd' | 'gbp' | 'eur';
+  // PayoutCurrency, not the Bridge trio: VirtualAccountRequestRecord already
+  // permits 'ngn', and the two disagreeing is what let a naira account reach a
+  // component that could not render it.
+  currency: PayoutCurrency;
   enabled: boolean;
   label: string;
   provider?: string;

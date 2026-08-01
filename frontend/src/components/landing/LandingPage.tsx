@@ -14,7 +14,7 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
   const updateQuoteAmount = (value: string) => setQuoteAmount(value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1'));
   const faqItems = [
     { q: 'Do I need to complete KYC to use Sivan?', a: 'Yes. Verification is required before bank withdrawals or on-ramp actions. This protects users, reduces fraud, and keeps Sivan aligned with provider-supported payment rails.' },
-    { q: 'Which countries and payment methods are supported?', a: `The current off-ramp supports enabled payout rails such as ${payoutCurrencies}. Available options are controlled by Sivan in Admin Controls. NGN is planned as a coming-soon rail as partnerships are finalized.` },
+    { q: 'Which countries and payment methods are supported?', a: `The current off-ramp supports enabled payout rails such as ${payoutCurrencies}. Available options are controlled by Sivan in Admin Controls. NGN payouts to Nigerian banks are supported through our local settlement partner.` },
     { q: 'How long does a transaction take?', a: 'After your crypto deposit is confirmed on the selected network, provider processing and bank payout timing can vary by rail and bank. The app tracks status as the provider sends updates.' },
     { q: 'What are the fees?', a: `The current Sivan off-ramp fee shown from the live fee configuration is ${feePercent}%. Fees are shown before users receive a deposit address, and admin-controlled pricing can be updated operationally.` },
     { q: 'What happens if I send the wrong token or wrong network?', a: 'Only send the selected token on the selected network shown on the deposit screen. Sending any other token, or using the wrong network, can permanently lose funds and may not be recoverable.' },
@@ -69,13 +69,13 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           <span>{assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
           <span>{payoutCurrencies}</span>
           <span>{networks}</span>
-          <span>NGN coming soon</span>
+          <span>NGN supported</span>
         </section>
 
         <section className="landing-section two-directions" id="features">
           <div className="section-head center"><p className="eyebrow center">Two directions</p><h2>Move value in either direction.</h2><p>One platform. One verification. Sell crypto to your bank or prepare to buy crypto with fiat with the same simple experience.</p></div>
           <div className="direction-grid">
-            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Launching first on Avalanche C-Chain</li><li>✓ Works with USDC and USDT when enabled</li><li>✓ Payouts in {payoutCurrencies}; NGN coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
+            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Solana, Base and Ethereum</li><li>✓ Works with USDC and USDT when enabled</li><li>✓ Payouts in {payoutCurrencies} and NGN</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
             <article className="direction-card buy"><span className="chip-pill purple">↙ Buy</span><em>Rollout ready</em><h3>Buy crypto directly with fiat.</h3><p>Pay by supported bank rails and receive stablecoins in a wallet you control once on-ramp backend rails are live.</p><ul><li>✓ Bank transfer flow planned</li><li>✓ Delivered after payment clears</li><li>✓ Self-custody wallet destination</li><li>✓ Same verification covers both directions</li></ul><div><strong>Provider rollout</strong><button className="secondary-btn" onClick={onBuy}>Start buying →</button></div></article>
           </div>
         </section>
@@ -94,7 +94,7 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           <div className="feature-grid-premium">
             <FeatureCard icon="⚡" title="Fast payouts" body="Create a deposit address quickly and track payout status as provider updates arrive." />
             <FeatureCard icon="🔒" title="Non-custodial by design" body="Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys." />
-            <FeatureCard icon="🌍" title="Global, multi-currency" body={`Cash out to ${payoutCurrencies}. NGN is coming soon as local partnerships progress.`} />
+            <FeatureCard icon="🌍" title="Global, multi-currency" body={`Cash out to ${payoutCurrencies}, or straight to a Nigerian bank account in NGN.`} />
             <FeatureCard icon="▥" title="Transparent pricing" body={`The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.`} />
             <FeatureCard icon="🛡" title="Built-in compliance" body="Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow." />
             <FeatureCard icon="☷" title="Clear transaction tracking" body="Users can follow address creation, deposit detection, conversion, payout processing, and completion." />
@@ -135,7 +135,7 @@ function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () =
         <div className="footer-brand-col">
           <div className="footer-brand"><img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong></div>
           <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
-          <div className="footer-badges"><span>Avalanche C-Chain first</span><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN coming soon</span></div>
+          <div className="footer-badges"><span>Solana · Base · Ethereum</span><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN supported</span></div>
         </div>
         <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
         <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
@@ -162,7 +162,7 @@ function RailsCard({ enabledControls, enabledAssets, enabledNetworks }: { enable
     <article className="panel rails-card">
       <div className="panel-head"><div><p className="eyebrow">Available rails</p><h3>Configured by Sivan Controls</h3></div></div>
       <div className="rail-chips">{enabledControls.length ? enabledControls.map((control) => <span key={control.currency}>{control.currency.toUpperCase()}</span>) : <span>No payout rails</span>}</div>
-      <div className="rail-chips muted-chips">{enabledAssets.length ? enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>) : <span>No assets</span>}<span>{enabledNetworks.length} networks</span><span>NGN coming soon</span></div>
+      <div className="rail-chips muted-chips">{enabledAssets.length ? enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>) : <span>No assets</span>}<span>{enabledNetworks.length} networks</span><span>NGN supported</span></div>
       <p className="muted">Only enabled assets, networks, and payout currencies appear in the withdrawal flow.</p>
     </article>
   );

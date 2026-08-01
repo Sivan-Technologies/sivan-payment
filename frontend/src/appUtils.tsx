@@ -184,13 +184,21 @@ export const fallbackSourceAssets: AssetControl[] = [
   { asset: 'usdt', enabled: false, label: 'USDT', updatedAt: new Date().toISOString() }
 ];
 
+/**
+ * Used only until GET /api/offramp/controls answers.
+ *
+ * Mirrors DEFAULT_NETWORK_CONTROLS on the server, and must keep mirroring it.
+ * It previously enabled avalanche_c_chain and nothing else - the same bug the
+ * backend had - which meant a user on a slow connection was briefly offered
+ * the one network Breet carries no stablecoin on, in either direction.
+ */
 export const fallbackSourceNetworks: NetworkControl[] = [
-  { network: 'base', enabled: false, label: 'Base', sortOrder: 10, updatedAt: new Date().toISOString() },
-  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 20, updatedAt: new Date().toISOString() },
-  { network: 'ethereum', enabled: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
-  { network: 'solana', enabled: false, label: 'Solana', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'base', enabled: true, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
   { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
-  { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
+  { network: 'avalanche_c_chain', enabled: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
 export const fallbackVirtualAccounts: VirtualAccountControl[] = [

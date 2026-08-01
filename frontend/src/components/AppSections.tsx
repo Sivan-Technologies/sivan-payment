@@ -1,5 +1,6 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from '../types';
+import { BRIDGE_CURRENCIES, CURRENCY_LABELS, RAIL_LABELS, formatPayoutAmount, isNgnCurrency, payoutRailFor, type PayoutCurrency } from '../rails';
 
 function statusClass(status?: string) {
   if (!status) return 'pending';
@@ -59,7 +60,7 @@ function OnRampView({ hasUser, isVerified, onGetStarted }: { hasUser: boolean; i
           <Kv label="Current access" value={hasUser ? isVerified ? 'Account ready' : 'Verification required' : 'Create account first'} />
           <Kv label="Planned assets" value="USDC / USDT" />
           <Kv label="Status" value="Provider rollout pending" />
-          <Kv label="NGN" value="Coming soon" />
+          <Kv label="NGN" value="Supported" />
         </div>
         <button className="primary-btn" onClick={onGetStarted}>{hasUser ? isVerified ? 'Manage bank accounts' : 'Verify account' : 'Get started'}</button>
       </article>
@@ -78,7 +79,35 @@ function OnRampView({ hasUser, isVerified, onGetStarted }: { hasUser: boolean; i
 }
 
 
-type WithdrawalReviewState = { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string };
+/**
+ * What the user is about to confirm.
+ *
+ * Carries fields for BOTH rails, because the review step is shared and the
+ * rail is decided by destinationCurrency. The NGN fields are optional rather
+ * than a separate type: a discriminated union would be cleaner in isolation
+ * but would fork every component that renders a review, for two extra strings.
+ *
+ *   Bridge  externalAccountId -> POST /api/withdrawals
+ *   Breet   quoteId + bankId + accountNumber -> POST /api/ngn/offramp/orders
+ */
+export type WithdrawalReviewState = {
+  userId: string;
+  externalAccountId: string;
+  sourceCurrency: string;
+  sourceChain: string;
+  destinationCurrency: string;
+  returnAddress?: string;
+  bankLabel: string;
+  assetLabel: string;
+  networkLabel: string;
+  /** NGN rail only. Breet settles against an accepted quote, not an account id. */
+  quoteId?: string;
+  bankId?: string;
+  accountNumber?: string;
+  /** Shown before confirming, so the floor is visible rather than discovered. */
+  minimumUsd?: number;
+  estimatedGasUsd?: number;
+};
 
 export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm }: {
   accounts: ExternalAccountRecord[];
@@ -229,8 +258,15 @@ export function OtpInput({ value, onChange }: { value: string; onChange: (value:
   );
 }
 
-function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm }: { review: null | { bankLabel: string; assetLabel: string; networkLabel: string; destinationCurrency: string }; feePercent?: string; loading: boolean; onCancel: () => void; onConfirm: () => void }) {
+function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm }: { review: WithdrawalReviewState | null; feePercent?: string; loading: boolean; onCancel: () => void; onConfirm: () => void }) {
   if (!review) return null;
+
+  // Naming the rail is deliberate. The user is about to send crypto to an
+  // address held by a third party, and which third party is not a detail they
+  // should have to infer from the currency.
+  const isNgn = isNgnCurrency(review.destinationCurrency);
+  const rail = payoutRailFor(review.destinationCurrency as PayoutCurrency);
+
   return (
     <article className="deposit-card review-card">
       <p className="eyebrow">Review withdrawal</p>
@@ -240,9 +276,17 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
         <Kv label="Asset" value={review.assetLabel} />
         <Kv label="Network" value={review.networkLabel} />
         <Kv label="Bank payout" value={review.bankLabel} />
-        <Kv label="Payout currency" value={review.destinationCurrency.toUpperCase()} />
+        <Kv label="Payout currency" value={CURRENCY_LABELS[review.destinationCurrency as PayoutCurrency] ?? review.destinationCurrency.toUpperCase()} />
+        <Kv label="Settlement" value={RAIL_LABELS[rail]} />
+        {review.minimumUsd !== undefined && <Kv label="Minimum for this network" value={`$${review.minimumUsd.toFixed(2)}`} />}
+        {review.estimatedGasUsd !== undefined && <Kv label="Estimated network fee" value={`$${review.estimatedGasUsd.toFixed(2)}`} />}
         <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
       </div>
+      {isNgn && review.minimumUsd !== undefined && (
+        // Stated before they send, because afterwards is too late: below the
+        // minimum the funds are confirmed on-chain, held, and not credited.
+        <div className="warning-box">Send at least <strong>${review.minimumUsd.toFixed(2)}</strong>. A smaller deposit is held by our settlement partner rather than paid out, and costs a fee to recover.</div>
+      )}
       <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</div>
       <div className="split-actions">
         <button className="ghost-btn" onClick={onCancel}>Edit details</button>
@@ -348,18 +392,36 @@ export function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, co
   return <section className="app-page payment-methods-premium"><PageHero title="Payment methods" subtitle="Manage payout banks you own for crypto-to-bank withdrawals." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><div className="payment-grid"><article className="dashboard-transactions payment-methods-card"><div className="dash-card-head"><h3>Verified bank accounts</h3></div><BankList accounts={accounts} /></article><BankForm onSubmit={onSubmit} loading={loading} isVerified={isVerified} controls={controls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} /></div></section>;
 }
 
-export function VirtualAccountsView({ requests, accounts, transactions, controls, loading, isVerified, canCreatePaymentActions, onRequest, onRefresh }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions: VirtualAccountTransactionRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void; onRefresh: () => void }) {
+export function VirtualAccountsView({ requests, accounts, transactions, controls, loading, isVerified, canCreatePaymentActions, onRequest, onRefresh }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions: VirtualAccountTransactionRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: PayoutCurrency) => void; onRefresh: () => void }) {
   return <section className="app-page payment-methods-premium"><PageHero title="Virtual accounts" subtitle="Request reusable receiving accounts for fiat deposits into Sivan." action={<button className="primary-btn small" onClick={onRefresh}>Refresh</button>} /><VirtualAccountsCustomerPanel requests={requests} accounts={accounts} controls={controls} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} /><VirtualAccountDepositHistory transactions={transactions} /></section>;
 }
 
-const vaCurrencyMeta: Record<'usd' | 'gbp' | 'eur', { title: string; rails: string; account: string; flag: string }> = {
+/**
+ * Card copy per virtual-account currency.
+ *
+ * Keyed by PayoutCurrency, INCLUDING ngn, because the record type this renders
+ * (VirtualAccountRequestRecord.currency) already permits 'ngn'. It previously
+ * did not: the type allowed naira while this map covered only usd/gbp/eur, so
+ * an NGN virtual account produced `meta = undefined` and the next line read
+ * `.title` off it - a white screen rather than an "unsupported" message.
+ *
+ * The entry exists so the lookup is total. Whether NGN is OFFERED is a
+ * separate question, decided by the admin control below.
+ */
+const vaCurrencyMeta: Record<PayoutCurrency, { title: string; rails: string; account: string; flag: string }> = {
   usd: { title: 'USD Account', rails: 'ACH / Wire', account: 'US bank account', flag: '$' },
   gbp: { title: 'GBP Account', rails: 'Faster Payments', account: 'UK account number', flag: '£' },
-  eur: { title: 'EUR Account', rails: 'SEPA', account: 'IBAN', flag: '€' }
+  eur: { title: 'EUR Account', rails: 'SEPA', account: 'IBAN', flag: '€' },
+  ngn: { title: 'NGN Account', rails: 'NIP transfer', account: 'Nigerian bank account', flag: '₦' }
 };
 
-function VirtualAccountsCustomerPanel({ requests, accounts, controls, loading, isVerified, canCreatePaymentActions, onRequest }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void }) {
-  const currencies: Array<'usd' | 'gbp' | 'eur'> = ['usd', 'gbp', 'eur'];
+function VirtualAccountsCustomerPanel({ requests, accounts, controls, loading, isVerified, canCreatePaymentActions, onRequest }: { requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; controls: VirtualAccountControl[]; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: PayoutCurrency) => void }) {
+  // Driven by the admin controls rather than a literal list, so enabling NGN
+  // virtual accounts is a controls change and not a deploy. Falls back to the
+  // Bridge currencies when controls have not loaded.
+  const currencies: PayoutCurrency[] = controls.length
+    ? (controls.map((control) => control.currency).filter((c): c is PayoutCurrency => c in vaCurrencyMeta))
+    : [...BRIDGE_CURRENCIES];
   const enabledControls = controls.filter((control) => control.enabled);
   return <article className="virtual-bank-panel"><div className="virtual-bank-head"><div><p className="eyebrow">Virtual Accounts</p><h3>Request virtual bank accounts</h3><p className="muted">After approval, Sivan shows customer-safe bank details only. Provider internals, destination wallets, and economics stay hidden.</p></div><Badge status={enabledControls.length ? 'active' : 'pending'}>{enabledControls.length ? `${enabledControls.length} enabled` : 'Disabled'}</Badge></div><div className="virtual-bank-grid">{currencies.map((currency) => <VirtualAccountCurrencyCard key={currency} currency={currency} request={requests.find((item) => item.currency === currency && !['rejected', 'canceled'].includes(item.status))} account={accounts.find((item) => item.currency === currency && item.status !== 'closed' && item.provider !== 'mock')} control={controls.find((item) => item.currency === currency)} loading={loading} isVerified={isVerified} canCreatePaymentActions={canCreatePaymentActions} onRequest={onRequest} />)}</div></article>;
 }
@@ -385,7 +447,7 @@ function virtualAccountInstructions(account?: VirtualAccountRecord) {
   };
 }
 
-function VirtualAccountCurrencyCard({ currency, request, account, control, loading, isVerified, canCreatePaymentActions, onRequest }: { currency: 'usd' | 'gbp' | 'eur'; request?: VirtualAccountRequestRecord; account?: VirtualAccountRecord; control?: VirtualAccountControl; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: 'usd' | 'gbp' | 'eur') => void }) {
+function VirtualAccountCurrencyCard({ currency, request, account, control, loading, isVerified, canCreatePaymentActions, onRequest }: { currency: PayoutCurrency; request?: VirtualAccountRequestRecord; account?: VirtualAccountRecord; control?: VirtualAccountControl; loading: boolean; isVerified: boolean; canCreatePaymentActions: boolean; onRequest: (currency: PayoutCurrency) => void }) {
   const [copied, setCopied] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const meta = vaCurrencyMeta[currency];

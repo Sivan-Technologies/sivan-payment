@@ -4,6 +4,10 @@ import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
+import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
+import { offrampClears, typicalGasUsd } from './ngnMinimum';
+import type { NgnNetworkLists } from './rails';
+import type { WithdrawalReviewState } from './components/AppSections';
 import { useNotifications } from './hooks/useNotifications';
 import { useSessionActivity } from './hooks/useAuth';
 import { usePaymentDataLoader } from './hooks/usePaymentData';
@@ -49,7 +53,13 @@ export default function App() {
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
-  const [withdrawalReview, setWithdrawalReview] = useState<null | { userId: string; externalAccountId: string; sourceCurrency: string; sourceChain: string; destinationCurrency: string; returnAddress?: string; bankLabel: string; assetLabel: string; networkLabel: string }>(null);
+  // The shape was written out inline here AND in AppSections, two copies of
+  // one contract that had to be edited in lockstep. Now imported.
+  const [withdrawalReview, setWithdrawalReview] = useState<WithdrawalReviewState | null>(null);
+  // Per-direction network lists for the NGN rail, from GET /api/ngn/networks.
+  // TWO lists, not one: Base can off-ramp but cannot on-ramp, so a shared list
+  // would offer a user a network naira cannot settle to.
+  const [ngnNetworks, setNgnNetworks] = useState<NgnNetworkLists | null>(null);
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
@@ -146,7 +156,7 @@ export default function App() {
   const showTwoFactorRecommendation = Boolean(isVerified && !twoFactorStatus?.enabled && Date.now() > twoFactorPromptDismissedUntil);
 
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
-  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Avalanche C-Chain';
+  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Solana';
 
   const clearLocalSession = useCallback(() => {
     setAuthToken('');
@@ -360,6 +370,20 @@ export default function App() {
   }, [api]);
 
   /**
+   * NGN network capabilities, per direction.
+   *
+   * Fetched rather than hardcoded because the answer depends on BOTH what
+   * Breet supports and what an admin has enabled - so turning Ethereum off in
+   * Admin Controls removes it here without a deploy. Failure leaves the state
+   * null, and the withdraw path then refuses to guess a minimum rather than
+   * inventing one.
+   */
+  const loadNgnNetworks = useCallback(async (asset: 'usdc' | 'usdt' = 'usdc') => {
+    const lists = await api<NgnNetworkLists>(`/api/ngn/networks?asset=${asset}`).catch(() => null);
+    setNgnNetworks(lists);
+  }, [api]);
+
+  /**
    * Fetch the caller's wallets. Failures are swallowed because a missing
    * wallet list must not break the page: the Receive screen renders a
    * "generate address" state instead.
@@ -380,8 +404,9 @@ export default function App() {
   useEffect(() => {
     void loadFee();
     void loadControls();
+    void loadNgnNetworks();
     void loadUserData();
-  }, [loadFee, loadControls, loadUserData]);
+  }, [loadFee, loadControls, loadNgnNetworks, loadUserData]);
 
   // Wallets are fetched separately from loadUserData because they depend on an
   // authenticated user and must refresh when that user changes.
@@ -815,7 +840,7 @@ export default function App() {
   }
 
 
-  async function handleVirtualAccountRequest(currency: 'usd' | 'gbp' | 'eur') {
+  async function handleVirtualAccountRequest(currency: PayoutCurrency) {
     if (!user?.id) return notify('Create your account first.', 'error');
     if (!isVerified) return notify('Please complete verification before requesting a virtual account.', 'error');
     if (!canCreatePaymentActions) return notify(systemStatus.message || 'New virtual account requests are temporarily unavailable.', 'error');
@@ -919,6 +944,29 @@ export default function App() {
       if (!selectedAccount) throw new Error('Choose a bank account first.');
       const assetLabel = latestControls.sourceAssets.find((asset) => asset.asset === data.sourceCurrency)?.label || data.sourceCurrency.toUpperCase();
       const networkLabel = latestControls.sourceNetworks.find((network) => network.network === data.sourceChain)?.label || data.sourceChain;
+      // NGN goes to Breet, which FLAGS a deposit below its asset minimum:
+      // confirmed on-chain, funds held, never credited, and a fee charged to
+      // recover. The amount that must clear the minimum is what ARRIVES, after
+      // gas - so this is checked before the user commits, not after they send.
+      const isNgnPayout = isNgnCurrency(selectedAccount.currency);
+      let minimumUsd: number | undefined;
+      let estimatedGasUsd: number | undefined;
+
+      if (isNgnPayout) {
+        estimatedGasUsd = typicalGasUsd(data.sourceChain);
+        const breetMinimumUsd = ngnNetworks?.offramp.find((option) => option.network === data.sourceChain)?.minimumDepositUsd;
+
+        if (breetMinimumUsd === undefined) {
+          // Refuse rather than guess. A floor set too low is precisely what
+          // gets the user's deposit flagged.
+          throw new Error('Minimum withdrawal for that network is unavailable right now. Try again shortly.');
+        }
+
+        const verdict = offrampClears({ amountUsd: Number(data.amount ?? 0), breetMinimumUsd, estimatedGasUsd });
+        minimumUsd = verdict.minimumUsd;
+        if (Number(data.amount ?? 0) > 0 && !verdict.clears) throw new Error(verdict.reason);
+      }
+
       setWithdrawalReview({
         userId: user.id,
         externalAccountId: selectedAccount.id,
@@ -928,7 +976,9 @@ export default function App() {
         returnAddress: data.returnAddress,
         bankLabel: `${selectedAccount.bankName || 'Bank account'} ****${selectedAccount.accountLast4 || '----'}`,
         assetLabel,
-        networkLabel
+        networkLabel,
+        minimumUsd,
+        estimatedGasUsd
       });
       setDepositResult(null);
       notify('Review your withdrawal details before creating a deposit address.');
@@ -940,18 +990,48 @@ export default function App() {
   }
 
 
+  /**
+   * Create the withdrawal, on whichever rail the payout currency belongs to.
+   *
+   * This used to POST /api/withdrawals unconditionally. That endpoint is
+   * Bridge, and Bridge has no naira rail at all - it rejects 'ngn' outright -
+   * so a Nigerian payout could never have worked from here regardless of what
+   * the UI offered.
+   *
+   * The rail is derived from the currency by payoutRailFor(), so the two
+   * cannot drift: adding a payout currency without routing it fails to
+   * compile. The request SHAPES differ too, which is why this branches rather
+   * than templating a URL - Bridge takes an external account and returns a
+   * deposit address, Breet takes a quote and returns its own.
+   */
   async function confirmWithdrawal() {
     if (!withdrawalReview) return;
     setLoading(true);
     try {
-      const result = await api<DepositResponse>('/api/withdrawals', {
-        method: 'POST',
-        body: JSON.stringify(withdrawalReview)
-      });
+      const currency = withdrawalReview.destinationCurrency as PayoutCurrency;
+      const rail = payoutRailFor(currency);
+
+      const result = rail === 'breet'
+        ? await api<DepositResponse>(withdrawalEndpointFor(currency), {
+            method: 'POST',
+            body: JSON.stringify({
+              userId: withdrawalReview.userId,
+              quoteId: withdrawalReview.quoteId,
+              bankId: withdrawalReview.bankId,
+              accountNumber: withdrawalReview.accountNumber,
+            })
+          })
+        : await api<DepositResponse>(withdrawalEndpointFor(currency), {
+            method: 'POST',
+            body: JSON.stringify(withdrawalReview)
+          });
+
       setWithdrawalReview(null);
       setDepositResult(result);
       await loadUserData();
-      notify('Deposit address created. Send only the selected asset and network.');
+      notify(rail === 'breet'
+        ? 'Deposit address created. Send only the selected asset and network - naira lands in your bank once it confirms.'
+        : 'Deposit address created. Send only the selected asset and network.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
