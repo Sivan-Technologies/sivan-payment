@@ -31,3 +31,4 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 frontend-admin/vite.config.js
 frontend-admin/vite.config.d.ts
+.env.e2e

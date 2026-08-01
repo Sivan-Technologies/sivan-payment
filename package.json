@@ -72,6 +72,8 @@
     "breet:smoke": "tsx scripts/breet-sandbox-smoke.ts",
     "privy:smoke": "tsx scripts/privy-live-smoke.ts",
     "privy:delegated": "tsx scripts/privy-delegated-signer-smoke.ts",
+    "base:e2e-setup": "tsx scripts/base-e2e-setup.ts",
+    "base:e2e-transfer": "tsx scripts/base-e2e-transfer.ts",
     "test:delegated-capability": "tsx scripts/test-delegated-capability.ts",
     "test:solana-transfer": "tsx scripts/test-solana-transfer.ts",
     "test:rail-separation": "tsx scripts/test-rail-separation.ts",

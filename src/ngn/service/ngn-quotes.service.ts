@@ -18,8 +18,44 @@ export const createNgnQuoteSchema = z.object({
   direction: z.enum(['onramp', 'offramp']),
   sourceCurrency: z.enum(['ngn', 'usdc', 'usdt']),
   destinationCurrency: z.enum(['ngn', 'usdc', 'usdt']),
-  sourceAmount: z.string().min(1)
+  sourceAmount: z.string().min(1),
+  /**
+   * Which chain the crypto leg moves on.
+   *
+   * The quote had no network field at all, which made the gas estimate
+   * unknowable - breet.provider.ts reads metadata.estimatedGasUsd and was
+   * always finding nothing, so the minimum-withdrawal guard ran with gas = 0.
+   * That is the exact input the buffer exists to account for.
+   *
+   * Optional with a default so existing callers keep working; the default
+   * matches BREET_DEFAULT_NETWORK.
+   */
+  network: z.string().optional()
 });
+
+/**
+ * Typical gas per network, in USD.
+ *
+ * Estimates for QUOTING only - the real figure is settled by the wallet
+ * provider at signing time. They exist so the minimum-withdrawal floor
+ * accounts for gas rather than assuming zero, and so a user sees why Base
+ * costs less than Ethereum before choosing.
+ *
+ * Ethereum is deliberately included despite being poor value: $2-10 against a
+ * $15 minimum is 13-66% of a small withdrawal, and showing the number is how a
+ * user understands the default.
+ */
+const TYPICAL_GAS_USD: Record<string, number> = {
+  solana: 0.001,
+  base: 0.02,
+  ethereum: 5,
+  arbitrum: 0.05,
+  polygon: 0.01,
+};
+
+export function typicalGasUsd(network: string): number {
+  return TYPICAL_GAS_USD[String(network).toLowerCase()] ?? 0.5;
+}
 
 
 /**
@@ -119,12 +155,20 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       ? Math.max(providerDestination - (rate > 0 ? margin.sivanMargin / rate : 0), 0)
       : Math.max(providerDestination - margin.sivanMargin, 0);
 
+  // Resolved once so the stored quote and the gas estimate cannot disagree.
+  const quoteNetwork = String(input.network ?? env.BREET_DEFAULT_NETWORK ?? 'solana').toLowerCase();
+  const estimatedGasUsd = typicalGasUsd(quoteNetwork);
+
   const now = nowIso();
   const record: NgnQuoteRecord = { id: id('ngnq'), userId: input.userId, customerId: customer?.id, direction: input.direction, provider: quote.provider, sourceCurrency: input.sourceCurrency, destinationCurrency: input.destinationCurrency, sourceAmount: quote.sourceAmount, destinationAmount: destinationAfterMargin.toFixed(input.destinationCurrency === 'ngn' ? 2 : 6), rate: quote.rate, feeAmount: String(margin.totalFee), status: 'quote_created', providerQuoteId: quote.providerQuoteId, expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), metadata: {
     ...(typeof quote.metadata === 'object' && quote.metadata ? quote.metadata : {}),
     // Kept separate on purpose. One blended number makes it impossible to tell
     // a provider price rise from Sivan earning more, and a support agent cannot
     // explain a fee they cannot break down.
+    // Carried so acceptance can reproduce the same floor the user was shown.
+    // Without these, breet.provider.ts computed the minimum with gas = 0.
+    network: quoteNetwork,
+    estimatedGasUsd,
     fees: {
       providerFee: margin.providerFee,
       providerName: quote.provider,

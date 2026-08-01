@@ -28,6 +28,7 @@ import {
   clearAssetIdCache,
   breetMinimumDepositUsd,
 } from '../src/ngn/provider/breet-networks.js';
+import { typicalGasUsd } from '../src/ngn/service/ngn-quotes.service.js';
 
 let pass = 0;
 let fail = 0;
@@ -141,6 +142,27 @@ console.log('\nLIVE MINIMUMS REPLACE THE HARDCODED TABLE');
   check('with nothing loaded, development refuses to guess',
     breetMinimumDepositUsd('solana', 'usdc', 'development') === undefined,
     String(breetMinimumDepositUsd('solana', 'usdc', 'development')));
+}
+
+console.log('\nTHE QUOTE ACTUALLY CARRIES A GAS ESTIMATE');
+{
+  // The guard reads metadata.estimatedGasUsd, and nothing on the quote path
+  // ever wrote it - the quote schema had no `network` field at all, so gas was
+  // unknowable and the floor was computed with gas = 0. That is precisely the
+  // input the buffer exists to account for.
+  check('base has a real estimate', typicalGasUsd('base') === 0.02, String(typicalGasUsd('base')));
+  check('solana is near-free', typicalGasUsd('solana') === 0.001);
+  check('ethereum is visibly dearer', typicalGasUsd('ethereum') >= 1);
+  check('an unknown network gets a cautious default, not zero',
+    typicalGasUsd('nonsense-chain') > 0, String(typicalGasUsd('nonsense-chain')));
+
+  // Zero gas understates what ARRIVES, which is the number Breet measures
+  // against its minimum.
+  const withGas = offrampClears({ amountUsd: 15.10, breetMinimumUsd: 15, estimatedGasUsd: typicalGasUsd('base') });
+  const withoutGas = offrampClears({ amountUsd: 15.10, breetMinimumUsd: 15, estimatedGasUsd: 0 });
+  check('gas changes the arriving amount', withGas.arrivesUsd < withoutGas.arrivesUsd,
+    `${withGas.arrivesUsd} vs ${withoutGas.arrivesUsd}`);
+  check('and raises the floor', withGas.minimumUsd > withoutGas.minimumUsd);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
