@@ -78,6 +78,7 @@
     "test:delegated-capability": "tsx scripts/test-delegated-capability.ts",
     "test:wallet-controls": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-wallet-controls.json EMAIL_PROVIDER=console APP_ENV=development tsx scripts/test-wallet-controls.ts",
     "test:wallet-health": "tsx scripts/test-wallet-health.ts",
+    "test:name-match": "tsx scripts/test-name-match.ts",
     "test:solana-transfer": "tsx scripts/test-solana-transfer.ts",
     "test:rail-separation": "tsx scripts/test-rail-separation.ts",
     "test:offramp-minimum": "tsx scripts/test-offramp-minimum.ts",
