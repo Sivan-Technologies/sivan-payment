@@ -28,13 +28,31 @@ export const DEFAULT_ASSET_CONTROLS: AssetControlRecord[] = [
   { asset: 'usdt', enabled: false, label: 'USDT', updatedBy: 'system', updatedAt: nowIso() }
 ];
 
+/**
+ * Which networks a new deployment starts with.
+ *
+ * Sivan's launch set is Solana, Base and Ethereum. All three are enabled here
+ * so the pipeline exists end to end and an operator can switch one OFF in
+ * Admin Controls - which is the right way round. A network that is absent from
+ * the code cannot be turned on without a deploy; a network that is present but
+ * disabled is one toggle.
+ *
+ * Sort order puts them cheapest-first, because that is the order a user should
+ * see them in and the list is rendered from this.
+ *
+ * avalanche_c_chain was previously the ONLY enabled default, and Breet carries
+ * no USDC or USDT on it in either direction - verified against the capability
+ * map. So the single network a fresh deployment offered was one where every
+ * NGN quote would refuse. It stays present for historical records but ships
+ * disabled.
+ */
 export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
-  { network: 'base', enabled: false, label: 'Base', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'ethereum', enabled: false, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'solana', enabled: false, label: 'Solana', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'base', enabled: true, label: 'Base', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'avalanche_c_chain', enabled: true, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
+  { network: 'avalanche_c_chain', enabled: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
 ];
 
 export const updatePaymentControlsSchema = z.object({

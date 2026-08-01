@@ -5,6 +5,13 @@ import { parseBody } from '../../shared/validation.js';
 import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
 import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
+import { listPaymentControls } from '../../controls/payment-controls.service.js';
+import {
+  usableForOnramp,
+  usableForOfframp,
+  breetMinimumDepositUsd,
+  type StableAsset,
+} from '../provider/breet-networks.js';
 import {
   getVerificationLimitMatrix,
   setVerificationLimit,
@@ -77,6 +84,54 @@ export async function ngnRoutes(app: FastifyInstance) {
   // a forged amount in the body cannot be credited.
   app.post('/api/webhooks/breet', async (request) => ({ data: await recordNgnWebhook('breet', request.body, request.headers) }));
 
+  /**
+   * Which networks a user may actually pick, per direction.
+   *
+   * Deliberately TWO lists, because the answer genuinely differs:
+   *
+   *   solana   usdc/usdt   off-ramp YES   on-ramp YES
+   *   base     usdc        off-ramp YES   on-ramp NO   (Breet has no Base withdrawal)
+   *   base     usdt        neither        (Breet publishes no Base USDT asset at all)
+   *   ethereum usdc/usdt   off-ramp YES   on-ramp YES
+   *
+   * Serving one shared list would let a user select Base for an on-ramp and
+   * only discover after committing that naira cannot settle there. The
+   * capability map already refuses it server-side; this stops the UI offering
+   * it in the first place.
+   *
+   * Intersected with the admin's enabled networks, so turning Ethereum off in
+   * Admin Controls removes it here without a deploy.
+   */
+  app.get('/api/ngn/networks', async (request) => {
+    const query = request.query as { asset?: string };
+    const asset = (String(query.asset ?? 'usdc').toLowerCase()) as StableAsset;
+    if (asset !== 'usdc' && asset !== 'usdt') {
+      throw badRequest('asset must be usdc or usdt.');
+    }
+
+    const controls = await listPaymentControls();
+    const enabled = (controls.sourceNetworks ?? [])
+      .filter((n: any) => n.enabled)
+      .map((n: any) => n.network as any);
+
+    const describe = (networks: readonly any[]) =>
+      networks.map((network) => ({
+        network,
+        asset,
+        // Surfaced per network because it is per ASSET, not global, and the
+        // user must see it before choosing where to send from.
+        minimumDepositUsd: breetMinimumDepositUsd(network, asset, 'production'),
+      }));
+
+    return {
+      data: {
+        asset,
+        offramp: describe(usableForOfframp(enabled, asset)),
+        onramp: describe(usableForOnramp(enabled, asset)),
+      },
+    };
+  });
+
   app.get('/api/admin/ngn/controls', async () => ({ data: await getNgnControls() }));
   app.put('/api/admin/ngn/controls', async (request) => ({ data: await updateNgnControls(parseBody(updateNgnControlsSchema, request.body)) }));
 
@@ -84,10 +139,12 @@ export async function ngnRoutes(app: FastifyInstance) {
    * Verification ceilings, admin-controlled.
    *
    * These were compiled into FLOW_LIMITS and could only be changed by editing
-   * code and redeploying. That produced a deadlock worth stating: Breet's live
-   * minimum deposit is $50 (~NGN 80,000) while the BANK off-ramp ceiling was
-   * NGN 50,000 per 30 days, so a Level 1 user could not clear a single
-   * withdrawal.
+   * code and redeploying, which is the wrong shape for a compliance number.
+   *
+   * Breet's documented MAINNET minimum is $15 (~NGN 24,075), so a Level 1 user
+   * on the NGN 50,000 ceiling gets about two withdrawals a month - tight, not
+   * impossible. The sandbox reports $50 for the same assets, which is a
+   * testing artifact rather than the production floor.
    *
    * GET returns default, override and effective side by side, because an
    * operator cannot judge a limit without seeing what it was changed from.
