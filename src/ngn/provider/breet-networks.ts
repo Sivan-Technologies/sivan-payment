@@ -175,11 +175,13 @@ export function breetMinimumDepositUsd(
 
   // LIVE VALUE FIRST. This function used to return `entry.minUsd` (hardcoded
   // 15 everywhere) in production and a flat 1 in development. Both were wrong:
-  // GET /trades/assets reports `minimum: 50` for every USDC/USDT asset in the
-  // sandbox, and the docs' $1 claim does not match the API. A floor derived
-  // from 15 would sit below Breet's real minimum, so every withdrawal built on
-  // it would be FLAGGED - funds confirmed on-chain, held, not credited, and
-  // charged the flag fee to recover.
+  // The static table happens to match Breet's DOCUMENTED mainnet figures ($15
+  // for USDC/USDT on these chains, $20 for Tron USDT), but it is still a
+  // snapshot: Breet say plainly that assets and their minimums change, and
+  // their own docs disagree with their own API in the sandbox - documented as
+  // $1 for every test asset, actually 50 for most, 10 for USDC_BSC_TEST and
+  // 5000 for BCH/DOGE. Reading the live value is the only way to be right in
+  // both environments.
   const identifier = environment === 'production' ? entry.mainnet : entry.testnet;
   const live = assetEconomics(identifier);
   if (live) return live.minimumUsd;
@@ -286,10 +288,12 @@ const assetIdCache = new Map<string, string>();
 /**
  * Live economics per asset, read from the same GET /trades/assets response.
  *
- * These are NOT static facts and must never be hardcoded again. The table in
- * this file claimed `minUsd: 15` for every asset; the live sandbox reports
- * `minimum: 50` on every USDC/USDT asset except USDC_BSC_TEST, which is 10.
- * A threshold built on 15 would have put every withdrawal under Breet's floor.
+ * These are NOT static facts. Breet's docs state that assets can be added,
+ * removed or disabled at any time, and their sandbox proves the point: the
+ * docs claim $1 for every test asset while the API returns 50 for most, 10 for
+ * USDC_BSC_TEST and 5000 for BCH_TEST/DOGE_TEST. Mainnet is documented at $15
+ * for USDC/USDT and $20 for Tron USDT, which the static table matches - but a
+ * snapshot that is currently correct is still a snapshot.
  */
 export interface BreetAssetEconomics {
   /** Breet's `minimum`, in USD. Below this a deposit is FLAGGED, not credited. */
@@ -298,6 +302,16 @@ export interface BreetAssetEconomics {
   flagFeeUsd: number;
   /** Confirmations before Breet credits. Drives the "how long" the UI promises. */
   confirmations?: number;
+  /**
+   * Breet's `isActive`. An asset can be disabled at any time - their docs say
+   * so explicitly - and a disabled asset still appears in the list.
+   *
+   * `undefined` means Breet did not send the field. That is NOT the same as
+   * false: the sandbox omits it on all 23 assets, so treating absent as
+   * disabled would turn off the entire rail. Absent is treated as active, and
+   * only an explicit `false` disables.
+   */
+  isActive?: boolean;
 }
 
 const assetEconomicsCache = new Map<string, BreetAssetEconomics>();
@@ -309,6 +323,7 @@ export function cacheAssetIds(
     minimum?: number;
     flagFeeUSD?: number;
     confirmations?: number;
+    isActive?: boolean;
   }>
 ): void {
   for (const asset of assets) {
@@ -322,9 +337,21 @@ export function cacheAssetIds(
         minimumUsd: asset.minimum,
         flagFeeUsd: typeof asset.flagFeeUSD === 'number' ? asset.flagFeeUSD : 0,
         confirmations: asset.confirmations,
+        isActive: typeof asset.isActive === 'boolean' ? asset.isActive : undefined,
       });
     }
   }
+}
+
+/**
+ * Has Breet explicitly disabled this asset?
+ *
+ * Only an explicit `false` counts. Absent means Breet did not tell us, and the
+ * safe reading of silence is "still available" - the sandbox omits the field
+ * entirely, so failing closed on absence would disable every network.
+ */
+export function assetIsDisabled(identifier: string): boolean {
+  return assetEconomics(identifier)?.isActive === false;
 }
 
 export function resolveAssetId(identifier: string): string | undefined {

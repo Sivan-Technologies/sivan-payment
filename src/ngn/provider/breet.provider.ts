@@ -10,6 +10,7 @@ import {
   breetDepositAssetId,
   breetMinimumDepositUsd,
   assetEconomics,
+  assetIsDisabled,
   offrampClears,
   breetWithdrawalNetwork,
   canDeposit,
@@ -481,6 +482,18 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     // assetIdFor() above has already loaded /trades/assets, so the live
     // minimum is populated by the time this runs.
     const minimumUsd = breetMinimumDepositUsd(sivanNetwork, asset, breetEnvironment());
+
+    // Breet disable assets at will - their docs say assets "can be added,
+    // removed, or temporarily disabled at any time". Generating a deposit
+    // address for a disabled asset invites the user to send funds Breet will
+    // not process. Checked here rather than at startup because the list is
+    // refreshed per process and an asset can go dark mid-session.
+    if (assetIsDisabled(identifier)) {
+      throw forbidden(
+        `Breet has disabled ${asset.toUpperCase()} on ${sivanNetwork}. ` +
+          'Choose another network or asset.'
+      );
+    }
 
     const economics = assetEconomics(identifier);
     const estimatedGasUsd = Number((quote.metadata as any)?.estimatedGasUsd ?? 0);

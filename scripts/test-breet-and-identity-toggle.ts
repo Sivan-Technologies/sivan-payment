@@ -362,11 +362,11 @@ async function main() {
   {
     // Under the minimum Breet FLAGS the deposit: on-chain, held, not credited.
     //
-    // This block used to assert $15 mainnet and $1 testnet. Both were wrong.
-    // GET /trades/assets reports `minimum: 50` for every USDC and USDT asset
-    // in the sandbox (USDC_BSC_TEST is 10), so the numbers this test was
-    // protecting came from the docs and never matched the API. The test passed
-    // precisely because it asserted the same fiction the code contained.
+    // This block used to assert $15 mainnet and $1 testnet as FIXED values.
+    // The mainnet figure is right per Breet's docs; the testnet one is not -
+    // the API returns 50 for most sandbox assets, 10 for USDC_BSC_TEST and
+    // 5000 for BCH_TEST. The test passed only because it asserted the same
+    // hardcoded numbers the code contained, so neither could catch the other.
     //
     // The rule now is: the live value wins, and when nothing has been loaded
     // the answer is "unknown" rather than a guess - because a floor set too

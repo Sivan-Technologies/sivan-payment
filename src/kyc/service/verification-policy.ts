@@ -92,7 +92,7 @@ export function limitFor(
 ): number | null {
   // An override wins outright. It is not clamped against the default, and
   // that is intentional: an admin raising the BANK off-ramp ceiling to clear
-  // Breet's $50 minimum is doing exactly what this exists for, and silently
+  // Breet's minimum is doing exactly what this exists for, and silently
   // capping them back to the shipped number would be a lie in the UI.
   const override = overrides?.find(
     (o) => o.flow === flow && o.rail === rail && o.level === level

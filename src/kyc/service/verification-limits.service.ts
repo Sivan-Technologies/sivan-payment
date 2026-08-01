@@ -11,9 +11,13 @@ import type { VerificationLimitOverride } from './verification-policy.js';
  *
  * The ceilings were compiled into FLOW_LIMITS, so moving one required a code
  * change and a deploy. That is the wrong shape for a compliance number that
- * has to track the business, and it produced a concrete deadlock: Breet's live
- * minimum deposit is $50 (~NGN 80,000) while the BANK off-ramp ceiling was NGN
- * 50,000 per 30 days, so a Level 1 user could not clear a single withdrawal.
+ * has to track the business.
+ *
+ * Breet's documented MAINNET minimum is $15 (~NGN 24,075 at 1605), against a
+ * BANK off-ramp ceiling of NGN 50,000 per 30 days - so a Level 1 user gets
+ * about two withdrawals a month. Tight enough to want a dial, not a deadlock.
+ * The sandbox reports $50 for the same assets; that is a testing artifact and
+ * must not be read as the production floor.
  *
  * Overrides are sparse. A row exists only where an admin has deliberately
  * departed from the shipped default, which keeps the defaults meaningful and

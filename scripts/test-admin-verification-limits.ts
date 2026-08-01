@@ -2,16 +2,19 @@
  * Admin-controlled verification ceilings.
  *
  * The ceilings were compiled into FLOW_LIMITS, so moving one meant editing
- * source and redeploying. That is the wrong shape for a compliance number, and
- * it produced a real deadlock:
+ * source and redeploying. That is the wrong shape for a compliance number that
+ * has to track both the business and the provider.
  *
- *   Breet's live minimum deposit is $50, about NGN 80,000.
- *   The BANK off-ramp ceiling was NGN 50,000 per 30 days.
- *   => a Level 1 user could not clear a SINGLE withdrawal.
+ * Concretely, on MAINNET:
  *
- * The smallest transaction the provider accepts was larger than the most the
- * policy would let that user move in a month. No frontend work fixes that; the
- * number itself has to be movable.
+ *   Breet's documented minimum deposit is $15, about NGN 24,075 at 1605.
+ *   The BANK off-ramp ceiling is NGN 50,000 per 30 days.
+ *   => a Level 1 user gets roughly TWO withdrawals a month.
+ *
+ * Tight enough to want a dial an operator can turn. The sandbox reports $50
+ * for the same assets - a testing artifact, not the production floor, and the
+ * scenario below uses the SANDBOX figure deliberately because it is the case
+ * where the ceiling actually binds.
  *
  * Run: npm run test:admin-verification-limits
  */
@@ -60,7 +63,9 @@ function bankLevelUser(): VerificationState {
   };
 }
 
-// One Breet withdrawal at the live $50 minimum, at 1605 NGN/USD.
+// One withdrawal at the SANDBOX minimum of $50, at 1605 NGN/USD. Mainnet is
+// $15 (NGN 24,075) and clears the default ceiling on its own; the sandbox
+// figure is used here because it is the case that actually binds.
 const ONE_BREET_WITHDRAWAL_NGN = 50 * 1605; // 80,250
 
 async function main() {
@@ -166,7 +171,7 @@ async function main() {
       flow: 'offramp', rail: 'ngn',
       level: VerificationLevel.BANK,
       cumulativeNgn: 200_000,
-      reason: 'Breet minimum deposit is $50 (~NGN 80,250)',
+      reason: 'Sandbox Breet minimum is $50 (~NGN 80,250); mainnet is $15',
       updatedBy: 'test-admin',
     });
     check('the override is stored', saved.cumulativeNgn === 200_000);
