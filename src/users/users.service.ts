@@ -8,6 +8,9 @@ export const createUserSchema = z
     email: z.string().email().transform((v) => v.toLowerCase()).optional(),
     whatsappNumber: z.string().min(6).optional(),
     fullName: z.string().min(2),
+    // Uppercased here so 'ng', 'NG' and 'Ng' cannot coexist and route
+    // differently. Optional: existing users have none and must not be blocked.
+    country: z.string().length(2).transform((v) => v.toUpperCase()).optional(),
     primaryChannel: z.enum(['email', 'whatsapp', 'both']).optional()
   })
   .refine((value) => value.email || value.whatsappNumber, {
@@ -33,6 +36,7 @@ export async function createUser(input: z.infer<typeof createUserSchema>) {
     email: input.email ?? '',
     whatsappNumber: input.whatsappNumber,
     fullName: input.fullName,
+    country: input.country,
     primaryChannel,
     createdAt: now,
     updatedAt: now

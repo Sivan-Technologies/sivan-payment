@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { env } from '../config/env.js';
 import { parseBody } from '../shared/validation.js';
-import { forbidden } from '../shared/errors.js';
+import { forbidden, notFound } from '../shared/errors.js';
+import { db } from '../database/json-database.js';
+import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { cancelWhatsappLink, getIdentityStatus, redeemIdentityLinkSchema, redeemWhatsappLink, startWhatsappLink, unlinkWhatsappIdentity } from './identity.service.js';
 
 function getAuthUserId(request: any) {
@@ -16,7 +18,38 @@ function requireIdentityServiceSecret(request: any) {
   if (value !== configured) throw forbidden('Invalid identity link service secret.');
 }
 
+/**
+ * A user may only read their own plan.
+ *
+ * app.ts already rejects a token whose subject differs from a :userId in the
+ * path, but that guard keys on specific route shapes - so this is asserted
+ * here rather than assumed, since the cost of being wrong is one user seeing
+ * another's verification state.
+ */
+function ensureOwnUser(request: any, userId: string) {
+  const authUserId = request.authUser?.sub;
+  if (authUserId && authUserId !== userId) {
+    throw forbidden('You cannot access another user account');
+  }
+}
+
 export async function identityRoutes(app: FastifyInstance) {
+  /**
+   * Which verification flow should this user be shown?
+   *
+   * Served from the backend rather than branched in the UI, so the two cannot
+   * disagree. A frontend that decides independently will eventually show a
+   * Nigerian form to a US user - a check that cannot possibly succeed for
+   * them, with no way to act on the failure.
+   */
+  app.get('/api/users/:userId/verification-plan', async (request) => {
+    const { userId } = request.params as { userId: string };
+    ensureOwnUser(request, userId);
+    const user = await db.findUserById(userId);
+    if (!user) throw notFound('User');
+    return { data: verificationPlanFor(user.country) };
+  });
+
   app.get('/api/users/me/identity', async (request) => {
     const userId = getAuthUserId(request);
     if (!userId) throw forbidden('Authentication required.');

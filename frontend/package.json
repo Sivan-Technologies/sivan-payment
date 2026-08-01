@@ -10,7 +10,8 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc -b --pretty",
     "test:rails": "tsx scripts/test-rails.ts",
-    "test:ngn-bank": "tsx scripts/test-ngn-bank.ts"
+    "test:ngn-bank": "tsx scripts/test-ngn-bank.ts",
+    "test:verification-path": "tsx scripts/test-verification-path.ts"
   },
   "dependencies": {
     "@sentry/react": "^10.65.0",

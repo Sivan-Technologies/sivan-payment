@@ -190,6 +190,14 @@ export interface UserRecord {
   email: string;
   whatsappNumber?: string;
   fullName: string;
+  /**
+   * ISO 3166-1 alpha-2, uppercase. DECLARED, not proven.
+   *
+   * Decides which verification flow a user is shown - Nigeria verifies via
+   * bank name resolution, everywhere else via Bridge. What a user is actually
+   * PERMITTED to do is decided by verified evidence, never by this field.
+   */
+  country?: string;
   username?: string;
   usernameUpdatedAt?: string;
   primaryChannel?: 'email' | 'whatsapp' | 'both';

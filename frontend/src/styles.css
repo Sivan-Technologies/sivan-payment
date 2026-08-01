@@ -1528,3 +1528,215 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 
 .receive-empty { display: grid; gap: 10px; justify-items: start; padding: 8px 0; }
 .receive-empty h3 { margin: 0; }
+
+/* ---------------------------------------------------------------------------
+   Verification modal
+   Level 1 is short - bank, ten digits, confirm - so it happens in place rather
+   than bouncing the user to a page and losing the flow they were in.
+   --------------------------------------------------------------------------- */
+
+.sv-modal-backdrop {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(4, 6, 10, 0.72);
+  backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  animation: sv-fade 160ms ease-out;
+}
+
+.sv-modal {
+  width: 100%; max-width: 440px;
+  /* Caps at the viewport so a long bank list cannot push the confirm button
+     off-screen on a short phone. */
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: linear-gradient(180deg, #10141b 0%, #0b0e13 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 28px;
+  position: relative;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  animation: sv-rise 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes sv-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sv-rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.98) }
+  to   { opacity: 1; transform: translateY(0) scale(1) }
+}
+
+/* Respect a user who has asked the OS for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  .sv-modal-backdrop, .sv-modal { animation: none }
+}
+
+.sv-modal-close {
+  position: absolute; top: 16px; right: 16px;
+  width: 32px; height: 32px; border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #9aa7b4; font-size: 18px; line-height: 1; cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.sv-modal-close:hover { background: rgba(255, 255, 255, 0.1); color: #eef3f7 }
+
+.sv-modal-eyebrow {
+  font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
+  color: #34d399; font-weight: 600;
+}
+.sv-modal-head h2 { margin: 10px 0 6px; font-size: 24px; letter-spacing: -0.02em; color: #eef3f7 }
+.sv-modal-sub { margin: 0; color: #8b98a6; font-size: 14px; line-height: 1.55 }
+.sv-modal-body { margin-top: 22px; display: flex; flex-direction: column; gap: 14px }
+
+.sv-steps { display: flex; gap: 8px; margin-bottom: 4px }
+.sv-step {
+  flex: 1; display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: #5f6b78;
+  padding: 8px 10px; border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.sv-step span {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 10px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.sv-step.active { color: #eef3f7; border-color: rgba(52, 211, 153, 0.3) }
+.sv-step.active span { background: #34d399; color: #06251a; font-weight: 700 }
+.sv-step.done { color: #34d399 }
+.sv-step.done span { background: rgba(52, 211, 153, 0.16); color: #34d399 }
+
+.sv-field { display: flex; flex-direction: column; gap: 7px }
+.sv-field > span { font-size: 12px; color: #8b98a6; font-weight: 500 }
+.sv-field input {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px; padding: 13px 14px;
+  color: #eef3f7; font-size: 15px; width: 100%;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.sv-field input:focus {
+  outline: none; border-color: rgba(52, 211, 153, 0.55);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.1);
+}
+.sv-hint { font-size: 11px; color: #5f6b78; font-style: normal }
+
+.sv-bank-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto }
+.sv-bank {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 12px 13px; border-radius: 12px; cursor: pointer; text-align: left;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #eef3f7; font-size: 14px;
+  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.sv-bank:hover {
+  background: rgba(52, 211, 153, 0.07);
+  border-color: rgba(52, 211, 153, 0.28);
+  transform: translateX(2px);
+}
+.sv-bank span:not(.sv-bank-dot) { flex: 1 }
+.sv-bank em { color: #5f6b78; font-style: normal }
+.sv-bank img { border-radius: 5px; object-fit: contain; background: #fff }
+.sv-bank-dot {
+  width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+  background: rgba(52, 211, 153, 0.15); color: #34d399; font-size: 11px; font-weight: 700;
+}
+
+.sv-selected {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 13px; border-radius: 12px;
+  background: rgba(52, 211, 153, 0.06);
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  font-size: 14px; color: #eef3f7;
+}
+.sv-selected strong { flex: 1; font-weight: 500 }
+.sv-selected button {
+  background: none; border: none; color: #34d399; cursor: pointer; font-size: 12px;
+}
+
+.sv-resolving { display: flex; align-items: center; gap: 9px; color: #8b98a6; font-size: 13px }
+.sv-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(52, 211, 153, 0.25); border-top-color: #34d399;
+  animation: sv-spin 700ms linear infinite;
+}
+@keyframes sv-spin { to { transform: rotate(360deg) } }
+
+.sv-resolved {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px; border-radius: 14px;
+  background: rgba(52, 211, 153, 0.07);
+  border: 1px solid rgba(52, 211, 153, 0.24);
+  animation: sv-rise 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sv-resolved-head { display: flex; align-items: center; gap: 11px }
+.sv-resolved-head strong { display: block; font-size: 16px; color: #eef3f7; letter-spacing: -0.01em }
+.sv-resolved-head small { display: block; color: #8b98a6; font-size: 12px; margin-top: 2px }
+.sv-tick {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: #34d399; color: #06251a;
+  display: grid; place-items: center; font-weight: 700;
+}
+
+.sv-primary {
+  width: 100%; padding: 14px; border: none; border-radius: 12px;
+  background: linear-gradient(180deg, #3ddba3 0%, #2bbd8a 100%);
+  color: #04140e; font-size: 15px; font-weight: 600; cursor: pointer;
+  transition: filter 140ms ease, transform 140ms ease;
+}
+.sv-primary:hover:not(:disabled) { filter: brightness(1.07) }
+.sv-primary:active:not(:disabled) { transform: translateY(1px) }
+.sv-primary:disabled { opacity: 0.5; cursor: not-allowed }
+
+.sv-bridge-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; counter-reset: sv }
+.sv-bridge-steps li {
+  counter-increment: sv;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 14px 12px 44px; position: relative;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.sv-bridge-steps li::before {
+  content: counter(sv);
+  position: absolute; left: 13px; top: 13px;
+  width: 21px; height: 21px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  background: rgba(52, 211, 153, 0.15); color: #34d399;
+}
+.sv-bridge-steps strong { font-size: 14px; color: #eef3f7; font-weight: 500 }
+.sv-bridge-steps span { font-size: 12px; color: #7d8a97 }
+
+.sv-modal-unlocks {
+  list-style: none; margin: 20px 0 0; padding: 16px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex; flex-direction: column; gap: 7px;
+}
+.sv-modal-unlocks li { font-size: 12.5px; color: #7d8a97; display: flex; align-items: center; gap: 8px }
+.sv-modal-unlocks li::before { content: '✓'; color: #34d399; font-weight: 700 }
+
+.sv-muted { color: #8b98a6; font-size: 13px; margin: 0; line-height: 1.5 }
+.sv-muted strong { color: #eef3f7; font-weight: 600 }
+.sv-warn {
+  margin: 0; font-size: 12.5px; color: #fbbf24; line-height: 1.5;
+  background: rgba(251, 191, 36, 0.07);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 10px; padding: 10px 12px;
+}
+.sv-error {
+  margin: 0; font-size: 13px; color: #f87171;
+  background: rgba(248, 113, 113, 0.07);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 10px; padding: 11px 13px;
+}
+
+@media (max-width: 520px) {
+  .sv-modal { padding: 22px 18px; border-radius: 18px; max-height: calc(100vh - 24px) }
+  .sv-modal-head h2 { font-size: 21px }
+  /* Labels drop away on narrow screens; the numbered circles still convey
+     position without wrapping the row. */
+  .sv-step { font-size: 0; padding: 8px; justify-content: center }
+  .sv-step span { font-size: 10px }
+}
