@@ -6,6 +6,7 @@ import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/
 import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
+import { getWalletProviderHealth, getAllWalletProviderHealth } from '../../wallets/wallet-health.service.js';
 import {
   getWalletControlsView,
   updateWalletControls,
@@ -183,6 +184,24 @@ export async function ngnRoutes(app: FastifyInstance) {
    * operator cannot judge a switch without seeing what it switches FROM.
    */
   app.get('/api/admin/wallets/controls', async () => ({ data: await getWalletControlsView() }));
+
+  /**
+   * Can this deployment actually reach its wallet provider?
+   *
+   * Exists because credential problems were only observable by creating a
+   * wallet - which sits behind the KYC gate, so a misconfigured deployment
+   * looked identical to a working one when tested without a verified bank
+   * account. This asks the provider directly: no user, no KYC, nothing
+   * created.
+   */
+  app.get('/api/admin/wallets/health', async (request) => {
+    const query = request.query as { all?: string };
+    return {
+      data: query.all === 'true'
+        ? await getAllWalletProviderHealth()
+        : await getWalletProviderHealth(),
+    };
+  });
 
   app.put('/api/admin/wallets/controls', async (request) => ({
     data: await updateWalletControls(parseBody(updateWalletControlsSchema, request.body)),
