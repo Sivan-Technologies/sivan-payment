@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { env } from '../config/env.js';
 import type {
+  VerificationLimitOverrideRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
   AceSupportSessionRecord,
@@ -181,6 +182,7 @@ export class PostgresDatabase {
       const ngnTransfers = await optionalQuery(client, 'select * from payments_ngn_transfers order by created_at asc');
       const ngnWebhooks = await optionalQuery(client, 'select * from payments_ngn_webhook_events order by created_at asc');
       const userWallets = await optionalQuery(client, 'select * from payments_user_wallets order by created_at asc');
+      const verificationLimitOverrides = await optionalQuery(client, 'select * from payments_verification_limit_overrides order by flow asc, rail asc, level asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -191,6 +193,7 @@ export class PostgresDatabase {
         virtualAccountEvents: virtualAccountEvents.rows.map(mapVirtualAccountEvent),
         virtualAccountTransactions: virtualAccountTransactions.rows.map(mapVirtualAccountTransaction),
         ngnControls: ngnControls.rows.map(mapNgnControls),
+        verificationLimitOverrides: verificationLimitOverrides.rows.map(mapVerificationLimitOverride),
         ngnQuotes: ngnQuotes.rows.map(mapNgnQuote),
         ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
         ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
@@ -492,6 +495,42 @@ export class PostgresDatabase {
   async upsertNgnControlsRecord(record: NgnControlsRecord) {
     const client = await this.pool.connect();
     try { await upsertNgnControls(client, record); return record; } finally { client.release(); }
+  }
+
+  async listVerificationLimitOverrides(): Promise<VerificationLimitOverrideRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      return (await optionalQuery(client, 'select * from payments_verification_limit_overrides order by flow asc, rail asc, level asc')).rows.map(mapVerificationLimitOverride);
+    } finally { client.release(); }
+  }
+
+  async upsertVerificationLimitOverride(record: Omit<VerificationLimitOverrideRecord, 'id'>) {
+    const client = await this.pool.connect();
+    const full: VerificationLimitOverrideRecord = { id: `vlo_${record.flow}_${record.rail}_${record.level}`, ...record };
+    try {
+      // Conflict target is the COMBINATION, not the id. Two rows for one
+      // (flow, rail, level) would make the effective ceiling depend on row
+      // order, which is not a property a compliance limit may have.
+      await client.query(
+        `insert into payments_verification_limit_overrides (id, flow, rail, level, cumulative_ngn, reason, updated_by, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)
+         on conflict (flow, rail, level) do update set
+           cumulative_ngn = excluded.cumulative_ngn,
+           reason = excluded.reason,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`,
+        [full.id, full.flow, full.rail, full.level, full.cumulativeNgn, full.reason ?? null, full.updatedBy, full.updatedAt]
+      );
+      return full;
+    } finally { client.release(); }
+  }
+
+  async deleteVerificationLimitOverride(flow: string, rail: string, level: number) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('delete from payments_verification_limit_overrides where flow = $1 and rail = $2 and level = $3', [flow, rail, level]);
+      return true;
+    } finally { client.release(); }
   }
 
   async listNgnQuotes(): Promise<NgnQuoteRecord[]> {
@@ -1400,6 +1439,21 @@ function mapNgnTransfer(row: any): NgnTransferRecord {
 
 function mapNgnWebhook(row: any): NgnWebhookRecord {
   return { id: row.id, provider: row.provider, providerEventId: row.provider_event_id, eventType: row.event_type, transferId: str(row.transfer_id), payload: row.payload, processedAt: optionalIso(row.processed_at), createdAt: iso(row.created_at) };
+}
+
+function mapVerificationLimitOverride(row: any): VerificationLimitOverrideRecord {
+  return {
+    id: row.id,
+    flow: row.flow,
+    rail: row.rail,
+    level: Number(row.level),
+    // null must survive as null. Coercing it to 0 would turn "unlimited" into
+    // "closed", which is the most damaging possible misreading of this value.
+    cumulativeNgn: row.cumulative_ngn === null || row.cumulative_ngn === undefined ? null : Number(row.cumulative_ngn),
+    reason: row.reason ?? undefined,
+    updatedBy: row.updated_by,
+    updatedAt: iso(row.updated_at),
+  };
 }
 
 async function upsertNgnControls(client: pg.PoolClient, item: NgnControlsRecord) {

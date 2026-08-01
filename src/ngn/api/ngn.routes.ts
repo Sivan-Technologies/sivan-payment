@@ -5,6 +5,13 @@ import { parseBody } from '../../shared/validation.js';
 import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
 import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
+import {
+  getVerificationLimitMatrix,
+  setVerificationLimit,
+  setVerificationLimitSchema,
+  clearVerificationLimit,
+  clearVerificationLimitSchema,
+} from '../../kyc/service/verification-limits.service.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
 import { PajNgnProvider } from '../provider/paj.provider.js';
 import { getNgnReconciliationSummary } from '../service/ngn-reconciliation.service.js';
@@ -72,6 +79,29 @@ export async function ngnRoutes(app: FastifyInstance) {
 
   app.get('/api/admin/ngn/controls', async () => ({ data: await getNgnControls() }));
   app.put('/api/admin/ngn/controls', async (request) => ({ data: await updateNgnControls(parseBody(updateNgnControlsSchema, request.body)) }));
+
+  /**
+   * Verification ceilings, admin-controlled.
+   *
+   * These were compiled into FLOW_LIMITS and could only be changed by editing
+   * code and redeploying. That produced a deadlock worth stating: Breet's live
+   * minimum deposit is $50 (~NGN 80,000) while the BANK off-ramp ceiling was
+   * NGN 50,000 per 30 days, so a Level 1 user could not clear a single
+   * withdrawal.
+   *
+   * GET returns default, override and effective side by side, because an
+   * operator cannot judge a limit without seeing what it was changed from.
+   */
+  app.get('/api/admin/verification-limits', async () => ({ data: await getVerificationLimitMatrix() }));
+
+  app.put('/api/admin/verification-limits', async (request) => ({
+    data: await setVerificationLimit(parseBody(setVerificationLimitSchema, request.body)),
+  }));
+
+  /** Remove an override and fall back to the shipped default. */
+  app.delete('/api/admin/verification-limits', async (request) => ({
+    data: await clearVerificationLimit(parseBody(clearVerificationLimitSchema, request.body)),
+  }));
   app.get('/api/admin/ngn/quotes', async (request) => {
     const query = request.query as { userId?: string };
     return { data: await listNgnQuotes({ userId: query.userId }) };

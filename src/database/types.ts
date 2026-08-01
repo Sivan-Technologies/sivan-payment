@@ -618,6 +618,23 @@ export interface UnifiedWebhookLogRecord {
   createdAt: string;
 }
 
+/**
+ * An admin-set verification ceiling, replacing the shipped FLOW_LIMITS value.
+ *
+ * `cumulativeNgn: null` means UNLIMITED and is deliberately distinct from 0,
+ * which closes the flow entirely. The two must never be conflated.
+ */
+export interface VerificationLimitOverrideRecord {
+  id: string;
+  flow: string;
+  rail: string;
+  level: number;
+  cumulativeNgn: number | null;
+  reason?: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export interface DatabaseShape {
   users: UserRecord[];
   customerIdentityLinks: CustomerIdentityLinkRecord[];
@@ -660,6 +677,7 @@ export interface DatabaseShape {
   virtualAccountEvents: VirtualAccountEventRecord[];
   virtualAccountTransactions: VirtualAccountTransactionRecord[];
   ngnControls: NgnControlsRecord[];
+  verificationLimitOverrides: VerificationLimitOverrideRecord[];
   ngnQuotes: NgnQuoteRecord[];
   ngnTransfers: NgnTransferRecord[];
   ngnWebhooks: NgnWebhookRecord[];

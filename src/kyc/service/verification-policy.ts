@@ -59,8 +59,46 @@ export interface Decision {
   bridgeUplift?: boolean;
 }
 
-/** Ceiling for a (flow, rail, level), or 0 if the combination is not permitted. */
-export function limitFor(flow: FlowType, rail: RailFamily, level: VerificationLevel): number | null {
+/**
+ * A ceiling an admin has deliberately set, replacing the shipped default.
+ *
+ * Sparse on purpose: only combinations an admin has actually changed appear.
+ * `cumulativeNgn: null` is UNLIMITED and is meaningfully different from 0,
+ * which closes the flow - so the presence of the entry, not the value, is what
+ * signals an override.
+ */
+export interface VerificationLimitOverride {
+  flow: FlowType;
+  rail: RailFamily;
+  level: VerificationLevel;
+  cumulativeNgn: number | null;
+}
+
+/**
+ * Ceiling for a (flow, rail, level), or 0 if the combination is not permitted.
+ *
+ * Deliberately still SYNCHRONOUS and pure. Overrides are passed in rather than
+ * fetched here: this function sits inside decide(), which is called on every
+ * quote, and turning it into a database read would put an I/O call on the hot
+ * path and make the policy untestable without a database.
+ *
+ * The caller loads overrides once and hands them down.
+ */
+export function limitFor(
+  flow: FlowType,
+  rail: RailFamily,
+  level: VerificationLevel,
+  overrides?: readonly VerificationLimitOverride[]
+): number | null {
+  // An override wins outright. It is not clamped against the default, and
+  // that is intentional: an admin raising the BANK off-ramp ceiling to clear
+  // Breet's $50 minimum is doing exactly what this exists for, and silently
+  // capping them back to the shipped number would be a lie in the UI.
+  const override = overrides?.find(
+    (o) => o.flow === flow && o.rail === rail && o.level === level
+  );
+  if (override) return override.cumulativeNgn;
+
   const match = FLOW_LIMITS.find((l) => l.flow === flow && l.rail === rail && l.level === level);
   if (!match) return 0;
   return match.cumulativeNgn;
@@ -76,7 +114,8 @@ export function limitFor(flow: FlowType, rail: RailFamily, level: VerificationLe
 export function lowestSufficientLevel(
   flow: FlowType,
   rail: RailFamily,
-  totalNgn: number
+  totalNgn: number,
+  overrides?: readonly VerificationLimitOverride[]
 ): VerificationLevel | undefined {
   const ladder = [
     VerificationLevel.BANK,
@@ -84,7 +123,10 @@ export function lowestSufficientLevel(
     VerificationLevel.ENHANCED,
   ];
   for (const level of ladder) {
-    const limit = limitFor(flow, rail, level);
+    // Overrides must reach here too. Without them this would tell a user to
+    // complete IDENTITY when the admin had already raised BANK high enough to
+    // clear their transaction - asking for documents that are not needed.
+    const limit = limitFor(flow, rail, level, overrides);
     if (limit === null || totalNgn <= limit) return level;
   }
   return undefined;
@@ -115,7 +157,15 @@ export function levelIsIntact(state: VerificationState): boolean {
   return true;
 }
 
-export function decide(state: VerificationState, request: TransactionRequest): Decision {
+export function decide(
+  state: VerificationState,
+  request: TransactionRequest,
+  /**
+   * Admin ceilings, loaded once by the caller. Omitted in tests and in any
+   * path that only cares about the shipped defaults.
+   */
+  overrides?: readonly VerificationLimitOverride[]
+): Decision {
   const currentLevel = state.level;
   const amount = Number(request.amountNgn);
   const prior = Number(request.priorVolumeNgn);
@@ -184,7 +234,7 @@ export function decide(state: VerificationState, request: TransactionRequest): D
     };
   }
 
-  const limit = limitFor(request.flow, request.rail, currentLevel);
+  const limit = limitFor(request.flow, request.rail, currentLevel, overrides);
   const total = prior + amount;
 
   if (limit === null) {
@@ -211,7 +261,7 @@ export function decide(state: VerificationState, request: TransactionRequest): D
     };
   }
 
-  const requiredLevel = lowestSufficientLevel(request.flow, request.rail, total);
+  const requiredLevel = lowestSufficientLevel(request.flow, request.rail, total, overrides);
 
   return {
     allowed: false,

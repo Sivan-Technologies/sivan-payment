@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -48,6 +48,7 @@ const emptyDb = (): DatabaseShape => ({
   virtualAccountEvents: [],
   virtualAccountTransactions: [],
   ngnControls: [],
+  verificationLimitOverrides: [],
   ngnQuotes: [],
   ngnTransfers: [],
   ngnWebhooks: []
@@ -700,6 +701,39 @@ export class JsonDatabase {
       if (index >= 0) data.ngnControls[index] = record;
       else data.ngnControls.push(record);
       return record;
+    });
+  }
+
+  async listVerificationLimitOverrides(): Promise<VerificationLimitOverrideRecord[]> {
+    const data = await this.read();
+    return data.verificationLimitOverrides ?? [];
+  }
+
+  async upsertVerificationLimitOverride(record: Omit<VerificationLimitOverrideRecord, 'id'>) {
+    return this.mutate((data) => {
+      data.verificationLimitOverrides = data.verificationLimitOverrides ?? [];
+      // Keyed on the combination, never on a generated id: two rows for one
+      // (flow, rail, level) would make the effective ceiling ambiguous, and
+      // which one won would depend on insertion order.
+      const index = data.verificationLimitOverrides.findIndex(
+        (item) => item.flow === record.flow && item.rail === record.rail && item.level === record.level
+      );
+      const full: VerificationLimitOverrideRecord = {
+        id: `vlo_${record.flow}_${record.rail}_${record.level}`,
+        ...record,
+      };
+      if (index >= 0) data.verificationLimitOverrides[index] = full;
+      else data.verificationLimitOverrides.push(full);
+      return full;
+    });
+  }
+
+  async deleteVerificationLimitOverride(flow: string, rail: string, level: number) {
+    return this.mutate((data) => {
+      data.verificationLimitOverrides = (data.verificationLimitOverrides ?? []).filter(
+        (item) => !(item.flow === flow && item.rail === rail && item.level === level)
+      );
+      return true;
     });
   }
 
