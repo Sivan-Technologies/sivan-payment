@@ -206,6 +206,18 @@ services:
       # adding a signer later needs the owner's signature, which Sivan lacks.
       - key: PRIVY_AUTHORIZATION_KEY_QUORUM_ID
         sync: false
+      # Solana RPC. NOT a redundancy layer over Privy - a component Privy does
+      # not provide. Privy signs and broadcasts; it does not read chain state,
+      # and whether a recipient already holds an SPL token account decides
+      # whether a transfer works at all. Alchemy or similar as primary.
+      - key: SOLANA_RPC_URL
+        sync: false
+      # A SECOND provider, ideally a different vendor. Only transport failures
+      # fail over - a chain answer like "account not found" is returned, not
+      # retried. Without either, the code falls back to the public endpoint,
+      # which is rate-limited and explicitly not for production.
+      - key: SOLANA_RPC_FALLBACK_URL
+        sync: false
       - key: VIRTUAL_ACCOUNTS_ENABLED
         value: "true"
       - key: VIRTUAL_ACCOUNT_REQUESTS_ENABLED
@@ -432,4 +444,16 @@ services:
       # CREATION - a wallet made without it can never be delegated to, because
       # adding a signer later needs the owner's signature, which Sivan lacks.
       - key: PRIVY_AUTHORIZATION_KEY_QUORUM_ID
+        sync: false
+      # Solana RPC. NOT a redundancy layer over Privy - a component Privy does
+      # not provide. Privy signs and broadcasts; it does not read chain state,
+      # and whether a recipient already holds an SPL token account decides
+      # whether a transfer works at all. Alchemy or similar as primary.
+      - key: SOLANA_RPC_URL
+        sync: false
+      # A SECOND provider, ideally a different vendor. Only transport failures
+      # fail over - a chain answer like "account not found" is returned, not
+      # retried. Without either, the code falls back to the public endpoint,
+      # which is rate-limited and explicitly not for production.
+      - key: SOLANA_RPC_FALLBACK_URL
         sync: false

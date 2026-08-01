@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
 import { forbidden } from '../../shared/errors.js';
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
+import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import type { WalletProvider } from './wallet-provider.js';
 import type {
   CreateWalletInput,
@@ -648,13 +649,10 @@ export class PrivyWalletProvider implements WalletProvider {
       };
     }
 
-    // Solana needs a fully built, blockhash-bearing transaction, which is a
-    // different construction path entirely. Refusing beats submitting
-    // something malformed against a user's funds.
+    // Solana takes a fully built transaction rather than a description, so it
+    // is constructed here and submitted through a different RPC method.
     if (input.chain === 'solana') {
-      throw forbidden(
-        'Delegated signing is not implemented for Solana yet. Use an EVM network or have the user sign.'
-      );
+      return this.sendSolanaTransfer(input, signingKey, caip2);
     }
 
     const token = erc20TokenAddress(input.chain, input.asset, isProduction());
@@ -728,6 +726,105 @@ export class PrivyWalletProvider implements WalletProvider {
       status: 'submitted',
       txHash: result?.data?.hash ?? result?.hash,
       rawProviderPayload: result,
+    };
+  }
+
+  /**
+   * Move SPL tokens out of a user's Solana wallet.
+   *
+   * Separate from the EVM path because the shape genuinely differs: EVM takes
+   * a transaction DESCRIPTION that Privy completes, Solana takes a fully built
+   * and serialised transaction that Privy only signs and broadcasts.
+   *
+   * The associated token account is resolved and checked before anything is
+   * signed - see buildSplTransfer. That check needs an RPC, which is why
+   * Solana support required an RPC layer and EVM did not.
+   */
+  private async sendSolanaTransfer(
+    input: WalletTransferInput,
+    signingKey: string,
+    caip2: string
+  ): Promise<WalletTransfer> {
+    const production = isProduction();
+    const mint = solanaMintFor(input.asset, production);
+    if (!mint) {
+      throw forbidden(
+        `No Solana mint known for ${String(input.asset).toUpperCase()} in this environment.`
+      );
+    }
+
+    // The SENDER's address is needed to derive their token account, and
+    // WalletTransferInput carries only the wallet ID. Resolved here rather
+    // than added to the interface: every caller already passes an id the
+    // provider can look up, and widening the interface would push a
+    // Solana-specific field onto the EVM and Bridge paths that never use it.
+    const wallet = await this.getWallet(input.providerWalletId);
+    if (!wallet?.address) {
+      throw forbidden('Could not resolve the sending wallet address for this Solana transfer.');
+    }
+
+    const built = await buildSplTransfer({
+      fromOwner: wallet.address,
+      toOwner: input.toAddress,
+      mint,
+      amount: input.amount,
+      decimals: 6,
+      production,
+    });
+
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const body = {
+      method: 'signAndSendTransaction',
+      caip2,
+      // Solana has no user-pays gas mode - Privy's token-gas feature is EVM
+      // only - so sponsorship is the only way a user without SOL can move
+      // USDC. Requested here and reported plainly when it is switched off.
+      sponsor: true,
+      params: { transaction: built.transactionBase64, encoding: 'base64' },
+    };
+
+    const { appId } = credentials();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result: any = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
+      if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
+        throw forbidden(
+          `Gas sponsorship is not available for ${caip2}. Solana has no user-pays gas mode, so ` +
+            'either enable sponsorship for this network in the Privy dashboard or the wallet must hold SOL.'
+        );
+      }
+      throw new Error(`Privy: ${message}`);
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId: result?.transaction_id ?? result?.data?.signature ?? `privy_sol_${crypto.randomUUID()}`,
+      status: 'submitted',
+      txHash: result?.data?.signature ?? result?.signature,
+      rawProviderPayload: {
+        ...result,
+        // Carried so a caller can explain a slightly larger SOL deduction: the
+        // sender pays rent when the recipient had no token account.
+        createdRecipientTokenAccount: built.createsRecipientAccount,
+        estimatedRentSol: built.estimatedRentSol,
+      },
     };
   }
 

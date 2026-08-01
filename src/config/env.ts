@@ -58,6 +58,19 @@ const envSchema = z.object({
   BRIDGE_API_KEY: z.string().optional().default(''),
   BRIDGE_WEBHOOK_PUBLIC_KEY: z.string().optional().default(''),
   AVALANCHE_RPC_URL: z.string().url().optional(),
+  /**
+   * Solana RPC, primary then fallback.
+   *
+   * Needed because Privy SIGNS but does not READ. Whether a recipient already
+   * holds a USDC token account is a chain-state question only an RPC can
+   * answer, and getting it wrong means a transfer that fails or funds sent to
+   * an account nobody can spend from.
+   *
+   * The public endpoint works but is rate-limited and explicitly not for
+   * production, so it is the last resort rather than the default.
+   */
+  SOLANA_RPC_URL: z.string().url().optional(),
+  SOLANA_RPC_FALLBACK_URL: z.string().url().optional(),
   WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
   SIVAN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
