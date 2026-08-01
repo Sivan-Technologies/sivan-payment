@@ -637,6 +637,21 @@ export interface UnifiedWebhookLogRecord {
  * `cumulativeNgn: null` means UNLIMITED and is deliberately distinct from 0,
  * which closes the flow entirely. The two must never be conflated.
  */
+/**
+ * Admin-controlled wallet provider.
+ *
+ * `activeProvider` undefined means "use the WALLET_PROVIDER environment
+ * variable" - distinct from any provider name, so the table existing changes
+ * nothing until an admin deliberately overrides it.
+ */
+export interface WalletControlsRecord {
+  id: string;
+  activeProvider?: string;
+  reason?: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export interface VerificationLimitOverrideRecord {
   id: string;
   flow: string;
@@ -691,6 +706,7 @@ export interface DatabaseShape {
   virtualAccountTransactions: VirtualAccountTransactionRecord[];
   ngnControls: NgnControlsRecord[];
   verificationLimitOverrides: VerificationLimitOverrideRecord[];
+  walletControls: WalletControlsRecord[];
   ngnQuotes: NgnQuoteRecord[];
   ngnTransfers: NgnTransferRecord[];
   ngnWebhooks: NgnWebhookRecord[];

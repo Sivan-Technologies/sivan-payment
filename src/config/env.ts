@@ -116,6 +116,14 @@ const envSchema = z.object({
   // Privy - embedded wallet layer. https://docs.privy.io
   // Wallets are USER-OWNED: Sivan holds neither funds nor keys, so a transfer
   // needs the user's signature. See privy-wallet.provider.ts for why.
+  /**
+   * Fallback wallet provider, used when no admin override is set.
+   *
+   * Was only ever read through process.env, so it was invisible to the typed
+   * config and could not be validated. The admin control in
+   * wallet-controls.service.ts takes precedence over this.
+   */
+  WALLET_PROVIDER: z.string().optional().default('mock'),
   PRIVY_APP_ID: z.string().optional().default(''),
   PRIVY_APP_SECRET: z.string().optional().default(''),
   /**

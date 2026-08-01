@@ -7,6 +7,7 @@ import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { getWalletProvider } from './provider/provider-registry.js';
+import { resolveActiveWalletProvider } from './wallet-controls.service.js';
 import { isAssetSupportedOnChain } from '../controls/payment-controls.service.js';
 
 /**
@@ -87,7 +88,7 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const existing = await db.findUserWallet(userId, chain);
   if (existing) return existing;
 
-  const provider = getWalletProvider();
+  const provider = getWalletProvider(await resolveActiveWalletProvider());
   const { customer } = await requireWalletEligibility(userId, provider.name);
 
   if (!provider.supportedChains.includes(chain)) {
@@ -161,7 +162,7 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   const wallet = await db.findUserWallet(userId, chain);
   if (!wallet) return null;
 
-  const provider = getWalletProvider();
+  const provider = getWalletProvider(await resolveActiveWalletProvider());
 
   // undefined means "could not load", [] means "loaded, and it is genuinely
   // zero". Collapsing the two would show a confirmed $0.00 to a user whose

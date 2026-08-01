@@ -6,6 +6,11 @@ import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/
 import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
+import {
+  getWalletControlsView,
+  updateWalletControls,
+  updateWalletControlsSchema,
+} from '../../wallets/wallet-controls.service.js';
 import { listPaymentControls } from '../../controls/payment-controls.service.js';
 import {
   usableForOnramp,
@@ -165,6 +170,23 @@ export async function ngnRoutes(app: FastifyInstance) {
       },
     };
   });
+
+  /**
+   * Wallet provider, admin-controlled.
+   *
+   * WALLET_PROVIDER lived only in the environment, so changing custody
+   * provider meant a redeploy. Safe to change at runtime because every wallet
+   * row records the provider that issued it - switching decides who issues the
+   * NEXT wallet and never orphans an existing one.
+   *
+   * GET returns the environment default alongside the override, since an
+   * operator cannot judge a switch without seeing what it switches FROM.
+   */
+  app.get('/api/admin/wallets/controls', async () => ({ data: await getWalletControlsView() }));
+
+  app.put('/api/admin/wallets/controls', async (request) => ({
+    data: await updateWalletControls(parseBody(updateWalletControlsSchema, request.body)),
+  }));
 
   app.get('/api/admin/ngn/controls', async () => ({ data: await getNgnControls() }));
   app.put('/api/admin/ngn/controls', async (request) => ({ data: await updateNgnControls(parseBody(updateNgnControlsSchema, request.body)) }));

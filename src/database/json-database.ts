@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, WalletControlsRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -49,6 +49,7 @@ const emptyDb = (): DatabaseShape => ({
   virtualAccountTransactions: [],
   ngnControls: [],
   verificationLimitOverrides: [],
+  walletControls: [],
   ngnQuotes: [],
   ngnTransfers: [],
   ngnWebhooks: []
@@ -700,6 +701,21 @@ export class JsonDatabase {
       const index = data.ngnControls.findIndex((item) => item.id === record.id);
       if (index >= 0) data.ngnControls[index] = record;
       else data.ngnControls.push(record);
+      return record;
+    });
+  }
+
+  async listWalletControls(): Promise<WalletControlsRecord[]> {
+    const data = await this.read();
+    return data.walletControls ?? [];
+  }
+
+  async upsertWalletControlsRecord(record: WalletControlsRecord) {
+    return this.mutate((data) => {
+      data.walletControls = data.walletControls ?? [];
+      const index = data.walletControls.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.walletControls[index] = record;
+      else data.walletControls.push(record);
       return record;
     });
   }

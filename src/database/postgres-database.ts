@@ -2,6 +2,7 @@ import pg from 'pg';
 import { env } from '../config/env.js';
 import type {
   VerificationLimitOverrideRecord,
+  WalletControlsRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
   AceSupportSessionRecord,
@@ -183,6 +184,7 @@ export class PostgresDatabase {
       const ngnWebhooks = await optionalQuery(client, 'select * from payments_ngn_webhook_events order by created_at asc');
       const userWallets = await optionalQuery(client, 'select * from payments_user_wallets order by created_at asc');
       const verificationLimitOverrides = await optionalQuery(client, 'select * from payments_verification_limit_overrides order by flow asc, rail asc, level asc');
+      const walletControls = await optionalQuery(client, 'select * from payments_wallet_controls order by id asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -194,6 +196,7 @@ export class PostgresDatabase {
         virtualAccountTransactions: virtualAccountTransactions.rows.map(mapVirtualAccountTransaction),
         ngnControls: ngnControls.rows.map(mapNgnControls),
         verificationLimitOverrides: verificationLimitOverrides.rows.map(mapVerificationLimitOverride),
+        walletControls: walletControls.rows.map(mapWalletControls),
         ngnQuotes: ngnQuotes.rows.map(mapNgnQuote),
         ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
         ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
@@ -495,6 +498,43 @@ export class PostgresDatabase {
   async upsertNgnControlsRecord(record: NgnControlsRecord) {
     const client = await this.pool.connect();
     try { await upsertNgnControls(client, record); return record; } finally { client.release(); }
+  }
+
+  async listWalletControls(): Promise<WalletControlsRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      return (await optionalQuery(client, 'select * from payments_wallet_controls order by id asc')).rows.map(mapWalletControls);
+    } finally { client.release(); }
+  }
+
+  async upsertWalletControlsRecord(record: WalletControlsRecord) {
+    const client = await this.pool.connect();
+    try {
+      // Migration 035 may not have run yet - Render applies migrations at
+      // build time, so a service can briefly be on new code with an old
+      // schema. Reads already degrade to [] via optionalQuery; a write must
+      // fail with something an operator can act on rather than a bare
+      // "relation does not exist".
+      await client.query(
+        `insert into payments_wallet_controls (id, active_provider, reason, updated_by, updated_at)
+         values ($1,$2,$3,$4,$5)
+         on conflict (id) do update set
+           active_provider = excluded.active_provider,
+           reason = excluded.reason,
+           updated_by = excluded.updated_by,
+           updated_at = excluded.updated_at`,
+        [record.id, record.activeProvider ?? null, record.reason ?? null, record.updatedBy, record.updatedAt]
+      ).catch((error: any) => {
+        if (error?.code === '42P01') {
+          throw new Error(
+            'Wallet controls are unavailable: migration 035 has not been applied yet. ' +
+            'The WALLET_PROVIDER environment variable remains in effect until it is.'
+          );
+        }
+        throw error;
+      });
+      return record;
+    } finally { client.release(); }
   }
 
   async listVerificationLimitOverrides(): Promise<VerificationLimitOverrideRecord[]> {
@@ -1442,6 +1482,18 @@ function mapNgnTransfer(row: any): NgnTransferRecord {
 
 function mapNgnWebhook(row: any): NgnWebhookRecord {
   return { id: row.id, provider: row.provider, providerEventId: row.provider_event_id, eventType: row.event_type, transferId: str(row.transfer_id), payload: row.payload, processedAt: optionalIso(row.processed_at), createdAt: iso(row.created_at) };
+}
+
+function mapWalletControls(row: any): WalletControlsRecord {
+  return {
+    id: row.id,
+    // null stays undefined, which is what "fall back to the environment"
+    // means. Coercing it to a string would pin the provider permanently.
+    activeProvider: row.active_provider ?? undefined,
+    reason: row.reason ?? undefined,
+    updatedBy: row.updated_by,
+    updatedAt: iso(row.updated_at),
+  };
 }
 
 function mapVerificationLimitOverride(row: any): VerificationLimitOverrideRecord {
