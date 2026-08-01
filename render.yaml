@@ -134,6 +134,66 @@ services:
         sync: false
       - key: PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER
         sync: false
+      # ---- Breet, the NGN rail ----
+      # Credentials are sync:false so the sandbox keys stay out of git and are
+      # pasted into the Render dashboard, matching how PAJ_RAMP_API_KEY is held.
+      #
+      # NGN_PROVIDER is deliberately NOT set to breet here. The adapter is
+      # verified against Breet's sandbox but has never processed a real
+      # webhook, and Breet's USD float is $0, so on-ramp would 403. Flipping
+      # the rail is a decision to make once, on purpose, not a side effect of
+      # adding configuration.
+      - key: BREET_APP_ID
+        sync: false
+      - key: BREET_APP_SECRET
+        sync: false
+      - key: BREET_WEBHOOK_SECRET
+        sync: false
+      - key: BREET_MERCHANT_REFERENCE
+        sync: false
+      - key: BREET_ENV
+        value: development
+      # Blank on purpose. Breet's asset ids are Mongo ObjectIds, not the
+      # SOL_USDC_JKVK-style identifiers in their docs, and they differ between
+      # environments. The adapter resolves them at runtime from
+      # GET /trades/assets and caches; pinning a stale id here would send funds
+      # against the wrong asset.
+      - key: BREET_DEFAULT_ASSET_ID
+        value: ""
+      # Sivan's own vocabulary, not Breet's. The adapter maps solana -> SOL.
+      - key: BREET_DEFAULT_NETWORK
+        value: solana
+      # Breet's platform fee. Their API returns a TIERED array rather than a
+      # scalar, all three tiers currently 0.5%; this is the fallback used when
+      # the live tiers cannot be read.
+      - key: BREET_FEE_PERCENT
+        value: "0.5"
+      - key: BREET_DEFAULT_BANK_ID
+        sync: false
+      - key: BREET_DEFAULT_ACCOUNT_NUMBER
+        sync: false
+      - key: BREET_DEFAULT_RECIPIENT_ADDRESS
+        sync: false
+      # ---- Sivan's margin on the NGN rail ----
+      # Separate from the provider fee on purpose. The user pays 1.5% total:
+      # 0.5% is Breet's cost, 1.0% is Sivan's revenue. Left at 0 the rail runs
+      # at cost, which is what it did before these existed.
+      - key: SIVAN_NGN_ONRAMP_FEE_PERCENT
+        value: "1.0"
+      - key: SIVAN_NGN_OFFRAMP_FEE_PERCENT
+        value: "1.0"
+      - key: SIVAN_NGN_MINIMUM_FEE_NGN
+        value: "0"
+      # ---- Privy embedded wallets ----
+      # Present so the adapter can authenticate, but WALLET_PROVIDER above is
+      # still 'bridge'. Privy wallets are user-owned: Sivan cannot sign for
+      # them, verified live (signing returns 401 "No valid authorization keys
+      # or user signing keys available"). Switching the wallet provider changes
+      # who custodies user funds and is not done implicitly here.
+      - key: PRIVY_APP_ID
+        sync: false
+      - key: PRIVY_APP_SECRET
+        sync: false
       - key: VIRTUAL_ACCOUNTS_ENABLED
         value: "true"
       - key: VIRTUAL_ACCOUNT_REQUESTS_ENABLED
@@ -293,4 +353,59 @@ services:
       - key: PAJ_RAMP_DEFAULT_BANK_ID
         sync: false
       - key: PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER
+        sync: false
+      # ---- Breet, the NGN rail ----
+      # All credentials sync:false. Nothing about Breet is a literal here: the
+      # production app id, secret and webhook secret are entered in the Render
+      # dashboard so they never reach git.
+      #
+      # NGN_PROVIDER is deliberately left as-is. Breet has processed zero real
+      # webhooks and its USD float is $0; making it the production NGN rail is
+      # a separate, deliberate decision.
+      - key: BREET_APP_ID
+        sync: false
+      - key: BREET_APP_SECRET
+        sync: false
+      - key: BREET_WEBHOOK_SECRET
+        sync: false
+      - key: BREET_MERCHANT_REFERENCE
+        sync: false
+      # The one value that MUST differ from the test service. The credentials
+      # currently held are sandbox ones; production keys have to be issued by
+      # Breet before this environment can settle real naira.
+      - key: BREET_ENV
+        value: production
+      # Resolved at runtime from GET /trades/assets. Breet's asset ids are
+      # environment-specific ObjectIds, so a value pinned here would be wrong
+      # in production even if it were right in sandbox.
+      - key: BREET_DEFAULT_ASSET_ID
+        value: ""
+      - key: BREET_DEFAULT_NETWORK
+        value: solana
+      - key: BREET_FEE_PERCENT
+        value: "0.5"
+      - key: BREET_DEFAULT_BANK_ID
+        sync: false
+      - key: BREET_DEFAULT_ACCOUNT_NUMBER
+        sync: false
+      - key: BREET_DEFAULT_RECIPIENT_ADDRESS
+        sync: false
+      # ---- Sivan's margin on the NGN rail ----
+      # User pays 1.5%: 0.5% Breet's cost, 1.0% Sivan's revenue. Applied to the
+      # gross amount, and kept separate from the provider fee in the response
+      # so the split stays auditable.
+      - key: SIVAN_NGN_ONRAMP_FEE_PERCENT
+        value: "1.0"
+      - key: SIVAN_NGN_OFFRAMP_FEE_PERCENT
+        value: "1.0"
+      - key: SIVAN_NGN_MINIMUM_FEE_NGN
+        value: "0"
+      # ---- Privy embedded wallets ----
+      # WALLET_PROVIDER above remains 'bridge'. These are present so the Privy
+      # adapter can authenticate when it is switched on; they do not switch it
+      # on. Privy wallets are user-owned and Sivan cannot sign for them, so
+      # changing the provider changes the custody model and the off-ramp flow.
+      - key: PRIVY_APP_ID
+        sync: false
+      - key: PRIVY_APP_SECRET
         sync: false

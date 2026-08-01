@@ -87,7 +87,11 @@ const envSchema = z.object({
   SIVAN_AI_API_KEY: z.string().optional().default(''),
   SIVAN_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(3500),
   SIVAN_AI_FALLBACK_ENABLED: booleanFromEnv.default(true),
-  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj']).default('mock'),
+  // 'breet' was missing here while ngn-provider-registry.ts already had a
+  // `if (name === 'breet')` branch. The registry could never be reached:
+  // NGN_PROVIDER=breet failed this enum and the whole service refused to boot,
+  // so the Breet integration was unreachable by configuration.
+  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj', 'breet']).default('mock'),
   NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false),
   PAJ_RAMP_ENV: z.enum(['staging', 'production']).default('staging'),
   // Breet - primary NGN provider. https://docs.breet.io
