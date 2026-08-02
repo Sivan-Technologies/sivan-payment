@@ -68,6 +68,28 @@ function iso(value: unknown): string {
   return Number.isFinite(date.getTime()) ? date.toISOString() : String(value);
 }
 
+/**
+ * Bind a value to a jsonb column.
+ *
+ * node-postgres serialises a JS ARRAY as a POSTGRES ARRAY literal - {a,b} -
+ * not as JSON. Passing one straight to a jsonb column fails with
+ *
+ *     invalid input syntax for type json
+ *
+ * which is what killed every NGN transfer: payments_ngn_transfers.timeline is
+ * jsonb and is built as an array of steps, so accepting ANY quote - on-ramp or
+ * off-ramp - 500'd before a deposit address could be returned.
+ *
+ * Objects happen to work because pg JSON-stringifies them, so this was
+ * invisible for metadata and virtual_account and only bit the one array
+ * column. Stringifying explicitly makes all three behave the same way and
+ * removes the trap for the next jsonb column someone adds.
+ */
+function jsonParam(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  return JSON.stringify(value);
+}
+
 function optionalIso(value: unknown): string | undefined {
   if (!value) return undefined;
   return iso(value);
@@ -1734,13 +1756,13 @@ async function upsertNgnControls(client: pg.PoolClient, item: NgnControlsRecord)
   await client.query(`insert into payments_ngn_controls (id,onramp_enabled,offramp_enabled,mock_provider_enabled,bank_settlement_enabled,virtual_account_enabled,identity_verification_enabled,active_provider,backup_provider,max_transaction_ngn,daily_limit_ngn,high_value_review_threshold_ngn,updated_by,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict (id) do update set onramp_enabled=excluded.onramp_enabled,offramp_enabled=excluded.offramp_enabled,mock_provider_enabled=excluded.mock_provider_enabled,bank_settlement_enabled=excluded.bank_settlement_enabled,virtual_account_enabled=excluded.virtual_account_enabled,identity_verification_enabled=excluded.identity_verification_enabled,active_provider=excluded.active_provider,backup_provider=excluded.backup_provider,max_transaction_ngn=excluded.max_transaction_ngn,daily_limit_ngn=excluded.daily_limit_ngn,high_value_review_threshold_ngn=excluded.high_value_review_threshold_ngn,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, [item.id, item.onrampEnabled, item.offrampEnabled, item.mockProviderEnabled, item.bankSettlementEnabled, item.virtualAccountEnabled, item.identityVerificationEnabled ?? false, item.activeProvider, item.backupProvider, item.maxTransactionNgn, item.dailyLimitNgn, item.highValueReviewThresholdNgn, item.updatedBy, item.updatedAt]);
 }
 async function upsertNgnQuote(client: pg.PoolClient, item: NgnQuoteRecord) {
-  await client.query(`insert into payments_ngn_quotes (id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,expires_at,metadata,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) on conflict (id) do update set status=excluded.status,updated_at=excluded.updated_at,metadata=excluded.metadata`, [item.id,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.expiresAt,item.metadata ?? null,item.createdAt,item.updatedAt]);
+  await client.query(`insert into payments_ngn_quotes (id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,expires_at,metadata,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) on conflict (id) do update set status=excluded.status,updated_at=excluded.updated_at,metadata=excluded.metadata`, [item.id,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.expiresAt,jsonParam(item.metadata),item.createdAt,item.updatedAt]);
 }
 async function upsertNgnTransfer(client: pg.PoolClient, item: NgnTransferRecord) {
-  await client.query(`insert into payments_ngn_transfers (id,quote_id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,provider_transfer_id,bank_reference,deposit_address,virtual_account,settlement_reference,destination_tx_hash,metadata,timeline,created_at,updated_at,completed_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) on conflict (id) do update set status=excluded.status,provider_transfer_id=excluded.provider_transfer_id,bank_reference=excluded.bank_reference,deposit_address=excluded.deposit_address,virtual_account=excluded.virtual_account,settlement_reference=excluded.settlement_reference,destination_tx_hash=excluded.destination_tx_hash,metadata=excluded.metadata,timeline=excluded.timeline,updated_at=excluded.updated_at,completed_at=excluded.completed_at`, [item.id,item.quoteId,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.providerTransferId,item.bankReference,item.depositAddress,item.virtualAccount ?? null,item.settlementReference,item.destinationTxHash,item.metadata ?? null,item.timeline ?? null,item.createdAt,item.updatedAt,item.completedAt]);
+  await client.query(`insert into payments_ngn_transfers (id,quote_id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,provider_transfer_id,bank_reference,deposit_address,virtual_account,settlement_reference,destination_tx_hash,metadata,timeline,created_at,updated_at,completed_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) on conflict (id) do update set status=excluded.status,provider_transfer_id=excluded.provider_transfer_id,bank_reference=excluded.bank_reference,deposit_address=excluded.deposit_address,virtual_account=excluded.virtual_account,settlement_reference=excluded.settlement_reference,destination_tx_hash=excluded.destination_tx_hash,metadata=excluded.metadata,timeline=excluded.timeline,updated_at=excluded.updated_at,completed_at=excluded.completed_at`, [item.id,item.quoteId,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.providerTransferId,item.bankReference,item.depositAddress,jsonParam(item.virtualAccount),item.settlementReference,item.destinationTxHash,jsonParam(item.metadata),jsonParam(item.timeline),item.createdAt,item.updatedAt,item.completedAt]);
 }
 async function upsertNgnWebhook(client: pg.PoolClient, item: NgnWebhookRecord) {
-  await client.query(`insert into payments_ngn_webhook_events (id,provider,provider_event_id,event_type,transfer_id,payload,processed_at,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict (provider, provider_event_id) do update set event_type=excluded.event_type,transfer_id=excluded.transfer_id,payload=excluded.payload,processed_at=excluded.processed_at`, [item.id,item.provider,item.providerEventId,item.eventType,item.transferId,item.payload ?? null,item.processedAt,item.createdAt]);
+  await client.query(`insert into payments_ngn_webhook_events (id,provider,provider_event_id,event_type,transfer_id,payload,processed_at,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict (provider, provider_event_id) do update set event_type=excluded.event_type,transfer_id=excluded.transfer_id,payload=excluded.payload,processed_at=excluded.processed_at`, [item.id,item.provider,item.providerEventId,item.eventType,item.transferId,jsonParam(item.payload),item.processedAt,item.createdAt]);
 }
 
 function mapSupportTicket(row: any): SupportTicketRecord {
