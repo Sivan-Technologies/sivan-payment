@@ -6,6 +6,14 @@ import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/
 import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
+import {
+  saveNgnPayoutAccount,
+  saveNgnPayoutAccountSchema,
+  listNgnPayoutAccounts,
+  listNgnPayoutAccountReviews,
+  reviewNgnPayoutAccount,
+  reviewNgnPayoutAccountSchema,
+} from '../service/ngn-payout-accounts.service.js';
 import { getWalletProviderHealth, getAllWalletProviderHealth } from '../../wallets/wallet-health.service.js';
 import {
   getWalletControlsView,
@@ -94,6 +102,51 @@ export async function ngnRoutes(app: FastifyInstance) {
     if (query.userId) ensureOwnUser(request, query.userId);
     if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
     return { data: await resolveNgnBankAccount(query.bankId, query.accountNumber, query.currency ?? 'ngn') };
+  });
+
+  /**
+   * Save a payout account, matched against the name on file.
+   *
+   * The resolve endpoint above is READ-ONLY and proves nothing about who is
+   * asking. This is the one that creates evidence: it re-resolves the account
+   * server side and matches the bank's name against the user's.
+   *
+   * Deliberately does NOT accept an accountName from the client. A client that
+   * could supply the name could submit a stranger's account number alongside
+   * its own name and inherit that stranger's bank-verified identity.
+   */
+  app.post('/api/ngn/payout-accounts', async (request, reply) => {
+    const body = parseBody(saveNgnPayoutAccountSchema, request.body);
+    ensureOwnUser(request, body.userId);
+    return reply.code(201).send({ data: await saveNgnPayoutAccount(body) });
+  });
+
+  app.get('/api/ngn/payout-accounts', async (request) => {
+    const query = request.query as { userId?: string };
+    if (!query.userId) throw badRequest('userId is required');
+    ensureOwnUser(request, query.userId);
+    return { data: await listNgnPayoutAccounts(query.userId) };
+  });
+
+  /**
+   * The review queue: accounts whose name match was partial.
+   *
+   * These are users who are probably legitimate - a middle name the bank does
+   * not hold, a married name, a transliteration - and who are BLOCKED until
+   * someone looks. An unattended queue is a silent outage for real customers,
+   * which is why the list is oldest-first.
+   */
+  app.get('/api/admin/ngn/payout-accounts/reviews', async () => ({
+    data: await listNgnPayoutAccountReviews(),
+  }));
+
+  app.put('/api/admin/ngn/payout-accounts/:accountId/review', async (request) => {
+    const { accountId } = request.params as { accountId: string };
+    const body = parseBody(reviewNgnPayoutAccountSchema.omit({ reviewedBy: true }), request.body);
+    // Taken from the authenticated admin, never from the body: an operator
+    // must not be able to file a decision under someone else's name.
+    const reviewedBy = (request as any).adminActor?.email || 'admin_api_key';
+    return { data: await reviewNgnPayoutAccount(accountId, { ...body, reviewedBy }) };
   });
 
   // Legacy aliases. Same registry-backed implementation, not PajRamp.

@@ -7,7 +7,7 @@ import type { UserTwoFactorStatus } from './appUtils';
 import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
 import { VerificationModal } from './components/verification/VerificationModal';
 import { localVerificationPlan, type VerificationPathPlan } from './verificationPath';
-import type { ResolvedNgnBankAccount } from './ngnBank';
+import { payoutAccountOutcomeMessage, type SavedNgnPayoutAccount } from './ngnBank';
 import { offrampClears, typicalGasUsd } from './ngnMinimum';
 import type { NgnNetworkLists } from './rails';
 import type { WithdrawalReviewState } from './components/AppSections';
@@ -789,14 +789,18 @@ export default function App() {
   /**
    * A resolved Nigerian bank account, confirmed by the user as theirs.
    *
-   * NOTE: this does not yet persist the account or run the name match server
-   * side - NGN payout accounts have no table, and ExternalAccountRecord is
-   * Bridge-shaped (us/gb/iban) and cannot hold a NUBAN. Until that exists this
-   * confirms to the user and reloads, and Level 1 is not actually granted.
+   * By this point the modal has already POSTed to /api/ngn/payout-accounts,
+   * which re-resolved the account server side and matched the bank's name
+   * against the name on file. So this receives a SAVED account carrying a
+   * verdict, and the only job left is to report the outcome honestly.
    */
-  const handleNgnVerified = useCallback(async (account: ResolvedNgnBankAccount) => {
+  const handleNgnVerified = useCallback(async (account: SavedNgnPayoutAccount) => {
     setVerificationOpen(false);
-    notify(`Confirmed ${account.accountName}. We will use this account for naira payouts.`);
+    // 'pending_review' is NOT success. A partial name match leaves the user
+    // blocked until a human clears it, and telling them they are verified
+    // would be a promise the withdrawal screen then breaks.
+    const outcome = payoutAccountOutcomeMessage(account);
+    notify(outcome.message, outcome.tone === 'error' ? 'error' : 'success');
     await loadUserData();
   }, [loadUserData, notify]);
 

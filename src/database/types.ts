@@ -340,6 +340,45 @@ export interface ExternalAccountRecord {
   updatedAt: string;
 }
 
+/**
+ * A Nigerian payout account and the name-match verdict attached to it.
+ *
+ * Separate from ExternalAccountRecord, which is Bridge-shaped ('us' | 'gb' |
+ * 'iban') and cannot hold a NUBAN plus a provider-specific bank id. See
+ * migration 037 for the full reasoning.
+ */
+export interface NgnPayoutAccountRecord {
+  id: string;
+  userId: string;
+  /**
+   * The provider whose directory this bankId came from. Bank ids are NOT
+   * portable between providers, so a row without this is a payout waiting to
+   * go to the wrong bank.
+   */
+  provider: string;
+  bankId: string;
+  bankName?: string;
+  accountNumber: string;
+  /** The name the bank returned. */
+  accountName: string;
+  /** The name on file when the match ran. Denormalised so the verdict stays auditable. */
+  declaredName: string;
+  matchVerdict: 'match' | 'review' | 'mismatch';
+  matchScore: number;
+  matchExplanation?: string;
+  matchedTokens?: string[];
+  unmatchedBankTokens?: string[];
+  /** False in sandbox, where any account number resolves to a plausible name. */
+  resolutionTrustworthy: boolean;
+  status: 'pending_review' | 'verified' | 'rejected';
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LiquidationAddressRecord {
   id: string;
   userId: string;
@@ -681,6 +720,7 @@ export interface DatabaseShape {
   legalAcceptances: LegalAcceptanceRecord[];
   customers: CustomerRecord[];
   externalAccounts: ExternalAccountRecord[];
+  ngnPayoutAccounts: NgnPayoutAccountRecord[];
   liquidationAddresses: LiquidationAddressRecord[];
   userWallets: UserWalletRecord[];
   withdrawals: WithdrawalRecord[];

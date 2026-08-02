@@ -120,3 +120,54 @@ export function maskAccountNumber(accountNumber: string): string {
   if (digits.length <= 4) return digits;
   return `${'•'.repeat(digits.length - 4)}${digits.slice(-4)}`;
 }
+
+/**
+ * A payout account after the server has matched it against the name on file.
+ *
+ * status is NOT cosmetic. 'verified' means Level 1 is granted; 'pending_review'
+ * means a human has to look and the user is still blocked. Rendering both as
+ * success would tell a queued user they can withdraw, and they would find out
+ * otherwise at the moment they tried.
+ */
+export interface SavedNgnPayoutAccount {
+  id: string;
+  userId: string;
+  bankId: string;
+  bankName?: string;
+  accountNumber: string;
+  accountName: string;
+  declaredName: string;
+  matchVerdict: 'match' | 'review' | 'mismatch';
+  matchScore: number;
+  matchExplanation?: string;
+  resolutionTrustworthy: boolean;
+  status: 'pending_review' | 'verified' | 'rejected';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** What to tell the user about a saved account, per outcome. */
+export function payoutAccountOutcomeMessage(account: SavedNgnPayoutAccount): {
+  tone: 'success' | 'pending' | 'error';
+  message: string;
+} {
+  if (account.status === 'verified') {
+    return { tone: 'success', message: `Verified. ${account.accountName} is ready for naira payouts.` };
+  }
+  if (account.status === 'rejected') {
+    return {
+      tone: 'error',
+      // Named plainly: the account belongs to someone else, and a vague error
+      // would send the user back to retype a number that was never the problem.
+      message:
+        `That account is held by ${account.accountName}, which does not match your name. ` +
+        `You can only pay out to an account in your own name.`,
+    };
+  }
+  return {
+    tone: 'pending',
+    message:
+      `Saved. ${account.accountName} needs a quick manual check before your first naira payout — ` +
+      `usually within a few hours.`,
+  };
+}

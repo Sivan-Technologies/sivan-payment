@@ -6,6 +6,7 @@ import {
   shouldResolveAccount,
   type NgnBank,
   type ResolvedNgnBankAccount,
+  type SavedNgnPayoutAccount,
 } from '../../ngnBank';
 import {
   SIGNUP_COUNTRIES,
@@ -52,7 +53,7 @@ export function VerificationModal({
   onClose: () => void;
   /** Persisted so the choice survives a reload and the server can re-plan. */
   onCountryChange: (country: string) => Promise<void> | void;
-  onVerified: (account: ResolvedNgnBankAccount) => void;
+  onVerified: (account: SavedNgnPayoutAccount) => void;
   onStartBridge: () => void;
 }) {
   // The country the modal is currently acting on. Seeded from the record, then
@@ -290,7 +291,7 @@ function NgnBankVerification({
   userId: string;
   fullName: string;
   api: <T>(path: string, options?: RequestInit) => Promise<T>;
-  onVerified: (account: ResolvedNgnBankAccount) => void;
+  onVerified: (account: SavedNgnPayoutAccount) => void;
 }) {
   const [banks, setBanks] = useState<NgnBank[]>([]);
   const [query, setQuery] = useState('');
@@ -310,6 +311,8 @@ function NgnBankVerification({
 
   const visible = useMemo(() => filterBanks(banks, query).slice(0, 6), [banks, query]);
   const selectedBank = banks.find((bank) => bank.id === bankId);
+
+  const [saving, setSaving] = useState(false);
 
   const resolve = useCallback(async () => {
     if (!shouldResolveAccount(bankId, accountNumber)) return;
@@ -420,8 +423,30 @@ function NgnBankVerification({
             // presenting this as confirmation would be a lie.
             <p className="sv-warn">Test environment — this name is simulated and confirms nothing.</p>
           )}
-          <button className="sv-primary" onClick={() => onVerified(resolved)}>
-            Yes, that is me →
+          <button
+            className="sv-primary"
+            disabled={saving}
+            onClick={async () => {
+              setSaving(true);
+              setError('');
+              try {
+                // POST, not just a local confirm. The server re-resolves the
+                // account and matches the bank's name against the name on
+                // file - the client's copy of accountName is display only, and
+                // is never sent, or a stranger's account could be claimed.
+                const account = await api<SavedNgnPayoutAccount>('/api/ngn/payout-accounts', {
+                  method: 'POST',
+                  body: JSON.stringify({ userId, bankId, accountNumber }),
+                });
+                onVerified(account);
+              } catch (err) {
+                setError((err as Error).message || 'We could not save that account.');
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {saving ? 'Saving…' : 'Yes, that is me →'}
           </button>
         </div>
       )}

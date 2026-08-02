@@ -52,6 +52,42 @@ function activeProviderName(): NgnProviderName {
   return (env.NGN_PROVIDER as NgnProviderName) ?? 'mock';
 }
 
+/**
+ * A small bank directory for NGN_PROVIDER=mock.
+ *
+ * Without this the entire bank flow - picker, resolution, payout account,
+ * name match - could not be exercised without live Breet credentials, so the
+ * one path that grants Level 1 had no way to be tested end to end.
+ */
+const MOCK_BANKS: NgnBank[] = [
+  { id: '1', name: 'Access Bank', slug: 'access-bank' },
+  { id: '2', name: 'Guaranty Trust Bank', slug: 'gtbank' },
+  { id: '3', name: 'United Bank for Africa', slug: 'uba' },
+  { id: '4', name: 'Zenith Bank', slug: 'zenith-bank' },
+  { id: '5', name: 'Kuda Microfinance Bank', slug: 'kuda' },
+];
+
+/**
+ * Deterministic mock account names, keyed by account number.
+ *
+ * Deterministic so a test can select a verdict by choosing a number, and so
+ * the same number always resolves to the same person - a mock that returned a
+ * fresh random name per call would make the upsert-on-resubmit path untestable.
+ *
+ * Every one of these is returned with trustworthy: false, exactly like Breet's
+ * sandbox, so none of them can grant Level 1 on their own.
+ */
+const MOCK_ACCOUNT_NAMES: Record<string, string> = {
+  // Exact match against a user named "Sharafa Ogunmepon", in bank order.
+  '1111111111': 'OGUNMEPON SHARAFA',
+  // The bank holds a name the user did not declare - the risky direction.
+  '2222222222': 'OGUNMEPON SHARAFA ADEBAYO',
+  // Nothing in common: someone else's account.
+  '3333333333': 'CHINEDU EMEKA OKAFOR',
+  // A single shared very common first name - not identity.
+  '4444444444': 'SHARAFA MUSTAPHA',
+};
+
 /** The list a user picks from. */
 export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<NgnBank[]> {
   const provider = activeProviderName();
@@ -76,6 +112,8 @@ export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<Ngn
       type: bank.type,
     }));
   }
+
+  if (provider === 'mock') return MOCK_BANKS;
 
   // Refused rather than returning [], which a UI would render as "no banks
   // found" - a lie that sends the user looking for a problem on their end.
@@ -134,6 +172,27 @@ export async function resolveNgnBankAccount(
       bankId,
       bankName: result?.bankName ?? result?.bank_name,
       trustworthy: (env.PAJ_RAMP_ENV ?? 'staging') === 'production',
+    };
+  }
+
+  if (provider === 'mock') {
+    const bank = MOCK_BANKS.find((item) => item.id === bankId);
+    if (!bank) throw badRequest('That bank was not recognised.');
+    const accountName = MOCK_ACCOUNT_NAMES[accountNumber];
+    // Unknown numbers FAIL rather than inventing a name. Breet's sandbox
+    // resolves anything, and copying that here would mean the mock could not
+    // reproduce the "account does not exist" case at all.
+    if (!accountName) {
+      throw badRequest('That account could not be verified. Check the number and bank.');
+    }
+    return {
+      accountName,
+      accountNumber,
+      bankId,
+      bankName: bank.name,
+      // Never true. A fabricated name is not evidence, and this is the flag
+      // that stops a mock resolution from granting real Level 1.
+      trustworthy: false,
     };
   }
 

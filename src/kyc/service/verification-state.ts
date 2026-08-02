@@ -54,10 +54,29 @@ export async function getVerificationState(userId: string): Promise<Verification
   // Level 1 evidence. Since the CBN directive effective 1 March 2024 a Nigerian
   // bank account cannot transact without BVN/NIN linkage, so an account that
   // resolves is one a licensed bank has already verified.
+  //
+  // TWO SOURCES, AND THEY ARE NOT THE SAME KIND OF EVIDENCE.
+  //
+  // externalAccounts are Bridge-shaped (us/gb/iban) and reach 'verified'
+  // through Bridge's own process. ngnPayoutAccounts are NUBANs, and reach
+  // 'verified' only when the account holder's name MATCHED the name on file
+  // and the resolution came from a real provider rather than a sandbox.
+  //
+  // Before migration 037 the NGN half did not exist, so a Nigerian user could
+  // not reach Level 1 at all by the Nigerian path - the modal confirmed their
+  // account and stored nothing. This is the half that was missing.
   const externalAccounts = (data.externalAccounts ?? []).filter((a: any) => a.userId === userId);
-  const bankVerified = externalAccounts.some(
+  const bridgeAccountVerified = externalAccounts.some(
     (a: any) => a.status === 'verified' || a.status === 'active'
   );
+
+  // Only 'verified' counts. 'pending_review' is a case waiting on a human, and
+  // counting it would grant the level to exactly the accounts a person was
+  // asked to look at - defeating the review queue while appearing to have one.
+  const ngnPayoutAccounts = (data.ngnPayoutAccounts ?? []).filter((a: any) => a.userId === userId);
+  const ngnAccountVerified = ngnPayoutAccounts.some((a: any) => a.status === 'verified');
+
+  const bankVerified = bridgeAccountVerified || ngnAccountVerified;
 
   // IDENTITY VERIFICATION IS ADMIN-TOGGLEABLE.
   //

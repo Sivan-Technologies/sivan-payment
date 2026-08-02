@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import type {
   VerificationLimitOverrideRecord,
   WalletControlsRecord,
+  NgnPayoutAccountRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
   AceSupportSessionRecord,
@@ -185,6 +186,10 @@ export class PostgresDatabase {
       const userWallets = await optionalQuery(client, 'select * from payments_user_wallets order by created_at asc');
       const verificationLimitOverrides = await optionalQuery(client, 'select * from payments_verification_limit_overrides order by flow asc, rail asc, level asc');
       const walletControls = await optionalQuery(client, 'select * from payments_wallet_controls order by id asc');
+      // optionalQuery, not query: Render applies migrations at build time, so a
+      // service can briefly run new code against a pre-037 schema. A hard
+      // failure here would take down every read in the app, not just NGN.
+      const ngnPayoutAccounts = await optionalQuery(client, 'select * from payments_ngn_payout_accounts order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -206,6 +211,7 @@ export class PostgresDatabase {
         legalAcceptances: legalAcceptances.rows.map(mapLegalAcceptance),
         customers: customers.rows.map(mapCustomer),
         externalAccounts: externalAccounts.rows.map(mapExternalAccount),
+        ngnPayoutAccounts: ngnPayoutAccounts.rows.map(mapNgnPayoutAccount),
         liquidationAddresses: liquidationAddresses.rows.map(mapLiquidationAddress),
         userWallets: userWallets.rows.map(mapUserWallet),
         withdrawals: withdrawals.rows.map(mapWithdrawal),
@@ -498,6 +504,75 @@ export class PostgresDatabase {
   async upsertNgnControlsRecord(record: NgnControlsRecord) {
     const client = await this.pool.connect();
     try { await upsertNgnControls(client, record); return record; } finally { client.release(); }
+  }
+
+  async listNgnPayoutAccounts(userId?: string): Promise<NgnPayoutAccountRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = userId
+        ? await optionalQuery(client, 'select * from payments_ngn_payout_accounts where user_id = $1 order by created_at asc', [userId])
+        : await optionalQuery(client, 'select * from payments_ngn_payout_accounts order by created_at asc');
+      return result.rows.map(mapNgnPayoutAccount);
+    } finally { client.release(); }
+  }
+
+  async findNgnPayoutAccountById(id: string): Promise<NgnPayoutAccountRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from payments_ngn_payout_accounts where id = $1', [id]);
+      return result.rows.length ? mapNgnPayoutAccount(result.rows[0]) : null;
+    } finally { client.release(); }
+  }
+
+  async upsertNgnPayoutAccountRecord(record: NgnPayoutAccountRecord) {
+    const client = await this.pool.connect();
+    try {
+      // Conflict target matches idx_ngn_payout_accounts_unique. Resubmitting
+      // the same account updates the verdict in place rather than minting a
+      // second pending row a user could farm for a different reviewer.
+      await client.query(
+        `insert into payments_ngn_payout_accounts
+           (id,user_id,provider,bank_id,bank_name,account_number,account_name,declared_name,
+            match_verdict,match_score,match_explanation,matched_tokens,unmatched_bank_tokens,
+            resolution_trustworthy,status,reviewed_by,reviewed_at,review_note,
+            raw_provider_payload,created_at,updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         on conflict (user_id, provider, bank_id, account_number) do update set
+           bank_name=excluded.bank_name,
+           account_name=excluded.account_name,
+           declared_name=excluded.declared_name,
+           match_verdict=excluded.match_verdict,
+           match_score=excluded.match_score,
+           match_explanation=excluded.match_explanation,
+           matched_tokens=excluded.matched_tokens,
+           unmatched_bank_tokens=excluded.unmatched_bank_tokens,
+           resolution_trustworthy=excluded.resolution_trustworthy,
+           status=excluded.status,
+           reviewed_by=excluded.reviewed_by,
+           reviewed_at=excluded.reviewed_at,
+           review_note=excluded.review_note,
+           raw_provider_payload=excluded.raw_provider_payload,
+           updated_at=excluded.updated_at`,
+        [
+          record.id, record.userId, record.provider, record.bankId, record.bankName ?? null,
+          record.accountNumber, record.accountName, record.declaredName,
+          record.matchVerdict, record.matchScore, record.matchExplanation ?? null,
+          JSON.stringify(record.matchedTokens ?? []), JSON.stringify(record.unmatchedBankTokens ?? []),
+          record.resolutionTrustworthy, record.status,
+          record.reviewedBy ?? null, record.reviewedAt ?? null, record.reviewNote ?? null,
+          record.raw ?? null, record.createdAt, record.updatedAt
+        ]
+      ).catch((error: any) => {
+        if (error?.code === '42P01') {
+          throw new Error(
+            'NGN payout accounts are unavailable: migration 037 has not been applied yet. ' +
+            'Run npm run db:migrate.'
+          );
+        }
+        throw error;
+      });
+      return record;
+    } finally { client.release(); }
   }
 
   async listWalletControls(): Promise<WalletControlsRecord[]> {
@@ -1150,6 +1225,35 @@ function mapCustomer(row: any): CustomerRecord {
     onboardingCostType: row.onboarding_cost_type,
     onboardingCostRecordedAt: optionalIso(row.onboarding_cost_recorded_at),
     raw: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
+}
+
+function mapNgnPayoutAccount(row: any): NgnPayoutAccountRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    provider: row.provider,
+    bankId: row.bank_id,
+    bankName: str(row.bank_name),
+    accountNumber: row.account_number,
+    accountName: row.account_name,
+    declaredName: row.declared_name,
+    matchVerdict: row.match_verdict,
+    matchScore: Number(row.match_score ?? 0),
+    matchExplanation: str(row.match_explanation),
+    matchedTokens: row.matched_tokens ?? undefined,
+    unmatchedBankTokens: row.unmatched_bank_tokens ?? undefined,
+    // Must default to FALSE, never true. A null here means the column was
+    // never written, and treating unknown provenance as trustworthy would
+    // grant Level 1 on a sandbox-fabricated name.
+    resolutionTrustworthy: row.resolution_trustworthy === true,
+    status: row.status,
+    reviewedBy: str(row.reviewed_by),
+    reviewedAt: row.reviewed_at ? iso(row.reviewed_at) : undefined,
+    reviewNote: str(row.review_note),
+    raw: row.raw_provider_payload,
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at)
   };

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, WalletControlsRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, WalletControlsRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -16,6 +16,7 @@ const emptyDb = (): DatabaseShape => ({
   legalAcceptances: [],
   customers: [],
   externalAccounts: [],
+  ngnPayoutAccounts: [],
   liquidationAddresses: [],
   userWallets: [],
   withdrawals: [],
@@ -435,6 +436,49 @@ export class JsonDatabase {
     return this.mutate((data) => {
       const index = data.externalAccounts.findIndex((item) => item.id === record.id);
       if (index >= 0) data.externalAccounts[index] = record;
+      return record;
+    });
+  }
+
+  async listNgnPayoutAccounts(userId?: string): Promise<NgnPayoutAccountRecord[]> {
+    const data = await this.read();
+    const all = data.ngnPayoutAccounts ?? [];
+    return userId ? all.filter((item) => item.userId === userId) : all;
+  }
+
+  async findNgnPayoutAccountById(id: string): Promise<NgnPayoutAccountRecord | null> {
+    const data = await this.read();
+    return (data.ngnPayoutAccounts ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  /**
+   * Upsert on (userId, provider, bankId, accountNumber), matching the unique
+   * index in migration 037.
+   *
+   * Re-submitting the same account must UPDATE, not insert. Otherwise a user
+   * whose account was rejected could resubmit until a fresh pending row
+   * appeared, and the review queue would fill with copies of one decision.
+   */
+  async upsertNgnPayoutAccountRecord(record: NgnPayoutAccountRecord) {
+    return this.mutate((data) => {
+      data.ngnPayoutAccounts = data.ngnPayoutAccounts ?? [];
+      const index = data.ngnPayoutAccounts.findIndex(
+        (item) =>
+          item.userId === record.userId &&
+          item.provider === record.provider &&
+          item.bankId === record.bankId &&
+          item.accountNumber === record.accountNumber
+      );
+      if (index >= 0) {
+        // Keep the original id and createdAt: this is the same account, and a
+        // reviewer following a link to it must not 404 because a resubmit
+        // minted a new id.
+        const existing = data.ngnPayoutAccounts[index];
+        const merged = { ...record, id: existing.id, createdAt: existing.createdAt };
+        data.ngnPayoutAccounts[index] = merged;
+        return merged;
+      }
+      data.ngnPayoutAccounts.push(record);
       return record;
     });
   }
