@@ -38,6 +38,21 @@ export async function acceptNgnQuote(input: z.infer<typeof acceptNgnQuoteSchema>
   if (quote.userId !== input.userId) throw notFound('NGN quote');
   if (quote.status !== 'quote_created') throw badRequest('NGN quote is not available to accept.');
   if (quote.expiresAt <= nowIso()) throw badRequest('NGN quote has expired. Request a new quote.');
+  /**
+   * AN ON-RAMP NEEDS SOMEWHERE TO SEND THE CRYPTO.
+   *
+   * The Breet provider refuses without metadata.recipientAddress, and before
+   * this it did so with a provider-shaped message after the quote had already
+   * been marked accepted - leaving a consumed quote and a 403 the user could
+   * do nothing with. Checked here, BEFORE acceptance, so the quote survives
+   * and the user is told the one thing that will fix it.
+   */
+  if (quote.direction === 'onramp' && !(quote.metadata as any)?.recipientAddress) {
+    throw badRequest(
+      'Create your wallet before buying crypto, so we have somewhere to send it.'
+    );
+  }
+
   const accepted = await markQuoteAccepted(quote);
   const provider = getNgnProvider(accepted.provider);
   const partial: Partial<NgnTransferRecord> = accepted.direction === 'onramp' ? await provider.createOnrampTransfer(accepted) : await provider.createOfframpTransfer(accepted);

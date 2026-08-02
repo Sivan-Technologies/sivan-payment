@@ -159,6 +159,47 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   const quoteNetwork = String(input.network ?? env.BREET_DEFAULT_NETWORK ?? 'solana').toLowerCase();
   const estimatedGasUsd = typicalGasUsd(quoteNetwork);
 
+  /**
+   * WHERE THE BOUGHT CRYPTO IS SENT. THE ON-RAMP HAD NOWHERE TO SEND IT.
+   *
+   * createOnrampTransfer() reads metadata.recipientAddress and refuses with
+   * "No destination wallet address for the Breet on-ramp." when it is absent.
+   * Nothing in the product ever set it: the field appeared in no schema, no
+   * route and no frontend call. Only BREET_DEFAULT_RECIPIENT_ADDRESS could
+   * satisfy it, and that is a single shared address - it is EMPTY on test, and
+   * setting it in production would send every user's purchase to the same
+   * wallet. So the on-ramp was unreachable for everybody, which is what
+   * walking the flow end to end exposed.
+   *
+   * Taken from the user's OWN wallet on the quoted chain, server-side. It is
+   * deliberately NOT accepted from the client: a caller who could name the
+   * destination could have someone else's purchased crypto delivered to their
+   * own address.
+   *
+   * Solana settles on a Solana wallet; base and ethereum share the EVM wallet,
+   * which is how the wallet fleet is provisioned (see walletsToProvision).
+   */
+  /**
+   * QUOTING MUST NOT REQUIRE A WALLET; ACCEPTING MUST.
+   *
+   * A first draft threw here when the user had no wallet yet. That broke four
+   * assertions in test:kyc-ngn-gate, and they were right to break: a quote is
+   * a PRICE. Refusing to show someone what naira buys until they have
+   * provisioned a wallet inverts the order a person actually shops in, and it
+   * conflated "you are not verified enough" - which this endpoint does police
+   * - with "you have not set up a destination yet", which it should not.
+   *
+   * So the address is attached when it exists and simply omitted when it does
+   * not. The refusal lives at acceptance, in acceptNgnQuote, where the money
+   * is about to move and a destination is genuinely mandatory.
+   */
+  let recipientAddress: string | undefined;
+  if (input.direction === 'onramp') {
+    const walletChain = quoteNetwork === 'solana' ? 'solana' : 'ethereum';
+    const wallet = await db.findUserWallet(input.userId, walletChain as any);
+    recipientAddress = wallet?.address;
+  }
+
   const now = nowIso();
   const record: NgnQuoteRecord = { id: id('ngnq'), userId: input.userId, customerId: customer?.id, direction: input.direction, provider: quote.provider, sourceCurrency: input.sourceCurrency, destinationCurrency: input.destinationCurrency, sourceAmount: quote.sourceAmount, destinationAmount: destinationAfterMargin.toFixed(input.destinationCurrency === 'ngn' ? 2 : 6), rate: quote.rate, feeAmount: String(margin.totalFee), status: 'quote_created', providerQuoteId: quote.providerQuoteId, expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), metadata: {
     ...(typeof quote.metadata === 'object' && quote.metadata ? quote.metadata : {}),
@@ -169,6 +210,8 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     // Without these, breet.provider.ts computed the minimum with gas = 0.
     network: quoteNetwork,
     estimatedGasUsd,
+    // Present only for on-ramps; an off-ramp has no destination wallet.
+    ...(recipientAddress ? { recipientAddress } : {}),
     fees: {
       providerFee: margin.providerFee,
       providerName: quote.provider,
