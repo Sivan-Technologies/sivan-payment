@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { validateAddressForChain, type AddressChain } from '../wallets/address-validation.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
@@ -211,6 +212,18 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   if (!controls.transfersEnabled) throw forbidden('Transfers from settled USDC balance are currently disabled.');
   if (!controls.supportedNetworks.includes(input.network)) throw forbidden(`${input.network} transfers are currently disabled.`);
   if (input.amount < controls.minimumSendAmount) throw badRequest(`Minimum transfer amount is ${controls.minimumSendAmount} ${input.asset.toUpperCase()}.`);
+
+  // THE DESTINATION WAS ONLY LENGTH-CHECKED: z.string().min(8).max(160).
+  //
+  // That accepted a Solana address for a Base transfer, an EVM address for a
+  // Solana transfer, and outright nonsense. Privy signs what it is told to
+  // sign, so every one of those broadcasts real funds to an address nobody
+  // controls - and on-chain there is no recall.
+  //
+  // Checked BEFORE the hold is placed, so a rejected address does not leave
+  // the user's balance locked behind a transfer that can never settle.
+  const addressCheck = validateAddressForChain(input.destinationAddress, input.network as AddressChain);
+  if (!addressCheck.valid) throw badRequest(addressCheck.reason ?? 'That destination address is not valid.');
   const balance = await getUserBalance(userId);
   const assetBalance = balance.balances.find((item) => item.asset === input.asset);
   if (amount(assetBalance?.available) < input.amount) throw badRequest('Insufficient settled USDC balance.');
