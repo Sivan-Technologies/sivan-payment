@@ -19,6 +19,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
+import { db } from '../src/database/json-database.js';
 
 let pass = 0;
 let fail = 0;
@@ -157,6 +158,100 @@ async function main() {
       token = first.token;
       const untouched = await call('GET', `/api/users/${victimId}`);
       check('the victim country is unchanged', untouched.body.country === 'US', untouched.body.country);
+    }
+
+    console.log('\nTHE NAME IS EDITABLE UNTIL IT BECOMES EVIDENCE');
+    {
+      const u = await signup('name-lock');
+      token = u.token;
+      const id = u.user.id;
+
+      const renamed = await call('PUT', `/api/users/${id}/name`, { fullName: 'Samuel Udochukwu' });
+      check('an unverified user can fix their name', renamed.status === 200, JSON.stringify(renamed.body));
+      check('and it is stored', renamed.body.fullName === 'Samuel Udochukwu', renamed.body.fullName);
+
+      check('whitespace is trimmed',
+        (await call('PUT', `/api/users/${id}/name`, { fullName: '  Ada Lovelace  ' })).body.fullName === 'Ada Lovelace');
+
+      for (const bad of ['', ' ', 'A']) {
+        const res = await call('PUT', `/api/users/${id}/name`, { fullName: bad });
+        check(`"${bad}" is rejected`, res.status === 400, String(res.status));
+      }
+    }
+
+    console.log('\nA PENDING REVIEW FREEZES THE NAME MID-DECISION');
+    {
+      const u = await signup('name-pending');
+      token = u.token;
+      const id = u.user.id;
+      // Must match the mock bank's holder for 1111111111 ("OGUNMEPON SHARAFA"),
+      // or the verdict is a mismatch and the account is rejected rather than
+      // queued - and there would be no pending review to test against.
+      await call('PUT', `/api/users/${id}/name`, { fullName: 'Sharafa Ogunmepon' });
+      await call('PUT', `/api/users/${id}/country`, { country: 'NG' });
+
+      // Mock resolutions are never trustworthy, so a perfect match queues.
+      const saved = await call('POST', '/api/ngn/payout-accounts', {
+        userId: id, bankId: '2', accountNumber: '1111111111'
+      });
+      check('the account is queued for review', saved.body.status === 'pending_review', saved.body.status);
+
+      // Editing now would change the comparison under the reviewer's feet -
+      // they would approve a pairing that no longer exists.
+      const blocked = await call('PUT', `/api/users/${id}/name`, { fullName: 'Someone Else' });
+      check('the name cannot be changed while a review is pending',
+        blocked.status === 400, String(blocked.status));
+      check('and the message says why', /reviewed/i.test(blocked.body?.error?.message ?? ''),
+        JSON.stringify(blocked.body));
+    }
+
+    console.log('\nONCE VERIFIED THE NAME IS LOCKED, SERVER SIDE');
+    {
+      const u = await signup('name-locked');
+      token = u.token;
+      const id = u.user.id;
+      await call('PUT', `/api/users/${id}/name`, { fullName: 'Sharafa Ogunmepon' });
+      await call('PUT', `/api/users/${id}/country`, { country: 'NG' });
+      await call('POST', '/api/ngn/payout-accounts', { userId: id, bankId: '2', accountNumber: '1111111111' });
+
+      // Promote to verified, as a reviewer approving would.
+      for (const account of await db.listNgnPayoutAccounts(id)) {
+        await db.upsertNgnPayoutAccountRecord({ ...account, resolutionTrustworthy: true, status: 'verified' });
+      }
+
+      // THE ATTACK THIS CLOSES: submit a stranger's account, get rejected on
+      // the name, then edit the name to match and resubmit. Without this the
+      // matcher is decorative - anyone passes it by copying what it showed.
+      const attempt = await call('PUT', `/api/users/${id}/name`, { fullName: 'Stranger Name' });
+      check('a verified user cannot change their name', attempt.status === 400, String(attempt.status));
+      check('the reason names the bank match',
+        /bank account|verified/i.test(attempt.body?.error?.message ?? ''), JSON.stringify(attempt.body));
+
+      const after = await call('GET', `/api/users/${id}`);
+      check('and the stored name is untouched',
+        after.body.fullName === 'Sharafa Ogunmepon', after.body.fullName);
+
+      // The lock must not leak into unrelated fields.
+      const country = await call('PUT', `/api/users/${id}/country`, { country: 'GB' });
+      check('country is still editable after verification', country.status === 200, String(country.status));
+    }
+
+    console.log('\nTHE NAME ROUTE IS PRIVATE');
+    {
+      const victim = await signup('name-victim');
+      const attacker = await signup('name-attacker');
+      token = attacker.token;
+      const cross = await call('PUT', `/api/users/${victim.user.id}/name`, { fullName: 'Hijacked' });
+      check('one user cannot rename another', cross.status === 403, String(cross.status));
+
+      token = '';
+      const anon = await call('PUT', `/api/users/${victim.user.id}/name`, { fullName: 'Hijacked' });
+      check('anonymous rename is rejected', anon.status === 401, String(anon.status));
+
+      token = victim.token;
+      const unchanged = await call('GET', `/api/users/${victim.user.id}`);
+      check('the victim name is unchanged',
+        unchanged.body.fullName === 'name victim', unchanged.body.fullName);
     }
 
     await app.close();

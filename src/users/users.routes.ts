@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { createUser, createUserSchema, getUser, setUserCountry, setUserCountrySchema } from './users.service.js';
+import { createUser, createUserSchema, getUser, setUserCountry, setUserCountrySchema, setUserName, setUserNameSchema } from './users.service.js';
+import { db } from '../database/json-database.js';
+import { isApprovedKycStatus } from '../kyc/types/verification.types.js';
 import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema } from './user-preferences.service.js';
 import { confirmAvatarUpload, confirmAvatarUploadSchema, createAvatarUploadUrl, createAvatarUploadUrlSchema, removeAvatar } from './user-avatar.service.js';
 import { checkUsernameAvailability, updateUsername, usernameSchema } from './username.service.js';
@@ -96,6 +98,36 @@ export async function usersRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = parseBody(setUserCountrySchema, request.body);
     return { data: await setUserCountry(userId, body) };
+  });
+
+  /**
+   * Change the name on file, while it is still changeable.
+   *
+   * The guard is evaluated HERE and passed to the service, so the service
+   * stays free of NGN/KYC imports. Locking rules:
+   *
+   *   verified NGN payout account -> locked (the name IS the evidence)
+   *   approved Bridge KYC         -> locked (a document was matched to it)
+   *   review pending              -> locked (a human is mid-decision on it)
+   *
+   * Anything else is an unverified user tidying their profile, which is
+   * harmless and should not need support.
+   */
+  app.put('/api/users/:userId/name', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(setUserNameSchema, request.body);
+
+    const payoutAccounts = await db.listNgnPayoutAccounts(userId);
+    const data = await db.read();
+    const customer = (data.customers ?? []).find((item: any) => item.userId === userId);
+
+    return {
+      data: await setUserName(userId, body, {
+        hasVerifiedPayoutAccount: payoutAccounts.some((item) => item.status === 'verified'),
+        hasPendingNameReview: payoutAccounts.some((item) => item.status === 'pending_review'),
+        kycApproved: isApprovedKycStatus(customer?.kycStatus)
+      })
+    };
   });
 
   app.get('/api/users/:userId', async (request) => {

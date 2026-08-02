@@ -86,6 +86,60 @@ export async function setUserCountry(userId: string, input: z.infer<typeof setUs
   return db.updateUserRecord(updated);
 }
 
+/**
+ * Change the name on file.
+ *
+ * ONLY BEFORE THE NAME HAS BEEN USED AS EVIDENCE.
+ *
+ * The Level 1 check works by comparing the bank's account holder against this
+ * field. So once a bank account has been matched against it, this field is not
+ * a profile preference any more - it is the basis of an identity decision.
+ *
+ * The attack this closes: submit a stranger's account number, get rejected for
+ * a name mismatch, edit the name to match the stranger, resubmit. Without a
+ * lock the matcher is decorative - anybody can pass it by copying the name it
+ * just showed them.
+ *
+ * A UI-only lock is not a lock. There is a readOnly attribute on the settings
+ * input, and it takes one curl to bypass. This is the enforcement.
+ */
+export const setUserNameSchema = z.object({
+  // A single character is not a legal name, and a bare surname cannot be
+  // matched against a Nigerian bank record with any confidence.
+  fullName: z.string().trim().min(2).max(120)
+});
+
+export async function setUserName(
+  userId: string,
+  input: z.infer<typeof setUserNameSchema>,
+  /**
+   * Supplied by the route, which owns the lookups. Passed in rather than
+   * imported so this module does not depend on the NGN or KYC layers.
+   */
+  guard: { hasVerifiedPayoutAccount: boolean; hasPendingNameReview: boolean; kycApproved: boolean }
+) {
+  const user = await getUser(userId);
+
+  if (guard.hasVerifiedPayoutAccount || guard.kycApproved) {
+    throw badRequest(
+      'Your name is locked because it has been verified against your bank account or ID. ' +
+      'Contact Sivan Support if it needs to be corrected.'
+    );
+  }
+
+  // A case sitting with a reviewer is mid-decision. Editing the name now would
+  // change the comparison under the reviewer's feet - they would approve a
+  // pairing that no longer exists.
+  if (guard.hasPendingNameReview) {
+    throw badRequest(
+      'Your bank account is being reviewed against this name. You cannot change it until that finishes.'
+    );
+  }
+
+  const updated = { ...user, fullName: input.fullName, updatedAt: nowIso() };
+  return db.updateUserRecord(updated);
+}
+
 export async function getUser(userId: string) {
   const user = await db.findUserById(userId);
   if (!user) throw notFound('User');

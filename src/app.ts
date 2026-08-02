@@ -285,6 +285,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     // Without this, PUT /api/users/:id/country is unauthenticated and anyone
     // can flip any user from the Bridge path to the Nigerian one.
     /^\/api\/users\/[^/]+\/country/,
+    /^\/api\/users\/[^/]+\/name/,
     /^\/api\/users\/[^/]+\/verification-plan/,
     /^\/api\/users\/[^/]+\/verification-summary/,
     /^\/api\/users\/[^/]+\/avatar/,
