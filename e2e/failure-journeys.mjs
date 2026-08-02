@@ -71,7 +71,23 @@ async function main() {
     const token = verified.data.token;
     const userId = verified.data.user.id;
     const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-    await fetch(`${API}/api/users/${userId}/country`, { method: 'PUT', headers: H, body: JSON.stringify({ country: 'NG' }) });
+    // SEED THE USER AS THE SERVER NOW SEES THEM, NOT AS SIGNUP RETURNED THEM.
+    //
+    // The country is set AFTER signup, so verified.data.user has no country on
+    // it. Seeding that stale object put the browser in a state a real user is
+    // never in - localStorage saying "no country" while the database said NG -
+    // and the modal then auto-detected the runner's location and offered a
+    // Nigerian the Bridge passport-and-selfie flow.
+    //
+    // That looked exactly like a product bug and was chased as one. It is not:
+    // a real user gets their country in the sign-in response (verified against
+    // the deployed API - a returning user's payload carries country: "NG").
+    // The fixture was the only thing lying.
+    const updatedUser = await j(await fetch(`${API}/api/users/${userId}/country`, {
+      method: 'PUT', headers: H, body: JSON.stringify({ country: 'NG' }),
+    }));
+    const seedUser = updatedUser.data ?? { ...verified.data.user, country: 'NG' };
+    if (seedUser.country !== 'NG') throw new Error(`fixture is not in the state under test: country=${seedUser.country}`);
 
     console.log(`\nuser ${userId}\n`);
 
@@ -80,7 +96,7 @@ async function main() {
     await page.evaluate(([t, u]) => {
       localStorage.setItem('sivan.authToken', t);
       localStorage.setItem('sivan.user', u);
-    }, [token, JSON.stringify(verified.data.user)]);
+    }, [token, JSON.stringify(seedUser)]);
 
     // ============================================================
     console.log('1. INVALID BANK ACCOUNT — the user mistypes');
@@ -88,7 +104,10 @@ async function main() {
     {
       await page.goto(`${FRONTEND}/verification`, { waitUntil: 'networkidle', timeout: 60000 });
       await page.waitForTimeout(3000);
-      await page.locator('button:has-text("Start verification"), button:has-text("Starting")').first().click();
+      // .last(), not .first(): "Start verification" also appears in the status
+      // notice above, and on some renders in the collapsed nav. The step
+      // button is the one in the checklist.
+      await page.locator('button:visible:has-text("Start verification"), button:visible:has-text("Starting")').last().click();
       await page.waitForTimeout(4000);
 
       // Reach the picker (detection may have auto-selected a country).
@@ -210,7 +229,10 @@ async function main() {
 
       await page.goto(`${FRONTEND}/verification`, { waitUntil: 'networkidle', timeout: 60000 });
       await page.waitForTimeout(3000);
-      await page.locator('button:has-text("Start verification"), button:has-text("Starting")').first().click();
+      // .last(), not .first(): "Start verification" also appears in the status
+      // notice above, and on some renders in the collapsed nav. The step
+      // button is the one in the checklist.
+      await page.locator('button:visible:has-text("Start verification"), button:visible:has-text("Starting")').last().click();
       await page.waitForTimeout(4000);
       const change2 = page.locator('.sv-chosen-country button:has-text("Change")');
       if (await change2.isVisible().catch(() => false)) { await change2.click(); await page.waitForTimeout(2000); }
@@ -251,7 +273,10 @@ async function main() {
       await page.route('**/api/ngn/bank-account/resolve*', route => route.abort('failed'));
       await page.goto(`${FRONTEND}/verification`, { waitUntil: 'networkidle', timeout: 60000 });
       await page.waitForTimeout(3000);
-      await page.locator('button:has-text("Start verification"), button:has-text("Starting")').first().click();
+      // .last(), not .first(): "Start verification" also appears in the status
+      // notice above, and on some renders in the collapsed nav. The step
+      // button is the one in the checklist.
+      await page.locator('button:visible:has-text("Start verification"), button:visible:has-text("Starting")').last().click();
       await page.waitForTimeout(4000);
       const change3 = page.locator('.sv-chosen-country button:has-text("Change")');
       if (await change3.isVisible().catch(() => false)) { await change3.click(); await page.waitForTimeout(2000); }
