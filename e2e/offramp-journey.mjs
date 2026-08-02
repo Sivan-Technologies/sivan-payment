@@ -156,8 +156,21 @@ async function main() {
       await page.waitForTimeout(12000);
       await shot('02-transactions');
       body = await page.locator('body').innerText();
+      // Assert on what the page ACTUALLY renders, not on raw API vocabulary.
+      // The first version looked for "awaiting", which is the API's word - the
+      // UI deliberately translates it to "Waiting for your crypto". The test
+      // was checking for the untranslated string and so would have passed only
+      // if the copy were bad.
       check('the pending sell appears in their transaction history',
-        /60|awaiting|pending|progress/i.test(body), body.slice(0, 220).replace(/\n/g, ' '));
+        !/No transactions yet/i.test(body) && /Sell crypto to naira/i.test(body),
+        body.slice(0, 240).replace(/\n/g, ' '));
+      check('and it is described in the user\'s terms, not the API\'s',
+        /Waiting for your crypto/i.test(body), body.slice(0, 240).replace(/\n/g, ' '));
+      check('the naira they will receive is shown',
+        /95,?817|NGN/i.test(body), body.slice(0, 240).replace(/\n/g, ' '));
+      // The whole point of an off-ramp awaiting funds.
+      check('the deposit address is on screen so the sell can be completed',
+        /0x[0-9a-fA-F]{6}/.test(body), body.slice(0, 240).replace(/\n/g, ' '));
       check('no raw provider wording leaks to the user',
         !/(internal server error|undefined|null|breet_offramp)/i.test(body));
     }
