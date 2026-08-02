@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AssetControl, NetworkControl, PaymentControl, UserRecord, WithdrawalRecord, OnrampOrderRecord } from '../../types';
+import type { AssetControl, NetworkControl, PaymentControl, UserRecord, WithdrawalRecord, OnrampOrderRecord, VerificationSummary } from '../../types';
 
 function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
 function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
@@ -74,10 +74,34 @@ export function TwoFactorRecommendationCard({ completedCount, onEnable, onDismis
   return <article className={`security-card two-factor-recommendation ${active ? 'after-activity' : ''}`}><div className="security-icon">⚿</div><div><p className="eyebrow">Security recommendation</p><h3>{active ? 'Secure your account before your next payment' : 'Protect your Sivan account'}</h3><p>{active ? 'You’ve completed your first Sivan transaction. Add authenticator 2FA to protect future transfers and payouts.' : 'Enable authenticator 2FA to secure transfers and payouts. You can skip this for now.'}</p><div className="recommendation-actions"><button className="primary-btn small" onClick={onEnable}>Enable 2FA</button><button className="ghost-btn small" onClick={onDismiss}>{active ? 'Not now' : 'Maybe later'}</button></div></div></article>;
 }
 
-export function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank, user, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; user: UserRecord | null; onContinue: () => void }) {
+export function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank, user, summary, onContinue }: { setupPercent: number; hasUser: boolean; isVerified: boolean; hasBank: boolean; user: UserRecord | null; summary: VerificationSummary | null; onContinue: () => void }) {
   const whatsappLinked = Boolean(user?.whatsappNumber || user?.whatsappVerifiedAt);
   const buttonLabel = !isVerified ? 'Start verification →' : !hasBank ? 'Add payout bank →' : 'Manage payment methods →';
-  return <article className="dashboard-setup-panel"><div className="panel-head"><div><p className="eyebrow">Setup</p><h3>Account setup</h3></div><strong className="setup-percent-pill">{setupPercent}%</strong></div><div className="setup-list"><SetupLine done={hasUser} title="Email confirmed" sub={user?.email ? 'Signed in securely' : 'Create account'} /><SetupLine done={whatsappLinked} optional title="WhatsApp linked" sub="Optional for escrow and alerts" /><SetupLine done={isVerified} title="Identity verified" sub={isVerified ? 'Ready' : '~3 minutes'} /><SetupLine done={hasBank} title="Payout bank" sub={hasBank ? 'Bank added' : 'Add a bank to sell crypto'} /></div><div className="setup-progress"><div><span style={{ width: `${setupPercent}%` }} /></div><strong>{setupPercent}%</strong></div><button className="primary-btn" onClick={onContinue}>{buttonLabel}</button></article>;
+
+  // COPY FOLLOWS THE PATH, NOT THE BRIDGE FLOW.
+  //
+  // "Identity verified / ~3 minutes" describes a document-and-selfie check. A
+  // Nigerian is never asked for either - they confirm a bank account in their
+  // own name - so this promised the wrong thing and set the wrong expectation
+  // about how long it takes.
+  const isNgnPath = summary?.path === 'ngn_bank';
+  const verifyTitle = isNgnPath ? 'Bank verified' : 'Identity verified';
+  const verifySub = isVerified
+    ? 'Ready'
+    : summary?.hasPendingPayoutReview
+      // A queued NUBAN is not "not started". Telling the user it takes a
+      // minute when it is already sitting with a reviewer reads as a failure.
+      ? 'Being checked'
+      : isNgnPath ? 'About a minute' : '~3 minutes';
+
+  // On the NGN path the payout bank IS the verification - one action clears
+  // both - so presenting them as two separate outstanding steps overstates
+  // what is left to do.
+  const bankSub = hasBank
+    ? 'Bank added'
+    : isNgnPath ? 'Added when you verify' : 'Add a bank to sell crypto';
+
+  return <article className="dashboard-setup-panel"><div className="panel-head"><div><p className="eyebrow">Setup</p><h3>Account setup</h3></div><strong className="setup-percent-pill">{setupPercent}%</strong></div><div className="setup-list"><SetupLine done={hasUser} title="Email confirmed" sub={user?.email ? 'Signed in securely' : 'Create account'} /><SetupLine done={whatsappLinked} optional title="WhatsApp linked" sub="Optional for escrow and alerts" /><SetupLine done={isVerified} title={verifyTitle} sub={verifySub} /><SetupLine done={hasBank} title="Payout bank" sub={bankSub} /></div><div className="setup-progress"><div><span style={{ width: `${setupPercent}%` }} /></div><strong>{setupPercent}%</strong></div><button className="primary-btn" onClick={onContinue}>{buttonLabel}</button></article>;
 }
 
 function SetupLine({ done, title, sub, optional = false }: { done: boolean; title: string; sub: string; optional?: boolean }) {

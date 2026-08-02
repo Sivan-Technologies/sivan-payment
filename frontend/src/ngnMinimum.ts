@@ -107,3 +107,25 @@ export const TYPICAL_GAS_USD: Record<string, number> = {
 export function typicalGasUsd(network: string): number {
   return TYPICAL_GAS_USD[network] ?? 0.5;
 }
+
+/**
+ * Does this quote breach the user's remaining 30-day headroom?
+ *
+ * Extracted from the form so it can be tested. The comparison is subtle in one
+ * way that matters: the LIMIT is in naira and the AMOUNT the user typed is in
+ * USD, so they cannot be compared until a quote supplies a rate. Every input
+ * here is therefore in naira, taken from the quote the server priced.
+ *
+ * `undefined` remaining means "not loaded" and must never block - a user whose
+ * summary request failed should not be locked out of withdrawing. `null` means
+ * genuinely uncapped.
+ */
+export function exceedsRemaining(
+  quotedNgn: number,
+  remainingNgn: number | null | undefined
+): boolean {
+  if (remainingNgn === undefined || remainingNgn === null) return false;
+  if (!Number.isFinite(quotedNgn) || quotedNgn <= 0) return false;
+  // Strictly greater: spending the last naira of an allowance is allowed.
+  return quotedNgn > remainingNgn;
+}

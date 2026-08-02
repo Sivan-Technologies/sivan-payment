@@ -1448,7 +1448,7 @@ export default function App() {
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
-            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice onVerify={openVerification} />}
+            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice summary={verificationSummary} onVerify={openVerification} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
               <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
@@ -1458,14 +1458,14 @@ export default function App() {
               <KpiCard label="Total volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
               <KpiCard label="Transactions" value={String(withdrawals.length + onrampOrders.length)} sub="Lifetime" trend={(withdrawals.length + onrampOrders.length) ? `${withdrawals.length + onrampOrders.length} records` : 'Start your first'} />
               <KpiCard label="Avg. payout time" value="1–2 days" sub="Provider + bank rail" trend="Tracked by status" />
-              <KpiCard label="Verification" value={isVerified ? 'Verified' : 'Incomplete'} sub={isVerified ? 'Ready' : 'Action required'} trend={friendlyStatus(customer?.kycStatus)} />
+              <KpiCard label="Verification" value={verificationSummary ? verificationSummary.levelLabel.replace(/^Level \d+: /, '') : isVerified ? 'Verified' : 'Incomplete'} sub={verificationSummary ? `Level ${verificationSummary.level}` : isVerified ? 'Ready' : 'Action required'} trend={/* friendlyStatus reads the BRIDGE customer status, which is "Not started" for a Nigerian who verified by bank check. */ verificationSummary ? (verificationSummary.pathComplete ? 'Ready' : verificationSummary.hasPendingPayoutReview ? 'Being checked' : 'Action required') : friendlyStatus(customer?.kycStatus)} />
             </div>
 
             <div className="dashboard-main-grid">
               <DashboardTransactions withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onViewAll={() => goToView('history')} />
               <div className="dashboard-side-stack">
                 {showTwoFactorRecommendation && <TwoFactorRecommendationCard completedCount={completedActivityCount} onEnable={goToSettingsSecurity} onDismiss={() => setTwoFactorPromptDismissedUntil(Date.now() + 7 * 24 * 60 * 60 * 1000)} />}
-                <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} onContinue={() => goToView(!isVerified ? 'kyc' : !hasBank ? 'banks' : 'banks')} />
+                <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} summary={verificationSummary} onContinue={() => goToView(!isVerified ? 'kyc' : !hasBank ? 'banks' : 'banks')} />
               </div>
             </div>
           </section>
@@ -1562,6 +1562,8 @@ export default function App() {
             ngnNetwork={ngnNetwork}
             ngnAsset="usdc"
             ngnMinimumUsd={ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd}
+            ngnRemainingNgn={ngnOfframpAllowance?.remainingNgn}
+            ngnWindowDays={verificationSummary?.windowDays}
             onNgnReady={handleNgnReady}
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}

@@ -110,7 +110,7 @@ export type WithdrawalReviewState = {
   estimatedGasUsd?: number;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork = 'solana', ngnAsset = 'usdc', ngnMinimumUsd, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork = 'solana', ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnWindowDays, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
   ngnUserId?: string;
@@ -118,6 +118,9 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   ngnNetwork?: string;
   ngnAsset?: 'usdc' | 'usdt';
   ngnMinimumUsd?: number;
+  /** Remaining NGN headroom from the server. Never computed in the UI. */
+  ngnRemainingNgn?: number | null;
+  ngnWindowDays?: number;
   onNgnReady?: (payload: { quote: any; account: any }) => void;
   onExitNgn?: () => void;
   onEnterNgn?: () => void;
@@ -168,7 +171,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // Naira needs a different first step entirely: a NUBAN and a
             // quote, not a saved Bridge external account. Bridge account
             // shapes (routing number, sort code, IBAN) cannot express one.
-            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} onReady={onNgnReady!} onCancel={onExitNgn!} />
+            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} windowDays={ngnWindowDays} onReady={onNgnReady!} onCancel={onExitNgn!} />
             : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} />}
@@ -339,10 +342,55 @@ function NeedHelpCard() {
 }
 
 
-export function DashboardAccountNotice({ onVerify }: { onVerify: () => void }) {
+/**
+ * The dashboard status notice for a user with no Bridge customer record.
+ *
+ * THIS USED TO BE UNCONDITIONALLY "Verify your account".
+ *
+ * App.tsx renders it whenever `customer` is null - and a Nigerian who verified
+ * through the bank name check NEVER becomes a Bridge customer. So a user who
+ * had completed everything Sivan asks of them was told to verify, forever,
+ * with a button that reopened a flow they had already finished.
+ *
+ * It now reads the summary, which is path-aware, and only falls back to the
+ * generic prompt when there genuinely is no verification.
+ */
+export function DashboardAccountNotice({ summary, onVerify, onAddBank, onSell }: {
+  summary: VerificationSummary | null;
+  onVerify: () => void;
+  onAddBank: () => void;
+  onSell: () => void;
+}) {
+  // A NUBAN sitting with a reviewer. The user cannot act, and must not be told
+  // to "verify" again - resubmitting the same account changes nothing.
+  if (summary?.hasPendingPayoutReview && !summary.pathComplete) {
+    return <article className="kyc-outcome-notice dashboard-account-notice">
+      <span className="kyc-outcome-icon">⏳</span>
+      <div className="kyc-outcome-copy"><p className="eyebrow">Account status</p><h3>Bank check in progress</h3><p>We are confirming your bank account matches your name. This is usually done within a few hours.</p></div>
+    </article>;
+  }
+
+  if (summary?.pathComplete) {
+    const ngn = summary.allowances.find((item) => item.flow === 'offramp' && item.rail === 'ngn');
+    // Headroom in the notice, because "verified" alone does not tell someone
+    // what they can actually do next.
+    const headroom = ngn && ngn.remainingNgn !== null
+      ? `You can sell up to ₦${ngn.remainingNgn.toLocaleString('en-NG')} in the next ${summary.windowDays} days.`
+      : 'You can sell crypto and withdraw to your bank.';
+
+    return <article className="kyc-outcome-notice ready dashboard-account-notice">
+      <span className="kyc-outcome-icon">✓</span>
+      <div className="kyc-outcome-copy"><p className="eyebrow">Account status</p><h3>{summary.levelLabel}</h3><p>{summary.hasPayoutAccount ? headroom : 'You are verified. Add a payout bank to start selling crypto.'}</p></div>
+      <div className="kyc-outcome-actions"><button className="primary-btn" onClick={summary.hasPayoutAccount ? onSell : onAddBank}>{summary.hasPayoutAccount ? 'Sell crypto' : 'Add bank account'}</button></div>
+    </article>;
+  }
+
+  // Genuinely unverified. The copy names the path their country puts them on,
+  // so a Nigerian is not promised a document check they will never be asked for.
+  const isNgnPath = summary?.path === 'ngn_bank';
   return <article className="kyc-outcome-notice action dashboard-account-notice">
     <span className="kyc-outcome-icon">◈</span>
-    <div className="kyc-outcome-copy"><p className="eyebrow">Account status</p><h3>Verify your account</h3><p>Complete identity verification to unlock payments.</p></div>
+    <div className="kyc-outcome-copy"><p className="eyebrow">Account status</p><h3>Verify your account</h3><p>{isNgnPath ? 'Confirm a Nigerian bank account in your name to unlock payments. No documents needed.' : 'Complete identity verification to unlock payments.'}</p></div>
     <div className="kyc-outcome-actions"><button className="primary-btn" onClick={onVerify}>Start verification</button></div>
   </article>;
 }

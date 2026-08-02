@@ -10,7 +10,7 @@ import {
   type ResolvedNgnBankAccount,
 } from '../../ngnBank';
 import { formatPayoutAmount } from '../../rails';
-import { offrampClears, typicalGasUsd } from '../../ngnMinimum';
+import { exceedsRemaining, offrampClears, typicalGasUsd } from '../../ngnMinimum';
 
 /**
  * Where the naira goes, and what it is worth.
@@ -30,6 +30,8 @@ export function NgnPayoutForm({
   network,
   asset,
   breetMinimumUsd,
+  remainingNgn,
+  windowDays = 30,
   onReady,
   onCancel,
 }: {
@@ -39,6 +41,16 @@ export function NgnPayoutForm({
   asset: 'usdc' | 'usdt';
   breetMinimumUsd?: number;
   onReady: (payload: { quote: NgnQuote; account: ResolvedNgnBankAccount }) => void;
+  /**
+   * The user's remaining NGN off-ramp headroom, from the server.
+   *
+   * Passed in rather than fetched here so there is ONE source of the number in
+   * the app. null means genuinely uncapped; undefined means not loaded yet,
+   * and in that case nothing is shown - an invented ceiling is worse than
+   * none, because the user only discovers the truth when the quote fails.
+   */
+  remainingNgn?: number | null;
+  windowDays?: number;
   onCancel: () => void;
 }) {
   const [banks, setBanks] = useState<NgnBank[]>([]);
@@ -108,6 +120,24 @@ export function NgnPayoutForm({
   }, [bankId, accountNumber, resolveAccount]);
 
   const amountUsd = Number(amount || 0);
+
+  /**
+   * Would this amount breach the user's 30-day ceiling?
+   *
+   * The limit is denominated in NGN and the input is in USD, so the two cannot
+   * be compared until there is a rate. Sivan holds no naira and the rate moves,
+   * so the only honest conversion is the one the QUOTE returns - anything else
+   * is a guess that would tell the user a different number from the one the
+   * server enforces.
+   *
+   * Consequence, deliberately accepted: the breach is reported after the first
+   * quote rather than while typing. A wrong answer shown earlier is worse than
+   * a right one shown a second later, and the server rejects it either way.
+   */
+  const quotedNgn = quote ? Number(quote.destinationAmount || 0) : 0;
+  const overLimit = exceedsRemaining(quotedNgn, remainingNgn);
+
+  const naira = (value: number) => `₦${value.toLocaleString('en-NG')}`;
   const floorVerdict = breetMinimumUsd !== undefined && amountUsd > 0
     ? offrampClears({ amountUsd, breetMinimumUsd, estimatedGasUsd })
     : undefined;
@@ -217,6 +247,12 @@ export function NgnPayoutForm({
             {breetMinimumUsd !== undefined && !amount && (
               <span className="field-hint">Minimum about ${offrampClears({ amountUsd: 0, breetMinimumUsd, estimatedGasUsd }).minimumUsd.toFixed(2)} on {network}, network fee included.</span>
             )}
+            {/* The ceiling, at the moment the amount is entered - which is
+                where it actually changes what someone types. Rendered only
+                when the server has told us the number. */}
+            {remainingNgn !== undefined && remainingNgn !== null && (
+              <span className="field-hint">You can withdraw up to {naira(remainingNgn)} in the next {windowDays} days.</span>
+            )}
           </label>
         )}
 
@@ -236,6 +272,15 @@ export function NgnPayoutForm({
           <div className="warning-box compact">That quote expired. Get a new one so you settle at the rate you were shown.</div>
         )}
 
+        {/* The server will refuse this, so refusing it here first turns a
+            failed submission into a number the user can adjust. */}
+        {overLimit && remainingNgn !== null && remainingNgn !== undefined && (
+          <div className="warning-box compact">
+            That is {naira(quotedNgn)}, above the {naira(remainingNgn)} you have left for the next {windowDays} days.
+            Withdraw less, or complete the next verification step to raise your limit.
+          </div>
+        )}
+
         <div className="split-actions">
           <button type="button" className="ghost-btn" onClick={onCancel}>Back</button>
           {!quote || quoteExpired ? (
@@ -251,6 +296,10 @@ export function NgnPayoutForm({
             <button
               type="button"
               className="primary-btn"
+              // Blocked over the ceiling. The server refuses it anyway, and
+              // letting the user reach the review screen only to be rejected
+              // there wastes the quote they are racing the expiry on.
+              disabled={overLimit}
               onClick={() => onReady({ quote, account: resolved! })}
             >
               Continue →
