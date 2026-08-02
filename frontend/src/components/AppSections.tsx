@@ -518,7 +518,30 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
   return (
     <section className="app-page verification-premium">
       <PageHero title="Verification" subtitle="A short, secure check so you can use Sivan payments with confidence." />
-      {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />}
+      {/* A QUEUED BANK CHECK OUTRANKS THE BRIDGE CARD.
+
+          KycOutcomeNotice reads customer.kycStatus, which is Bridge-only. A
+          Nigerian who has just submitted their bank account has no Bridge
+          customer, so it rendered "Verify your account - complete identity
+          verification" immediately after they submitted. Caught in the
+          browser: the page said Level 0, 25%, verify - seconds after a
+          successful submission.
+
+          The user's own words for what they did must win over a provider
+          status that has no opinion about it. */}
+      {summary?.hasPendingPayoutReview && !summary.pathComplete ? (
+        <article className="kyc-outcome-notice dashboard-account-notice">
+          <span className="kyc-outcome-icon">⏳</span>
+          <div className="kyc-outcome-copy">
+            <p className="eyebrow">Account status</p>
+            <h3>Bank check in progress</h3>
+            <p>We are confirming your bank account matches your name. This is usually done within a few hours — you do not need to do anything.</p>
+          </div>
+          <div className="kyc-outcome-actions"><button className="ghost-btn" onClick={onRefresh}>Refresh status</button></div>
+        </article>
+      ) : (
+        customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />
+      )}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
           <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{levelLabel}</Badge></div>
@@ -549,7 +572,7 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
               ceiling in the hub changes this immediately with no deploy. */}
           {ngnOfframp && <VerificationLimitCard allowance={ngnOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} />}
           {customer && <article className="panel verification-status-card"><div className="panel-head"><div><p className="eyebrow">Current status</p><h3>Verification summary</h3></div><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
-          <article className="panel verify-simple-card"><h3>Why we verify</h3><p className="muted">Verification keeps your account safe and helps Sivan meet payment partner requirements.</p><ul className="plain-list"><li>✓ Encrypted data</li><li>✓ Used only for compliance</li><li>✓ Status refreshes automatically</li></ul></article>
+          <article className="panel verify-simple-card"><h3>Why we verify</h3><p className="muted">{isNgnPath ? 'Confirming the bank account belongs to you keeps payouts going to the right person.' : 'Verification keeps your account safe and helps Sivan meet payment partner requirements.'}</p><ul className="plain-list"><li>✓ Encrypted data</li><li>✓ Used only for compliance</li><li>✓ Status refreshes automatically</li></ul></article>
           <article className="security-card verify-help-card"><div className="security-icon">?</div><div><h3>Need help?</h3><p>If you are having trouble, support can review it with you.</p><button onClick={onSupport}>Contact support →</button><button onClick={onRefresh}>Refresh status →</button></div></article>
         </div>
       </div>

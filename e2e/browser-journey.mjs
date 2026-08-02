@@ -181,8 +181,14 @@ async function main() {
 
     const bankPath = await page.locator('text=/bank account|Your bank|Level 1/i').first().isVisible().catch(() => false);
     check('Nigeria routes to the bank check, not a photo ID', bankPath);
-    const askedForId = await page.locator('text=/photo ID|selfie/i').first().isVisible().catch(() => false);
-    check('and it does NOT ask a Nigerian for a selfie', !askedForId);
+
+    // Scope to the MODAL. The first version searched the whole page and hit
+    // the verification page rendered BEHIND the overlay, which legitimately
+    // describes the Bridge path for users who need it. The modal is what the
+    // Nigerian is actually looking at.
+    const modalText = await page.locator('.sv-modal').innerText().catch(() => '');
+    check('and the modal does NOT ask a Nigerian for a selfie',
+      !/photo ID|selfie/i.test(modalText), modalText.slice(0, 120).replace(/\n/g, ' '));
 
     console.log('\n6. RESOLVE A BANK ACCOUNT');
     const search = page.locator('.sv-field input').first();
@@ -218,9 +224,16 @@ async function main() {
             await confirm.click();
             await page.waitForTimeout(8000);
             await shot('09-submitted');
-            const queued = await page.locator('text=/manual check|being checked|few hours/i').first().isVisible().catch(() => false);
-            // NOT "verified". The sandbox is untrustworthy, so this must queue.
-            check('the user is told it needs a manual check, not that they are verified', queued);
+            // NOT "verified". The sandbox is untrustworthy, so this must queue -
+            // and the page must SAY so rather than reverting to a generic
+            // "verify your account" prompt, which is what it used to do.
+            const pageText = await page.locator('body').innerText().catch(() => '');
+            const queued = /manual check|being checked|in progress|few hours/i.test(pageText);
+            check('the user is told a check is in progress', queued,
+              pageText.slice(0, 200).replace(/\n/g, ' '));
+            check('and is NOT told to start verifying all over again',
+              !/Verify your account/i.test(pageText),
+              'page still shows the generic verify prompt');
           }
         }
       }
