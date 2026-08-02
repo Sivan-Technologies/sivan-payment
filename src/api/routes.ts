@@ -15,6 +15,7 @@ import { paymentControlsRoutes } from '../controls/payment-controls.routes.js';
 import { systemStatusRoutes } from '../system/system-status.routes.js';
 import { supportRoutes } from '../support/support.routes.js';
 import { db } from '../database/json-database.js';
+import { getOperationalHealth } from '../monitoring/operational-health.service.js';
 import { onrampOrdersRoutes } from '../onramp/api/onramp-orders.routes.js';
 import { identityRoutes } from '../identity/identity.routes.js';
 import { virtualAccountsRoutes } from '../virtual-accounts/api/virtual-accounts.routes.js';
@@ -28,6 +29,27 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/ping', async (_request, reply) => reply.type('text/plain').send('ok'));
   app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
   app.get('/health/db', async () => ({ status: 'ok', database: db.getPoolStats() }));
+
+  /**
+   * Is the money moving?
+   *
+   * /health says the process is up; this says the product is working. The
+   * difference matters because every incident so far has been silent - a
+   * stuck webhook, a discarded event, a stale deploy - and /health returned
+   * 200 through all of them.
+   *
+   * Returns 503 when any signal is critical, so a plain uptime monitor
+   * (UptimeRobot, Better Stack, an ALB health check) alerts on it without
+   * needing to parse the body. 200 with warnings, so a slow review queue
+   * does not page anyone at 3am.
+   *
+   * PUBLIC ON PURPOSE. It exposes counts and states, never user data, and an
+   * alerting endpoint behind auth is one credential away from not alerting.
+   */
+  app.get('/health/operational', async (_request, reply) => {
+    const health = await getOperationalHealth();
+    return reply.code(health.status === 'critical' ? 503 : 200).send(health);
+  });
   await authRoutes(app);
   await usersRoutes(app);
   await identityRoutes(app);

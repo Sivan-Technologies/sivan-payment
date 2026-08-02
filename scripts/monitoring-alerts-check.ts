@@ -14,6 +14,10 @@ const urls = {
 
 await checkHealth(`${urls.liveBackend}/health`, 'Render live backend health');
 await checkHealth(`${urls.testBackend}/health`, 'Render test backend health');
+// Process liveness is not product health. /health returned 200 through all
+// three of the silent incidents this endpoint was built to catch.
+await checkOperational(`${urls.liveBackend}/health/operational`, 'live operational health');
+await checkOperational(`${urls.testBackend}/health/operational`, 'test operational health');
 await checkFrontendSentry(urls.liveUser, 'Vercel live user frontend Sentry bundle');
 await checkFrontendSentry(urls.testUser, 'Vercel test user frontend Sentry bundle');
 await checkFrontendSentry(urls.admin, 'Vercel admin frontend Sentry bundle');
@@ -29,6 +33,29 @@ async function checkHealth(url: string, name: string) {
     const res = await fetch(url);
     record(name, res.ok, res.ok ? 'pass' : 'fail', { status: res.status });
   } catch (error) { record(name, false, 'fail', error instanceof Error ? error.message : String(error)); }
+}
+
+/**
+ * Read the operational endpoint and surface WHICH signal is red.
+ *
+ * A bare pass/fail here would tell an operator the system is unhealthy
+ * without saying why, which is the same as telling them nothing.
+ */
+async function checkOperational(url: string, name: string) {
+  try {
+    const res = await fetch(url);
+    const body: any = await res.json().catch(() => ({}));
+    const bad = (body.signals ?? []).filter((s: any) => s.severity !== 'ok');
+    // 503 is the endpoint working correctly, not the check failing - but it
+    // still has to be loud, because something is genuinely wrong.
+    record(name, bad.length === 0, bad.some((s: any) => s.severity === 'critical') ? 'fail' : bad.length ? 'warn' : 'pass', {
+      httpStatus: res.status,
+      status: body.status,
+      problems: bad.map((s: any) => `[${s.severity}] ${s.name}: ${s.detail}`),
+    });
+  } catch (error) {
+    record(name, false, 'fail', error instanceof Error ? error.message : String(error));
+  }
 }
 
 async function checkFrontendSentry(baseUrl: string, name: string) {

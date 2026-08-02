@@ -26,6 +26,9 @@ export function getRateLimitPolicy(method: string, url: string): RateLimitPolicy
   if (!env.RATE_LIMIT_ENABLED) return null;
   if (method === 'OPTIONS') return null;
   if (url === '/health') return null;
+  // Polled every minute by an uptime monitor. Rate limiting the thing that
+  // tells you the system is broken is how an outage becomes invisible.
+  if (url === '/health/operational' || url === '/health/db') return null;
 
   // Read-only API calls are used heavily by dashboards for bootstrap, focus,
   // visibility, and status refreshes. Throttling them in the in-process user-action

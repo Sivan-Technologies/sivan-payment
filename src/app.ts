@@ -199,7 +199,7 @@ export async function buildApp() {
 
 function isFastHealthRequest(method: string, url: string): boolean {
   const path = url.split('?')[0];
-  return ['GET', 'HEAD'].includes(method) && ['/', '/ping', '/health', '/health/db'].includes(path);
+  return ['GET', 'HEAD'].includes(method) && ['/', '/ping', '/health', '/health/db', '/health/operational'].includes(path);
 }
 
 /**
