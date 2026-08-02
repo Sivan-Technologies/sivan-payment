@@ -129,6 +129,41 @@ async function main() {
     check('a null country is still allowed for existing users', nullAllowed);
   }
 
+  console.log('\nA USER WITH NO BRIDGE CUSTOMER CAN STILL BE GIVEN A WALLET');
+  {
+    // THE NIGERIAN PATH HAS NO BRIDGE CUSTOMER, EVER.
+    //
+    // payments_user_wallets.payments_customer_id was `not null references
+    // payments_customers(id)`, written in 031 when a wallet only existed as
+    // "the wallet belonging to a Bridge customer". A user who verifies by
+    // NUBAN name check never becomes one, so wallet creation died with 23502
+    // and they got a bare 500 - no deposit address, no off-ramp, no on-ramp.
+    //
+    // Caught by walking the actual product against the deployed test API, not
+    // by any suite: every wallet test seeds a Bridge customer first, so the
+    // constraint was structurally invisible to all of them.
+    await db.exec(`insert into users (user_id, email) values ('mig_w1','w1@b.test')`);
+
+    let noCustomerAllowed = true;
+    let failure = '';
+    try {
+      await db.exec(`insert into payments_user_wallets
+        (id, user_id, payments_customer_id, provider, provider_wallet_id, chain, address, status, custodial)
+        values ('mig_uw1','mig_w1',null,'privy','pw_1','solana','SoLaddr1','active',false)`);
+    } catch (error) { noCustomerAllowed = false; failure = (error as Error).message.slice(0, 120); }
+    check('a wallet can be created with no Bridge customer', noCustomerAllowed, failure);
+
+    // The FK must still bite. Dropping NOT NULL must not have become "any
+    // string is fine" - a dangling customer id is a different bug.
+    let danglingRejected = false;
+    try {
+      await db.exec(`insert into payments_user_wallets
+        (id, user_id, payments_customer_id, provider, provider_wallet_id, chain, address, status, custodial)
+        values ('mig_uw2','mig_w1','cus_does_not_exist','privy','pw_2','ethereum','0xaddr2','active',false)`);
+    } catch { danglingRejected = true; }
+    check('but a customer id that does not exist is still rejected', danglingRejected);
+  }
+
   console.log('\nNO MIGRATION USES AN UNGUARDED add constraint');
   {
     // Static check as well as the behavioural one, so the failure names the
