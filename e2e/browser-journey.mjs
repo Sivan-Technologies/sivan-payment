@@ -71,20 +71,27 @@ async function main() {
     await page.fill('input[name="email"]', email);
     await page.fill('input[name="fullName"]', fullName);
     await page.check('input[name="legalAccepted"]');
-    await page.click('button:has-text("Send verification code")');
-    await page.waitForTimeout(4000);
-    await shot('02-otp');
 
-    // The OTP is read from the API, not the UI. This is the only place the
-    // test steps outside the browser.
-    const start = await fetch(`${API}/api/auth/email/start`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, fullName, intent: 'signup',
-        legalAcceptance: { accepted: true, termsVersion: 't', privacyVersion: 'p', riskDisclosureVersion: 'r' } }),
-    }).then(r => r.json());
-    const code = start?.data?.devCode;
-    check('an OTP was issued', Boolean(code), JSON.stringify(start).slice(0, 160));
+    // INTERCEPT the browser's own response rather than calling the API again.
+    //
+    // The first version issued a SECOND email/start from the test, which mints
+    // a fresh challenge and invalidates the code the UI is waiting on. The
+    // screenshot showed the button still reading "Sending secure code..."
+    // while the test had already moved on with a code the UI would reject.
+    const startResponse = page.waitForResponse(
+      r => r.url().includes('/auth/email/start') && r.request().method() === 'POST',
+      { timeout: 90000 }
+    );
+    await page.click('button:has-text("Send verification code")');
+    const startBody = await (await startResponse).json().catch(() => null);
+    const code = startBody?.data?.devCode;
+    check('an OTP was issued', Boolean(code), JSON.stringify(startBody).slice(0, 160));
     if (!code) throw new Error('no devCode - cannot continue');
+
+    // Wait for the UI to actually reach the code screen. A fixed sleep raced
+    // a 3s API call and typed into a form that was not there yet.
+    await page.waitForSelector('input[inputmode="numeric"], input[maxlength="1"], input[name="code"]', { timeout: 60000 });
+    await shot('02-otp');
 
     const otpBoxes = page.locator('input[inputmode="numeric"], input[maxlength="1"]');
     const boxCount = await otpBoxes.count();
@@ -93,14 +100,20 @@ async function main() {
     } else {
       await page.fill('input[name="code"], input[placeholder*="code" i]', code);
     }
-    await page.waitForTimeout(1500);
+    const verifyResponse = page.waitForResponse(
+      r => r.url().includes('/auth/email/verify') && r.request().method() === 'POST',
+      { timeout: 90000 }
+    ).catch(() => null);
     const submit = page.locator('button:has-text("Verify"), button:has-text("Continue"), button:has-text("Confirm")').first();
     if (await submit.isVisible().catch(() => false)) await submit.click();
-    await page.waitForTimeout(6000);
-    await shot('03-after-signin');
+    const verified = await verifyResponse;
+    if (verified) check('the verify call succeeded', verified.status() === 200, String(verified.status()));
 
-    const signedIn = !page.url().includes('/signup') || await page.locator('text=/dashboard|overview/i').first().isVisible().catch(() => false);
-    check('the user is signed in', signedIn, page.url());
+    // Wait for the app to leave /signup rather than guessing at a duration.
+    await page.waitForURL(u => !u.toString().includes('/signup'), { timeout: 60000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+    await shot('03-after-signin');
+    check('the user is signed in', !page.url().includes('/signup'), page.url());
 
     console.log('\n3. OPEN VERIFICATION');
     await page.goto(`${FRONTEND}/verification`, { waitUntil: 'networkidle', timeout: 60000 });

@@ -604,6 +604,12 @@ export class JsonDatabase {
     });
   }
 
+  /** Mirrors the Postgres targeted read. See that implementation for why. */
+  async getSystemStatusRecord() {
+    const data = await this.read();
+    return (data.systemStatus ?? []).find((item) => item.id === 'global') ?? null;
+  }
+
   async listSystemIncidentRecords(): Promise<SystemIncidentRecord[]> {
     const data = await this.read();
     return data.systemIncidents ?? [];

@@ -18,9 +18,15 @@ export const updateSystemStatusSchema = z.object({
   estimatedResumeAt: z.string().datetime().optional().nullable()
 });
 
+/**
+ * The platform's on/off state, read on EVERY /api/* request by the app.ts
+ * preHandler - GETs included, which is what made this worse than the
+ * audit-log equivalent.
+ *
+ * It used to call db.read() (all 28 tables) to find one row keyed 'global'.
+ */
 export async function getSystemStatus(): Promise<SystemStatusRecord> {
-  const data = await db.read();
-  const status = (data.systemStatus ?? []).find((item) => item.id === 'global') ?? defaultStatus();
+  const status = (await db.getSystemStatusRecord()) ?? defaultStatus();
   const activeIncidents = await listActiveSystemIncidents();
   return { ...status, activeIncidents };
 }

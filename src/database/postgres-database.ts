@@ -994,6 +994,28 @@ export class PostgresDatabase {
     try { await upsertSystemStatus(client, record); return record; } finally { client.release(); }
   }
 
+  /**
+   * The global system-status row.
+   *
+   * getSystemStatus() runs in the preHandler for EVERY /api/* request - GETs
+   * included - and was reading it via db.read(), which loads all 28 tables.
+   *
+   * Measured on the deployed test API after the audit-log fix:
+   *   /health              0.05s
+   *   /api/geo/country     3.29s   <- reads one HTTP header, nothing else
+   *   /api/users/x/FAKE    3.09s   <- a 404 still paid the cost
+   *
+   * A route that does no work taking 3s is the tell: the cost is in the hook,
+   * not the handler.
+   */
+  async getSystemStatusRecord(): Promise<SystemStatusRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, "select * from payments_system_status where id = 'global' limit 1");
+      return result.rows.length ? mapSystemStatus(result.rows[0]) : null;
+    } finally { client.release(); }
+  }
+
   async listSystemIncidentRecords(): Promise<SystemIncidentRecord[]> {
     const client = await this.pool.connect();
     try { return (await optionalQuery(client, 'select * from payments_system_incidents order by started_at desc, created_at desc')).rows.map(mapSystemIncident); } finally { client.release(); }
