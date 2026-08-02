@@ -81,6 +81,8 @@
     "test:name-match": "tsx scripts/test-name-match.ts",
     "test:verification-path": "tsx scripts/test-verification-path.ts",
     "test:ngn-payout-accounts": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-payout-accounts.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=ngn-payout-admin-key tsx scripts/test-ngn-payout-accounts.ts",
+    "setup:alerts": "tsx scripts/setup-alerts.ts",
+    "ops:rails": "tsx scripts/fix-live-findings.ts",
     "watchdog": "tsx scripts/watchdog.ts",
     "test:watchdog": "tsx scripts/test-watchdog.ts",
     "test:operational-health": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-op-health.json EMAIL_PROVIDER=console NGN_PROVIDER=mock PRIVY_AUTHORIZATION_PRIVATE_KEY=stub PRIVY_AUTHORIZATION_KEY_QUORUM_ID=stub tsx scripts/test-operational-health.ts",
