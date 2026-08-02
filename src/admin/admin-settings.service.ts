@@ -34,11 +34,20 @@ const defaultPlatformSettings = (): AdminPlatformSettings & { updatedAt: string 
   updatedAt: nowIso()
 });
 
+/**
+ * Platform settings, read on EVERY mutating request by the app.ts preHandler.
+ *
+ * This used to call db.read(), which loads all 28 tables - including an
+ * unbounded `select * from payments_audit_logs` - to find a single row. On the
+ * deployed test API that made a signup POST take 146 SECONDS while GET /health
+ * answered in 0.08s, and it degrades further as the audit log grows.
+ *
+ * Found by driving the real frontend in a browser: the gateway returned
+ * UPSTREAM_UNAVAILABLE on signup and nothing in any test suite had caught it,
+ * because every suite runs against a database with a handful of rows.
+ */
 export async function getAdminPlatformSettings() {
-  const data = await db.read();
-  const latest = (data.auditLogs ?? [])
-    .filter((log) => log.action === 'admin.platform_settings.updated')
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const latest = await db.latestAuditLogByAction('admin.platform_settings.updated');
   if (!latest) return defaultPlatformSettings();
   return { ...defaultPlatformSettings(), ...((latest.metadata as any)?.settings ?? {}), updatedBy: latest.actorId ?? 'admin_api_key', updatedAt: latest.createdAt };
 }

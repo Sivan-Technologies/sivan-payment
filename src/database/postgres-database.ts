@@ -470,6 +470,29 @@ export class PostgresDatabase {
     try { return (await client.query('select * from payments_audit_logs order by created_at desc limit $1 offset $2', [limit, offset])).rows.map(mapAuditLog); } finally { client.release(); }
   }
 
+  /**
+   * The most recent audit log for one action.
+   *
+   * Exists because getAdminPlatformSettings() was doing this by calling
+   * db.read() - which loads all 28 tables, including `select * from
+   * payments_audit_logs` with no limit - and it runs on EVERY mutating
+   * request via the platform-status preHandler.
+   *
+   * Measured on the deployed test API: a signup POST took 146 SECONDS while
+   * GET /health took 0.08s. One indexed row instead of the entire audit
+   * history.
+   */
+  async latestAuditLogByAction(action: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'select * from payments_audit_logs where action = $1 order by created_at desc limit 1',
+        [action]
+      );
+      return result.rows.length ? mapAuditLog(result.rows[0]) : null;
+    } finally { client.release(); }
+  }
+
   async listReconciliationRunsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
     const client = await this.pool.connect();
     try {

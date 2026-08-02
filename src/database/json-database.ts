@@ -257,6 +257,14 @@ export class JsonDatabase {
     return (data.auditLogs ?? []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(offset, offset + limit);
   }
 
+  /** Mirrors the Postgres targeted lookup. See that implementation for why. */
+  async latestAuditLogByAction(action: string) {
+    const data = await this.read();
+    return (data.auditLogs ?? [])
+      .filter((log) => log.action === action)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
+  }
+
   async listReconciliationRunsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
     const data = await this.read();
     return (data.reconciliationRuns ?? [])
