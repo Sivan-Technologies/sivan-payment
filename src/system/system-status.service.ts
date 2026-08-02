@@ -60,10 +60,34 @@ export function isUserMutationBlocked(mode: SystemStatusRecord['mode'], method: 
   if (url.startsWith('/api/webhooks')) return false;
   if (url.startsWith('/api/auth')) return false;
 
+  // THE NGN RAILS WERE MISSING FROM BOTH LISTS.
+  //
+  // These patterns were written when Bridge was the only way money moved. The
+  // naira rails were added later and never registered here, so an operator
+  // pausing the system - the single lever for "stop everything, something is
+  // wrong" - stopped Bridge withdrawals and left NGN off-ramps running.
+  //
+  // That is the worst possible shape for a kill switch: it reports success
+  // and keeps paying out. Caught by the full-system e2e, not by reading.
+  //
+  // Accepting a quote is what commits money, so /offramp/orders and
+  // /onramp/orders are blocked. Quoting is a read-shaped POST-free path and
+  // is left alone deliberately - a user should still be able to see a rate
+  // while payments are down, and blocking it only produces a confusing error
+  // on a screen that moves nothing.
+  const ngnBlocked = [
+    /^\/api\/ngn\/offramp\/orders$/,
+    /^\/api\/ngn\/onramp\/orders$/,
+    // A payout account is identity evidence, not a payment - but creating one
+    // spends a paid provider lookup, so it stops with everything else.
+    /^\/api\/ngn\/payout-accounts$/
+  ];
+
   const maintenanceBlocked = [
     /^\/api\/external-accounts/,
     /^\/api\/withdrawals$/,
-    /^\/api\/onramp\/orders$/
+    /^\/api\/onramp\/orders$/,
+    ...ngnBlocked
   ];
 
   const pausedBlocked = [
@@ -71,7 +95,8 @@ export function isUserMutationBlocked(mode: SystemStatusRecord['mode'], method: 
     /^\/api\/customers\/kyc-link$/,
     /^\/api\/external-accounts/,
     /^\/api\/withdrawals$/,
-    /^\/api\/onramp\/orders$/
+    /^\/api\/onramp\/orders$/,
+    ...ngnBlocked
   ];
 
   const patterns = mode === 'maintenance' ? maintenanceBlocked : pausedBlocked;

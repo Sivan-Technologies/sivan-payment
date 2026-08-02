@@ -73,15 +73,27 @@ async function main() {
   {
     // Ship defaults: BANK off-ramp is NGN 50,000.
     const shipped = limitFor('offramp', 'ngn', VerificationLevel.BANK);
-    check('shipped BANK off-ramp ceiling is 50,000', shipped === 50_000, String(shipped));
+    check('shipped BANK off-ramp ceiling is 100,000', shipped === 100_000, String(shipped));
 
     const blocked = decide(bankLevelUser(), {
       flow: 'offramp', rail: 'ngn',
       amountNgn: ONE_BREET_WITHDRAWAL_NGN, priorVolumeNgn: 0,
     });
-    check('a single minimum Breet withdrawal is BLOCKED by default',
-      !blocked.allowed, `${ONE_BREET_WITHDRAWAL_NGN} was allowed`);
-    console.log(`       one $50 withdrawal = NGN ${ONE_BREET_WITHDRAWAL_NGN.toLocaleString()} vs ceiling 50,000`);
+    // The ceiling was raised to 100,000, so one sandbox-minimum withdrawal
+    // (NGN 80,250) now FITS - which was the point of raising it. What still
+    // binds is the second one, because the threshold is cumulative.
+    check('one $50 withdrawal now fits under the raised ceiling',
+      blocked.allowed, `${ONE_BREET_WITHDRAWAL_NGN} was refused`);
+    console.log(`       one $50 withdrawal = NGN ${ONE_BREET_WITHDRAWAL_NGN.toLocaleString()} vs ceiling 100,000`);
+
+    const second = decide(bankLevelUser(), {
+      flow: 'offramp', rail: 'ngn',
+      amountNgn: ONE_BREET_WITHDRAWAL_NGN, priorVolumeNgn: ONE_BREET_WITHDRAWAL_NGN,
+    });
+    check('but a SECOND one in the same window is refused',
+      !second.allowed, 'cumulative ceiling did not bind');
+    check('and the user is told to add NIN or BVN',
+      second.requiredLevel === VerificationLevel.IDENTITY, String(second.requiredLevel));
 
     // An admin raises it. No deploy.
     const overrides: VerificationLimitOverride[] = [
@@ -195,7 +207,7 @@ async function main() {
     const matrix = await getVerificationLimitMatrix();
     const row = matrix.find((r) => r.flow === 'offramp' && r.rail === 'ngn' && r.level === VerificationLevel.BANK);
     check('the matrix shows the default alongside the override',
-      row?.defaultCumulativeNgn === 50_000 && row?.effectiveCumulativeNgn === 250_000,
+      row?.defaultCumulativeNgn === 100_000 && row?.effectiveCumulativeNgn === 250_000,
       JSON.stringify(row));
     check('the matrix flags it as overridden', row?.isOverridden === true);
 
@@ -229,11 +241,11 @@ async function main() {
     const cleared = await clearVerificationLimit({
       flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK,
     });
-    check('clearing reverts to the shipped default', cleared.revertedTo === 50_000, String(cleared.revertedTo));
+    check('clearing reverts to the shipped default', cleared.revertedTo === 100_000, String(cleared.revertedTo));
     check('and the override is gone',
       (await listVerificationLimitOverrides()).every((o) => !(o.flow === 'offramp' && o.level === VerificationLevel.BANK)));
     check('defaultLimitFor still reports the shipped value',
-      defaultLimitFor('offramp', 'ngn', VerificationLevel.BANK) === 50_000);
+      defaultLimitFor('offramp', 'ngn', VerificationLevel.BANK) === 100_000);
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);

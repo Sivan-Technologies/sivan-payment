@@ -181,7 +181,7 @@ async function main() {
       // The ceilings are the thing a user actually feels, so assert those too -
       // a level number that maps to the wrong limit is still a breach.
       check('the NGN off-ramp ceiling is the Level 1 one',
-        defaultLimitFor('offramp', 'ngn', state.level) === 50_000,
+        defaultLimitFor('offramp', 'ngn', state.level) === 100_000,
         String(defaultLimitFor('offramp', 'ngn', state.level)));
       check('FOREIGN rails stay closed on a Nigerian bank match',
         defaultLimitFor('offramp', 'foreign', state.level) === 0,

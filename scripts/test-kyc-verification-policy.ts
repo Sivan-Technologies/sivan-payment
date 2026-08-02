@@ -132,15 +132,32 @@ console.log('\nSTRUCTURING: the reason thresholds are cumulative');
   check('the message states the remaining amount', /1,000/.test(second.reason), second.reason);
 }
 
-console.log('\noff-ramp is held tighter than escrow');
+console.log('\noff-ramp is never held looser than escrow');
 {
-  const escrow = decide(bankVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 80_000, priorVolumeNgn: 0 });
-  const offramp = decide(bankVerified, { flow: 'offramp', rail: 'ngn', amountNgn: 80_000, priorVolumeNgn: 0 });
-  check('NGN 80,000 escrow is allowed', escrow.allowed);
-  check('the same NGN 80,000 off-ramp is not', !offramp.allowed);
-  check('off-ramp ceiling is half of escrow at every level',
-    limitFor('offramp', 'ngn', VerificationLevel.BANK) === 50_000 &&
-    limitFor('offramp', 'ngn', VerificationLevel.IDENTITY) === 500_000);
+  // The Level 1 off-ramp ceiling was raised 50,000 -> 100,000, so it now
+  // EQUALS escrow at that level rather than sitting at half. The invariant
+  // that actually matters is not the ratio - it is that off-ramp is never
+  // MORE permissive than escrow.
+  //
+  // Why: escrow is two Nigerian bank accounts settling with each other, and
+  // both ends already carry a bank's KYC. Off-ramp is crypto of unknown
+  // origin becoming naira. Same number, different risk. If off-ramp ever
+  // exceeded escrow, the looser limit would be on the riskier flow.
+  for (const level of [VerificationLevel.BANK, VerificationLevel.IDENTITY]) {
+    const escrowLimit = limitFor('escrow', 'ngn', level);
+    const offrampLimit = limitFor('offramp', 'ngn', level);
+    check(`off-ramp <= escrow at level ${level}`,
+      offrampLimit !== null && escrowLimit !== null && offrampLimit <= escrowLimit,
+      `offramp ${offrampLimit} vs escrow ${escrowLimit}`);
+  }
+
+  // The raised Level 1 ceiling: one sandbox-minimum withdrawal fits, a second
+  // does not, because the threshold is cumulative.
+  const first = decide(bankVerified, { flow: 'offramp', rail: 'ngn', amountNgn: 80_000, priorVolumeNgn: 0 });
+  check('one NGN 80,000 off-ramp fits under the raised ceiling', first.allowed);
+  const second = decide(bankVerified, { flow: 'offramp', rail: 'ngn', amountNgn: 80_000, priorVolumeNgn: 80_000 });
+  check('a second one in the same window does not', !second.allowed);
+  check('and IDENTITY is what lifts it', second.requiredLevel === VerificationLevel.IDENTITY);
 }
 
 console.log('\nidentity level: up to NGN 1,000,000 escrow');

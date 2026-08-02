@@ -141,8 +141,8 @@ async function main() {
       check('and they still have NO Bridge customer', me.body.customerId === undefined);
 
       const off = allowance(res.body, 'offramp', 'ngn');
-      check('the NGN off-ramp ceiling is the Level 1 figure', off.limitNgn === 50_000, String(off.limitNgn));
-      check('headroom is the full ceiling with no volume yet', off.remainingNgn === 50_000, String(off.remainingNgn));
+      check('the NGN off-ramp ceiling is the Level 1 figure', off.limitNgn === 100_000, String(off.limitNgn));
+      check('headroom is the full ceiling with no volume yet', off.remainingNgn === 100_000, String(off.remainingNgn));
       check('nothing has been used', off.usedNgn === 0, String(off.usedNgn));
       check('and the next level up is named', off.nextLevel === VerificationLevel.IDENTITY, String(off.nextLevel));
 
@@ -180,7 +180,7 @@ async function main() {
       await clearVerificationLimit({ flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK } as any);
       const restored = await call('GET', `/api/users/${userId}/verification-summary`);
       check('clearing the override returns the shipped default',
-        allowance(restored.body, 'offramp', 'ngn').limitNgn === 50_000,
+        allowance(restored.body, 'offramp', 'ngn').limitNgn === 100_000,
         String(allowance(restored.body, 'offramp', 'ngn').limitNgn));
     }
 
@@ -199,9 +199,9 @@ async function main() {
       const res = await call('GET', `/api/users/${userId}/verification-summary`);
       const off = allowance(res.body, 'offramp', 'ngn');
       check('used volume is reported', off.usedNgn === 30_000, String(off.usedNgn));
-      check('the ceiling itself is unchanged by usage', off.limitNgn === 50_000, String(off.limitNgn));
+      check('the ceiling itself is unchanged by usage', off.limitNgn === 100_000, String(off.limitNgn));
       check('and headroom is ceiling minus used',
-        off.remainingNgn === 20_000, String(off.remainingNgn));
+        off.remainingNgn === 70_000, String(off.remainingNgn));
 
       // A PENDING transfer must not consume headroom.
       await db.upsertNgnTransferRecord({
