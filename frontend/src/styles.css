@@ -1794,3 +1794,32 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
      nothing useful at 360px. */
   .sv-country-grid { grid-template-columns: 1fr }
 }
+
+/* The verification limit card.
+
+   Every number in it comes from the server's summary endpoint, which resolves
+   ceilings through the admin-overridable limit table. Nothing here encodes a
+   figure - if this file ever contains a naira amount, that is a bug. */
+.verification-limit-card { display: flex; flex-direction: column; gap: 10px }
+.verification-limit-card h3 { margin: 0; font-size: 26px; letter-spacing: -0.02em; color: #eef3f7 }
+.verification-limit-card .muted { margin: 0; font-size: 13px; color: #8b98a6 }
+.verification-limit-bar {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.07);
+}
+.verification-limit-bar span {
+  display: block; height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, #34d399, #22b47f);
+  transition: width 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.verification-limit-next {
+  margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; color: #34d399;
+  background: rgba(52, 211, 153, 0.07);
+  border: 1px solid rgba(52, 211, 153, 0.18);
+  border-radius: 10px; padding: 9px 11px;
+}
+/* Shown while a NUBAN sits in the review queue. Deliberately not styled as an
+   error - the user did nothing wrong and there is nothing for them to fix. */
+.verification-pending-note {
+  display: block; margin-top: 4px; color: #fbbf24;
+}

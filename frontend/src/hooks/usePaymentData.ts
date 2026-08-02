@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, WithdrawalRecord } from '../types';
+import type { BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord } from '../types';
 
 export function usePaymentDataLoader(input: {
   userId?: string;
@@ -20,11 +20,13 @@ export function usePaymentDataLoader(input: {
   setUserPreferences: (value: UserPreferencesRecord | null) => void;
   setIdentityStatus: (value: IdentityStatus | null) => void;
   setTwoFactorStatus: (value: { userId: string; enabled: boolean; enabledAt?: string; lastVerifiedAt?: string; recoveryCodesRemaining?: number } | null) => void;
+  /** Level, checks and CURRENT ceilings. The UI derives none of this itself. */
+  setVerificationSummary: (value: VerificationSummary | null) => void;
 }) {
-  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus } = input;
+  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary } = input;
   return useCallback(async () => {
     if (!userId || !authToken) return;
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult, verificationSummaryResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${userId}`),
       api<ExternalAccountRecord[]>(`/api/users/${userId}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${userId}/withdrawals`),
@@ -37,7 +39,8 @@ export function usePaymentDataLoader(input: {
       api<SupportTicketRecord[]>(`/api/users/${userId}/support/tickets`),
       api<UserPreferencesRecord>(`/api/users/${userId}/preferences`),
       api<IdentityStatus>('/api/users/me/identity'),
-      api<any>(`/api/users/${userId}/2fa`)
+      api<any>(`/api/users/${userId}/2fa`),
+      api<VerificationSummary>(`/api/users/${userId}/verification-summary`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
@@ -52,6 +55,7 @@ export function usePaymentDataLoader(input: {
     if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
     if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
     if (twoFactorResult.status === 'fulfilled') setTwoFactorStatus(twoFactorResult.value);
-  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus]);
+    if (verificationSummaryResult.status === 'fulfilled') setVerificationSummary(verificationSummaryResult.value);
+  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary]);
 }
 

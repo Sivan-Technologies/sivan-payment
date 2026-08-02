@@ -4,6 +4,7 @@ import { parseBody } from '../shared/validation.js';
 import { forbidden, notFound } from '../shared/errors.js';
 import { db } from '../database/json-database.js';
 import { verificationPlanFor } from '../kyc/service/verification-path.js';
+import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
 import { cancelWhatsappLink, getIdentityStatus, redeemIdentityLinkSchema, redeemWhatsappLink, startWhatsappLink, unlinkWhatsappIdentity } from './identity.service.js';
 
 function getAuthUserId(request: any) {
@@ -48,6 +49,19 @@ export async function identityRoutes(app: FastifyInstance) {
     const user = await db.findUserById(userId);
     if (!user) throw notFound('User');
     return { data: verificationPlanFor(user.country) };
+  });
+
+  /**
+   * The user's verification, as the UI needs to render it.
+   *
+   * Level, per-check status, and the CURRENT ceilings with headroom - every
+   * number resolved through the admin-overridable limit table, never
+   * hardcoded. An admin moving a ceiling changes this response immediately.
+   */
+  app.get('/api/users/:userId/verification-summary', async (request) => {
+    const { userId } = request.params as { userId: string };
+    ensureOwnUser(request, userId);
+    return { data: await getVerificationSummary(userId) };
   });
 
   app.get('/api/users/me/identity', async (request) => {

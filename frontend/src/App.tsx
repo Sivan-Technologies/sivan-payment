@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import type { UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
+import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
@@ -82,12 +82,43 @@ export default function App() {
   // The server's plan. Authoritative, but arrives a round trip late, so the
   // modal renders a local mirror of the same routing rule until it lands.
   const [verificationPlan, setVerificationPlan] = useState<VerificationPathPlan | null>(null);
+  // The backend's answer to "how verified, and for how much". Every gate and
+  // every limit below reads from this. Nothing is derived locally, because the
+  // local derivation was Bridge-only and got Nigerian users wrong.
+  const [verificationSummary, setVerificationSummary] = useState<VerificationSummary | null>(null);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
   const hasUser = Boolean(user?.id && authToken);
-  const isVerified = customer?.kycStatus === 'kyc_approved';
-  const hasBank = accounts.length > 0;
+  /**
+   * VERIFIED MEANS "COMPLETED THE PATH MY COUNTRY REQUIRES".
+   *
+   * This was `customer?.kycStatus === 'kyc_approved'` - a Bridge-only fact. A
+   * Nigerian who passed the bank name check never becomes a Bridge customer,
+   * so they showed as unverified forever while the backend had already granted
+   * them Level 1 and a NGN 50,000 ceiling.
+   *
+   * The fallback keeps pre-existing Bridge users working if the summary call
+   * fails, rather than logging everyone out of their own verification.
+   */
+  const isVerified = verificationSummary
+    ? verificationSummary.pathComplete
+    : customer?.kycStatus === 'kyc_approved';
+
+  /**
+   * A payout destination exists - NUBAN or Bridge external account.
+   *
+   * `accounts` is /external-accounts, which is Bridge-shaped and can never
+   * hold a NUBAN. A Nigerian's payout account lives in a different table.
+   */
+  const hasBank = verificationSummary
+    ? verificationSummary.hasPayoutAccount
+    : accounts.length > 0;
+
+  /** The NGN off-ramp allowance, straight from the server. Never computed here. */
+  const ngnOfframpAllowance = verificationSummary?.allowances.find(
+    (item) => item.flow === 'offramp' && item.rail === 'ngn'
+  );
   const systemPaused = systemStatus.mode === 'paused';
   const systemMaintenance = systemStatus.mode === 'maintenance';
   const canStartKyc = !systemPaused;
@@ -190,6 +221,9 @@ export default function App() {
     setUserPreferences(null);
     setIdentityStatus(null);
     setTwoFactorStatus(null);
+    // Must be cleared: a stale summary would carry one account's verification
+    // level and ceilings into the next sign-in.
+    setVerificationSummary(null);
     setDepositResult(null);
     localStorage.removeItem('sivan.authToken');
     localStorage.removeItem('sivan.user');
@@ -349,7 +383,8 @@ export default function App() {
     setSupportTickets,
     setUserPreferences,
     setIdentityStatus,
-    setTwoFactorStatus
+    setTwoFactorStatus,
+    setVerificationSummary
   });
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -1500,7 +1535,7 @@ export default function App() {
           </section>
         )}
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} onSubmit={handleKyc} onStartVerification={openVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} onSubmit={handleKyc} onStartVerification={openVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 

@@ -525,3 +525,49 @@ export interface UserWalletRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+
+/**
+ * The single source of truth for "how verified is this user, and for how much".
+ *
+ * Served by GET /api/users/:id/verification-summary. The UI must not derive
+ * any of this itself: it used to compute
+ *
+ *     isVerified = customer?.kycStatus === 'kyc_approved'
+ *     hasBank    = externalAccounts.length > 0
+ *
+ * which are Bridge-only facts. A Nigerian who passed the bank check has
+ * neither, so the UI called them unverified while the backend had already
+ * granted Level 1.
+ */
+export interface FlowAllowance {
+  flow: 'escrow' | 'offramp' | 'onramp';
+  rail: 'ngn' | 'foreign';
+  /** null means genuinely uncapped. NEVER hardcode this in the UI. */
+  limitNgn: number | null;
+  usedNgn: number;
+  remainingNgn: number | null;
+  nextLevel?: number;
+}
+
+export interface VerificationSummary {
+  level: number;
+  levelLabel: string;
+  path: 'ngn_bank' | 'bridge_kyc';
+  country?: string;
+  checks: {
+    identity: string;
+    bank: string;
+    nin: string;
+    bvn: string;
+    proofOfAddress: string;
+    sourceOfFunds: string;
+  };
+  identitySource?: 'sivan' | 'bridge';
+  upliftApplies: boolean;
+  pathComplete: boolean;
+  hasPayoutAccount: boolean;
+  hasPendingPayoutReview: boolean;
+  windowDays: number;
+  allowances: FlowAllowance[];
+}

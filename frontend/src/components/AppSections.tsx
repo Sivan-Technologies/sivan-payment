@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from '../types';
+import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord, VerificationSummary, FlowAllowance } from '../types';
 import { BRIDGE_CURRENCIES, CURRENCY_LABELS, RAIL_LABELS, formatPayoutAmount, isNgnCurrency, payoutRailFor, type PayoutCurrency } from '../rails';
 import { NgnPayoutForm } from './sell/NgnPayoutForm';
 
@@ -376,37 +376,130 @@ export function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onR
 }
 
 
-export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, onSubmit, onStartVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
+/**
+ * How much this user may move, and what would raise it.
+ *
+ * NOTHING HERE IS HARDCODED. limitNgn, usedNgn and remainingNgn all arrive
+ * from GET /api/users/:id/verification-summary, which resolves them through
+ * the admin-overridable limit table. If an operator changes a ceiling in the
+ * hub, this card changes on the next load.
+ *
+ * The upgrade line names the level rather than a marketing phrase, because
+ * "verify to increase your limit" does not tell a user what to actually do.
+ */
+function VerificationLimitCard({
+  allowance,
+  windowDays,
+  upliftApplies,
+}: {
+  allowance: FlowAllowance;
+  windowDays: number;
+  upliftApplies: boolean;
+}) {
+  const naira = (value: number) => `₦${value.toLocaleString('en-NG')}`;
+
+  // null is genuinely uncapped - not zero, and not "unknown".
+  if (allowance.limitNgn === null) {
+    return (
+      <article className="panel verification-limit-card">
+        <p className="eyebrow">Withdrawal limit</p>
+        <h3>No limit</h3>
+        <p className="muted">You have completed every verification step we offer.</p>
+      </article>
+    );
+  }
+
+  const limit = allowance.limitNgn;
+  const remaining = allowance.remainingNgn ?? limit;
+  const used = allowance.usedNgn;
+  const pctUsed = limit > 0 ? Math.min(Math.round((used / limit) * 100), 100) : 100;
+
+  const nextStep: Record<number, string> = {
+    1: 'Confirm a bank account in your name',
+    2: 'Add your NIN or BVN',
+    3: 'Add proof of address and source of funds',
+  };
+
+  return (
+    <article className="panel verification-limit-card">
+      <p className="eyebrow">Sell to naira · last {windowDays} days</p>
+      <h3>{naira(remaining)} left</h3>
+      <div className="verification-limit-bar"><span style={{ width: `${pctUsed}%` }} /></div>
+      <p className="muted">
+        {naira(used)} of {naira(limit)} used.
+        {upliftApplies ? ' Your identity check is complete.' : ''}
+      </p>
+      {/* Only shown when a higher level actually exists. At the top of the
+          ladder there is nothing to ask for, and inviting an upgrade that
+          cannot happen is a dead end. */}
+      {allowance.nextLevel !== undefined && nextStep[allowance.nextLevel] && (
+        <p className="verification-limit-next">
+          To go higher: {nextStep[allowance.nextLevel]}.
+        </p>
+      )}
+    </article>
+  );
+}
+
+export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, onSubmit, onStartVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
   const emailDone = hasUser;
-  const identityDone = customer?.kycStatus === 'kyc_approved';
+  // COUNTRY DECIDES THE PATH, so the page cannot describe one flow.
+  //
+  // A Nigerian verifies with a bank name check - no documents, no selfie, and
+  // no Bridge customer ever created. Reading `customer?.kycStatus` for them is
+  // asking Bridge about a user Bridge has never heard of, which is why this
+  // page showed 25% and "Government-issued ID and selfie" to someone who had
+  // already completed everything Sivan asks of them.
+  const isNgnPath = summary?.path === 'ngn_bank';
+  const identityDone = summary ? summary.pathComplete : customer?.kycStatus === 'kyc_approved';
   const verificationLink = customer?.hostedKycLink || customer?.kycLink;
-  const canOpenExistingVerification = Boolean(verificationLink && customer?.id && !identityDone && !kycFailed);
+  // Only meaningful on the Bridge path; a Nigerian has no hosted link to resume.
+  const canOpenExistingVerification = Boolean(!isNgnPath && verificationLink && customer?.id && !identityDone && !kycFailed);
   const started = Boolean(customer?.id);
   const bankDone = hasBank;
-  const steps = [emailDone, identityDone, customer?.tosStatus === 'approved', bankDone];
+
+  // Terms are a Bridge requirement. Counting them for a Nigerian caps their
+  // progress at 75% forever with a step they can never complete.
+  const steps = isNgnPath
+    ? [emailDone, identityDone, bankDone]
+    : [emailDone, identityDone, customer?.tosStatus === 'approved', bankDone];
   const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
+
+  const levelLabel = summary?.levelLabel ?? (identityDone ? 'Level 1: Verified' : 'Level 0: Starter');
+  const ngnOfframp = summary?.allowances.find((item) => item.flow === 'offramp' && item.rail === 'ngn');
   return (
     <section className="app-page verification-premium">
       <PageHero title="Verification" subtitle="A short, secure check so you can use Sivan payments with confidence." />
       {customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
-          <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{identityDone ? 'Level 1: Verified' : 'Level 0: Starter'}</Badge></div>
+          <div className="verification-progress-head"><div><p className="eyebrow">Progress</p><h3>{pct}% complete</h3></div><Badge status={identityDone ? 'verified' : 'pending'}>{levelLabel}</Badge></div>
           <div className="setup-progress big"><div><span style={{ width: `${pct}%` }} /></div></div>
-          <div className="level-grid"><div className="active"><strong>Step 1</strong><span>Email confirmed</span></div><div className={identityDone ? 'active' : ''}><strong>Step 2</strong><span>Identity verified</span></div><div className={hasBank ? 'active' : ''}><strong>Step 3</strong><span>Payout ready</span></div></div>
+          <div className="level-grid"><div className="active"><strong>Step 1</strong><span>Email confirmed</span></div><div className={identityDone ? 'active' : ''}><strong>Step 2</strong><span>{isNgnPath ? 'Bank verified' : 'Identity verified'}</span></div><div className={hasBank ? 'active' : ''}><strong>Step 3</strong><span>Payout ready</span></div></div>
           <div className="verification-steps-list">
             <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Signed in securely" action="Completed" />
-            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>Identity verification</strong><small>Government-issued ID and selfie. Usually takes about 3 minutes.</small></div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : /* Individual verification opens the modal, which asks for the country
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>{isNgnPath ? 'Bank verification' : 'Identity verification'}</strong><small>{isNgnPath ? 'Confirm a Nigerian bank account in your name. No documents, usually under a minute.' : 'Government-issued ID and selfie. Usually takes about 3 minutes.'}</small>{summary?.hasPendingPayoutReview && !identityDone && <small className="verification-pending-note">Your bank account is being checked by our team.</small>}</div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : /* Individual verification opens the modal, which asks for the country
    first and then routes: Nigeria to the bank-name check, everywhere else to
    Bridge. Business verification still uses the form below, because the modal
    has no customer-type step and a business cannot be verified by a personal
    bank account. */
 <button className="primary-btn small" onClick={onStartVerification} disabled={!canSubmitKyc}>{kycActionLabel}</button>}</div>
-            <VerificationStep done={customer?.tosStatus === 'approved'} index={3} title="Terms accepted" sub="Provider terms are accepted when required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />
-            <VerificationStep done={hasBank} index={4} title="Payout bank" sub="Add a bank when you are ready to sell crypto" action={hasBank ? 'Completed' : 'Continue'} />
+            {/* Bridge requires its own terms acceptance. A Nigerian on the bank
+                path has no Bridge relationship, so showing them a step they can
+                never complete caps their progress permanently. */}
+            {!isNgnPath && <VerificationStep done={customer?.tosStatus === 'approved'} index={3} title="Terms accepted" sub="Provider terms are accepted when required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />}
+            <VerificationStep done={hasBank} index={isNgnPath ? 3 : 4} title="Payout bank" sub={isNgnPath ? 'Confirmed with your bank verification' : 'Add a bank when you are ready to sell crypto'} action={hasBank ? 'Completed' : 'Continue'} />
           </div>
         </article>
         <div className="dashboard-side-stack">
+          {/* The ceiling, straight from the server.
+
+              Rendered only when a summary exists - an invented number here
+              would be worse than no number, because a user who trusts it and
+              starts a withdrawal finds out at the point of failure. Every
+              figure comes from the admin-overridable limit table, so moving a
+              ceiling in the hub changes this immediately with no deploy. */}
+          {ngnOfframp && <VerificationLimitCard allowance={ngnOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} />}
           {customer && <article className="panel verification-status-card"><div className="panel-head"><div><p className="eyebrow">Current status</p><h3>Verification summary</h3></div><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
           <article className="panel verify-simple-card"><h3>Why we verify</h3><p className="muted">Verification keeps your account safe and helps Sivan meet payment partner requirements.</p><ul className="plain-list"><li>✓ Encrypted data</li><li>✓ Used only for compliance</li><li>✓ Status refreshes automatically</li></ul></article>
           <article className="security-card verify-help-card"><div className="security-icon">?</div><div><h3>Need help?</h3><p>If you are having trouble, support can review it with you.</p><button onClick={onSupport}>Contact support →</button><button onClick={onRefresh}>Refresh status →</button></div></article>

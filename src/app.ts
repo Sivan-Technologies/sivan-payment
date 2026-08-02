@@ -286,6 +286,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     // can flip any user from the Bridge path to the Nigerian one.
     /^\/api\/users\/[^/]+\/country/,
     /^\/api\/users\/[^/]+\/verification-plan/,
+    /^\/api\/users\/[^/]+\/verification-summary/,
     /^\/api\/users\/[^/]+\/avatar/,
     /^\/api\/users\/[^/]+\/2fa/,
     /^\/api\/users\/[^/]+\/balance/,
