@@ -120,6 +120,17 @@ export interface NgnQuoteInput {
   sourceCurrency: 'ngn' | 'usdc' | 'usdt';
   destinationCurrency: 'ngn' | 'usdc' | 'usdt';
   sourceAmount: string;
+  /**
+   * The chain the crypto leg moves on.
+   *
+   * This field did not exist, so the user's chosen network was dropped before
+   * the provider ever saw it: createQuote() priced with
+   * BREET_DEFAULT_NETWORK and stamped THAT network's assetId into the quote.
+   * A user selecting Base got a quote carrying Solana's asset, and accepting
+   * it asked Breet to generate a Base address against a Solana id -
+   * "you have entered an invalid _id".
+   */
+  network?: string;
 }
 
 export interface NgnTimelineStep { key: string; label: string; status: 'completed' | 'current' | 'pending' | 'failed'; at?: string; description: string }

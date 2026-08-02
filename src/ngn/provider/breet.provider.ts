@@ -203,13 +203,39 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * Breet's rate would show a number Sivan cannot honour.
    */
   async createQuote(input: NgnQuoteInput) {
+    /**
+     * PRICE THE ASSET THE USER ACTUALLY CHOSE.
+     *
+     * This read BREET_DEFAULT_NETWORK and a hardcoded 'usdc', ignoring both
+     * the network and the currency on the request. Two consequences, and the
+     * second is the one that broke the product:
+     *
+     *   the rate came from the wrong asset's calculator, and
+     *   metadata.assetId was stamped with the DEFAULT network's id.
+     *
+     * createOfframpTransfer() then resolved the correct id for the requested
+     * network, but the quote it had been handed disagreed - so a user who
+     * picked Base was priced on Solana and their acceptance was rejected by
+     * Breet with "you have entered an invalid _id". Every off-ramp on any
+     * network other than the default failed, and the default only worked by
+     * coincidence.
+     */
+    const quoteNetwork = String(
+      input.network ?? env.BREET_DEFAULT_NETWORK ?? 'solana'
+    ).toLowerCase() as BalanceNetwork;
+    // The crypto leg is the non-naira side, whichever direction this is.
+    const quoteAsset = (
+      input.sourceCurrency === 'ngn' ? input.destinationCurrency : input.sourceCurrency
+    ).toLowerCase() as StableAsset;
+
     const identifier =
-      breetDepositAssetId(
-        String(env.BREET_DEFAULT_NETWORK || 'solana').toLowerCase() as BalanceNetwork,
-        'usdc',
-        breetEnvironment()
-      ) ?? env.BREET_DEFAULT_ASSET_ID;
-    if (!identifier) throw forbidden('No Breet asset configured to price with.');
+      breetDepositAssetId(quoteNetwork, quoteAsset, breetEnvironment())
+      ?? env.BREET_DEFAULT_ASSET_ID;
+    if (!identifier) {
+      throw forbidden(
+        `Breet cannot price ${quoteAsset.toUpperCase()} on ${quoteNetwork}.`
+      );
+    }
     const assetId = await this.assetIdFor(identifier);
 
     const source = Number(input.sourceAmount);
@@ -581,8 +607,17 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       // addresses are permanent and reusable by design.
       if (!/already exists/i.test(String(error?.message ?? ''))) throw error;
 
+      // GET /trades/wallets, NOT /trades/sell/wallets.
+      //
+      // The latter does not exist and answers 400 "you have entered an
+      // invalid _id" - a message that names the wrong thing entirely and sent
+      // this investigation after the asset id for an hour. So the recovery
+      // branch for a returning user threw instead of recovering, and the
+      // whole off-ramp failed with a bare 500 the SECOND time any user tried
+      // it on a given chain. The first attempt succeeded, which is exactly
+      // why it survived earlier testing.
       const wallets = await breetRequest<Array<{ id: string; address: string; label?: string }>>(
-        '/trades/sell/wallets'
+        '/trades/wallets'
       );
       const existing = wallets?.find((w) => w.label === label);
       address = existing?.address;

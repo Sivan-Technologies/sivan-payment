@@ -130,6 +130,8 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     : await getCustomerByUserId(input.userId).catch(() => undefined);
 
   const provider = getNgnProvider(controls.activeProvider);
+  // input.network is forwarded so the provider prices - and stamps the assetId
+  // for - the chain the user actually picked.
   const quote = await provider.createQuote({ ...input, customerId: customer?.id });
 
   // The provider quote carries the PROVIDER's fee only. Sivan's margin is added
