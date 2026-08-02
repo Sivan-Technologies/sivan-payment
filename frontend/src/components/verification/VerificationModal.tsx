@@ -11,6 +11,7 @@ import {
 import {
   SIGNUP_COUNTRIES,
   normalizeCountry,
+  orderCountriesForDetected,
   planToRender,
   type VerificationPathPlan,
 } from '../../verificationPath';
@@ -62,10 +63,36 @@ export function VerificationModal({
   const [chosenCountry, setChosenCountry] = useState<string | undefined>(() => normalizeCountry(country));
   const [savingCountry, setSavingCountry] = useState(false);
   const [countryError, setCountryError] = useState('');
+  /**
+   * Where the edge says this request came from.
+   *
+   * A HINT, NEVER A FACT. It pre-orders the picker and nothing more - it is
+   * not written to the user record and it does not decide anything. On a VPN
+   * this is the exit node rather than the person, which is unavoidable and
+   * fine precisely because the user still has to choose.
+   */
+  const [detectedCountry, setDetectedCountry] = useState<string | undefined>();
 
   // A user who reopens the modal after their country was saved elsewhere must
   // not see a stale local value.
   useEffect(() => { setChosenCountry(normalizeCountry(country)); }, [country, open]);
+
+  // Fetched only while the picker is actually open, and only when the user has
+  // no country yet - re-detecting for someone who already answered would be a
+  // pointless request, and a VPN-flipped result could reorder the list under
+  // them mid-interaction.
+  useEffect(() => {
+    if (!open || normalizeCountry(country)) return;
+    let cancelled = false;
+    api<{ country: string | null }>('/api/geo/country')
+      .then((result) => {
+        if (!cancelled) setDetectedCountry(normalizeCountry(result?.country) ?? undefined);
+      })
+      // Silent. Detection is a convenience; failing to get it just means the
+      // picker renders in its shipped order, which is a working screen.
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [open, country, api]);
 
   // Escape closes, because a modal that traps you is worse than no modal.
   useEffect(() => {
@@ -147,7 +174,7 @@ export function VerificationModal({
         </div>
 
         {needsCountry ? (
-          <CountryStep saving={savingCountry} error={countryError} onChoose={chooseCountry} />
+          <CountryStep saving={savingCountry} error={countryError} detected={detectedCountry} onChoose={chooseCountry} />
         ) : (
           <>
             <ChosenCountry
@@ -196,21 +223,29 @@ export function VerificationModal({
 function CountryStep({
   saving,
   error,
+  detected,
   onChoose,
 }: {
   saving: boolean;
   error: string;
+  /** Where the edge thinks this request came from. A hint, never a fact. */
+  detected?: string;
   onChoose: (code: string) => void;
 }) {
   const [query, setQuery] = useState('');
 
+  // The detected country floats to the top. Nigeria was pinned there with an
+  // "INSTANT" badge, which reads as the default to everyone - including the US
+  // user whose path it would silently get wrong.
+  const ordered = useMemo(() => orderCountriesForDetected(SIGNUP_COUNTRIES, detected), [detected]);
+
   const visible = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term) return SIGNUP_COUNTRIES;
-    return SIGNUP_COUNTRIES.filter(
+    if (!term) return ordered;
+    return ordered.filter(
       (item) => item.name.toLowerCase().includes(term) || item.code.toLowerCase() === term
     );
-  }, [query]);
+  }, [query, ordered]);
 
   return (
     <div className="sv-modal-body">
@@ -218,7 +253,7 @@ function CountryStep({
         <span>Country</span>
         <input
           autoFocus
-          placeholder="Search — Nigeria, United States…"
+          placeholder="Search — United Kingdom, United States…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -229,15 +264,21 @@ function CountryStep({
           <button
             key={item.code}
             type="button"
-            className={`sv-country ${item.code === 'NG' ? 'primary' : ''}`}
+            // Highlight follows DETECTION, not a hardcoded country. Only one
+            // row is ever emphasised, and only when we actually have a signal.
+            className={`sv-country ${detected && item.code === detected ? 'primary' : ''}`}
             disabled={saving}
             onClick={() => onChoose(item.code)}
           >
             <span className="sv-flag" aria-hidden="true">{item.flag}</span>
             <span className="sv-country-name">{item.name}</span>
+            {/* Still worth stating that the NGN path is instant - it is true
+                and it is a real difference - but the emphasis above is what
+                signals "this is probably you", and that follows detection. */}
             {item.code === 'NG'
               ? <em className="sv-country-tag">Instant</em>
               : <em className="sv-country-tag muted">ID check</em>}
+            {detected && item.code === detected && <em className="sv-country-tag detected">Detected</em>}
           </button>
         ))}
         {!visible.length && (

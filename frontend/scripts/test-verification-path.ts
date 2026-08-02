@@ -17,6 +17,7 @@ import {
   canRequestVirtualAccount,
   virtualAccountBlockedReason,
   SIGNUP_COUNTRIES,
+  orderCountriesForDetected,
   planToRender,
 } from '../src/verificationPath';
 
@@ -139,6 +140,44 @@ console.log('\nTHE MODAL RENDERS THE RIGHT PLAN WHILE THE SERVER CATCHES UP');
     picked.path === 'ngn_bank', picked.path);
   check('and it stops claiming to be a fallback',
     picked.isFallback === false);
+}
+
+console.log('\nTHE PICKER ORDER FOLLOWS DETECTION, NOT A HARDCODED COUNTRY');
+{
+  // Nigeria was pinned first with an "INSTANT" badge. To a US visitor that
+  // reads as the default - and country decides their ENTIRE path, so a
+  // mis-click sends them into a NUBAN check their account cannot pass.
+  const us = orderCountriesForDetected(SIGNUP_COUNTRIES, 'US');
+  check('a US visitor sees the United States first', us[0].code === 'US', us[0].code);
+  check('Nigeria is still reachable', us.some((item) => item.code === 'NG'));
+  check('nothing is lost when reordering', us.length === SIGNUP_COUNTRIES.length, String(us.length));
+  check('and nothing is duplicated',
+    new Set(us.map((item) => item.code)).size === us.length);
+
+  const gb = orderCountriesForDetected(SIGNUP_COUNTRIES, 'gb');
+  check('lowercase detection still reorders', gb[0].code === 'GB', gb[0].code);
+
+  // No signal keeps the shipped order, which is Nigeria-first. That is correct
+  // - it is most of the userbase. What was wrong was asserting it about a
+  // specific visitor we DID have a signal for.
+  const none = orderCountriesForDetected(SIGNUP_COUNTRIES, undefined);
+  check('no detection keeps the shipped order', none[0].code === 'NG', none[0].code);
+  check('and returns the list untouched', none === SIGNUP_COUNTRIES);
+  check('an empty string is not a detection',
+    orderCountriesForDetected(SIGNUP_COUNTRIES, '') === SIGNUP_COUNTRIES);
+
+  // A country we do not serve must not blank the list.
+  const jp = orderCountriesForDetected(SIGNUP_COUNTRIES, 'JP');
+  check('an unlisted country leaves the list intact',
+    jp.length === SIGNUP_COUNTRIES.length && jp[0].code === 'NG');
+
+  // A VPN changes the ORDER and nothing else. Every country stays reachable
+  // because the user is the one who chooses - which is exactly why detecting
+  // the exit node is acceptable.
+  check('a VPN cannot remove the real country from the list',
+    orderCountriesForDetected(SIGNUP_COUNTRIES, 'US').some((item) => item.code === 'NG'));
+  check('and a Nigerian on a US VPN can still pick Nigeria',
+    orderCountriesForDetected(SIGNUP_COUNTRIES, 'US').find((item) => item.code === 'NG')?.name === 'Nigeria');
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

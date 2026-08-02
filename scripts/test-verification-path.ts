@@ -16,6 +16,7 @@
  * Run: npm run test:verification-path
  */
 
+import { detectCountryFromHeaders, normalizeCountryHeader } from '../src/kyc/service/geo-country.js';
 import {
   verificationPathFor,
   verificationPlanFor,
@@ -113,6 +114,44 @@ console.log('\nA MISSING COUNTRY IS A FALLBACK, AND SAYS SO');
     /where you are based/i.test(unknown.description), unknown.description);
 
   check('a known country is NOT a fallback', verificationPlanFor('US').isFallback === false);
+}
+
+console.log('\nGEO DETECTION IS A HINT, AND MUST FAIL SAFE');
+{
+  // Cloudflare fronts this API and sets CF-IPCountry on every request. It also
+  // OVERWRITES any value a client sent, which is what makes it safe to
+  // pre-select with - and it is still only a pre-selection.
+  check('CF-IPCountry is read', detectCountryFromHeaders({ 'cf-ipcountry': 'NG' }) === 'NG');
+  check('lowercase is normalised', detectCountryFromHeaders({ 'cf-ipcountry': 'gb' }) === 'GB');
+  check('whitespace is tolerated', detectCountryFromHeaders({ 'cf-ipcountry': ' us ' }) === 'US');
+
+  // Cloudflare returns XX for unknown and T1 for Tor. Neither is a place, and
+  // handing either to a picker would default someone to a country that does
+  // not exist.
+  check('XX (unknown) is not a country', detectCountryFromHeaders({ 'cf-ipcountry': 'XX' }) === undefined);
+  check('T1 (Tor) is not a country', detectCountryFromHeaders({ 'cf-ipcountry': 'T1' }) === undefined);
+  check('EU is not a country', detectCountryFromHeaders({ 'cf-ipcountry': 'EU' }) === undefined);
+
+  check('no headers at all is undefined, not a guess', detectCountryFromHeaders(undefined) === undefined);
+  check('missing header is undefined', detectCountryFromHeaders({}) === undefined);
+  check('rubbish is rejected', detectCountryFromHeaders({ 'cf-ipcountry': 'NGA' }) === undefined);
+  check('a number is rejected', detectCountryFromHeaders({ 'cf-ipcountry': '12' }) === undefined);
+
+  // Fallbacks for other edges, only consulted when Cloudflare's is absent.
+  check('Vercel header is a fallback',
+    detectCountryFromHeaders({ 'x-vercel-ip-country': 'GB' }) === 'GB');
+  check('Cloudflare wins over the fallbacks',
+    detectCountryFromHeaders({ 'cf-ipcountry': 'NG', 'x-vercel-ip-country': 'GB' }) === 'NG');
+
+  // An array-valued header is what Node produces for a repeated header.
+  check('a repeated header takes the first value',
+    normalizeCountryHeader(['NG', 'GB']) === 'NG');
+
+  // A VPN resolves the EXIT node, which cannot be fixed and does not need to
+  // be: detection only orders a picker the user still chooses from, and the
+  // stored country remains declared rather than proven.
+  check('a VPN exit node is reported as that country, honestly',
+    detectCountryFromHeaders({ 'cf-ipcountry': 'US' }) === 'US');
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

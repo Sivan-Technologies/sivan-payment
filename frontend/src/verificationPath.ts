@@ -50,6 +50,29 @@ export const SIGNUP_COUNTRIES: Array<{ code: string; name: string; flag: string 
   { code: 'GH', name: 'Ghana', flag: '🇬🇭' },
 ];
 
+/**
+ * Order the picker so the likely answer is first.
+ *
+ * Nigeria was hardcoded at the top with an "INSTANT" badge, which reads to an
+ * American as though it were the default choice - and the country decides
+ * their whole verification path, so a mis-click sends them down a NUBAN check
+ * their account cannot pass.
+ *
+ * The detected country floats to the top instead. When nothing is detected the
+ * shipped order stands, which keeps Nigeria first for the market that is most
+ * of the userbase without asserting it about a specific visitor.
+ */
+export function orderCountriesForDetected(
+  countries: typeof SIGNUP_COUNTRIES,
+  detected: string | undefined | null
+): typeof SIGNUP_COUNTRIES {
+  const code = normalizeCountry(detected);
+  if (!code) return countries;
+  const match = countries.find((item) => item.code === code);
+  if (!match) return countries;
+  return [match, ...countries.filter((item) => item.code !== code)];
+}
+
 export function normalizeCountry(value: string | undefined | null): string | undefined {
   const trimmed = String(value ?? '').trim().toUpperCase();
   return /^[A-Z]{2}$/.test(trimmed) ? trimmed : undefined;

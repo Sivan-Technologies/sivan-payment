@@ -5,6 +5,7 @@ import { forbidden, notFound } from '../shared/errors.js';
 import { db } from '../database/json-database.js';
 import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
+import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
 import { cancelWhatsappLink, getIdentityStatus, redeemIdentityLinkSchema, redeemWhatsappLink, startWhatsappLink, unlinkWhatsappIdentity } from './identity.service.js';
 
 function getAuthUserId(request: any) {
@@ -62,6 +63,22 @@ export async function identityRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     ensureOwnUser(request, userId);
     return { data: await getVerificationSummary(userId) };
+  });
+
+  /**
+   * Which country does this request appear to come from?
+   *
+   * Used ONLY to pre-select the picker in the verification modal. Public,
+   * because it reveals nothing the caller does not already know - it is
+   * derived from their own IP and tells them where they are.
+   *
+   * Deliberately does NOT write anything. A geo guess must not become a stored
+   * country without the user confirming it, and on a VPN the guess is the exit
+   * node rather than the person.
+   */
+  app.get('/api/geo/country', async (request) => {
+    const country = detectCountryFromHeaders(request.headers as Record<string, unknown>);
+    return { data: { country: country ?? null, detected: Boolean(country) } };
   });
 
   app.get('/api/users/me/identity', async (request) => {
