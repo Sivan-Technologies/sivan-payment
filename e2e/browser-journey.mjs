@@ -120,10 +120,27 @@ async function main() {
     await page.waitForTimeout(3000);
     await shot('04-verification-page');
 
-    const startBtn = page.locator('button:has-text("Start verification"), button:has-text("Starting")').first();
-    check('a start-verification button exists', await startBtn.isVisible().catch(() => false));
-    await startBtn.click();
-    await page.waitForTimeout(5000);
+    // EVERY "Start verification" BUTTON MUST OPEN VERIFICATION.
+    //
+    // .first() used to be clicked blindly. It matched the status-notice
+    // button, whose onContinue was wired to onRefresh - so the click did
+    // nothing and the suite reported "the modal opens: FAIL", which read as a
+    // modal bug rather than a dead button. Both are now asserted, in order,
+    // because a page with two identical buttons that behave differently is
+    // the actual defect.
+    const startButtons = page.locator('button:visible:has-text("Start verification"), button:visible:has-text("Starting")');
+    const startCount = await startButtons.count();
+    check('a start-verification button exists', startCount > 0, `${startCount} found`);
+
+    let openedBy = null;
+    for (let i = 0; i < startCount; i++) {
+      await startButtons.nth(i).click().catch(() => {});
+      await page.waitForTimeout(4000);
+      if (await page.locator('.sv-modal').isVisible().catch(() => false)) { openedBy = i; break; }
+    }
+    check('every "Start verification" button opens verification, not just one',
+      openedBy === 0,
+      openedBy === null ? 'none of them opened it' : `only button ${openedBy} worked; earlier ones are dead`);
     await shot('05-modal');
 
     console.log('\n4. THE COUNTRY STEP');

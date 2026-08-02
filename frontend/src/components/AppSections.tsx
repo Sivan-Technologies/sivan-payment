@@ -582,7 +582,19 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
           <div className="kyc-outcome-actions"><button className="ghost-btn" onClick={onRefresh}>Refresh status</button></div>
         </article>
       ) : (
-        customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onRefresh} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />
+        /* A BUTTON THAT SAYS "Start verification" MUST START VERIFICATION.
+ 
+           onContinue was `onRefresh` for every non-approved status. On the
+           not-started case the card's primary button is labelled "Start
+           verification" - so the most prominent button on the page silently
+           re-fetched the KYC status and did nothing visible. Caught in a real
+           browser on the deployed app: click it, wait 6s, no modal, no
+           navigation, no toast.
+ 
+           Only the not-started case is re-pointed. under_review, incomplete
+           and failed still refresh or deep-link, which is correct for them -
+           their buttons say "Refresh status" and "Continue verification". */
+        customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onStartVerification} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />
       )}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
