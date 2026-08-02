@@ -250,11 +250,17 @@ services:
       # Credentials are sync:false so the sandbox keys stay out of git and are
       # pasted into the Render dashboard, matching how PAJ_RAMP_API_KEY is held.
       #
-      # NGN_PROVIDER is deliberately NOT set to breet here. The adapter is
-      # verified against Breet's sandbox but has never processed a real
-      # webhook, and Breet's USD float is $0, so on-ramp would 403. Flipping
-      # the rail is a decision to make once, on purpose, not a side effect of
-      # adding configuration.
+      # NGN_PROVIDER is sync:false and set in the dashboard.
+      #
+      # IT MUST BE `breet` ON TEST. It was `paj`, which broke the bank picker
+      # outright: PajRamp's resolver needs a per-user session token and the
+      # staging key was never provisioned, so /api/ngn/bank-account/resolve
+      # returned 500 for every account number. Verified on the deployed API -
+      # the picker listed 687 PajRamp banks and none of them could resolve.
+      #
+      # The earlier note here said Breet had never processed a real webhook.
+      # That is now stale: test:breet-e2e drives the full pipeline including
+      # settlement, and the flagged path is covered too. Breet is the rail.
       - key: BREET_APP_ID
         sync: false
       - key: BREET_APP_SECRET

@@ -231,7 +231,22 @@ async function main() {
         env.APP_ENV === 'production' || breet.severity === 'ok', breet.severity);
     }
 
-    console.log('\nSEVERITY ROLLS UP TO THE WORST SIGNAL');
+    console.log('\nA BROKEN NGN PROVIDER IS CAUGHT BEFORE A USER HITS IT');
+  {
+    // The real incident: test ran NGN_PROVIDER=paj, whose resolver needs a
+    // session token that was never provisioned. Every bank lookup returned
+    // 500 and nothing detected it until someone opened the picker.
+    const res = await fetchHealth();
+    const s = signal(res.body, 'ngn_provider');
+    check('the active provider is reported', Boolean(s), 'signal missing');
+    // In this suite APP_ENV is not deployed, so mock is correctly tolerated.
+    // The deployed case is asserted against the real API below.
+    check('mock is tolerated outside a deployed environment',
+      s.severity === 'ok', `${s.severity} (${env.NGN_PROVIDER}/${env.APP_ENV})`);
+    check('and it names the provider in use', /mock|breet|paj/i.test(s.detail), s.detail);
+  }
+
+  console.log('\nSEVERITY ROLLS UP TO THE WORST SIGNAL');
     {
       await makeTransfer('ngnt_stuck2', 'processing', 9);
       const res = await fetchHealth();

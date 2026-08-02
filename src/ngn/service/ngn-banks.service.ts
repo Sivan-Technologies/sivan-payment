@@ -146,7 +146,18 @@ export async function resolveNgnBankAccount(
   const isProduction = (env.BREET_ENV ?? 'development') === 'production';
 
   if (provider === 'breet') {
-    const result = await new BreetNgnProvider().verifyBankAccount(bankId, accountNumber, currency);
+    let result: any;
+    try {
+      result = await new BreetNgnProvider().verifyBankAccount(bankId, accountNumber, currency);
+    } catch (error: any) {
+      // Same reasoning as the paj branch: a credential or outage problem is
+      // ours, and saying "internal server error" sends the user to re-check
+      // digits that were never wrong.
+      const reason = String(error?.message ?? error);
+      throw badRequest(
+        `Bank verification is unavailable right now (provider: breet). ${reason}`.slice(0, 300)
+      );
+    }
     if (!result?.accountName) {
       throw badRequest('That account could not be verified. Check the number and bank.');
     }
@@ -161,7 +172,25 @@ export async function resolveNgnBankAccount(
   }
 
   if (provider === 'paj') {
-    const result: any = await new PajNgnProvider().resolveBankAccount(bankId, accountNumber);
+    // PROVIDER FAILURES MUST NOT BECOME A BARE 500.
+    //
+    // PajRamp's resolver needs a per-user session token, and the staging key
+    // has never been provisioned - /pub/initiate answers "Can't find
+    // business". The raw throw surfaced to the browser as
+    // "Internal Server Error", which tells a user their bank details are
+    // broken when the truth is that a provider is misconfigured.
+    //
+    // Caught on the deployed test API: the bank picker listed 687 PajRamp
+    // banks and every resolve returned 500.
+    let result: any;
+    try {
+      result = await new PajNgnProvider().resolveBankAccount(bankId, accountNumber);
+    } catch (error: any) {
+      const reason = String(error?.message ?? error);
+      throw badRequest(
+        `Bank verification is unavailable right now (provider: paj). ${reason}`.slice(0, 300)
+      );
+    }
     const accountName = result?.accountName ?? result?.account_name ?? result?.name;
     if (!accountName) {
       throw badRequest('That account could not be verified. Check the number and bank.');

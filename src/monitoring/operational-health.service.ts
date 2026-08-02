@@ -196,6 +196,31 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
     });
   }
 
+  // 8. THE ACTIVE NGN PROVIDER. A provider whose resolver cannot authenticate
+  //    breaks the bank picker completely - and it fails as a 500 on a user
+  //    action, which is invisible from any liveness check.
+  //
+  //    This is not hypothetical: test ran with NGN_PROVIDER=paj, whose staging
+  //    key was never provisioned, and every bank resolution returned 500.
+  {
+    const provider = env.NGN_PROVIDER ?? 'mock';
+    const usable = provider === 'breet';
+    // 'mock' is correct in a test run and in local development, so it is only
+    // a problem on a DEPLOYED environment. 'paj' is a problem anywhere it
+    // serves users, because its resolver cannot authenticate at all.
+    const deployed = env.APP_ENV === 'production' || env.APP_ENV === 'staging';
+    signals.push({
+      name: 'ngn_provider',
+      severity: usable ? 'ok' : deployed ? 'critical' : 'ok',
+      value: usable ? 1 : 0,
+      detail: usable
+        ? 'NGN provider is breet.'
+        : deployed
+          ? `NGN_PROVIDER is "${provider}" on a deployed environment. Bank resolution will fail for users — set it to breet.`
+          : `NGN provider is "${provider}" (local/test — fine here).`,
+    });
+  }
+
   return {
     status: worst(signals),
     checkedAt: new Date().toISOString(),
