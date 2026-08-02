@@ -386,7 +386,12 @@ services:
       # No localhost here. A developer machine must not be able to drive the
       # production API from a browser session.
       - key: CORS_ORIGIN
-        value: https://sivan-payments-user-live.onrender.com
+        # app.sivantech.online is the PRODUCTION customer domain and was
+        # missing, so every browser call from it would have been blocked by
+        # CORS at launch - with no server error, just a silent failure in the
+        # console. CUSTOMER_APP_URL has defaulted to it since env.ts was
+        # written; the allow-list never caught up.
+        value: https://app.sivantech.online,https://sivan-payments-user-live.onrender.com,https://sivan-payments-user-live.vercel.app
       - key: ADMIN_API_KEY
         sync: false
       - key: USER_JWT_SECRET
