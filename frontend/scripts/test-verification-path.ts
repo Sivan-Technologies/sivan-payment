@@ -18,6 +18,7 @@ import {
   virtualAccountBlockedReason,
   SIGNUP_COUNTRIES,
   orderCountriesForDetected,
+  shouldAutoSelectCountry,
   planToRender,
 } from '../src/verificationPath';
 
@@ -178,6 +179,35 @@ console.log('\nTHE PICKER ORDER FOLLOWS DETECTION, NOT A HARDCODED COUNTRY');
     orderCountriesForDetected(SIGNUP_COUNTRIES, 'US').some((item) => item.code === 'NG'));
   check('and a Nigerian on a US VPN can still pick Nigeria',
     orderCountriesForDetected(SIGNUP_COUNTRIES, 'US').find((item) => item.code === 'NG')?.name === 'Nigeria');
+}
+
+console.log('\nDETECTION AUTO-SELECTS, BUT ONLY A COUNTRY WE SERVE');
+{
+  // Asking someone to confirm a country we already know is a step that exists
+  // only to be clicked through. The choice stays visible and reversible on the
+  // next screen, so auto-selecting costs the user nothing and saves a tap.
+  check('a served country auto-selects', shouldAutoSelectCountry('NG') === true);
+  check('so does the US', shouldAutoSelectCountry('US') === true);
+  check('lowercase still counts', shouldAutoSelectCountry('gb') === true);
+
+  // THE EDGE CASE THAT MATTERS. Detecting a country we do not serve must fall
+  // through to the picker. Selecting nothing silently, or defaulting to a
+  // neighbour, puts the user on a verification path they never chose.
+  check('an unserved country does NOT auto-select', shouldAutoSelectCountry('JP') === false);
+  check('nor does Brazil', shouldAutoSelectCountry('BR') === false);
+
+  // No signal, or a non-country like Tor's T1, must never auto-select.
+  check('undefined does not auto-select', shouldAutoSelectCountry(undefined) === false);
+  check('null does not auto-select', shouldAutoSelectCountry(null) === false);
+  check('an empty string does not auto-select', shouldAutoSelectCountry('') === false);
+  check('rubbish does not auto-select', shouldAutoSelectCountry('XX') === false);
+
+  // Auto-selection must agree with routing, or a user is auto-put on a path
+  // the server disagrees with.
+  check('auto-selecting NG lands on the bank path',
+    shouldAutoSelectCountry('NG') && verificationPathFor('NG') === 'ngn_bank');
+  check('auto-selecting US lands on Bridge',
+    shouldAutoSelectCountry('US') && verificationPathFor('US') === 'bridge_kyc');
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

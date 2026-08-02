@@ -13,6 +13,7 @@ import {
   normalizeCountry,
   orderCountriesForDetected,
   planToRender,
+  shouldAutoSelectCountry,
   type VerificationPathPlan,
 } from '../../verificationPath';
 
@@ -72,10 +73,31 @@ export function VerificationModal({
    * fine precisely because the user still has to choose.
    */
   const [detectedCountry, setDetectedCountry] = useState<string | undefined>();
+  /** True while the geo lookup is in flight. Prevents a flash of the picker. */
+  const [detecting, setDetecting] = useState(false);
 
   // A user who reopens the modal after their country was saved elsewhere must
   // not see a stale local value.
   useEffect(() => { setChosenCountry(normalizeCountry(country)); }, [country, open]);
+
+  const chooseCountry = useCallback(async (code: string) => {
+    const normalized = normalizeCountry(code);
+    if (!normalized) return;
+    // Set first, save second. The branch is a UI decision; making the user
+    // wait on a network call to see the right form is latency for nothing.
+    setChosenCountry(normalized);
+    setCountryError('');
+    setSavingCountry(true);
+    try {
+      await onCountryChange(normalized);
+    } catch (err) {
+      // The path shown is still correct - it is derived from the selection,
+      // not from the save - so this warns without tearing the form away.
+      setCountryError((err as Error).message || 'We could not save your country. Verification still works.');
+    } finally {
+      setSavingCountry(false);
+    }
+  }, [onCountryChange]);
 
   // Fetched only while the picker is actually open, and only when the user has
   // no country yet - re-detecting for someone who already answered would be a
@@ -84,15 +106,26 @@ export function VerificationModal({
   useEffect(() => {
     if (!open || normalizeCountry(country)) return;
     let cancelled = false;
+    setDetecting(true);
     api<{ country: string | null }>('/api/geo/country')
       .then((result) => {
-        if (!cancelled) setDetectedCountry(normalizeCountry(result?.country) ?? undefined);
+        if (cancelled) return;
+        const found = normalizeCountry(result?.country) ?? undefined;
+        setDetectedCountry(found);
+        // AUTO-SELECT, not just reorder. Asking someone to confirm a country
+        // we already know is a step that exists only to be clicked through,
+        // and the answer is shown and reversible on the next screen anyway.
+        //
+        // Only for countries we actually serve. Detecting Japan and selecting
+        // nothing is right - they need to choose from the list.
+        if (shouldAutoSelectCountry(found)) void chooseCountry(found!);
       })
-      // Silent. Detection is a convenience; failing to get it just means the
-      // picker renders in its shipped order, which is a working screen.
-      .catch(() => undefined);
+      // Silent. Detection is a convenience; failing just means the user picks
+      // from the list, which is a working screen.
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setDetecting(false); });
     return () => { cancelled = true; };
-  }, [open, country, api]);
+  }, [open, country, api, chooseCountry]);
 
   // Escape closes, because a modal that traps you is worse than no modal.
   useEffect(() => {
@@ -123,24 +156,6 @@ export function VerificationModal({
     [plan, chosenCountry]
   );
 
-  const chooseCountry = useCallback(async (code: string) => {
-    const normalized = normalizeCountry(code);
-    if (!normalized) return;
-    // Set first, save second. The branch is a UI decision; making the user
-    // wait on a network call to see the right form is latency for nothing.
-    setChosenCountry(normalized);
-    setCountryError('');
-    setSavingCountry(true);
-    try {
-      await onCountryChange(normalized);
-    } catch (err) {
-      // The path shown is still correct - it is derived from the selection,
-      // not from the save - so this warns without tearing the form away.
-      setCountryError((err as Error).message || 'We could not save your country. Verification still works.');
-    } finally {
-      setSavingCountry(false);
-    }
-  }, [onCountryChange]);
 
   if (!open) return null;
 
@@ -165,16 +180,24 @@ export function VerificationModal({
               ? 'Verification'
               : activePlan.path === 'ngn_bank' ? 'Level 1 · Bank check' : 'Identity verification'}
           </span>
-          <h2 id="sv-modal-title">{needsCountry ? 'Where are you based?' : activePlan.title}</h2>
+          <h2 id="sv-modal-title">
+            {needsCountry ? (detecting ? 'One moment' : 'Where are you based?') : activePlan.title}
+          </h2>
           <p className="sv-modal-sub">
             {needsCountry
-              ? 'Your country decides how we verify you. Nigeria takes under a minute with a bank account; everywhere else needs a photo ID.'
+              ? detecting
+                ? 'Finding the fastest way to verify you.'
+                : 'Your country decides how we verify you. Nigeria takes under a minute with a bank account; everywhere else needs a photo ID.'
               : activePlan.description}
           </p>
         </div>
 
         {needsCountry ? (
-          <CountryStep saving={savingCountry} error={countryError} detected={detectedCountry} onChoose={chooseCountry} />
+          detecting
+            // A picker that renders and then vanishes half a second later
+            // reads as a glitch. One calm line instead.
+            ? <div className="sv-modal-body"><div className="sv-resolving"><span className="sv-spinner" />Checking where you are…</div></div>
+            : <CountryStep saving={savingCountry} error={countryError} detected={detectedCountry} onChoose={chooseCountry} />
         ) : (
           <>
             <ChosenCountry

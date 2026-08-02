@@ -181,3 +181,22 @@ export function planToRender(
   if (normalizeCountry(serverPlan.country) === chosen) return serverPlan;
   return localVerificationPlan(chosen);
 }
+
+/**
+ * Should a detected country be auto-selected, or only offered?
+ *
+ * Auto-selecting is the right default: asking someone to confirm a country we
+ * already know is a step that exists only to be clicked through, and the
+ * choice is shown and reversible on the very next screen.
+ *
+ * But ONLY for countries we serve. Detecting Japan and silently selecting
+ * nothing - or worse, defaulting to a neighbour - would put the user on a
+ * path they never chose. An unserved country must fall through to the picker,
+ * where "not listed" is at least visible and they can pick the country on
+ * their ID.
+ */
+export function shouldAutoSelectCountry(detected: string | undefined | null): boolean {
+  const code = normalizeCountry(detected);
+  if (!code) return false;
+  return SIGNUP_COUNTRIES.some((item) => item.code === code);
+}

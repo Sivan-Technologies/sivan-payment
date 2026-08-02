@@ -1762,11 +1762,26 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   background: rgba(52, 211, 153, 0.07);
   border-color: rgba(52, 211, 153, 0.26);
 }
-.sv-country-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* The NAME must never be the thing that truncates.
+
+   Two columns at modal width could not fit "United Kingdom" alongside a flag
+   and an "ID CHECK" tag, so both it and "United States" rendered as
+   "United ..." - two different countries, visually identical, in a picker
+   that decides the user's entire verification path. The tag is decoration;
+   the name is the decision, so the tag is what gives way. */
+.sv-country-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .sv-flag { font-size: 19px; line-height: 1; flex-shrink: 0 }
 .sv-country-tag {
   font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
   text-transform: uppercase; color: #34d399; flex-shrink: 0;
+}
+/* Below this the tag competes with the country name for the same row. The
+   name wins - the "ID check" label is repeated on nine of ten rows and
+   carries almost no information, while the country name carries all of it. */
+@media (max-width: 720px) {
+  .sv-country-tag:not(.detected) { display: none }
 }
 .sv-country-tag.muted { color: #5f6b78; font-weight: 500 }
 
