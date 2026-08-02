@@ -130,27 +130,52 @@ async function main() {
     const modal = page.locator('.sv-modal');
     check('the modal opens', await modal.isVisible().catch(() => false));
 
+    // AUTO-DETECTION MEANS THERE MAY BE NO PROMPT AT ALL.
+    //
+    // The first version asserted "it asks for the country" and failed - not
+    // because anything was broken, but because detection had already worked:
+    // this sandbox egresses from the US, so the modal auto-selected United
+    // States and went straight to Bridge. That is the feature behaving
+    // correctly, and the test was wrong to demand a question.
+    //
+    // Either state is valid, so both are accepted - and whichever happens,
+    // the country must be VISIBLE and CHANGEABLE.
+    const chosen = page.locator('.sv-chosen-country');
+    const autoSelected = await chosen.isVisible().catch(() => false);
     const askedCountry = await page.locator('text=/Where are you based|One moment/i').first().isVisible().catch(() => false);
-    check('it asks for the country (or is detecting)', askedCountry);
+    check('the country is either asked for or auto-detected', askedCountry || autoSelected,
+      `asked=${askedCountry} auto=${autoSelected}`);
 
-    // THE TRUNCATION BUG. "United Kingdom" and "United States" both rendered
-    // as "United ..." at this width, which is two different countries looking
-    // identical on the screen that decides the whole verification path.
-    const names = await page.locator('.sv-country-name').allInnerTexts().catch(() => []);
-    if (names.length) {
-      const truncated = names.filter(n => n.includes('…') || n.trim().endsWith('...'));
-      check('no country name is truncated', truncated.length === 0, truncated.join(' | '));
-      const dupes = names.length !== new Set(names).size;
-      check('no two countries render identically', !dupes, names.join(' | '));
-    } else {
-      check('country list rendered (or auto-selected)', true, 'auto-selected, list skipped');
+    if (autoSelected) {
+      const detected = (await chosen.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+      console.log(`       auto-detected: ${detected}`);
+      // A detected country the user cannot correct would strand a Nigerian on
+      // a VPN, or anyone travelling, on a path they never chose.
+      check('the detected country is shown to the user', detected.length > 0);
+      check('and it can be changed', await page.locator('.sv-chosen-country button:has-text("Change")').isVisible().catch(() => false));
     }
 
     console.log('\n5. PICK NIGERIA -> BANK PATH');
+    // If detection already chose a country, click Change to reach the picker -
+    // which is the exact path a Nigerian on a US VPN would take.
+    if (autoSelected) {
+      await page.locator('.sv-chosen-country button:has-text("Change")').click();
+      await page.waitForTimeout(2500);
+      await shot('05b-picker-reopened');
+      const names = await page.locator('.sv-country-name').allInnerTexts().catch(() => []);
+      check('changing the country reopens the full list', names.length > 0, `${names.length} countries`);
+      // THE TRUNCATION BUG, checked where the list actually renders.
+      const truncated = names.filter(n => n.includes('…') || n.trim().endsWith('...'));
+      check('no country name is truncated', truncated.length === 0, truncated.join(' | '));
+      check('no two countries render identically',
+        names.length === new Set(names).size, names.join(' | '));
+    }
+
     const ng = page.locator('.sv-country:has-text("Nigeria")').first();
+    check('Nigeria is selectable', await ng.isVisible().catch(() => false));
     if (await ng.isVisible().catch(() => false)) {
       await ng.click();
-      await page.waitForTimeout(4000);
+      await page.waitForTimeout(5000);
     }
     await shot('06-after-country');
 
@@ -213,7 +238,10 @@ async function main() {
       !stillPrompting || inReview, 'still showing the generic verify prompt');
 
     console.log('\n8. NOTHING BROKE ALONG THE WAY');
-    const realErrors = consoleErrors.filter(e => !/favicon|sentry|Download the React/i.test(e));
+    // A 401 before sign-in is the app correctly discovering it has no session.
+    // Counting it as an error made a clean run look broken.
+    const realErrors = consoleErrors.filter(e =>
+      !/favicon|sentry|Download the React|status of 401/i.test(e));
     check('no unexpected console errors', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));
     // 401s are expected before sign-in; anything else is not.
     const badRequests = failedRequests.filter(r => !r.startsWith('401'));

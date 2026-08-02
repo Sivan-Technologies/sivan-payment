@@ -244,6 +244,32 @@ async function main() {
     check('mock is tolerated outside a deployed environment',
       s.severity === 'ok', `${s.severity} (${env.NGN_PROVIDER}/${env.APP_ENV})`);
     check('and it names the provider in use', /mock|breet|paj/i.test(s.detail), s.detail);
+
+    // NAMING THE PROVIDER IS NOT ENOUGH. Test had NGN_PROVIDER=breet with no
+    // credentials, so this signal read ok while every bank call 403'd and the
+    // picker was empty. Configuration must be checked, not just selection.
+    // Deleting BREET_APP_ID from process.env does NOT work here: dotenv
+    // repopulates it from .env when config/env.ts loads, so the delete is
+    // silently undone. Setting it EMPTY is the only way to express "selected
+    // but unconfigured" - which is also exactly what a blank Render dashboard
+    // field produces, so it is the realistic case anyway.
+    const savedId = process.env.BREET_APP_ID;
+    const savedSecret = process.env.BREET_APP_SECRET;
+    const savedProvider = process.env.NGN_PROVIDER;
+    process.env.NGN_PROVIDER = 'breet';
+    process.env.BREET_APP_ID = '';
+    process.env.BREET_APP_SECRET = '';
+    const bare = await fetchHealth();
+    const bareSignal = signal(bare.body, 'ngn_provider');
+    check('breet WITHOUT credentials is critical',
+      bareSignal.severity === 'critical', bareSignal.severity);
+    check('and the detail says the lookups will 403',
+      /403|credentials/i.test(bareSignal.detail), bareSignal.detail);
+    check('and the endpoint returns 503 so the watchdog alerts',
+      bare.status === 503, String(bare.status));
+    if (savedId !== undefined) process.env.BREET_APP_ID = savedId;
+    if (savedSecret !== undefined) process.env.BREET_APP_SECRET = savedSecret;
+    process.env.NGN_PROVIDER = savedProvider ?? 'mock';
   }
 
   console.log('\nSEVERITY ROLLS UP TO THE WORST SIGNAL');

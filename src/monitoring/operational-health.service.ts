@@ -203,21 +203,47 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
   //    This is not hypothetical: test ran with NGN_PROVIDER=paj, whose staging
   //    key was never provisioned, and every bank resolution returned 500.
   {
-    const provider = env.NGN_PROVIDER ?? 'mock';
-    const usable = provider === 'breet';
+    // Read process.env FIRST. config/env.ts parses once at import, so a value
+    // changed afterwards - by an operator restarting with new config, or by a
+    // test - would otherwise be invisible here. Same reasoning as
+    // wallet-health's credential check.
+    const provider = process.env.NGN_PROVIDER || env.NGN_PROVIDER || 'mock';
+    // CREDENTIALS, NOT JUST THE NAME.
+    //
+    // Setting NGN_PROVIDER=breet without BREET_APP_ID/SECRET is worse than
+    // leaving it wrong: every bank call 403s with "Breet credentials are not
+    // configured", so the picker is empty and a user cannot verify at all.
+    // Caught in the browser - the provider signal read ok while /api/ngn/banks
+    // returned 403.
+    // `process.env.X || env.X` is WRONG here: env is a parsed snapshot, so a
+    // credential DELETED from process.env would fall through to the stale
+    // snapshot value and still read as configured. Prefer process.env when
+    // the key is present at all, including when it is empty.
+    const breetAppId = 'BREET_APP_ID' in process.env ? process.env.BREET_APP_ID : env.BREET_APP_ID;
+    const breetSecret = 'BREET_APP_SECRET' in process.env ? process.env.BREET_APP_SECRET : env.BREET_APP_SECRET;
+    const breetConfigured = Boolean(breetAppId && breetSecret);
+    const usable = provider === 'breet' && breetConfigured;
     // 'mock' is correct in a test run and in local development, so it is only
     // a problem on a DEPLOYED environment. 'paj' is a problem anywhere it
     // serves users, because its resolver cannot authenticate at all.
     const deployed = env.APP_ENV === 'production' || env.APP_ENV === 'staging';
     signals.push({
       name: 'ngn_provider',
-      severity: usable ? 'ok' : deployed ? 'critical' : 'ok',
+      // Deliberately choosing breet and then not configuring it is broken
+      // EVERYWHERE, not only on a deployed host - the picker is empty and
+      // nobody can verify. A merely-unset provider (mock) is only a problem
+      // once deployed.
+      severity: usable
+        ? 'ok'
+        : provider === 'breet' || deployed ? 'critical' : 'ok',
       value: usable ? 1 : 0,
       detail: usable
-        ? 'NGN provider is breet.'
-        : deployed
-          ? `NGN_PROVIDER is "${provider}" on a deployed environment. Bank resolution will fail for users — set it to breet.`
-          : `NGN provider is "${provider}" (local/test — fine here).`,
+        ? 'NGN provider is breet, with credentials.'
+        : provider === 'breet' && !breetConfigured
+          ? 'NGN_PROVIDER is breet but BREET_APP_ID/BREET_APP_SECRET are missing. Every bank lookup returns 403 and no user can verify.'
+          : deployed
+            ? `NGN_PROVIDER is "${provider}" on a deployed environment. Bank resolution will fail for users — set it to breet.`
+            : `NGN provider is "${provider}" (local/test — fine here).`,
     });
   }
 
