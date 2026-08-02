@@ -81,26 +81,35 @@ export async function getVerificationState(userId: string): Promise<Verification
   // IDENTITY VERIFICATION IS ADMIN-TOGGLEABLE.
   //
   // No NIN/BVN provider is integrated yet. Requiring identity while nothing can
-  // satisfy it would strand every user at Level 1 with no way to clear - so for
-  // MVP the toggle is OFF by default and Level 2 is reachable on the bank check
-  // alone.
+  // satisfy it would strand every Bridge user with no way to clear - so for MVP
+  // the toggle is OFF by default and identity is inherited from Bridge instead.
   //
   // That is a real compromise, so it is a visible one: an admin can see the
   // switch, it is recorded on the controls record, and flipping it on is a
   // single change once a provider exists. Far better than a hardcoded `true`
   // nobody can find later.
   //
-  // When ON, identity must be genuinely satisfied. A Bridge-approved user
-  // counts: Bridge requires a national identity number for every non-US
-  // resident and accepts nin, bvn and tin for Nigeria, so that person HAS had
-  // one verified - at the $2 already spent. It is inherited, not
-  // Sivan-performed, which is why step 3 still matters: if Bridge offboards
-  // them, that identity goes with it.
+  // WHY THIS READS bridgeAccountVerified AND NOT bankVerified.
+  //
+  // It used to be `identityVerified = bankVerified`, and that was sound while
+  // bankVerified could ONLY come from a Bridge external account - such a user
+  // has been through Bridge's document KYC, so inheriting identity from them
+  // is inheriting something real.
+  //
+  // Migration 037 broke that premise by making bankVerified reachable from a
+  // bare NUBAN name match. Left as it was, a Nigerian who typed ten digits and
+  // matched a name would be granted LEVEL 2 - lifting the NGN off-ramp ceiling
+  // from 50,000 to 500,000 and OPENING FOREIGN RAILS, which sit at 0 below
+  // IDENTITY. No documents, no selfie, and no $2 ever spent at Bridge.
+  //
+  // KYC-DESIGN.md is explicit: Level 1 is the bank/NIN tier, Level 2 is
+  // "Provider verified - Bridge customer created and approved". A NUBAN match
+  // is Level 1 evidence and must stop there.
   const controls = await getNgnControls();
   const identityRequired = controls.identityVerificationEnabled === true;
   const bridgeApproved = isApprovedKycStatus(customer?.kycStatus);
 
-  const identityVerified = identityRequired ? bridgeApproved : bankVerified;
+  const identityVerified = identityRequired ? bridgeApproved : bridgeAccountVerified;
 
   // When the toggle is OFF, the level is granted without a NIN/BVN check - so
   // the per-check statuses must say so too, or levelIsIntact() sees a Level 2
@@ -109,6 +118,10 @@ export async function getVerificationState(userId: string): Promise<Verification
   // Caught by test: with the toggle off, every NGN quote failed with "one of
   // your verification checks needs attention", which was true and useless -
   // there was no check to attend to. The level and the evidence have to agree.
+  // Tracks identityVerified exactly. If the level says IDENTITY but this says
+  // NOT_STARTED, levelIsIntact() blocks every transaction with "one of your
+  // verification checks needs attention" - true, and useless, because there is
+  // no check the user can attend to. The level and the evidence must agree.
   const ninStatus = bridgeApproved || (identityVerified && !identityRequired)
     ? CheckStatus.VERIFIED
     : CheckStatus.NOT_STARTED;

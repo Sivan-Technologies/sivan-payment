@@ -32,6 +32,8 @@ import { getVerificationState } from '../src/kyc/service/verification-state.js';
 import { VerificationLevel } from '../src/kyc/types/verification.types.js';
 import { payoutAccountStatusFor } from '../src/ngn/service/ngn-payout-accounts.service.js';
 import { updateNgnControls } from '../src/ngn/service/ngn-controls.service.js';
+import { levelIsIntact } from '../src/kyc/service/verification-policy.js';
+import { defaultLimitFor } from '../src/kyc/service/verification-limits.service.js';
 
 let pass = 0;
 let fail = 0;
@@ -150,36 +152,76 @@ async function main() {
       check('the bank check reads as verified', state.bankStatus === 'verified', String(state.bankStatus));
 
       /**
-       * IT GRANTS LEVEL 2, NOT LEVEL 1. THIS IS DELIBERATE BUT LOAD-BEARING.
+       * LEVEL 1 (BANK), NOT LEVEL 2. THIS IS THE WHOLE POINT.
        *
-       * verification-state derives identityVerified from bankVerified while
-       * ngnControls.identityVerificationEnabled is false, which is the shipped
-       * default because no NIN/BVN provider is integrated. So one bank-name
-       * match satisfies both the bank AND the identity check, and the user
-       * lands on IDENTITY (2) rather than BANK (1).
+       * KYC-DESIGN.md: Level 1 is the bank/NIN tier; Level 2 is "Provider
+       * verified - Bridge customer created and approved". A NUBAN name match
+       * is Level 1 evidence and must stop there.
        *
-       * Measured, not assumed: the NGN off-ramp ceiling that follows is
-       * NGN 500,000 per 30 days instead of NGN 50,000 - a 10x difference.
+       * It did NOT stop there when this table was first wired up.
+       * verification-state read `identityVerified = bankVerified`, which was
+       * sound while bankVerified could only come from a Bridge external
+       * account - that user has done Bridge's document KYC. Making
+       * bankVerified reachable from a bare NUBAN broke the premise, and a user
+       * who typed ten digits was granted Level 2.
        *
-       * That compromise was written when bankVerified could ONLY come from a
-       * Bridge external account, which carries real document KYC behind it.
-       * This change makes it reachable from a bare NUBAN name match, which is
-       * much weaker evidence for the same ceiling. Asserted here so the
-       * consequence is visible and so flipping the toggle is a one-line,
-       * clearly-failing change rather than a silent shift in exposure.
+       * Measured consequences of that bug, which is why this is asserted at
+       * three levels rather than one:
+       *   NGN off-ramp ceiling  50,000 -> 500,000   (10x)
+       *   FOREIGN rails         0 -> 500,000        (opened outright)
+       * with no documents, no selfie, and no $2 ever spent at Bridge.
        */
-      check('the toggle being off lifts them to IDENTITY, not BANK',
-        state.level === VerificationLevel.IDENTITY, String(state.level));
+      check('a NUBAN match grants BANK, not IDENTITY',
+        state.level === VerificationLevel.BANK, String(state.level));
+      check('identity is NOT inherited from a bank name match',
+        state.identityStatus === 'not_started', String(state.identityStatus));
+      check('and no NIN is claimed',
+        state.ninStatus === 'not_started', String(state.ninStatus));
 
-      // With the toggle ON, the same evidence grants only Level 1 - proving
-      // the switch genuinely governs this and the Nigerian path is not
-      // hardcoded past it.
+      // The ceilings are the thing a user actually feels, so assert those too -
+      // a level number that maps to the wrong limit is still a breach.
+      check('the NGN off-ramp ceiling is the Level 1 one',
+        defaultLimitFor('offramp', 'ngn', state.level) === 50_000,
+        String(defaultLimitFor('offramp', 'ngn', state.level)));
+      check('FOREIGN rails stay closed on a Nigerian bank match',
+        defaultLimitFor('offramp', 'foreign', state.level) === 0,
+        String(defaultLimitFor('offramp', 'foreign', state.level)));
+
+      // The level must be INTACT, not merely low. A level whose evidence does
+      // not back it makes levelIsIntact() reject every transaction with "one
+      // of your verification checks needs attention" - true, and useless,
+      // because there is no check the user can go and attend to.
+      check('the level is intact, so transactions are not dead-locked',
+        levelIsIntact(state) === true);
+
+      // The toggle must not silently change the Nigerian answer either. It
+      // governs whether identity is REQUIRED, and a NUBAN never satisfies it.
       await updateNgnControls({ identityVerificationEnabled: true } as any);
       const strict = await getVerificationState(userId);
-      check('with identity verification required, it grants only BANK',
+      check('with identity required, a NUBAN match is still BANK',
         strict.level === VerificationLevel.BANK, String(strict.level));
-      check('and the bank check still holds', strict.bankStatus === 'verified', String(strict.bankStatus));
+      check('and still intact', levelIsIntact(strict) === true);
       await updateNgnControls({ identityVerificationEnabled: false } as any);
+    }
+
+    console.log('\nA BRIDGE-APPROVED USER IS UNAFFECTED BY THAT FIX');
+    {
+      // The fix narrowed identity inheritance to Bridge accounts. Confirm it
+      // narrowed rather than removed it - stranding Bridge users at Level 1
+      // would close the foreign rails they paid $2 to open.
+      const now = new Date().toISOString();
+      await db.insertUserRecord({ id: 'usr_bridge_probe', email: 'bridge@sivan.test', fullName: 'Bridge Person', createdAt: now, updatedAt: now } as any);
+      await db.insertCustomerRecord({ id: 'cus_bridge_probe', userId: 'usr_bridge_probe', provider: 'bridge', providerCustomerId: 'pc_1', customerType: 'individual', kycStatus: 'kyc_approved', tosStatus: 'approved', createdAt: now, updatedAt: now } as any);
+      await db.insertExternalAccountRecord({ id: 'ext_bridge_probe', userId: 'usr_bridge_probe', customerId: 'cus_bridge_probe', provider: 'bridge', providerExternalAccountId: 'pe_1', currency: 'usd', accountType: 'us', accountOwnerName: 'Bridge Person', paymentRail: 'ach', status: 'verified', createdAt: now, updatedAt: now } as any);
+
+      const state = await getVerificationState('usr_bridge_probe');
+      check('a Bridge-approved user still reaches IDENTITY',
+        state.level === VerificationLevel.IDENTITY, String(state.level));
+      check('their identity is verified', state.identityStatus === 'verified', String(state.identityStatus));
+      check('their level is intact', levelIsIntact(state) === true);
+      check('and their foreign rails are open',
+        defaultLimitFor('offramp', 'foreign', state.level) === 500_000,
+        String(defaultLimitFor('offramp', 'foreign', state.level)));
     }
 
     console.log('\nRESUBMITTING THE SAME ACCOUNT UPDATES ONE ROW');
