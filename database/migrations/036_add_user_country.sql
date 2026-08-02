@@ -24,9 +24,26 @@ alter table users
 
 -- ISO 3166-1 alpha-2, uppercase. Constrained rather than free text so 'NG',
 -- 'Nigeria' and 'nigeria' cannot all coexist and silently route differently.
-alter table users
-  add constraint users_country_iso2
-  check (country is null or country ~ '^[A-Z]{2}$')
-  not valid;
+--
+-- WRAPPED IN AN EXISTENCE CHECK BECAUSE MIGRATIONS RE-RUN ON EVERY DEPLOY.
+--
+-- scripts/db-migrate.ts replays every .sql file in order on each build; there
+-- is no applied-migrations table. `add constraint` has no IF NOT EXISTS in
+-- Postgres, so the bare form succeeded once and then failed every subsequent
+-- deploy with 42710 "constraint already exists" - taking down the whole build,
+-- which is why nothing after this migration shipped.
+--
+-- This is the idiom migration 002 already uses for exactly this reason.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'users_country_iso2'
+  ) then
+    alter table users
+      add constraint users_country_iso2
+      check (country is null or country ~ '^[A-Z]{2}$')
+      not valid;
+  end if;
+end $$;
 
 create index if not exists idx_users_country on users(country) where country is not null;

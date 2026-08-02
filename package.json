@@ -81,6 +81,7 @@
     "test:name-match": "tsx scripts/test-name-match.ts",
     "test:verification-path": "tsx scripts/test-verification-path.ts",
     "test:ngn-payout-accounts": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-payout-accounts.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=ngn-payout-admin-key tsx scripts/test-ngn-payout-accounts.ts",
+    "test:migrations": "tsx scripts/test-migrations-idempotent.ts",
     "test:verification-summary": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-verification-summary.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=vs-admin-key tsx scripts/test-verification-summary.ts",
     "test:user-country": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-user-country.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true tsx scripts/test-user-country.ts",
     "test:solana-transfer": "tsx scripts/test-solana-transfer.ts",
@@ -107,6 +108,7 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "@types/node": "latest",
     "@types/pg": "^8.20.0",
     "tsx": "latest",
