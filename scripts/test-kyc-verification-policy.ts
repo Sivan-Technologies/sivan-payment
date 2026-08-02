@@ -24,7 +24,7 @@ import {
   levelIsIntact,
   requiresBridgeCustomer,
 } from '../src/kyc/service/verification-policy.js';
-import { bridgeUpliftApplies } from '../src/kyc/types/verification.types.js';
+import { upliftApplies, hasSivanIdentity, UPLIFT_CEILING_NGN } from '../src/kyc/types/verification.types.js';
 
 let pass = 0;
 let fail = 0;
@@ -269,15 +269,141 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
     bankStatus: CheckStatus.VERIFIED,
     identityStatus: CheckStatus.VERIFIED,
     ninStatus: CheckStatus.VERIFIED,
+    identitySource: 'bridge',
     bridgeKycStatus: 'kyc_approved',
     bridgeTosStatus: 'approved',
   });
-  check('Bridge approved + basics done = uplift applies', bridgeUpliftApplies(full));
+  check('Bridge approved + basics done = uplift applies', upliftApplies(full));
 
+  // THE UPLIFT IS A HIGH CEILING, NOT AN ABSENT ONE.
+  //
+  // It used to return limitNgn: null - unlimited, forever, on every rail. An
+  // identity check states WHO someone is at one point in time; it cannot say
+  // whether this NGN 40m today is normal for them. Unlimited means no amount
+  // ever triggers a second look.
   const big = decide(full, { flow: 'offramp', rail: 'ngn', amountNgn: 40_000_000, priorVolumeNgn: 900_000_000 });
-  check('NGN 40m off-ramp is allowed despite only being Level 2', big.allowed);
-  check('the ceiling is reported as removed', big.limitNgn === null);
-  check('and the reason is attributed to Bridge, not to the level', big.bridgeUplift === true);
+  check('NGN 40m off-ramp is NOT waved through on a Level 2 identity check', !big.allowed);
+  check('the uplifted ceiling is reported, not a null one', big.limitNgn === UPLIFT_CEILING_NGN, String(big.limitNgn));
+  check('and the user is asked for source of funds', big.requiredLevel === VerificationLevel.ENHANCED);
+  check('the uplift is still attributed', big.bridgeUplift === true);
+
+  // Under the ceiling it behaves exactly as before: allowed, well past the
+  // Level 2 table figure of 500,000.
+  const withinUplift = decide(full, { flow: 'offramp', rail: 'ngn', amountNgn: 5_000_000, priorVolumeNgn: 0 });
+  check('NGN 5m is allowed, far above the Level 2 table ceiling', withinUplift.allowed);
+  check('and it reports the uplifted ceiling', withinUplift.limitNgn === UPLIFT_CEILING_NGN);
+  // remainingNgn is headroom BEFORE this transaction, matching the non-uplift
+  // path - prior volume was 0, so the full ceiling is still reported.
+  check('remaining headroom is measured before this transaction, as elsewhere',
+    withinUplift.remainingNgn === UPLIFT_CEILING_NGN, String(withinUplift.remainingNgn));
+
+  // Cumulative, like every other threshold. Structuring under the uplift must
+  // not work either.
+  const structured = decide(full, { flow: 'offramp', rail: 'ngn', amountNgn: 1_000_000, priorVolumeNgn: 9_500_000 });
+  check('the uplifted ceiling is cumulative, not per-transaction', !structured.allowed);
+  check('and only the genuine headroom remains',
+    structured.remainingNgn === 500_000, String(structured.remainingNgn));
+
+  console.log('\nA NIGERIAN WHO NEVER TOUCHES BRIDGE GETS THE SAME CEILING');
+  {
+    // The point: the uplift is a consequence of being verified, not of having
+    // paid for a foreign rail. This user validated NIN/BVN with Sivan, has no
+    // Bridge customer at all, and wants no USD account.
+    const ngnOnly = state({
+      level: VerificationLevel.IDENTITY,
+      bankStatus: CheckStatus.VERIFIED,
+      identityStatus: CheckStatus.VERIFIED,
+      bvnStatus: CheckStatus.VERIFIED,
+      identitySource: 'sivan',
+    });
+    check('no Bridge customer at all', ngnOnly.bridgeKycStatus === undefined);
+    check('Sivan-held identity qualifies for the uplift', upliftApplies(ngnOnly));
+
+    const d = decide(ngnOnly, { flow: 'offramp', rail: 'ngn', amountNgn: 5_000_000, priorVolumeNgn: 0 });
+    check('and they may move NGN 5m', d.allowed);
+    check('on exactly the same ceiling as a Bridge user',
+      d.limitNgn === UPLIFT_CEILING_NGN, String(d.limitNgn));
+
+    const over = decide(ngnOnly, { flow: 'offramp', rail: 'ngn', amountNgn: 12_000_000, priorVolumeNgn: 0 });
+    check('and they hit the same source-of-funds ask above it',
+      over.requiredLevel === VerificationLevel.ENHANCED);
+
+    // NIN alone is equally acceptable - Bridge accepts either for Nigeria and
+    // requiring both would block users who hold only one.
+    const ninOnly = state({
+      level: VerificationLevel.IDENTITY,
+      bankStatus: CheckStatus.VERIFIED,
+      identityStatus: CheckStatus.VERIFIED,
+      ninStatus: CheckStatus.VERIFIED,
+      identitySource: 'sivan',
+    });
+    check('NIN alone also qualifies', upliftApplies(ninOnly));
+
+    // The floor still binds. Identity without a payout account is not enough:
+    // knowing who someone is says nothing about where their naira should land.
+    const noBankSivan = state({
+      level: VerificationLevel.NONE,
+      identityStatus: CheckStatus.VERIFIED,
+      bvnStatus: CheckStatus.VERIFIED,
+      identitySource: 'sivan',
+    });
+    check('Sivan identity WITHOUT a payout bank gives no uplift', !upliftApplies(noBankSivan));
+  }
+
+  console.log('\nTHE FLOOR IS NOT SATISFIED BY BRIDGE VOUCHING FOR BRIDGE');
+  {
+    // The circularity this fixes: ninStatus was SET from bridgeApproved, so
+    // the "Sivan must hold its own identity" floor was reading a flag that
+    // existed only because Bridge approved the user.
+    const inherited = state({
+      level: VerificationLevel.IDENTITY,
+      bankStatus: CheckStatus.VERIFIED,
+      identityStatus: CheckStatus.VERIFIED,
+      ninStatus: CheckStatus.VERIFIED,
+      identitySource: 'bridge',
+      bridgeKycStatus: 'kyc_approved',
+      bridgeTosStatus: 'approved',
+    });
+    check('inherited identity is not counted as Sivan-held', !hasSivanIdentity(inherited));
+    check('but it still grants the uplift by the Bridge route', upliftApplies(inherited));
+
+    // Unattributed identity grants nothing. A VERIFIED ninStatus with no
+    // recorded source is exactly the ambiguity that hid the circularity.
+    const unattributed = state({
+      level: VerificationLevel.IDENTITY,
+      bankStatus: CheckStatus.VERIFIED,
+      identityStatus: CheckStatus.VERIFIED,
+      ninStatus: CheckStatus.VERIFIED,
+      bridgeKycStatus: 'kyc_approved',
+      bridgeTosStatus: 'approved',
+    });
+    check('a NIN with no recorded source grants no uplift', !upliftApplies(unattributed));
+
+    // Bridge offboarding must remove what Bridge gave, and nothing else.
+    const offboarded = { ...inherited, bridgeKycStatus: 'offboarded' };
+    check('Bridge offboarding withdraws the inherited uplift', !upliftApplies(offboarded));
+
+    // The same user, had Sivan held the identity itself, keeps it.
+    const ownIdentity = { ...inherited, identitySource: 'sivan' as const, bridgeKycStatus: 'offboarded' };
+    check('Sivan-held identity survives Bridge offboarding', upliftApplies(ownIdentity));
+  }
+
+  console.log('\nENHANCED IS STILL UNCAPPED - IT HAS ALREADY ANSWERED THE ASK');
+  {
+    // The uplift caps in order to ask for source of funds. A user who has
+    // supplied it has nothing left to be asked, so the table's own null wins.
+    const l3 = state({
+      level: VerificationLevel.ENHANCED,
+      bankStatus: CheckStatus.VERIFIED,
+      identityStatus: CheckStatus.VERIFIED,
+      ninStatus: CheckStatus.VERIFIED,
+      identitySource: 'sivan',
+      proofOfAddressStatus: CheckStatus.VERIFIED,
+      sourceOfFundsStatus: CheckStatus.VERIFIED,
+    });
+    const d = decide(l3, { flow: 'offramp', rail: 'ngn', amountNgn: 40_000_000, priorVolumeNgn: 0 });
+    check('a Level 3 user is genuinely uncapped', d.allowed && d.limitNgn === null);
+  }
 
   // THE GUARD. Bridge approved, but no payout bank verified.
   const noBank = state({
@@ -288,7 +414,7 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
     bridgeTosStatus: 'approved',
   });
   check('Bridge approval WITHOUT a verified payout bank gives no uplift',
-    !bridgeUpliftApplies(noBank));
+    !upliftApplies(noBank));
   check('and such a user still cannot move NGN 5,000',
     !decide(noBank, { flow: 'offramp', rail: 'ngn', amountNgn: 5_000, priorVolumeNgn: 0 }).allowed);
 
@@ -299,8 +425,8 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
     bridgeKycStatus: 'kyc_approved',
     bridgeTosStatus: 'approved',
   });
-  check('Bridge approval WITHOUT Sivan holding NIN/BVN gives no uplift',
-    !bridgeUpliftApplies(noIdentity));
+  check('Bridge approval WITHOUT any NIN/BVN gives no uplift',
+    !upliftApplies(noIdentity));
   const capped = decide(noIdentity, { flow: 'escrow', rail: 'ngn', amountNgn: 500_000, priorVolumeNgn: 0 });
   check('that user is still held to the Level 1 ceiling', !capped.allowed);
   check('and is asked for NIN/BVN', capped.requiredLevel === VerificationLevel.IDENTITY);
@@ -314,7 +440,7 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
     bridgeKycStatus: 'kyc_approved',
     bridgeTosStatus: 'pending',
   });
-  check('Bridge KYC without Bridge terms accepted gives no uplift', !bridgeUpliftApplies(noTos));
+  check('Bridge KYC without Bridge terms accepted gives no uplift', !upliftApplies(noTos));
 
   // Rejected by Bridge must not read as approved.
   const rejected = state({
@@ -324,7 +450,7 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
     ninStatus: CheckStatus.VERIFIED,
     bridgeKycStatus: 'kyc_rejected',
   });
-  check('a Bridge rejection gives no uplift', !bridgeUpliftApplies(rejected));
+  check('a Bridge rejection gives no uplift', !upliftApplies(rejected));
   check('and the user falls back to their Level 2 ceiling',
     !decide(rejected, { flow: 'escrow', rail: 'ngn', amountNgn: 2_000_000, priorVolumeNgn: 0 }).allowed);
 
@@ -355,7 +481,7 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
 
   // 'active' is Bridge's own spelling of approved.
   const activeSpelling = { ...full, bridgeKycStatus: 'active', bridgeTosStatus: 'approved' };
-  check("Bridge's 'active' spelling also grants uplift", bridgeUpliftApplies(activeSpelling));
+  check("Bridge's 'active' spelling also grants uplift", upliftApplies(activeSpelling));
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

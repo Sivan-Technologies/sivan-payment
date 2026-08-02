@@ -19,9 +19,10 @@
 import {
   CheckStatus,
   FLOW_LIMITS,
+  UPLIFT_CEILING_NGN,
   VerificationLevel,
   VOLUME_WINDOW_DAYS,
-  bridgeUpliftApplies,
+  upliftApplies,
   type FlowType,
   type RailFamily,
   type VerificationState,
@@ -219,18 +220,51 @@ export function decide(
     };
   }
 
-  // Bridge-verified users are uncapped - but only once Sivan's own floor is
-  // met. bridgeUpliftApplies() enforces that; Bridge raises the ceiling, it
-  // never replaces the basics.
-  if (bridgeUpliftApplies(state)) {
+  // Fully identity-verified users get a HIGH ceiling, not an unlimited one.
+  //
+  // Whoever performed the check: Sivan's own NIN/BVN, or Bridge's. A Nigerian
+  // user who never needs a USD account should not be capped below someone who
+  // paid for one on identical evidence - see upliftApplies().
+  //
+  // Deliberately not `null`. Unlimited means no amount ever triggers a second
+  // look, and an identity check says who someone IS, not whether this
+  // particular transfer is normal for them. Crossing the ceiling asks for
+  // source of funds, which is what ENHANCED collects.
+  //
+  // ENHANCED is exempt: that user HAS supplied proof of address and source of
+  // funds, so there is nothing further to ask for and the table's own `null`
+  // applies below.
+  if (currentLevel < VerificationLevel.ENHANCED && upliftApplies(state)) {
+    const upliftLimit = upliftCeilingFor(request.flow, request.rail, overrides);
+    const upliftTotal = prior + amount;
+    const upliftRemaining = Math.max(upliftLimit - prior, 0);
+
+    if (upliftTotal <= upliftLimit) {
+      return {
+        allowed: true,
+        code: 'allowed',
+        currentLevel,
+        limitNgn: upliftLimit,
+        remainingNgn: upliftRemaining,
+        bridgeUplift: true,
+        reason: 'Allowed.',
+      };
+    }
+
+    // Over the uplifted ceiling. The only thing left to ask for is ENHANCED -
+    // photo ID, proof of address, source of funds.
     return {
-      allowed: true,
-      code: 'allowed',
+      allowed: false,
+      code: 'upgrade_required',
+      requiredLevel: VerificationLevel.ENHANCED,
       currentLevel,
-      limitNgn: null,
-      remainingNgn: null,
+      limitNgn: upliftLimit,
+      remainingNgn: upliftRemaining,
       bridgeUplift: true,
-      reason: 'Allowed.',
+      reason:
+        `You have ${ngn(upliftRemaining)} left of your ${ngn(upliftLimit)} limit for the last ` +
+        `${VOLUME_WINDOW_DAYS} days. To go higher we need proof of address and where the funds ` +
+        `come from.`,
     };
   }
 
@@ -278,6 +312,27 @@ export function decide(
 
 function ngn(value: number): string {
   return `NGN ${value.toLocaleString('en-NG')}`;
+}
+
+/**
+ * The uplifted ceiling for a flow/rail.
+ *
+ * Reads the ENHANCED row's override if an admin has set one, because "how much
+ * may a fully verified user move" is the same question that row answers. A
+ * `null` there means the admin has deliberately chosen unlimited, and that is
+ * their call to make - the default simply is not unlimited.
+ */
+export function upliftCeilingFor(
+  flow: FlowType,
+  rail: RailFamily,
+  overrides?: readonly VerificationLimitOverride[]
+): number {
+  const override = overrides?.find(
+    (o) => o.flow === flow && o.rail === rail && o.level === VerificationLevel.ENHANCED
+  );
+  if (override && override.cumulativeNgn !== null) return override.cumulativeNgn;
+  if (override && override.cumulativeNgn === null) return Number.POSITIVE_INFINITY;
+  return UPLIFT_CEILING_NGN;
 }
 
 /**

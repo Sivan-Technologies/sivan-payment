@@ -124,37 +124,116 @@ export interface VerificationState {
   bridgeKycStatus?: string;
   /** Bridge requires its own terms acceptance separately from KYC. */
   bridgeTosStatus?: string;
+
+  /**
+   * WHERE the identity check came from. Sivan's own, or inherited from Bridge.
+   *
+   * This exists because `ninStatus` alone was a lie by omission. It was set
+   * from `bridgeApproved`, so the uplift's "Sivan must hold its own identity"
+   * floor was reading a flag that existed ONLY because Bridge approved the
+   * user - Bridge vouching for Bridge. The floor looked like an independent
+   * second factor and was not one.
+   *
+   * 'sivan'  a NIN or BVN Sivan validated against the national source. Survives
+   *          Bridge offboarding, because it was never Bridge's to withdraw.
+   * 'bridge' inherited. Real - Bridge requires a national identity number for
+   *          non-US residents and accepts nin/bvn/tin for Nigeria - but it
+   *          evaporates if the relationship ends.
+   */
+  identitySource?: 'sivan' | 'bridge';
 }
 
 /**
- * Does Bridge approval lift this user to unlimited?
+ * Does Sivan hold its own identity evidence for this user?
  *
- * Bridge approval alone is NOT enough, and this is the whole point of the
- * function. Sivan's basics must be complete too:
- *
- *   - a resolved payout bank account. Bridge verifies WHO someone is; it has no
- *     opinion on where their naira should land. Paying out to an unverified
- *     account because Bridge said the person is real is how money reaches the
- *     wrong bank account with a perfectly valid KYC record attached.
- *
- *   - an identity check Sivan holds itself. If Bridge ever offboards the user,
- *     changes its risk appetite, or the relationship ends, Sivan must still
- *     know who this person is. Verification that evaporates with a vendor is
- *     not verification.
- *
- * So Bridge lifts the CEILING. It does not replace the FLOOR. A user cannot use
- * Bridge as a shortcut past the basic process.
+ * The honest version of the old `ninStatus === VERIFIED` check. Inherited
+ * Bridge identity does NOT satisfy this, which is the entire point: an
+ * uncapped ceiling should not rest on a fact that disappears with a vendor.
  */
-export function bridgeUpliftApplies(state: VerificationState): boolean {
+export function hasSivanIdentity(state: VerificationState): boolean {
+  if (state.identitySource !== 'sivan') return false;
+  return state.ninStatus === CheckStatus.VERIFIED || state.bvnStatus === CheckStatus.VERIFIED;
+}
+
+/**
+ * The uplift ceiling, in NGN over the rolling window.
+ *
+ * NOT `null`. An uncapped ceiling means no amount, ever, triggers a second
+ * look - and a KYC check is a point-in-time statement about WHO someone is,
+ * not a transaction-monitoring programme. It cannot tell you whether this
+ * particular NGN 50m today is normal for this person.
+ *
+ * NGN 10,000,000 per 30 days is roughly $6,200 at 1605. That covers essentially
+ * every legitimate retail user of this product while leaving a number a
+ * genuinely unusual pattern has to cross - at which point source of funds is
+ * asked for, which is what ENHANCED was designed to collect.
+ *
+ * Admin-overridable like every other ceiling, so this is a default and not a
+ * hardcoded business rule.
+ */
+export const UPLIFT_CEILING_NGN = 10_000_000;
+
+/**
+ * Does this user qualify for the uplifted ceiling?
+ *
+ * WHO GETS IT: anyone who has completed a full identity check, whoever
+ * performed it. Two routes, deliberately equal:
+ *
+ *   SIVAN'S OWN   NIN or BVN validated against the national source, plus a
+ *                 resolved payout bank account. A Nigerian user who never
+ *                 wants a USD virtual account has no reason to touch Bridge,
+ *                 and no reason to be capped lower than someone who did. They
+ *                 completed the same identity check - arguably a more direct
+ *                 one, against the national source rather than a vendor's
+ *                 database.
+ *
+ *   VIA BRIDGE    Bridge ran document, database and sanctions checks and
+ *                 charged $2 for it. Inherited, and real.
+ *
+ * This used to be bridgeUpliftApplies() and required Bridge specifically,
+ * which made the higher ceiling a privilege of having paid for a foreign rail
+ * rather than a consequence of being verified. A Nigerian NGN-only user could
+ * complete every check Sivan offers and still be held at Level 2's ceiling
+ * while a Bridge user with identical evidence went uncapped.
+ *
+ * THE FLOOR IS UNCHANGED AND NON-NEGOTIABLE:
+ *
+ *   - a resolved payout bank account. Identity verification says WHO someone
+ *     is; it has no opinion on where their naira should land. Paying out to an
+ *     unverified account because the person is real is how money reaches the
+ *     wrong account with a perfectly valid KYC record attached.
+ *
+ *   - a real identity check. For the Bridge route that is inherited; for the
+ *     Sivan route it is held directly and survives any vendor relationship
+ *     ending.
+ */
+export function upliftApplies(state: VerificationState): boolean {
+  // The floor, first and regardless of route.
+  if (state.bankStatus !== CheckStatus.VERIFIED) return false;
+
+  // ROUTE 1: Sivan's own NIN/BVN. No provider involved, nothing to evaporate.
+  if (hasSivanIdentity(state)) return true;
+
+  // ROUTE 2: inherited from Bridge.
   if (!isApprovedKycStatus(state.bridgeKycStatus)) return false;
   // Bridge treats terms acceptance as a separate gate; so does Sivan.
   if (state.bridgeTosStatus && !isApprovedKycStatus(state.bridgeTosStatus)) return false;
-
-  // The floor. Non-negotiable regardless of what Bridge says.
-  if (state.bankStatus !== CheckStatus.VERIFIED) return false;
+  // The identity must actually be attributed to Bridge. Without this the check
+  // is circular - see identitySource.
+  if (state.identitySource !== 'bridge') return false;
   if (state.ninStatus !== CheckStatus.VERIFIED && state.bvnStatus !== CheckStatus.VERIFIED) return false;
 
   return true;
+}
+
+/**
+ * Retained so existing callers and tests keep compiling.
+ *
+ * @deprecated Use upliftApplies(). The uplift is no longer Bridge-specific:
+ * a Nigerian user with Sivan's own NIN/BVN qualifies on identical evidence.
+ */
+export function bridgeUpliftApplies(state: VerificationState): boolean {
+  return upliftApplies(state);
 }
 
 export interface FlowLimit {

@@ -126,6 +126,27 @@ export async function getVerificationState(userId: string): Promise<Verification
     ? CheckStatus.VERIFIED
     : CheckStatus.NOT_STARTED;
   const bvnStatus = CheckStatus.NOT_STARTED;
+
+  /**
+   * WHERE that identity came from, stated honestly.
+   *
+   * Today the only source is Bridge. Sivan validates no NIN or BVN against the
+   * national source - there is no provider integrated and nowhere to store the
+   * result - so 'sivan' is currently unreachable, and that is the correct
+   * answer rather than a gap to paper over.
+   *
+   * It matters because upliftApplies() uses this to break a circularity: the
+   * old floor checked `ninStatus === VERIFIED`, but ninStatus was SET from
+   * bridgeApproved, so the "Sivan must hold its own identity" guard was Bridge
+   * vouching for Bridge. Attributing the source makes that visible instead of
+   * implied.
+   *
+   * When a NIN/BVN provider lands, this becomes 'sivan' for those users and a
+   * Nigerian who never touches Bridge qualifies for the same uplifted ceiling.
+   */
+  const identitySource: 'sivan' | 'bridge' | undefined =
+    ninStatus === CheckStatus.VERIFIED ? 'bridge' : undefined;
+
   const addressVerified = false;
 
   const level = deriveLevel({ bankVerified, identityVerified, addressVerified });
@@ -147,6 +168,7 @@ export async function getVerificationState(userId: string): Promise<Verification
     // uplift, which additionally requires Sivan's own floor.
     bridgeKycStatus: customer?.kycStatus,
     bridgeTosStatus: customer?.tosStatus,
+    identitySource,
   };
 }
 
