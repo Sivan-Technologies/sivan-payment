@@ -204,8 +204,19 @@ async function main() {
     // describes the Bridge path for users who need it. The modal is what the
     // Nigerian is actually looking at.
     const modalText = await page.locator('.sv-modal').innerText().catch(() => '');
+    // MY ASSERTION WAS WRONG, NOT THE APP.
+    //
+    // A bare /selfie/ matched the Nigerian copy's own reassurance - "no
+    // documents, no selfie, usually under a minute" - so the test failed on
+    // the exact sentence that proves the behaviour is right. Corrected to
+    // match only a selfie being REQUESTED, and the negated forms are excluded
+    // explicitly so this cannot regress into the same false positive.
+    const asksForSelfie = /(?<!no )\bselfie\b/i.test(modalText.replace(/no documents, no selfie/gi, ''))
+      || /(upload|take|provide|submit)[^.]{0,30}(selfie|photo ID)/i.test(modalText);
     check('and the modal does NOT ask a Nigerian for a selfie',
-      !/photo ID|selfie/i.test(modalText), modalText.slice(0, 120).replace(/\n/g, ' '));
+      !asksForSelfie, modalText.slice(0, 120).replace(/\n/g, ' '));
+    check('it explicitly reassures them no documents are needed',
+      /no documents/i.test(modalText), modalText.slice(0, 120).replace(/\n/g, ' '));
 
     console.log('\n6. RESOLVE A BANK ACCOUNT');
     const search = page.locator('.sv-field input').first();
