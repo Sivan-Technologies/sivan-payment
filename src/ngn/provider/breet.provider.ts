@@ -65,7 +65,14 @@ export const BREET_WEBHOOK_IPS: readonly string[] = [
   '159.89.20.62',
 ];
 
-function breetEnvironment(): 'development' | 'production' {
+/**
+ * Exported because callers OUTSIDE the provider must not guess it.
+ *
+ * /api/ngn/networks hardcoded 'production' and therefore advertised the
+ * MAINNET minimum ($15) while the sandbox actually enforces $50. See the
+ * comment on that route.
+ */
+export function breetEnvironment(): 'development' | 'production' {
   return env.BREET_ENV === 'production' ? 'production' : 'development';
 }
 

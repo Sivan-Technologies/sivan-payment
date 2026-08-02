@@ -27,6 +27,7 @@ import {
   breetMinimumDepositUsd,
   type StableAsset,
 } from '../provider/breet-networks.js';
+import { breetEnvironment } from '../provider/breet.provider.js';
 import {
   getVerificationLimitMatrix,
   setVerificationLimit,
@@ -213,7 +214,15 @@ export async function ngnRoutes(app: FastifyInstance) {
         asset,
         // Surfaced per network because it is per ASSET, not global, and the
         // user must see it before choosing where to send from.
-        minimumDepositUsd: breetMinimumDepositUsd(network, asset, 'production'),
+        //
+        // THE ENVIRONMENT MUST BE THE REAL ONE, NOT 'production'.
+        //
+        // Hardcoding it meant this endpoint advertised Breet's MAINNET
+        // minimum ($15) on the sandbox, where the enforced figure is $50. The
+        // UI showed "minimum $15", the user sent $20, and only on accepting
+        // the quote did they learn the true floor. A limit the product states
+        // and then does not honour is worse than no limit shown.
+        minimumDepositUsd: breetMinimumDepositUsd(network, asset, breetEnvironment()),
       }));
 
     return {
