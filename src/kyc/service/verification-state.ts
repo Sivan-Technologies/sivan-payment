@@ -45,10 +45,21 @@ function deriveLevel(input: {
 }
 
 export async function getVerificationState(userId: string): Promise<VerificationState> {
-  const data = await db.read();
-
-  // May legitimately not exist. Most users never become Bridge customers.
-  const customer = (data.customers ?? []).find((c: any) => c.userId === userId);
+  // THREE TARGETED READS, NOT ONE WHOLE-DATABASE READ.
+  //
+  // This used to be a single `await db.read()`, which on Postgres issues 40+
+  // `select *` queries - every table - to find one customer and one user's
+  // accounts. /verification-summary calls this, getCumulativeNgnVolume() and
+  // its own account lookup, so it paid that cost three times: 8.9 SECONDS
+  // measured on the deployed test API, against 0.43s for an endpoint doing no
+  // db.read() at all.
+  //
+  // The three run in parallel because none depends on another.
+  const [customer, externalAccounts, ngnPayoutAccounts] = await Promise.all([
+    db.findCustomerByUserId(userId),
+    db.listExternalAccountsByUser(userId),
+    db.listNgnPayoutAccounts(userId),
+  ]);
 
   // A payout account that has been name-resolved against the bank is Sivan's
   // Level 1 evidence. Since the CBN directive effective 1 March 2024 a Nigerian
@@ -65,7 +76,6 @@ export async function getVerificationState(userId: string): Promise<Verification
   // Before migration 037 the NGN half did not exist, so a Nigerian user could
   // not reach Level 1 at all by the Nigerian path - the modal confirmed their
   // account and stored nothing. This is the half that was missing.
-  const externalAccounts = (data.externalAccounts ?? []).filter((a: any) => a.userId === userId);
   const bridgeAccountVerified = externalAccounts.some(
     (a: any) => a.status === 'verified' || a.status === 'active'
   );
@@ -73,7 +83,6 @@ export async function getVerificationState(userId: string): Promise<Verification
   // Only 'verified' counts. 'pending_review' is a case waiting on a human, and
   // counting it would grant the level to exactly the accounts a person was
   // asked to look at - defeating the review queue while appearing to have one.
-  const ngnPayoutAccounts = (data.ngnPayoutAccounts ?? []).filter((a: any) => a.userId === userId);
   const ngnAccountVerified = ngnPayoutAccounts.some((a: any) => a.status === 'verified');
 
   const bankVerified = bridgeAccountVerified || ngnAccountVerified;
@@ -180,15 +189,13 @@ export async function getVerificationState(userId: string): Promise<Verification
  * ones would penalise them for a provider outage.
  */
 export async function getCumulativeNgnVolume(userId: string, windowDays: number): Promise<number> {
-  const data = await db.read();
+  // Filtered in the DATABASE, not in Node. This was `db.read()` - every table
+  // in the database, then a filter down to one user - and it is called on
+  // every /verification-summary. The status and window predicates now go to
+  // Postgres, so the rows returned are bounded by one user's settled
+  // transfers in the window rather than by Sivan's entire transfer history.
   const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
-
-  const transfers = (data.ngnTransfers ?? []).filter((t: any) => {
-    if (t.userId !== userId) return false;
-    if (t.status !== 'completed' && t.status !== 'settled') return false;
-    const at = Date.parse(t.updatedAt ?? t.createdAt ?? '');
-    return Number.isFinite(at) && at >= cutoff;
-  });
+  const transfers = await db.listNgnTransfersByUserSince(userId, new Date(cutoff).toISOString());
 
   return transfers.reduce((sum: number, t: any) => {
     // Whichever leg is naira is the leg that counts toward an NGN threshold.

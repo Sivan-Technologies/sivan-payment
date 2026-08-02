@@ -86,6 +86,26 @@ export default function App() {
   // every limit below reads from this. Nothing is derived locally, because the
   // local derivation was Bridge-only and got Nigerian users wrong.
   const [verificationSummary, setVerificationSummary] = useState<VerificationSummary | null>(null);
+  /**
+   * "NOT YET ANSWERED" IS NOT THE SAME AS "ANSWERED: NOTHING".
+   *
+   * null meant both, and the verification page treated it as the second. So
+   * for as long as the summary was in flight, a Nigerian with a bank check in
+   * the review queue was shown the Bridge document flow - "Government-issued
+   * ID and selfie", Level 0, 25% - and told to start a verification they had
+   * already completed.
+   *
+   * That was not hypothetical. Measured in a real browser against the
+   * deployed app, six cold loads of /verification: FOUR rendered the Bridge
+   * copy, two rendered the correct pending card. Same user, same server
+   * state. The endpoint answered in ~9s (three whole-database reads, since
+   * fixed) and the page had long since painted.
+   *
+   * Speed alone cannot fix this - it only narrows the window. A user on a bad
+   * Lagos connection would still lose the race. So the page now waits for an
+   * answer instead of inventing one.
+   */
+  const [verificationSummaryLoaded, setVerificationSummaryLoaded] = useState(false);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
@@ -384,7 +404,8 @@ export default function App() {
     setUserPreferences,
     setIdentityStatus,
     setTwoFactorStatus,
-    setVerificationSummary
+    setVerificationSummary,
+    setVerificationSummaryLoaded
   });
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -1550,7 +1571,7 @@ export default function App() {
           </section>
         )}
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} onSubmit={handleKyc} onStartVerification={openVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onSubmit={handleKyc} onStartVerification={openVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 

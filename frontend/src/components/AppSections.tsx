@@ -489,7 +489,7 @@ function VerificationLimitCard({
   );
 }
 
-export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, onSubmit, onStartVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
+export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, summaryLoaded, onSubmit, onStartVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; summaryLoaded: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
   const emailDone = hasUser;
   // COUNTRY DECIDES THE PATH, so the page cannot describe one flow.
   //
@@ -515,6 +515,48 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
 
   const levelLabel = summary?.levelLabel ?? (identityDone ? 'Level 1: Verified' : 'Level 0: Starter');
   const ngnOfframp = summary?.allowances.find((item) => item.flow === 'offramp' && item.rail === 'ngn');
+
+  /**
+   * SAY NOTHING UNTIL THERE IS SOMETHING TRUE TO SAY.
+   *
+   * Every line on this page - the path, the percentage, the level, whether a
+   * check is pending - comes from the summary. Rendering it before the answer
+   * arrives does not degrade gracefully: it degrades to the BRIDGE path,
+   * because that is what the fallbacks read. So a Nigerian with a bank check
+   * in the queue was told to photograph a passport.
+   *
+   * Caught in a real browser on the deployed app: four of six cold loads of
+   * /verification showed "Government-issued ID and selfie", Level 0, 25%, to
+   * a user whose account was already sitting with a reviewer.
+   *
+   * This is deliberately a skeleton and not a spinner: the shape of the page
+   * does not move when the data lands, so nothing jumps under a thumb that is
+   * already reaching for a button.
+   *
+   * The gate is `summaryLoaded`, not `summary !== null`, so a FAILED call
+   * still releases it - the user gets the degraded view rather than a
+   * skeleton that never resolves.
+   */
+  if (hasUser && !summaryLoaded) {
+    return (
+      <section className="app-page verification-premium">
+        <PageHero title="Verification" subtitle="A short, secure check so you can use Sivan payments with confidence." />
+        <div className="verification-grid">
+          <article className="dashboard-setup-panel verification-main-card" aria-busy="true" aria-live="polite">
+            <p className="eyebrow">Checking your verification status</p>
+            <div className="verification-skeleton">
+              <span className="skeleton-line wide" />
+              <span className="skeleton-line" />
+              <span className="skeleton-line" />
+              <span className="skeleton-line short" />
+            </div>
+            <p className="muted">One moment — we are loading your current level and limits.</p>
+          </article>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="app-page verification-premium">
       <PageHero title="Verification" subtitle="A short, secure check so you can use Sivan payments with confidence." />

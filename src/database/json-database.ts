@@ -460,6 +460,32 @@ export class JsonDatabase {
   }
 
   /**
+   * Mirrors the Postgres targeted lookups. See that implementation for why -
+   * on this backend read() is a cached in-memory object, so the three calls
+   * cost nothing and the win is entirely on Postgres.
+   */
+  async findCustomerByUserId(userId: string): Promise<CustomerRecord | null> {
+    const data = await this.read();
+    return (data.customers ?? []).find((item) => item.userId === userId) ?? null;
+  }
+
+  async listExternalAccountsByUser(userId: string): Promise<ExternalAccountRecord[]> {
+    const data = await this.read();
+    return (data.externalAccounts ?? []).filter((item) => item.userId === userId);
+  }
+
+  async listNgnTransfersByUserSince(userId: string, sinceIso: string): Promise<NgnTransferRecord[]> {
+    const data = await this.read();
+    const cutoff = Date.parse(sinceIso);
+    return (data.ngnTransfers ?? []).filter((item: any) => {
+      if (item.userId !== userId) return false;
+      if (item.status !== 'completed' && item.status !== 'settled') return false;
+      const at = Date.parse(item.updatedAt ?? item.createdAt ?? '');
+      return Number.isFinite(at) && at >= cutoff;
+    });
+  }
+
+  /**
    * Upsert on (userId, provider, bankId, accountNumber), matching the unique
    * index in migration 037.
    *

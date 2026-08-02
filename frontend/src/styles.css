@@ -1847,3 +1847,16 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   padding-left: 8px; margin-left: 2px;
 }
+
+/* Verification skeleton: shown while GET /verification-summary is in flight.
+   The page cannot describe a user's level before the server has said what it
+   is, and its fallbacks describe the Bridge path - so a Nigerian awaiting a
+   bank check was shown "Government-issued ID and selfie". A skeleton rather
+   than a spinner because the layout must not jump when the answer lands.
+   prefers-reduced-motion drops the shimmer and keeps the placeholder. */
+.verification-skeleton{display:grid;gap:12px;margin:18px 0}
+.verification-skeleton .skeleton-line{display:block;height:14px;border-radius:8px;background:linear-gradient(90deg,rgba(255,255,255,.045) 25%,rgba(255,255,255,.085) 37%,rgba(255,255,255,.045) 63%);background-size:400% 100%;animation:sv-skeleton 1.4s ease infinite}
+.verification-skeleton .skeleton-line.wide{height:22px;width:62%}
+.verification-skeleton .skeleton-line.short{width:38%}
+@keyframes sv-skeleton{0%{background-position:100% 50%}100%{background-position:0 50%}}
+@media(prefers-reduced-motion:reduce){.verification-skeleton .skeleton-line{animation:none}}

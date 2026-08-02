@@ -214,6 +214,91 @@ async function main() {
       check('a pending transfer does not consume headroom',
         allowance(afterPending.body, 'offramp', 'ngn').usedNgn === 30_000,
         String(allowance(afterPending.body, 'offramp', 'ngn').usedNgn));
+
+      // THE WINDOW IS A ROLLING 30 DAYS, AND THAT WAS NEVER ASSERTED.
+      //
+      // Found by mutation: deleting the cutoff comparison from
+      // listNgnTransfersByUserSince - so every transfer the user had ever
+      // completed counted - passed all 46 assertions. A user would have been
+      // permanently capped by volume they moved a year ago, with no way to
+      // recover their headroom, and the suite would have said fine.
+      const longAgo = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000).toISOString();
+      await db.upsertNgnTransferRecord({
+        id: 'ngnt_expired', userId, quoteId: 'q3', direction: 'offramp',
+        sourceCurrency: 'usdc', destinationCurrency: 'ngn',
+        sourceAmount: '50', destinationAmount: '75000',
+        status: 'completed', provider: 'mock', createdAt: longAgo, updatedAt: longAgo
+      } as any);
+      const afterOld = await call('GET', `/api/users/${userId}/verification-summary`);
+      check('volume older than the window has expired out of it',
+        allowance(afterOld.body, 'offramp', 'ngn').usedNgn === 30_000,
+        String(allowance(afterOld.body, 'offramp', 'ngn').usedNgn));
+      check('so headroom is not eaten by last year',
+        allowance(afterOld.body, 'offramp', 'ngn').remainingNgn === 70_000,
+        String(allowance(afterOld.body, 'offramp', 'ngn').remainingNgn));
+
+      // ANOTHER USER'S VOLUME IS NOT YOURS.
+      //
+      // Also found by mutation: dropping the user filter went unnoticed. On a
+      // shared table that is every customer's volume charged to one person.
+      const stranger = await signup('Volume Stranger');
+      await db.upsertNgnTransferRecord({
+        id: 'ngnt_stranger', userId: stranger.user.id, quoteId: 'q4', direction: 'offramp',
+        sourceCurrency: 'usdc', destinationCurrency: 'ngn',
+        sourceAmount: '60', destinationAmount: '90000',
+        status: 'completed', provider: 'mock', createdAt: now, updatedAt: now
+      } as any);
+      const afterStranger = await call('GET', `/api/users/${userId}/verification-summary`);
+      check('a stranger\'s completed transfer does not consume your headroom',
+        allowance(afterStranger.body, 'offramp', 'ngn').usedNgn === 30_000,
+        String(allowance(afterStranger.body, 'offramp', 'ngn').usedNgn));
+    }
+
+    console.log('\nONE USER\'S BANK EVIDENCE IS NOT ANOTHER\'S');
+    {
+      // Mutation-found: listExternalAccountsByUser returning every row passed
+      // this suite. A single verified Bridge account anywhere in the table
+      // would then have marked EVERY user as having a payout account - and,
+      // through bridgeAccountVerified, granted them all Level 2.
+      const loner = await signup('Unbanked Person');
+      token = loner.token;
+      await call('PUT', `/api/users/${loner.user.id}/country`, { country: 'US' });
+      const now = new Date().toISOString();
+      const richer = await signup('Well Banked Person');
+      await db.insertExternalAccountRecord({
+        id: 'ext_other', userId: richer.user.id, customerId: 'cus_other', provider: 'bridge',
+        providerExternalAccountId: 'pe_other', currency: 'usd', accountType: 'us',
+        accountOwnerName: 'Well Banked Person', paymentRail: 'ach', status: 'verified',
+        createdAt: now, updatedAt: now
+      } as any);
+
+      token = loner.token;
+      const res = await call('GET', `/api/users/${loner.user.id}/verification-summary`);
+      check('someone else\'s verified account is not my payout account',
+        res.body.hasPayoutAccount === false, String(res.body.hasPayoutAccount));
+      check('and it does not grant me a level',
+        res.body.level === VerificationLevel.NONE, String(res.body.level));
+      check('nor mark my path complete',
+        res.body.pathComplete === false, String(res.body.pathComplete));
+    }
+
+    console.log('\nA CUSTOMER RECORD MUST ACTUALLY BE FOUND');
+    {
+      // Mutation-found: findCustomerByUserId returning null unconditionally
+      // failed 3 assertions here, which is the correct behaviour - a Bridge
+      // user whose customer cannot be read must not silently read as Level 0.
+      const bridgey = await signup('Lookup Person');
+      token = bridgey.token;
+      await call('PUT', `/api/users/${bridgey.user.id}/country`, { country: 'US' });
+      const now = new Date().toISOString();
+      await db.insertCustomerRecord({ id: 'cus_lookup', userId: bridgey.user.id, provider: 'bridge', providerCustomerId: 'pc_l', customerType: 'individual', kycStatus: 'kyc_approved', tosStatus: 'approved', createdAt: now, updatedAt: now } as any);
+      await db.insertExternalAccountRecord({ id: 'ext_lookup', userId: bridgey.user.id, customerId: 'cus_lookup', provider: 'bridge', providerExternalAccountId: 'pe_l', currency: 'usd', accountType: 'us', accountOwnerName: 'Lookup Person', paymentRail: 'ach', status: 'verified', createdAt: now, updatedAt: now } as any);
+
+      const res = await call('GET', `/api/users/${bridgey.user.id}/verification-summary`);
+      check('the customer is found by userId, not by whole-table scan',
+        res.body.level === VerificationLevel.IDENTITY, String(res.body.level));
+      check('and their Bridge status reaches the summary',
+        res.body.identitySource === 'bridge', String(res.body.identitySource));
     }
 
     console.log('\nA BRIDGE USER IS DESCRIBED BY THE SAME ENDPOINT');

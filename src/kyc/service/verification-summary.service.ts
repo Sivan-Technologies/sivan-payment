@@ -108,18 +108,29 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
   const user = await db.findUserById(userId);
   if (!user) throw notFound('User');
 
-  const state = await getVerificationState(userId);
-  const overrides = await listVerificationLimitOverrides();
-  const usedNgn = await getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS);
+  // IN PARALLEL, because none of these depends on another.
+  //
+  // They were five sequential awaits. Latency is what broke this page: the
+  // frontend renders on whatever has arrived, so a summary that lands after
+  // the first paint is, on screen, indistinguishable from a summary that was
+  // never fetched. Every await removed from this chain is one less chance of
+  // showing a Nigerian the Bridge document flow.
+  const [state, overrides, usedNgn, ngnAccounts, bridgeAccounts] = await Promise.all([
+    getVerificationState(userId),
+    listVerificationLimitOverrides(),
+    getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS),
+    db.listNgnPayoutAccounts(userId),
+    // One indexed lookup, not the whole database. See the comment on
+    // findCustomerByUserId in postgres-database.ts for the measurement.
+    db.listExternalAccountsByUser(userId),
+  ]);
   const path = verificationPathFor(user.country);
 
-  const ngnAccounts = await db.listNgnPayoutAccounts(userId);
   const hasVerifiedNgnAccount = ngnAccounts.some((a) => a.status === 'verified');
   const hasPendingPayoutReview = ngnAccounts.some((a) => a.status === 'pending_review');
 
-  const data = await db.read();
-  const hasBridgeAccount = (data.externalAccounts ?? []).some(
-    (a: any) => a.userId === userId && (a.status === 'verified' || a.status === 'active')
+  const hasBridgeAccount = bridgeAccounts.some(
+    (a: any) => a.status === 'verified' || a.status === 'active'
   );
 
   const uplifted = upliftApplies(state) && state.level < VerificationLevel.ENHANCED;

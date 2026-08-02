@@ -493,6 +493,75 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  /**
+   * THE THREE READS BEHIND /verification-summary, MADE TARGETED.
+   *
+   * That endpoint took 8.9 SECONDS on the deployed test API. Measured against
+   * neighbours on the same user, on the same request, the cost is exactly
+   * linear in the number of db.read() calls:
+   *
+   *     /preferences           0 reads   0.43s
+   *     /2fa                   0 reads   0.44s
+   *     /balance               1 read    3.12s
+   *     /verification-summary  3 reads   8.98s
+   *
+   * ~2.85s per full 28-table read. Same class of bug as 7de0828 and fda71cb,
+   * but worse, because this one is paid THREE times: getVerificationState(),
+   * getCumulativeNgnVolume() and the summary's own external-account lookup
+   * each load every table in the database to read a handful of rows.
+   *
+   * It is not merely slow. The frontend renders on whatever has arrived, and
+   * at 9s the summary loses that race - so a Nigerian with a bank check in
+   * the queue was shown Bridge copy ("Government-issued ID and selfie",
+   * Level 0, 25%) because `summary` was still null when React painted.
+   * Proven by browser run: 6 cold loads of /verification, 4 rendered the
+   * wrong page, 2 rendered the right one. Same user, same state.
+   */
+  async findCustomerByUserId(userId: string): Promise<CustomerRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'select * from payments_customers where user_id = $1 order by created_at desc limit 1',
+        [userId]
+      );
+      return result.rows.length ? mapCustomer(result.rows[0]) : null;
+    } finally { client.release(); }
+  }
+
+  async listExternalAccountsByUser(userId: string): Promise<ExternalAccountRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'select * from payments_external_accounts where user_id = $1 order by created_at asc',
+        [userId]
+      );
+      return result.rows.map(mapExternalAccount);
+    } finally { client.release(); }
+  }
+
+  /**
+   * Settled NGN volume in a window, summed in the database.
+   *
+   * The status and cutoff filters are applied in SQL rather than in Node, so
+   * the row count is bounded by one user's completed transfers instead of
+   * every transfer Sivan has ever recorded.
+   */
+  async listNgnTransfersByUserSince(userId: string, sinceIso: string): Promise<NgnTransferRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_ngn_transfers
+          where user_id = $1
+            and status in ('completed','settled')
+            and coalesce(updated_at, created_at) >= $2
+          order by created_at asc`,
+        [userId, sinceIso]
+      );
+      return result.rows.map(mapNgnTransfer);
+    } finally { client.release(); }
+  }
+
   async listReconciliationRunsView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
     const client = await this.pool.connect();
     try {
