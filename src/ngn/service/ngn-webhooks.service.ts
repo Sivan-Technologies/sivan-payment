@@ -69,7 +69,9 @@ async function applyWebhookToTransfer(event: {
   );
   if (!transfer) return undefined;
 
-  if (!isFlaggedEvent(event.eventType, payload)) return undefined;
+  if (!isFlaggedEvent(event.eventType, payload)) {
+    return applySettlementToTransfer(transfer, event, payload);
+  }
 
   // requires_review, not failed. The funds are not lost - Breet is holding
   // them - and calling it failed would tell the user their money is gone while
@@ -100,6 +102,76 @@ async function applyWebhookToTransfer(event: {
 
   await db.upsertNgnTransferRecord(updated);
   return updated;
+}
+
+/**
+ * Advance a transfer on a NON-flagged webhook.
+ *
+ * THIS DID NOT EXIST. applyWebhookToTransfer handled `trade.flagged` and
+ * returned early for everything else, so a `trade.completed` was verified,
+ * stored, and then thrown away. The user's crypto had been converted and the
+ * naira paid out, and the transfer still read `awaiting_crypto_deposit` -
+ * indistinguishable, to them, from a deposit that never arrived. The flagged
+ * path was fixed in 8a935a7 for exactly this reason; the SUCCESS path had the
+ * same hole and nobody noticed, because a stored webhook looks like a handled
+ * one.
+ *
+ * The status comes from Breet's own record. verifyWebhook re-fetches the
+ * transaction from Breet and merges it over the delivered body, so what is
+ * read here is Breet's number rather than the caller's - a replayed payload
+ * with an inflated amount cannot settle anything.
+ */
+async function applySettlementToTransfer(
+  transfer: NgnTransferRecord,
+  event: { eventType: string },
+  payload: any
+): Promise<NgnTransferRecord | undefined> {
+  const next = mapBreetStatus(payload?.status);
+  if (!next) return undefined;
+
+  // NEVER MOVE A TERMINAL TRANSFER. Breet retries for up to 24 hours, so a
+  // late duplicate of an earlier event is routine - and rewinding a completed
+  // transfer to processing would show a user their finished payout had
+  // reverted.
+  const TERMINAL = new Set(['completed', 'failed', 'expired']);
+  if (TERMINAL.has(transfer.status)) return transfer;
+
+  if (transfer.status === next) return transfer;
+
+  const updated: NgnTransferRecord = {
+    ...transfer,
+    status: next,
+    metadata: {
+      ...(typeof transfer.metadata === 'object' && transfer.metadata ? transfer.metadata : {}),
+      lastWebhookEvent: event.eventType,
+      lastWebhookAt: new Date().toISOString(),
+      // Breet's own figures, kept for reconciliation and support. The naira
+      // amount actually paid can differ from the quote if the rate moved.
+      settledCryptoAmount: payload?.cryptoAmount ?? payload?.amount,
+      settledFiatAmount: payload?.fiatAmount ?? payload?.amountInNGN,
+      settledAmountUsd: payload?.amountInUSD ?? payload?.amountInUsd,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+
+  await db.upsertNgnTransferRecord(updated);
+  return updated;
+}
+
+/**
+ * Breet's transaction states, mapped onto Sivan's.
+ *
+ * Returns undefined for a status we do not recognise, which leaves the
+ * transfer untouched. Guessing at an unknown state is how a transfer ends up
+ * marked completed because a provider added a word we had not seen.
+ */
+function mapBreetStatus(status?: string): NgnTransferRecord['status'] | undefined {
+  const value = String(status ?? '').toLowerCase();
+  if (!value) return undefined;
+  if (value === 'completed' || value === 'success' || value === 'successful') return 'completed';
+  if (value === 'failed' || value === 'rejected' || value === 'reversed') return 'failed';
+  if (value === 'processing' || value === 'pending' || value === 'confirmed') return 'processing';
+  return undefined;
 }
 
 export async function listNgnWebhooks() {
