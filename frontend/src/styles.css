@@ -1860,3 +1860,8 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .verification-skeleton .skeleton-line.short{width:38%}
 @keyframes sv-skeleton{0%{background-position:100% 50%}100%{background-position:0 50%}}
 @media(prefers-reduced-motion:reduce){.verification-skeleton .skeleton-line{animation:none}}
+
+/* Deposit address on a pending naira sell. Monospace and breakable: a user
+   reading a 42-character address off a phone must be able to check it
+   character by character, and it must never overflow the card. */
+.deposit-address-value{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;overflow-wrap:anywhere;word-break:break-all;padding:10px 12px;margin:8px 0;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(116,221,190,.22);color:#eef3f7}

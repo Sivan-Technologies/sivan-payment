@@ -1,16 +1,16 @@
 import { FormEvent, useMemo, useState } from 'react';
-import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline } from '../../types';
+import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord } from '../../types';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
-type CustomerTransactionRow = { id: string; kind: 'withdrawal' | 'onramp_order'; label: string; direction: 'sell' | 'buy'; asset: string; amount: string; currency: string; status: string; createdAt: string; providerReference?: string; timeline?: TransactionTimeline; raw: WithdrawalRecord | OnrampOrderRecord; };
+type CustomerTransactionRow = { id: string; kind: 'withdrawal' | 'onramp_order' | 'ngn_transfer'; label: string; direction: 'sell' | 'buy'; asset: string; amount: string; currency: string; status: string; createdAt: string; providerReference?: string; timeline?: TransactionTimeline; depositAddress?: string; raw: WithdrawalRecord | OnrampOrderRecord | NgnTransferRecord; };
 function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
-function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment', payment_received:'Payment received', processing:'Processing' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
+function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment', payment_received:'Payment received', processing:'Processing', awaiting_crypto_deposit:'Waiting for your crypto', crypto_received:'Crypto received', settling:'Paying your bank', settled:'Paid to your bank', quote_created:'Quote created', flagged:'Being reviewed', expired:'Expired' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
 function Badge({ children, status }: { children: string; status?: string }) { return <span className={`badge ${statusClass(status)}`}>{children}</span>; }
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0,8)}…${value.slice(-6)}`; }
 
-export function TransactionsView({ user, api, withdrawals, onrampOrders, onStart, onBuy }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; onStart: () => void; onBuy: () => void }) {
+export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], onStart, onBuy }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; onStart: () => void; onBuy: () => void }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'sell' | 'buy' | 'processing'>('all');
   const transactions = useMemo<CustomerTransactionRow[]>(() => {
@@ -42,8 +42,31 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, onStart
       timeline: o.transactionTimeline || fallbackOnrampTimeline(o),
       raw: o
     }));
-    return [...sells, ...buys].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [withdrawals, onrampOrders]);
+    // NAIRA TRANSFERS ARE A THIRD SOURCE, AND WERE MISSING ENTIRELY.
+    //
+    // withdrawals and onrampOrders are both Bridge-shaped. A Nigerian selling
+    // USDC for naira writes to payments_ngn_transfers and to neither of those,
+    // so this page told a user with a live sell and a real Breet deposit
+    // address that they had no transactions.
+    const naira = ngnTransfers.map((t): CustomerTransactionRow => ({
+      id: t.id,
+      kind: 'ngn_transfer',
+      label: t.direction === 'offramp' ? 'Sell crypto to naira' : 'Buy crypto with naira',
+      direction: t.direction === 'offramp' ? 'sell' : 'buy',
+      asset: (t.direction === 'offramp' ? t.sourceCurrency : t.destinationCurrency)?.toUpperCase() || 'USDC',
+      // Show the leg the user thinks in: naira out for a sell, naira in for a buy.
+      amount: (t.direction === 'offramp' ? t.destinationAmount : t.sourceAmount) || '—',
+      currency: (t.direction === 'offramp' ? t.destinationCurrency : t.sourceCurrency)?.toUpperCase() || 'NGN',
+      status: t.status,
+      createdAt: t.createdAt,
+      providerReference: t.providerTransferId || t.providerQuoteId,
+      // The whole point of an off-ramp that is awaiting funds: without this the
+      // user has nowhere to send their crypto.
+      depositAddress: t.depositAddress,
+      raw: t
+    }));
+    return [...sells, ...buys, ...naira].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [withdrawals, onrampOrders, ngnTransfers]);
   const filtered = transactions.filter((tx) => {
     if (filter === 'sell' && tx.direction !== 'sell') return false;
     if (filter === 'buy' && tx.direction !== 'buy') return false;
@@ -70,6 +93,39 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, onStart
 }
 
 function TransactionTimelinePanel({ transaction, assistantAnswer, assistantLoading, onAskSivanAssistant }: { transaction: CustomerTransactionRow | null; assistantAnswer?: any; assistantLoading?: boolean; onAskSivanAssistant?: () => void }) {
+  // A NAIRA TRANSFER HAS NO BRIDGE TIMELINE, AND MUST NOT FALL THROUGH TO
+  // "Select a transaction to see its timeline."
+  //
+  // For an off-ramp awaiting funds the deposit address IS the transaction:
+  // without it on screen the user has nowhere to send their crypto and the
+  // sell can never complete. That was the state this page left them in.
+  if (!transaction?.timeline && transaction?.kind === 'ngn_transfer') {
+    const waiting = transaction.status === 'awaiting_crypto_deposit';
+    return <aside className="transaction-timeline-card">
+      <div className="timeline-card-head">
+        <div><p className="eyebrow">Transaction</p><h3>{transaction.label}</h3>
+          <small>{friendlyStatus(transaction.status)}</small></div>
+        <Badge status={transaction.status}>{friendlyStatus(transaction.status)}</Badge>
+      </div>
+      <div className="transaction-explanation-box">
+        {waiting
+          ? `Send ${transaction.asset} to the address below. Your bank is paid automatically once it arrives.`
+          : `We are processing this ${transaction.direction === 'sell' ? 'sell' : 'buy'}. No action is needed from you.`}
+      </div>
+      <div className="timeline-meta-grid">
+        <Kv label="Request ID" value={transaction.id} />
+        <Kv label="Provider reference" value={transaction.providerReference || 'Pending'} />
+        <Kv label="You receive" value={`${transaction.amount} ${transaction.currency}`} />
+        <Kv label="Asset" value={transaction.asset} />
+      </div>
+      {transaction.depositAddress && <div className="support-reference-box">
+        <strong>Send {transaction.asset} to this address</strong>
+        <span className="deposit-address-value">{transaction.depositAddress}</span>
+        <button className="secondary-btn small"
+          onClick={() => navigator.clipboard?.writeText(transaction.depositAddress!)}>Copy address</button>
+      </div>}
+    </aside>;
+  }
   if (!transaction?.timeline) return <aside className="transaction-timeline-card"><Empty>Select a transaction to see its timeline.</Empty></aside>;
   const timeline = transaction.timeline;
   const currentStep = timeline.steps.find((step) => step.status === 'current') || timeline.steps.find((step) => step.status === 'failed') || timeline.steps[timeline.steps.length - 1];

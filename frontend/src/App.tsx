@@ -1,5 +1,5 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord } from './types';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord, NgnTransferRecord } from './types';
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
@@ -66,6 +66,22 @@ export default function App() {
   // Naira withdrawal is a different first step, not a variation of the Bridge
   // one: it needs a NUBAN and a quote rather than a saved external account.
   const [ngnMode, setNgnMode] = useState(false);
+  /**
+   * DEFAULT THE SELL SCREEN TO THE RAIL THE USER ACTUALLY HAS.
+   *
+   * ngnMode was hardcoded false, so a verified Nigerian landed on the Bridge
+   * tab - which reads `accounts` (Bridge external accounts) and, finding none,
+   * told them "Add a bank first". They had already added a bank; it is a NUBAN,
+   * on the other tab, and nothing pointed them there.
+   *
+   * Caught in a browser on the deployed app: Level 1, payout account approved,
+   * and the sell screen still said add a bank.
+   *
+   * Only flips the default once, and never fights the user: if they have
+   * switched tabs themselves this must not drag them back, which is what the
+   * ref guards.
+   */
+  const ngnDefaultApplied = useRef(false);
   const [ngnNetwork, setNgnNetwork] = useState('solana');
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
@@ -106,6 +122,10 @@ export default function App() {
    * answer instead of inventing one.
    */
   const [verificationSummaryLoaded, setVerificationSummaryLoaded] = useState(false);
+  // Naira on/off-ramps. Bridge withdrawals and NGN transfers are different
+  // tables; the Transactions page only read the Bridge ones, so a naira sell
+  // was invisible to the person who had just created it.
+  const [ngnTransfers, setNgnTransfers] = useState<NgnTransferRecord[]>([]);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
@@ -405,7 +425,8 @@ export default function App() {
     setIdentityStatus,
     setTwoFactorStatus,
     setVerificationSummary,
-    setVerificationSummaryLoaded
+    setVerificationSummaryLoaded,
+    setNgnTransfers
   });
 
   const refreshKycStatus = useCallback(async (showToast = false) => {
@@ -498,6 +519,16 @@ export default function App() {
   useEffect(() => {
     void loadUserWallets();
   }, [loadUserWallets]);
+
+  // Applied once the server has actually told us who this user is. Keyed on
+  // the summary rather than on user.country so it cannot fire against a stale
+  // localStorage record that predates the country being set.
+  useEffect(() => {
+    if (ngnDefaultApplied.current) return;
+    if (!verificationSummaryLoaded || !verificationSummary) return;
+    ngnDefaultApplied.current = true;
+    if (verificationSummary.path === 'ngn_bank' && verificationSummary.hasPayoutAccount) setNgnMode(true);
+  }, [verificationSummaryLoaded, verificationSummary]);
 
   useEffect(() => {
     const onPopState = () => setView(viewFromPath(window.location.pathname));
@@ -1611,7 +1642,7 @@ export default function App() {
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
-        {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
+        {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
         {view === 'settings' && <SettingsView api={api} user={user} isVerified={isVerified} onUserUpdated={(updated) => { setUser(updated); localStorage.setItem('sivan.user', JSON.stringify(updated)); }} preferences={userPreferences} initialTab={settingsInitialTab} twoFactorStatus={twoFactorStatus} onTwoFactorStatusChanged={setTwoFactorStatus} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} user={user} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}

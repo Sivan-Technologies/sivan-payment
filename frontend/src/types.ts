@@ -571,3 +571,40 @@ export interface VerificationSummary {
   windowDays: number;
   allowances: FlowAllowance[];
 }
+
+/**
+ * A naira on/off-ramp, from GET /api/users/:id/ngn-transfers.
+ *
+ * THIS TYPE DID NOT EXIST, AND NEITHER DID THE FETCH.
+ *
+ * Transactions was built from /withdrawals (Bridge) and /onramp-orders
+ * (Bridge). A Nigerian selling USDC for naira creates neither - the record
+ * lives in payments_ngn_transfers. So a user could accept a sell, receive a
+ * real Breet deposit address, and then be told "No transactions yet."
+ *
+ * Caught in a browser against the deployed app: three awaiting_crypto_deposit
+ * transfers on the API, an empty transaction list on screen.
+ */
+export interface NgnTransferRecord {
+  id: string;
+  quoteId?: string;
+  userId: string;
+  direction: 'onramp' | 'offramp';
+  provider: string;
+  sourceCurrency: string;
+  destinationCurrency: string;
+  sourceAmount: string;
+  destinationAmount: string;
+  rate?: string;
+  feeAmount?: string;
+  status: string;
+  providerQuoteId?: string;
+  providerTransferId?: string;
+  /** Where the user must send crypto for an off-ramp to settle. */
+  depositAddress?: string;
+  virtualAccount?: unknown;
+  metadata?: Record<string, unknown>;
+  timeline?: unknown;
+  createdAt: string;
+  updatedAt?: string;
+}

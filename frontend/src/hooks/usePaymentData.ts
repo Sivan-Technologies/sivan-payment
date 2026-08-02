@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord } from '../types';
+import type { BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord, NgnTransferRecord } from '../types';
 
 export function usePaymentDataLoader(input: {
   userId?: string;
@@ -30,8 +30,14 @@ export function usePaymentDataLoader(input: {
    * skeleton forever, which is a worse outcome than the degraded fallback.
    */
   setVerificationSummaryLoaded: (value: boolean) => void;
+  /**
+   * Naira on/off-ramps. Separate from withdrawals, which are Bridge-shaped
+   * and can never hold an NGN transfer - which is why the Transactions page
+   * showed "No transactions yet" to a user with a live sell.
+   */
+  setNgnTransfers: (value: NgnTransferRecord[]) => void;
 }) {
-  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded } = input;
+  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers } = input;
   return useCallback(async () => {
     if (!userId || !authToken) return;
 
@@ -63,7 +69,7 @@ export function usePaymentDataLoader(input: {
       .catch(() => undefined)
       .finally(() => setVerificationSummaryLoaded(true));
 
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult, ngnTransfersResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${userId}`),
       api<ExternalAccountRecord[]>(`/api/users/${userId}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${userId}/withdrawals`),
@@ -76,7 +82,8 @@ export function usePaymentDataLoader(input: {
       api<SupportTicketRecord[]>(`/api/users/${userId}/support/tickets`),
       api<UserPreferencesRecord>(`/api/users/${userId}/preferences`),
       api<IdentityStatus>('/api/users/me/identity'),
-      api<any>(`/api/users/${userId}/2fa`)
+      api<any>(`/api/users/${userId}/2fa`),
+      api<NgnTransferRecord[]>(`/api/users/${userId}/ngn-transfers`)
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
@@ -91,10 +98,11 @@ export function usePaymentDataLoader(input: {
     if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
     if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
     if (twoFactorResult.status === 'fulfilled') setTwoFactorStatus(twoFactorResult.value);
+    if (ngnTransfersResult.status === 'fulfilled') setNgnTransfers(Array.isArray(ngnTransfersResult.value) ? ngnTransfersResult.value : []);
     // Awaited last so that callers which `await loadUserData()` - the
     // post-verification refresh does - still observe the applied summary,
     // without the PAGE having waited on the other thirteen calls.
     await summaryPromise;
-  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded]);
+  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers]);
 }
 
