@@ -81,6 +81,7 @@
     "test:name-match": "tsx scripts/test-name-match.ts",
     "test:verification-path": "tsx scripts/test-verification-path.ts",
     "test:ngn-payout-accounts": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-payout-accounts.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=ngn-payout-admin-key tsx scripts/test-ngn-payout-accounts.ts",
+    "e2e:failures": "node e2e/failure-journeys.mjs",
     "e2e:browser": "node e2e/browser-journey.mjs",
     "setup:alerts": "tsx scripts/setup-alerts.ts",
     "ops:rails": "tsx scripts/fix-live-findings.ts",

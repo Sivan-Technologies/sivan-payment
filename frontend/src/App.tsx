@@ -398,7 +398,22 @@ export default function App() {
       if (showToast) notify(kycOutcomeMessage(refreshed.kycStatus, refreshed.customerAction), ['kyc_rejected', 'failed', 'cancelled'].includes(refreshed.kycStatus || '') ? 'error' : 'success');
       return refreshed;
     } catch (error) {
-      if (showToast) notify((error as Error).message, 'error');
+      // "Customer not found" IS THE NORMAL CASE ON THE NIGERIAN PATH.
+      //
+      // /api/customers/:id/kyc-status 404s for anyone with no Bridge
+      // customer, and a Nigerian verifying by bank check never has one. The
+      // raw provider wording was being toasted at them - caught in the
+      // browser: a red "Customer not found" appeared over the verification
+      // page after a provider hiccup.
+      //
+      // It is not an error, it is an absence, so it is silent. Anything else
+      // still reports, because a real failure must not be swallowed.
+      const message = (error as Error).message ?? '';
+      const noBridgeCustomer = /customer not found/i.test(message);
+      if (showToast && !noBridgeCustomer) notify(message, 'error');
+      if (showToast && noBridgeCustomer) {
+        notify('Your verification status is up to date.');
+      }
       return null;
     }
   }, [api, authToken, notify, user?.id]);
