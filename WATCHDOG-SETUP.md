@@ -26,24 +26,33 @@ Pair it with **one** free external check (UptimeRobot free, or Better Stack's
 ten free monitors) pointed at the watchdog host itself, as a dead-man's
 switch. One monitor, inside any free tier.
 
-## Telegram bot
+## Telegram: reuse your bot, use a separate channel
 
-`@SivanAi_bot` already exists and is **in production** - it has a live webhook
-serving telegram-layer at `telegram-layer.onrender.com/webhooks/telegram`.
+**You do not need a second bot.** Verified against the live API: `sendMessage`
+works normally even while a bot has a production webhook. Only `getUpdates`
+conflicts (409), and that is just chat-id discovery, not sending.
 
-**Do not reuse that token here.** Calling `getUpdates` on it conflicts with
-the webhook (Telegram returns 409), and a watchdog restart could disrupt
-escrow message delivery. Create a second bot for alerts:
+So reuse `@SivanAi_bot`. What you *should* separate is the **destination** —
+alerts must not land in the same place as customer OTPs, or a 3am critical
+scrolls past between one-time codes.
 
-1. Telegram -> `@BotFather` -> `/newbot` -> name it e.g. `Sivan Alerts`
-2. Copy the token it gives you
-3. Send that new bot any message from your own account
-4. Get your chat id:
+`SiaNotify/.env` already has a `TELEGRAM_LOGS_CHAT_ID` slot for exactly this,
+and it is currently empty.
 
-```
-curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" \
-  | python3 -c "import sys,json;[print(u['message']['chat']['id']) for u in json.load(sys.stdin)['result']]"
-```
+### Create the alerts channel
+
+1. Telegram → **New Channel** → name it `Sivan Alerts` (private is fine)
+2. Add your bot as an **admin** of the channel — admin rights are required to
+   post; plain membership is not enough
+3. Post any message in the channel
+4. Forward that message to `@userinfobot`, which replies with the channel id
+
+Channel ids look like `-1001234567890`. **Keep the leading minus sign** — it is
+part of the id, not a typo.
+
+Then run `npm run setup:alerts` and paste the token and that id. The script
+detects the webhook, skips auto-discovery, and sends a real test message so
+you see the format on your phone before it matters.
 
 ## Configure
 

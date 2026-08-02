@@ -29,13 +29,13 @@ const TARGETS = [
 async function main() {
   const rl = readline.createInterface({ input, output });
   console.log('\n=== Sivan alerting setup ===\n');
-  console.log('Step 1 of 3: create the bot');
-  console.log('  Open Telegram, message @BotFather, send /newbot, name it "Sivan Alerts".');
-  console.log('  It replies with a token like 8123456789:AAF...\n');
-  console.log('  NOTE: do NOT reuse @SivanAi_bot. That one has a live production');
-  console.log('  webhook serving telegram-layer, and polling it would conflict.\n');
+  console.log('Step 1 of 3: the bot');
+  console.log('  You can REUSE your existing bot. Sending messages works fine even');
+  console.log('  when the bot has a production webhook - verified: only getUpdates');
+  console.log('  conflicts, and this script has a webhook-safe path for that.\n');
+  console.log('  Or create a fresh one: @BotFather -> /newbot -> "Sivan Alerts".\n');
 
-  const token = (await rl.question('Paste the NEW bot token: ')).trim();
+  const token = (await rl.question('Paste the bot token: ')).trim();
   if (!token) { console.error('No token given.'); process.exit(1); }
 
   // Verify before going further. A typo here otherwise surfaces at 3am as
@@ -47,35 +47,42 @@ async function main() {
   }
   console.log(`  ✓ bot is @${me.result.username}\n`);
 
-  console.log('Step 2 of 3: link your account');
-  console.log(`  Open https://t.me/${me.result.username} and send it any message (e.g. "hi").`);
-  await rl.question('  Press Enter once you have sent it: ');
+  console.log('Step 2 of 3: where alerts go');
 
-  const updates: any = await (await fetch(`https://api.telegram.org/bot${token}/getUpdates`)).json();
-  if (!updates?.ok) {
-    console.error(`\ngetUpdates failed: ${updates?.description}`);
-    if (/conflict/i.test(String(updates?.description))) {
-      console.error('That bot has a webhook set - it is probably the production bot. Use a NEW one.');
+  // A webhook blocks getUpdates (409), so a production bot cannot discover
+  // its own chats this way. Detect that and offer the manual route instead of
+  // failing with a Telegram error nobody should have to interpret.
+  const hook: any = await (await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`)).json();
+  const hasWebhook = Boolean(hook?.result?.url);
+  if (hasWebhook) {
+    console.log(`  This bot has a production webhook (${hook.result.url}).`);
+    console.log('  Sending alerts still works; only auto-discovery of the chat id does not.\n');
+    console.log('  RECOMMENDED: make a dedicated channel so alerts do not mix with OTPs.');
+    console.log('    1. Telegram -> New Channel -> "Sivan Alerts" (private is fine)');
+    console.log('    2. Add your bot as an ADMIN of it (admin is required to post)');
+    console.log('    3. Post any message in the channel');
+    console.log('    4. Forward that message to @userinfobot - it replies with the id');
+    console.log('       Channel ids look like -1001234567890 (keep the minus sign)\n');
+  } else {
+    console.log(`  Open https://t.me/${me.result.username} and send it any message.`);
+    await rl.question('  Press Enter once you have sent it: ');
+    const updates: any = await (await fetch(`https://api.telegram.org/bot${token}/getUpdates`)).json();
+    const chats = new Map<string, string>();
+    for (const update of updates?.result ?? []) {
+      const chat = (update.message ?? update.channel_post)?.chat;
+      if (chat?.id) chats.set(String(chat.id), chat.first_name ?? chat.title ?? chat.username ?? '');
     }
-    process.exit(1);
-  }
-  const chats = new Map<string, string>();
-  for (const update of updates.result ?? []) {
-    const chat = (update.message ?? update.channel_post)?.chat;
-    if (chat?.id) chats.set(String(chat.id), chat.first_name ?? chat.title ?? chat.username ?? '');
-  }
-  if (!chats.size) {
-    console.error('\nNo messages seen. Send the bot a message, then run this again.');
-    process.exit(1);
+    if (chats.size) {
+      console.log('\n  Found:');
+      for (const [id, name] of chats) console.log(`    ${id}  ${name}`);
+    } else {
+      console.log('\n  No messages seen - paste the id manually below.');
+    }
   }
 
-  let chatId = [...chats.keys()][0];
-  if (chats.size > 1) {
-    console.log('\n  Several chats found:');
-    for (const [id, name] of chats) console.log(`    ${id}  ${name}`);
-    chatId = (await rl.question('  Which chat id? ')).trim();
-  }
-  console.log(`  ✓ chat id ${chatId} (${chats.get(chatId) ?? ''})\n`);
+  const chatId = (await rl.question('  Chat / channel id: ')).trim();
+  if (!chatId) { console.error('No chat id given.'); process.exit(1); }
+  console.log('');
 
   console.log('Step 3 of 3: send a real alert');
   const send = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -89,8 +96,16 @@ async function main() {
         + 'never every minute.\n\n<code>setup test</code>',
     }),
   });
-  if (!send.ok) {
-    console.error(`  Sending failed: ${send.status} ${await send.text().catch(() => '')}`);
+  const sendBody: any = await send.json().catch(() => ({}));
+  if (!sendBody?.ok) {
+    const why = String(sendBody?.description ?? send.status);
+    console.error(`  Sending failed: ${why}`);
+    if (/chat not found/i.test(why)) {
+      console.error('  -> The id is wrong, or the bot is not a member of that channel.');
+    }
+    if (/not enough rights|administrator/i.test(why)) {
+      console.error('  -> The bot must be an ADMIN of the channel to post into it.');
+    }
     process.exit(1);
   }
   console.log('  ✓ check your phone — you should have a message\n');
