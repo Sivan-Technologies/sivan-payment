@@ -56,13 +56,21 @@ you see the format on your phone before it matters.
 
 ## Configure
 
+`.env.watchdog` is written for you and gitignored. Current contents:
+
 ```
-WATCHDOG_TARGETS=https://api-host-1,https://api-host-2
-WATCHDOG_TELEGRAM_BOT_TOKEN=<new alerts bot token>
-WATCHDOG_TELEGRAM_CHAT_ID=<your chat id>
+WATCHDOG_TARGETS=<test api>,<live api>
+WATCHDOG_TELEGRAM_BOT_TOKEN=<@SivanEscrowBot>
+WATCHDOG_TELEGRAM_CHAT_ID=-1004465897328     # "Sivan Ops" channel
 WATCHDOG_INTERVAL_SECONDS=60
 WATCHDOG_FAILURES_BEFORE_ALERT=2
+WATCHDOG_TIMEOUT_SECONDS=45
 ```
+
+The timeout is 45s, not 25s, and that number was measured rather than
+guessed. On the first run both Render services timed out at 25s and then
+answered in **0.11s** once warm - a free-tier cold start. 45s plus the
+two-failure rule means a cold start never pages anyone.
 
 Smoke test:
 
@@ -70,7 +78,7 @@ Smoke test:
 npm run watchdog -- --once
 ```
 
-Exit code 1 and a printed reason if anything is unhealthy, so it also works
+Exits non-zero and prints the reason if anything is unhealthy, so it doubles
 as a cron job or a CI gate.
 
 ## systemd (AWS)

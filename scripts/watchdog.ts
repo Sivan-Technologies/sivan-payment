@@ -31,7 +31,17 @@
  *      npm run watchdog -- --once  (single pass, for cron or a smoke test)
  */
 
-import 'dotenv/config';
+import { config as loadEnv } from 'dotenv';
+
+// .env.watchdog FIRST, then .env as a fallback.
+//
+// dotenv does not overwrite an already-set variable, so the watchdog file
+// wins where both define a key. That matters: .env holds the application's
+// own config, and the watchdog is a separate concern that must be
+// configurable without touching it - especially on the AWS box, where the app
+// may not be deployed at all.
+loadEnv({ path: '.env.watchdog' });
+loadEnv();
 
 const TARGETS = (process.env.WATCHDOG_TARGETS ?? '')
   .split(',')
