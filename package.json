@@ -107,7 +107,8 @@
     "test:otp-cooldown": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-otp-cooldown.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true tsx scripts/test-otp-resend-cooldown.ts",
     "e2e:otp-resend": "node e2e/otp-resend-journey.mjs",
     "test:breet-webhook-verification": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-breet-wh-verify.json EMAIL_PROVIDER=console NGN_PROVIDER=breet BREET_APP_ID=t BREET_APP_SECRET=t BREET_WEBHOOK_SECRET=whsec_test_verify tsx scripts/test-breet-webhook-verification.ts",
-    "test:autosettlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-autosettlement.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock tsx scripts/test-autosettlement.ts"
+    "test:autosettlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-autosettlement.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock tsx scripts/test-autosettlement.ts",
+    "test:offramp-autosettlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-autoset.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=autoset-key tsx scripts/test-offramp-autosettlement.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
