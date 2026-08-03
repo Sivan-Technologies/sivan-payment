@@ -8,6 +8,81 @@ verified rather than assumed.
 
 ---
 
+## ⚠️ THE ONE THING TO SET ASIDE RIGHT NOW
+
+**No naira has ever reached a bank account. On any environment. Not once.**
+
+Everything else in this repository is tested to an unusual standard — 429
+backend assertions, 77 browser assertions, mutation tests on every guard, zero
+criticals on production health. That work is real. It also all stops one step
+short of the only thing the product exists to do.
+
+The evidence, checked rather than remembered:
+
+| | |
+|---|---|
+| NGN transfers on production | **0** |
+| Ever settled, any environment | **0** |
+| Provider webhooks on production | 1 — and it is a PajRamp artifact from 1 Aug, not a Breet settlement |
+| Transfers on test | 14, all `awaiting_crypto_deposit`, none ever funded |
+
+So the entire back half of the pipeline is unproven: crypto lands at Breet →
+Breet converts → Breet pays the NUBAN → webhook fires → we mark it settled.
+Every step before that is proven to death. **Not one of those five has ever
+run.**
+
+### Why this outranks everything else on the list
+
+It is not the largest task. It is the one that can invalidate the others.
+
+Both parts of this spec attach to that pipeline — Part A funds it
+automatically, Part B decides when it has given up waiting. Writing either
+against a pipeline that has never completed means inventing its failure modes.
+A single real settlement tells us how long Breet takes to detect a deposit,
+whether `trade.pending` really precedes `trade.completed`, and what the webhook
+body actually contains. **That evidence should set the TTL and shape the
+funding flow — not a number I picked in the abstract.**
+
+The same applies beyond this spec. Credential rotation, the AWS migration and
+the remaining polish are all deferrable. This is not, because it is the only
+open item that could reveal the product does not work.
+
+### What is already in place for it
+
+| | |
+|---|---|
+| Funded wallet | `0x6d7D2Eb4667395437739634D3382A90Fff238295` — **59.59 USDC** on Base Sepolia |
+| Above Breet's floor | yes, $50 minimum cleared; the API now accepts the order |
+| Sivan can sign for it | verified, `personal_sign` → HTTP 200 |
+| Gas | sponsored, proven on-chain with **0 ETH** in the wallet |
+| Chains line up | Privy signs Base Sepolia; Breet's asset is "USD Coin (Base Testnet)" |
+
+### The only things still missing
+
+1. **Breet webhook URL** set to `https://test-sivan.sivantech.online/api/payment/api/webhooks/breet`
+2. **`BREET_WEBHOOK_SECRET`** on api-test matching Breet's dashboard value
+   byte-for-byte. The handler fails closed — a mismatch means every webhook
+   403s and the settlement silently never completes.
+
+Two configuration steps. Then the run takes minutes.
+
+### One related unknown, same theme
+
+Production reports `ngn_provider: breet, with credentials` — but that check
+only confirms the env vars are **non-empty**. It never calls Breet. A sandbox
+key sitting on production would 401 on every bank lookup and the signal would
+still read `ok`. One command settles it, with the live admin key:
+
+```bash
+curl -s https://api.sivantech.online/api/payment/api/admin/ngn/provider-health \
+  -H "x-admin-api-key: <LIVE_KEY>" | jq .data.active
+```
+
+Want `available: true` and `mode: "live"`. If it says `sandbox`, no Nigerian
+can verify a bank account on production.
+
+---
+
 ## Part A — auto-detect balance, fall back to a deposit address
 
 ### The behaviour asked for
