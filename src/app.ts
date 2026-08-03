@@ -42,6 +42,39 @@ export async function buildApp() {
     routes: ['/api/webhooks/bridge']
   });
 
+  /**
+   * PROVIDER WEBHOOK VERIFICATION PROBES MUST NOT DIE IN THE PARSER.
+   *
+   * Breet's dashboard POSTs to a webhook URL when you save it and requires a
+   * 200. Fastify was rejecting that probe before any route handler ran:
+   *
+   *   Content-Type: application/json + zero-length body -> 400 "Body cannot be empty"
+   *   no Content-Type header                            -> 415 Unsupported Media Type
+   *   Content-Type: application/x-www-form-urlencoded   -> 415 Unsupported Media Type
+   *
+   * Each is a 4xx, so the dashboard reported "Webhook URL must acknowledge the
+   * verification request with a 200 response" and refused to save the URL. No
+   * handler logic could fix it, because the handler was never reached.
+   *
+   * These two parsers make an empty or unusual body survive as far as the
+   * route, which then decides what it is. A real webhook still arrives as a
+   * parsed object and every secret check is untouched - this changes what can
+   * be RECEIVED, never what is TRUSTED.
+   */
+  // removeContentTypeParser first: Fastify ships a JSON parser and refuses a
+  // duplicate with FST_ERR_CTP_ALREADY_PRESENT, which fails the boot rather
+  // than silently doing the wrong thing. Good behaviour on its part.
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body: string, done) => {
+    if (!body || !body.trim()) return done(null, {});
+    try { done(null, JSON.parse(body)); } catch (error) { done(error as Error, undefined); }
+  });
+
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_request, body: string, done) => {
+    if (!body || !body.trim()) return done(null, {});
+    try { done(null, JSON.parse(body)); } catch { done(null, {}); }
+  });
+
   app.addHook('preHandler', async (request, reply) => {
     if (isFastHealthRequest(request.method, request.url)) return;
     const body = request.body as Record<string, unknown> | undefined;

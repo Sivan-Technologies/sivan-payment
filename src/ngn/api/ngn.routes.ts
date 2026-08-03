@@ -198,9 +198,45 @@ export async function ngnRoutes(app: FastifyInstance) {
    * who omits the header get a 200, which is exactly the shape of the bug
    * being avoided.
    */
-  app.post('/api/webhooks/breet', async (request) => {
+  app.post('/api/webhooks/breet', {
+    /**
+     * ACCEPT ANY CONTENT TYPE, AND AN EMPTY BODY.
+     *
+     * Fastify rejected the dashboard's ping before our handler ever ran:
+     *
+     *   Content-Type: application/json + zero-length body -> 400 "Body cannot be empty"
+     *   no Content-Type header at all                     -> 415 Unsupported Media Type
+     *   Content-Type: application/x-www-form-urlencoded   -> 415 Unsupported Media Type
+     *
+     * All three are 4xx, so Breet reports "Webhook URL must acknowledge the
+     * verification request with a 200 response" and refuses to save - and no
+     * amount of handler logic helps, because the handler is never reached.
+     *
+     * A wildcard parser that tolerates an empty payload fixes all three. It
+     * parses JSON when it can and hands back an empty object when it cannot,
+     * so a real webhook still arrives as a normal object and every secret
+     * check below is unchanged.
+     */
+    bodyLimit: 1_048_576,
+  }, async (request) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    const isVerificationPing = !body.event && !body.id;
+
+    /**
+     * A VERIFICATION PING, NOT A WEBHOOK.
+     *
+     * Recognised by carrying no transaction identity - no id, and no event
+     * that names a real Breet event. Breet's live events are `trade.*` and
+     * `withdrawal.*`; the dashboard probe sends either nothing at all or a
+     * placeholder such as {"event":"verification"}, which named an event and
+     * was therefore being treated as a forged webhook and refused with 403.
+     *
+     * Matching on the event NAMESPACE rather than on "is the event field
+     * present" is what makes this safe: a payload claiming `trade.completed`
+     * can never be waved through, whatever else it contains.
+     */
+    const eventName = typeof body.event === 'string' ? body.event : '';
+    const isRealEventName = /^(trade|withdrawal)\./i.test(eventName);
+    const isVerificationPing = !isRealEventName && !body.id;
     if (isVerificationPing) {
       return { data: { acknowledged: true, verification: true } };
     }
