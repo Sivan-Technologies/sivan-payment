@@ -48,6 +48,37 @@ export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>
     throw badRequest('You must accept the Terms, Privacy Policy, and Risk Disclosure to create an account');
   }
 
+  // RESEND COOLDOWN. THE RATE LIMIT PROTECTS THE ENDPOINT; THIS PROTECTS THE
+  // EMAIL QUOTA, AND THEY ARE NOT THE SAME THING.
+  //
+  // The IP+email limiter allows 5 starts per 15 minutes. That is correct as an
+  // abuse control, and useless as a budget control: 5 x 4 windows x 24h is 480
+  // emails a day from ONE address, and the Resend free tier is 100 a day. One
+  // bored person with the login page open exhausts the whole platform's email
+  // for everybody, including OTPs for real users trying to sign in.
+  //
+  // The 60-second cooldown the UI shows was CLIENT-SIDE ONLY - React state in
+  // `resendAvailableAt`. Anything not using our frontend ignored it entirely.
+  //
+  // A legitimate user needs one code, plus perhaps one resend if it lands in
+  // spam. Sixty seconds between sends costs them nothing and caps the worst
+  // case at a rate the free tier survives.
+  //
+  // Deliberately NOT an error the caller can distinguish from success in a
+  // useful way beyond the wait: replying "no such account" or "code already
+  // sent" to an arbitrary address would leak whether an account exists.
+  const lastChallenge = await db.latestAuthChallengeForEmail(input.email);
+  if (lastChallenge) {
+    const elapsedMs = Date.now() - Date.parse(lastChallenge.createdAt);
+    const cooldownMs = env.AUTH_OTP_RESEND_COOLDOWN_SECONDS * 1000;
+    if (Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < cooldownMs) {
+      const waitSeconds = Math.ceil((cooldownMs - elapsedMs) / 1000);
+      throw badRequest(
+        `A code was just sent to that address. Check your inbox and spam folder, or ask for another in ${waitSeconds} second${waitSeconds === 1 ? '' : 's'}.`
+      );
+    }
+  }
+
   const code = generateCode();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + env.AUTH_OTP_EXPIRES_MINUTES * 60 * 1000).toISOString();

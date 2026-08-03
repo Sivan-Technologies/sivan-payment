@@ -863,6 +863,29 @@ export class PostgresDatabase {
     try { await upsertAuthChallenge(client, record); return record; } finally { client.release(); }
   }
 
+  /**
+   * The most recent OTP challenge for an email, for resend throttling.
+   *
+   * ONE INDEXED ROW, NOT A TABLE SCAN. idx_payments_auth_challenges_email_created
+   * (migration 011) is `(email, created_at desc)`, so this is an index-only
+   * lookup. Doing it via db.read() would load every table in the database on
+   * the login path, which is the exact bug that made signup take 146 seconds.
+   *
+   * Matched case-insensitively because a user typing `Sam@x.com` after
+   * `sam@x.com` must not get a second code - otherwise the throttle is
+   * bypassed by holding shift.
+   */
+  async latestAuthChallengeForEmail(email: string): Promise<AuthChallengeRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'select * from payments_auth_challenges where lower(email) = lower($1) order by created_at desc limit 1',
+        [email]
+      );
+      return result.rows[0] ? mapAuthChallenge(result.rows[0]) : null;
+    } finally { client.release(); }
+  }
+
   async consumeAuthChallengeAndMarkUserEmail(challengeId: string, userId: string, now: string) {
     const client = await this.pool.connect();
     try {

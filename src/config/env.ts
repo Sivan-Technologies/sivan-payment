@@ -33,6 +33,15 @@ const envSchema = z.object({
   USER_JWT_SECRET: z.string().default('dev-user-jwt-secret-change-me'),
   USER_JWT_EXPIRES_MINUTES: z.coerce.number().int().positive().default(60),
   AUTH_OTP_EXPIRES_MINUTES: z.coerce.number().int().positive().default(10),
+  /**
+   * Minimum gap between two OTP emails to the SAME address.
+   *
+   * This is an email-budget control, not an abuse control - the IP+email rate
+   * limiter already handles abuse. On the Resend free tier (100/day) the
+   * limiter alone permits 480 sends a day from one address, so a cooldown is
+   * what actually keeps the quota alive. 0 disables it.
+   */
+  AUTH_OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().nonnegative().default(60),
   AUTH_DEV_SHOW_OTP: booleanFromEnv.default(true),
   AUTH_REQUIRE_USER: booleanFromEnv.default(true),
   IDENTITY_LINK_SERVICE_SECRET: z.string().optional().default(''),

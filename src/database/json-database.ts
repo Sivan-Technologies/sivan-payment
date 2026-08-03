@@ -257,7 +257,19 @@ export class JsonDatabase {
     return (data.auditLogs ?? []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(offset, offset + limit);
   }
 
-  /** Mirrors the Postgres targeted lookup. See that implementation for why. */
+  /**
+   * Mirrors the Postgres targeted lookup. See that implementation for why.
+   *
+   * The lowercasing here is a REAL second guard, not decoration. Two
+   * independent things stop `SAM@x.com` buying a second email after
+   * `sam@x.com`: startEmailAuthSchema lowercases the input, and this
+   * comparison lowercases again.
+   *
+   * Mutation-tested all three ways: removing EITHER one alone leaves the
+   * suite green, because the other still catches it. Removing BOTH fails
+   * "the same address in different case is still throttled". That is the
+   * correct shape for a bypass guard - it should take two mistakes, not one.
+   */
   async latestAuditLogByAction(action: string) {
     const data = await this.read();
     return (data.auditLogs ?? [])
@@ -357,6 +369,15 @@ export class JsonDatabase {
       data.authChallenges.push(record);
       return record;
     });
+  }
+
+  /** Mirrors the Postgres targeted lookup. See that implementation for why. */
+  async latestAuthChallengeForEmail(email: string): Promise<AuthChallengeRecord | null> {
+    const data = await this.read();
+    const target = email.toLowerCase();
+    return (data.authChallenges ?? [])
+      .filter((item) => item.email.toLowerCase() === target)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
 
   async consumeAuthChallengeAndMarkUserEmail(challengeId: string, userId: string, now: string) {
