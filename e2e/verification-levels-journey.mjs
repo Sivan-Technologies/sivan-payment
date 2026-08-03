@@ -190,6 +190,29 @@ async function main() {
       check('step 2 reads as complete', /Completed|Verified/i.test(step?.action ?? ''), step?.action);
       check('progress reads 100%', facts.pct === 100, String(facts.pct));
       check('the level badge says Level 1', /Level 1/.test(facts.level ?? ''), facts.level);
+
+      /**
+       * NOTHING ELSE ON THE PAGE MAY CONTRADICT IT EITHER.
+       *
+       * Fixing the step button was not enough, and the screenshot proved it:
+       * the rows all read Completed / 100% / "Level 1: Bank verified" while
+       * the banner directly above still said "Verify your account - complete
+       * identity verification to unlock payments", and the sidebar printed
+       * "Status: Not started, Terms: Pending". Same root cause each time -
+       * a BRIDGE field rendered for a user Bridge has never heard of.
+       *
+       * Asserted on the whole page, because a page that contradicts itself is
+       * the actual defect, not any one widget.
+       */
+      check('the banner does not still say "Verify your account"',
+        !/Verify your account/i.test(facts.body),
+        'banner contradicts the completed steps');
+      check('nothing on the page says "Complete identity verification"',
+        !/Complete identity verification to unlock/i.test(facts.body));
+      check('the sidebar does not print a Bridge status of "Not started"',
+        !/Not started/i.test(facts.body), 'Bridge status card rendered for an NGN user');
+      check('and it does not print Bridge terms as "Pending"',
+        !/TERMS Pending|Terms Pending/i.test(facts.body.replace(/\s+/g, ' ')));
     }
 
     // ================================================================
@@ -232,6 +255,20 @@ async function main() {
       check('and it invites them to start',
         /Start verification|Continue/i.test(step?.action ?? ''), step?.action);
 
+      /**
+       * AND THE LIMIT CARD MUST NOT HAND THEM THE NIGERIAN INSTRUCTION.
+       *
+       * Caught in a browser screenshot: a US user at Level 0 was told "To go
+       * higher: Confirm a bank account in your name" - the NGN rung, for a
+       * check their country cannot take. The card kept its own ladder keyed on
+       * level alone, which cannot be right when the rungs differ by country.
+       */
+      check('a US user is NOT told to confirm a Nigerian bank account',
+        !/Confirm a bank account in your name/i.test(facts.body),
+        'the NGN ladder leaked onto the Bridge path');
+      check('they are pointed at a document check instead',
+        /government-issued ID|photo ID|selfie/i.test(facts.body));
+
       const usSummary = await api(`/api/users/${us.user.id}/verification-summary`, {
         headers: { Authorization: `Bearer ${us.token}` },
       });
@@ -264,7 +301,18 @@ async function main() {
         const el = document.querySelector('.sv-modal-body, [class*="sv-modal"]');
         return el ? el.innerText.replace(/\s+/g, ' ').trim().slice(0, 400) : null;
       });
-      check('it asks for a country first', Boolean(modal) && /Country|Nigeria/i.test(modal ?? ''),
+      /**
+       * The modal asks for a country OR has already answered it.
+       *
+       * A first version asserted the country step was always shown and failed
+       * here - wrongly. The modal auto-selects when the edge detects a country
+       * and skips straight to that country's flow, which is deliberate:
+       * asking someone to confirm what we already know is a step for nothing.
+       * The runner has a US-shaped IP, so it correctly lands on the Bridge
+       * screen. Both outcomes are valid; a modal that renders NEITHER is not.
+       */
+      check('the modal routes to a verification flow',
+        Boolean(modal) && /Country|Nigeria|Verify your identity|Bridge/i.test(modal ?? ''),
         modal?.slice(0, 120));
       console.log(`       modal: ${modal?.slice(0, 140)}`);
     }

@@ -439,10 +439,13 @@ function VerificationLimitCard({
   allowance,
   windowDays,
   upliftApplies,
+  nextStep,
 }: {
   allowance: FlowAllowance;
   windowDays: number;
   upliftApplies: boolean;
+  /** The server's next rung. See the comment where it is rendered. */
+  nextStep?: VerificationSummary['nextStep'];
 }) {
   const naira = (value: number) => `₦${value.toLocaleString('en-NG')}`;
 
@@ -462,11 +465,6 @@ function VerificationLimitCard({
   const used = allowance.usedNgn;
   const pctUsed = limit > 0 ? Math.min(Math.round((used / limit) * 100), 100) : 100;
 
-  const nextStep: Record<number, string> = {
-    1: 'Confirm a bank account in your name',
-    2: 'Add your NIN or BVN',
-    3: 'Add proof of address and source of funds',
-  };
 
   return (
     <article className="panel verification-limit-card">
@@ -477,12 +475,26 @@ function VerificationLimitCard({
         {naira(used)} of {naira(limit)} used.
         {upliftApplies ? ' Your identity check is complete.' : ''}
       </p>
-      {/* Only shown when a higher level actually exists. At the top of the
-          ladder there is nothing to ask for, and inviting an upgrade that
-          cannot happen is a dead end. */}
-      {allowance.nextLevel !== undefined && nextStep[allowance.nextLevel] && (
+      {/* THE LADDER IS THE SERVER'S, NOT THIS FILE'S.
+ 
+          This used to hold its own `{1: 'Confirm a bank account in your name',
+          2: 'Add your NIN or BVN', ...}` map keyed on level alone - which
+          cannot be right, because the rungs differ by country. Caught in a
+          browser screenshot: a US user at Level 0 was told "To go higher:
+          Confirm a bank account in your name", the NIGERIAN instruction, for a
+          check their country cannot even take. Their actual next step is a
+          document check.
+ 
+          summary.nextStep already answers this per path, so the second copy of
+          the ladder is gone rather than corrected - a duplicated rule drifts
+          again the moment either side changes.
+ 
+          Still only rendered when a higher level exists; at the top there is
+          nothing to ask for, and inviting an upgrade that cannot happen is a
+          dead end. */}
+      {nextStep && (
         <p className="verification-limit-next">
-          To go higher: {nextStep[allowance.nextLevel]}.
+          To go higher: {nextStep.description}
         </p>
       )}
     </article>
@@ -594,7 +606,30 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
            Only the not-started case is re-pointed. under_review, incomplete
            and failed still refresh or deep-link, which is correct for them -
            their buttons say "Refresh status" and "Continue verification". */
-        customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onStartVerification} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />
+        /* AND THE BANNER MUST NOT CONTRADICT THE STEPS EITHER.
+ 
+            Same root cause as the step-2 button, one level up: this card reads
+            customer.kycStatus, a BRIDGE field. Caught in the browser
+            screenshot AFTER fixing the steps - the rows all said Completed,
+            100%, "Level 1: Bank verified", and the banner directly above them
+            still said "Verify your account - complete identity verification to
+            unlock payments" with a "Start verification" button.
+ 
+            A Nigerian whose path is complete is DONE, whatever Bridge does or
+            does not know about them. Their banner is the finished one. The
+            Bridge card still renders for everyone else, and for a Nigerian who
+            has genuinely started a Bridge check on top. */
+        identityDone && isNgnPath && !customer?.id
+          ? <article className="kyc-outcome-notice ready">
+              <span className="kyc-outcome-icon">✓</span>
+              <div className="kyc-outcome-copy">
+                <p className="eyebrow">Verification status</p>
+                <h3>{hasBank ? 'Account ready' : 'Bank verified'}</h3>
+                <p>{hasBank ? 'Your bank account is confirmed. You can sell crypto and receive naira payouts.' : 'Your bank account is confirmed and ready for naira payouts.'}</p>
+              </div>
+              <div className="kyc-outcome-actions"><button className="primary-btn small" onClick={hasBank ? onSell : onAddBank}>{hasBank ? 'Sell crypto' : 'Add bank account'}</button></div>
+            </article>
+          : customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onStartVerification} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />
       )}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
@@ -691,8 +726,14 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
               starts a withdrawal finds out at the point of failure. Every
               figure comes from the admin-overridable limit table, so moving a
               ceiling in the hub changes this immediately with no deploy. */}
-          {ngnOfframp && <VerificationLimitCard allowance={ngnOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} />}
-          {customer && <article className="panel verification-status-card"><div className="panel-head"><div><p className="eyebrow">Current status</p><h3>Verification summary</h3></div><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
+          {ngnOfframp && <VerificationLimitCard allowance={ngnOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} nextStep={summary?.nextStep} />}
+          {/* CustomerDetails renders Bridge's KYC status, account type and
+              terms state. For a Nigerian on the bank path there IS no Bridge
+              customer, so it printed "Status: Not started / Terms: Pending"
+              beside a page reading 100% complete - seen in the browser
+              screenshot. Bridge's opinion of a user it has never met is not a
+              status worth showing. */}
+          {customer?.id && !(isNgnPath && identityDone && !customer.kycStatus) && <article className="panel verification-status-card"><div className="panel-head"><div><p className="eyebrow">Current status</p><h3>Verification summary</h3></div><button className="ghost-btn small" onClick={onRefresh}>Refresh</button></div><CustomerDetails customer={customer} /></article>}
           <article className="panel verify-simple-card"><h3>Why we verify</h3><p className="muted">{isNgnPath ? 'Confirming the bank account belongs to you keeps payouts going to the right person.' : 'Verification keeps your account safe and helps Sivan meet payment partner requirements.'}</p><ul className="plain-list"><li>✓ Encrypted data</li><li>✓ Used only for compliance</li><li>✓ Status refreshes automatically</li></ul></article>
           <article className="security-card verify-help-card"><div className="security-icon">?</div><div><h3>Need help?</h3><p>If you are having trouble, support can review it with you.</p><button onClick={onSupport}>Contact support →</button><button onClick={onRefresh}>Refresh status →</button></div></article>
         </div>
