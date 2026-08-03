@@ -202,6 +202,44 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     recipientAddress = wallet?.address;
   }
 
+  /**
+   * THE USER'S OWN BANK, CARRIED SO THE PAYOUT CAN BE AUTOMATIC.
+   *
+   * breet.provider.ts only sets `autoSettlement: true` on the deposit address
+   * when it can see a bankId AND an accountNumber:
+   *
+   *     if (bankId && accountNumber) { body.autoSettlement = true; }
+   *
+   * It read those from quote.metadata, and NOTHING EVER PUT THEM THERE. The
+   * env fallbacks (BREET_DEFAULT_BANK_ID / _ACCOUNT_NUMBER) were empty too, so
+   * autoSettlement was never enabled on any address we have ever generated.
+   *
+   * The consequence is quiet and expensive: the user's crypto arrives, Breet
+   * converts it to naira, and the money STOPS in Sivan's Breet balance instead
+   * of reaching their bank. Nothing errors. The transfer just never settles.
+   *
+   * Taken from the user's VERIFIED payout account, never from configuration.
+   * A global default would pay every user's naira into one bank account, which
+   * is the worst possible bug in this file - so this deliberately does not
+   * fall back to BREET_DEFAULT_*, even though the provider still accepts them
+   * for single-tenant setups.
+   *
+   * Only `verified` accounts qualify. A pending_review NUBAN is one a human
+   * was asked to look at; auto-paying it would defeat the review queue.
+   */
+  let payoutBank: { bankId: string; accountNumber: string; bankName?: string } | undefined;
+  if (input.direction === 'offramp' && input.destinationCurrency === 'ngn') {
+    const accounts = await db.listNgnPayoutAccounts(input.userId);
+    const verified = accounts.find((account) => account.status === 'verified');
+    if (verified) {
+      payoutBank = {
+        bankId: verified.bankId,
+        accountNumber: verified.accountNumber,
+        bankName: verified.bankName,
+      };
+    }
+  }
+
   const now = nowIso();
   const record: NgnQuoteRecord = { id: id('ngnq'), userId: input.userId, customerId: customer?.id, direction: input.direction, provider: quote.provider, sourceCurrency: input.sourceCurrency, destinationCurrency: input.destinationCurrency, sourceAmount: quote.sourceAmount, destinationAmount: destinationAfterMargin.toFixed(input.destinationCurrency === 'ngn' ? 2 : 6), rate: quote.rate, feeAmount: String(margin.totalFee), status: 'quote_created', providerQuoteId: quote.providerQuoteId, expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), metadata: {
     ...(typeof quote.metadata === 'object' && quote.metadata ? quote.metadata : {}),
@@ -214,6 +252,9 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     estimatedGasUsd,
     // Present only for on-ramps; an off-ramp has no destination wallet.
     ...(recipientAddress ? { recipientAddress } : {}),
+    // Present only for NGN off-ramps, and only when the user has a VERIFIED
+    // payout account. This is what turns autoSettlement on.
+    ...(payoutBank ?? {}),
     fees: {
       providerFee: margin.providerFee,
       providerName: quote.provider,
