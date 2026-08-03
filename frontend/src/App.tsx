@@ -360,19 +360,20 @@ export default function App() {
             continue;
           }
           /**
-           * ONLY AN ACTUALLY-INVALID TOKEN ENDS THE SESSION.
+           * ONLY A TOKEN THE SERVER REJECTED ENDS THE SESSION.
            *
-           * Any 401 used to log the user out. But the gateway and a sleeping
-           * Render instance produce 401-shaped answers that have nothing to do
-           * with the token - and that is the "signed out every few minutes"
-           * complaint: a cold start took 34 seconds and returned
-           * UPSTREAM_UNAVAILABLE, and the session was destroyed over it.
+           * Any 401 used to log the user out, and that is half of the
+           * "signed out every few minutes" report. api-live sleeps on
+           * Render's free tier: a cold start answers 503, and a proxied call
+           * was measured taking 34 seconds to fail with UPSTREAM_UNAVAILABLE.
+           * The gateway can return 401-shaped answers that have nothing to do
+           * with the credential, and destroying a valid session over
+           * infrastructure is how an hour-long token feels like minutes.
            *
-           * The server distinguishes these precisely, so trust its code:
-           * auth_required and invalid_token mean the credential is the
-           * problem. Anything else is infrastructure, and the session
-           * survives - the sliding refresh will renew it once the backend is
-           * awake.
+           * The server names the difference precisely, so use its code:
+           * auth_required and invalid_token mean the token is the problem.
+           * Anything else is infrastructure, and the session survives - the
+           * sliding refresh renews it once the backend is awake again.
            */
           const authCode = json?.error?.code;
           const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required';
@@ -433,12 +434,9 @@ export default function App() {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
   }, [accounts]);
 
-  /**
-   * The sliding session. A renewed token replaces the stored one in place, so
-   * an active user is never signed out mid-task and never sees "Session
-   * expired" while they are still working.
-   */
-  useSessionActivity(authToken, logout, useCallback((token: string) => {
+  useSessionActivity(authToken, logout, apiBase, useCallback((token: string) => {
+    // Persist as well as set state: a reload must not drop back to the old
+    // token, which would expire on its original schedule and undo the refresh.
     localStorage.setItem('sivan.authToken', token);
     setAuthToken(token);
   }, []));

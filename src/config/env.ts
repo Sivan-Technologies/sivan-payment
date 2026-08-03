@@ -150,6 +150,43 @@ const envSchema = z.object({
   BREET_APP_SECRET: z.string().optional().default(''),
   // Required header on every request; Breet rejects a missing or invalid value.
   BREET_ENV: z.enum(['development', 'production']).default('development'),
+  /**
+   * TREAT SANDBOX BANK RESOLUTIONS AS TRUSTWORTHY EVIDENCE.
+   *
+   * OFF by default, and it must stay off anywhere real money moves.
+   *
+   * Breet's sandbox returns a plausible name for ANY account number - verified
+   * live, just now: 0000000000, 1234567890 and 9999999999 at PalmPay all
+   * resolve to "Samuel Udochukwu". A name match against that proves nothing,
+   * so sandbox resolutions are marked untrustworthy and a clean match is sent
+   * to a human instead of granting Level 1.
+   *
+   * That is the right call, and it had an unintended consequence: on the test
+   * environment the auto-approve path became UNREACHABLE. Every perfect match
+   * queued for review - 38 of them, all "Samuel Udochukwu" vs "Samuel
+   * Udochukwu", score 1.0 - so the behaviour that will run in production was
+   * the one behaviour nobody could exercise or see.
+   *
+   * This switch makes that path testable WITHOUT weakening production, because
+   * turning it on is a deliberate, visible, per-environment act rather than a
+   * quiet relaxation of the rule.
+   *
+   * The receipts, taken live against Breet's sandbox:
+   *
+   *   PalmPay 8102524846 -> Samuel Udochukwu
+   *   PalmPay 0000000000 -> Samuel Udochukwu
+   *   PalmPay 1234567890 -> Samuel Udochukwu
+   *   PalmPay 9999999999 -> Samuel Udochukwu
+   *   Access  8102524846 -> Samuel Udochukwu   (any BANK id, too)
+   *
+   * Always the API key owner, whatever you ask for. That is why the gate
+   * exists and why this override must never reach anywhere real.
+   *
+   * REFUSED IN PRODUCTION, and against any live bank resolver. Enforced in
+   * app.ts at boot, not merely documented: a comment saying "do not set this
+   * in production" is not a control.
+   */
+  NGN_TRUST_SANDBOX_BANK_RESOLUTION: booleanFromEnv.default(false),
   BREET_WEBHOOK_SECRET: z.string().optional().default(''),
   /**
    * How often to ask the NGN provider what it actually settled, in seconds.
@@ -163,33 +200,6 @@ const envSchema = z.object({
    * in minutes, slow enough to be nothing to a partner API.
    */
   NGN_SETTLEMENT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
-  /**
-   * TREAT A SANDBOX BANK RESOLUTION AS REAL EVIDENCE.
-   *
-   * OFF by default, and it must stay off in production.
-   *
-   * Breet's development environment resolves ANY ten digits to a plausible
-   * name. Verified live, just now, against the real sandbox:
-   *
-   *   PalmPay 8102524846 -> Samuel Udochukwu
-   *   PalmPay 0000000000 -> Samuel Udochukwu
-   *   PalmPay 1234567890 -> Samuel Udochukwu
-   *   PalmPay 9999999999 -> Samuel Udochukwu
-   *   Access  8102524846 -> Samuel Udochukwu   (any BANK, too)
-   *
-   * It always returns the account holder of the API key. So on sandbox a
-   * "name match" is a match against a fixed string, and auto-approving on it
-   * would grant Level 1 - and a 100,000 NGN payout ceiling - to anyone who
-   * types ten digits.
-   *
-   * That is why every sandbox account lands in manual review, which is the
-   * behaviour being complained about. It is correct, but it makes the flow
-   * untestable end to end, so this switch exists to say "I know this
-   * environment lies, let matched accounts through anyway".
-   *
-   * Refused outright when APP_ENV is production - see buildApp().
-   */
-  NGN_TRUST_SANDBOX_BANK_RESOLUTION: booleanFromEnv.default(false),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),

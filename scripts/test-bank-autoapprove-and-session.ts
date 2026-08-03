@@ -45,7 +45,7 @@ import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
 import { db } from '../src/database/json-database.js';
-import { payoutAccountDecision } from '../src/ngn/service/ngn-payout-accounts.service.js';
+import { payoutAccountStatusFor, payoutReviewReasonFor } from '../src/ngn/service/ngn-payout-accounts.service.js';
 
 let pass = 0;
 let fail = 0;
@@ -90,34 +90,21 @@ async function main() {
   }
 
   try {
-    console.log('\nTHE DECISION TABLE: WHO IS BLOCKED, AND BY WHAT');
+    console.log('\nWHY A CASE IS QUEUED, NOT JUST THAT IT IS');
     {
-      // A clean match against a REAL provider is the whole point. No queue.
-      const verified = payoutAccountDecision('match', true);
-      check('a clean match on a trustworthy resolution auto-verifies',
-        verified.status === 'verified' && verified.reason === 'auto_verified', JSON.stringify(verified));
-      check('and needs nobody', verified.needsHuman === false);
-
-      // A partial match is a real judgement call - a middle name, a married
-      // name. This is the ONLY thing that should reach an operator.
-      const review = payoutAccountDecision('review', true);
-      check('a partial match goes to a human',
-        review.status === 'pending_review' && review.reason === 'name_needs_review', JSON.stringify(review));
-      check('and is flagged as needing one', review.needsHuman === true);
-
-      // A clean match on a sandbox resolution is NOT evidence, but it is also
-      // not something an operator can decide - the names are identical.
-      const untrusted = payoutAccountDecision('match', false);
-      check('a clean match on an untrustworthy resolution is still held',
-        untrusted.status === 'pending_review' && untrusted.reason === 'resolution_untrustworthy',
-        JSON.stringify(untrusted));
-      check('but is NOT put in front of a human, because no human can fix it',
-        untrusted.needsHuman === false, JSON.stringify(untrusted));
-
-      const mismatch = payoutAccountDecision('mismatch', true);
-      check('an unrelated name is refused outright',
-        mismatch.status === 'rejected' && mismatch.reason === 'name_mismatch', JSON.stringify(mismatch));
-      check('and never reaches the queue', mismatch.needsHuman === false);
+      // The status table itself is covered by test:bank-match-session. What is
+      // asserted here is the CLASSIFICATION that drives the admin split, and
+      // the derivation working on rows that carry no stored reason.
+      check('a perfect match on a sandbox resolution is an environment problem',
+        payoutReviewReasonFor({ matchVerdict: 'match', resolutionTrustworthy: false }) === 'unverified_source');
+      check('a partial match is a name problem, even on a real resolution',
+        payoutReviewReasonFor({ matchVerdict: 'review', resolutionTrustworthy: true }) === 'name');
+      check('a partial match on a sandbox resolution is STILL a name problem',
+        // Both things are wrong with it, but only one needs a person, and the
+        // name is the one a person can act on.
+        payoutReviewReasonFor({ matchVerdict: 'review', resolutionTrustworthy: false }) === 'name');
+      check('and the status table still refuses to verify from a sandbox',
+        payoutAccountStatusFor('match', false) === 'pending_review');
     }
 
     console.log('\nEND TO END: A MATCHED ACCOUNT IS APPROVED WITHOUT AN OPERATOR');
@@ -147,10 +134,7 @@ async function main() {
       check('the name matched cleanly', saved.body?.matchVerdict === 'match',
         `${saved.body?.matchVerdict} score=${saved.body?.matchScore}`);
       check('and it is VERIFIED immediately, with no manual check',
-        saved.body?.status === 'verified',
-        `${saved.body?.status} reason=${saved.body?.reviewReason}`);
-      check('recorded as auto-verified', saved.body?.reviewReason === 'auto_verified',
-        String(saved.body?.reviewReason));
+        saved.body?.status === 'verified', String(saved.body?.status));
 
       // THE POINT OF THE WHOLE FEATURE: verification actually moves.
       const summary = await call('GET', `/api/users/${userId}/verification-summary`);
@@ -172,7 +156,6 @@ async function main() {
         accountNumber: '5555555555', accountName: 'Samuel Udochukwu Chinedu',
         declaredName: 'Samuel Udochukwu', matchVerdict: 'review', matchScore: 0.7,
         resolutionTrustworthy: true, status: 'pending_review',
-        reviewReason: 'name_needs_review', needsHumanReview: true,
         createdAt: now, updatedAt: now,
       } as any);
       // Held only by the environment.
@@ -181,7 +164,6 @@ async function main() {
         accountNumber: '6666666666', accountName: 'Samuel Udochukwu',
         declaredName: 'Samuel Udochukwu', matchVerdict: 'match', matchScore: 1,
         resolutionTrustworthy: false, status: 'pending_review',
-        reviewReason: 'resolution_untrustworthy', needsHumanReview: false,
         createdAt: now, updatedAt: now,
       } as any);
 
@@ -211,7 +193,7 @@ async function main() {
       const queue = await call('GET', '/api/admin/ngn/payout-accounts/reviews', undefined, '');
       const legacy = (queue.body as any[]).find((item) => item.id === 'ngnacct_legacy');
       check('a legacy row is classified from what it does have',
-        legacy?.reviewReason === 'resolution_untrustworthy', String(legacy?.reviewReason));
+        legacy?.reviewReason === 'unverified_source', String(legacy?.reviewReason));
       check('and is not put in front of an operator',
         legacy?.needsHumanReview === false, String(legacy?.needsHumanReview));
     }
@@ -232,7 +214,7 @@ async function main() {
       // two tokens can be byte-identical and "it refreshed" proves nothing.
       await new Promise((resolve) => setTimeout(resolve, 1100));
 
-      const refreshed = await call('POST', '/api/auth/refresh');
+      const refreshed = await call('POST', '/api/auth/session/refresh');
       check('a valid token can be exchanged for a fresh one', refreshed.status === 200,
         `${refreshed.status} ${JSON.stringify(refreshed.body).slice(0, 140)}`);
       const after = decode(refreshed.body.token);
@@ -249,10 +231,10 @@ async function main() {
 
     console.log('\nBUT REFRESH IS NOT A WAY IN');
     {
-      const anonymous = await call('POST', '/api/auth/refresh', undefined, '');
+      const anonymous = await call('POST', '/api/auth/session/refresh', undefined, '');
       check('refresh without a token is refused', anonymous.status === 401, String(anonymous.status));
 
-      const forged = await call('POST', '/api/auth/refresh', undefined, 'not.a.token');
+      const forged = await call('POST', '/api/auth/session/refresh', undefined, 'not.a.token');
       check('a malformed token is refused', forged.status === 401, String(forged.status));
 
       /**
@@ -282,7 +264,7 @@ async function main() {
       payload.sub = victimId;
       payload.email = victimEmail;
       const tampered = `${parts[0]}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${parts[2]}`;
-      const swapped = await call('POST', '/api/auth/refresh', undefined, tampered);
+      const swapped = await call('POST', '/api/auth/session/refresh', undefined, tampered);
       check('a token re-pointed at another REAL user is refused',
         swapped.status === 401, `${swapped.status} ${JSON.stringify(swapped.body).slice(0, 120)}`);
       check('and no token was minted for them',
@@ -292,7 +274,7 @@ async function main() {
       // the idle timeout both become meaningless.
       const expiredPayload = { ...payload, sub: userId, iat: 1, exp: 2 };
       const expired = `${parts[0]}.${Buffer.from(JSON.stringify(expiredPayload)).toString('base64url')}.${parts[2]}`;
-      const revived = await call('POST', '/api/auth/refresh', undefined, expired);
+      const revived = await call('POST', '/api/auth/session/refresh', undefined, expired);
       check('an expired token cannot be revived', revived.status === 401, String(revived.status));
     }
 
@@ -312,17 +294,38 @@ async function main() {
       check('the client refreshes on a timer', /REFRESH_INTERVAL_MS/.test(hook));
       check('a failed refresh does NOT log the user out',
         /if \(!response\.ok\) return;/.test(hook), 'a non-ok refresh still ends the session');
-      check('the idle timeout is 8 hours, not 30 minutes',
-        /IDLE_TIMEOUT_MS = 8 \* 60 \* 60 \* 1000/.test(hook));
+      check('the idle timeout is an hour, not thirty minutes',
+        /IDLE_TIMEOUT_MS = 60 \* 60 \* 1000/.test(hook), 'idle timeout was not raised');
+      /**
+       * setInterval does not fire in a backgrounded tab and does not fire at
+       * all while a laptop sleeps. Without a refresh on tab focus, a machine
+       * that slept through the 20-minute tick wakes holding a nearly-expired
+       * token and waits up to another 20 minutes before trying - by which
+       * point it has expired. That is the "logged out again" experience.
+       */
+      check('and it also refreshes when the tab is brought back',
+        /visibilitychange/.test(hook), 'no refresh on tab focus');
     }
 
     console.log('\nAND THE SANDBOX OVERRIDE CANNOT BE LEFT ON IN PRODUCTION');
     {
       const appSource = await fs.readFile(path.join(process.cwd(), 'src/app.ts'), 'utf8');
-      check('buildApp refuses to start with it set in production',
-        /APP_ENV === 'production' && env\.NGN_TRUST_SANDBOX_BANK_RESOLUTION/.test(appSource) &&
-          /throw new Error/.test(appSource.slice(appSource.indexOf('NGN_TRUST_SANDBOX_BANK_RESOLUTION'))),
-        'no production guard on NGN_TRUST_SANDBOX_BANK_RESOLUTION');
+      /**
+       * The boot guard's BEHAVIOUR is covered by test:bank-match-session,
+       * which starts real apps. What is checked here is the shape that had to
+       * be merged from two independent attempts, each incomplete in the
+       * opposite direction: keying on APP_ENV alone would have crash-looped
+       * api-test (APP_ENV=staging, confirmed by curling /health/operational),
+       * and keying on the provider alone misses a production deployment
+       * momentarily pointed at a sandbox. Both conditions must be present.
+       */
+      check('the boot guard refuses on a LIVE provider',
+        /ngnRailIsLive/.test(appSource) &&
+          /BREET_ENV === 'production' \|\| env\.PAJ_RAMP_ENV === 'production'/.test(appSource),
+        'no live-provider condition');
+      check('AND on a production deployment',
+        /ngnRailIsLive \|\| env\.APP_ENV === 'production'/.test(appSource),
+        'production is not covered by the boot guard');
     }
 
     await app.close();

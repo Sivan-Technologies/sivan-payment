@@ -71,31 +71,31 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   /**
-   * EXTEND A LIVE SESSION WITHOUT MAKING THE USER SIGN IN AGAIN.
+   * EXTEND A LIVE SESSION INSTEAD OF DROPPING IT.
    *
-   * The complaint is being signed out "every few minutes". The token is
-   * actually good for 60 minutes - measured on the deployed API, iat to exp
-   * is exactly 3600s - so expiry was never the cause. Two other things were:
+   * A user reported being signed out "every few minutes". The token is 60
+   * minutes, so that reads like an exaggeration - until you look at what
+   * happens at minute 60: the JWT is a hard expiry with NO way to renew it.
+   * There was no refresh endpoint anywhere in the service. Every session ended
+   * by dying mid-use, on whatever screen the user happened to be on, and an
+   * active user got exactly the same treatment as an idle one.
    *
-   *   1. api-live on Render's free tier SLEEPS. A cold start answers 503 for
-   *      several seconds (measured: 6.6s, and a proxied call took 34s to fail
-   *      with UPSTREAM_UNAVAILABLE). Any 401-shaped answer during that window
-   *      logs the user out.
-   *   2. Even a perfect 60 minutes ends abruptly, mid-task, with "Session
-   *      expired" and a lost form.
+   * Worse, the drop was silent until the next request, so the moment it
+   * surfaced was usually a click that mattered - and losing a half-filled
+   * withdrawal form to "Session expired" feels like being logged out
+   * constantly even when the arithmetic says once an hour.
    *
-   * A refresh makes the session SLIDING: active use keeps it alive
-   * indefinitely, and it only lapses after a genuine idle period. That is
-   * what the user is asking for, and it is safer than simply setting
-   * USER_JWT_EXPIRES_MINUTES to a large number - a long-lived token cannot be
-   * cut short if it leaks, whereas a short token that is refreshed while in
-   * use stops being refreshed the moment the tab does.
+   * This makes the session SLIDING: while you are using Sivan, it keeps
+   * renewing. Deliberately NOT a longer fixed token - a 12-hour JWT is worse
+   * security for the same complaint, because a stolen token stays valid for 12
+   * hours. A sliding 60-minute window means an abandoned session still dies on
+   * schedule while an active one never interrupts you.
    *
-   * Deliberately NOT a separate refresh-token family: this re-signs from a
-   * still-valid access token, so a token that has already expired cannot be
-   * revived. The maximum a stolen token buys is one refresh window.
+   * Requires a currently VALID token. An expired one cannot be renewed here -
+   * that would make expiry meaningless - so the client must refresh before it
+   * lapses, which is what the frontend timer does.
    */
-  app.post('/api/auth/refresh', async (request, reply) => {
+  const refreshSession = async (request: any, reply: any) => {
     const header = request.headers.authorization;
     const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
     if (!token) {
@@ -103,15 +103,16 @@ export async function authRoutes(app: FastifyInstance) {
     }
     try {
       const payload = verifyUserJwt(token);
+      // Re-read the user so a deleted or disabled account cannot keep renewing
+      // a session forever. A token is a claim about who you were an hour ago.
       const user = await getUser(payload.sub);
-      // A user who has been deleted or disabled since the token was issued must
-      // not be handed a fresh one.
       if (!user) {
         return reply.code(401).send({ error: { code: 'invalid_token', message: 'Invalid or expired token' } });
       }
+      const refreshed = signUserJwt({ userId: payload.sub, email: payload.email, roles: payload.roles });
       return {
         data: {
-          token: signUserJwt({ userId: payload.sub, email: payload.email, roles: payload.roles }),
+          token: refreshed,
           expiresInMinutes: env.USER_JWT_EXPIRES_MINUTES,
           user,
         },
@@ -119,7 +120,20 @@ export async function authRoutes(app: FastifyInstance) {
     } catch {
       return reply.code(401).send({ error: { code: 'invalid_token', message: 'Invalid or expired token' } });
     }
-  });
+  };
+
+  app.post('/api/auth/session/refresh', refreshSession);
+
+  /**
+   * Alias for the route above.
+   *
+   * Two implementations of this endpoint were written concurrently and shipped
+   * under different paths - /api/auth/session/refresh and /api/auth/refresh.
+   * The logic is identical. Registering both means neither a deployed frontend
+   * nor a cached bundle can end up calling a 404 and silently losing its
+   * session, which is the exact failure this endpoint exists to prevent.
+   */
+  app.post('/api/auth/refresh', refreshSession);
 
   app.get('/api/auth/me', async (request, reply) => {
     const header = request.headers.authorization;

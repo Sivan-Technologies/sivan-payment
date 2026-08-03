@@ -1,117 +1,120 @@
 import { useEffect, useRef } from 'react';
 
 /**
- * How long a user may sit completely idle before being signed out.
+ * How long a session may sit untouched before it is ended.
  *
- * Raised from 30 minutes to 8 hours, and it now means something different.
- *
- * Before, this was 30 minutes of idle on top of a token that hard-expired
- * after 60 minutes whatever you were doing - so an active user was thrown out
- * mid-session at the hour mark regardless. With the sliding refresh below, an
- * ACTIVE session no longer ends at all; this is purely the "walked away"
- * timer. Eight hours is a working day: come back from lunch and you are still
- * signed in, leave it overnight and you are not.
+ * Separate from the token's own lifetime on purpose. The token is a security
+ * boundary - short, renewable, and stolen-token exposure is capped by it. This
+ * is a UX boundary: how long an unattended browser stays signed in.
  */
-const IDLE_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 
 /**
- * How often to renew the token while the user is active.
+ * How often to renew the token while the user is actually here.
  *
- * The token lives 60 minutes (USER_JWT_EXPIRES_MINUTES). Renewing every 15
- * leaves three chances to succeed before it lapses, which matters because
- * api-live sleeps on Render's free tier and a cold start can fail the first
- * attempt outright.
+ * Must be comfortably under USER_JWT_EXPIRES_MINUTES (60) so a renewal always
+ * happens with a valid token in hand - /api/auth/session/refresh deliberately
+ * refuses an already-expired one, because renewing a dead token would make
+ * expiry meaningless.
  */
-const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
-
-const ACTIVITY_KEY = 'sivan.lastActivityAt';
+const REFRESH_INTERVAL_MS = 20 * 60 * 1000;
 
 /**
- * KEEP AN ACTIVE SESSION ALIVE; ONLY END AN IDLE ONE.
+ * KEEP AN ACTIVE SESSION ALIVE; END AN ABANDONED ONE.
  *
- * The reported problem was being signed out "every few minutes". The token was
- * never the cause - measured against the deployed API, iat to exp is exactly
- * 3600 seconds. Two other things were:
+ * The user's complaint was being signed out constantly. The cause was not the
+ * idle timer - it was that the JWT had a HARD 60-minute expiry and the service
+ * had no refresh endpoint at all. Every session, active or not, died at the
+ * hour mark on whatever screen the user was on, and the first sign of it was a
+ * click that failed. Losing a half-filled form to "Session expired" feels far
+ * more frequent than once an hour.
  *
- *   1. api-live sleeps (Render free plan). A cold start answers 503, and a
- *      proxied call took 34 seconds to fail with UPSTREAM_UNAVAILABLE. Any
- *      401-shaped response in that window signed the user out of a session
- *      that was perfectly valid.
- *   2. Even a flawless 60 minutes ended abruptly, mid-task, with "Session
- *      expired" and whatever was on screen lost.
+ * Two independent mechanisms now, which is the point:
  *
- * So the session is now SLIDING: while the tab is being used the token is
- * renewed in the background and the user never sees an expiry. This is safer
- * than simply making USER_JWT_EXPIRES_MINUTES enormous - a long-lived token
- * cannot be cut short if it leaks, whereas a short one that is only refreshed
- * while in use stops being refreshed the moment the tab is closed.
+ *   - While you are USING Sivan, the token silently renews every 20 minutes,
+ *     so the session never interrupts you.
+ *   - If you WALK AWAY, the idle timer still signs you out after 60 minutes.
+ *
+ * Deliberately not solved by issuing a longer token. A 12-hour JWT would fix
+ * the same complaint by making a stolen token valid for 12 hours; a sliding
+ * 60-minute window does not.
  */
 export function useSessionActivity(
   authToken: string,
   logout: (message?: string) => void,
+  // Passed in rather than read from localStorage. A first draft looked up a
+  // 'sivan.apiBase' key that nothing in the app has ever written, so every
+  // refresh would have posted to a relative path on the frontend origin and
+  // silently 404'd - a refresh mechanism that never refreshed, and no error to
+  // show for it.
+  apiBase = '',
   onTokenRefreshed?: (token: string) => void
 ) {
   // Held in a ref so changing the callback identity does not tear down and
-  // restart the timers - which, with a callback defined inline in a component,
-  // would otherwise happen on every render and reset the refresh clock so it
-  // never actually fired.
+  // restart the timers - which would reset the idle clock on every render and
+  // silently disable the timeout.
   const refreshedRef = useRef(onTokenRefreshed);
   refreshedRef.current = onTokenRefreshed;
-
-  const tokenRef = useRef(authToken);
-  tokenRef.current = authToken;
 
   useEffect(() => {
     if (!authToken) return;
 
-    const updateActivity = () => localStorage.setItem(ACTIVITY_KEY, String(Date.now()));
-    const idleFor = () => Date.now() - Number(localStorage.getItem(ACTIVITY_KEY) || Date.now());
+    const updateActivity = () => localStorage.setItem('sivan.lastActivityAt', String(Date.now()));
+    const lastActivity = () => Number(localStorage.getItem('sivan.lastActivityAt') || Date.now());
 
     const checkActivity = () => {
-      if (idleFor() > IDLE_TIMEOUT_MS) logout('Signed out after 8 hours of inactivity.');
+      if (Date.now() - lastActivity() > IDLE_TIMEOUT_MS) {
+        logout('Signed out after 60 minutes of inactivity.');
+      }
     };
 
-    const refresh = async () => {
-      // Pointless while the user is away: it would keep a walked-away session
-      // alive forever, which is the opposite of what the idle timer is for.
-      if (idleFor() > IDLE_TIMEOUT_MS) return;
+    /**
+     * Renew, but only for someone who is still here.
+     *
+     * Guarded on recent activity so a tab left open overnight does not renew
+     * itself indefinitely - that would turn the idle timeout into a fiction,
+     * since the token would still be alive every time the check ran.
+     */
+    const refreshToken = async () => {
+      if (Date.now() - lastActivity() > IDLE_TIMEOUT_MS) return;
       if (document.visibilityState === 'hidden') return;
-
       try {
-        const base = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
-        const response = await fetch(`${base}/api/auth/refresh`, {
+        const response = await fetch(`${apiBase}/api/auth/session/refresh`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokenRef.current}` },
+          headers: { Authorization: `Bearer ${authToken}` },
         });
-        // A FAILED REFRESH IS NOT A LOGOUT.
-        //
-        // This is the exact bug being fixed: a sleeping backend answers 503 or
-        // times out, and treating that as "your session ended" is what threw
-        // people out. The existing token is still valid, so leave it alone and
-        // try again on the next tick.
         if (!response.ok) return;
-        const body = await response.json().catch(() => null);
-        const next = body?.data?.token;
-        if (typeof next === 'string' && next.length > 0) refreshedRef.current?.(next);
+        const json = await response.json().catch(() => null);
+        const next = json?.data?.token;
+        // Never log the user out on a failed refresh. A flaky network must not
+        // end a session that is otherwise perfectly valid - the token still
+        // has 40 minutes on it, and the next attempt can succeed.
+        if (typeof next === 'string' && next) refreshedRef.current?.(next);
       } catch {
-        // Network blip. Same reasoning: keep the session, retry later.
+        /* keep the existing token; see above */
       }
     };
 
     updateActivity();
     const events = ['click', 'keydown', 'mousemove', 'touchstart'];
     events.forEach((event) => window.addEventListener(event, updateActivity, { passive: true }));
-
     const idleInterval = window.setInterval(checkActivity, 60_000);
-    const refreshInterval = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS);
+    const refreshInterval = window.setInterval(refreshToken, REFRESH_INTERVAL_MS);
 
-    // Refresh on return to the tab too. A laptop that slept through the
-    // interval wakes with a token that may be minutes from expiry, and waiting
-    // up to another 15 minutes to notice is how the session dies anyway.
+    /**
+     * ALSO RENEW ON RETURN TO THE TAB.
+     *
+     * setInterval does not run reliably in a backgrounded tab, and does not
+     * run at all while a laptop is asleep. Without this, a machine that slept
+     * through the 20-minute tick wakes holding a token that may be minutes
+     * from expiring, and waits up to another 20 minutes before trying - by
+     * which time it has expired and the user is signed out. Which is exactly
+     * the "logged out again" experience being fixed.
+     */
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       updateActivity();
-      void refresh();
+      void refreshToken();
     };
     document.addEventListener('visibilitychange', onVisible);
 
@@ -121,5 +124,5 @@ export function useSessionActivity(
       window.clearInterval(idleInterval);
       window.clearInterval(refreshInterval);
     };
-  }, [authToken, logout]);
+  }, [apiBase, authToken, logout]);
 }

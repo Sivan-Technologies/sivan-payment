@@ -31,20 +31,38 @@ export async function buildApp() {
   }
 
   /**
-   * A SANDBOX BANK RESOLUTION CAN NEVER BE IDENTITY EVIDENCE IN PRODUCTION.
+   * A TEST-ONLY TRUST OVERRIDE MUST NOT BE ABLE TO REACH ANYWHERE REAL.
    *
-   * NGN_TRUST_SANDBOX_BANK_RESOLUTION makes a matched name auto-approve a
-   * payout account, which is what grants Level 1 and a 100,000 NGN ceiling.
-   * That is correct against a real bank and catastrophic against Breet's
-   * sandbox, which resolves ANY ten digits to the API key owner's name -
-   * so with it on in production, anyone could verify as anyone.
+   * NGN_TRUST_SANDBOX_BANK_RESOLUTION makes an unverifiable sandbox name match
+   * grant Level 1. Fine on a test rig; catastrophic anywhere real naira moves,
+   * because it would let anyone type any ten digits and inherit a verified
+   * account. Refused at BOOT rather than trusted to a comment: nothing about a
+   * wrongly-verified user looks wrong until the money is gone.
    *
-   * Refused at startup rather than ignored at runtime: a silently-disabled
-   * flag would leave an operator believing it was in effect.
+   * KEYED ON THE PROVIDER BEING LIVE, NOT ONLY ON A LABEL.
+   *
+   * Two versions of this guard were written independently and both were
+   * incomplete, in opposite directions:
+   *
+   *   APP_ENV only     - api-test runs APP_ENV=staging, verified by curling
+   *                      /health/operational and reading `environment: staging`
+   *                      back. A production-or-staging check would have
+   *                      crash-looped the exact rig the override exists for.
+   *                      An APP_ENV=production-only check misses a live BREET
+   *                      key deployed under any other label.
+   *   provider only    - misses a production deployment whose provider is
+   *                      momentarily pointed at a sandbox, which is precisely
+   *                      when a stray override would go unnoticed.
+   *
+   * The hazard is EITHER a live bank resolver OR a production deployment, so
+   * both are refused. Neither condition is true on api-test, which is what
+   * keeps the override usable where it is meant to be used.
    */
-  if (env.APP_ENV === 'production' && env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) {
+  const ngnRailIsLive = env.BREET_ENV === 'production' || env.PAJ_RAMP_ENV === 'production';
+  if ((ngnRailIsLive || env.APP_ENV === 'production') && env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) {
     throw new Error(
-      'NGN_TRUST_SANDBOX_BANK_RESOLUTION must not be set in production. It makes a sandbox bank lookup - which resolves any ten digits - grant Level 1 verification.'
+      'NGN_TRUST_SANDBOX_BANK_RESOLUTION must not be enabled against a live NGN provider or in production. ' +
+        'It makes an unverifiable sandbox bank resolution grant Level 1 verification.'
     );
   }
 
