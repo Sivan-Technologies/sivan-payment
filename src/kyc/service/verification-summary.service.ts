@@ -37,6 +37,7 @@ import {
   type RailFamily,
 } from '../types/verification.types.js';
 import { verificationPathFor } from './verification-path.js';
+import { getNgnControls } from '../../ngn/service/ngn-controls.service.js';
 import { db } from '../../database/json-database.js';
 import { notFound } from '../../shared/errors.js';
 
@@ -81,6 +82,78 @@ export interface VerificationSummary {
 
   windowDays: number;
   allowances: FlowAllowance[];
+
+  /**
+   * What the user can do NEXT to raise their level, if anything.
+   *
+   * Undefined at the top of the ladder - inviting an upgrade that cannot
+   * happen is a dead end. The frontend renders this verbatim rather than
+   * deciding for itself, because the ladder is the server's to own and two
+   * copies of it drift.
+   */
+  nextStep?: {
+    level: VerificationLevel;
+    label: string;
+    description: string;
+    /** Which flow completes it, so the UI knows which button to show. */
+    action: 'nin_bvn' | 'bridge_kyc' | 'contact_support';
+    available: boolean;
+  };
+}
+
+/**
+ * The rung above the one the user is on.
+ *
+ * Nigeria and everywhere else climb differently. A Nigerian reaches Level 1 on
+ * a bank check alone and goes to Level 2 with NIN/BVN; a Bridge user has no
+ * Level 1 at all - their document check takes them straight to Level 2, which
+ * is why a US user at Level 0 is offered identity verification and not a bank.
+ *
+ * `available: false` is deliberate and honest: NIN/BVN has no provider wired
+ * up yet (the identityVerificationEnabled admin control is off for MVP), so the UI states the
+ * next level exists and is coming rather than offering a button that leads
+ * nowhere. Silence would leave a Nigerian at 100% with no idea a higher
+ * ceiling exists.
+ */
+function nextStepFor(
+  path: 'ngn_bank' | 'bridge_kyc',
+  level: VerificationLevel,
+  ninBvnAvailable: boolean
+): VerificationSummary['nextStep'] {
+  if (level >= VerificationLevel.ENHANCED) return undefined;
+
+  if (level >= VerificationLevel.IDENTITY) {
+    return {
+      level: VerificationLevel.ENHANCED,
+      label: 'Level 3: Enhanced',
+      description:
+        'Higher limits for regular, larger volumes. Our team reviews these individually - contact support to start.',
+      action: 'contact_support',
+      available: true,
+    };
+  }
+
+  if (path === 'ngn_bank') {
+    return {
+      level: VerificationLevel.IDENTITY,
+      label: 'Level 2: Identity verified',
+      description:
+        'Add your NIN or BVN to raise your limit from ₦100,000 to ₦500,000 per 30 days.',
+      action: 'nin_bvn',
+      // No NIN/BVN provider is integrated yet. Stated, not hidden, and not
+      // offered as a button that cannot work.
+      available: ninBvnAvailable,
+    };
+  }
+
+  return {
+    level: VerificationLevel.IDENTITY,
+    label: 'Level 2: Identity verified',
+    description:
+      'Verify your identity with a government-issued ID and a selfie. Usually takes about three minutes.',
+    action: 'bridge_kyc',
+    available: true,
+  };
 }
 
 const LEVEL_LABELS: Record<number, string> = {
@@ -115,7 +188,7 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
   // the first paint is, on screen, indistinguishable from a summary that was
   // never fetched. Every await removed from this chain is one less chance of
   // showing a Nigerian the Bridge document flow.
-  const [state, overrides, usedNgn, ngnAccounts, bridgeAccounts] = await Promise.all([
+  const [state, overrides, usedNgn, ngnAccounts, bridgeAccounts, controls] = await Promise.all([
     getVerificationState(userId),
     listVerificationLimitOverrides(),
     getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS),
@@ -123,6 +196,9 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
     // One indexed lookup, not the whole database. See the comment on
     // findCustomerByUserId in postgres-database.ts for the measurement.
     db.listExternalAccountsByUser(userId),
+    // Whether NIN/BVN is even offerable. Read here rather than assumed,
+    // because turning the provider on must change the page with no deploy.
+    getNgnControls(),
   ]);
   const path = verificationPathFor(user.country);
 
@@ -180,6 +256,19 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
     // Bridge path when Bridge approved. Asking "is this user verified" without
     // reference to their path is what produced the original bug.
     pathComplete: path === 'ngn_bank' ? hasVerifiedNgnAccount : state.level >= VerificationLevel.IDENTITY,
+    /**
+     * IS THERE A HIGHER LEVEL, AND WHAT WOULD IT TAKE?
+     *
+     * The UI had no way to answer this, so a Nigerian who finished Level 1 saw
+     * a page that said 100% and stopped - with no hint that Level 2 exists or
+     * that it raises their ceiling from 100k to 500k. `allowances[].nextLevel`
+     * already carried the number, but nothing said what to DO about it, so the
+     * page could not offer a next step without hardcoding the ladder in the
+     * frontend - which is how the two drift apart.
+     *
+     * Stated by the server because the server owns the ladder.
+     */
+    nextStep: nextStepFor(path, state.level, controls.identityVerificationEnabled === true),
     hasPayoutAccount: hasVerifiedNgnAccount || hasBridgeAccount,
     hasPendingPayoutReview,
     windowDays: VOLUME_WINDOW_DAYS,

@@ -570,6 +570,23 @@ export interface VerificationSummary {
   hasPendingPayoutReview: boolean;
   windowDays: number;
   allowances: FlowAllowance[];
+  /**
+   * The rung above this one, decided by the SERVER.
+   *
+   * Rendered verbatim. The ladder differs by country - a Nigerian goes
+   * bank -> NIN/BVN, everyone else goes straight to documents - and keeping a
+   * second copy of that in the frontend is how the two drift apart.
+   *
+   * Undefined at the top, where there is nothing to offer.
+   */
+  nextStep?: {
+    level: number;
+    label: string;
+    description: string;
+    action: 'nin_bvn' | 'bridge_kyc' | 'contact_support';
+    /** False when the level exists but no provider is wired up yet. */
+    available: boolean;
+  };
 }
 
 /**

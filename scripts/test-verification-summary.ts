@@ -328,6 +328,66 @@ async function main() {
         String(allowance(res.body, 'offramp', 'foreign').limitNgn));
     }
 
+    console.log('\nTHE PAGE MUST BE ABLE TO SAY WHAT COMES NEXT');
+    {
+      /**
+       * A FINISHED LEVEL IS NOT A FINISHED LADDER.
+       *
+       * Caught in a browser: a Nigerian at Level 1 saw "100% complete" and
+       * nothing else. No mention that Level 2 exists, that it lifts the
+       * ceiling from 100k to 500k, or what it would take. The honest read of
+       * that screen is "this is as far as Sivan goes", and the ladder was
+       * visible only to whoever read the limits table.
+       *
+       * The frontend cannot compute this itself without keeping a second copy
+       * of the ladder - which is exactly how the two drift apart - so the
+       * server states it.
+       */
+      const climber = await signup('Samuel Udochukwu');
+      token = climber.token;
+      await call('PUT', `/api/users/${climber.user.id}/country`, { country: 'NG' });
+
+      const atZero = await call('GET', `/api/users/${climber.user.id}/verification-summary`);
+      check('a Nigerian at level 0 is pointed at level 2 as the next rung',
+        atZero.body.nextStep?.level === VerificationLevel.IDENTITY,
+        JSON.stringify(atZero.body.nextStep));
+      check('and it is described as NIN/BVN, not documents',
+        atZero.body.nextStep?.action === 'nin_bvn', atZero.body.nextStep?.action);
+      check('the description names the actual ceiling it unlocks',
+        /500,?000/.test(atZero.body.nextStep?.description ?? ''),
+        atZero.body.nextStep?.description);
+
+      /**
+       * AND IT IS HONEST ABOUT NOT BEING READY.
+       *
+       * No NIN/BVN provider is integrated - identityVerificationEnabled is off
+       * for MVP. Offering a button that leads nowhere is worse than saying
+       * "coming soon", because a user who clicks a dead button blames
+       * themselves. So the rung is STATED and marked unavailable.
+       */
+      check('but it is marked unavailable while no NIN/BVN provider exists',
+        atZero.body.nextStep?.available === false,
+        String(atZero.body.nextStep?.available));
+
+      console.log('\n  A BRIDGE USER CLIMBS A DIFFERENT LADDER');
+      const foreigner = await signup('Jonathan Benjamin Hart');
+      token = foreigner.token;
+      await call('PUT', `/api/users/${foreigner.user.id}/country`, { country: 'US' });
+      const usSummary = await call('GET', `/api/users/${foreigner.user.id}/verification-summary`);
+      check('a US user is pointed at level 2 as well',
+        usSummary.body.nextStep?.level === VerificationLevel.IDENTITY,
+        JSON.stringify(usSummary.body.nextStep));
+      check('but via DOCUMENTS, not NIN/BVN',
+        usSummary.body.nextStep?.action === 'bridge_kyc', usSummary.body.nextStep?.action);
+      check('and that path IS available today',
+        usSummary.body.nextStep?.available === true, String(usSummary.body.nextStep?.available));
+
+      // The two ladders must not be the same object with a different label -
+      // that would mean the country routing had collapsed.
+      check('the two paths genuinely differ',
+        atZero.body.nextStep?.action !== usSummary.body.nextStep?.action);
+    }
+
     console.log('\nTHE ENDPOINT IS PRIVATE');
     {
       const other = await signup('Nosy Person');

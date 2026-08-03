@@ -603,7 +603,25 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
           <div className="level-grid"><div className="active"><strong>Step 1</strong><span>Email confirmed</span></div><div className={identityDone ? 'active' : ''}><strong>Step 2</strong><span>{isNgnPath ? 'Bank verified' : 'Identity verified'}</span></div><div className={hasBank ? 'active' : ''}><strong>Step 3</strong><span>Payout ready</span></div></div>
           <div className="verification-steps-list">
             <VerificationStep done={emailDone} index={1} title="Email confirmed" sub="Signed in securely" action="Completed" />
-            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>{isNgnPath ? 'Bank verification' : 'Identity verification'}</strong><small>{isNgnPath ? 'Confirm a Nigerian bank account in your name. No documents, usually under a minute.' : 'Government-issued ID and selfie. Usually takes about 3 minutes.'}</small>{summary?.hasPendingPayoutReview && !identityDone && <small className="verification-pending-note">Your bank account is being checked by our team.</small>}</div>{!hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : /* Individual verification opens the modal, which asks for the country
+            {/* A STEP MARKED ✓ MUST NOT ALSO SAY "Start verification".
+ 
+                Reported from a real screen and reproduced in a browser: a
+                Nigerian at Level 1 saw this row rendered done - tick, greyed,
+                "Bank verified" in the stepper above - with a primary button
+                still reading "Start verification", sandwiched between two rows
+                that said "Completed". One screen, three contradictory claims.
+ 
+                The cause was that the label came from `kycActionLabel`, which
+                is computed purely from customer.kycStatus - a BRIDGE field. A
+                Nigerian verifying by bank check never has a Bridge customer,
+                so kycStatus is undefined forever and the label falls through
+                to its "nothing has happened yet" default no matter what the
+                user has actually completed.
+ 
+                identityDone comes from summary.pathComplete, which is the
+                server's answer for whichever path this user is on. When the
+                path is complete the step is finished, and it says so. */}
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>{isNgnPath ? 'Bank verification' : 'Identity verification'}</strong><small>{isNgnPath ? 'Confirm a Nigerian bank account in your name. No documents, usually under a minute.' : 'Government-issued ID and selfie. Usually takes about 3 minutes.'}</small>{summary?.hasPendingPayoutReview && !identityDone && <small className="verification-pending-note">Your bank account is being checked by our team.</small>}</div>{identityDone ? <button className="ghost-btn small" disabled>Completed</button> : !hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : /* Individual verification opens the modal, which asks for the country
    first and then routes: Nigeria to the bank-name check, everywhere else to
    Bridge. Business verification still uses the form below, because the modal
    has no customer-type step and a business cannot be verified by a personal
@@ -614,7 +632,56 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
                 never complete caps their progress permanently. */}
             {!isNgnPath && <VerificationStep done={customer?.tosStatus === 'approved'} index={3} title="Terms accepted" sub="Provider terms are accepted when required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />}
             <VerificationStep done={hasBank} index={isNgnPath ? 3 : 4} title="Payout bank" sub={isNgnPath ? 'Confirmed with your bank verification' : 'Add a bank when you are ready to sell crypto'} action={hasBank ? 'Completed' : 'Continue'} />
+            {/* WHAT COMES AFTER "100% COMPLETE".
+ 
+                A Nigerian who finished Level 1 saw a page that said 100% and
+                then stopped dead. Nothing on it mentioned that Level 2 exists,
+                that it lifts the ceiling from 100k to 500k, or what it would
+                take - so the honest read of the screen was "this is as far as
+                Sivan goes". The ladder was only ever visible to whoever read
+                the limits table.
+ 
+                Rendered from summary.nextStep so the ladder lives in one
+                place. When no provider is wired up for the next rung it says
+                so plainly rather than offering a button that goes nowhere - a
+                dead button is worse than a stated "coming soon", because the
+                user blames themselves for the click that did nothing. */}
+            {summary?.nextStep && identityDone && (
+              <div className="verification-step verification-next-step">
+                <span>{summary.nextStep.level}</span>
+                <div>
+                  <strong>{summary.nextStep.label}</strong>
+                  <small>{summary.nextStep.description}</small>
+                  {!summary.nextStep.available && (
+                    <small className="verification-pending-note">Coming soon — we will let you know the moment it opens.</small>
+                  )}
+                </div>
+                {summary.nextStep.action === 'contact_support'
+                  ? <button className="primary-btn small" onClick={onSupport}>Contact support</button>
+                  : <button className="primary-btn small" onClick={onStartVerification} disabled={!summary.nextStep.available || !canSubmitKyc}>{summary.nextStep.available ? 'Continue' : 'Coming soon'}</button>}
+              </div>
+            )}
           </div>
+          {/* A NIGERIAN MAY WANT THE DOCUMENT PATH TOO.
+ 
+              Country picks the DEFAULT path, not the only one. A Nigerian who
+              needs USD/GBP/EUR virtual accounts, or who wants the higher
+              ceiling without waiting for NIN/BVN, has to reach Bridge - and
+              there was no way to get there from this page. The modal already
+              lets any country be chosen; this is the door to it.
+ 
+              Only shown once the local path is done, so it is an upgrade
+              rather than a distraction from the faster check they should do
+              first. */}
+          {isNgnPath && identityDone && (
+            <div className="verification-alt-path">
+              <p className="muted">
+                Need USD, GBP or EUR accounts? You can also verify with a government-issued ID and selfie.
+                That is the same check international users take, and it unlocks foreign-currency rails.
+              </p>
+              <button className="ghost-btn small" onClick={onStartVerification} disabled={!canSubmitKyc}>Verify with ID instead</button>
+            </div>
+          )}
         </article>
         <div className="dashboard-side-stack">
           {/* The ceiling, straight from the server.

@@ -1839,6 +1839,33 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   display: block; margin-top: 4px; color: #fbbf24;
 }
 
+/* THE RUNG ABOVE THE ONE YOU ARE ON.
+   Tinted and dashed so it reads as an OPTIONAL next thing rather than an
+   outstanding task - a solid row here would make a finished page look
+   unfinished, which is the bug this was added to fix, in reverse. */
+.verification-next-step {
+  border-style: dashed;
+  border-color: rgba(52, 211, 153, 0.28);
+  background: rgba(52, 211, 153, 0.045);
+}
+.verification-next-step > span {
+  background: rgba(52, 211, 153, 0.14);
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+/* The door to the other verification path. Quiet on purpose: it is a genuine
+   option, not the recommended one, and it must not compete with the faster
+   local check a Nigerian should do first. */
+.verification-alt-path {
+  margin-top: 14px; padding: 13px 15px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: center; justify-content: space-between;
+}
+.verification-alt-path p { margin: 0; flex: 1 1 260px; font-size: 12.5px; line-height: 1.55; }
+
 /* Marks the country the edge detected. Sits alongside the Instant/ID-check
    tag rather than replacing it - one says what the path IS, the other says
    which row is probably you. */
