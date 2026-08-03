@@ -177,20 +177,49 @@ async function main() {
        * does not resolve. The user must be told to check the NUMBER and the
        * BANK - not that a provider is unavailable.
        */
-      const filled = await page.evaluate(() => {
+      /**
+       * PICK A BANK FIRST.
+       *
+       * The modal opens on the bank SEARCH step, so the account field does not
+       * exist yet. A first version looked for it immediately, did not find it,
+       * printed "skipping" and reported success - a test that quietly skips
+       * the one screen it was written for is worse than a failing one. The
+       * screenshot is what exposed it.
+       */
+      const setValue = (el, value) => {
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        const inputs = [...document.querySelectorAll('input')].filter((i) => i.offsetParent !== null);
-        const account = inputs.find((i) => /account/i.test(i.placeholder + i.name + (i.previousElementSibling?.innerText ?? '')))
-          ?? inputs.find((i) => i.inputMode === 'numeric' || i.type === 'tel');
-        if (!account) return false;
-        setter.call(account, '7061547698');
-        account.dispatchEvent(new Event('input', { bubbles: true }));
-        return true;
-      });
+        setter.call(el, value);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
 
-      if (!filled) {
-        console.log('       (account field not reachable in this modal state - skipping the type-in)');
-      } else {
+      await page.evaluate((fn) => {
+        const set = eval(`(${fn})`);
+        const search = [...document.querySelectorAll('input')].find((i) => /search/i.test(i.placeholder ?? ''));
+        if (search) set(search, 'Access');
+      }, setValue.toString());
+      await page.waitForTimeout(1800);
+      await page.evaluate(() => {
+        const row = [...document.querySelectorAll('button')].find((b) => /access bank/i.test(b.innerText));
+        row?.click();
+      });
+      await page.waitForTimeout(2500);
+      await shot('02b-bank-picked');
+
+      const filled = await page.evaluate((fn) => {
+        const set = eval(`(${fn})`);
+        const inputs = [...document.querySelectorAll('input')].filter((i) => i.offsetParent !== null);
+        const account = inputs.find((i) => /account/i.test(`${i.placeholder} ${i.name}`))
+          ?? inputs.find((i) => i.inputMode === 'numeric' || i.type === 'tel')
+          ?? inputs.find((i) => !/search/i.test(i.placeholder ?? ''));
+        if (!account) return false;
+        set(account, '7061547698');
+        return true;
+      }, setValue.toString());
+
+      check('the account number field is reachable after picking a bank', filled,
+        'could not find the account input');
+
+      if (filled) {
         await page.waitForTimeout(6000);
         await shot('03-bank-result');
         const errors = await visibleErrors();
