@@ -30,6 +30,25 @@ export async function buildApp() {
     );
   }
 
+  /**
+   * A SANDBOX BANK RESOLUTION MUST NEVER BE EVIDENCE IN PRODUCTION.
+   *
+   * NGN_TRUST_SANDBOX_BANK_RESOLUTION lets the test environment auto-approve a
+   * clean name match, which is the whole point of it. On production it would
+   * mean anyone typing ten digits gets Level 1, because a sandbox resolver
+   * invents a plausible person for any number.
+   *
+   * A failed deploy is the correct outcome. The alternative - honouring it
+   * quietly - is unauthenticated identity verification, and nobody would see
+   * it until money moved.
+   */
+  if (env.APP_ENV === 'production' && env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) {
+    throw new Error(
+      'NGN_TRUST_SANDBOX_BANK_RESOLUTION must be false in production. It would grant ' +
+        'Level 1 verification on a fabricated bank-name resolution.'
+    );
+  }
+
   await app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
   });

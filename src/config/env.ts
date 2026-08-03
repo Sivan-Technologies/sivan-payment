@@ -152,6 +152,24 @@ const envSchema = z.object({
   BREET_ENV: z.enum(['development', 'production']).default('development'),
   BREET_WEBHOOK_SECRET: z.string().optional().default(''),
   /**
+   * Treat a SANDBOX bank-name resolution as real evidence.
+   *
+   * OFF by default, and it must stay off in production. Breet's sandbox
+   * returns a plausible person for ANY account number - verified live:
+   * 0000000000 at UBA resolved to "Samuel Udochukwu" - so a name match there
+   * is a match against a fabrication, and honouring it would hand Level 1 to
+   * anyone who typed ten digits.
+   *
+   * It exists because the consequence of that gate is invisible and confusing
+   * on the test environment: every account, including a perfect match, is
+   * parked at pending_review with "needs a quick manual check", so the
+   * auto-approval path could not be exercised end to end at all. Turning this
+   * on for api-test makes the test environment behave like production.
+   *
+   * app.ts refuses to start if this is true while APP_ENV is production.
+   */
+  NGN_TRUST_SANDBOX_BANK_RESOLUTION: booleanFromEnv.default(false),
+  /**
    * How often to ask the NGN provider what it actually settled, in seconds.
    *
    * The webhook is not trustworthy enough to be the only path: six real

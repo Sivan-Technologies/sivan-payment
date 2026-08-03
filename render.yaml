@@ -271,6 +271,13 @@ services:
         sync: false
       - key: BREET_ENV
         value: development
+      # Sandbox bank resolutions count as real evidence HERE ONLY, so a clean
+      # name match auto-approves on the test environment exactly as it will in
+      # production. Without it every account - including a perfect match - is
+      # parked at pending_review and the auto-approval path cannot be tested.
+      # app.ts refuses to boot if this is true while APP_ENV is production.
+      - key: NGN_TRUST_SANDBOX_BANK_RESOLUTION
+        value: "true"
       # Blank on purpose. Breet's asset ids are Mongo ObjectIds, not the
       # SOL_USDC_JKVK-style identifiers in their docs, and they differ between
       # environments. The adapter resolves them at runtime from
@@ -528,6 +535,12 @@ services:
       # Breet before this environment can settle real naira.
       - key: BREET_ENV
         value: production
+      # NEVER true here. A sandbox resolver invents a plausible person for any
+      # ten digits, so honouring one would grant Level 1 to anybody. Stated
+      # explicitly rather than left to the default, and app.ts refuses to start
+      # if it is ever flipped.
+      - key: NGN_TRUST_SANDBOX_BANK_RESOLUTION
+        value: "false"
       # Resolved at runtime from GET /trades/assets. Breet's asset ids are
       # environment-specific ObjectIds, so a value pinned here would be wrong
       # in production even if it were right in sandbox.

@@ -161,6 +161,59 @@ console.log('\nONLY A FULL MATCH GRANTS LEVEL 1');
   check('mismatch does NOT grant', !nameMatchGrantsVerification('mismatch'));
 }
 
+console.log('\nAN OMITTED MIDDLE NAME IS THE SAME PERSON, NOT A REVIEW CASE');
+{
+  /**
+   * THE MOST COMMON SHAPE THERE IS, AND IT WAS BEING HELD.
+   *
+   * Caught on the deployed test app: a user declared "Jonathan Hart", the bank
+   * held "JONATHAN BENJAMIN HART", and the product told them their account
+   * "needs a quick manual check before your first naira payout - usually
+   * within a few hours". Nobody watches that queue, so "a few hours" means
+   * never. A first-and-last-name match with only a middle name unaccounted for
+   * is one person who did not type their middle name.
+   *
+   * The rule is POSITIONAL: the bank's FIRST and LAST tokens must both be
+   * accounted for. What is left over can then only be interior.
+   */
+  const middle = matchAccountName('Jonathan Hart', 'JONATHAN BENJAMIN HART');
+  check('an omitted middle name auto-approves', middle.verdict === 'match', middle.verdict);
+  check('and it says which name was extra',
+    middle.explanation.toLowerCase().includes('benjamin'), middle.explanation);
+  check('and it grants verification', nameMatchGrantsVerification(middle.verdict));
+
+  check('two omitted middle names still auto-approve',
+    matchAccountName('Chinedu Okeke', 'CHINEDU ADEYEMI TUNDE OKEKE').verdict === 'match');
+
+  check('a reordered name with an omitted middle still auto-approves',
+    matchAccountName('Samuel Udochukwu', 'UDOCHUKWU JOHN SAMUEL').verdict === 'match');
+
+  /**
+   * AND THE DANGEROUS DIRECTION IS UNCHANGED.
+   *
+   * An unexplained token at the START or END of the bank name is a surname or
+   * a leading given name, not a middle name. Sharing two common Nigerian names
+   * with a different surname is precisely the stranger's-account case this
+   * check exists to catch. These MUST still go to a human.
+   */
+  const trailing = matchAccountName('Sharafa Ogunmepon', 'OGUNMEPON SHARAFA ADEBAYO');
+  check('an unexplained TRAILING surname still goes to review',
+    trailing.verdict === 'review', trailing.verdict);
+  check('and it does NOT grant verification', !nameMatchGrantsVerification(trailing.verdict));
+
+  const leading = matchAccountName('Sharafa Ogunmepon', 'ADEBAYO SHARAFA OGUNMEPON');
+  check('an unexplained LEADING name still goes to review',
+    leading.verdict === 'review', leading.verdict);
+
+  // The two-token floor sits underneath all of this: a single shared very
+  // common first name can never reach the auto-approval branch, whatever the
+  // positions say.
+  check('a single shared first name is still not identity',
+    matchAccountName('Chinedu', 'CHINEDU').verdict === 'review');
+  check('one matched token with a middle name is still not enough',
+    matchAccountName('Chinedu', 'CHINEDU ADEYEMI OKEKE').verdict !== 'match');
+}
+
 console.log('\nA HUMAN CAN UNDERSTAND EVERY VERDICT');
 {
   // These land in a review queue that somebody has to work.

@@ -165,6 +165,17 @@ export async function resolveNgnBankAccount(
 
   const isProduction = (env.BREET_ENV ?? 'development') === 'production';
 
+  /**
+   * A sandbox resolution can be trusted ONLY where an operator has said so.
+   *
+   * See NGN_TRUST_SANDBOX_BANK_RESOLUTION in env.ts. Without this, every
+   * account on the test environment - including an exact name match - lands in
+   * pending_review, and the auto-approval path cannot be exercised at all.
+   * app.ts refuses to boot with this on in production.
+   */
+  const trustSandbox = env.NGN_TRUST_SANDBOX_BANK_RESOLUTION === true;
+  const resolutionIsEvidence = isProduction || trustSandbox;
+
   if (provider === 'breet') {
     let result: any;
     try {
@@ -187,7 +198,7 @@ export async function resolveNgnBankAccount(
       bankId,
       bankName: result.bankName,
       type: result.type,
-      trustworthy: isProduction,
+      trustworthy: resolutionIsEvidence,
     };
   }
 
@@ -220,7 +231,7 @@ export async function resolveNgnBankAccount(
       accountNumber,
       bankId,
       bankName: result?.bankName ?? result?.bank_name,
-      trustworthy: (env.PAJ_RAMP_ENV ?? 'staging') === 'production',
+      trustworthy: (env.PAJ_RAMP_ENV ?? 'staging') === 'production' || trustSandbox,
     };
   }
 
@@ -241,7 +252,7 @@ export async function resolveNgnBankAccount(
       bankName: bank.name,
       // Never true. A fabricated name is not evidence, and this is the flag
       // that stops a mock resolution from granting real Level 1.
-      trustworthy: false,
+      trustworthy: trustSandbox,
     };
   }
 

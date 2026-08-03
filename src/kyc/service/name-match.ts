@@ -152,12 +152,57 @@ export function matchAccountName(
   // An unexplained name on the BANK side is the risky direction - see above.
   const bankHasUnexplainedName = unmatchedBankTokens.length > 0;
 
-  if (score === 1 && enoughTokens && bankHasUnexplainedName) {
+  /**
+   * AN OMITTED MIDDLE NAME IS NOT A STRANGER'S ACCOUNT.
+   *
+   * Every unexplained bank token used to send the case to a human, which was
+   * too blunt in the single most common shape there is:
+   *
+   *   declared "Jonathan Hart"   bank "JONATHAN BENJAMIN HART"
+   *
+   * That is one person who did not type their middle name. It was being held
+   * for manual review, so an ordinary user with a perfectly matching account
+   * was told to wait "a few hours" before their first payout - which, with
+   * nobody watching the queue, means indefinitely.
+   *
+   * The safe distinction is POSITIONAL, not merely "how many tokens are
+   * unexplained":
+   *
+   *   FIRST and LAST token of the bank name both matched  ->  the unexplained
+   *   tokens can only be interior, i.e. middle names. The bank's own bracket
+   *   of the identity - what a Nigerian bank prints and what a human reads
+   *   first - is fully accounted for.
+   *
+   * Contrast the case this must NOT relax:
+   *
+   *   declared "Sharafa Ogunmepon"   bank "OGUNMEPON SHARAFA ADEBAYO"
+   *
+   * Here the bank's LAST token, "adebayo", is unexplained. A trailing
+   * unexplained token is a surname, and a shared first-and-middle with a
+   * different surname is exactly the different-person case this check exists
+   * to catch. Still a review.
+   *
+   * The two-token floor still applies underneath, so a single shared common
+   * first name can never reach here.
+   */
+  const bankFirst = bankTokens[0];
+  const bankLast = bankTokens[bankTokens.length - 1];
+  const bankBracketMatched = userSet.has(bankFirst) && userSet.has(bankLast);
+  const onlyInteriorUnexplained = bankHasUnexplainedName && bankBracketMatched;
+
+  if (score === 1 && enoughTokens && bankHasUnexplainedName && onlyInteriorUnexplained) {
+    verdict = 'match';
+    explanation =
+      `Every name on file matches, and the bank additionally holds ` +
+      `"${unmatchedBankTokens.join(', ')}" between the first and last name - an omitted ` +
+      `middle name. The first and last name the bank holds both match the name on file.`;
+  } else if (score === 1 && enoughTokens && bankHasUnexplainedName) {
     verdict = 'review';
     explanation =
       `The name on file matches, but the bank also holds ` +
-      `"${unmatchedBankTokens.join(', ')}" which was not declared. This is usually an ` +
-      `omitted middle name, but it can also be a different person who shares these names.`;
+      `"${unmatchedBankTokens.join(', ')}" which was not declared, including at the start ` +
+      `or end of the name. This can be an omitted name, but it can also be a different ` +
+      `person who shares these names.`;
   } else if (score === 1 && enoughTokens) {
     verdict = 'match';
     explanation = `Every name the bank holds matches the name on file (${matched.join(', ')}).`;
