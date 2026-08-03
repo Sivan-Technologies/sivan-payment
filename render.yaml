@@ -271,11 +271,13 @@ services:
         sync: false
       - key: BREET_ENV
         value: development
-      # Sandbox bank resolutions count as real evidence HERE ONLY, so a clean
-      # name match auto-approves on the test environment exactly as it will in
-      # production. Without it every account - including a perfect match - is
-      # parked at pending_review and the auto-approval path cannot be tested.
-      # app.ts refuses to boot if this is true while APP_ENV is production.
+      # TEST RIG ONLY, and refused at boot in production/staging.
+      #
+      # Breet's sandbox resolves ANY ten digits to a plausible name, so a name
+      # match there proves nothing and correctly does not grant Level 1. The
+      # side effect was that the auto-approve path could not be exercised or
+      # demonstrated anywhere except live - 38 perfect matches sat queued on
+      # api-test for review that had nothing to review.
       - key: NGN_TRUST_SANDBOX_BANK_RESOLUTION
         value: "true"
       # Blank on purpose. Breet's asset ids are Mongo ObjectIds, not the

@@ -150,25 +150,44 @@ const envSchema = z.object({
   BREET_APP_SECRET: z.string().optional().default(''),
   // Required header on every request; Breet rejects a missing or invalid value.
   BREET_ENV: z.enum(['development', 'production']).default('development'),
-  BREET_WEBHOOK_SECRET: z.string().optional().default(''),
   /**
-   * Treat a SANDBOX bank-name resolution as real evidence.
+   * TREAT SANDBOX BANK RESOLUTIONS AS TRUSTWORTHY EVIDENCE.
    *
-   * OFF by default, and it must stay off in production. Breet's sandbox
-   * returns a plausible person for ANY account number - verified live:
-   * 0000000000 at UBA resolved to "Samuel Udochukwu" - so a name match there
-   * is a match against a fabrication, and honouring it would hand Level 1 to
-   * anyone who typed ten digits.
+   * OFF by default, and it must stay off anywhere real money moves.
    *
-   * It exists because the consequence of that gate is invisible and confusing
-   * on the test environment: every account, including a perfect match, is
-   * parked at pending_review with "needs a quick manual check", so the
-   * auto-approval path could not be exercised end to end at all. Turning this
-   * on for api-test makes the test environment behave like production.
+   * Breet's sandbox returns a plausible name for ANY account number - verified
+   * live, just now: 0000000000, 1234567890 and 9999999999 at PalmPay all
+   * resolve to "Samuel Udochukwu". A name match against that proves nothing,
+   * so sandbox resolutions are marked untrustworthy and a clean match is sent
+   * to a human instead of granting Level 1.
    *
-   * app.ts refuses to start if this is true while APP_ENV is production.
+   * That is the right call, and it had an unintended consequence: on the test
+   * environment the auto-approve path became UNREACHABLE. Every perfect match
+   * queued for review - 38 of them, all "Samuel Udochukwu" vs "Samuel
+   * Udochukwu", score 1.0 - so the behaviour that will run in production was
+   * the one behaviour nobody could exercise or see.
+   *
+   * This switch makes that path testable WITHOUT weakening production, because
+   * turning it on is a deliberate, visible, per-environment act rather than a
+   * quiet relaxation of the rule.
+   *
+   * The receipts, taken live against Breet's sandbox:
+   *
+   *   PalmPay 8102524846 -> Samuel Udochukwu
+   *   PalmPay 0000000000 -> Samuel Udochukwu
+   *   PalmPay 1234567890 -> Samuel Udochukwu
+   *   PalmPay 9999999999 -> Samuel Udochukwu
+   *   Access  8102524846 -> Samuel Udochukwu   (any BANK id, too)
+   *
+   * Always the API key owner, whatever you ask for. That is why the gate
+   * exists and why this override must never reach anywhere real.
+   *
+   * REFUSED IN PRODUCTION, and against any live bank resolver. Enforced in
+   * app.ts at boot, not merely documented: a comment saying "do not set this
+   * in production" is not a control.
    */
   NGN_TRUST_SANDBOX_BANK_RESOLUTION: booleanFromEnv.default(false),
+  BREET_WEBHOOK_SECRET: z.string().optional().default(''),
   /**
    * How often to ask the NGN provider what it actually settled, in seconds.
    *

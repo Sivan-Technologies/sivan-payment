@@ -45,7 +45,18 @@ export function verifyUserJwt(token: string): UserJwtPayload {
     .createHmac('sha256', env.USER_JWT_SECRET)
     .update(`${encodedHeader}.${encodedPayload}`)
     .digest('base64url');
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new Error('Invalid token');
+  // crypto.timingSafeEqual throws a RangeError when the buffers differ in
+  // length, which would surface as a 500 instead of a 401 for any attacker
+  // supplying a truncated or padded signature. Compare lengths first, then run
+  // the constant-time comparison on equal-length buffers.
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (
+    signatureBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
+  ) {
+    throw new Error('Invalid token');
+  }
   const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as UserJwtPayload;
   const now = Math.floor(Date.now() / 1000);
   if (payload.exp <= now) throw new Error('Token expired');

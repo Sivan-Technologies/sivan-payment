@@ -210,11 +210,87 @@ export async function reviewNgnPayoutAccount(
 }
 
 /** The admin review queue: accounts a human still has to decide. */
+/**
+ * WHY IS THIS CASE HERE?
+ *
+ * Two completely different situations both land in this queue and they need
+ * completely different handling, but the row looked identical for both:
+ *
+ *   'name'        the bank's name did not cleanly match the declared one.
+ *                 A real judgement call - middle names, married names,
+ *                 transliterations, or a stranger's account.
+ *
+ *   'unverified_source'  the name matched PERFECTLY, and the only reason it is
+ *                 queued is that the resolution came from a sandbox that
+ *                 returns a plausible name for any ten digits. There is no
+ *                 judgement to make; an operator cannot learn anything by
+ *                 staring at "Samuel Udochukwu" vs "Samuel Udochukwu".
+ *
+ * On the test rig every single one of the 38 queued cases was the second kind,
+ * which makes the queue pure noise and trains operators to approve without
+ * looking - the exact habit that makes the first kind dangerous.
+ */
+export type PayoutReviewReason = 'name' | 'unverified_source';
+
+export function payoutReviewReasonFor(account: {
+  matchVerdict?: string;
+  resolutionTrustworthy?: boolean;
+}): PayoutReviewReason {
+  if (account.matchVerdict === 'match' && !account.resolutionTrustworthy) {
+    return 'unverified_source';
+  }
+  return 'name';
+}
+
 export async function listNgnPayoutAccountReviews() {
   const all = await db.listNgnPayoutAccounts();
   return all
     .filter((account) => account.status === 'pending_review')
     // Oldest first. A queue worked newest-first strands the cases that have
     // already waited longest, which are the users most likely to give up.
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .map((account) => ({
+      ...account,
+      reviewReason: payoutReviewReasonFor(account),
+      /**
+       * True only when an OPERATOR'S JUDGEMENT is what unblocks the user.
+       *
+       * 'unverified_source' cases are queued because the provider is a
+       * sandbox that resolves any ten digits - the two names are identical
+       * and no amount of looking at them helps. Counting those as work waiting
+       * on a person is what buries the cases that genuinely are.
+       */
+      needsHumanReview: payoutReviewReasonFor(account) === 'name',
+    }));
+}
+
+/**
+ * WHERE MANUAL REVIEW IS ACTUALLY NEEDED, as counts.
+ *
+ * The queue length alone is misleading: on a sandbox every account lands in
+ * it, so "38 waiting" can mean 38 blocked customers or one misconfigured
+ * provider. Those need completely different responses, so they are counted
+ * separately and the admin panel shows them separately.
+ */
+export async function getNgnPayoutReviewSummary() {
+  const queue = await listNgnPayoutAccountReviews();
+  const needsHuman = queue.filter((account) => account.needsHumanReview);
+  const blockedByConfig = queue.filter((account) => !account.needsHumanReview);
+  const oldest = needsHuman[0]?.createdAt;
+
+  return {
+    total: queue.length,
+    /** Cases an operator can actually decide. This is the number that matters. */
+    needsHumanReview: needsHuman.length,
+    /**
+     * Clean matches held only because the provider environment cannot be
+     * trusted. Cleared with NGN_TRUST_SANDBOX_BANK_RESOLUTION on a test rig or
+     * by pointing at a live provider - never by an operator clicking approve.
+     */
+    blockedByUntrustworthyResolution: blockedByConfig.length,
+    oldestPendingAt: oldest,
+    oldestPendingAgeHours: oldest
+      ? Math.floor((Date.now() - Date.parse(oldest)) / 3_600_000)
+      : 0,
+  };
 }

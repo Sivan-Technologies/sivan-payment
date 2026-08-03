@@ -360,22 +360,24 @@ export default function App() {
             continue;
           }
           /**
-           * ONLY AN EXPIRED OR INVALID TOKEN ENDS THE SESSION.
+           * ONLY A TOKEN THE SERVER REJECTED ENDS THE SESSION.
            *
-           * Every 401 used to log the user out. But a 401 is also what the API
-           * returns for "this endpoint needs auth and you sent none" - and
-           * several calls fire before or independently of the token, so an
-           * unrelated 401 tore down a perfectly good session. That is the
-           * "logged out every few minutes" behaviour: not the token expiring,
-           * a bystander request answering 401.
+           * Any 401 used to log the user out, and that is half of the
+           * "signed out every few minutes" report. api-live sleeps on
+           * Render's free tier: a cold start answers 503, and a proxied call
+           * was measured taking 34 seconds to fail with UPSTREAM_UNAVAILABLE.
+           * The gateway can return 401-shaped answers that have nothing to do
+           * with the credential, and destroying a valid session over
+           * infrastructure is how an hour-long token feels like minutes.
            *
-           * The backend distinguishes the two - `invalid_token` means the
-           * credential is bad, `auth_required` means none was supplied - so
-           * that distinction is honoured here rather than treating both as
-           * proof the session is dead.
+           * The server names the difference precisely, so use its code:
+           * auth_required and invalid_token mean the token is the problem.
+           * Anything else is infrastructure, and the session survives - the
+           * sliding refresh renews it once the backend is awake again.
            */
-          const errorCode = json?.error?.code;
-          if (response.status === 401 && authToken && errorCode !== 'auth_required') {
+          const authCode = json?.error?.code;
+          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required';
+          if (response.status === 401 && authToken && tokenIsRejected) {
             logout('Session expired. Please sign in again.');
           }
           const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
@@ -432,37 +434,12 @@ export default function App() {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
   }, [accounts]);
 
-  /**
-   * Renew the session token while the user is active.
-   *
-   * Deliberately a bare fetch rather than the `api` helper: `api` force-logs-
-   * out on 401, and a failed renewal must NOT do that on its own. A refresh can
-   * fail because the network blipped, and signing someone out for that is the
-   * exact behaviour being fixed here. A genuinely dead session ends via the
-   * idle timeout or the next real 401.
-   */
-  const refreshSession = useCallback(async (): Promise<string | null> => {
-    if (!authToken) return null;
-    try {
-      const response = await fetch(`${apiBase}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authToken}` },
-      });
-      if (!response.ok) return null;
-      const json = await response.json().catch(() => ({}));
-      const next = (json?.data ?? json)?.token;
-      return typeof next === 'string' && next ? next : null;
-    } catch {
-      return null;
-    }
-  }, [apiBase, authToken]);
-
-  const applyRefreshedToken = useCallback((token: string) => {
+  useSessionActivity(authToken, logout, apiBase, useCallback((token: string) => {
+    // Persist as well as set state: a reload must not drop back to the old
+    // token, which would expire on its original schedule and undo the refresh.
     localStorage.setItem('sivan.authToken', token);
     setAuthToken(token);
-  }, []);
-
-  useSessionActivity(authToken, logout, applyRefreshedToken, refreshSession);
+  }, []));
 
   const loadUserData = usePaymentDataLoader({
     userId: user?.id,
