@@ -15,6 +15,17 @@ import { useNotifications } from './hooks/useNotifications';
 import { useSessionActivity } from './hooks/useAuth';
 import { usePaymentDataLoader } from './hooks/usePaymentData';
 
+/**
+ * Server-enforced gap between OTP emails, mirrored here so the countdown tells
+ * the truth. The backend default is AUTH_OTP_RESEND_COOLDOWN_SECONDS=60; if
+ * that is ever tuned, this must move with it.
+ *
+ * One second of padding, because the server measures from when it STORED the
+ * challenge and the client from when it received the response - without it a
+ * click on the exact boundary still 400s.
+ */
+const OTP_RESEND_COOLDOWN_MS = 61_000;
+
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -615,7 +626,17 @@ export default function App() {
       setPendingFullName(body.fullName || '');
       setOtpCode('');
       setDevCode(result.devCode);
-      setResendAvailableAt(Date.now() + 30_000);
+      // MUST MATCH THE SERVER, WHICH IS THE ONLY REAL RULE.
+      //
+      // This was 30s while the backend enforces a 60s per-address cooldown
+      // (AUTH_OTP_RESEND_COOLDOWN_SECONDS). So the button re-enabled itself at
+      // 30s, the user clicked a control that said it was ready, and the API
+      // refused with "ask for another in 26 seconds". Caught in a browser on
+      // the deployed app - screenshot in e2e/shots/resend-mismatch.png.
+      //
+      // A countdown that lies is worse than no countdown: the user learns the
+      // button is unreliable rather than that they need to wait.
+      setResendAvailableAt(Date.now() + OTP_RESEND_COOLDOWN_MS);
       setTimeNow(Date.now());
       notify(authTab === 'signup' ? 'Verification code sent. Enter it to create your account.' : 'Login code sent. Enter it to continue.');
     } catch (error) {
@@ -644,7 +665,17 @@ export default function App() {
       });
       setOtpCode('');
       setDevCode(result.devCode);
-      setResendAvailableAt(Date.now() + 30_000);
+      // MUST MATCH THE SERVER, WHICH IS THE ONLY REAL RULE.
+      //
+      // This was 30s while the backend enforces a 60s per-address cooldown
+      // (AUTH_OTP_RESEND_COOLDOWN_SECONDS). So the button re-enabled itself at
+      // 30s, the user clicked a control that said it was ready, and the API
+      // refused with "ask for another in 26 seconds". Caught in a browser on
+      // the deployed app - screenshot in e2e/shots/resend-mismatch.png.
+      //
+      // A countdown that lies is worse than no countdown: the user learns the
+      // button is unreliable rather than that they need to wait.
+      setResendAvailableAt(Date.now() + OTP_RESEND_COOLDOWN_MS);
       setTimeNow(Date.now());
       notify('A new verification code has been sent.');
     } catch (error) {
