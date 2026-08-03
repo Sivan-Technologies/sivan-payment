@@ -30,6 +30,24 @@ export async function buildApp() {
     );
   }
 
+  /**
+   * A SANDBOX BANK RESOLUTION CAN NEVER BE IDENTITY EVIDENCE IN PRODUCTION.
+   *
+   * NGN_TRUST_SANDBOX_BANK_RESOLUTION makes a matched name auto-approve a
+   * payout account, which is what grants Level 1 and a 100,000 NGN ceiling.
+   * That is correct against a real bank and catastrophic against Breet's
+   * sandbox, which resolves ANY ten digits to the API key owner's name -
+   * so with it on in production, anyone could verify as anyone.
+   *
+   * Refused at startup rather than ignored at runtime: a silently-disabled
+   * flag would leave an operator believing it was in effect.
+   */
+  if (env.APP_ENV === 'production' && env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) {
+    throw new Error(
+      'NGN_TRUST_SANDBOX_BANK_RESOLUTION must not be set in production. It makes a sandbox bank lookup - which resolves any ten digits - grant Level 1 verification.'
+    );
+  }
+
   await app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
   });

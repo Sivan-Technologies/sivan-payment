@@ -63,13 +63,52 @@ export function payoutAccountStatusFor(
   verdict: 'match' | 'review' | 'mismatch',
   resolutionTrustworthy: boolean
 ): 'pending_review' | 'verified' | 'rejected' {
-  if (verdict === 'mismatch') return 'rejected';
-  if (!nameMatchGrantsVerification(verdict)) return 'pending_review';
+  return payoutAccountDecision(verdict, resolutionTrustworthy).status;
+}
+
+/**
+ * WHY an account ended where it did, not just where.
+ *
+ * "pending_review" alone cannot be acted on: a middle name the bank does not
+ * hold and an untrustworthy sandbox resolution are the same word and
+ * completely different problems - one needs an operator to read two names,
+ * the other needs an environment variable and no human judgement at all.
+ * The admin queue was showing both identically, so an operator could not tell
+ * which cases were even theirs to decide.
+ *
+ * A CLEAN MATCH IS AUTO-APPROVED. That is the whole point of the matcher, and
+ * it already worked; what did NOT work is that on sandbox `trustworthy` is
+ * always false, so every single account - including perfect matches - fell
+ * into review. See NGN_TRUST_SANDBOX_BANK_RESOLUTION.
+ */
+export function payoutAccountDecision(
+  verdict: 'match' | 'review' | 'mismatch',
+  resolutionTrustworthy: boolean
+): {
+  status: 'pending_review' | 'verified' | 'rejected';
+  reason: 'auto_verified' | 'name_needs_review' | 'name_mismatch' | 'resolution_untrustworthy';
+  /** True when a person must look. False when the blocker is configuration. */
+  needsHuman: boolean;
+} {
+  if (verdict === 'mismatch') {
+    return { status: 'rejected', reason: 'name_mismatch', needsHuman: false };
+  }
+  if (!nameMatchGrantsVerification(verdict)) {
+    return { status: 'pending_review', reason: 'name_needs_review', needsHuman: true };
+  }
   // A clean match on an untrustworthy resolution is not evidence. It goes to a
   // human rather than being rejected, because the USER did nothing wrong - the
   // environment did.
-  if (!resolutionTrustworthy) return 'pending_review';
-  return 'verified';
+  //
+  // needsHuman is FALSE here on purpose: no operator can resolve this by
+  // looking at it. The names match perfectly; the provider is a sandbox that
+  // would have returned that name for any ten digits. Only configuration
+  // fixes it, and putting it in the same queue as real judgement calls buries
+  // the cases that actually need a person.
+  if (!resolutionTrustworthy) {
+    return { status: 'pending_review', reason: 'resolution_untrustworthy', needsHuman: false };
+  }
+  return { status: 'verified', reason: 'auto_verified', needsHuman: false };
 }
 
 export async function saveNgnPayoutAccount(input: z.infer<typeof saveNgnPayoutAccountSchema>) {
@@ -88,7 +127,8 @@ export async function saveNgnPayoutAccount(input: z.infer<typeof saveNgnPayoutAc
   const resolved = await resolveNgnBankAccount(input.bankId, input.accountNumber, 'ngn');
 
   const match = matchAccountName(declaredName, resolved.accountName);
-  const status = payoutAccountStatusFor(match.verdict, resolved.trustworthy);
+  const decision = payoutAccountDecision(match.verdict, resolved.trustworthy);
+  const status = decision.status;
   const now = nowIso();
 
   const record: NgnPayoutAccountRecord = {
@@ -107,6 +147,11 @@ export async function saveNgnPayoutAccount(input: z.infer<typeof saveNgnPayoutAc
     unmatchedBankTokens: match.unmatchedBankTokens,
     resolutionTrustworthy: resolved.trustworthy,
     status,
+    // Persisted so the admin queue can separate "an operator must judge this"
+    // from "this environment cannot produce evidence", and so support can
+    // answer "why is mine still pending" without re-deriving it.
+    reviewReason: decision.reason,
+    needsHumanReview: decision.needsHuman,
     raw: resolved,
     createdAt: now,
     updatedAt: now
@@ -130,6 +175,8 @@ export async function saveNgnPayoutAccount(input: z.infer<typeof saveNgnPayoutAc
       verdict: match.verdict,
       score: match.score,
       status,
+      reviewReason: decision.reason,
+      needsHumanReview: decision.needsHuman,
       resolutionTrustworthy: resolved.trustworthy,
       explanation: match.explanation
     }
@@ -216,5 +263,55 @@ export async function listNgnPayoutAccountReviews() {
     .filter((account) => account.status === 'pending_review')
     // Oldest first. A queue worked newest-first strands the cases that have
     // already waited longest, which are the users most likely to give up.
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .map((account) => ({
+      ...account,
+      /**
+       * Derived for rows written before reviewReason existed, so the queue
+       * does not show a blank column for every historical case.
+       *
+       * A stored value always wins - re-deriving over the top would discard
+       * the decision actually taken at the time.
+       */
+      reviewReason:
+        account.reviewReason ??
+        (account.matchVerdict === 'match' && !account.resolutionTrustworthy
+          ? ('resolution_untrustworthy' as const)
+          : ('name_needs_review' as const)),
+      needsHumanReview:
+        account.needsHumanReview ??
+        !(account.matchVerdict === 'match' && !account.resolutionTrustworthy),
+    }));
+}
+
+/**
+ * WHERE MANUAL REVIEW IS ACTUALLY NEEDED.
+ *
+ * The queue length on its own is misleading. On a sandbox every account lands
+ * in it, including perfect matches that no operator can action, so a count of
+ * 40 can mean "40 people are blocked on you" or "your provider is a sandbox".
+ * Those need different responses, so they are counted separately.
+ */
+export async function getNgnPayoutReviewSummary() {
+  const queue = await listNgnPayoutAccountReviews();
+  const needsHuman = queue.filter((account) => account.needsHumanReview);
+  const blockedByConfig = queue.filter((account) => !account.needsHumanReview);
+  const oldest = needsHuman[0]?.createdAt;
+
+  return {
+    total: queue.length,
+    /** Cases an operator can actually decide. This is the number that matters. */
+    needsHumanReview: needsHuman.length,
+    /**
+     * Clean matches held only because the provider environment cannot be
+     * trusted. Fixed with NGN_TRUST_SANDBOX_BANK_RESOLUTION on test, or by
+     * pointing at a production provider - never by an operator clicking
+     * approve.
+     */
+    blockedByUntrustworthyResolution: blockedByConfig.length,
+    oldestPendingAt: oldest,
+    oldestPendingAgeHours: oldest
+      ? Math.floor((Date.now() - Date.parse(oldest)) / 3_600_000)
+      : 0,
+  };
 }

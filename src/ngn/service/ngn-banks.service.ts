@@ -163,7 +163,20 @@ export async function resolveNgnBankAccount(
     throw badRequest('A Nigerian account number is exactly 10 digits.');
   }
 
+  /**
+   * IS THIS RESOLUTION EVIDENCE ABOUT A PERSON, OR A SANDBOX ECHO?
+   *
+   * Only a production provider environment resolves a real account holder.
+   * Breet's sandbox returns the API key owner's name for ANY ten digits and
+   * ANY bank id - verified live, see NGN_TRUST_SANDBOX_BANK_RESOLUTION.
+   *
+   * The override exists so the Nigerian verification flow can be exercised
+   * end to end on test without every account falling into manual review. It
+   * is refused in production at startup, so it cannot be left on by accident
+   * where it would grant Level 1 to any ten digits.
+   */
   const isProduction = (env.BREET_ENV ?? 'development') === 'production';
+  const trustResolution = isProduction || env.NGN_TRUST_SANDBOX_BANK_RESOLUTION;
 
   if (provider === 'breet') {
     let result: any;
@@ -187,7 +200,7 @@ export async function resolveNgnBankAccount(
       bankId,
       bankName: result.bankName,
       type: result.type,
-      trustworthy: isProduction,
+      trustworthy: trustResolution,
     };
   }
 
@@ -220,7 +233,9 @@ export async function resolveNgnBankAccount(
       accountNumber,
       bankId,
       bankName: result?.bankName ?? result?.bank_name,
-      trustworthy: (env.PAJ_RAMP_ENV ?? 'staging') === 'production',
+      trustworthy:
+        (env.PAJ_RAMP_ENV ?? 'staging') === 'production' ||
+        env.NGN_TRUST_SANDBOX_BANK_RESOLUTION,
     };
   }
 
@@ -239,9 +254,18 @@ export async function resolveNgnBankAccount(
       accountNumber,
       bankId,
       bankName: bank.name,
-      // Never true. A fabricated name is not evidence, and this is the flag
-      // that stops a mock resolution from granting real Level 1.
-      trustworthy: false,
+      /**
+       * A fabricated name is not evidence, and this flag is what stops a mock
+       * resolution from granting real Level 1.
+       *
+       * The override is honoured here for the same reason it exists for Breet
+       * sandbox: without it the auto-approve path cannot be exercised at all,
+       * because NO test environment can produce a trustworthy resolution. It
+       * is refused in production at startup, and the mock provider is itself
+       * refused in production by test:no-mock-in-production - two independent
+       * locks on the same door.
+       */
+      trustworthy: env.NGN_TRUST_SANDBOX_BANK_RESOLUTION,
     };
   }
 

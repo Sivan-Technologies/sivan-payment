@@ -11,6 +11,7 @@ import {
   saveNgnPayoutAccountSchema,
   listNgnPayoutAccounts,
   listNgnPayoutAccountReviews,
+  getNgnPayoutReviewSummary,
   reviewNgnPayoutAccount,
   reviewNgnPayoutAccountSchema,
 } from '../service/ngn-payout-accounts.service.js';
@@ -140,6 +141,17 @@ export async function ngnRoutes(app: FastifyInstance) {
    */
   app.get('/api/admin/ngn/payout-accounts/reviews', async () => ({
     data: await listNgnPayoutAccountReviews(),
+  }));
+
+  /**
+   * Where manual review is actually needed, as counts.
+   *
+   * Separate from the queue itself because the queue length alone cannot tell
+   * an operator whether anyone is waiting on THEM: on a sandbox every account
+   * lands in it, perfect matches included.
+   */
+  app.get('/api/admin/ngn/payout-accounts/review-summary', async () => ({
+    data: await getNgnPayoutReviewSummary(),
   }));
 
   app.put('/api/admin/ngn/payout-accounts/:accountId/review', async (request) => {

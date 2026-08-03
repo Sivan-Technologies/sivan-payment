@@ -371,6 +371,17 @@ export interface NgnPayoutAccountRecord {
   /** False in sandbox, where any account number resolves to a plausible name. */
   resolutionTrustworthy: boolean;
   status: 'pending_review' | 'verified' | 'rejected';
+  /**
+   * WHY this status, so the admin queue can separate the two very different
+   * things that both read as 'pending_review':
+   *
+   *   name_needs_review        a person must compare two names
+   *   resolution_untrustworthy the provider is a sandbox that resolves any
+   *                            ten digits - no human judgement can fix it
+   */
+  reviewReason?: 'auto_verified' | 'name_needs_review' | 'name_mismatch' | 'resolution_untrustworthy';
+  /** True only when an operator's judgement is what unblocks the user. */
+  needsHumanReview?: boolean;
   reviewedBy?: string;
   reviewedAt?: string;
   reviewNote?: string;

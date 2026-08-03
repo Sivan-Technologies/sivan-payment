@@ -163,6 +163,33 @@ const envSchema = z.object({
    * in minutes, slow enough to be nothing to a partner API.
    */
   NGN_SETTLEMENT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
+  /**
+   * TREAT A SANDBOX BANK RESOLUTION AS REAL EVIDENCE.
+   *
+   * OFF by default, and it must stay off in production.
+   *
+   * Breet's development environment resolves ANY ten digits to a plausible
+   * name. Verified live, just now, against the real sandbox:
+   *
+   *   PalmPay 8102524846 -> Samuel Udochukwu
+   *   PalmPay 0000000000 -> Samuel Udochukwu
+   *   PalmPay 1234567890 -> Samuel Udochukwu
+   *   PalmPay 9999999999 -> Samuel Udochukwu
+   *   Access  8102524846 -> Samuel Udochukwu   (any BANK, too)
+   *
+   * It always returns the account holder of the API key. So on sandbox a
+   * "name match" is a match against a fixed string, and auto-approving on it
+   * would grant Level 1 - and a 100,000 NGN payout ceiling - to anyone who
+   * types ten digits.
+   *
+   * That is why every sandbox account lands in manual review, which is the
+   * behaviour being complained about. It is correct, but it makes the flow
+   * untestable end to end, so this switch exists to say "I know this
+   * environment lies, let matched accounts through anyway".
+   *
+   * Refused outright when APP_ENV is production - see buildApp().
+   */
+  NGN_TRUST_SANDBOX_BANK_RESOLUTION: booleanFromEnv.default(false),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),

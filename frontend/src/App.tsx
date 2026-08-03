@@ -359,7 +359,26 @@ export default function App() {
             await sleep(500 * attempt);
             continue;
           }
-          if (response.status === 401 && authToken) logout('Session expired. Please sign in again.');
+          /**
+           * ONLY AN ACTUALLY-INVALID TOKEN ENDS THE SESSION.
+           *
+           * Any 401 used to log the user out. But the gateway and a sleeping
+           * Render instance produce 401-shaped answers that have nothing to do
+           * with the token - and that is the "signed out every few minutes"
+           * complaint: a cold start took 34 seconds and returned
+           * UPSTREAM_UNAVAILABLE, and the session was destroyed over it.
+           *
+           * The server distinguishes these precisely, so trust its code:
+           * auth_required and invalid_token mean the credential is the
+           * problem. Anything else is infrastructure, and the session
+           * survives - the sliding refresh will renew it once the backend is
+           * awake.
+           */
+          const authCode = json?.error?.code;
+          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required';
+          if (response.status === 401 && authToken && tokenIsRejected) {
+            logout('Session expired. Please sign in again.');
+          }
           const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
           throw new Error(json?.error?.message || detailMessage || json?.message || 'Something went wrong. Please try again.');
         }
@@ -414,7 +433,15 @@ export default function App() {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
   }, [accounts]);
 
-  useSessionActivity(authToken, logout);
+  /**
+   * The sliding session. A renewed token replaces the stored one in place, so
+   * an active user is never signed out mid-task and never sees "Session
+   * expired" while they are still working.
+   */
+  useSessionActivity(authToken, logout, useCallback((token: string) => {
+    localStorage.setItem('sivan.authToken', token);
+    setAuthToken(token);
+  }, []));
 
   const loadUserData = usePaymentDataLoader({
     userId: user?.id,

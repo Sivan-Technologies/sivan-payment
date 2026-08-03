@@ -142,6 +142,9 @@ export interface SavedNgnPayoutAccount {
   matchExplanation?: string;
   resolutionTrustworthy: boolean;
   status: 'pending_review' | 'verified' | 'rejected';
+  /** Why it is in this status. Optional: rows predating the field have none. */
+  reviewReason?: 'auto_verified' | 'name_needs_review' | 'name_mismatch' | 'resolution_untrustworthy';
+  needsHumanReview?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -162,6 +165,23 @@ export function payoutAccountOutcomeMessage(account: SavedNgnPayoutAccount): {
       message:
         `That account is held by ${account.accountName}, which does not match your name. ` +
         `You can only pay out to an account in your own name.`,
+    };
+  }
+  /**
+   * WHY it is pending, because the two reasons need different words.
+   *
+   * "needs a quick manual check ... within a few hours" is a promise, and on
+   * a name-review case it is one a person can keep. On a case held because
+   * the provider environment cannot be trusted, nobody is coming: no operator
+   * can approve it, because the names DO match and the resolution is the
+   * problem. Telling that user to wait a few hours is simply false.
+   */
+  if (account.reviewReason === 'resolution_untrustworthy') {
+    return {
+      tone: 'pending',
+      message:
+        `Saved. ${account.accountName} matches your name, but bank verification is running ` +
+        `against a test provider on this environment, so it cannot be confirmed automatically.`,
     };
   }
   return {
