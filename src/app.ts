@@ -30,6 +30,41 @@ export async function buildApp() {
     );
   }
 
+  /**
+   * A TEST-ONLY TRUST OVERRIDE MUST NOT BE ABLE TO REACH PRODUCTION.
+   *
+   * NGN_TRUST_SANDBOX_BANK_RESOLUTION makes an unverifiable sandbox name match
+   * grant Level 1. That is fine on a test rig and catastrophic anywhere real
+   * naira moves - it would let anyone type any ten digits and inherit a
+   * verified account. Refusing at BOOT rather than trusting a comment, because
+   * the failure mode is silent: nothing about a wrongly-verified user looks
+   * wrong until money is gone.
+   */
+  /**
+   * KEYED ON THE PROVIDER BEING LIVE, NOT ON THE APP_ENV LABEL.
+   *
+   * The first version of this refused on APP_ENV production OR staging - and
+   * api-test runs APP_ENV=staging. It would have crash-looped the test rig on
+   * deploy, which is the exact environment the override exists for. Caught by
+   * curling /health/operational and reading `environment: staging` back,
+   * before shipping it.
+   *
+   * The real hazard is not a label, it is a live bank resolver. When
+   * BREET_ENV=production a genuine bank answers, `trustworthy` is already true
+   * on its own, and the override is therefore both pointless and dangerous -
+   * pointless because it changes nothing, dangerous because it would also
+   * apply to the mock provider if one were ever configured by mistake.
+   *
+   * So: refuse whenever the money rail is real.
+   */
+  const ngnRailIsLive = env.BREET_ENV === 'production' || env.PAJ_RAMP_ENV === 'production';
+  if (ngnRailIsLive && env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) {
+    throw new Error(
+      'NGN_TRUST_SANDBOX_BANK_RESOLUTION must not be enabled against a live NGN provider. ' +
+        'It makes an unverifiable sandbox bank resolution grant Level 1 verification.'
+    );
+  }
+
   await app.register(cors, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
   });

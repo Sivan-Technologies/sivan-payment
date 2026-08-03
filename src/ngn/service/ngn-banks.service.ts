@@ -163,7 +163,20 @@ export async function resolveNgnBankAccount(
     throw badRequest('A Nigerian account number is exactly 10 digits.');
   }
 
+  /**
+   * Is the name this resolution returns worth anything as identity evidence?
+   *
+   * Only in production, where a real bank answered. Breet's sandbox returns a
+   * plausible name for ANY ten digits - re-verified live against PalmPay:
+   * 0000000000, 1234567890 and 9999999999 all came back "Samuel Udochukwu".
+   *
+   * NGN_TRUST_SANDBOX_BANK_RESOLUTION overrides that on a test rig so the
+   * auto-approve path can actually be exercised. It is refused at boot in
+   * production and staging (see app.ts), so this cannot become a production
+   * relaxation by accident.
+   */
   const isProduction = (env.BREET_ENV ?? 'development') === 'production';
+  const resolutionIsEvidence = isProduction || env.NGN_TRUST_SANDBOX_BANK_RESOLUTION;
 
   if (provider === 'breet') {
     let result: any;
@@ -187,7 +200,7 @@ export async function resolveNgnBankAccount(
       bankId,
       bankName: result.bankName,
       type: result.type,
-      trustworthy: isProduction,
+      trustworthy: resolutionIsEvidence,
     };
   }
 
@@ -239,9 +252,17 @@ export async function resolveNgnBankAccount(
       accountNumber,
       bankId,
       bankName: bank.name,
-      // Never true. A fabricated name is not evidence, and this is the flag
-      // that stops a mock resolution from granting real Level 1.
-      trustworthy: false,
+      /**
+       * A fabricated name is not evidence, and this is the flag that stops a
+       * mock resolution from granting real Level 1.
+       *
+       * It honours NGN_TRUST_SANDBOX_BANK_RESOLUTION for one reason: without
+       * it, the auto-approve branch of payoutAccountStatusFor() cannot be
+       * reached by any automated test, because every test runs on the mock.
+       * An untestable branch is how the "clean match still queues" bug went
+       * unnoticed. The override is refused at boot in production and staging.
+       */
+      trustworthy: env.NGN_TRUST_SANDBOX_BANK_RESOLUTION,
     };
   }
 

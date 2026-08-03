@@ -150,6 +150,31 @@ const envSchema = z.object({
   BREET_APP_SECRET: z.string().optional().default(''),
   // Required header on every request; Breet rejects a missing or invalid value.
   BREET_ENV: z.enum(['development', 'production']).default('development'),
+  /**
+   * TREAT SANDBOX BANK RESOLUTIONS AS TRUSTWORTHY EVIDENCE.
+   *
+   * OFF by default, and it must stay off anywhere real money moves.
+   *
+   * Breet's sandbox returns a plausible name for ANY account number - verified
+   * live, just now: 0000000000, 1234567890 and 9999999999 at PalmPay all
+   * resolve to "Samuel Udochukwu". A name match against that proves nothing,
+   * so sandbox resolutions are marked untrustworthy and a clean match is sent
+   * to a human instead of granting Level 1.
+   *
+   * That is the right call, and it had an unintended consequence: on the test
+   * environment the auto-approve path became UNREACHABLE. Every perfect match
+   * queued for review - 38 of them, all "Samuel Udochukwu" vs "Samuel
+   * Udochukwu", score 1.0 - so the behaviour that will run in production was
+   * the one behaviour nobody could exercise or see.
+   *
+   * This switch makes that path testable WITHOUT weakening production, because
+   * turning it on is a deliberate, visible, per-environment act rather than a
+   * quiet relaxation of the rule.
+   *
+   * REFUSED IN PRODUCTION. Enforced in app.ts at boot, not merely documented:
+   * a comment saying "do not set this in production" is not a control.
+   */
+  NGN_TRUST_SANDBOX_BANK_RESOLUTION: booleanFromEnv.default(false),
   BREET_WEBHOOK_SECRET: z.string().optional().default(''),
   /**
    * How often to ask the NGN provider what it actually settled, in seconds.

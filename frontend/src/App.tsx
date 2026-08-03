@@ -414,7 +414,12 @@ export default function App() {
     localStorage.setItem('sivan.accounts', JSON.stringify(accounts));
   }, [accounts]);
 
-  useSessionActivity(authToken, logout);
+  useSessionActivity(authToken, logout, apiBase, useCallback((token: string) => {
+    // Persist as well as set state: a reload must not drop back to the old
+    // token, which would expire on its original schedule and undo the refresh.
+    localStorage.setItem('sivan.authToken', token);
+    setAuthToken(token);
+  }, []));
 
   const loadUserData = usePaymentDataLoader({
     userId: user?.id,

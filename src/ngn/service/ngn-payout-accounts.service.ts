@@ -210,11 +210,47 @@ export async function reviewNgnPayoutAccount(
 }
 
 /** The admin review queue: accounts a human still has to decide. */
+/**
+ * WHY IS THIS CASE HERE?
+ *
+ * Two completely different situations both land in this queue and they need
+ * completely different handling, but the row looked identical for both:
+ *
+ *   'name'        the bank's name did not cleanly match the declared one.
+ *                 A real judgement call - middle names, married names,
+ *                 transliterations, or a stranger's account.
+ *
+ *   'unverified_source'  the name matched PERFECTLY, and the only reason it is
+ *                 queued is that the resolution came from a sandbox that
+ *                 returns a plausible name for any ten digits. There is no
+ *                 judgement to make; an operator cannot learn anything by
+ *                 staring at "Samuel Udochukwu" vs "Samuel Udochukwu".
+ *
+ * On the test rig every single one of the 38 queued cases was the second kind,
+ * which makes the queue pure noise and trains operators to approve without
+ * looking - the exact habit that makes the first kind dangerous.
+ */
+export type PayoutReviewReason = 'name' | 'unverified_source';
+
+export function payoutReviewReasonFor(account: {
+  matchVerdict?: string;
+  resolutionTrustworthy?: boolean;
+}): PayoutReviewReason {
+  if (account.matchVerdict === 'match' && !account.resolutionTrustworthy) {
+    return 'unverified_source';
+  }
+  return 'name';
+}
+
 export async function listNgnPayoutAccountReviews() {
   const all = await db.listNgnPayoutAccounts();
   return all
     .filter((account) => account.status === 'pending_review')
     // Oldest first. A queue worked newest-first strands the cases that have
     // already waited longest, which are the users most likely to give up.
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .map((account) => ({
+      ...account,
+      reviewReason: payoutReviewReasonFor(account),
+    }));
 }
