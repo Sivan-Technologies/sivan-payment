@@ -306,3 +306,53 @@ export type UserTwoFactorStatus = {
 };
 
 
+
+/**
+ * NOTHING ABOUT OUR PLUMBING REACHES A TOAST.
+ *
+ * A user on production, entering a bank account on their phone, was shown:
+ *
+ *   "Bank verification is unavailable right now (provider: breet).
+ *    Breet: failed to validate bank account."
+ *
+ * The server-side cause is fixed at its source and there is a sweep in the
+ * API's error handler. This is the third layer, and it exists because the
+ * frontend echoes `error.message` straight into a toast in twenty-three
+ * places: any one of them can surface a string nobody vetted - from an older
+ * API still running, from a proxy, or from a browser-generated network error.
+ *
+ * Belt and braces on purpose. A leak here is seen by a customer, and the cost
+ * of one redundant check is nothing.
+ */
+const LEAKY_TERMS = [
+  'breet', 'bridge', 'pajramp', 'paj ramp', 'privy', 'resend', 'nomba',
+  'eversend', 'linkio', 'alchemy', 'neon', 'render', 'sumsub', 'persona',
+  'provider:', 'api key', 'app_secret', 'app secret', 'econnrefused',
+  'enotfound', 'etimedout', 'postgres', 'cannot read properties',
+  'undefined is not', 'internal server error',
+];
+
+/** True when a message names a provider or an internal. */
+export function messageLeaksInternals(message: string): boolean {
+  const text = String(message ?? '').toLowerCase();
+  return LEAKY_TERMS.some((term) =>
+    term.endsWith(':') || term.includes(' ') ? text.includes(term) : new RegExp(`\\b${term}\\b`).test(text)
+  );
+}
+
+/**
+ * The sentence a user actually sees.
+ *
+ * A leaking message is replaced wholesale rather than trimmed: a string that
+ * mentions our provider was not written for a customer, so no amount of
+ * editing turns it into a good one. An empty or absent message gets the same
+ * treatment, because a blank red box is worse than a plain sentence.
+ */
+export function userFacingMessage(message: unknown): string {
+  const text = String((message as Error)?.message ?? message ?? '').trim();
+  if (!text) return 'Something went wrong. Please try again.';
+  if (messageLeaksInternals(text)) {
+    return 'We could not complete that request. Please check your details and try again.';
+  }
+  return text;
+}

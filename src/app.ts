@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { env } from './config/env.js';
 import { registerRoutes } from './api/routes.js';
 import { AppError } from './shared/errors.js';
+import { safeUserMessage } from './shared/user-message.js';
 import { captureError } from './monitoring/sentry.js';
 import { verifyUserJwt } from './auth/jwt.js';
 import { checkRateLimit } from './shared/rate-limit.js';
@@ -240,13 +241,33 @@ export async function buildApp() {
     (request as any).adminActor = { role: role || 'admin_api_key', email: email || undefined };
   });
 
+  /**
+   * THE LAST PLACE A LEAK CAN BE STOPPED.
+   *
+   * A user on production was shown "Bank verification is unavailable right now
+   * (provider: breet). Breet: failed to validate bank account." - our supply
+   * chain, an outage claim that was false, and nothing they could act on.
+   *
+   * That specific message is fixed at its source. This is the net underneath:
+   * every error leaving the API is swept for provider names and internals
+   * before it is serialised, so the NEXT one nobody thought about is caught
+   * too. The raw message still reaches the log and Sentry, which is where an
+   * engineer needs it.
+   *
+   * Deliberately applied to the message only, never to `code` - clients switch
+   * on the code, and rewriting it would break the frontend's own handling.
+   */
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof AppError) {
       if (error.statusCode >= 500) {
         captureError(error, { requestId: request.id, url: request.url, method: request.method, code: error.code, details: error.details });
       }
       request.log.warn({ error: error.message, code: error.code, details: error.details });
-      return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, details: error.details } });
+      const safe = safeUserMessage(error.message, error.statusCode);
+      if (safe !== error.message) {
+        request.log.error({ raw: error.message, url: request.url }, 'error message leaked internals and was rewritten');
+      }
+      return reply.code(error.statusCode).send({ error: { code: error.code, message: safe, details: error.details } });
     }
 
     const err = error as Error & { statusCode?: number };
@@ -256,7 +277,7 @@ export async function buildApp() {
     return reply.code(statusCode).send({
       error: {
         code: statusCode === 500 ? 'internal_server_error' : 'request_error',
-        message: statusCode === 500 ? 'Internal server error' : err.message
+        message: statusCode === 500 ? 'Internal server error' : safeUserMessage(err.message, statusCode)
       }
     });
   });

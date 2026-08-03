@@ -1,5 +1,6 @@
 import { env } from '../../config/env.js';
 import { badRequest, serviceUnavailable } from '../../shared/errors.js';
+import { bankResolutionMessage } from '../../shared/user-message.js';
 import { BreetNgnProvider } from '../provider/breet.provider.js';
 import { PajNgnProvider } from '../provider/paj.provider.js';
 import type { NgnProviderName } from '../types/ngn.types.js';
@@ -186,16 +187,31 @@ export async function resolveNgnBankAccount(
     try {
       result = await new BreetNgnProvider().verifyBankAccount(bankId, accountNumber, currency);
     } catch (error: any) {
-      // Same reasoning as the paj branch: a credential or outage problem is
-      // ours, and saying "internal server error" sends the user to re-check
-      // digits that were never wrong.
-      const reason = String(error?.message ?? error);
-      throw badRequest(
-        `Bank verification is unavailable right now (provider: breet). ${reason}`.slice(0, 300)
-      );
+      /**
+       * NEVER HAND THE UPSTREAM'S WORDS TO THE USER.
+       *
+       * This used to say, on a real phone, on production:
+       *
+       *   "Bank verification is unavailable right now (provider: breet).
+       *    Breet: failed to validate bank account."
+       *
+       * It named our provider, it blamed an outage for what was actually a
+       * declined account number, and it gave the user nothing to act on. The
+       * upstream was up - it had answered, and its answer was "no".
+       *
+       * bankResolutionMessage() separates those two cases: their-fault-about-
+       * the-user gets "check the number and the bank", ours gets "this is on
+       * our side". The raw text is logged, where it is useful, and dropped
+       * from the response, where it is not.
+       */
+      // Logged with the raw upstream text, which is exactly where it belongs.
+      console.warn('[ngn-banks] resolution failed', { bankId, reason: String(error?.message ?? error) });
+      throw badRequest(bankResolutionMessage(error));
     }
     if (!result?.accountName) {
-      throw badRequest('That account could not be verified. Check the number and bank.');
+      throw badRequest(
+        'We could not confirm that account. Check the account number and that you picked the right bank, then try again.'
+      );
     }
     return {
       accountName: result.accountName,
@@ -222,14 +238,14 @@ export async function resolveNgnBankAccount(
     try {
       result = await new PajNgnProvider().resolveBankAccount(bankId, accountNumber);
     } catch (error: any) {
-      const reason = String(error?.message ?? error);
-      throw badRequest(
-        `Bank verification is unavailable right now (provider: paj). ${reason}`.slice(0, 300)
-      );
+      // Same rule as the Breet branch above: the upstream's words, and its
+      // name, stay in the log.
+      console.warn('[ngn-banks] resolution failed', { bankId, reason: String(error?.message ?? error) });
+      throw badRequest(bankResolutionMessage(error));
     }
     const accountName = result?.accountName ?? result?.account_name ?? result?.name;
     if (!accountName) {
-      throw badRequest('That account could not be verified. Check the number and bank.');
+      throw badRequest('We could not confirm that account. Check the account number and that you picked the right bank, then try again.');
     }
     return {
       accountName,
@@ -248,7 +264,7 @@ export async function resolveNgnBankAccount(
     // resolves anything, and copying that here would mean the mock could not
     // reproduce the "account does not exist" case at all.
     if (!accountName) {
-      throw badRequest('That account could not be verified. Check the number and bank.');
+      throw badRequest('We could not confirm that account. Check the account number and that you picked the right bank, then try again.');
     }
     return {
       accountName,
