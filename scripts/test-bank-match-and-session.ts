@@ -316,6 +316,36 @@ async function main() {
       check('refresh with a tampered signature is refused',
         forged.status === 401, String(forged.status));
 
+      /**
+       * A WRONG-LENGTH SIGNATURE MUST BE A 401, NOT A 500.
+       *
+       * crypto.timingSafeEqual throws RangeError when the buffers differ in
+       * length, so a truncated or padded signature threw rather than returning
+       * false. Length-guarded upstream in f862b03.
+       *
+       * HONEST SCOPE, because I checked and the tempting claim is wrong: this
+       * does NOT currently prove the guard is load-bearing. All three callers
+       * of verifyUserJwt - app.ts:198 and auth.routes.ts:105/130 - wrap it in
+       * `try { } catch { 401 }`, so the RangeError was already being converted
+       * into the same 401 and reverting f862b03 leaves this suite green. I
+       * verified that by actually reverting it rather than assuming.
+       *
+       * It is kept because the BEHAVIOUR is what matters and must not regress:
+       * the day someone adds a fourth caller without a catch, or narrows one
+       * of those catches to `instanceof Error && message === 'Invalid token'`,
+       * this turns into a 500 and this assertion is what notices.
+       *
+       * Also note the neighbouring fixture above is 43 a's - exactly the
+       * length of a real base64url HMAC-SHA256 signature - so it takes the
+       * equal-length path. These two deliberately do not.
+       */
+      for (const badSignature of ['short', 'a'.repeat(200)]) {
+        const wrongLength = await call('POST', '/api/auth/session/refresh', undefined,
+          `${header}.${payload}.${badSignature}`);
+        check(`a ${badSignature.length}-char signature is rejected, not a 500`,
+          wrongLength.status === 401, String(wrongLength.status));
+      }
+
       // An EXPIRED token must not be renewable, or expiry means nothing.
       const { signUserJwt } = await import('../src/auth/jwt.js');
       const realToken = signUserJwt({ userId: user.userId, email: user.email });
