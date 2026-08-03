@@ -176,7 +176,36 @@ export async function ngnRoutes(app: FastifyInstance) {
   // shapes never reach the wrong verifier. Breet's verifyWebhook checks the
   // x-webhook-secret header and then re-fetches the transaction from Breet, so
   // a forged amount in the body cannot be credited.
-  app.post('/api/webhooks/breet', async (request) => ({ data: await recordNgnWebhook('breet', request.body, request.headers) }));
+  /**
+   * Breet webhooks, plus the dashboard's URL-verification ping.
+   *
+   * SAVING A WEBHOOK URL IN BREET'S DASHBOARD POSTS TO IT AND DEMANDS A 200.
+   *
+   * That ping carries no `x-webhook-secret` - the secret does not exist yet at
+   * the point you are configuring the URL - and it carries no event body. So
+   * verifyWebhook() correctly rejected it with 403 and the dashboard refused
+   * to save, reporting "Webhook URL must acknowledge the verification request
+   * with a 200 response".
+   *
+   * A verification ping is recognised by having NO event and NO id. It is
+   * acknowledged and nothing else: nothing is stored, no transfer is touched,
+   * no balance moves. A payload that carries an event still goes through the
+   * full secret check and the fetch-by-id confirmation, so this does not
+   * weaken the path that actually credits money - which is the only thing
+   * that matters here.
+   *
+   * Deliberately NOT keyed on "the secret is missing". That would let anyone
+   * who omits the header get a 200, which is exactly the shape of the bug
+   * being avoided.
+   */
+  app.post('/api/webhooks/breet', async (request) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const isVerificationPing = !body.event && !body.id;
+    if (isVerificationPing) {
+      return { data: { acknowledged: true, verification: true } };
+    }
+    return { data: await recordNgnWebhook('breet', request.body, request.headers) };
+  });
 
   /**
    * Which networks a user may actually pick, per direction.
