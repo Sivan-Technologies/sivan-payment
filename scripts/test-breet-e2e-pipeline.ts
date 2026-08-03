@@ -196,9 +196,18 @@ async function main() {
       const transfer = transfers.find((t) => t.id === transferId);
       check('the transfer advances past awaiting_crypto_deposit',
         transfer?.status !== 'awaiting_crypto_deposit', String(transfer?.status));
-      check('and reaches a settled state',
-        ['completed', 'settled', 'processing', 'payout_pending'].includes(String(transfer?.status)),
-        String(transfer?.status));
+      /**
+       * SETTLEMENT_PROCESSING, AND DELIBERATELY NOT 'completed'.
+       *
+       * This used to accept 'completed' among several statuses, which meant it
+       * would have passed whether or not the trade/withdrawal distinction was
+       * respected - a permissive assertion that could not fail. A completed
+       * TRADE means Breet converted the crypto into its own naira wallet; only
+       * `withdrawal.completed` means the money reached the user's bank.
+       * Asserted exactly, so conflating them fails here.
+       */
+      check('a completed trade reaches settlement_processing',
+        transfer?.status === 'settlement_processing', String(transfer?.status));
 
       const listed = await call('GET', `/api/users/${userId}/ngn-transfers`);
       const mine = (listed.body as any[]).find((t) => t.id === transferId);
@@ -255,6 +264,11 @@ async function main() {
       // hours, so a stale 'processing' arriving after 'completed' is routine -
       // and showing a user their finished payout had reverted to in-progress
       // would generate a support ticket for a transfer that already settled.
+      // Finish the payout properly first, with the withdrawal event that
+      // actually pays the bank - otherwise "cannot rewind a COMPLETED
+      // transfer" is tested against a transfer that was never completed.
+      await deliverWebhook({ event: 'withdrawal.completed', id: `wd_${providerRef}`,
+        status: 'completed', trade: providerRef, amount: 40125 });
       const settled = (await db.listNgnTransfers()).find((t) => t.id === transferId);
       check('the transfer is terminal before the stale retry',
         settled?.status === 'completed', String(settled?.status));

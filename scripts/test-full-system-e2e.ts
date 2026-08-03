@@ -198,11 +198,35 @@ async function main() {
       });
       check('a genuine webhook is accepted', good.status === 200 || good.status === 201, String(good.status));
 
+      const converted = (await db.listNgnTransfers()).find((t) => t.id === ngTransferId);
+      // A completed TRADE is the crypto becoming naira inside Breet. The bank
+      // has not been paid until withdrawal.completed, which is a separate
+      // event carrying the account number and the payout fee.
+      check('a completed trade reaches settlement_processing',
+        converted?.status === 'settlement_processing', String(converted?.status));
+
+      const payout = await webhook({
+        event: 'withdrawal.completed', id: `wd_${ngProviderRef}`, status: 'completed',
+        trade: ngProviderRef, amount: 40125,
+      });
+      check('the payout webhook is accepted', payout.status === 200 || payout.status === 201, String(payout.status));
+
       const settled = (await db.listNgnTransfers()).find((t) => t.id === ngTransferId);
-      check('the transfer settles', settled?.status === 'completed', String(settled?.status));
+      check('and the withdrawal completes the transfer', settled?.status === 'completed', String(settled?.status));
+      /**
+       * The WITHDRAWAL's naira figure wins, and rightly so: it is the amount
+       * that actually left for the bank, net of the payout fee, whereas the
+       * trade's figure is what Breet credited to its own wallet. Compared
+       * numerically because the two events type it differently - the trade
+       * sends a string, the withdrawal a number - and asserting on the string
+       * form was asserting on which event happened to write last.
+       */
       check("Breet's own figures are retained for reconciliation",
-        (settled?.metadata as any)?.settledFiatAmount === '40125',
+        Number((settled?.metadata as any)?.settledFiatAmount) === 40125,
         String((settled?.metadata as any)?.settledFiatAmount));
+      check('and the crypto amount from the trade is not erased by the withdrawal',
+        String((settled?.metadata as any)?.settledCryptoAmount) === '25',
+        String((settled?.metadata as any)?.settledCryptoAmount));
 
       const listed = await call('GET', `/api/users/${ngId}/ngn-transfers`);
       check('the user sees it as completed',

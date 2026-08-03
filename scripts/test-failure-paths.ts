@@ -246,15 +246,40 @@ async function main() {
       check('the first delivery is accepted', first.status === 200 || first.status === 201);
 
       const afterFirst = (await db.listNgnTransfers()).find((t: any) => t.id === transferId);
-      check('the transfer settles', afterFirst?.status === 'completed', String(afterFirst?.status));
+      /**
+       * A COMPLETED TRADE IS NOT A COMPLETED PAYOUT.
+       *
+       * This asserted 'completed' and was WRONG - it encoded the bug rather
+       * than the requirement. `trade.completed` means Breet converted the
+       * crypto and credited its OWN naira wallet; the money has not reached
+       * the user's bank until `withdrawal.completed`, a separate event with a
+       * separate id. Verified against the real settlement: Breet sent both,
+       * and the withdrawal carried the PalmPay account and a 50 NGN fee the
+       * trade event knew nothing about.
+       *
+       * Telling a user "completed" at this point is telling them money has
+       * landed when, on an account without autoSettlement, it may never leave
+       * Breet at all.
+       */
+      check('a completed TRADE moves to settlement_processing, not completed',
+        afterFirst?.status === 'settlement_processing', String(afterFirst?.status));
 
       // Breet retries for up to 24 hours. Duplicates are routine, not
       // exceptional, and double-crediting is the worst outcome in the system.
       for (let i = 0; i < 5; i++) await webhook(payload);
       const afterRetries = (await db.listNgnTransfers()).find((t: any) => t.id === transferId);
       check('five duplicate deliveries change nothing',
-        afterRetries?.status === 'completed' && afterRetries?.updatedAt === afterFirst?.updatedAt,
+        afterRetries?.status === 'settlement_processing' && afterRetries?.updatedAt === afterFirst?.updatedAt,
         `${afterRetries?.status} @ ${afterRetries?.updatedAt}`);
+
+      // AND THE WITHDRAWAL IS WHAT FINISHES IT. Without this the section
+      // proves only half the flow, which is how the wrong assertion above
+      // survived in the first place.
+      await webhook({ event: 'withdrawal.completed', id: `wd_${providerRef}`, status: 'completed',
+        trade: providerRef, amount: 32100 });
+      const afterWithdrawal = (await db.listNgnTransfers()).find((t: any) => t.id === transferId);
+      check('and the WITHDRAWAL event is what completes the transfer',
+        afterWithdrawal?.status === 'completed', String(afterWithdrawal?.status));
 
       const events = (await db.listNgnWebhooks()).filter((w: any) => w.transferId === providerRef);
       check('and the duplicates are deduplicated by (id, event)',
@@ -288,7 +313,12 @@ async function main() {
       // and is waiting - the state must SAY that, not sit blank.
       await webhook({ event: 'trade.processing', id: order.body.providerTransferId, status: 'processing' });
       const t = (await db.listNgnTransfers()).find((x: any) => x.id === order.body.id);
-      check('a delayed settlement moves to processing', t?.status === 'processing', String(t?.status));
+      // blockchain_confirmed, not the generic 'processing': the event says the
+      // DEPOSIT is being processed on chain, and the off-ramp timeline has a
+      // step that means exactly that. 'processing' is not even on the off-ramp
+      // timeline, so the old value rendered as no step at all.
+      check('a delayed settlement is shown as confirmed on chain',
+        t?.status === 'blockchain_confirmed', String(t?.status));
 
       const timeline = await call('GET', `/api/users/${userId}/ngn-transfers`);
       const mine = (timeline.body as any[]).find((x: any) => x.id === order.body.id);

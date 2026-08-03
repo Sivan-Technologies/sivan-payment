@@ -40,6 +40,7 @@ import { PajNgnProvider } from '../provider/paj.provider.js';
 import { getNgnReconciliationSummary } from '../service/ngn-reconciliation.service.js';
 import { listNgnSettlementQueue } from '../service/ngn-settlement.service.js';
 import { listNgnWebhooks, recordNgnWebhook } from '../service/ngn-webhooks.service.js';
+import { reconcileNgnSettlements } from '../service/ngn-settlement-reconciler.js';
 
 function ensureOwnUser(request: any, userId: string) {
   const authUserId = request.authUser?.sub;
@@ -378,6 +379,17 @@ export async function ngnRoutes(app: FastifyInstance) {
     const backup = controls.backupProvider ? getNgnProvider(controls.backupProvider) : null;
     return { data: { active: await active.health(), backup: backup ? await backup.health() : null, controls } };
   });
+  /**
+   * Reconcile against the provider's own record, on demand.
+   *
+   * The timer does this every few minutes; this is the button for when
+   * somebody is standing over a stuck payout and does not want to wait.
+   */
+  app.post('/api/admin/ngn/reconcile-settlements', async (request) => ({
+    data: await reconcileNgnSettlements({
+      actorId: (request as any).adminActor?.email || 'admin_api_key',
+    }),
+  }));
   app.post('/api/admin/ngn/transfers/:id/retry', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await retryNgnTransfer(id, (request as any).adminActor?.email || 'admin_api_key') };

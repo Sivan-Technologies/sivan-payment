@@ -446,7 +446,22 @@ export default function App() {
       return null;
     }
     try {
-      const refreshed = await api<CustomerRecord>(`/api/customers/${user.id}/kyc-status`);
+      const refreshed = await api<CustomerRecord | null>(`/api/customers/${user.id}/kyc-status`);
+      /**
+       * NULL IS THE NIGERIAN PATH, AND IT IS FINE.
+       *
+       * The endpoint used to 404 for anyone without a Bridge customer, which
+       * is every user who verifies by bank check. It now answers 200 with
+       * null instead - a stated absence rather than an error - so the console
+       * stops filling with red for the normal case.
+       *
+       * Handled BEFORE setCustomer: writing null over an existing customer
+       * would wipe a Bridge user's KYC state on a transient blank response.
+       */
+      if (!refreshed) {
+        if (showToast) notify('Your verification status is up to date.');
+        return null;
+      }
       setCustomer(refreshed);
       if (showToast) notify(kycOutcomeMessage(refreshed.kycStatus, refreshed.customerAction), ['kyc_rejected', 'failed', 'cancelled'].includes(refreshed.kycStatus || '') ? 'error' : 'success');
       return refreshed;
@@ -521,9 +536,31 @@ export default function App() {
   useEffect(() => {
     void loadFee();
     void loadControls();
-    void loadNgnNetworks();
     void loadUserData();
-  }, [loadFee, loadControls, loadNgnNetworks, loadUserData]);
+  }, [loadFee, loadControls, loadUserData]);
+
+  /**
+   * NETWORKS NEED A TOKEN, SO DO NOT ASK FOR THEM WITHOUT ONE.
+   *
+   * /api/ngn/* is authenticated (requiresUserAuth matches /^\/api\/ngn/), but
+   * this was fired from the unconditional bootstrap effect alongside genuinely
+   * public calls like /api/fees/offramp. So every visitor to the landing and
+   * login pages produced
+   *
+   *   GET /api/ngn/networks?asset=usdc 401 (Unauthorized)
+   *
+   * before they had any way of being authenticated. The request was guaranteed
+   * to fail, its result was swallowed by .catch(() => null), and the only
+   * thing it accomplished was a red line in the console on the first screen
+   * every user sees - plus an unauthenticated round trip per page load.
+   *
+   * Gating on the token also means the list is fetched the moment a session
+   * appears, which is when it is first useful.
+   */
+  useEffect(() => {
+    if (!authToken) return;
+    void loadNgnNetworks();
+  }, [authToken, loadNgnNetworks]);
 
   // Wallets are fetched separately from loadUserData because they depend on an
   // authenticated user and must refresh when that user changes.

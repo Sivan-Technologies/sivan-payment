@@ -108,6 +108,9 @@
     "e2e:otp-resend": "node e2e/otp-resend-journey.mjs",
     "test:breet-webhook-verification": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-breet-wh-verify.json EMAIL_PROVIDER=console NGN_PROVIDER=breet BREET_APP_ID=t BREET_APP_SECRET=t BREET_WEBHOOK_SECRET=whsec_test_verify tsx scripts/test-breet-webhook-verification.ts",
     "test:autosettlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-autosettlement.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock tsx scripts/test-autosettlement.ts",
+    "breet:settlement-check": "tsx scripts/breet-settlement-live-check.ts",
+    "test:console-clean": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-console.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock NGN_SETTLEMENT_POLL_SECONDS=0 ADMIN_API_KEY=console-key tsx scripts/test-console-clean.ts",
+    "test:settlement-reconciliation": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-reconcile.json EMAIL_PROVIDER=console NGN_PROVIDER=breet NGN_SETTLEMENT_POLL_SECONDS=0 ADMIN_API_KEY=reconcile-key tsx scripts/test-settlement-reconciliation.ts",
     "test:offramp-autosettlement": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-autoset.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=autoset-key tsx scripts/test-offramp-autosettlement.ts"
   },
   "dependencies": {

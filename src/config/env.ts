@@ -151,6 +151,18 @@ const envSchema = z.object({
   // Required header on every request; Breet rejects a missing or invalid value.
   BREET_ENV: z.enum(['development', 'production']).default('development'),
   BREET_WEBHOOK_SECRET: z.string().optional().default(''),
+  /**
+   * How often to ask the NGN provider what it actually settled, in seconds.
+   *
+   * The webhook is not trustworthy enough to be the only path: six real
+   * deliveries for one completed, paid-out settlement were all refused, and
+   * the transfer sat at "awaiting_crypto_deposit" while the naira was already
+   * in the user's bank. This closes that gap whatever happens to delivery.
+   *
+   * 0 disables it. Default 300s - fast enough that a stuck payout is measured
+   * in minutes, slow enough to be nothing to a partner API.
+   */
+  NGN_SETTLEMENT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
 import { forbidden } from '../../shared/errors.js';
-import type { NgnProviderAdapter } from './ngn-provider.js';
+import type { NgnProviderAdapter, NgnProviderSettlement } from './ngn-provider.js';
 import type { NgnProviderHealth, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
 import type { BalanceNetwork } from '../../balances/balance.service.js';
 import {
@@ -709,13 +709,41 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     let confirmationError: string | undefined;
 
     if (resourceId) {
-      const path = eventName.startsWith('withdrawal')
-        ? `/payments/withdrawal/${encodeURIComponent(String(resourceId))}`
-        : `/transactions/${encodeURIComponent(String(resourceId))}`;
-      try {
-        confirmed = await breetRequest<any>(path);
-      } catch (error: any) {
-        confirmationError = String(error?.message ?? error);
+      /**
+       * A TRADE IS FETCHED FROM /trades/sell/:id, NOT /transactions/:id.
+       *
+       * GET /v1/transactions/{tradeId} answers, verbatim:
+       *
+       *   {"success":false,"message":"Sorry, requested URL GET /v1/transactions/
+       *    6a70adbe0b4ad380586424a1 not found!"}
+       *
+       * and GET /v1/transactions returns an EMPTY list even with a completed
+       * trade on the account (totalDocs: 0) - sell trades simply do not appear
+       * there. Verified live against the sandbox with a real settled trade.
+       *
+       * "not found" is exactly the string the forgery check below matches, so
+       * every genuine `trade.completed` Breet ever sent would have been
+       * rejected with 403 "references a transaction that does not exist" -
+       * AFTER passing the secret check. The secret was never the only problem.
+       *
+       * Both paths are tried for a trade: the documented one is kept as a
+       * fallback in case Breet ever makes it work, but the one that actually
+       * answers is tried first.
+       */
+      const paths = eventName.startsWith('withdrawal')
+        ? [`/payments/withdrawal/${encodeURIComponent(String(resourceId))}`]
+        : [
+          `/trades/sell/${encodeURIComponent(String(resourceId))}`,
+          `/transactions/${encodeURIComponent(String(resourceId))}`,
+        ];
+      for (const path of paths) {
+        try {
+          confirmed = await breetRequest<any>(path);
+          confirmationError = undefined;
+          break;
+        } catch (error: any) {
+          confirmationError = String(error?.message ?? error);
+        }
       }
     }
 
@@ -742,6 +770,54 @@ export class BreetNgnProvider implements NgnProviderAdapter {
         : { ...payload, breetConfirmed: false, breetConfirmationError: confirmationError },
       createdAt: new Date().toISOString(),
     };
+  }
+
+  /**
+   * WHAT BREET ACTUALLY DID, ASKED RATHER THAN AWAITED.
+   *
+   * Reconstructed from two endpoints, because Breet has no "list my trades"
+   * call that works - GET /transactions returns an empty list even with a
+   * completed trade on the account, and GET /trades/sell (no id) 404s.
+   * Verified live. What DOES work:
+   *
+   *   GET /trades/wallets                 every deposit address we generated
+   *   GET /trades/wallets/{id}            one address, with its lastTrade
+   *   GET /trades/sell/{tradeId}          the trade, with amounts and status
+   *   GET /payments/withdrawals           every NGN payout, each naming .trade
+   *
+   * So: walk the withdrawals (few, and they are the thing that actually pays a
+   * bank), resolve each back to its trade, and read the deposit address off
+   * the trade. That address is the only field that ties a Breet settlement to
+   * a Sivan transfer.
+   */
+  async listSettlements(): Promise<NgnProviderSettlement[]> {
+    const withdrawals = await breetRequest<any[]>('/payments/withdrawals').catch(() => []);
+    const list = Array.isArray(withdrawals) ? withdrawals : [];
+
+    const settlements: NgnProviderSettlement[] = [];
+    // Sequential on purpose: this runs on a timer against a partner API, and
+    // a burst of parallel requests is how an integration gets rate limited.
+    for (const withdrawal of list) {
+      const tradeId = withdrawal?.trade ? String(withdrawal.trade) : undefined;
+      let trade: any;
+      if (tradeId) {
+        trade = await breetRequest<any>(`/trades/sell/${encodeURIComponent(tradeId)}`).catch(
+          () => undefined
+        );
+      }
+      settlements.push({
+        depositAddress: trade?.address ? String(trade.address) : undefined,
+        tradeId,
+        withdrawalId: withdrawal?.id ? String(withdrawal.id) : undefined,
+        tradeStatus: trade?.status ? String(trade.status) : undefined,
+        withdrawalStatus: withdrawal?.status ? String(withdrawal.status) : undefined,
+        cryptoAmount: Number(trade?.amountReceived ?? trade?.cryptoReceived ?? 0) || undefined,
+        fiatAmount: Number(withdrawal?.payoutAmount ?? withdrawal?.amount ?? 0) || undefined,
+        txHash: trade?.txHash ? String(trade.txHash) : undefined,
+        raw: { withdrawal, trade },
+      });
+    }
+    return settlements;
   }
 
   async health(): Promise<NgnProviderHealth> {

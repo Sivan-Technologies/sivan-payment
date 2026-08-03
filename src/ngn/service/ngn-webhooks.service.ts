@@ -61,12 +61,7 @@ async function applyWebhookToTransfer(event: {
   if (!providerRef) return undefined;
 
   const transfers = await db.listNgnTransfers();
-  const transfer = transfers.find(
-    (item) =>
-      item.providerTransferId === String(providerRef) ||
-      item.id === String(providerRef) ||
-      (item.metadata as any)?.breetAddressId === String(providerRef)
-  );
+  const transfer = findTransferForEvent(transfers, String(providerRef), payload);
   if (!transfer) return undefined;
 
   if (!isFlaggedEvent(event.eventType, payload)) {
@@ -105,6 +100,87 @@ async function applyWebhookToTransfer(event: {
 }
 
 /**
+ * FIND THE TRANSFER A BREET EVENT BELONGS TO.
+ *
+ * THE ID IN THE WEBHOOK IS NOT THE ID WE STORED.
+ *
+ * createOfframpTransfer saves the DEPOSIT ADDRESS id as providerTransferId -
+ * that is all Breet gives back at address-generation time. But every event
+ * afterwards is keyed on something else:
+ *
+ *   trade.address.created  id = wallet/address id      (matches)
+ *   trade.pending          id = TRADE id               (no match)
+ *   trade.completed        id = TRADE id               (no match)
+ *   withdrawal.*           id = WITHDRAWAL id          (no match)
+ *
+ * Verified against six real deliveries: address 6a70ad8c040553cd1f89a0c2,
+ * trade 6a70adbe0b4ad380586424a1, withdrawal 6a70adbea4f8526669d89013 - three
+ * different ids for one settlement. So even with a correct secret, only the
+ * useless first event would ever have matched, and `trade.completed` - the one
+ * that finishes the transfer - would have been dropped on the floor by the
+ * `if (!transfer) return undefined` above.
+ *
+ * The link back is the ADDRESS, which every payload carries under one of
+ * several names, and which is stable because Breet addresses are permanent.
+ * A withdrawal names its parent trade rather than an address, so the trade id
+ * learned from an earlier event is matched too.
+ */
+function findTransferForEvent(
+  transfers: NgnTransferRecord[],
+  providerRef: string,
+  payload: any
+): NgnTransferRecord | undefined {
+  const meta = (transfer: NgnTransferRecord) =>
+    (typeof transfer.metadata === 'object' && transfer.metadata ? transfer.metadata : {}) as any;
+  const transferMeta = (transfer: NgnTransferRecord) => meta(transfer).transferMetadata ?? {};
+
+  const byId = transfers.find(
+    (item) =>
+      item.providerTransferId === providerRef ||
+      item.id === providerRef ||
+      meta(item).breetAddressId === providerRef ||
+      meta(item).breetTradeId === providerRef ||
+      meta(item).breetWithdrawalId === providerRef
+  );
+  if (byId) return byId;
+
+  // A withdrawal points at its trade; the trade was recorded when its own
+  // event arrived.
+  const tradeRef = payload?.trade ? String(payload.trade) : '';
+  if (tradeRef) {
+    const byTrade = transfers.find(
+      (item) => meta(item).breetTradeId === tradeRef || item.providerTransferId === tradeRef
+    );
+    if (byTrade) return byTrade;
+  }
+
+  // The deposit address. Case-insensitive because EVM addresses arrive
+  // checksummed in some payloads and lowercased in others, and a case-
+  // sensitive compare here would silently drop a real settlement.
+  const address = String(
+    payload?.destinationAddress ?? payload?.address ?? payload?.walletAddress ?? ''
+  ).toLowerCase();
+  if (address) {
+    const byAddress = transfers.find(
+      (item) =>
+        String(item.depositAddress ?? '').toLowerCase() === address ||
+        String(transferMeta(item).depositAddress ?? '').toLowerCase() === address
+    );
+    if (byAddress) return byAddress;
+  }
+
+  // Last resort: the label we generated when creating the address. It embeds
+  // our user id and the asset id, so it is ours and unambiguous.
+  const label = String(payload?.label ?? payload?.wallet ?? '');
+  if (label) {
+    const byLabel = transfers.find((item) => transferMeta(item).label === label);
+    if (byLabel) return byLabel;
+  }
+
+  return undefined;
+}
+
+/**
  * Advance a transfer on a NON-flagged webhook.
  *
  * THIS DID NOT EXIST. applyWebhookToTransfer handled `trade.flagged` and
@@ -126,7 +202,7 @@ async function applySettlementToTransfer(
   event: { eventType: string },
   payload: any
 ): Promise<NgnTransferRecord | undefined> {
-  const next = mapBreetStatus(payload?.status);
+  const next = mapBreetEvent(event.eventType, payload?.status);
   if (!next) return undefined;
 
   // NEVER MOVE A TERMINAL TRANSFER. Breet retries for up to 24 hours, so a
@@ -136,20 +212,50 @@ async function applySettlementToTransfer(
   const TERMINAL = new Set(['completed', 'failed', 'expired']);
   if (TERMINAL.has(transfer.status)) return transfer;
 
+  // NEVER MOVE BACKWARDS EITHER. Breet's events do not arrive in order - in
+  // the six real deliveries observed, withdrawal.completed was generated
+  // BEFORE trade.completed, and Breet retries each independently over 24
+  // hours. Without this, a late trade.pending after a withdrawal.completed
+  // would drag a finished payout back to "settling".
+  //
+  // FAILURE IS EXEMPT, AND THAT EXEMPTION IS NOT OPTIONAL.
+  //
+  // 'failed' is not a point on the happy path, so it has no rank - it scored 0
+  // and this guard silently swallowed every trade.failed, leaving a rejected
+  // transfer sitting at awaiting_crypto_deposit forever. I introduced that
+  // while fixing the reordering problem and test:failure-paths caught it.
+  // A transfer must always be able to fail, from any non-terminal state.
+  if (next !== 'failed' && rank(next) < rank(transfer.status)) return transfer;
+
   if (transfer.status === next) return transfer;
+
+  const eventIds = learnBreetIds(event.eventType, payload);
 
   const updated: NgnTransferRecord = {
     ...transfer,
     status: next,
+    completedAt: next === 'completed' ? new Date().toISOString() : transfer.completedAt,
     metadata: {
       ...(typeof transfer.metadata === 'object' && transfer.metadata ? transfer.metadata : {}),
+      ...eventIds,
       lastWebhookEvent: event.eventType,
       lastWebhookAt: new Date().toISOString(),
-      // Breet's own figures, kept for reconciliation and support. The naira
-      // amount actually paid can differ from the quote if the rate moved.
-      settledCryptoAmount: payload?.cryptoAmount ?? payload?.amount,
-      settledFiatAmount: payload?.fiatAmount ?? payload?.amountInNGN,
-      settledAmountUsd: payload?.amountInUSD ?? payload?.amountInUsd,
+      /**
+       * Breet's own figures, kept for reconciliation and support. The naira
+       * amount actually paid can differ from the quote if the rate moved.
+       *
+       * ONE EVENT MUST NOT ERASE ANOTHER'S NUMBERS.
+       *
+       * A settlement arrives as two events carrying DIFFERENT fields: the
+       * trade knows the crypto amount and the USD value, the withdrawal knows
+       * the naira paid and the payout fee. Writing all of them on every event
+       * meant the withdrawal - which always arrives second on the happy path -
+       * overwrote the trade's figures with undefined and reconciliation lost
+       * the amounts. Caught by test:full-system, but only after that suite was
+       * extended to deliver BOTH events; every suite that stopped at the trade
+       * was blind to it.
+       */
+      ...keepKnown(settledFigures(event.eventType, payload)),
     },
     updatedAt: new Date().toISOString(),
   };
@@ -172,6 +278,120 @@ function mapBreetStatus(status?: string): NgnTransferRecord['status'] | undefine
   if (value === 'failed' || value === 'rejected' || value === 'reversed') return 'failed';
   if (value === 'processing' || value === 'pending' || value === 'confirmed') return 'processing';
   return undefined;
+}
+
+/**
+ * THE EVENT MATTERS AS MUCH AS THE STATUS. A completed TRADE is not a
+ * completed PAYOUT.
+ *
+ * `trade.completed` means the crypto was converted and Breet credited its own
+ * NGN wallet. The naira has not reached the user's bank at that point - that
+ * is `withdrawal.completed`, a separate event with a separate id. Mapping on
+ * status alone marked the transfer "completed" the moment the trade settled,
+ * which tells a user their money has arrived while it is still inside Breet.
+ * On a non-autoSettlement account it may never leave.
+ *
+ * So only a withdrawal event may complete an off-ramp. A completed trade is
+ * `settlement_processing`: converted, payout in flight.
+ */
+function mapBreetEvent(
+  eventType: string,
+  status?: string
+): NgnTransferRecord['status'] | undefined {
+  const mapped = mapBreetStatus(status);
+  if (!mapped) return undefined;
+  const event = String(eventType ?? '').toLowerCase();
+
+  if (event.startsWith('withdrawal')) {
+    if (mapped === 'completed') return 'completed';
+    if (mapped === 'failed') return 'failed';
+    return 'bank_processing';
+  }
+
+  if (event.startsWith('trade')) {
+    if (mapped === 'completed') return 'settlement_processing';
+    if (mapped === 'failed') return 'failed';
+    return 'blockchain_confirmed';
+  }
+
+  return mapped;
+}
+
+/**
+ * How far along a status is, for the no-going-backwards guard. Terminal
+ * states rank highest; an unknown status ranks 0 so it can never hold a
+ * transfer back.
+ */
+function rank(status: string): number {
+  const order = [
+    'created',
+    'quote_created',
+    'quote_accepted',
+    'awaiting_deposit',
+    'awaiting_crypto_deposit',
+    'deposit_received',
+    'blockchain_confirmed',
+    'processing',
+    'settlement_processing',
+    'bank_processing',
+    'crypto_sent',
+    'completed',
+  ];
+  const index = order.indexOf(status);
+  return index < 0 ? 0 : index;
+}
+
+/**
+ * Remember the ids Breet used, so the NEXT event can be matched.
+ *
+ * Each stage of one settlement has its own id, and the only place they are
+ * ever correlated is here, as they arrive. Storing them turns the second and
+ * third events from unmatchable into trivial lookups.
+ */
+/**
+ * WHICH NUMBER IS WHICH DEPENDS ON THE EVENT.
+ *
+ * `amount` means different things on the two events - on a trade it is crypto,
+ * on a withdrawal it is naira - so a shared fallback chain
+ * (`cryptoAmount ?? amount`) read a withdrawal's 94,221 NGN as 94,221 USDC and
+ * wrote it into settledCryptoAmount. That is a wrong number in the record that
+ * support and reconciliation read, wrong by a factor of the exchange rate.
+ *
+ * Each event therefore only contributes the fields it actually knows.
+ */
+function settledFigures(eventType: string, payload: any): Record<string, unknown> {
+  const event = String(eventType ?? '').toLowerCase();
+
+  if (event.startsWith('withdrawal')) {
+    return {
+      settledFiatAmount: payload?.payoutAmount ?? payload?.amount ?? payload?.amountInNGN,
+      settledPayoutFee: payload?.meta?.fee,
+    };
+  }
+
+  return {
+    settledCryptoAmount: payload?.cryptoAmount ?? payload?.amountReceived ?? payload?.amount,
+    settledFiatAmount: payload?.fiatAmount ?? payload?.amountInNGN ?? payload?.amountSettled,
+    settledAmountUsd: payload?.amountInUSD ?? payload?.amountInUsd,
+  };
+}
+
+/**
+ * Drop undefined entries so a spread cannot blank a value that is already
+ * known. `{...a, b: undefined}` still writes the key.
+ */
+function keepKnown(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined));
+}
+
+function learnBreetIds(eventType: string, payload: any): Record<string, unknown> {
+  const event = String(eventType ?? '').toLowerCase();
+  const learned: Record<string, unknown> = {};
+  if (payload?.id && event.startsWith('trade')) learned.breetTradeId = String(payload.id);
+  if (payload?.id && event.startsWith('withdrawal')) learned.breetWithdrawalId = String(payload.id);
+  if (payload?.trade) learned.breetTradeId = String(payload.trade);
+  if (payload?.txHash) learned.depositTxHash = String(payload.txHash);
+  return learned;
 }
 
 export async function listNgnWebhooks() {
