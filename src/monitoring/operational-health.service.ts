@@ -26,6 +26,7 @@
 
 import { db } from '../database/json-database.js';
 import { getNgnControls } from '../ngn/service/ngn-controls.service.js';
+import { getNgnProvider } from '../ngn/provider/ngn-provider-registry.js';
 import { env } from '../config/env.js';
 
 export type AlertSeverity = 'ok' | 'warn' | 'critical';
@@ -222,7 +223,38 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
     const breetAppId = 'BREET_APP_ID' in process.env ? process.env.BREET_APP_ID : env.BREET_APP_ID;
     const breetSecret = 'BREET_APP_SECRET' in process.env ? process.env.BREET_APP_SECRET : env.BREET_APP_SECRET;
     const breetConfigured = Boolean(breetAppId && breetSecret);
-    const usable = provider === 'breet' && breetConfigured;
+
+    // CONFIGURED IS NOT THE SAME AS WORKING, AND THAT GAP HID A REAL OUTAGE.
+    //
+    // This used to stop at "are the vars non-empty". A REVOKED key is
+    // non-empty, so when the Breet sandbox key was rotated the signal kept
+    // reporting "NGN provider is breet, with credentials" while
+    // GET /api/ngn/banks returned 500 to every user on the deployed test API.
+    // The bank picker was empty, nobody could verify, and the health endpoint
+    // said ok.
+    //
+    // So actually call Breet. provider.health() already does exactly this -
+    // it probes /trades/assets, which is authenticated and real - it simply
+    // was not wired in here.
+    //
+    // Failure to REACH Breet is reported as a warning rather than critical:
+    // a transient network blip should not page someone at 3am. A rejected
+    // credential is critical, because nothing works until a human fixes it.
+    let breetReachable: boolean | undefined;
+    let breetMessage = '';
+    if (provider === 'breet' && breetConfigured) {
+      try {
+        const health = await getNgnProvider('breet').health();
+        breetReachable = health.available;
+        breetMessage = health.message ?? '';
+      } catch (error: any) {
+        breetReachable = false;
+        breetMessage = String(error?.message ?? 'Breet health check threw.');
+      }
+    }
+
+    const credentialsRejected = breetReachable === false && /401|unauthor|invalid|wrong app/i.test(breetMessage);
+    const usable = provider === 'breet' && breetConfigured && breetReachable !== false;
     // 'mock' is correct in a test run and in local development, so it is only
     // a problem on a DEPLOYED environment. 'paj' is a problem anywhere it
     // serves users, because its resolver cannot authenticate at all.
@@ -235,12 +267,19 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
       // once deployed.
       severity: usable
         ? 'ok'
-        : provider === 'breet' || deployed ? 'critical' : 'ok',
+        // Unreachable-but-not-rejected is a blip; a dead key is an outage.
+        : provider === 'breet' && breetReachable === false && !credentialsRejected
+          ? 'warn'
+          : provider === 'breet' || deployed ? 'critical' : 'ok',
       value: usable ? 1 : 0,
       detail: usable
-        ? 'NGN provider is breet, with credentials.'
+        ? `NGN provider is breet, credentials verified against Breet${breetMessage ? ` (${breetMessage})` : ''}.`
         : provider === 'breet' && !breetConfigured
           ? 'NGN_PROVIDER is breet but BREET_APP_ID/BREET_APP_SECRET are missing. Every bank lookup returns 403 and no user can verify.'
+          : provider === 'breet' && credentialsRejected
+            ? `Breet REJECTED our credentials: ${breetMessage}. The key is set but dead - likely rotated or revoked. Every bank lookup 500s and no user can verify.`
+            : provider === 'breet' && breetReachable === false
+              ? `Breet is not reachable: ${breetMessage}. Bank lookups will fail while this lasts.`
           : deployed
             ? `NGN_PROVIDER is "${provider}" on a deployed environment. Bank resolution will fail for users — set it to breet.`
             : `NGN provider is "${provider}" (local/test — fine here).`,

@@ -113,6 +113,18 @@ async function main() {
       check('a payload carrying an id is NOT treated as a ping',
         idOnly.status === 403, `${idOnly.status} ${JSON.stringify(idOnly.body).slice(0, 100)}`);
 
+      // A DELIBERATE, DOCUMENTED TRADE-OFF.
+      //
+      // If Breet's verification ping ever carries an `id` and no event - a
+      // plausible shape - it will be REFUSED and the dashboard will not save.
+      // The alternative is treating any id-only body as a ping, which hands a
+      // 200 to a forged `{"id":"..."}` and is strictly worse.
+      //
+      // Verified against the real dashboard: the ping Breet actually sends is
+      // accepted. If that changes, this is where to look, and the fix is to
+      // match Breet's documented verification body exactly rather than to
+      // loosen the rule.
+
       const eventOnly = await post({ event: 'trade.completed' });
       check('a payload carrying a REAL event name is NOT treated as a ping',
         eventOnly.status === 403, String(eventOnly.status));

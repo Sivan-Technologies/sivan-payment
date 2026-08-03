@@ -1,5 +1,5 @@
 import { env } from '../../config/env.js';
-import { badRequest } from '../../shared/errors.js';
+import { badRequest, serviceUnavailable } from '../../shared/errors.js';
 import { BreetNgnProvider } from '../provider/breet.provider.js';
 import { PajNgnProvider } from '../provider/paj.provider.js';
 import type { NgnProviderName } from '../types/ngn.types.js';
@@ -93,7 +93,27 @@ export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<Ngn
   const provider = activeProviderName();
 
   if (provider === 'breet') {
-    const banks = await new BreetNgnProvider().listBanks(currency);
+    // A DEAD KEY MUST NOT SURFACE AS "Internal server error".
+    //
+    // When the Breet sandbox key was rotated, listBanks threw the raw upstream
+    // failure and /api/ngn/banks returned a bare 500 to every user. On screen
+    // that is an empty bank picker with no explanation - the person cannot
+    // verify, cannot tell whether it is them or us, and support gets a ticket
+    // saying "the app is broken".
+    //
+    // 503 rather than 500, because the truthful statement is "the provider is
+    // unavailable", not "we crashed". The message names the provider so an
+    // operator reading a log knows immediately where to look, while the user
+    // gets something they can act on.
+    const banks = await new BreetNgnProvider().listBanks(currency).catch((error: any) => {
+      const message = String(error?.message ?? '');
+      const rejected = /401|unauthor|invalid|wrong app/i.test(message);
+      throw serviceUnavailable(
+        rejected
+          ? 'Our bank provider rejected this request. Our team has been alerted - please try again shortly.'
+          : 'We cannot reach our bank provider right now. Please try again in a few minutes.'
+      );
+    });
     return (banks ?? []).map((bank: any) => ({
       id: String(bank.id),
       name: bank.name,
