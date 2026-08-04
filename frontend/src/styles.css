@@ -1911,6 +1911,26 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 @keyframes sv-skeleton{0%{background-position:100% 50%}100%{background-position:0 50%}}
 @media(prefers-reduced-motion:reduce){.verification-skeleton .skeleton-line{animation:none}}
 
+/* WAITING IS NOT A WARNING, AND IT IS NOT NOTHING.
+ *
+ * Two problems in the half-second before /verification-summary lands:
+ *
+ *   - .dashboard-account-notice paints an AMBER border (#f1bd7252), the same
+ *     colour the card uses for "action required". The skeleton inherits it, so
+ *     the load window rendered a gold-edged box - the alarm colour, for a state
+ *     where nothing is wrong and nothing is known yet.
+ *
+ *   - .skeleton-line is rgba(255,255,255,.045) on a #0d1520 card, roughly 4%
+ *     contrast. Reported as "a blank flash", which is exactly right: the
+ *     skeleton was painting, it just could not be seen.
+ *
+ * Scoped to [aria-busy="true"] so it applies only while loading and cannot
+ * bleed into the real states below.
+ */
+.kyc-outcome-notice[aria-busy=true]{border-color:var(--border)}
+.kyc-outcome-notice[aria-busy=true] .skeleton-line{background:linear-gradient(90deg,rgba(255,255,255,.05) 25%,rgba(255,255,255,.12) 37%,rgba(255,255,255,.05) 63%);background-size:400% 100%}
+
+
 /* Deposit address on a pending naira sell. Monospace and breakable: a user
    reading a 42-character address off a phone must be able to check it
    character by character, and it must never overflow the card. */
