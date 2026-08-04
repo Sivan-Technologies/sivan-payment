@@ -111,9 +111,23 @@ async function main() {
      * lingers at 100%. Tying both to one value makes that impossible.
      */
     const source = await fs.readFile(path.join(process.cwd(), 'frontend/src/App.tsx'), 'utf8');
+    /**
+     * ASSERTS THE CONDITION, NOT THE EXACT LINE.
+     *
+     * The first version matched `{setupPercent < 100 && (\n <DashboardSetupPanel`
+     * literally, and broke the moment upstream STRENGTHENED the gate to
+     * `verificationSummaryLoaded && setupPercent < 100 && (` - a real
+     * improvement, since isVerified and hasBank both default to false while
+     * the summary is in flight and a finished user briefly saw a 33%
+     * checklist. A test that fails when the code gets better is testing the
+     * wrong thing.
+     *
+     * What must hold is that the panel is gated on setupPercent. Extra
+     * conjuncts are fine; losing that one is not.
+     */
+    const gate = source.match(/\{([^{}]*setupPercent < 100[^{}]*)&& \(\s*\n\s*<DashboardSetupPanel/);
     check('the dashboard gates the panel on setupPercent',
-      /\{setupPercent < 100 && \(\s*\n\s*<DashboardSetupPanel/.test(source),
-      'the setup panel is not gated');
+      Boolean(gate), 'the setup panel is not gated on setupPercent');
     check('and the panel is still passed that same percentage',
       /<DashboardSetupPanel setupPercent=\{setupPercent\}/.test(source));
   }
