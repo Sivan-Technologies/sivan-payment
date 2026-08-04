@@ -106,6 +106,28 @@ async function main() {
     check('and getSpendable returns null rather than guessing',
       /if \(row\.chainUnavailable && num\(row\.credited\) === 0\) return null/.test(svc));
     check('per-wallet reads run in parallel', /Promise\.all\(/.test(svc));
+
+    /**
+     * ONE EVM WALLET SERVES SEVERAL EVM CHAINS - AND THE MONEY IS RARELY ON
+     * THE ONE IT IS FILED UNDER.
+     *
+     * walletsToProvision() issues a single 'ethereum' wallet that `alsoServes`
+     * base: same key, same address, different networks. NOTHING in the
+     * codebase read `alsoServes`, so the first version of this service asked
+     * for balances on 'ethereum' only.
+     *
+     * Caught by a REAL off-ramp, not by these tests: a wallet holding 180.59
+     * USDC on BASE Sepolia reported chain=0, spendable=0, and the sweep
+     * silently declined to send. Every unit assertion passed, because none of
+     * them crossed the chain boundary. Base is the default deposit network, so
+     * this would have hidden most users' money.
+     */
+    check('every chain an EVM wallet serves is read, not just its filed chain',
+      /walletsToProvision\(\)\.find\(\(entry\) => entry\.chain === wallet\.chain\)\?\.alsoServes/.test(svc));
+    check('and each (wallet, chain) pair is read separately',
+      /\[wallet\.chain, \.\.\.alsoServes\]\.map/.test(svc));
+    check('the balance is read on that chain, not on the wallet record chain',
+      /chain as WalletChain/.test(svc) && !/wallet\.chain as WalletChain/.test(svc));
     check('a provider throw is caught per wallet, not for the whole call',
       /catch \(error\)[\s\S]{0,400}balancesUnavailable: true/.test(svc));
   }

@@ -3,6 +3,7 @@ import { getUserBalance } from './balance.service.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import type { WalletChain } from '../wallets/types/wallet.types.js';
+import { walletsToProvision } from '../wallets/wallet-eligibility.js';
 
 /**
  * ONE BALANCE, ASSEMBLED FROM THE CHAIN AND THE LEDGER.
@@ -99,24 +100,48 @@ async function readChainBalances(userId: string) {
 
   const provider = getWalletProvider(await resolveActiveWalletProvider());
 
+  /**
+   * ONE EVM WALLET, SEVERAL EVM CHAINS - AND THE MONEY IS RARELY ON THE ONE
+   * IT IS FILED UNDER.
+   *
+   * walletsToProvision() issues a single 'ethereum' wallet that `alsoServes`
+   * base: same secp256k1 key, same address, different networks. NOTHING in the
+   * codebase read `alsoServes`, so this service asked for balances on
+   * 'ethereum' only.
+   *
+   * Caught by a real off-ramp: a wallet holding 180.59 USDC on BASE Sepolia
+   * reported chain=0, spendable=0, and the sweep silently declined to send.
+   * Every assertion in the unit suite passed, because they never crossed the
+   * chain boundary. A user whose funds are on Base - which is the default
+   * deposit network - would have seen zero and been unable to send anything.
+   *
+   * Each (address, chain) pair is read separately and summed per asset: the
+   * SAME address genuinely holds different amounts on Base and on Ethereum,
+   * and both are the user's money.
+   */
+  const reads = active.flatMap((wallet) => {
+    const alsoServes = walletsToProvision().find((entry) => entry.chain === wallet.chain)?.alsoServes ?? [];
+    return [wallet.chain, ...alsoServes].map((chain) => ({ wallet, chain }));
+  });
+
   return Promise.all(
-    active.map(async (wallet) => {
+    reads.map(async ({ wallet, chain }) => {
       try {
         const balances = await provider.getBalances(
           wallet.providerWalletId,
           wallet.customerId,
           wallet.address,
-          wallet.chain as WalletChain
+          chain as WalletChain
         );
-        return { chain: wallet.chain, address: wallet.address, balances, balancesUnavailable: false };
+        return { chain, address: wallet.address, balances, balancesUnavailable: false };
       } catch (error) {
         // An RPC outage must not blank the dashboard or, worse, read as zero.
         console.warn('[unified_balance.chain_unavailable]', {
           userId,
-          chain: wallet.chain,
+          chain,
           reason: error instanceof Error ? error.message : String(error),
         });
-        return { chain: wallet.chain, address: wallet.address, balances: undefined, balancesUnavailable: true };
+        return { chain, address: wallet.address, balances: undefined, balancesUnavailable: true };
       }
     })
   );

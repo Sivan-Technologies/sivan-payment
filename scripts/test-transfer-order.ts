@@ -57,7 +57,17 @@ function main() {
 
   const at = (needle: string) => grid.indexOf(needle);
 
-  const balance = at('Settled USDC available');
+  /**
+   * Matched on the CSS class, not the label.
+   *
+   * This searched for the literal 'Settled USDC available'. That eyebrow was
+   * renamed to 'USDC available to send' when the figure stopped being a ledger
+   * mirror and became chain + credits - holds, and the test then reported the
+   * card as MISSING - three ordering assertions failed against a card that was
+   * on screen and correct. The class is what identifies the panel; the words
+   * are copy and will change again.
+   */
+  const balance = at('transfer-balance-card');
   const cryptoForm = at('Transfer USDC to a wallet');
   const cryptoHistory = at('<h3>Crypto sends</h3>');
   const supplierAdd = at('<h3>Add supplier bank</h3>');
