@@ -70,11 +70,27 @@ export async function getUserTimeline(userId: string) {
 }
 
 export async function listUserRestrictions(userId?: string) {
-  const data = await db.read();
-  return (data.auditLogs ?? [])
-    .filter((log) => log.action === 'admin.user_restricted' || log.action === 'admin.user_unrestricted')
-    .filter((log) => !userId || log.resourceId === userId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  /**
+   * TWO INDEXED ACTIONS, NOT THE WHOLE DATABASE.
+   *
+   * This was db.read() - 47 sequential `select *` queries, every table,
+   * including the entire unbounded audit history - and it runs inside the
+   * platform-status preHandler via getActiveRestrictionForUser() for EVERY
+   * mutating request that names a user.
+   *
+   * That made it a tax on the whole platform, not one endpoint. Measured on
+   * api-test after the onramp fixes: signup POST 3.9s and a buy rejection
+   * 3.4s, against GET /health at 30ms and GET /api/system/status at 333ms -
+   * the cost was the same on both, which is what gave the shared hook away.
+   *
+   * Third instance of this exact bug: getAdminPlatformSettings() (146s
+   * signups), then getOnrampControls(), now this. The audit log is the most
+   * expensive table in the system and the easiest one to read by accident.
+   */
+  return db.listAuditLogsByActions(
+    ['admin.user_restricted', 'admin.user_unrestricted'],
+    userId
+  );
 }
 
 export async function restrictUser(userId: string, input: z.infer<typeof userRestrictionSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {

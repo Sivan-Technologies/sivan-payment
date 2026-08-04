@@ -504,6 +504,35 @@ export class PostgresDatabase {
    * GET /health took 0.08s. One indexed row instead of the entire audit
    * history.
    */
+  /**
+   * Audit rows for a set of actions, optionally scoped to one resource.
+   *
+   * listUserRestrictions() was doing this with db.read() - 47 `select *`
+   * queries, every table, entire unbounded audit history - and it runs in the
+   * platform-status preHandler for EVERY mutating request that names a user.
+   * Measured on api-test: signup POST 3.9s, buy rejection 3.4s, while
+   * GET /health was 30ms and GET /api/system/status 333ms.
+   *
+   * Uses idx_audit_logs_action_created (migration 040). The resource filter is
+   * applied in SQL rather than in JS so a busy account does not drag the whole
+   * platform's restriction history across the wire.
+   */
+  async listAuditLogsByActions(actions: string[], resourceId?: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = resourceId
+        ? await client.query(
+            'select * from payments_audit_logs where action = any($1) and resource_id = $2 order by created_at desc limit 200',
+            [actions, resourceId]
+          )
+        : await client.query(
+            'select * from payments_audit_logs where action = any($1) order by created_at desc limit 200',
+            [actions]
+          );
+      return result.rows.map(mapAuditLog);
+    } finally { client.release(); }
+  }
+
   async latestAuditLogByAction(action: string) {
     const client = await this.pool.connect();
     try {

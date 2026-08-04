@@ -270,6 +270,16 @@ export class JsonDatabase {
    * "the same address in different case is still throttled". That is the
    * correct shape for a bypass guard - it should take two mistakes, not one.
    */
+  /** Mirror of the Postgres targeted audit query. Cheap on JSON. */
+  async listAuditLogsByActions(actions: string[], resourceId?: string) {
+    const data = await this.read();
+    return (data.auditLogs ?? [])
+      .filter((log) => actions.includes(log.action))
+      .filter((log) => !resourceId || log.resourceId === resourceId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 200);
+  }
+
   async latestAuditLogByAction(action: string) {
     const data = await this.read();
     return (data.auditLogs ?? [])

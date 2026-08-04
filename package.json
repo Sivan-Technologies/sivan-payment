@@ -86,6 +86,7 @@
     "test:kyc-handoff": "tsx scripts/test-kyc-handoff.ts",
     "test:buy-gate": "tsx scripts/test-buy-gate.ts",
     "test:transfer-order": "tsx scripts/test-transfer-order.ts",
+    "test:hot-path-reads": "tsx scripts/test-hot-path-reads.ts",
     "test:name-match": "tsx scripts/test-name-match.ts",
     "test:verification-path": "tsx scripts/test-verification-path.ts",
     "test:ngn-payout-accounts": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-payout-accounts.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=ngn-payout-admin-key tsx scripts/test-ngn-payout-accounts.ts",
