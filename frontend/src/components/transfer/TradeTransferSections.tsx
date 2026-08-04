@@ -1,6 +1,7 @@
 import { FormEvent, useState } from 'react';
 import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord } from '../../types';
 import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
+import { explorerLink, explorerReference, shortHash } from '../../blockExplorer';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) { return <span className={`step-node ${active ? 'active' : ''} ${done ? 'done' : ''}`}><span>{done ? '✓' : '•'}</span>{label}</span>; }
@@ -11,6 +12,102 @@ function Empty({ children }: { children: string }) { return <div className="empt
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0,8)}…${value.slice(-6)}`; }
 function CustomSelect({ name, options, value, defaultValue, onChange, disabled = false }: { name: string; options: Array<{ value: string; label: string; helper?: string; disabled?: boolean }>; value?: string; defaultValue?: string; onChange?: (value: string) => void; disabled?: boolean }) { const firstEnabled = options.find((option) => !option.disabled)?.value || options[0]?.value || ''; const [internalValue,setInternalValue]=useState(defaultValue || value || firstEnabled); const [open,setOpen]=useState(false); const selectedValue=value ?? internalValue; const selected=options.find((option)=>option.value===selectedValue)||options.find((option)=>!option.disabled)||options[0]; const choose=(next:string)=>{setInternalValue(next); onChange?.(next); setOpen(false);}; return <div className="custom-select-wrap app-select-wrap"><input type="hidden" name={name} value={selected?.value || ''} /><button type="button" disabled={disabled} className={`custom-select-trigger ${open ? 'open' : ''}`} onClick={() => !disabled && setOpen((state)=>!state)}><span><strong>{selected?.label || 'Select'}</strong>{selected?.helper && <small>{selected.helper}</small>}</span><em>⌄</em></button>{open && <div className="custom-select-menu app-select-menu">{options.map((option)=><button type="button" disabled={option.disabled} className={option.value===selected?.value ? 'selected' : ''} key={option.value} onClick={()=>!option.disabled && choose(option.value)}><span>{option.label}</span>{option.helper && <small>{option.helper}</small>}</button>)}</div>}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
+
+/**
+ * THE ON-CHAIN RECEIPT FOR ONE TRANSFER.
+ *
+ * Requested directly: "add a blockchain field here where user can see the
+ * blockchain transaction based on the network they sent".
+ *
+ * It earns its space because of what happened without it. Two Solana sends
+ * both showed "Processing" with the same truncated RECIPIENT address beside
+ * them, and the user reasonably concluded the payment had not gone through.
+ * Both had settled on chain minutes earlier. The product held the answer and
+ * offered no way to see it.
+ *
+ * THREE STATES, and the difference between them is the whole point:
+ *
+ *   a real hash        -> the transaction exists. Link to the explorer.
+ *   a user-op hash     -> sponsored, not yet included by a bundler. Link to
+ *                         jiffyscan, which indexes user operations; a normal
+ *                         explorer would 404 and read as "it never happened".
+ *   nothing yet        -> say so plainly rather than rendering a dead link.
+ *
+ * The reference is selectable and copyable as well as linked: a user checking
+ * against their own wallet or a counterparty needs the string itself, and on
+ * mobile "open a new tab" is often the wrong action.
+ */
+function OnChainReceipt({ network, txHash, userOperationHash, networkMode, status }: { network: string; txHash?: string; userOperationHash?: string; networkMode?: 'mainnet' | 'testnet'; status?: string }) {
+  const [copied, setCopied] = useState(false);
+  const link = explorerLink({ network, txHash, userOperationHash, networkMode });
+  const reference = explorerReference({ txHash, userOperationHash });
+
+  /**
+   * NO REFERENCE IS NOT AN ERROR - it is the first few seconds of a transfer,
+   * or a transfer still waiting on a human. Stated in words, because an empty
+   * space where a receipt should be is exactly what caused the original
+   * confusion.
+   */
+  if (!reference) {
+    return (
+      <div className="chain-receipt pending">
+        <span className="chain-receipt-label">On-chain</span>
+        <span className="chain-receipt-empty">
+          {status === 'pending_review' ? 'Waiting on review, nothing sent yet' : 'Waiting for the network reference'}
+        </span>
+      </div>
+    );
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(reference);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard can be blocked by permissions or an insecure context. The
+      // reference is selectable text either way, so this stays silent rather
+      // than throwing an error at someone who can simply highlight it.
+    }
+  };
+
+  return (
+    <div className="chain-receipt">
+      <span className="chain-receipt-label">
+        On-chain
+        {/* The network is named here rather than only in the title above,
+            because this row is what a user screenshots for support. */}
+        <em>{String(network).replaceAll('_', ' ')}</em>
+        {link?.testnet && <b className="chain-receipt-testnet">Testnet</b>}
+      </span>
+      {/* title carries the FULL value: middle-truncation is for layout, and a
+          user comparing against their wallet needs every character. */}
+      <code className="chain-receipt-hash" title={reference}>{shortHash(reference)}</code>
+      <span className="chain-receipt-actions">
+        <button type="button" className="chain-receipt-btn" onClick={copy} aria-label="Copy transaction reference">
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+        {link && (
+          // noopener/noreferrer: an explorer is a third party and must never
+          // get a handle on this window.
+          <a className="chain-receipt-btn primary" href={link.url} target="_blank" rel="noopener noreferrer">
+            {link.label} ↗
+          </a>
+        )}
+      </span>
+      {!link && (
+        <small className="chain-receipt-note">
+          No explorer is configured for this network yet. The reference above is still the one to quote.
+        </small>
+      )}
+      {!txHash && userOperationHash && (
+        <small className="chain-receipt-note">
+          Gas was sponsored, so this is the user-operation reference until the transaction is included.
+        </small>
+      )}
+    </div>
+  );
+}
 
 export function BuyCryptoView({ hasUser, isVerified, bridgeBlockedReason, onVerifyWithId, feePercent, enabledControls, enabledAssets, enabledNetworks, orders, loading, onSubmit, onSell, onContinue, onSupport, onRefreshOrders }: { hasUser: boolean; isVerified: boolean; /** Why Bridge refuses this user, or undefined when it will not. Buying runs on Bridge, so `isVerified` (the country path) is not the gate here. */ bridgeBlockedReason?: string; /** Opens the modal on the DOCUMENT path explicitly - a Nigerian needs Bridge, not the bank form they already finished. */ onVerifyWithId: () => void; feePercent: string; enabledControls: PaymentControl[]; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[]; orders: OnrampOrderRecord[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onSell: () => void; onContinue: () => void; onSupport: () => void; onRefreshOrders: () => Promise<void> }) {
   const [amount, setAmount] = useState('1000');
@@ -73,7 +170,7 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
     <div className="warning-box compact">Send the exact amount and include the reference/memo. Missing or incorrect references can delay matching and settlement.</div>
   </div>;
 }
-export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, loading, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
+export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, networkMode, loading, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; /** Server-stated, never guessed: a mainnet explorer link for a testnet hash shows "not found", which reads as "your money is gone". */ networkMode?: 'mainnet' | 'testnet'; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
   const [activeRoute, setActiveRoute] = useState<'crypto' | 'supplier' | 'user'>('crypto');
   const [supplierCurrency, setSupplierCurrency] = useState<'gbp' | 'usd' | 'eur' | 'mxn' | 'brl'>('gbp');
   const [supplierCurrencyOpen, setSupplierCurrencyOpen] = useState(false);
@@ -148,7 +245,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
 
                   Labelled now, and the transaction identifier shown beside it
                   when one exists - that is the thing a user can actually look
-                  up, and the thing that differs per send. */}<small>To {shortRef(transfer.destinationAddress)} · {new Date(transfer.createdAt).toLocaleString()}</small>{(transfer.txHash || transfer.userOperationHash) && <small className="mono-ref">Tx {shortRef(transfer.txHash || transfer.userOperationHash)}</small>}{transfer.status === 'processing' && <small>Submitted to the network. This usually confirms within a minute.</small>}{transfer.note && <small>{transfer.note}</small>}</div>)}</div>}</article>}
+                  up, and the thing that differs per send. */}<small>To {shortRef(transfer.destinationAddress)} · {new Date(transfer.createdAt).toLocaleString()}</small>{transfer.status === 'processing' && <small>Submitted to the network. This usually confirms within a minute.</small>}{transfer.note && <small>{transfer.note}</small>}<OnChainReceipt network={transfer.network} txHash={transfer.txHash} userOperationHash={transfer.userOperationHash} networkMode={networkMode} status={transfer.status} /></div>)}</div>}</article>}
       {activeRoute === 'supplier' && <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Supplier payment history</p><h3>Cross-border payouts</h3></div></div>{!supplierPayments.length ? <Empty>No supplier payments yet.</Empty> : <div className="list">{supplierPayments.map((payment) => <div className="list-item" key={payment.id}><strong>{payment.amount} USDC → {payment.destinationCurrency.toUpperCase()}</strong><Badge status={payment.status}>{friendlyStatus(payment.status)}</Badge><small>{payment.supplier?.supplierName || shortRef(payment.supplierId)} · Risk {payment.riskLevel} · {new Date(payment.createdAt).toLocaleString()}</small><small>{payment.reviewReason}</small></div>)}</div>}</article>}
     </div>
     <article className="panel"><div className="panel-head"><div><p className="eyebrow">Stablecoin ledger</p><h3>Deposit, hold and spend trail</h3></div></div>{!balance?.ledger?.length ? <Empty>No stablecoin ledger entries yet. Deposit to your virtual account; after provider settlement, USDC can become spendable.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>Type</th><th>Amount</th><th>Status</th><th>Source</th><th>Date</th></tr></thead><tbody>{balance.ledger.slice(0, 20).map((entry) => <tr key={entry.entryId}><td>{entry.kind.replaceAll('_', ' ')}</td><td>{entry.amount} {entry.asset.toUpperCase()}</td><td><Badge status={entry.status}>{friendlyStatus(entry.status)}</Badge></td><td>{entry.sourceType} · {shortRef(entry.sourceId)}</td><td>{new Date(entry.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>

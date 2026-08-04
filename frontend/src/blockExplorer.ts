@@ -1,0 +1,146 @@
+/**
+ * WHERE A USER GOES TO SEE THEIR OWN TRANSACTION.
+ *
+ * Requested after a support round where two Solana sends both showed
+ * "Processing" and the user concluded the money had not arrived. It had - both
+ * were finalised on chain - but the product gave them no way to check. The
+ * only reference on screen was the recipient address, unlabelled, identical
+ * across both sends.
+ *
+ * A block explorer link is the shortest path from "did it work?" to a verified
+ * yes, and it is the one answer that does not depend on trusting us.
+ *
+ * TWO THINGS THIS MUST GET RIGHT, BOTH OF WHICH LOSE THE USER IF WRONG:
+ *
+ * 1. NETWORK. A Base Sepolia hash on basescan.org mainnet returns "not found",
+ *    which reads as "your transaction does not exist" - strictly worse than no
+ *    link at all. The network mode comes from the SERVER (preferences.
+ *    networkMode, set from NETWORK_MODE) and is never guessed here.
+ *
+ * 2. IDENTIFIER TYPE. A sponsored EVM transfer is an ERC-4337 user operation.
+ *    Its userOperationHash is NOT a transaction hash and will not resolve on a
+ *    normal explorer transaction page until a bundler includes it. Linking one
+ *    to /tx/ produces a dead page, so user operations get jiffyscan, which
+ *    indexes them specifically.
+ */
+
+export type ExplorerNetwork = 'base' | 'ethereum' | 'solana' | 'polygon' | 'arbitrum' | string;
+
+export interface ExplorerLink {
+  /** Absolute URL, safe to put in href. */
+  url: string;
+  /** Shown to the user, e.g. "Basescan". Never a bare domain. */
+  label: string;
+  /** True when this points at a test network, so the UI can say so. */
+  testnet: boolean;
+}
+
+/**
+ * Explorer hosts per network and mode.
+ *
+ * Solana uses one host with a ?cluster= parameter rather than a separate
+ * domain, which is why it is modelled as a builder rather than a base string.
+ */
+const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: string }> = {
+  base: { mainnet: 'https://basescan.org', testnet: 'https://sepolia.basescan.org', label: 'Basescan' },
+  ethereum: { mainnet: 'https://etherscan.io', testnet: 'https://sepolia.etherscan.io', label: 'Etherscan' },
+  polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
+  arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
+};
+
+/** CAIP-ish chain ids jiffyscan uses for user operations. */
+const USEROP_CHAIN: Record<string, { mainnet: string; testnet: string }> = {
+  base: { mainnet: 'base', testnet: 'base-sepolia' },
+  ethereum: { mainnet: 'mainnet', testnet: 'sepolia' },
+  polygon: { mainnet: 'matic', testnet: 'amoy' },
+  arbitrum: { mainnet: 'arbitrum-one', testnet: 'arbitrum-sepolia' },
+};
+
+export interface ExplorerInput {
+  network?: string;
+  /** The real transaction hash or Solana signature, when one exists. */
+  txHash?: string;
+  /**
+   * Present INSTEAD of txHash while an EVM transfer is sponsored and not yet
+   * included by a bundler. Deliberately a separate field: treating it as a
+   * transaction hash is what produces a dead explorer page.
+   */
+  userOperationHash?: string;
+  networkMode?: 'mainnet' | 'testnet';
+}
+
+/**
+ * Build the explorer link for a transfer, or undefined when there is nothing
+ * honest to link to.
+ *
+ * Returns undefined rather than a best-guess URL. A link that 404s costs more
+ * trust than an absent one, because the user reads the empty page as evidence
+ * about their money rather than about our URL.
+ */
+export function explorerLink(input: ExplorerInput): ExplorerLink | undefined {
+  const network = String(input.network ?? '').toLowerCase();
+  // Absent means mainnet, matching the server default and the same reasoning
+  // as types.ts: never claim a real transfer is on a test chain.
+  const testnet = input.networkMode === 'testnet';
+  const hash = (input.txHash ?? '').trim();
+  const userOp = (input.userOperationHash ?? '').trim();
+
+  if (network === 'solana') {
+    // Solana has no user-operation concept; the signature is available
+    // immediately, so a missing one means we genuinely have nothing.
+    if (!hash) return undefined;
+    const cluster = testnet ? '?cluster=devnet' : '';
+    return {
+      url: `https://solscan.io/tx/${encodeURIComponent(hash)}${cluster}`,
+      label: 'Solscan',
+      testnet,
+    };
+  }
+
+  const evm = EVM_EXPLORERS[network];
+  if (!evm) return undefined;
+
+  if (hash) {
+    return {
+      url: `${testnet ? evm.testnet : evm.mainnet}/tx/${encodeURIComponent(hash)}`,
+      label: evm.label,
+      testnet,
+    };
+  }
+
+  /**
+   * Sponsored and not yet included. jiffyscan resolves a user-operation hash;
+   * the standard explorers do not, and would show "not found".
+   */
+  if (userOp) {
+    const chain = USEROP_CHAIN[network];
+    if (!chain) return undefined;
+    return {
+      url: `https://jiffyscan.xyz/userOpHash/${encodeURIComponent(userOp)}?network=${testnet ? chain.testnet : chain.mainnet}`,
+      label: 'Jiffyscan',
+      testnet,
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * The identifier to SHOW, distinct from the one to link.
+ *
+ * A user comparing what is on screen against what their wallet or counterparty
+ * shows needs the string itself, not just a link.
+ */
+export function explorerReference(input: ExplorerInput): string | undefined {
+  const hash = (input.txHash ?? '').trim();
+  if (hash) return hash;
+  const userOp = (input.userOperationHash ?? '').trim();
+  return userOp || undefined;
+}
+
+/** Middle-truncated for display; the full value stays in the title attribute. */
+export function shortHash(value?: string): string {
+  if (!value) return '—';
+  if (value.length <= 20) return value;
+  return `${value.slice(0, 10)}…${value.slice(-8)}`;
+}

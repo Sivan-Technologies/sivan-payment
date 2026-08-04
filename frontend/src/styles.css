@@ -2071,3 +2071,65 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   background: #fff;
   padding: 2px;
 }
+
+/* ON-CHAIN RECEIPT
+ *
+ * Requested as "a blockchain field where user can see the blockchain
+ * transaction based on the network they sent", slick on mobile and desktop.
+ *
+ * It exists because its absence cost real trust: two settled Solana sends read
+ * as failures because the only reference on screen was the recipient address,
+ * unlabelled and identical across both. This row is the thing a user
+ * screenshots for support, so it has to survive being screenshotted - hence a
+ * monospace hash that never reflows mid-character, a visible network name, and
+ * an explicit testnet marker.
+ *
+ * LAYOUT. Desktop puts label, hash and actions on one line with the hash
+ * taking the slack (minmax(0,1fr) so a long signature shrinks instead of
+ * pushing the buttons off the card). Below 640px it becomes three stacked
+ * rows, because a 88-character Solana signature and two buttons cannot share
+ * a phone's width without one of them being unusable.
+ *
+ * Set apart from the list item with its own inset surface and a top rule: it
+ * is evidence about the transfer rather than another line of description, and
+ * the visual break is what stops it being skimmed past like the ones above it.
+ */
+.chain-receipt{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content;align-items:center;gap:10px 12px;margin-top:10px;padding:11px 12px;border:1px solid rgba(116,221,190,.16);border-radius:13px;background:linear-gradient(180deg,rgba(116,221,190,.055),rgba(8,13,20,.86));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.chain-receipt.pending{border-color:rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.022),rgba(8,13,20,.8))}
+.chain-receipt-label{display:inline-flex;align-items:center;gap:7px;font-size:9.5px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:#9fb0c2;white-space:nowrap}
+/* The network, stated on the receipt itself. A user comparing two sends needs
+   to see WHICH chain each went to without reading the title above. */
+.chain-receipt-label em{font-style:normal;padding:3px 7px;border-radius:999px;background:rgba(116,221,190,.12);border:1px solid rgba(116,221,190,.18);color:#74ddbe;font-size:9.5px;letter-spacing:.1em}
+/* Amber, not green: this is a warning that the funds are not real, and it must
+   not read as another piece of confirmation. */
+.chain-receipt-testnet{padding:3px 7px;border-radius:999px;background:rgba(241,189,114,.14);border:1px solid rgba(241,189,114,.3);color:#f1bd72;font-size:9.5px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+/* user-select:all so one tap selects the whole reference on mobile, where
+   dragging a selection across a truncated hash is close to impossible. */
+.chain-receipt-hash{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px;letter-spacing:-.01em;color:#eef3f7;user-select:all;cursor:text}
+.chain-receipt-empty{min-width:0;font-size:12px;color:#8b9aab;overflow-wrap:anywhere}
+.chain-receipt-actions{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.chain-receipt-btn{appearance:none;font:inherit;cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:7px 11px;border-radius:10px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.05);color:#cfe7df;font-size:11.5px;font-weight:800;line-height:1;text-decoration:none;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+.chain-receipt-btn:hover{border-color:rgba(116,221,190,.32);background:rgba(116,221,190,.09);color:#eef3f7}
+.chain-receipt-btn:active{transform:translateY(1px)}
+.chain-receipt-btn.primary{border-color:rgba(116,221,190,.26);background:rgba(116,221,190,.13);color:#74ddbe}
+.chain-receipt-btn.primary:hover{background:rgba(116,221,190,.2)}
+/* Keyboard focus must be obvious: this is the row people tab to when checking
+   a payment, and outline:none on a link is an accessibility regression. */
+.chain-receipt-btn:focus-visible{outline:2px solid rgba(116,221,190,.55);outline-offset:2px}
+/* Spans all three columns so an explanatory note never squeezes the hash. */
+.chain-receipt-note{grid-column:1 / -1;margin:0;font-size:11px;line-height:1.45;color:#8b9aab;overflow-wrap:anywhere}
+
+@media(max-width:640px){
+  /* Stacked, because a Solana signature plus two buttons cannot share a phone
+     width without the buttons becoming untappable. */
+  .chain-receipt{grid-template-columns:1fr;gap:9px;padding:12px}
+  .chain-receipt-label{justify-self:start}
+  /* Wraps on mobile rather than ellipsing: with the full width available there
+     is room to show the whole reference, and a user reading it against their
+     wallet should not have to scroll it. */
+  .chain-receipt-hash{white-space:normal;overflow-wrap:anywhere;word-break:break-all;font-size:11.5px;line-height:1.5}
+  .chain-receipt-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  /* 40px: comfortably above the 44px-ish tap target guidance once padding and
+     line-height are counted, and equal-width so neither is the easy one. */
+  .chain-receipt-btn{justify-content:center;min-height:40px;padding:10px;font-size:12px}
+}

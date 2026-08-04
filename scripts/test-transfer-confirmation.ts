@@ -179,10 +179,19 @@ const types = read('frontend/src/types.ts');
 check('the recipient is now labelled rather than bare',
   ui.includes('To {shortRef(transfer.destinationAddress)}'),
   'an unlabelled address reads as a transaction reference');
+/**
+ * REPINNED, not weakened. These asserted the inline `Tx {shortRef(...)}` line
+ * that the on-chain receipt component replaced - see test:block-explorer. The
+ * BEHAVIOUR they guard is unchanged and still required: the identifier must be
+ * shown, and a sponsored transfer must fall back to its user-operation hash.
+ * Pointing them at the component keeps that guarantee instead of deleting it
+ * because the markup moved.
+ */
 check('the transaction identifier is shown when one exists',
-  ui.includes('Tx {shortRef(transfer.txHash || transfer.userOperationHash)}'));
+  ui.includes('<OnChainReceipt') && ui.includes('txHash={transfer.txHash}'));
 check('a sponsored transfer falls back to the user-operation hash',
-  ui.includes('transfer.txHash || transfer.userOperationHash'));
+  ui.includes('userOperationHash={transfer.userOperationHash}')
+  && read('frontend/src/blockExplorer.ts').includes('return userOp || undefined;'));
 check('processing explains itself instead of just sitting there',
   ui.includes('Submitted to the network'));
 check('the frontend type declares txHash', /txHash\?: string;/.test(types));
