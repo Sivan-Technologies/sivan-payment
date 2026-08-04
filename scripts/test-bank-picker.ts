@@ -67,7 +67,7 @@ const names = (list: Array<{ name: string }>) => list.map((bank) => bank.name);
 const positionOf = (list: Array<{ name: string }>, name: string) =>
   list.findIndex((bank) => bank.name === name);
 
-function main() {
+async function main() {
   console.log('\nWHAT YOU SEE BEFORE YOU TYPE');
   {
     const ordered = orderBanksForDisplay(BANKS);
@@ -251,8 +251,74 @@ function main() {
       filterBanks(BANKS, 'a+b(c').length === 0);
   }
 
+  console.log('\nTHE ROWS ARE ACTUALLY STYLED');
+  {
+    /**
+     * .bank-option HAD NO CSS AT ALL.
+     *
+     * The class was applied in NgnPayoutForm.tsx and never defined anywhere,
+     * so every row fell through to the browser's default <button>: light grey
+     * background, centred text, system font - a stack of white pills stamped
+     * into a dark premium UI. Reported from a screenshot; confirmed by
+     * grepping styles.css and finding zero matches.
+     *
+     * An unstyled class is invisible to typecheck, to lint, and to every
+     * behavioural test in this suite - all of which passed the whole time the
+     * picker looked broken. Only a human looking at it, or this, catches it.
+     */
+    const fsp = await import('node:fs/promises');
+    const pathMod = await import('node:path');
+    const css = await fsp.readFile(
+      pathMod.join(process.cwd(), 'frontend/src/styles.css'), 'utf8'
+    );
+
+    check('.bank-option has a rule at all', /^\.bank-option \{/m.test(css),
+      'the class is applied in markup but never styled');
+
+    const rule = css.match(/^\.bank-option \{([^}]*)\}/m)?.[1] ?? '';
+    check('it sets its own background, not the browser default',
+      /background:/.test(rule), rule.slice(0, 80));
+    check('and a light text colour for a dark surface',
+      /color: #eef3f7/.test(rule), rule.slice(0, 80));
+    check('rows read left to right, not centred',
+      /text-align: left/.test(rule), rule.slice(0, 80));
+
+    /**
+     * The background must be DARK. A rule that exists but paints white would
+     * pass the checks above while looking exactly like the bug.
+     */
+    const background = rule.match(/background:\s*([^;]+);/)?.[1]?.trim() ?? '';
+    check('the surface is translucent white over dark, not opaque white',
+      /rgba\(255,\s*255,\s*255,\s*0\.0/.test(background), background);
+
+    check('there is a hover state', /^\.bank-option:hover \{/m.test(css));
+    check('and a keyboard focus state, since this list is tabbed through',
+      /^\.bank-option:focus-visible \{/m.test(css));
+
+    /**
+     * Bank logos are PNGs drawn for LIGHT backgrounds - dark wordmarks with
+     * transparency - so without a white tile behind them most disappear
+     * entirely on a dark row. Same treatment the verification modal already
+     * uses for .sv-bank img.
+     */
+    check('logos get a white tile so dark wordmarks stay legible',
+      /^\.bank-option img \{[^}]*background: #fff/m.test(css));
+
+    /**
+     * The two pickers do the same job and must not look like different
+     * products. Asserted on the shared values rather than on identical text.
+     */
+    const svRule = css.match(/^\.sv-bank \{([^}]*)\}/m)?.[1] ?? '';
+    const radiusOf = (r: string) => r.match(/border-radius:\s*([^;]+);/)?.[1]?.trim();
+    check('it matches the verification modal picker radius',
+      radiusOf(rule) === radiusOf(svRule),
+      `${radiusOf(rule)} vs ${radiusOf(svRule)}`);
+    check('and the same mint hover',
+      /rgba\(52, 211, 153/.test(css.match(/^\.bank-option:hover \{([^}]*)\}/m)?.[1] ?? ''));
+  }
+
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }
 
-main();
+main().catch((error) => { console.error(error); process.exit(1); });
