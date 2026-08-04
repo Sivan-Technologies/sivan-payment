@@ -610,6 +610,39 @@ export class PostgresDatabase {
 
 
 
+  /**
+   * The five control tables, and ONLY those.
+   *
+   * listPaymentControls() used db.read(), which issues 47 sequential
+   * `select *` queries - every table in the database - to answer "is USD
+   * enabled". On the deployed test API a rejected buy order spent 18 seconds
+   * there, past the Cloudflare gateway's 12s write timeout, so the user got
+   * "the payments-api service did not respond" instead of the reason.
+   *
+   * Removing three of the four callers cut that to ~9.7s. Still far too slow,
+   * because the one remaining read is the expensive part. These five run in
+   * parallel on one connection.
+   */
+  async readControlTables() {
+    const client = await this.pool.connect();
+    try {
+      const [customerTypes, payouts, virtualAccounts, assets, networks] = await Promise.all([
+        client.query('select * from payments_customer_type_controls order by customer_type asc'),
+        client.query('select * from payments_control_settings order by currency asc'),
+        optionalQuery(client, 'select * from payments_virtual_account_controls order by currency asc'),
+        client.query('select * from payments_asset_controls order by asset asc'),
+        client.query('select * from payments_network_controls order by sort_order asc'),
+      ]);
+      return {
+        customerTypeControls: customerTypes.rows.map(mapCustomerTypeControl),
+        paymentControls: payouts.rows.map(mapPaymentControl),
+        virtualAccountControls: virtualAccounts.rows.map(mapVirtualAccountControl),
+        assetControls: assets.rows.map(mapAssetControl),
+        networkControls: networks.rows.map(mapNetworkControl),
+      };
+    } finally { client.release(); }
+  }
+
   async listNgnControls(): Promise<NgnControlsRecord[]> {
     const client = await this.pool.connect();
     try { return (await optionalQuery(client, 'select * from payments_ngn_controls order by id asc')).rows.map(mapNgnControls); } finally { client.release(); }

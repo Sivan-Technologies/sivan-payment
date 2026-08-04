@@ -92,7 +92,17 @@ export interface OfframpControlsResponse {
 }
 
 export async function listPaymentControls(): Promise<OfframpControlsResponse> {
-  const data = await db.read();
+  /**
+   * FIVE TARGETED QUERIES, NOT A WHOLE-DATABASE READ.
+   *
+   * This was `db.read()`, which on Postgres issues 47 sequential `select *`
+   * queries - every table - to answer questions like "is USD enabled". A
+   * rejected buy order called it four times and took 18 seconds, past the
+   * Cloudflare gateway's 12s write cutoff, so the user saw "the payments-api
+   * service did not respond" rather than the actual reason. Collapsing the
+   * four callers to one got it to 9.7s; the read itself was the rest.
+   */
+  const data = await db.readControlTables();
   const existingCustomerTypes = data.customerTypeControls ?? [];
   const existingPayouts = data.paymentControls ?? [];
   const existingAssets = data.assetControls ?? [];

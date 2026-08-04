@@ -183,6 +183,49 @@ function main() {
      * finders instead.
      */
     check('and the whole database is never read here', !/db\.read\(\)/.test(src));
+
+    /**
+     * THE READ ITSELF WAS THE REST OF THE LATENCY.
+     *
+     * Collapsing four control guards into one got the rejection from 18s to
+     * 9.7s measured on api-test - better, still past anything a user will
+     * wait through, and only 2.3s inside the gateway's 12s write cutoff.
+     * listPaymentControls() was still calling db.read(): 47 sequential
+     * `select *` queries to answer "is USD enabled".
+     */
+    const controls = read('src/controls/payment-controls.service.ts')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    check('listPaymentControls no longer reads the whole database',
+      !/const data = await db\.read\(\)/.test(controls));
+    check('it reads only the control tables',
+      /await db\.readControlTables\(\)/.test(controls));
+
+    for (const [label, file] of [
+      ['postgres', 'src/database/postgres-database.ts'],
+      ['json', 'src/database/json-database.ts'],
+    ] as const) {
+      const impl = read(file);
+      check(`${label} implements readControlTables`, /async readControlTables\(/.test(impl));
+    }
+    /**
+     * Sequential would be five round trips instead of one. The whole point is
+     * that none of them depends on another.
+     */
+    const pg = read('src/database/postgres-database.ts');
+    const body = pg.slice(pg.indexOf('async readControlTables('), pg.indexOf('async listNgnControls('));
+    check('and postgres runs the five in parallel', /await Promise\.all\(\[/.test(body));
+    check('on a single pooled connection',
+      (body.match(/this\.pool\.connect\(\)/g) ?? []).length === 1);
+    /**
+     * SCOPED TO THIS METHOD'S BODY, and that correction matters: the file
+     * contains 92 identical `finally { client.release(); }` lines, so a check
+     * against the whole file passed even with this method's release deleted.
+     * Mutation-testing caught it - the guard was decorative.
+     *
+     * A leaked connection here would exhaust the pool under load, which is a
+     * far worse failure than the slow response being fixed.
+     */
+    check('which it releases', /client\.release\(\)/.test(body));
     check('the user is fetched by an indexed lookup', /db\.findUserById\(/.test(src));
     check('as is the customer', /db\.findCustomerByUserId\(/.test(src));
     check('the three lookups run in parallel, not in series',

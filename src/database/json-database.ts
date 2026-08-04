@@ -795,6 +795,18 @@ export class JsonDatabase {
 
 
 
+  /** Mirror of the Postgres targeted control read. On JSON this is already cheap. */
+  async readControlTables() {
+    const data = await this.read();
+    return {
+      customerTypeControls: data.customerTypeControls ?? [],
+      paymentControls: data.paymentControls ?? [],
+      virtualAccountControls: data.virtualAccountControls ?? [],
+      assetControls: data.assetControls ?? [],
+      networkControls: data.networkControls ?? [],
+    };
+  }
+
   async listNgnControls(): Promise<NgnControlsRecord[]> {
     const data = await this.read();
     return data.ngnControls ?? [];
