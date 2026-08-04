@@ -1892,3 +1892,57 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
    reading a 42-character address off a phone must be able to check it
    character by character, and it must never overflow the card. */
 .deposit-address-value{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.6;overflow-wrap:anywhere;word-break:break-all;padding:10px 12px;margin:8px 0;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(116,221,190,.22);color:#eef3f7}
+
+/* ── Bank picker: state labels ──────────────────────────────────────────────
+   The picker used to render 169 alphabetical rows with nothing to say which
+   state it was in - loading, a shortlist, or search results all looked
+   identical, and the first thing on screen was Abbey Mortgage Bank. These are
+   the labels that tell the user what they are looking at. */
+.bank-list-label,
+.sv-bank-label {
+  margin: 2px 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: #7e8b99;
+}
+
+/* Loading is a distinct state, not an empty list. An empty list with no
+   explanation reads as "no banks", which is the wrong conclusion. */
+.bank-list-status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 2px;
+  color: #8b98a6;
+  font-size: 13.5px;
+}
+
+/* Nothing is hidden, only deferred - this is the way to the other 150 banks
+   for anyone whose bank is not in the shortlist. */
+.bank-list-more {
+  margin-top: 4px;
+  padding: 11px 14px;
+  width: 100%;
+  border-radius: 14px;
+  border: 1px dashed rgba(147, 183, 223, .22);
+  background: rgba(255, 255, 255, .02);
+  color: #b9c7d5;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .16s ease, color .16s ease, background .16s ease;
+}
+.bank-list-more:hover {
+  border-color: rgba(116, 221, 190, .38);
+  background: rgba(116, 221, 190, .06);
+  color: #dffcf2;
+}
+
+/* The sell-screen list can grow long once expanded; keep it scrollable rather
+   than pushing the account-number field off the bottom of a phone. */
+.bank-list {
+  max-height: 340px;
+  overflow-y: auto;
+}
