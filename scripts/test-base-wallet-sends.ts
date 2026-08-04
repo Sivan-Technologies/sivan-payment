@@ -183,6 +183,84 @@ async function main() {
     });
     check('a send OVER the review threshold is still held for review', big.data.status === 'pending_review', JSON.stringify(big.body).slice(0, 200));
 
+    /**
+     * THE STATUS A LIST REPORTS MUST BE THE CURRENT ONE.
+     *
+     * Confirmed against live api-test: GET /api/admin/balance/transfers said
+     * {"status":"requested"} for a transfer whose audit log, seconds later,
+     * recorded pending_review. Both list functions read ONLY the
+     * balance.transfer_requested event, so the status was frozen at creation
+     * and every later event was written and then read by nobody.
+     */
+    const adminList = await req('GET', '/api/admin/balance/transfers', undefined, { 'x-admin-api-key': 'base-wallet-admin-key' });
+    const listedBig = (adminList.data as any[]).find((t) => t.transferId === big.data.transferId);
+    check('the admin list reports the CURRENT status, not the creation one',
+      listedBig?.status === 'pending_review', String(listedBig?.status));
+    const listedSent = (adminList.data as any[]).find((t) => t.transferId === send.data.transferId);
+    check('and shows the completed send as processing, not requested',
+      listedSent?.status === 'processing', String(listedSent?.status));
+    check('the later event brought its tx identifiers with it', Boolean(listedSent?.providerTransferId));
+
+    const userList = await req('GET', `/api/users/${userId}/balance/transfers`);
+    check("the user's own history agrees with the admin view",
+      (userList.data as any[]).find((t) => t.transferId === big.data.transferId)?.status === 'pending_review');
+
+    console.log('\n── the review queue must have an exit ─────────────────────────');
+
+    /**
+     * There was NO approve or reject route, service function or script
+     * anywhere. A transfer over the threshold held funds permanently. A
+     * control that can stop money but never release it is a leak.
+     */
+    const badDecision = await req('POST', `/api/admin/balance/transfers/${big.data.transferId}/decision`,
+      { decision: 'approve', reason: 'no' }, { 'x-admin-api-key': 'base-wallet-admin-key' });
+    check('a too-short reason is refused', badDecision.status === 400, String(badDecision.status));
+
+    const missing = await req('POST', '/api/admin/balance/transfers/btx_does_not_exist/decision',
+      { decision: 'approve', reason: 'Reviewed and cleared' }, { 'x-admin-api-key': 'base-wallet-admin-key' });
+    check('an unknown transfer 404s rather than inventing one', missing.status === 404, String(missing.status));
+
+    const unauth = await req('POST', `/api/admin/balance/transfers/${big.data.transferId}/decision`,
+      { decision: 'approve', reason: 'Reviewed and cleared' });
+    check('releasing money requires the admin key', unauth.status === 401 || unauth.status === 403, String(unauth.status));
+
+    const approved = await req('POST', `/api/admin/balance/transfers/${big.data.transferId}/decision`,
+      { decision: 'approve', reason: 'Reviewed and cleared for release' }, { 'x-admin-api-key': 'base-wallet-admin-key' });
+    check('an approved transfer is broadcast', approved.data.status === 'processing', JSON.stringify(approved.body).slice(0, 200));
+    check('through the same path, so it carries a provider id', Boolean(approved.data.providerTransferId));
+
+    /**
+     * Approving twice must not send twice. Without the state guard this would
+     * debit the user a second time for one transfer.
+     */
+    const twice = await req('POST', `/api/admin/balance/transfers/${big.data.transferId}/decision`,
+      { decision: 'approve', reason: 'Trying to approve it a second time' }, { 'x-admin-api-key': 'base-wallet-admin-key' });
+    check('approving an already-sent transfer is refused', twice.status === 400, String(twice.status));
+
+    /** And reject must return the money, not spend it. */
+    const toReject = await req('POST', `/api/users/${userId}/balance/transfers`, {
+      asset: 'usdc', network: 'base', amount: 55,
+      destinationAddress: '0x6d7D2Eb4667395437739634D3382A90Fff238295',
+    });
+    check('a second reviewable transfer is created', toReject.data.status === 'pending_review', String(toReject.data.status));
+    const beforeReject = await req('GET', `/api/users/${userId}/balance/unified`);
+    const heldBefore = Number(beforeReject.data.balances.find((b: any) => b.asset === 'usdc')?.held ?? 0);
+    check('its funds are held while it waits', heldBefore === 55, String(heldBefore));
+
+    const rejected = await req('POST', `/api/admin/balance/transfers/${toReject.data.transferId}/decision`,
+      { decision: 'reject', reason: 'Destination could not be confirmed' }, { 'x-admin-api-key': 'base-wallet-admin-key' });
+    check('a rejected transfer is marked rejected', rejected.data.status === 'rejected', String(rejected.data.status));
+
+    const afterReject = await req('GET', `/api/users/${userId}/balance/unified`);
+    const heldAfter = Number(afterReject.data.balances.find((b: any) => b.asset === 'usdc')?.held ?? 0);
+    check('and the hold is RETURNED to the user, not spent', heldAfter === 0, String(heldAfter));
+
+    const finalLedger = await req('GET', `/api/users/${userId}/balance/ledger`);
+    const releases = (finalLedger.data as any[]).filter((e) => e.kind === 'hold_release');
+    check('the release is recorded as hold_release, never as a debit', releases.length === 1);
+    check('a rejected transfer produced no debit_transfer',
+      (finalLedger.data as any[]).filter((e) => e.kind === 'debit_transfer' && e.transferId === toReject.data.transferId).length === 0);
+
     await app.close();
   } catch (error) {
     await app.close();

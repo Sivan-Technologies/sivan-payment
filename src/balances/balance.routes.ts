@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, createAdminBalanceAdjustment, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
+import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber } from '../identity/identity.service.js';
@@ -106,6 +106,20 @@ export async function balanceRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/admin/balance/transfers', async () => ({ data: await listAllBalanceTransfers() }));
+
+  /**
+   * THE ONLY EXIT FROM THE REVIEW QUEUE. There was none before this.
+   *
+   * A transfer over the manual-review threshold held the user's funds on the
+   * ledger with no route, service function or script anywhere in the codebase
+   * able to release or refuse it. Approve broadcasts through the same
+   * executeBalanceTransfer the automatic path uses; reject returns the hold.
+   */
+  app.post('/api/admin/balance/transfers/:transferId/decision', async (request) => {
+    const { transferId } = request.params as { transferId: string };
+    const body = parseBody(balanceTransferDecisionSchema, request.body);
+    return { data: await decideBalanceTransfer(transferId, { ...body, decidedBy: actor(request) }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
 
   app.post('/api/admin/balance/adjustments', async (request) => {
     const body = parseBody(adminBalanceAdjustmentSchema, request.body);

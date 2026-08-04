@@ -106,12 +106,59 @@ function ledgerLogs() {
     .filter((item) => item.entry?.entryId));
 }
 
+/**
+ * Audit actions that carry a transfer's state, oldest meaning first.
+ *
+ * A transfer is not stored as a row - it is reconstructed from its audit
+ * trail. That is fine, but only if EVERY event in the trail is read.
+ */
+const TRANSFER_EVENTS = [
+  'balance.transfer_requested',
+  'balance.transfer_requires_operator',
+  'balance.transfer_submitted',
+  'balance.transfer_failed',
+  'balance.transfer_approved',
+  'balance.transfer_rejected',
+] as const;
+
+/**
+ * Every transfer, at its LATEST known state.
+ *
+ * This used to filter on 'balance.transfer_requested' alone, so the status
+ * shown was whatever it was at creation and never changed again. Confirmed
+ * against the live api-test service: GET /api/admin/balance/transfers reported
+ *
+ *   {"status":"requested", ...}
+ *
+ * for a transfer whose audit log, seconds later, recorded
+ * balance.transfer_requires_operator with status pending_review. The user's
+ * own screen said "requested" while the ledger held the money and no operator
+ * queue knew about it.
+ *
+ * Every subsequent event - submitted, failed, approved, rejected - was written
+ * correctly and then read by nobody. Folding them in per transferId, ordered
+ * by time, is the whole fix.
+ */
 async function transferLogs() {
   const data = await db.read();
-  return (data.auditLogs ?? [])
-    .filter((log) => log.action === 'balance.transfer_requested')
+  const events = (data.auditLogs ?? [])
+    .filter((log) => (TRANSFER_EVENTS as readonly string[]).includes(log.action))
     .map((log) => ({ log, transfer: log.metadata as TransferMetadata }))
-    .filter((item) => item.transfer?.transferId);
+    .filter((item) => item.transfer?.transferId)
+    .sort((a, b) => a.log.createdAt.localeCompare(b.log.createdAt));
+
+  const latest = new Map<string, { log: typeof events[number]['log']; transfer: TransferMetadata }>();
+  for (const event of events) {
+    const existing = latest.get(event.transfer.transferId);
+    latest.set(event.transfer.transferId, {
+      // Keep the ORIGINAL log for createdAt - the request time is what a user
+      // recognises, not the moment an operator happened to touch it.
+      log: existing?.log ?? event.log,
+      // Merged, not replaced: a later event may omit fields the first carried.
+      transfer: { ...(existing?.transfer ?? {}), ...event.transfer },
+    });
+  }
+  return [...latest.values()];
 }
 
 export async function getBalanceTransferControls() {
@@ -440,6 +487,111 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
 
 export async function listAllBalanceTransfers() {
   return (await transferLogs()).map((item) => item.transfer).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export const balanceTransferDecisionSchema = z.object({
+  decision: z.enum(['approve', 'reject']),
+  reason: z.string().min(5).max(1000),
+  decidedBy: z.string().min(2).default('admin_api_key'),
+});
+
+/**
+ * RELEASE OR REFUSE A TRANSFER THAT IS WAITING ON A HUMAN.
+ *
+ * THERE WAS NO WAY TO DO THIS. Grep confirmed it: no approve route, no reject
+ * route, no service function, nothing anywhere in src/ that moved a transfer
+ * out of pending_review. Every route was GET, POST-create, or controls.
+ *
+ * So the manual-review threshold was a one-way door. A transfer that crossed
+ * it had its funds held on the ledger, permanently, with no mechanism in the
+ * product to send it or give it back. On api-test a real 10 USDC hold is
+ * sitting in exactly that state right now.
+ *
+ * That is worse than the threshold not existing. A control that can stop money
+ * but cannot then release it is not a control, it is a leak.
+ *
+ * APPROVE runs the SAME executeBalanceTransfer as an auto-approved send, so
+ * there is one implementation of "send the money" and the reviewed path cannot
+ * quietly rot away from the unreviewed one.
+ *
+ * REJECT releases the hold back to the user. Not a debit - the money never
+ * left, and recording it as spent would lose it.
+ */
+export async function decideBalanceTransfer(
+  transferId: string,
+  input: z.infer<typeof balanceTransferDecisionSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const found = (await transferLogs()).find((item) => item.transfer.transferId === transferId);
+  if (!found) throw notFound('Balance transfer');
+  const transfer = found.transfer;
+
+  /**
+   * Only a transfer actually awaiting review may be decided.
+   *
+   * Without this, approving an already-submitted transfer would broadcast it a
+   * SECOND time and debit the user twice. The provider idempotency key guards
+   * the same transfer id, but relying on a downstream vendor for a rule this
+   * important is not a guard, it is a hope.
+   */
+  if (transfer.status !== 'pending_review') {
+    throw badRequest(`This transfer is ${transfer.status}, not awaiting review.`);
+  }
+
+  if (input.decision === 'reject') {
+    await createBalanceLedgerEntry({
+      userId: transfer.userId, asset: transfer.asset, amount: transfer.amount,
+      kind: 'hold_release', status: 'available',
+      sourceType: 'balance_transfer', sourceId: transfer.transferId,
+      description: `Hold released after review: ${input.reason}`,
+      network: transfer.network, destinationAddress: transfer.destinationAddress,
+      transferId: transfer.transferId,
+    }, { actorType: 'admin', actorId: input.decidedBy });
+
+    const rejected: TransferMetadata = { ...transfer, status: 'rejected', updatedAt: nowIso() };
+    await createAuditLog({
+      actorType: 'admin', actorId: input.decidedBy, action: 'balance.transfer_rejected',
+      resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'warning',
+      ipAddress: context.ipAddress, userAgent: context.userAgent,
+      metadata: { ...rejected, reason: input.reason },
+    });
+    return rejected;
+  }
+
+  /**
+   * The approval is recorded BEFORE the send is attempted.
+   *
+   * If the broadcast then fails, the trail still shows who approved it and
+   * when. Writing it afterwards would lose the decision on exactly the
+   * occasions an auditor most wants to see it.
+   */
+  await createAuditLog({
+    actorType: 'admin', actorId: input.decidedBy, action: 'balance.transfer_approved',
+    resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'warning',
+    ipAddress: context.ipAddress, userAgent: context.userAgent,
+    metadata: { ...transfer, status: 'requested', reason: input.reason },
+  });
+
+  try {
+    return await executeBalanceTransfer(transfer.userId, { ...transfer, status: 'requested' });
+  } catch (error) {
+    // Same release-on-failure rule as the automatic path: a hold behind a
+    // transfer that never happened is silently unspendable money.
+    await createBalanceLedgerEntry({
+      userId: transfer.userId, asset: transfer.asset, amount: transfer.amount,
+      kind: 'hold_release', status: 'available',
+      sourceType: 'balance_transfer', sourceId: transfer.transferId,
+      description: 'Release hold after an approved transfer could not be submitted',
+      network: transfer.network, destinationAddress: transfer.destinationAddress,
+      transferId: transfer.transferId,
+    }, { actorType: 'system', actorId: 'balance_transfer' });
+    await createAuditLog({
+      actorType: 'system', actorId: 'balance_transfer', action: 'balance.transfer_failed',
+      resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'error',
+      metadata: { ...transfer, status: 'failed', reason: error instanceof Error ? error.message : String(error) },
+    });
+    throw error;
+  }
 }
 
 export async function createAdminBalanceAdjustment(input: z.infer<typeof adminBalanceAdjustmentSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
