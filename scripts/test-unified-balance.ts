@@ -295,6 +295,24 @@ async function main() {
       /if \(!wallet\) return undefined/.test(sweep));
   }
 
+  console.log('\n6. A REFUSAL THE USER CAN ACT ON\n');
+  {
+    /**
+     * avalanche_c_chain is ENABLED as a deposit network but carries no USDC or
+     * USDT the naira rail can settle, so a user can pick it in the sell screen
+     * and be refused. The refusal said "Breet cannot price USDC on
+     * avalanche_c_chain", which safeUserMessage() rewrites - because it names
+     * a provider - to "We could not complete that request." Measured live
+     * against api-test: exactly that blank refusal, with the one useful fact
+     * (which network to use instead) stripped out.
+     */
+    const breet = code('src/ngn/provider/breet.provider.ts');
+    check('the unsupported-network refusal names no provider',
+      !/Breet cannot price/.test(breet));
+    check('and tells the user which networks DO work',
+      /Use Base, Ethereum or Solana instead/.test(breet));
+  }
+
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

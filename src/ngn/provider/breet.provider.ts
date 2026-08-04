@@ -232,8 +232,24 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       breetDepositAssetId(quoteNetwork, quoteAsset, breetEnvironment())
       ?? env.BREET_DEFAULT_ASSET_ID;
     if (!identifier) {
+      /**
+       * NO PROVIDER NAME. This is a user-facing refusal.
+       *
+       * It used to read "Breet cannot price USDC on avalanche_c_chain", which
+       * safeUserMessage() rewrites to "We could not complete that request.
+       * Please check your details and try again." - so the one piece of
+       * information the user needed, WHICH NETWORK TO USE INSTEAD, never
+       * reached them. Measured live: a naira off-ramp quote on
+       * avalanche_c_chain returned exactly that blank refusal.
+       *
+       * avalanche_c_chain is enabled as a DEPOSIT network but carries no USDC
+       * or USDT that the naira rail can settle, so this path is reachable by
+       * anyone who picks it in the sell screen.
+       */
+      const label = String(quoteNetwork).replace(/_/g, ' ');
       throw forbidden(
-        `Breet cannot price ${quoteAsset.toUpperCase()} on ${quoteNetwork}.`
+        `${quoteAsset.toUpperCase()} on ${label} cannot be converted to naira. ` +
+        'Use Base, Ethereum or Solana instead.'
       );
     }
     const assetId = await this.assetIdFor(identifier);
