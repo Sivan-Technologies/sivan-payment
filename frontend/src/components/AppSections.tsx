@@ -501,7 +501,7 @@ function VerificationLimitCard({
   );
 }
 
-export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, summaryLoaded, onSubmit, onStartVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; summaryLoaded: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
+export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, summaryLoaded, onSubmit, onStartVerification, onStartBridgeVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; summaryLoaded: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; /** Opens the modal on the DOCUMENT path explicitly, whatever the country default is. */ onStartBridgeVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
   const emailDone = hasUser;
   // COUNTRY DECIDES THE PATH, so the page cannot describe one flow.
   //
@@ -714,7 +714,11 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
                 Need USD, GBP or EUR accounts? You can also verify with a government-issued ID and selfie.
                 That is the same check international users take, and it unlocks foreign-currency rails.
               </p>
-              <button className="ghost-btn small" onClick={onStartVerification} disabled={!canSubmitKyc}>Verify with ID instead</button>
+              {/* onStartBridgeVerification, NOT onStartVerification. The
+                  generic opener routes by country, so for the Nigerian who
+                  needs this button it re-opened the bank form they had just
+                  completed - the button did the opposite of its label. */}
+              <button className="ghost-btn small" onClick={onStartBridgeVerification} disabled={!canSubmitKyc}>Verify with ID instead</button>
             </div>
           )}
         </article>

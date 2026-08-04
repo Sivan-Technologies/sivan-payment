@@ -15,6 +15,7 @@ import {
   planToRender,
   shouldAutoSelectCountry,
   type VerificationPathPlan,
+  type VerificationPath,
 } from '../../verificationPath';
 
 /**
@@ -42,6 +43,7 @@ export function VerificationModal({
   onCountryChange,
   onVerified,
   onStartBridge,
+  requestedPath,
 }: {
   open: boolean;
   /** The server's plan for the country already on file, if any. */
@@ -57,6 +59,14 @@ export function VerificationModal({
   onCountryChange: (country: string) => Promise<void> | void;
   onVerified: (account: SavedNgnPayoutAccount) => void;
   onStartBridge: () => void;
+  /**
+   * An explicit path the user asked for, overriding the country default.
+   *
+   * Set when they click "Verify with ID instead" - a Nigerian who needs
+   * USD/GBP/EUR accounts must be able to reach Bridge, and country-only
+   * routing meant that button re-opened the bank form they had just finished.
+   */
+  requestedPath?: VerificationPath;
 }) {
   // The country the modal is currently acting on. Seeded from the record, then
   // owned locally so picking a country re-routes the modal instantly rather
@@ -152,8 +162,8 @@ export function VerificationModal({
    * cannot disagree about which path a country maps to.
    */
   const activePlan = useMemo<VerificationPathPlan>(
-    () => planToRender(plan, chosenCountry),
-    [plan, chosenCountry]
+    () => planToRender(plan, chosenCountry, requestedPath),
+    [plan, chosenCountry, requestedPath]
   );
 
 

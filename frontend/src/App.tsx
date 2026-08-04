@@ -6,7 +6,7 @@ import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fa
 import type { UserTwoFactorStatus } from './appUtils';
 import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
 import { VerificationModal } from './components/verification/VerificationModal';
-import { localVerificationPlan, type VerificationPathPlan } from './verificationPath';
+import { localVerificationPlan, type VerificationPathPlan, type VerificationPath } from './verificationPath';
 import { payoutAccountOutcomeMessage, type SavedNgnPayoutAccount } from './ngnBank';
 import { offrampClears, typicalGasUsd } from './ngnMinimum';
 import type { NgnNetworkLists } from './rails';
@@ -109,6 +109,14 @@ export default function App() {
   // The server's plan. Authoritative, but arrives a round trip late, so the
   // modal renders a local mirror of the same routing rule until it lands.
   const [verificationPlan, setVerificationPlan] = useState<VerificationPathPlan | null>(null);
+  /**
+   * A path the user explicitly asked for, overriding the country default.
+   *
+   * Cleared whenever the modal closes, so the next open starts from the
+   * country default again - a sticky override would silently keep showing the
+   * document check to someone who only wanted to look once.
+   */
+  const [requestedVerificationPath, setRequestedVerificationPath] = useState<VerificationPath | undefined>(undefined);
   // The backend's answer to "how verified, and for how much". Every gate and
   // every limit below reads from this. Nothing is derived locally, because the
   // local derivation was Bridge-only and got Nigerian users wrong.
@@ -1012,8 +1020,21 @@ export default function App() {
     await loadUserData();
   }, [loadUserData, notify]);
 
-  /** Open the modal, fetching the server's plan for this user. */
-  const openVerification = useCallback(() => {
+  /**
+   * Open the modal, fetching the server's plan for this user.
+   *
+   * `path` is an EXPLICIT request that overrides the country default. Country
+   * decides which check a user is offered first - for a Nigerian, the
+   * sixty-second bank check - but it is not the only one they may take. A
+   * Nigerian who needs USD/GBP/EUR accounts has to reach Bridge.
+   *
+   * Before this, routing was country-only and total: "Verify with ID instead"
+   * opened the modal, the modal asked the same question of the same country,
+   * and served the Nigerian bank form again. The button did the opposite of
+   * what it said.
+   */
+  const openVerification = useCallback((path?: VerificationPath) => {
+    setRequestedVerificationPath(path);
     setVerificationOpen(true);
     if (!user?.id) return;
     void api<VerificationPathPlan>(`/api/users/${user.id}/verification-plan`)
@@ -1022,6 +1043,9 @@ export default function App() {
       // so a failed fetch degrades to a correct screen rather than an error.
       .catch(() => undefined);
   }, [api, user?.id]);
+
+  /** Explicitly ask for the document check, whatever the country says. */
+  const openBridgeVerification = useCallback(() => openVerification('bridge_kyc'), [openVerification]);
 
 
   async function handleBalanceTransfer(event: FormEvent<HTMLFormElement>) {
@@ -1621,7 +1645,7 @@ export default function App() {
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
-            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice summary={verificationSummary} onVerify={openVerification} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
+            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice summary={verificationSummary} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
               <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
@@ -1708,7 +1732,7 @@ export default function App() {
           </section>
         )}
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onSubmit={handleKyc} onStartVerification={openVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onSubmit={handleKyc} onStartVerification={() => openVerification()} onStartBridgeVerification={openBridgeVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 
@@ -1765,10 +1789,11 @@ export default function App() {
         country={user?.country}
         api={api}
         loading={loading}
-        onClose={() => setVerificationOpen(false)}
+        onClose={() => { setVerificationOpen(false); setRequestedVerificationPath(undefined); }}
         onCountryChange={handleCountryChange}
         onVerified={handleNgnVerified}
         onStartBridge={startBridgeVerification}
+        requestedPath={requestedVerificationPath}
       />
     </div>
   );

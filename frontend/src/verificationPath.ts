@@ -93,10 +93,33 @@ export function verificationPathFor(country: string | undefined | null): Verific
   return isNigerianUser(country) ? 'ngn_bank' : 'bridge_kyc';
 }
 
-/** A plan to render before the server responds. */
-export function localVerificationPlan(country: string | undefined | null): VerificationPathPlan {
+/**
+ * A plan to render before the server responds.
+ *
+ * `forcePath` EXISTS BECAUSE COUNTRY IS A DEFAULT, NOT A SENTENCE.
+ *
+ * Country decides which path a user is SHOWN first, and for a Nigerian that is
+ * rightly the sixty-second bank check. But it is not the only path they may
+ * ever take: a Nigerian who needs USD, GBP or EUR accounts has to reach
+ * Bridge, and Bridge is the only thing that opens foreign rails.
+ *
+ * Without an override the routing was total - path came from country and
+ * nothing else - so "Verify with ID instead" opened the modal, the modal asked
+ * the same question of the same country, and the user was handed the Nigerian
+ * bank form they had already completed. Reported with a screenshot; the button
+ * did the exact opposite of what it said.
+ *
+ * Deliberately an explicit REQUEST rather than rewriting the user's country.
+ * Country drives naira limits and which rails apply; flipping it to fake a
+ * Bridge route would silently move their ceiling and their rail eligibility to
+ * another jurisdiction. They have not stopped being Nigerian.
+ */
+export function localVerificationPlan(
+  country: string | undefined | null,
+  forcePath?: VerificationPath
+): VerificationPathPlan {
   const normalized = normalizeCountry(country);
-  const path = verificationPathFor(normalized);
+  const path = forcePath ?? verificationPathFor(normalized);
 
   if (path === 'ngn_bank') {
     return {
@@ -172,14 +195,29 @@ export function virtualAccountBlockedReason(
  */
 export function planToRender(
   serverPlan: VerificationPathPlan,
-  chosenCountry: string | undefined | null
+  chosenCountry: string | undefined | null,
+  forcePath?: VerificationPath
 ): VerificationPathPlan {
   const chosen = normalizeCountry(chosenCountry);
+
+  /**
+   * AN EXPLICIT REQUEST BEATS THE SERVER'S PLAN.
+   *
+   * The server plans from country, so for a Nigerian it always answers
+   * ngn_bank - correct as a default, and wrong the moment the user has asked
+   * for the document check. Checked FIRST, before either branch below, because
+   * both of those return a country-derived plan and would quietly discard the
+   * request.
+   */
+  if (forcePath && forcePath !== serverPlan.path) {
+    return localVerificationPlan(chosen ?? serverPlan.country, forcePath);
+  }
+
   // No selection yet: nothing to be stale against.
   if (!chosen) return serverPlan;
   // Same country: the server's copy is richer and authoritative.
   if (normalizeCountry(serverPlan.country) === chosen) return serverPlan;
-  return localVerificationPlan(chosen);
+  return localVerificationPlan(chosen, forcePath);
 }
 
 /**
