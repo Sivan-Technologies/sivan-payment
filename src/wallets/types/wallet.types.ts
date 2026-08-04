@@ -18,7 +18,10 @@
  * a specific vendor SDK.
  */
 
+import type { NetworkMode } from '../../database/types.js';
+
 export type WalletProviderName = 'mock' | 'bridge' | 'privy';
+
 
 /**
  * Chains Sivan may issue wallets on. Intersection of what Bridge Custodial
@@ -122,7 +125,18 @@ export interface WalletTransferInput {
   toAddress: string;
   idempotencyKey: string;
   reference?: string;
+  /**
+   * Which network to sign against, already resolved by the server.
+   *
+   * Optional so existing callers keep their previous APP_ENV-derived behaviour
+   * unchanged. Anything passing this must pass the OUTPUT of
+   * resolveNetworkMode(), never a preference value read straight from the
+   * database - the difference is whether the server has agreed to testnet or
+   * merely been asked for it.
+   */
+  networkMode?: NetworkMode;
 }
+
 
 /**
  * A sponsored EVM transfer is an ERC-4337 user operation, so it has a user

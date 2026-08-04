@@ -4,6 +4,8 @@ import { createUser, createUserSchema, getUser, setUserCountry, setUserCountrySc
 import { db } from '../database/json-database.js';
 import { isApprovedKycStatus } from '../kyc/types/verification.types.js';
 import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema } from './user-preferences.service.js';
+import { resolveNetworkMode } from '../wallets/network-mode.js';
+
 import { confirmAvatarUpload, confirmAvatarUploadSchema, createAvatarUploadUrl, createAvatarUploadUrlSchema, removeAvatar } from './user-avatar.service.js';
 import { checkUsernameAvailability, updateUsername, usernameSchema } from './username.service.js';
 import { legalAcceptancePayloadSchema, listUserLegalAcceptances, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
@@ -40,14 +42,45 @@ export async function usersRoutes(app: FastifyInstance) {
 
   app.get('/api/users/:userId/preferences', async (request) => {
     const { userId } = request.params as { userId: string };
-    return { data: await getUserPreferences(userId) };
+    const preferences = await getUserPreferences(userId);
+    return {
+      data: {
+        ...preferences,
+        // READ-ONLY server fact, not a stored preference: which chain THIS
+        // deployment signs against. Not part of UserPreferencesRecord and never
+        // written back - the PUT schema has no `network` key at all.
+        //
+        // The UI needs it to mark the testnet build. Sourced from the server
+        // rather than the frontend's own VITE_APP_ENV so the badge cannot
+        // disagree with what the backend will actually do: a testnet API behind
+        // a frontend built as 'live' would otherwise show nothing at all.
+        //
+        // It rides inside `data` rather than a sibling `meta` because the
+        // frontend's shared api() helper returns `json.data ?? json` and drops
+        // everything else, so a `meta` key would be silently discarded.
+        networkMode: resolveNetworkMode(),
+      },
+    };
+
   });
+
 
   app.put('/api/users/:userId/preferences', async (request) => {
     const { userId } = request.params as { userId: string };
     const body = parseBody(updateUserPreferencesSchema, request.body);
-    return { data: await updateUserPreferences(userId, body) };
+    const updated = await updateUserPreferences(userId, body);
+    return {
+      data: {
+        ...updated,
+        // Repeated on the write path, and NOT decoration. The frontend does
+        // setUserPreferences(response) wholesale, so a PUT that omitted this
+        // would drop networkMode out of client state and the testnet banner
+        // would vanish the moment a user saved any unrelated preference.
+        networkMode: resolveNetworkMode(),
+      },
+    };
   });
+
 
 
 

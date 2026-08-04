@@ -87,7 +87,22 @@ const envSchema = z.object({
   BRIDGE_KYC_COST_USD: z.coerce.number().min(0).default(2),
   BRIDGE_KYB_COST_USD: z.coerce.number().min(0).default(10),
   CUSTOMER_ACQUISITION_COST_USD: z.coerce.number().min(0).default(0),
+  /**
+   * Which chain network THIS DEPLOYMENT signs against.
+   *
+   * A deployment-wide constant, not a per-user setting: the test stack runs
+   * testnet, the live stack runs mainnet, and no request can move a process
+   * between them. See src/wallets/network-mode.ts for why it is pinned here
+   * rather than offered as a control.
+   *
+   * Defaults to mainnet so a service that forgets to set it behaves like
+   * production - real money, and every fiat guard active. Defaulting the other
+   * way would sign real transfers onto a chain nobody is watching.
+   */
+  NETWORK_MODE: z.enum(['mainnet', 'testnet']).default('mainnet'),
+
   DATABASE_PROVIDER: z.enum(['json', 'postgres']).default('json'),
+
   DATABASE_URL: z.string().optional().default(''),
   DATABASE_FILE: z.string().default('.data/sivan-offramp.json'),
   VIRTUAL_ACCOUNTS_ENABLED: booleanFromEnv.default(false),

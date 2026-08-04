@@ -6,6 +6,11 @@ import { nowIso } from '../shared/id.js';
 import { getUser } from './users.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 
+// No `network` key. The chain is fixed per deployment, so there is no request
+// a client could send here that would be honoured - and an accepted-then-
+// ignored field is worse than an absent one. Zod strips unknown keys, so a
+// stale client still sending `network` is silently ignored rather than
+// erroring, which is the right behaviour during a rollout.
 export const updateUserPreferencesSchema = z.object({
   defaultFiatCurrency: z.enum(['usd', 'gbp', 'eur', 'ngn']).optional(),
   language: z.enum(['en-US', 'en-GB', 'fr-FR', 'de-DE', 'es-ES', 'it-IT', 'nl-NL', 'pt-PT']).optional(),
@@ -28,6 +33,7 @@ export function defaultUserPreferences(userId: string): UserPreferencesRecord {
   };
 }
 
+
 export async function getUserPreferences(userId: string) {
   await getUser(userId).catch(() => { throw notFound('User'); });
   return (await db.getUserPreferencesRecord(userId)) ?? defaultUserPreferences(userId);
@@ -40,6 +46,7 @@ export async function updateUserPreferences(userId: string, input: z.infer<typeo
     ...input,
     updatedAt: nowIso()
   };
+
   await db.upsertUserPreferencesRecord(next);
   await createAuditLog({
     actorType: 'user',

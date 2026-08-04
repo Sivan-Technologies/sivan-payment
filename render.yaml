@@ -92,6 +92,19 @@ services:
     envVars:
       - key: APP_ENV
         value: staging
+      # WHICH CHAIN THIS DEPLOYMENT SIGNS AGAINST. Read by resolveNetworkMode()
+      # and reported to the UI as a read-only banner; it is NOT a user setting.
+      #
+      # This used to be inferred from APP_ENV === 'production', which meant the
+      # chain was a side effect of a variable set for a dozen unrelated reasons
+      # and there was no way to run a staging box against mainnet. Stated
+      # explicitly so the chain is visible in config rather than only in code.
+      #
+      # 'testnet' matches what the old APP_ENV=staging fallback already
+      # resolved to, so this pins current behaviour rather than changing it,
+      # and it agrees with the sandbox Bridge and development Breet below.
+      - key: NETWORK_MODE
+        value: testnet
       # Real Bridge sandbox wallets, not simulated ones. ALLOW_MOCK_WALLETS was
       # set here while the wallet adapter was unfinished; it is deliberately
       # gone now, so a missing WALLET_PROVIDER fails loudly instead of quietly
@@ -372,6 +385,11 @@ services:
     envVars:
       - key: APP_ENV
         value: production
+      # Real chains, real money. Also the default when unset, so an accidental
+      # omission still signs mainnet rather than silently moving production
+      # traffic onto a test chain nobody is watching.
+      - key: NETWORK_MODE
+        value: mainnet
       - key: SENTRY_DSN
         sync: false
       - key: SENTRY_ENVIRONMENT

@@ -490,8 +490,19 @@ export interface UserPreferencesRecord {
   marketingEmails: boolean;
   securityAlerts: boolean;
   emailConfirmationsForHighValue: boolean;
+  /**
+   * Which network the SERVER signs against. Read-only, and not a preference -
+   * it is returned by GET/PUT preferences and must never be sent back.
+   *
+   * Absent means mainnet, so a stale client or an older backend shows no
+   * testnet warning rather than falsely claiming a user's real funds are on a
+   * test chain. Fixed per deployment, so it never changes within a session.
+   */
+  networkMode?: 'mainnet' | 'testnet';
   updatedAt: string;
 }
+
+
 
 /**
  * A wallet belonging to this user, one per chain.

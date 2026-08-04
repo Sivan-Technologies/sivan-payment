@@ -151,6 +151,20 @@ export interface LegalAcceptanceRecord {
   createdAt: string;
 }
 
+/**
+ * Mainnet is real money; testnet is faucet tokens with no value.
+ *
+ * `Chain` above deliberately does not encode this - a Base deposit is `base`
+ * whichever network it arrived on - so the mode is carried separately and must
+ * accompany any record that represents value. Two rows with the same chain,
+ * asset and amount are not the same thing if their NetworkMode differs, and
+ * summing across them would count faucet tokens as spendable balance.
+ *
+ * Fixed per deployment and NOT stored per user - see resolveNetworkMode() in
+ * src/wallets/network-mode.ts.
+ */
+export type NetworkMode = 'mainnet' | 'testnet';
+
 export interface UserPreferencesRecord {
   userId: string;
   defaultFiatCurrency: Currency | 'ngn';
@@ -159,8 +173,12 @@ export interface UserPreferencesRecord {
   marketingEmails: boolean;
   securityAlerts: boolean;
   emailConfirmationsForHighValue: boolean;
+  // No `network` here on purpose. The chain a user signs against is a property
+  // of the deployment they are talking to, not something they choose, so there
+  // is nothing to store. resolveNetworkMode() answers it.
   updatedAt: string;
 }
+
 
 export interface UserTwoFactorRecord {
   userId: string;

@@ -14,6 +14,8 @@
  * Run: npm run test:wallet-controls
  */
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import {
   getWalletControls,
   updateWalletControls,
@@ -36,6 +38,24 @@ async function threw(fn: () => Promise<unknown>) {
 }
 
 async function main() {
+  /**
+   * START FROM AN EMPTY DATABASE.
+   *
+   * The very first assertion is "no override is set by default", and the JSON
+   * database PERSISTS between runs - so the override written later in this
+   * same suite survived, and the second run onwards failed with
+   * activeProvider "privy" against an expected undefined.
+   *
+   * That is a false alarm on a real guard: it made a passing codebase look
+   * broken, which is worse than no test, because the next person spends their
+   * time on the fixture instead of the product. Every other suite here starts
+   * by removing its file; this one did not.
+   */
+  const dbPath = path.isAbsolute(env.DATABASE_FILE)
+    ? env.DATABASE_FILE
+    : path.join(process.cwd(), env.DATABASE_FILE);
+  await fs.rm(dbPath, { force: true });
+
   console.log('\nWITH NO OVERRIDE, THE ENVIRONMENT STILL WINS');
   {
     // The migration must change nothing on its own. A deployment that never
