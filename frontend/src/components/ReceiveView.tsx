@@ -84,6 +84,8 @@ export function ReceiveView({
   enabledAssets,
   enabledNetworks,
   isVerified,
+  hasPayoutAccount,
+  onAddBank,
   loading,
   walletsEnabled,
   onCreateWallet,
@@ -93,6 +95,9 @@ export function ReceiveView({
   enabledAssets: AssetControl[];
   enabledNetworks: NetworkControl[];
   isVerified: boolean;
+  /** The server's real precondition for issuing an address. */
+  hasPayoutAccount: boolean;
+  onAddBank?: () => void;
   loading: boolean;
   walletsEnabled: boolean;
   onCreateWallet: (chain: ReceiveChain) => void;
@@ -138,17 +143,49 @@ export function ReceiveView({
     );
   }
 
-  if (!isVerified) {
+  /**
+   * THE SCREEN MUST ASK THE SAME QUESTION THE SERVER ASKS.
+   *
+   * Reported from production: pressing "Generate address" returned
+   *
+   *   POST /api/users/:id/wallets  400
+   *   "Add and confirm your payout bank account to create your wallet."
+   *
+   * Reproduced against the live API. The button was offered and then refused,
+   * which is the worst possible order: the user has already decided to act.
+   *
+   * The two gates were different questions.
+   *
+   *   this screen  isVerified = pathComplete - "did you finish your country's
+   *                path". Its FALLBACK, when /verification-summary has not
+   *                loaded, is `customer?.kycStatus === 'kyc_approved'` - which
+   *                says nothing at all about a bank account.
+   *   the server   canProvisionWallet() - level >= BANK **and**
+   *                bankStatus === VERIFIED.
+   *
+   * A user with an approved Bridge KYC and no payout account satisfies the
+   * first and fails the second. So does anyone whose summary call was slow or
+   * failed, because the fallback quietly grants access.
+   *
+   * Gated on hasPayoutAccount now, which is the server's actual precondition,
+   * and the copy names the missing step instead of saying "verify" to someone
+   * who already has.
+   */
+  if (!isVerified || !hasPayoutAccount) {
     return (
       <section className="app-page receive-page">
         <PageHead onRefresh={onRefresh} />
         <article className="receive-panel">
           <div className="receive-empty">
-            <h3>Verify your identity first</h3>
+            <h3>{!isVerified ? 'Verify your identity first' : 'Add your payout bank account first'}</h3>
             <p className="muted">
-              Deposit addresses are issued after verification. This protects your funds and
-              is required by our regulated partners.
+              {!isVerified
+                ? 'Deposit addresses are issued after verification. This protects your funds and is required by our regulated partners.'
+                : 'Your deposit address is created once a bank account in your name is confirmed. The bank check is what verifies your identity, so it has to come first.'}
             </p>
+            {isVerified && !hasPayoutAccount && onAddBank && (
+              <button className="primary-btn" onClick={onAddBank}>Add payout account →</button>
+            )}
           </div>
         </article>
       </section>

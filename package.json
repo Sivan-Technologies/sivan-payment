@@ -39,6 +39,7 @@
     "test:bridge-kyc-no-mock-fallback": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-bridge-kyc-no-mock-fallback.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=false tsx scripts/test-bridge-kyc-no-mock-fallback.ts",
     "test:bridge-customer-import": "tsx scripts/test-bridge-customer-import.ts",
     "test:base-wallet-sends": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-base-wallet-sends.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock WALLET_PROVIDER=mock APP_ENV=development ADMIN_API_KEY=base-wallet-admin-key tsx scripts/test-base-wallet-sends.ts",
+    "test:wallet-gate-and-cors": "tsx scripts/test-wallet-gate-and-cors.ts",
     "test:wallet-chain-family": "tsx scripts/test-wallet-chain-family.ts",
     "test:balance-transfer": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-balance-transfer.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock ADMIN_API_KEY=balance-admin-key tsx scripts/test-balance-transfer.ts",
     "test:supplier-payments": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-supplier-payments.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=supplier-admin-key tsx scripts/test-supplier-payments.ts",
