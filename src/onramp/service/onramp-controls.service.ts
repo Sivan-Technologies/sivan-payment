@@ -23,10 +23,23 @@ function envDefaults(): OnrampControls {
 }
 
 export async function getOnrampControls() {
-  const data = await db.read();
-  const latest = (data.auditLogs ?? [])
-    .filter((log) => log.action === 'onramp.controls.updated')
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  /**
+   * ONE INDEXED ROW, NOT THE WHOLE DATABASE.
+   *
+   * This was `db.read()` - 47 sequential `select *` queries, every table,
+   * including the entire unbounded audit history - to find ONE audit row.
+   *
+   * It is the first thing createOnrampOrder() does, via
+   * requireOneTimeOnrampEnabled(), so it ran BEFORE the validation I had
+   * already optimised. That is why a rejected buy order still measured
+   * 6.3-7.2s on api-test after the earlier fix: I had made the second step
+   * fast and left the first one loading the database.
+   *
+   * latestAuditLogByAction() already existed for exactly this reason - it was
+   * added when getAdminPlatformSettings() did the same thing and a signup POST
+   * took 146 seconds. This is the same bug in a second place.
+   */
+  const latest = await db.latestAuditLogByAction('onramp.controls.updated');
   const saved = (latest?.metadata as any)?.settings as Partial<OnrampControls> | undefined;
   return {
     ...envDefaults(),

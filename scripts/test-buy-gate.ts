@@ -211,6 +211,32 @@ function main() {
      * Sequential would be five round trips instead of one. The whole point is
      * that none of them depends on another.
      */
+    /**
+     * THE FIRST THING createOnrampOrder DOES, AND IT WAS STILL SLOW.
+     *
+     * requireOneTimeOnrampEnabled() -> getOnrampControls() ran BEFORE the
+     * validation optimised above and still called db.read(): 47 sequential
+     * `select *` queries, including the entire unbounded audit history, to
+     * find ONE audit row. So a rejected buy order still measured 6.3-7.2s on
+     * api-test after the earlier fix - the second step was fast and the first
+     * one was loading the database.
+     *
+     * latestAuditLogByAction() already existed for exactly this reason.
+     */
+    const onrampControls = read('src/onramp/service/onramp-controls.service.ts')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    check('getOnrampControls no longer reads the whole database',
+      !/await db\.read\(\)/.test(onrampControls));
+    check('it uses the indexed single-row audit lookup',
+      /await db\.latestAuditLogByAction\('onramp\.controls\.updated'\)/.test(onrampControls));
+    for (const [label, file] of [
+      ['postgres', 'src/database/postgres-database.ts'],
+      ['json', 'src/database/json-database.ts'],
+    ] as const) {
+      check(`${label} implements latestAuditLogByAction`,
+        /async latestAuditLogByAction\(/.test(read(file)));
+    }
+
     const pg = read('src/database/postgres-database.ts');
     const body = pg.slice(pg.indexOf('async readControlTables('), pg.indexOf('async listNgnControls('));
     check('and postgres runs the five in parallel', /await Promise\.all\(\[/.test(body));
