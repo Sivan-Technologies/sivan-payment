@@ -4,6 +4,9 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
+import { getSpendable } from './unified-balance.service.js';
+import { getWalletProvider } from '../wallets/provider/provider-registry.js';
+import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 
 export type BalanceAsset = 'usdc' | 'usdt';
 /**
@@ -72,6 +75,18 @@ type TransferMetadata = {
   note?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Set once the transfer has actually been broadcast.
+   *
+   * All optional because a transfer awaiting review has none of them yet, and
+   * a SPONSORED transfer has a userOperationHash but no txHash until a bundler
+   * includes it on chain. Declaring them properly rather than casting keeps
+   * that distinction visible to every consumer.
+   */
+  providerTransferId?: string;
+  txHash?: string;
+  userOperationHash?: string;
+  sponsored?: boolean;
 };
 
 function amount(value: unknown) {
@@ -224,10 +239,45 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   // the user's balance locked behind a transfer that can never settle.
   const addressCheck = validateAddressForChain(input.destinationAddress, input.network as AddressChain);
   if (!addressCheck.valid) throw badRequest(addressCheck.reason ?? 'That destination address is not valid.');
-  const balance = await getUserBalance(userId);
-  const assetBalance = balance.balances.find((item) => item.asset === input.asset);
-  if (amount(assetBalance?.available) < input.amount) throw badRequest('Insufficient settled USDC balance.');
+  /**
+   * SPENDABLE, NOT "settled ledger available".
+   *
+   * Reported: "I have balance in the receive wallet now, but not showing in
+   * the dashboard or the transfer area." This line was the reason. It asked
+   * the LEDGER what the user had, and the ledger is only ever credited by
+   * Bridge virtual-account settlements and admin adjustments - verified by
+   * grepping every caller of createBalanceLedgerEntry. Crypto that lands in
+   * the user's own Privy wallet credits nothing, so their real money was
+   * invisible to the one check that decides whether they may spend it.
+   *
+   * getSpendable() answers from chain + ledger credits - holds. See
+   * unified-balance.service.ts for the model.
+   *
+   * null means the chain could not be read AND the ledger holds nothing. That
+   * is "we do not know", and it must refuse: assuming zero blocks a funded
+   * user, and assuming plenty signs a transfer that will revert on chain after
+   * we have already told them it worked.
+   */
+  const spendable = await getSpendable(userId, input.asset);
+  if (spendable === null) {
+    throw badRequest('We could not read your wallet balance just now. Please try again in a moment.');
+  }
+  if (spendable < input.amount) {
+    throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance. You can send up to ${money(spendable)}.`);
+  }
   const now = nowIso();
+  /**
+   * WHEN A HUMAN MUST LOOK.
+   *
+   * This was `amount >= threshold || riskHoldsEnabled`, and riskHoldsEnabled
+   * defaults to TRUE - so the OR made the threshold dead code and EVERY
+   * transfer went to manual review regardless of size. A 30 USDC send sat in
+   * a queue behind a 1,000 limit that could never apply.
+   *
+   * riskHoldsEnabled now means what its name says: whether review applies at
+   * all. With it on, the threshold decides. With it off, nothing is held.
+   */
+  const needsReview = controls.riskHoldsEnabled && input.amount >= controls.manualReviewThreshold;
   const transfer: TransferMetadata = {
     transferId: id('btx'),
     userId,
@@ -235,14 +285,136 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     network: input.network,
     amount: money(input.amount),
     destinationAddress: input.destinationAddress,
-    status: input.amount >= controls.manualReviewThreshold || controls.riskHoldsEnabled ? 'pending_review' : 'requested',
+    status: needsReview ? 'pending_review' : 'requested',
     note: input.note,
     createdAt: now,
     updatedAt: now,
   };
   await createBalanceLedgerEntry({ userId, asset: input.asset, amount: money(input.amount), kind: 'hold', status: 'held', sourceType: 'balance_transfer', sourceId: transfer.transferId, description: `Hold settled ${input.asset.toUpperCase()} for transfer to ${input.network}`, network: input.network, destinationAddress: input.destinationAddress, transferId: transfer.transferId }, { actorType: 'user', actorId: userId });
   await createAuditLog({ actorType: 'user', actorId: userId, action: 'balance.transfer_requested', resourceType: 'balance_transfer', resourceId: transfer.transferId, ipAddress: context.ipAddress, userAgent: context.userAgent, severity: 'warning', metadata: transfer });
+
+  /**
+   * AND NOW ACTUALLY SEND IT.
+   *
+   * Before this, requestBalanceTransfer validated, wrote a hold, wrote an
+   * audit log and returned. Nothing ever touched a chain. `grep -rn
+   * '\.createTransfer('` across src/ returned NOTHING - the Privy adapter that
+   * signs, sponsors gas and broadcasts was not reachable from any route in the
+   * product. "Send crypto" marked money as spoken for and stopped.
+   *
+   * Only when no human review is required. A transfer awaiting review must
+   * stay held and unsent, or the review is theatre.
+   *
+   * Failure RELEASES THE HOLD. Leaving it in place would strand the user's
+   * funds behind a transfer that never happened and that no queue is watching -
+   * silently unspendable money is worse than a visible error.
+   */
+  if (!needsReview) {
+    try {
+      const executed = await executeBalanceTransfer(userId, transfer);
+      return executed;
+    } catch (error) {
+      await createBalanceLedgerEntry({
+        userId, asset: input.asset, amount: money(input.amount), kind: 'hold_release', status: 'available',
+        sourceType: 'balance_transfer', sourceId: transfer.transferId,
+        description: 'Release hold after the on-chain transfer could not be submitted',
+        network: input.network, destinationAddress: input.destinationAddress, transferId: transfer.transferId,
+      }, { actorType: 'system', actorId: 'balance_transfer' });
+      await createAuditLog({
+        actorType: 'system', actorId: 'balance_transfer', action: 'balance.transfer_failed',
+        resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'error',
+        metadata: { ...transfer, status: 'failed', reason: error instanceof Error ? error.message : String(error) },
+      });
+      throw error;
+    }
+  }
+
   return transfer;
+}
+
+/**
+ * Broadcast a held transfer from the user's own wallet.
+ *
+ * Separated from requestBalanceTransfer so an admin approving a reviewed
+ * transfer runs the SAME code path. Two implementations of "send the money"
+ * is how one of them silently rots.
+ */
+export async function executeBalanceTransfer(userId: string, transfer: TransferMetadata): Promise<TransferMetadata> {
+  /**
+   * Which wallet signs. base/ethereum and the other EVM chains share one
+   * secp256k1 key; Solana needs its ed25519 wallet. Getting this wrong signs
+   * against a wallet that does not hold the funds.
+   */
+  const walletChain = transfer.network === 'solana' ? 'solana' : 'ethereum';
+  const wallet = await db.findUserWallet(userId, walletChain as any);
+  if (!wallet) {
+    /**
+     * NO WALLET IS NOT AN ERROR - IT IS A DIFFERENT CUSTODY STORY.
+     *
+     * Caught by test:balance-transfer, which passed before this change and
+     * failed after: a user funded ENTIRELY by a Bridge virtual-account
+     * settlement or an admin adjustment has spendable balance in the ledger
+     * and no Privy wallet of their own. Those funds sit in pooled custody and
+     * are moved by an operator, not signed for here.
+     *
+     * Throwing rejected a legitimate transfer AND, because the caller releases
+     * the hold on failure, made it look like the request had simply bounced.
+     * Left pending_review instead, which is exactly what it needs: a human.
+     */
+    const queued: TransferMetadata = { ...transfer, status: 'pending_review', updatedAt: nowIso() };
+    await createAuditLog({
+      actorType: 'system', actorId: 'balance_transfer', action: 'balance.transfer_requires_operator',
+      resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'warning',
+      metadata: { ...queued, reason: `No ${walletChain} wallet - balance is in pooled custody and needs an operator payout.` },
+    });
+    return queued;
+  }
+
+  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  const result = await provider.createTransfer({
+    providerWalletId: wallet.providerWalletId,
+    providerCustomerId: wallet.customerId,
+    asset: transfer.asset as any,
+    chain: transfer.network as any,
+    amount: transfer.amount,
+    toAddress: transfer.destinationAddress,
+    // Derived from the transfer id, so a retry of the SAME transfer cannot
+    // double-spend even if this function is called twice.
+    idempotencyKey: `btx_${transfer.transferId}`,
+    reference: transfer.transferId,
+  });
+
+  /**
+   * The hold becomes a debit. Not a hold_release - the money left, it was not
+   * returned. Getting this backwards would credit the user for funds they no
+   * longer have.
+   */
+  await createBalanceLedgerEntry({
+    userId, asset: transfer.asset, amount: transfer.amount, kind: 'debit_transfer', status: 'completed',
+    sourceType: 'balance_transfer', sourceId: transfer.transferId,
+    description: `On-chain transfer submitted to ${transfer.network}`,
+    network: transfer.network, destinationAddress: transfer.destinationAddress, transferId: transfer.transferId,
+  }, { actorType: 'system', actorId: 'balance_transfer' });
+
+  const sent: TransferMetadata = {
+    ...transfer,
+    status: 'processing',
+    // A SPONSORED transfer is an ERC-4337 user operation: there is no
+    // transaction hash until a bundler includes it, so the user-operation hash
+    // is the only identifier that exists at this moment.
+    providerTransferId: result.providerTransferId,
+    txHash: result.txHash,
+    userOperationHash: result.userOperationHash,
+    sponsored: result.sponsored,
+    updatedAt: nowIso(),
+  };
+
+  await createAuditLog({
+    actorType: 'system', actorId: 'balance_transfer', action: 'balance.transfer_submitted',
+    resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'info', metadata: sent,
+  });
+
+  return sent;
 }
 
 export async function listAllBalanceTransfers() {

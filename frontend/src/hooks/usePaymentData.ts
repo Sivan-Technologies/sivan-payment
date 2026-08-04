@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord, NgnTransferRecord } from '../types';
+import type { UnifiedBalance, BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord, NgnTransferRecord } from '../types';
 
 export function usePaymentDataLoader(input: {
   userId?: string;
@@ -13,6 +13,7 @@ export function usePaymentDataLoader(input: {
   setVirtualAccounts: (value: VirtualAccountRecord[]) => void;
   setVirtualAccountTransactions: (value: VirtualAccountTransactionRecord[]) => void;
   setBalance: (value: BalanceSummary | null) => void;
+  setUnifiedBalance: (value: UnifiedBalance | null) => void;
   setBalanceTransfers: (value: BalanceTransferRecord[]) => void;
   setSuppliers: (value: SupplierRecord[]) => void;
   setSupplierPayments: (value: SupplierPaymentRecord[]) => void;
@@ -37,7 +38,7 @@ export function usePaymentDataLoader(input: {
    */
   setNgnTransfers: (value: NgnTransferRecord[]) => void;
 }) {
-  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers } = input;
+  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers } = input;
   return useCallback(async () => {
     if (!userId || !authToken) return;
 
@@ -69,13 +70,16 @@ export function usePaymentDataLoader(input: {
       .catch(() => undefined)
       .finally(() => setVerificationSummaryLoaded(true));
 
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult, ngnTransfersResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, unifiedBalanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult, ngnTransfersResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${userId}`),
       api<ExternalAccountRecord[]>(`/api/users/${userId}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${userId}/withdrawals`),
       api<OnrampOrderRecord[]>(`/api/users/${userId}/onramp-orders`),
       api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions?: VirtualAccountTransactionRecord[]; events?: any[] }>(`/api/users/${userId}/virtual-accounts`),
       api<BalanceSummary>(`/api/users/${userId}/balance`),
+      // The ONE number every screen shows: chain + ledger credits - holds.
+      // /balance above stays for the ledger journal view only.
+      api<UnifiedBalance>(`/api/users/${userId}/balance/unified`),
       api<BalanceTransferRecord[]>(`/api/users/${userId}/balance/transfers`),
       api<SupplierRecord[]>(`/api/users/${userId}/suppliers`),
       api<SupplierPaymentRecord[]>(`/api/users/${userId}/supplier-payments`),
@@ -91,6 +95,7 @@ export function usePaymentDataLoader(input: {
     if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
     if (virtualAccountsResult.status === 'fulfilled') { setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []); setVirtualAccounts(virtualAccountsResult.value.accounts ?? []); setVirtualAccountTransactions(virtualAccountsResult.value.transactions ?? []); }
     if (balanceResult.status === 'fulfilled') setBalance(balanceResult.value);
+    if (unifiedBalanceResult.status === 'fulfilled') setUnifiedBalance(unifiedBalanceResult.value);
     if (balanceTransfersResult.status === 'fulfilled') setBalanceTransfers(balanceTransfersResult.value);
     if (suppliersResult.status === 'fulfilled') setSuppliers(suppliersResult.value);
     if (supplierPaymentsResult.status === 'fulfilled') setSupplierPayments(supplierPaymentsResult.value);
@@ -103,6 +108,6 @@ export function usePaymentDataLoader(input: {
     // post-verification refresh does - still observe the applied summary,
     // without the PAGE having waited on the other thirteen calls.
     await summaryPromise;
-  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers]);
+  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers]);
 }
 

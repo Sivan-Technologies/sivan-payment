@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, createAdminBalanceAdjustment, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
+import { getUnifiedBalance } from './unified-balance.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber } from '../identity/identity.service.js';
 
@@ -67,6 +68,18 @@ export async function balanceRoutes(app: FastifyInstance) {
   app.get('/api/users/:userId/balance', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await getUserBalance(userId) };
+  });
+
+  /**
+   * ONE BALANCE, chain + ledger, for every screen that shows a number.
+   *
+   * /balance above stays for the ledger view (the "deposit, hold and spend
+   * trail"), which is genuinely a journal and should keep reading like one.
+   * Anything answering "how much do I have" reads THIS.
+   */
+  app.get('/api/users/:userId/balance/unified', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await getUnifiedBalance(userId) };
   });
 
   app.get('/api/users/:userId/balance/ledger', async (request) => {

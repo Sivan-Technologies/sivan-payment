@@ -6,6 +6,9 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
 import { getNgnQuote, markQuoteAccepted } from './ngn-quotes.service.js';
 import type { NgnTimelineStep, NgnTransferRecord } from '../types/ngn.types.js';
+import { getSpendable } from '../../balances/unified-balance.service.js';
+import { getWalletProvider } from '../../wallets/provider/provider-registry.js';
+import { resolveActiveWalletProvider } from '../../wallets/wallet-controls.service.js';
 
 export const acceptNgnQuoteSchema = z.object({ userId: z.string().min(1), quoteId: z.string().min(1) });
 
@@ -61,7 +64,99 @@ export async function acceptNgnQuote(input: z.infer<typeof acceptNgnQuoteSchema>
   transfer.timeline = buildTimeline(transfer);
   await db.upsertNgnTransferRecord(transfer);
   await createAuditLog({ actorType: 'user', actorId: input.userId, action: 'ngn.transfer_created', resourceType: 'payments_ngn_transfer', resourceId: transfer.id, metadata: { quoteId: accepted.id, direction: transfer.direction, provider: transfer.provider } });
+
+  /**
+   * SWEEP THE CRYPTO TO THE RAIL, INSTEAD OF ASKING THE USER TO DO IT.
+   *
+   * An off-ramp gets a depositAddress back from Breet and, before this,
+   * stopped there. The user was expected to open a wallet app and send crypto
+   * to that address themselves - even though the funds are in a Sivan-managed
+   * Privy wallet that Sivan can already sign for, with gas sponsored.
+   *
+   * That is the gap the user described: "when a user wants to offramp the
+   * system should pick up the amount from the Privy wallet and send it to the
+   * rail provider and settle it". Correct, and now it does.
+   *
+   * DELIBERATELY NON-FATAL. The order is already created and the deposit
+   * address is already valid, so a sweep failure must not destroy it - the
+   * manual route still works and the reconciler still watches the address.
+   * Throwing here would lose a real order over a recoverable RPC error.
+   */
+  if (transfer.direction === 'offramp' && transfer.depositAddress) {
+    try {
+      const swept = await sweepToRail(transfer);
+      if (swept) {
+        transfer.status = 'settlement_processing';
+        transfer.metadata = { ...(transfer.metadata as Record<string, unknown>), sweep: swept };
+        transfer.timeline = buildTimeline(transfer);
+        await db.upsertNgnTransferRecord(transfer);
+      }
+    } catch (error) {
+      await createAuditLog({
+        actorType: 'system', actorId: 'ngn_sweep', action: 'ngn.sweep_failed',
+        resourceType: 'payments_ngn_transfer', resourceId: transfer.id, severity: 'error',
+        metadata: { depositAddress: transfer.depositAddress, reason: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }
+
   return transfer;
+}
+
+/**
+ * Send the off-ramp amount from the user's own wallet to the rail's deposit
+ * address.
+ *
+ * Returns undefined - not an error - when there is nothing to sweep from. A
+ * user who funded a personal wallet elsewhere and intends to send manually is
+ * a legitimate case, not a failure.
+ */
+async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, unknown> | undefined> {
+  const network = String((transfer.metadata as any)?.quoteMetadata?.network ?? '').toLowerCase();
+  if (!network) return undefined;
+
+  // Same wallet-selection rule as everywhere else: Solana has its own key,
+  // every EVM chain shares one.
+  const walletChain = network === 'solana' ? 'solana' : 'ethereum';
+  const wallet = await db.findUserWallet(transfer.userId, walletChain as any);
+  if (!wallet) return undefined;
+
+  const asset = String(transfer.sourceCurrency ?? 'usdc').toLowerCase();
+  /**
+   * Never sweep more than the wallet holds. Privy signs what it is told to
+   * sign; an over-sized transfer reverts on chain AFTER we have told the user
+   * their off-ramp is under way.
+   */
+  const spendable = await getSpendable(transfer.userId, asset);
+  const amount = Number(transfer.sourceAmount ?? 0);
+  if (spendable === null || spendable < amount || amount <= 0) return undefined;
+
+  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  const result = await provider.createTransfer({
+    providerWalletId: wallet.providerWalletId,
+    providerCustomerId: wallet.customerId,
+    asset: asset as any,
+    chain: network as any,
+    amount: String(transfer.sourceAmount),
+    toAddress: transfer.depositAddress!,
+    // Keyed on the transfer, so a retry cannot sweep twice.
+    idempotencyKey: `ngnsweep_${transfer.id}`,
+    reference: transfer.id,
+  });
+
+  await createAuditLog({
+    actorType: 'system', actorId: 'ngn_sweep', action: 'ngn.sweep_submitted',
+    resourceType: 'payments_ngn_transfer', resourceId: transfer.id, severity: 'info',
+    metadata: { depositAddress: transfer.depositAddress, amount: transfer.sourceAmount, asset, network, providerTransferId: result.providerTransferId, sponsored: result.sponsored },
+  });
+
+  return {
+    providerTransferId: result.providerTransferId,
+    txHash: result.txHash,
+    userOperationHash: result.userOperationHash,
+    sponsored: result.sponsored,
+    sweptAt: nowIso(),
+  };
 }
 
 export async function listNgnTransfers(options: { userId?: string; status?: string } = {}) {

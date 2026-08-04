@@ -87,6 +87,7 @@
     "test:buy-gate": "tsx scripts/test-buy-gate.ts",
     "test:transfer-order": "tsx scripts/test-transfer-order.ts",
     "test:hot-path-reads": "tsx scripts/test-hot-path-reads.ts",
+    "test:unified-balance": "tsx scripts/test-unified-balance.ts",
     "test:webhook-body-parsing": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-webhook-body.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock WALLET_PROVIDER=mock NGN_SETTLEMENT_POLL_SECONDS=0 ADMIN_API_KEY=wh-body-key tsx scripts/test-webhook-body-parsing.ts",
     "test:name-match": "tsx scripts/test-name-match.ts",
     "test:verification-path": "tsx scripts/test-verification-path.ts",

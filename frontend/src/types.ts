@@ -139,6 +139,38 @@ export interface SupplierPaymentRecord {
   supplier?: SupplierRecord | null;
 }
 
+/**
+ * ONE BALANCE, chain + ledger, from GET /balance/unified.
+ *
+ * Reported: the Receive screen showed a real deposit while the dashboard and
+ * transfer screens showed zero. They were reading different things - Receive
+ * asked the Privy wallet, everything else summed a ledger that is only ever
+ * credited by virtual-account settlements and admin adjustments. An on-chain
+ * deposit credited nothing, so real money was invisible to every spending path.
+ */
+export interface UnifiedAssetBalance {
+  asset: string;
+  /** Live on-chain total. */
+  chain: string;
+  /** Ledger credits with no chain counterpart we read (virtual accounts). */
+  credited: string;
+  /** Claims against it: transfers under review, payouts in flight. */
+  held: string;
+  /** chain + credited - held. What the user may actually send. */
+  spendable: string;
+  pending: string;
+  spent: string;
+  /** True when the chain read FAILED. Not the same as zero. */
+  chainUnavailable: boolean;
+}
+
+export interface UnifiedBalance {
+  userId: string;
+  balances: UnifiedAssetBalance[];
+  wallets: Array<{ chain: string; address: string; balances?: Array<{ asset: string; chain: string; amount: string }>; balancesUnavailable: boolean }>;
+  updatedAt: string;
+}
+
 export interface BalanceSummary {
   userId: string;
   balances: Array<{ asset: string; pending: string; available: string; held: string; spent: string; totalCredited: string }>;

@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import type { AssetControl, BalanceSummary, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord } from '../../types';
+import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord } from '../../types';
 import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
@@ -73,7 +73,7 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
     <div className="warning-box compact">Send the exact amount and include the reference/memo. Missing or incorrect references can delay matching and settlement.</div>
   </div>;
 }
-export function TransferCryptoView({ hasUser, isVerified, balance, transfers, suppliers, supplierPayments, enabledNetworks, loading, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; balance: BalanceSummary | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
+export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, loading, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
   const [activeRoute, setActiveRoute] = useState<'crypto' | 'supplier' | 'user'>('crypto');
   const [supplierCurrency, setSupplierCurrency] = useState<'gbp' | 'usd' | 'eur' | 'mxn' | 'brl'>('gbp');
   const [supplierCurrencyOpen, setSupplierCurrencyOpen] = useState(false);
@@ -85,10 +85,24 @@ export function TransferCryptoView({ hasUser, isVerified, balance, transfers, su
     { value: 'brl', label: 'BRL', helper: 'PIX' }
   ];
   const selectedSupplierCurrency = supplierCurrencyOptions.find((option) => option.value === supplierCurrency) || supplierCurrencyOptions[0];
+  /**
+   * ONE BALANCE, PREFERRING THE UNIFIED ONE.
+   *
+   * `balance` is the ledger journal, and the ledger is only ever credited by
+   * virtual-account settlements and admin adjustments - so a user who received
+   * crypto into their own Privy wallet saw 0 here while the Receive screen
+   * showed the real figure. `unifiedBalance` is chain + ledger credits - holds.
+   *
+   * The ledger is kept as a fallback rather than removed: if the unified call
+   * fails, showing the ledger figure is closer to the truth than showing zero.
+   */
+  const unified = unifiedBalance?.balances.find((item) => item.asset === 'usdc');
   const usdc = balance?.balances.find((item) => item.asset === 'usdc');
-  const available = Number(usdc?.available || 0);
-  const pending = Number(usdc?.pending || 0);
-  const held = Number(usdc?.held || 0);
+  const available = unified ? Number(unified.spendable || 0) : Number(usdc?.available || 0);
+  const pending = unified ? Number(unified.pending || 0) : Number(usdc?.pending || 0);
+  const held = unified ? Number(unified.held || 0) : Number(usdc?.held || 0);
+  /** True when the chain read failed - NOT the same as a zero balance. */
+  const chainUnavailable = Boolean(unified?.chainUnavailable);
   const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
   const approvedSuppliers = suppliers.filter((supplier) => supplier.status === 'approved');
   const supplierCurrencyLabel = { gbp: 'GBP · Faster Payments', usd: 'USD · ACH/Wire', eur: 'EUR · SEPA', mxn: 'MXN · SPEI', brl: 'BRL · PIX' }[supplierCurrency];

@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord, NgnTransferRecord } from './types';
+import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NgnTransferRecord } from './types';
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
@@ -56,6 +56,15 @@ export default function App() {
   const [virtualAccountTransactions, setVirtualAccountTransactions] = useState<VirtualAccountTransactionRecord[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
   const [balance, setBalance] = useState<BalanceSummary | null>(null);
+  /**
+   * THE ONE BALANCE. chain + ledger credits - holds, from the server.
+   *
+   * Reported: a deposit visible on Receive showed as zero on the dashboard and
+   * the transfer screen. Receive read the Privy wallet; everything else summed
+   * a ledger that nothing credits from an on-chain deposit. Two sources, one
+   * of which could not see the user's actual money.
+   */
+  const [unifiedBalance, setUnifiedBalance] = useState<UnifiedBalance | null>(null);
   const [balanceTransfers, setBalanceTransfers] = useState<BalanceTransferRecord[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<SupplierPaymentRecord[]>([]);
@@ -341,6 +350,7 @@ export default function App() {
     setVirtualAccounts([]);
     setVirtualAccountTransactions([]);
     setBalance(null);
+    setUnifiedBalance(null);
     setBalanceTransfers([]);
     setSuppliers([]);
     setSupplierPayments([]);
@@ -541,6 +551,7 @@ export default function App() {
     setVirtualAccounts,
     setVirtualAccountTransactions,
     setBalance,
+    setUnifiedBalance,
     setBalanceTransfers,
     setSuppliers,
     setSupplierPayments,
@@ -1913,7 +1924,7 @@ export default function App() {
 
         {view === 'receive' && <ReceiveView wallets={userWallets} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={loadUserWallets} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
-        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
+        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
 
