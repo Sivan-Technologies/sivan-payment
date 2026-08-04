@@ -383,7 +383,21 @@ function NgnBankVerification({
     return () => { cancelled = true; };
   }, [api, userId]);
 
-  const visible = useMemo(() => filterBanks(banks, query).slice(0, 6), [banks, query]);
+  /**
+   * Six was an arbitrary cap on an ALPHABETICAL list, so the modal opened on
+   * Abbey Mortgage Bank, ASO Savings and Loans, Bowen Microfinance... and the
+   * six banks nearly everybody actually holds were not among them. filterBanks
+   * now returns the common ones first when idle, so the same six are useful.
+   *
+   * While searching the cap is lifted: a user who typed something specific
+   * wants every match, and real queries return single digits.
+   */
+  const searching = query.trim().length > 0;
+  const matches = useMemo(() => filterBanks(banks, query), [banks, query]);
+  const visible = useMemo(
+    () => (searching ? matches.slice(0, 12) : matches.slice(0, 6)),
+    [matches, searching]
+  );
   const selectedBank = banks.find((bank) => bank.id === bankId);
 
   const [saving, setSaving] = useState(false);
@@ -438,7 +452,17 @@ function NgnBankVerification({
             />
           </label>
           <div className="sv-bank-list">
-            {!banks.length && !error && <p className="sv-muted">Loading banks…</p>}
+            {/* Say which state the list is in - loading, a shortlist, or
+                results - rather than presenting all three identically. */}
+            {!banks.length && !error && (
+              <p className="sv-muted" aria-live="polite"><span className="sv-spinner" /> Loading banks…</p>
+            )}
+            {Boolean(banks.length) && !searching && <p className="sv-bank-label">Common banks — or search for yours</p>}
+            {searching && Boolean(visible.length) && (
+              <p className="sv-bank-label" aria-live="polite">
+                {matches.length} {matches.length === 1 ? 'match' : 'matches'}
+              </p>
+            )}
             {visible.map((bank) => (
               <button key={bank.id} type="button" className="sv-bank" onClick={() => { setBankId(bank.id); setQuery(''); }}>
                 {bank.logoUrl
@@ -448,7 +472,9 @@ function NgnBankVerification({
                 <em>→</em>
               </button>
             ))}
-            {Boolean(query) && !visible.length && <p className="sv-muted">No bank matches “{query}”.</p>}
+            {Boolean(query) && !visible.length && (
+              <p className="sv-muted">No bank matches “{query}”. Try the short name, like GTB or UBA.</p>
+            )}
           </div>
         </>
       )}

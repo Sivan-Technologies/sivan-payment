@@ -24,6 +24,21 @@ import { exceedsRemaining, offrampClears, typicalGasUsd } from '../../ngnMinimum
  * see the rate, then commit. Each step is blocked until the one before it
  * succeeds, because every one of them can fail for a reason the user can fix.
  */
+/**
+ * How many banks to show before the user types.
+ *
+ * Long enough to contain almost everyone's bank - the shortlist is ordered by
+ * how commonly they are held - and short enough that BOTH the search box and
+ * the "show all" escape hatch fit on a phone without scrolling.
+ *
+ * Eight was the first choice and the browser test caught it: at 420x900 the
+ * eighth row pushed "Show all 169 banks" below the fold, so the shortlist
+ * looked like the entire directory to anyone holding a microfinance account.
+ * Six keeps the way out visible, and the six are OPay, PalmPay, Kuda,
+ * Moniepoint, GTB and Access - which covers the overwhelming majority.
+ */
+const POPULAR_BANKS_SHOWN = 6;
+
 export function NgnPayoutForm({
   userId,
   api,
@@ -55,6 +70,8 @@ export function NgnPayoutForm({
 }) {
   const [banks, setBanks] = useState<NgnBank[]>([]);
   const [bankQuery, setBankQuery] = useState('');
+  /** Expands the shortlist to the full directory. Reset whenever a bank is cleared. */
+  const [showAllBanks, setShowAllBanks] = useState(false);
   const [bankId, setBankId] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [resolved, setResolved] = useState<ResolvedNgnBankAccount | null>(null);
@@ -84,7 +101,23 @@ export function NgnPayoutForm({
     return () => clearInterval(timer);
   }, [quote?.expiresAt]);
 
-  const visibleBanks = useMemo(() => filterBanks(banks, bankQuery).slice(0, 40), [banks, bankQuery]);
+  /**
+   * NOT slice(0, 40) any more.
+   *
+   * When idle the list is capped SHORT, because the top of it is now the banks
+   * most people actually hold - 169 alphabetical rows opened on Abbey Mortgage
+   * Bank and buried OPay at #26. When searching, every match is shown: a user
+   * who typed something specific wants all of it, and the result sets are
+   * small (the widest real query, "bank", is 95 and the rest are single
+   * digits).
+   */
+  const searching = bankQuery.trim().length > 0;
+  const matches = useMemo(() => filterBanks(banks, bankQuery), [banks, bankQuery]);
+  const visibleBanks = useMemo(
+    () => (searching || showAllBanks ? matches : matches.slice(0, POPULAR_BANKS_SHOWN)),
+    [matches, searching, showAllBanks]
+  );
+  const hiddenBankCount = searching || showAllBanks ? 0 : Math.max(matches.length - POPULAR_BANKS_SHOWN, 0);
   const secondsLeft = quoteSecondsRemaining(quote, now);
   const quoteExpired = Boolean(quote?.expiresAt) && secondsLeft <= 0;
 
@@ -181,7 +214,26 @@ export function NgnPayoutForm({
 
         {!bankId && (
           <div className="bank-list">
-            {!banks.length && !error && <p className="muted">Loading banks…</p>}
+            {/* THE LIST HAS TO SAY WHICH STATE IT IS IN.
+ 
+                Reported from a phone: the picker opens on a wall of 169
+                alphabetical rows - Abbey Mortgage, ASO Savings, Bowen
+                Microfinance - and nothing indicates that typing narrows it or
+                that the common banks exist. Three states, each labelled:
+                loading, a short common-bank list, or search results. */}
+            {!banks.length && !error && (
+              <div className="bank-list-status" aria-live="polite">
+                <span className="sv-spinner" /> Loading banks…
+              </div>
+            )}
+            {Boolean(banks.length) && !searching && (
+              <p className="bank-list-label">Common banks</p>
+            )}
+            {searching && Boolean(visibleBanks.length) && (
+              <p className="bank-list-label" aria-live="polite">
+                {visibleBanks.length} {visibleBanks.length === 1 ? 'match' : 'matches'} for “{bankQuery.trim()}”
+              </p>
+            )}
             {visibleBanks.map((bank) => (
               <button
                 type="button"
@@ -193,15 +245,34 @@ export function NgnPayoutForm({
                 <span>{bank.name}</span>
               </button>
             ))}
-            {Boolean(bankQuery) && !visibleBanks.length && <p className="muted">No bank matches “{bankQuery}”.</p>}
+            {Boolean(bankQuery) && !visibleBanks.length && (
+              <p className="muted">No bank matches “{bankQuery}”. Check the spelling, or try the short name like GTB or UBA.</p>
+            )}
           </div>
+        )}
+
+        {/* OUTSIDE the scrolling list, deliberately.
+ 
+            Placed inside it first, and the browser screenshot showed why that
+            was wrong: .bank-list scrolls, so "Show all 169 banks" sat below the
+            fold under the eight shortlisted rows. It was in the DOM and
+            invisible - which is the same as absent for anyone holding a
+            microfinance account, and worse, because it looks like the
+            shortlist is the whole directory.
+ 
+            Nothing is hidden by the shortlist, only deferred; this is the way
+            to the rest and it has to be seen without scrolling. */}
+        {!bankId && hiddenBankCount > 0 && (
+          <button type="button" className="bank-list-more" onClick={() => setShowAllBanks(true)}>
+            Show all {matches.length} banks
+          </button>
         )}
 
         {bankId && (
           <>
             <div className="details-box compact">
               <span>{selectedBank?.name}</span>
-              <button type="button" className="ghost-btn small" onClick={() => { setBankId(''); setBankQuery(''); setResolved(null); setQuote(null); }}>Change</button>
+              <button type="button" className="ghost-btn small" onClick={() => { setBankId(''); setBankQuery(''); setResolved(null); setQuote(null); setShowAllBanks(false); }}>Change</button>
             </div>
 
             <label>Account number
