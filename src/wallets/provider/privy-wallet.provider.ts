@@ -3,7 +3,10 @@ import { env } from '../../config/env.js';
 import { forbidden } from '../../shared/errors.js';
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
+import { resolveNetworkMode } from '../network-mode.js';
+import type { NetworkMode } from '../../database/types.js';
 import type { WalletProvider } from './wallet-provider.js';
+
 import type {
   CreateWalletInput,
   ProviderWallet,
@@ -151,9 +154,27 @@ async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKe
   throw lastError ?? new Error('Privy: request failed.');
 }
 
-function isProduction(): boolean {
-  return (process.env.APP_ENV || env.APP_ENV) === 'production';
+/**
+ * Whether to sign against mainnet.
+ *
+ * An explicit `mode` wins, for callers that have already resolved one. Absent,
+ * it asks resolveNetworkMode(), which reads this deployment's NETWORK_MODE.
+ *
+ * The fallback used to be `APP_ENV === 'production'`, and that was the line
+ * that actually decided the chain: nothing in the codebase passes `mode`, so
+ * every signature went through it. Two things were wrong with it. It conflated
+ * "which environment is this" with "which chain is this", leaving no way to run
+ * a staging box against mainnet or a production-shaped box against testnet. And
+ * it was silent - APP_ENV is set for a dozen unrelated reasons, so the chain a
+ * transfer signed against was a side effect of a variable nobody thought of as
+ * chain configuration. NETWORK_MODE says what it means, and defaults to
+ * mainnet, so an unset value still signs real.
+ */
+function isProduction(mode?: NetworkMode): boolean {
+  if (mode) return mode === 'mainnet';
+  return resolveNetworkMode() === 'mainnet';
 }
+
 
 /**
  * Privy returns created_at in TWO different units, in the same API.
@@ -585,7 +606,12 @@ export class PrivyWalletProvider implements WalletProvider {
     const caip = CAIP2[input.chain];
     if (!caip) throw forbidden(`No CAIP-2 chain id for ${input.chain}.`);
 
-    const caip2 = isProduction() ? caip.mainnet : caip.testnet;
+    // The one place the network is chosen for this transfer. Everything below
+    // - the CAIP-2 id, the token contract, the Solana mint - must agree with
+    // it, because a mainnet contract address on a testnet chain id is a
+    // transfer that either reverts or lands somewhere nobody is watching.
+    const caip2 = isProduction(input.networkMode) ? caip.mainnet : caip.testnet;
+
     const signingKey = loadAuthorizationPrivateKey(
       process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY || env.PRIVY_AUTHORIZATION_PRIVATE_KEY
     );
@@ -655,7 +681,12 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendSolanaTransfer(input, signingKey, caip2);
     }
 
-    const token = erc20TokenAddress(input.chain, input.asset, isProduction());
+    // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
+    // disagreeing is the specific failure this parameter exists to prevent: a
+    // mainnet USDC contract addressed on Base Sepolia is not a token contract
+    // at all, and the transfer fails after the user has approved it.
+    const token = erc20TokenAddress(input.chain, input.asset, isProduction(input.networkMode));
+
     if (!token) {
       throw forbidden(`No ${input.asset.toUpperCase()} contract known for ${input.chain}.`);
     }
@@ -760,8 +791,13 @@ export class PrivyWalletProvider implements WalletProvider {
     signingKey: string,
     caip2: string
   ): Promise<WalletTransfer> {
-    const production = isProduction();
+    // Derived from the SAME input.networkMode that produced the caip2 passed
+    // in above. This drives both the mint and the RPC that buildSplTransfer
+    // reads token accounts from, so an env-derived value here would look up
+    // the recipient's account on one network and sign for another.
+    const production = isProduction(input.networkMode);
     const mint = solanaMintFor(input.asset, production);
+
     if (!mint) {
       throw forbidden(
         `No Solana mint known for ${String(input.asset).toUpperCase()} in this environment.`
