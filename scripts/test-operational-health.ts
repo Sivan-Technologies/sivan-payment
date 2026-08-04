@@ -24,6 +24,10 @@ import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
 import { db } from '../src/database/json-database.js';
+import { readFileSync } from 'node:fs';
+
+/** Read a source file, for assertions about code that has no runtime hook. */
+const read = (rel: string) => readFileSync(path.join(process.cwd(), rel), 'utf8');
 
 let pass = 0;
 let fail = 0;
@@ -84,10 +88,68 @@ async function main() {
         signal(res.body, 'delegated_signing_configured').severity === 'ok');
     }
 
-    console.log('\nA STUCK TRANSFER IS CRITICAL AND RETURNS 503');
+    console.log('\nTHE WEBHOOK SECRET IS REPORTED, NOT SILENTLY ABSENT');
     {
-      // The exact shape of both webhook bugs: non-terminal, not updating.
-      await makeTransfer('ngnt_stuck', 'awaiting_crypto_deposit', 5);
+      /**
+       * verifyWebhook() fails CLOSED when BREET_WEBHOOK_SECRET is empty, which
+       * is correct - an unauthenticated webhook that credits balances is worse
+       * than a broken one. But NOTHING SAID SO. Every provider delivery
+       * returned 403, the provider retried on its published backoff and then
+       * marked the event permanently failed, and the only symptom was
+       * settlements arriving late via the 5-minute reconciler.
+       *
+       * Measured on the deployment: the value is an empty string. This was
+       * described to me as a "secret mismatch"; it is not a mismatch, it is
+       * ABSENT - and the difference decides the fix.
+       */
+      const res = await fetchHealth();
+      const s = signal(res.body, 'ngn_webhook_secret_configured');
+      check('the signal exists', Boolean(s), 'no ngn_webhook_secret_configured signal');
+      check('with a secret configured it is ok', s.severity === 'ok', s.severity);
+      /**
+       * The detail must name the ENV VAR and where to get the value, because
+       * the person reading it at 3am did not write this code.
+       */
+      const svc = read('src/monitoring/operational-health.service.ts');
+      check('an ABSENT secret is CRITICAL, not a warning',
+        /severity: configured \? 'ok' : 'critical'[\s\S]{0,200}BREET_WEBHOOK_SECRET is EMPTY/.test(svc));
+      check('and the detail names the env var to set',
+        /Copy the Webhook Verification Secret Key/.test(svc));
+      check('and explains the consequence: 403 and reconciler fallback',
+        /rejected with 403[\s\S]{0,60}reconciler/.test(svc));
+    }
+
+    console.log('\nAN UNFUNDED ORDER IS NOT AN INCIDENT');
+    {
+      /**
+       * `awaiting_crypto_deposit` means the order exists and the user has NOT
+       * sent anything. Nobody's money is at risk and there is nothing for an
+       * operator to do at 3am.
+       *
+       * It used to be counted as CRITICAL. Measured on api-test: 9 such
+       * transfers, every one with no destinationTxHash, holding the whole
+       * service at status=critical and returning 503 from the alerting
+       * endpoint. A monitor that cries wolf is a monitor nobody reads.
+       */
+      await makeTransfer('ngnt_unfunded', 'awaiting_crypto_deposit', 5);
+      const res = await fetchHealth();
+      const stuck = signal(res.body, 'transfers_stuck_in_flight');
+      check('an unfunded order is NOT counted as stuck', stuck.value === 0, String(stuck.value));
+      check('and does not page anyone', stuck.severity === 'ok', stuck.severity);
+      const idle = signal(res.body, 'orders_awaiting_deposit');
+      check('it is still counted, informationally', idle.value === 1, String(idle.value));
+      check('and says plainly that no money is at risk',
+        /no money is at risk/i.test(idle.detail), idle.detail);
+      check('the endpoint stays 200', res.status === 200, String(res.status));
+    }
+
+    console.log('\nMONEY ACTUALLY IN FLIGHT IS CRITICAL AND RETURNS 503');
+    {
+      /**
+       * THIS is the shape of both webhook bugs: crypto has left the user, a
+       * provider holds it, and no naira has arrived.
+       */
+      await makeTransfer('ngnt_stuck', 'settlement_processing', 5);
       const res = await fetchHealth();
       const s = signal(res.body, 'transfers_stuck_in_flight');
       check('the stuck transfer is counted', s.value === 1, String(s.value));

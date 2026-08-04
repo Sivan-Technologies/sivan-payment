@@ -566,6 +566,48 @@ async function main() {
     );
   }
 
+  console.log('\nABANDONED ORDERS ARE CLOSED - AND FUNDED ONES NEVER ARE');
+  {
+    /**
+     * A QUOTE expires after 10 minutes; once accepted the TRANSFER sat in
+     * `awaiting_crypto_deposit` forever. Measured on api-test: 9 of them, the
+     * oldest two days old, all with no destinationTxHash - people who opened a
+     * sell, saw the address, and walked away. They held the health endpoint at
+     * critical, which is how a monitor stops being read.
+     *
+     * The dangerous direction is the opposite one: closing an order that IS
+     * funded would make somebody's money vanish from their own dashboard while
+     * it is genuinely in flight. Three of these five assertions exist to prove
+     * that cannot happen.
+     */
+    const old = new Date(Date.now() - 48 * 3600_000).toISOString();
+    const fresh = new Date().toISOString();
+    const mk = (id: string, status: string, updatedAt: string, txHash?: string) =>
+      db.upsertNgnTransferRecord({
+        id, quoteId: `q_${id}`, userId: 'u_expiry', direction: 'offramp', provider: 'mock',
+        sourceCurrency: 'usdc', destinationCurrency: 'ngn', sourceAmount: '60',
+        destinationAmount: '90000', rate: '1500', feeAmount: '1', status,
+        destinationTxHash: txHash, createdAt: old, updatedAt,
+      } as any);
+
+    await mk('ngnt_exp_old', 'awaiting_crypto_deposit', old);
+    await mk('ngnt_exp_fresh', 'awaiting_crypto_deposit', fresh);
+    await mk('ngnt_exp_funded', 'awaiting_crypto_deposit', old, '0xabc');
+    await mk('ngnt_exp_inflight', 'settlement_processing', old);
+
+    const out = await reconcileNgnSettlements();
+    const at = async (id: string) => (await reload(id))?.status;
+
+    check('an old unfunded order is expired', await at('ngnt_exp_old') === 'expired', String(await at('ngnt_exp_old')));
+    check('a fresh unfunded order is left alone',
+      await at('ngnt_exp_fresh') === 'awaiting_crypto_deposit', String(await at('ngnt_exp_fresh')));
+    check('an old order WITH a tx hash is never touched',
+      await at('ngnt_exp_funded') === 'awaiting_crypto_deposit', String(await at('ngnt_exp_funded')));
+    check('money in flight is never expired',
+      await at('ngnt_exp_inflight') === 'settlement_processing', String(await at('ngnt_exp_inflight')));
+    check('the outcome reports the expiry', (out.expired ?? []).includes('ngnt_exp_old'), JSON.stringify(out.expired));
+  }
+
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
 }

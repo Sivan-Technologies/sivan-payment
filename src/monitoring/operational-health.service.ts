@@ -63,11 +63,38 @@ const STUCK_TRANSFER_HOURS = 2;
 const STALE_REVIEW_HOURS = 24;
 const CRITICAL_REVIEW_HOURS = 48;
 
-/** Non-terminal states. A transfer sitting in one of these is unfinished. */
+/**
+ * States where SIVAN OR A PROVIDER HOLDS THE USER'S MONEY.
+ *
+ * This is the whole point of the signal: crypto has left the user's control
+ * and no naira has arrived. Every minute is a support ticket forming, so it
+ * pages someone.
+ *
+ * `awaiting_crypto_deposit` and the pre-deposit states are DELIBERATELY NOT
+ * here. They mean the opposite: an order exists and the user has not sent
+ * anything. Nobody's money is at risk and there is nothing for an operator to
+ * do.
+ *
+ * Measured on api-test: 9 transfers counted as CRITICAL, all
+ * `awaiting_crypto_deposit`, all with no destinationTxHash - nobody had ever
+ * sent crypto. That is 9 pages for abandoned test orders, and a monitor that
+ * cries wolf is a monitor nobody reads. Those are now reported separately as
+ * an informational count.
+ */
 const IN_FLIGHT = new Set([
-  'created', 'quote_created', 'quote_accepted', 'awaiting_deposit',
-  'awaiting_crypto_deposit', 'deposit_received', 'blockchain_confirmed',
+  'deposit_received', 'blockchain_confirmed',
   'processing', 'settlement_processing', 'bank_processing', 'crypto_sent',
+]);
+
+/**
+ * Orders created but never funded. Informational, never critical.
+ *
+ * Worth counting - a sudden spike means people are trying to sell and failing
+ * at the send step - but it is a product signal, not an incident.
+ */
+const AWAITING_DEPOSIT = new Set([
+  'created', 'quote_created', 'quote_accepted', 'awaiting_deposit',
+  'awaiting_crypto_deposit',
 ]);
 
 function hoursSince(iso: string | undefined): number {
@@ -93,6 +120,9 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
     const stuck = transfers.filter(
       (t: any) => IN_FLIGHT.has(String(t.status)) && hoursSince(t.updatedAt ?? t.createdAt) >= STUCK_TRANSFER_HOURS
     );
+    const unfunded = transfers.filter(
+      (t: any) => AWAITING_DEPOSIT.has(String(t.status)) && hoursSince(t.updatedAt ?? t.createdAt) >= STUCK_TRANSFER_HOURS
+    );
     signals.push({
       name: 'transfers_stuck_in_flight',
       // Critical, not warn: money has left a user's wallet and no naira has
@@ -102,6 +132,18 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
       detail: stuck.length
         ? `${stuck.length} transfer(s) unfinished for over ${STUCK_TRANSFER_HOURS}h. Check the Breet webhook log - a delivery may have failed or gone unapplied.`
         : `No transfer has been in flight longer than ${STUCK_TRANSFER_HOURS}h.`,
+    });
+
+    /**
+     * Counted, never paged. An abandoned order is a product observation.
+     */
+    signals.push({
+      name: 'orders_awaiting_deposit',
+      severity: 'ok',
+      value: unfunded.length,
+      detail: unfunded.length
+        ? `${unfunded.length} order(s) created but never funded. No money is at risk - the user has not sent crypto.`
+        : 'No unfunded orders older than the threshold.',
     });
   }
 
@@ -149,6 +191,40 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
       detail: recent === 0 && inFlightRecently
         ? 'Transfers were started in the last 24h but NO provider webhook arrived. Check the webhook URL and secret at the provider.'
         : `${recent} provider webhook(s) in the last 24h.`,
+    });
+  }
+
+  /**
+   * 4b. IS THE WEBHOOK SECRET EVEN SET?
+   *
+   * verifyWebhook() fails CLOSED when BREET_WEBHOOK_SECRET is empty - which is
+   * the right call, an unauthenticated webhook that credits balances is worse
+   * than a broken one. But nothing SAID so. Every Breet delivery returned 403,
+   * Breet retried on its published backoff (1m, 5m, 1h, 4h, 8h, 12h, 24h) and
+   * then marked the event permanently failed, and the only symptom anywhere
+   * was settlements arriving late via the 5-minute reconciler.
+   *
+   * Measured: BREET_WEBHOOK_SECRET is an empty string on this deployment. This
+   * was described to me as a "secret mismatch"; it is not a mismatch, it is
+   * ABSENT. The value comes from the Breet dashboard under
+   * Settings -> For Developer -> Webhook Verification Secret Key, and Breet
+   * sends it verbatim in the `x-webhook-secret` header.
+   *
+   * Critical rather than warn: with it unset, no webhook can ever be accepted,
+   * so every settlement depends on the reconciler catching it within 5 minutes.
+   * That is a fallback, not a design.
+   */
+  {
+    const configured = Boolean(env.BREET_WEBHOOK_SECRET);
+    signals.push({
+      name: 'ngn_webhook_secret_configured',
+      severity: configured ? 'ok' : 'critical',
+      value: configured ? 1 : 0,
+      detail: configured
+        ? 'NGN webhook secret is configured, so provider deliveries can be verified.'
+        : 'BREET_WEBHOOK_SECRET is EMPTY, so every provider webhook is rejected with 403 and '
+          + 'settlement falls back to the reconciler. Copy the Webhook Verification Secret Key '
+          + 'from the provider dashboard into BREET_WEBHOOK_SECRET.',
     });
   }
 

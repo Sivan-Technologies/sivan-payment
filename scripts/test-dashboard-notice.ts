@@ -153,8 +153,22 @@ async function main() {
 
     check('App.tsx defines the predicate',
       /const bridgeNeedsAttention = Boolean\(/.test(source));
-    check('it requires a customer row',
-      /bridgeNeedsAttention = Boolean\(\s*\n\s*customer/.test(source));
+    /**
+     * Asserts the CONJUNCT, not its position.
+     *
+     * This matched `Boolean(\n customer`, so it broke the moment
+     * `verificationSummaryLoaded` was added as the first line - a genuine
+     * improvement, since verificationSummary is null for the whole in-flight
+     * window and the old predicate accused a verified user on every cold load.
+     * A test that fails when the code gets better is testing the wrong thing.
+     */
+    const predicate = source.slice(
+      source.indexOf('const bridgeNeedsAttention = Boolean('),
+      source.indexOf('const bridgeNeedsAttention = Boolean(') + 400
+    );
+    check('it requires a customer row', /&&\s*customer\b/.test(predicate), predicate.slice(0, 160));
+    check('and it waits for the summary before accusing anyone',
+      /verificationSummaryLoaded/.test(predicate), predicate.slice(0, 160));
     check('it defers to a completed path',
       /!verificationSummary\?\.pathComplete/.test(source));
     /**

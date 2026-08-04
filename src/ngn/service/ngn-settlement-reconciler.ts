@@ -34,6 +34,8 @@ export interface ReconcileOutcome {
   advanced: Array<{ transferId: string; from: string; to: string; provider: string }>;
   unmatched: Array<{ depositAddress?: string; tradeId?: string; withdrawalStatus?: string }>;
   skipped: string[];
+  /** Orders closed because nobody ever funded them. Never money at risk. */
+  expired: string[];
 }
 
 /** How far along a status is. Only forward moves are applied. */
@@ -132,6 +134,62 @@ function matchTransfer(
   return open[0] ?? candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
+/** Nothing has been received in these states. */
+const UNFUNDED_STATUSES = new Set([
+  'created', 'quote_created', 'quote_accepted', 'awaiting_deposit', 'awaiting_crypto_deposit',
+]);
+
+/**
+ * How long a user has to fund an off-ramp before it is closed.
+ *
+ * 24 hours, not minutes: a deposit address stays valid at the provider, and
+ * somebody who starts a sell in the evening and finishes it next morning must
+ * not find their order cancelled. Long enough to be generous, short enough
+ * that a week of abandoned orders does not pile up.
+ */
+const UNFUNDED_EXPIRY_HOURS = Number(process.env.NGN_UNFUNDED_EXPIRY_HOURS || 24);
+
+async function expireUnfundedOrders(
+  transfers: NgnTransferRecord[],
+  actorId?: string
+): Promise<string[]> {
+  const expired: string[] = [];
+  const cutoff = Date.now() - UNFUNDED_EXPIRY_HOURS * 3_600_000;
+
+  for (const transfer of transfers) {
+    if (!UNFUNDED_STATUSES.has(String(transfer.status))) continue;
+    // A tx hash means crypto DID arrive - never close one of these, whatever
+    // the status field says.
+    if (transfer.destinationTxHash) continue;
+    const started = Date.parse(transfer.updatedAt ?? transfer.createdAt ?? '');
+    if (!Number.isFinite(started) || started > cutoff) continue;
+
+    await db.upsertNgnTransferRecord({
+      ...transfer,
+      status: 'expired',
+      updatedAt: new Date().toISOString(),
+      metadata: {
+        ...(typeof transfer.metadata === 'object' && transfer.metadata ? transfer.metadata as Record<string, unknown> : {}),
+        expiredReason: `No crypto deposit received within ${UNFUNDED_EXPIRY_HOURS}h.`,
+        expiredAt: new Date().toISOString(),
+      },
+    } as NgnTransferRecord);
+
+    await createAuditLog({
+      actorType: 'system',
+      actorId: actorId || 'ngn_reconciler',
+      action: 'ngn.transfer_expired',
+      resourceType: 'payments_ngn_transfer',
+      resourceId: transfer.id,
+      severity: 'info',
+      metadata: { previousStatus: transfer.status, hours: UNFUNDED_EXPIRY_HOURS },
+    });
+    expired.push(transfer.id);
+  }
+
+  return expired;
+}
+
 export async function reconcileNgnSettlements(
   options: { actorId?: string } = {}
 ): Promise<ReconcileOutcome> {
@@ -141,7 +199,34 @@ export async function reconcileNgnSettlements(
     advanced: [],
     unmatched: [],
     skipped: [],
+    expired: [],
   };
+
+  /**
+   * EXPIRE ORDERS NOBODY EVER FUNDED - BEFORE THE PROVIDER GUARD.
+   *
+   * A QUOTE expires after 10 minutes, but once accepted the TRANSFER sat in
+   * `awaiting_crypto_deposit` forever. Nothing ever closed it.
+   *
+   * Measured on api-test: 9 such transfers, the oldest two days old, every one
+   * with no destinationTxHash - the user opened a sell, saw the deposit
+   * address, and walked away. Harmless individually, but they accumulate and
+   * held the health endpoint at critical.
+   *
+   * DELIBERATELY ABOVE the listSettlements() guard. Expiry is a local
+   * bookkeeping decision about orders the user never funded; it needs no
+   * provider call. My first version placed it after that guard, and on any
+   * provider without listSettlements - the mock, and any future one - the
+   * function returned early and NOTHING was ever expired. Caught by running
+   * it, not by reading it.
+   *
+   * Conservative by design. Only closed when the status says nothing was
+   * received, AND there is no destinationTxHash, AND it is older than the
+   * window. Wrongly closing a funded order means somebody's money vanishing
+   * from their own dashboard while it is genuinely in flight.
+   */
+  const allTransfers = await db.listNgnTransfers();
+  outcome.expired = await expireUnfundedOrders(allTransfers, options.actorId);
 
   const controls = await getNgnControls();
   const provider = getNgnProvider(controls.activeProvider);
@@ -152,9 +237,11 @@ export async function reconcileNgnSettlements(
 
   const settlements = await provider.listSettlements();
   outcome.checked = settlements.length;
-  if (settlements.length === 0) return outcome;
 
   const transfers = await db.listNgnTransfers();
+
+
+  if (settlements.length === 0) return outcome;
 
   for (const settlement of settlements) {
     const transfer = matchTransfer(transfers, settlement);

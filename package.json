@@ -98,7 +98,7 @@
     "ops:rails": "tsx scripts/fix-live-findings.ts",
     "watchdog": "tsx scripts/watchdog.ts",
     "test:watchdog": "tsx scripts/test-watchdog.ts",
-    "test:operational-health": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-op-health.json EMAIL_PROVIDER=console NGN_PROVIDER=mock PRIVY_AUTHORIZATION_PRIVATE_KEY=stub PRIVY_AUTHORIZATION_KEY_QUORUM_ID=stub tsx scripts/test-operational-health.ts",
+    "test:operational-health": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-op-health.json EMAIL_PROVIDER=console NGN_PROVIDER=mock PRIVY_AUTHORIZATION_PRIVATE_KEY=stub PRIVY_AUTHORIZATION_KEY_QUORUM_ID=stub BREET_WEBHOOK_SECRET=stub-webhook-secret tsx scripts/test-operational-health.ts",
     "test:failure-paths": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-failure-paths.json BALANCE_TRANSFERS_ENABLED=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock WALLET_PROVIDER=mock ADMIN_API_KEY=failure-admin-key BREET_WEBHOOK_SECRET=failure-paths-secret tsx scripts/test-failure-paths.ts",
     "test:full-system": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-full-system.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock WALLET_PROVIDER=mock ADMIN_API_KEY=full-e2e-admin-key BREET_WEBHOOK_SECRET=full-e2e-webhook-secret tsx scripts/test-full-system-e2e.ts",
     "test:breet-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-breet-e2e.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock ADMIN_API_KEY=breet-e2e-admin-key BREET_WEBHOOK_SECRET=breet-e2e-webhook-secret tsx scripts/test-breet-e2e-pipeline.ts",
