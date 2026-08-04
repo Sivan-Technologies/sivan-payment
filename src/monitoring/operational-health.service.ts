@@ -28,6 +28,7 @@ import { db } from '../database/json-database.js';
 import { getNgnControls } from '../ngn/service/ngn-controls.service.js';
 import { getNgnProvider } from '../ngn/provider/ngn-provider-registry.js';
 import { env } from '../config/env.js';
+import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 
 export type AlertSeverity = 'ok' | 'warn' | 'critical';
 
@@ -225,6 +226,42 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
         : 'BREET_WEBHOOK_SECRET is EMPTY, so every provider webhook is rejected with 403 and '
           + 'settlement falls back to the reconciler. Copy the Webhook Verification Secret Key '
           + 'from the provider dashboard into BREET_WEBHOOK_SECRET.',
+    });
+  }
+
+  /**
+   * 4c. CAN THE ACTIVE WALLET PROVIDER ACTUALLY SERVE OUR USERS?
+   *
+   * Reported twice from production: POST /wallets returned 400 for a user who
+   * had verified with a Nigerian bank and was correctly Level 1.
+   *
+   * Sivan's own eligibility passed. The Bridge adapter then refused, because
+   * Bridge's API is customer-scoped and the NGN verification path never
+   * creates a Bridge customer - by design, since Bridge plays no part in a
+   * naira off-ramp and charges $2 per KYC.
+   *
+   * So `bridge` cannot issue a wallet to ANY Nigerian-bank user, ever. That is
+   * not a per-user fault to be discovered one support ticket at a time; it is
+   * a deployment-wide misconfiguration, and it belongs here where an operator
+   * sees it before a customer does.
+   *
+   * Privy is the provider that serves this path: it is customer-agnostic, so
+   * Level 1 is sufficient.
+   */
+  {
+    const provider = await resolveActiveWalletProvider().catch(() => 'unknown');
+    // Only 'bridge' has the customer-scoped limitation. mock is refused
+    // outside development by the registry itself, and privy needs no customer.
+    const blocked = provider === 'bridge';
+    signals.push({
+      name: 'wallet_provider_serves_ngn_users',
+      severity: blocked ? 'critical' : 'ok',
+      value: blocked ? 0 : 1,
+      detail: blocked
+        ? 'Active wallet provider is "bridge", which requires a Bridge customer with approved KYC. '
+          + 'Users who verified by Nigerian bank have no Bridge customer, so wallet creation returns 400 '
+          + 'for all of them. Switch to privy: PUT /api/admin/wallets/controls {"activeProvider":"privy"}.'
+        : `Active wallet provider is "${provider}", which can issue wallets to bank-verified users.`,
     });
   }
 

@@ -66,12 +66,49 @@ async function requireWalletEligibility(userId: string, providerName: string) {
   const customer = data.customers.find((item) => item.userId === userId);
 
   if (providerName === 'bridge') {
-    if (!customer?.providerCustomerId) {
-      throw badRequest('Bridge wallets require a Bridge customer. Complete verification first.');
-    }
-    if (!isApprovedKycStatus(customer.kycStatus)) {
-      throw badRequest('Bridge requires approved verification before a wallet can be created.');
-    }
+    /**
+     * A PROVIDER LIMIT THAT NO NIGERIAN-BANK USER CAN EVER CLEAR.
+     *
+     * Reported from production, twice:
+     *   POST /api/users/:id/wallets  400
+     * for a user who verified with a Nigerian bank and is correctly Level 1.
+     *
+     * Traced by evaluating the gates directly. Sivan's own gate PASSES:
+     *   canProvisionWallet(level=BANK, bankStatus=VERIFIED)
+     *     -> { eligible: true, code: 'eligible' }
+     * Then this block refuses, because the NGN path never creates a Bridge
+     * customer - that is the entire point of the path. isApprovedKycStatus()
+     * is false for undefined, kyc_not_started, kyc_incomplete and
+     * kyc_under_review; only kyc_approved passes.
+     *
+     * So with WALLET_PROVIDER=bridge, EVERY Nigerian who verified by bank hits
+     * a permanent dead end. Not a misconfigured user - a wallet provider that
+     * structurally cannot serve the platform's main verification path.
+     *
+     * The old messages made this undiagnosable. They told a user who HAD
+     * finished verification to go and finish verification, and named no
+     * provider, so the obvious reading was "your KYC is broken" when the truth
+     * is "this deployment points at the wrong wallet provider".
+     *
+     * Deliberately NOT auto-falling back to Privy here. Which provider
+     * custodies user funds is not a decision a request handler should make
+     * silently. It is an operator decision, so this states precisely what an
+     * operator must change, and operational-health surfaces it BEFORE a user
+     * ever meets it.
+     */
+    const reason = !customer?.providerCustomerId
+      ? 'this account has no Bridge customer record'
+      : `Bridge has not approved this customer (status: ${customer.kycStatus ?? 'none'})`;
+    console.error('[wallet.provider_cannot_serve_user]', {
+      userId,
+      provider: 'bridge',
+      reason,
+      sivanEligible: true,
+      fix: 'Set the active wallet provider to privy (PUT /api/admin/wallets/controls) or complete Bridge onboarding for this user.',
+    });
+    throw badRequest(
+      'Deposit addresses are temporarily unavailable on this account. Our team has been notified - please try again shortly or contact support.'
+    );
   }
 
   return { user, customer };
