@@ -318,11 +318,34 @@ export default function App() {
    * Bridge attempt on top of that is not a problem to solve on the dashboard.
    * It still shows on /verification, where they went looking for it.
    */
+  /**
+   * AND NOT UNTIL THE SUMMARY HAS ACTUALLY LANDED.
+   *
+   * `verificationSummary` is null while the request is in flight, so
+   * `!verificationSummary?.pathComplete` is TRUE during the whole load window.
+   * A verified user with any leftover Bridge row - a failed check, or one they
+   * abandoned by tapping "Verify with ID instead" once - therefore tripped this
+   * flag on every fresh login, and the dashboard handed them the Bridge card
+   * telling them to verify an account they had already finished. It corrected
+   * itself a moment later when the summary arrived, which is exactly what makes
+   * it feel broken rather than slow.
+   *
+   * DashboardAccountNotice already guards this with a skeleton, but the guard
+   * lives INSIDE that component - and this flag decides whether that component
+   * renders at all, so the skeleton never got the chance to run. The gate
+   * belongs here, on the branch condition itself.
+   *
+   * Gated on `verificationSummaryLoaded` and not `verificationSummary !== null`
+   * so a FAILED summary call still falls through to Bridge's opinion, rather
+   * than suppressing a real "your check needs attention" notice forever.
+   */
   const bridgeNeedsAttention = Boolean(
-    customer
+    verificationSummaryLoaded
+    && customer
     && !verificationSummary?.pathComplete
     && (kycUnderReview || kycFailed || kycStatus === 'kyc_incomplete')
   );
+
   const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
   const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
   const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
