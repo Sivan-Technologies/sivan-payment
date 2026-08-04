@@ -228,6 +228,16 @@ const envSchema = z.object({
    * in minutes, slow enough to be nothing to a partner API.
    */
   NGN_SETTLEMENT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
+  /**
+   * How often to re-check crypto sends that are still 'processing'.
+   *
+   * Nothing ever confirmed them before this: 'completed' was declared in the
+   * status union and never assigned to a transfer, so a send that had settled
+   * on chain within seconds still read "Processing" hours later. 0 disables.
+   */
+  TRANSFER_CONFIRM_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  /** Age at which an unconfirmed send is escalated to a human, in minutes. */
+  TRANSFER_CONFIRM_STALE_MINUTES: z.coerce.number().int().positive().default(30),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),

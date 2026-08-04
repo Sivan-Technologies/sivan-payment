@@ -204,6 +204,19 @@ export interface BalanceTransferRecord {
   destinationAddress: string;
   status: string;
   note?: string;
+  /**
+   * The on-chain identifier. The server has always sent these; the frontend
+   * type simply did not declare them, so the UI could not show a user the one
+   * reference they can actually verify and fell back to printing the
+   * recipient address instead.
+   *
+   * A SPONSORED EVM transfer is an ERC-4337 user operation and has only
+   * userOperationHash until a bundler includes it; a Solana send has txHash
+   * (the signature) immediately. Both optional, because a transfer awaiting
+   * review has neither.
+   */
+  txHash?: string;
+  userOperationHash?: string;
   createdAt: string;
   updatedAt: string;
 }

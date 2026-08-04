@@ -119,6 +119,20 @@ const TRANSFER_EVENTS = [
   'balance.transfer_failed',
   'balance.transfer_approved',
   'balance.transfer_rejected',
+  /**
+   * The terminal one, and the one that did not exist.
+   *
+   * Nothing ever marked a send finished: 'completed' was declared in the
+   * status union and only ever assigned to ledger entries. A transfer that
+   * settled on chain in seconds still read "Processing" hours later, because
+   * the last event anyone wrote was the submission.
+   *
+   * Listed here as well as emitted, because emitting it and not reading it
+   * would be the same bug wearing a new hat - caught by
+   * test:transfer-confirmation, which failed on exactly that.
+   */
+  'balance.transfer_confirmed',
+  'balance.transfer_stale',
 ] as const;
 
 /**

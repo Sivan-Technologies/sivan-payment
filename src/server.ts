@@ -2,6 +2,7 @@ import { buildApp } from './app.js';
 import { env } from './config/env.js';
 import { captureError, flushMonitoring, initMonitoring } from './monitoring/sentry.js';
 import { reconcileNgnSettlements } from './ngn/service/ngn-settlement-reconciler.js';
+import { confirmBalanceTransfers } from './balances/transfer-confirmation.service.js';
 
 initMonitoring();
 
@@ -66,5 +67,48 @@ if (env.NGN_SETTLEMENT_POLL_SECONDS > 0) {
   setInterval(tick, intervalMs).unref();
   // Run once at boot: a deploy is exactly when a webhook is most likely to
   // have been missed.
+  void tick();
+}
+
+/**
+ * A CRYPTO SEND HAD NO WAY TO FINISH.
+ *
+ * Reported with a screenshot: three sends stuck on "Processing", the oldest
+ * two hours old. All three had actually settled - both Solana transfers are
+ * finalised on chain with err:null and the recipient received every cent.
+ * Nothing ever went back to look.
+ *
+ * `completed` was declared in BalanceTransferStatus and never once assigned to
+ * a transfer. executeBalanceTransfer wrote 'processing' when the provider
+ * accepted the broadcast and that was the final word. There was no poller and
+ * no webhook on this path.
+ *
+ * Same shape and the same safety rules as the settlement reconciler above:
+ * started here rather than in buildApp() so tests do not spawn a timer that
+ * talks to a live chain, every failure swallowed and logged, unref'd.
+ */
+if (env.TRANSFER_CONFIRM_POLL_SECONDS > 0) {
+  const intervalMs = env.TRANSFER_CONFIRM_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await confirmBalanceTransfers();
+      if (outcome.confirmed.length > 0) {
+        app.log.info({ confirmed: outcome.confirmed }, 'crypto sends confirmed on chain');
+      }
+      if (outcome.failed.length > 0) {
+        app.log.error({ failed: outcome.failed }, 'crypto sends reverted on chain; holds released');
+      }
+      if (outcome.stale.length > 0) {
+        app.log.warn(
+          { stale: outcome.stale },
+          'crypto sends submitted but still unconfirmed; a human must check the chain'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'transfer confirmer failed');
+      captureError(error as Error, { source: 'transfer_confirmer' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
   void tick();
 }
