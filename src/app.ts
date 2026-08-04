@@ -98,18 +98,64 @@ export async function buildApp() {
    * parsed object and every secret check is untouched - this changes what can
    * be RECEIVED, never what is TRUSTED.
    */
+  /**
+   * PARSED AS A BUFFER, NOT A STRING. THIS ONE CRASHED PRODUCTION.
+   *
+   * Sentry, on the live API:
+   *
+   *   TypeError: The "list[0]" argument must be an instance of Buffer or
+   *   Uint8Array. Received type string ('{"api_version":"v0","even...')
+   *     at Buffer.concat (node:buffer:626)
+   *     at IncomingMessage.onEnd (raw-body/index.js:286)
+   *
+   * The payload it choked on begins `{"api_version":"v0"` - a BRIDGE WEBHOOK.
+   * Reproduced locally: one POST to /api/webhooks/bridge and the whole process
+   * exits 1. Not a 500 - the server dies, taking every in-flight request with
+   * it, and Render restarts it cold. Bridge sees a dropped connection and
+   * retries, so a burst of webhooks is a restart loop.
+   *
+   * The mechanism, and it is a genuinely subtle interaction:
+   *
+   *   1. fastify-raw-body is registered with `encoding: false, runFirst: true`
+   *      so the webhook route can verify a signature over the EXACT bytes.
+   *      runFirst means it reads `request.raw` in preParsing.
+   *   2. `encoding: false` makes the plugin register its own
+   *      application/json parser with `parseAs: 'buffer'` - deliberately, so
+   *      the stream keeps yielding Buffers.
+   *   3. These lines then REMOVED that parser and replaced it with
+   *      `parseAs: 'string'`.
+   *   4. Fastify's string path calls `payload.setEncoding('utf8')`
+   *      (content-type-parser.js:250) on the same underlying stream.
+   *   5. raw-body, already listening on that stream with no decoder of its
+   *      own, now receives STRINGS, pushes them into its array, and calls
+   *      Buffer.concat on an array of strings. Throw, inside a stream
+   *      callback, unhandled.
+   *
+   * So the empty-body accommodation below silently broke webhook parsing for
+   * every provider. Both requirements are real, so both are kept:
+   *
+   *   parseAs: 'buffer'  keeps the raw stream in Buffers, so raw-body works
+   *                      and signature verification sees the true bytes
+   *   the empty check    still answers 200 to a dashboard verification probe
+   *
+   * Buffer.byteLength(body) rather than body.length is the same distinction
+   * one level up: a JSON body with any non-ASCII character has more bytes than
+   * characters, and the check must be about presence, not size.
+   */
   // removeContentTypeParser first: Fastify ships a JSON parser and refuses a
   // duplicate with FST_ERR_CTP_ALREADY_PRESENT, which fails the boot rather
   // than silently doing the wrong thing. Good behaviour on its part.
   app.removeContentTypeParser('application/json');
-  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body: string, done) => {
-    if (!body || !body.trim()) return done(null, {});
-    try { done(null, JSON.parse(body)); } catch (error) { done(error as Error, undefined); }
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_request, body: Buffer, done) => {
+    const text = body?.toString('utf8') ?? '';
+    if (!text.trim()) return done(null, {});
+    try { done(null, JSON.parse(text)); } catch (error) { done(error as Error, undefined); }
   });
 
-  app.addContentTypeParser('*', { parseAs: 'string' }, (_request, body: string, done) => {
-    if (!body || !body.trim()) return done(null, {});
-    try { done(null, JSON.parse(body)); } catch { done(null, {}); }
+  app.addContentTypeParser('*', { parseAs: 'buffer' }, (_request, body: Buffer, done) => {
+    const text = body?.toString('utf8') ?? '';
+    if (!text.trim()) return done(null, {});
+    try { done(null, JSON.parse(text)); } catch { done(null, {}); }
   });
 
   app.addHook('preHandler', async (request, reply) => {
