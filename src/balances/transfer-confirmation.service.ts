@@ -122,6 +122,18 @@ export async function confirmBalanceTransfers(): Promise<ConfirmationOutcome> {
   );
   if (!transfers.length) return outcome;
 
+  /**
+   * Which transfers have ALREADY been escalated, so each is reported once.
+   * Read from the audit log rather than held in memory: this process restarts
+   * on every deploy, and an in-memory set would re-alert the whole backlog.
+   */
+  const escalations = await db
+    .listAuditLogsByActions?.(['balance.transfer_stale'])
+    .catch(() => [] as any[]);
+  const alreadyEscalated = new Set<string>(
+    (escalations ?? []).map((log: any) => String(log?.resourceId ?? '')).filter(Boolean)
+  );
+
   const production = env.NETWORK_MODE !== 'testnet';
   let provider: ReturnType<typeof getWalletProvider> | undefined;
   try {
@@ -265,6 +277,20 @@ export async function confirmBalanceTransfers(): Promise<ConfirmationOutcome> {
     outcome.stillPending.push(transfer.transferId);
     if (age >= STALE_AFTER_MINUTES) {
       outcome.stale.push(transfer.transferId);
+      /**
+       * ESCALATE ONCE, NOT EVERY MINUTE.
+       *
+       * The first version wrote a fresh balance.transfer_stale on every pass.
+       * Measured on api-test: 66 events for 3 transfers in under an hour, and
+       * it would have grown without bound - the poll runs every 60 seconds and
+       * these transfers can never self-resolve, because their signature was
+       * lost by the adapter bug this shipped alongside.
+       *
+       * That is not a harmless log. The audit log is the transfer's own state
+       * machine here, so unbounded duplicates bloat every read of it, and an
+       * alert that repeats forever is one an operator learns to ignore.
+       */
+      if (alreadyEscalated.has(transfer.transferId)) continue;
       /**
        * Deliberately NOT marked failed. Solana finalises in seconds, so a
        * transfer unconfirmed after 30 minutes is almost certainly broken - but

@@ -90,6 +90,17 @@ check('an RPC error returns unknown, not failed',
   /catch \{[\s\S]{0,120}return 'unknown'/.test(svc));
 check('only an explicit on-chain err marks it failed',
   /if \(status\.err\) return 'failed'/.test(svc));
+/**
+ * Measured on api-test before this guard: 66 balance.transfer_stale events for
+ * 3 transfers in under an hour, growing every 60 seconds. These transfers can
+ * never self-resolve, so the alert would repeat forever - and the audit log IS
+ * the transfer's state machine here, so the duplicates bloat every read of it.
+ */
+check('a transfer is escalated ONCE, not on every poll',
+  svc.includes('alreadyEscalated.has(transfer.transferId)'));
+check('the escalation set is read from the audit log, not held in memory',
+  svc.includes("listAuditLogsByActions?.(['balance.transfer_stale'])"),
+  'an in-memory set would re-alert the whole backlog after every deploy');
 check('a stale transfer is escalated, NOT auto-refunded',
   svc.includes("action: 'balance.transfer_stale'")
   && !/stale[\s\S]{0,400}status: 'failed'/.test(svc));
