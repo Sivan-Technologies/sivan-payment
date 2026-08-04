@@ -2,6 +2,7 @@ import type {
   CreateWalletInput,
   ProviderWallet,
   WalletBalance,
+  WalletChain,
   WalletCustodyModel,
   WalletProviderName,
   WalletTransfer,
@@ -34,7 +35,19 @@ export interface WalletProvider {
 
   listWallets(providerCustomerId: string): Promise<ProviderWallet[]>;
 
-  getBalances(providerWalletId: string, providerCustomerId?: string): Promise<WalletBalance[]>;
+  /**
+   * Live balances for a wallet.
+   *
+   * `address` and `chain` are optional for backward compatibility with Bridge
+   * and Mock, which read balances through their own APIs. Privy needs them to
+   * make RPC calls, since Privy is a key manager and does not index balances.
+   */
+  getBalances(
+    providerWalletId: string,
+    providerCustomerId?: string,
+    address?: string,
+    chain?: WalletChain
+  ): Promise<WalletBalance[]>;
 
   /**
    * Move funds out of the wallet.

@@ -80,6 +80,19 @@ const envSchema = z.object({
    */
   SOLANA_RPC_URL: z.string().url().optional(),
   SOLANA_RPC_FALLBACK_URL: z.string().url().optional(),
+  /**
+   * EVM RPC, per chain. Same reason as Solana above: Privy signs but does not
+   * read, so a displayed balance needs an eth_call somewhere.
+   *
+   * Optional, and the public endpoint is the fallback. Public Base/Ethereum
+   * RPCs are aggressively rate-limited and will start refusing a deployment
+   * that leans on them, which surfaces as an unavailable balance rather than a
+   * wrong one - degraded, but not dishonest.
+   */
+  BASE_RPC_URL: z.string().url().optional(),
+  BASE_RPC_FALLBACK_URL: z.string().url().optional(),
+  ETHEREUM_RPC_URL: z.string().url().optional(),
+  ETHEREUM_RPC_FALLBACK_URL: z.string().url().optional(),
   WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
   SIVAN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),

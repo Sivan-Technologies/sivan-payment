@@ -170,10 +170,29 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   let balances: Array<{ asset: string; chain: string; amount: string }> | undefined;
   let balancesUnavailable = false;
   try {
-    balances = await provider.getBalances(wallet.providerWalletId, wallet.customerId);
-  } catch {
+    // address and chain are passed because Privy cannot answer without them -
+    // it is a key manager, not an indexer, so the balance is read from an RPC
+    // against this specific address on this specific network. Bridge and Mock
+    // ignore the extra arguments.
+    balances = await provider.getBalances(
+      wallet.providerWalletId,
+      wallet.customerId,
+      wallet.address,
+      wallet.chain
+    );
+  } catch (error) {
     // A provider outage must not blank the deposit address. The user can still
     // receive funds; only the balance figure is unavailable.
+    //
+    // Logged rather than swallowed silently: this branch is now reachable via a
+    // rate-limited or misconfigured RPC, and an operator seeing "balance
+    // unavailable" reports needs to know which endpoint failed and why.
+    console.warn('[wallet.balances_unavailable]', {
+      userId,
+      chain: wallet.chain,
+      provider: provider.name,
+      reason: error instanceof Error ? error.message : String(error),
+    });
     balances = undefined;
     balancesUnavailable = true;
   }
