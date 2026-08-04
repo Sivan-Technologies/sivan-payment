@@ -292,7 +292,7 @@ function CountryStep({
         <span>Country</span>
         <input
           autoFocus
-          placeholder="Search — United Kingdom, United States…"
+          placeholder="Search: United Kingdom, United States…"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
@@ -452,7 +452,7 @@ function NgnBankVerification({
             <span>Your bank</span>
             <input
               autoFocus
-              placeholder="Search — GTB, Access, UBA…"
+              placeholder="Search: GTB, Access, UBA…"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -463,7 +463,7 @@ function NgnBankVerification({
             {!banks.length && !error && (
               <p className="sv-muted" aria-live="polite"><span className="sv-spinner" /> Loading banks…</p>
             )}
-            {Boolean(banks.length) && !searching && <p className="sv-bank-label">Common banks — or search for yours</p>}
+            {Boolean(banks.length) && !searching && <p className="sv-bank-label">Common banks, or search for yours</p>}
             {searching && Boolean(visible.length) && (
               <p className="sv-bank-label" aria-live="polite">
                 {matches.length} {matches.length === 1 ? 'match' : 'matches'}
@@ -527,7 +527,7 @@ function NgnBankVerification({
           {!resolved.trustworthy && (
             // The sandbox resolves ANY account number to a plausible name, so
             // presenting this as confirmation would be a lie.
-            <p className="sv-warn">Test environment — this name is simulated and confirms nothing.</p>
+            <p className="sv-warn">Test environment. This name is simulated and confirms nothing.</p>
           )}
           <button
             className="sv-primary"
@@ -622,15 +622,15 @@ function BridgeVerification({
         <div className="sv-handoff" aria-live="polite">
           <p className="sv-handoff-status"><span className="sv-spinner" />Opening secure verification…</p>
           <p className="sv-muted">
-            We are setting up your session with Bridge. This can take up to 15 seconds — the new tab
-            will load on its own. Please do not close it.
+            We are setting up your session with Bridge. This can take up to 15 seconds, and the new
+            tab will load on its own. Please do not close it.
           </p>
         </div>
       ) : (
         <>
           <p className="sv-muted">
             This opens our partner Bridge in a new tab, and can take up to 15 seconds to load. Come
-            back here when you are done — this page updates on its own.
+            back here when you are done. This page updates on its own.
           </p>
           <button className="sv-primary" disabled={loading} onClick={onStart}>
             Start verification →

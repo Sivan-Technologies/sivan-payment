@@ -1897,7 +1897,7 @@ export default function App() {
               {!pendingEmail ? (
                 <form className="form auth-form-premium" onSubmit={handleEmailAuthStart}>
                   <label>Email address<input name="email" type="email" placeholder="you@example.com" autoComplete="email" required /></label>
-                  {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Olaleye Micheal Samson" autoComplete="name" required /></label>}
+                  {authTab === 'signup' && <label>Full name<input name="fullName" placeholder="Hart James Lucas" autoComplete="name" required /></label>}
                   {authTab === 'signup' && <label className="legal-checkbox auth-legal-card"><input name="legalAccepted" type="checkbox" required /><span>I agree to Sivan’s <a href={legalLinks.terms} target="_blank" rel="noreferrer">Terms</a>, <a href={legalLinks.privacy} target="_blank" rel="noreferrer">Privacy Policy</a>, and <a href={legalLinks.risk} target="_blank" rel="noreferrer">Risk Disclosure</a>.</span></label>}
                   <button className="primary-btn auth-submit" disabled={loading}>{loading ? 'Sending secure code…' : authTab === 'signup' ? 'Send verification code →' : 'Send login code →'}</button>
                 </form>

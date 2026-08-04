@@ -615,7 +615,7 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
               <span className="skeleton-line" />
               <span className="skeleton-line short" />
             </div>
-            <p className="muted">One moment — we are loading your current level and limits.</p>
+            <p className="muted">One moment. We are loading your current level and limits.</p>
           </article>
         </div>
       </section>
@@ -642,7 +642,7 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
           <div className="kyc-outcome-copy">
             <p className="eyebrow">Account status</p>
             <h3>Bank check in progress</h3>
-            <p>We are confirming your bank account matches your name. This is usually done within a few hours — you do not need to do anything.</p>
+            <p>We are confirming your bank account matches your name. This is usually done within a few hours, and you do not need to do anything.</p>
           </div>
           <div className="kyc-outcome-actions"><button className="ghost-btn" onClick={onRefresh}>Refresh status</button></div>
         </article>
@@ -741,7 +741,7 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
                   <strong>{summary.nextStep.label}</strong>
                   <small>{summary.nextStep.description}</small>
                   {!summary.nextStep.available && (
-                    <small className="verification-pending-note">Coming soon — we will let you know the moment it opens.</small>
+                    <small className="verification-pending-note">Coming soon. We will let you know the moment it opens.</small>
                   )}
                 </div>
                 {summary.nextStep.action === 'contact_support'

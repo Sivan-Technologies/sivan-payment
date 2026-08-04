@@ -321,7 +321,7 @@ export function payoutAccountOutcomeMessage(account: SavedNgnPayoutAccount): {
   return {
     tone: 'pending',
     message:
-      `Saved. ${account.accountName} needs a quick manual check before your first naira payout — ` +
+      `Saved. ${account.accountName} needs a quick manual check before your first naira payout: ` +
       `usually within a few hours.`,
   };
 }

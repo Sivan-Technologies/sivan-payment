@@ -349,7 +349,7 @@ export function ReceiveView({
             <>
               {wallet.provider === 'mock' && (
                 <div className="receive-mock-banner" role="alert">
-                  <strong>Test address — do not send funds</strong>
+                  <strong>Test address. Do not send funds</strong>
                   <span>
                     This is a simulated address generated for testing. It is not a real{' '}
                     {meta.label} account and nobody controls it. Any {assetLabel} sent here
@@ -413,7 +413,7 @@ export function ReceiveView({
                 {wallet.balancesUnavailable ? (
                   <p className="muted receive-balance-note">
                     Balance temporarily unavailable. Your funds are safe and the address above
-                    still works — try refreshing in a moment.
+                    still works. Try refreshing in a moment.
                   </p>
                 ) : !wallet.balances ? (
                   <p className="muted receive-balance-note">Loading…</p>

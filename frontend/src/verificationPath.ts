@@ -128,8 +128,8 @@ export function localVerificationPlan(
       isFallback: false,
       title: 'Verify with your bank account',
       description:
-        'Enter your Nigerian bank account. We confirm the account name matches your name — ' +
-        'no documents, no selfie, usually under a minute.',
+        'Enter your Nigerian bank account. We confirm the account name matches your name. ' +
+        'No documents, no selfie, usually under a minute.',
       unlocks: ['Sell crypto to naira', 'Withdraw to your Nigerian bank'],
       costsProviderFee: false,
     };
@@ -212,9 +212,9 @@ export function bridgeFlowBlockedReason(
   // told to "complete verification" after completing verification is what made
   // the original report feel like the app was broken.
   return path === 'ngn_bank'
-    ? `${action} needs identity verification with our partner Bridge — a photo ID and a selfie. `
+    ? `${action} needs identity verification with our partner Bridge: a photo ID and a selfie. `
       + 'Your bank verification covers naira payouts, but not this.'
-    : `Complete identity verification with our partner Bridge — a photo ID and a selfie — to unlock ${action.toLowerCase()}.`;
+    : `Complete identity verification with our partner Bridge (a photo ID and a selfie) to unlock ${action.toLowerCase()}.`;
 }
 
 /** Why the virtual-account button is disabled, phrased for a user. */

@@ -61,7 +61,7 @@ export function handoffDocumentHtml(): string {
 <div style="max-width:360px">
   <div style="width:34px;height:34px;margin:0 auto 20px;border-radius:50%;border:3px solid rgba(52,211,153,0.25);border-top-color:#34d399;animation:sv-spin 900ms linear infinite"></div>
   <h1 style="font-size:17px;font-weight:600;margin:0 0 8px">Opening secure verification…</h1>
-  <p style="font-size:13.5px;line-height:1.55;color:#8b98a6;margin:0">Setting up your session with our verification partner. This can take up to ${HANDOFF_SLOW_SECONDS} seconds — please keep this tab open.</p>
+  <p style="font-size:13.5px;line-height:1.55;color:#8b98a6;margin:0">Setting up your session with our verification partner. This can take up to ${HANDOFF_SLOW_SECONDS} seconds. Please keep this tab open.</p>
 </div>
 <style>@keyframes sv-spin{to{transform:rotate(360deg)}}</style>
 </body></html>`;

@@ -299,7 +299,7 @@ export function NgnPayoutForm({
             {!resolved.trustworthy && (
               // Sandbox resolves ANY account number to a plausible name, so
               // presenting this as confirmation would be a lie.
-              <span className="field-hint">Test environment — this name is simulated and does not confirm a real account.</span>
+              <span className="field-hint">Test environment. This name is simulated and does not confirm a real account.</span>
             )}
           </div>
         )}
