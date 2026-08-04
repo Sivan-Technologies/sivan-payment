@@ -143,10 +143,53 @@ export async function confirmBalanceTransfers(): Promise<ConfirmationOutcome> {
      * SOLANA: the signature IS the answer, and we can read it directly.
      * This is the path the reported transfers took.
      */
-    const signature = transfer.txHash;
+    let signature = transfer.txHash;
+
+    /**
+     * RECOVERING A SIGNATURE THE ADAPTER THREW AWAY.
+     *
+     * Privy returns the Solana signature as `data.hash`; the adapter read
+     * `data.signature`, which does not exist, so txHash was stored as null and
+     * providerTransferId became a random `privy_sol_<uuid>`. Two real sends on
+     * api-test are in exactly that state - finalised on chain, unidentifiable
+     * from our records.
+     *
+     * The adapter is fixed, but that does not heal rows already written. Privy
+     * still knows the transaction, so ask them for it rather than leaving
+     * those transfers stuck forever. Only for ids Privy can actually resolve -
+     * a locally generated uuid is not one, and asking about it is a guaranteed
+     * 404.
+     */
+    if (
+      transfer.network === 'solana' &&
+      !signature &&
+      provider &&
+      transfer.providerTransferId &&
+      !transfer.providerTransferId.startsWith('privy_sol_')
+    ) {
+      try {
+        const remote: any = await provider.getTransfer(transfer.providerTransferId);
+        if (remote?.txHash) signature = remote.txHash;
+      } catch {
+        // Unreachable provider is not evidence either way.
+      }
+    }
+
     if (transfer.network === 'solana' && signature) {
       verdict = await solanaSignatureOutcome(signature, production);
       evidence = `solana:${signature}`;
+    }
+
+    /**
+     * A SOLANA TRANSFER WITH NO RECOVERABLE SIGNATURE CANNOT BE JUDGED HERE.
+     *
+     * It is NOT failed - the two real examples both settled. Marking it failed
+     * would release a hold for money that genuinely left the wallet, crediting
+     * the user twice. It falls through to the stale path below, which escalates
+     * to a human, and that is the correct outcome for a record we damaged.
+     */
+    if (transfer.network === 'solana' && !signature) {
+      evidence = 'solana:signature_missing';
     }
 
     /**

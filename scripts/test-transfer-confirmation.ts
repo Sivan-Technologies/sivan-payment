@@ -98,6 +98,54 @@ check('a genuine on-chain failure returns the money as hold_release',
 check('a failure is NOT recorded as a new credit that invents money',
   !/kind: 'credit_available'/.test(svc));
 
+console.log('\n── the Solana signature is read from the key Privy actually uses ──');
+
+/**
+ * Privy's documented 200 body for signAndSendTransaction is
+ *   { method, data: { hash, signed_transaction, caip2, transaction_id } }
+ * The adapter read data.signature - which does not exist - so txHash was
+ * ALWAYS undefined and providerTransferId fell through to a random uuid.
+ * Confirmed against two real sends on api-test: both stored as
+ * privy_sol_<uuid> with txHash null, while finalised on chain the whole time.
+ */
+const privy = code('src/wallets/provider/privy-wallet.provider.ts');
+const solBlock = privy.slice(privy.indexOf('private async sendSolanaTransfer'));
+
+check('the Solana signature is read from data.hash',
+  /result\?\.data\?\.hash/.test(solBlock),
+  'data.signature does not exist in Privy responses');
+check('older key names are kept as fallbacks, not replaced',
+  /data\?\.signature/.test(solBlock),
+  'an adapter that only knows one shape breaks silently on a rename');
+check('txHash is set from that resolved signature', /txHash: signature,/.test(solBlock));
+check('transaction_id is read from data, where Privy nests it',
+  /result\?\.data\?\.transaction_id/.test(solBlock));
+check('the random uuid is the LAST resort, not the second',
+  solBlock.indexOf('data?.transaction_id') < solBlock.indexOf('privy_sol_$'));
+check('the EVM path also prefers the nested transaction_id',
+  /result\?\.data\?\.transaction_id/.test(privy.slice(0, privy.indexOf('private async sendSolanaTransfer'))));
+
+console.log('\n── and a signature we already lost is recovered, not guessed ──');
+
+check('the confirmer asks the provider for a missing Solana signature',
+  svc.includes('if (remote?.txHash) signature = remote.txHash'));
+check('it does not ask about locally generated uuids, which Privy cannot resolve',
+  svc.includes("!transfer.providerTransferId.startsWith('privy_sol_')"));
+/**
+ * MY FIRST VERSION OF THIS ASSERTION WAS DECORATIVE.
+ *
+ * It scanned for `verdict = 'failed'` AFTER the signature_missing marker, but
+ * the mutation sets it on the SAME line and before - so injecting exactly the
+ * money-losing bug it was written to catch left it passing. Caught by running
+ * the mutation, which is the only reason it is worth running.
+ *
+ * Pinned to the whole statement instead: the branch must assign evidence and
+ * nothing else.
+ */
+check('an unrecoverable Solana transfer is NOT marked failed',
+  /if \(transfer\.network === 'solana' && !signature\) \{\s*evidence = 'solana:signature_missing';\s*\}/.test(svc),
+  'both real examples settled; a false refund would credit the user twice');
+
 console.log('\n── it runs, and cannot take the process down ──────────────────');
 
 check('the confirmer is scheduled in server.ts', server.includes('confirmBalanceTransfers()'));

@@ -854,6 +854,10 @@ export class PrivyWalletProvider implements WalletProvider {
       // was stored with an EMPTY id. Nothing could then be reconciled or
       // looked up. Confirmed live through the service path.
       providerTransferId:
+        // `data.transaction_id` FIRST: Privy nests it, and the top-level read
+        // this used to lead with never matched. It happened to work on EVM
+        // only because the user-operation hash below caught the fall-through.
+        result?.data?.transaction_id ||
         result?.transaction_id ||
         result?.data?.user_operation_hash ||
         result?.data?.hash ||
@@ -957,13 +961,44 @@ export class PrivyWalletProvider implements WalletProvider {
       throw new Error(`Privy: ${message}`);
     }
 
+    /**
+     * PRIVY CALLS THE SOLANA SIGNATURE `data.hash`, NOT `data.signature`.
+     *
+     * This read `result?.data?.signature`, which does not exist in their
+     * response, so txHash was ALWAYS undefined and providerTransferId fell all
+     * the way through to a random UUID. Confirmed against two real sends on
+     * api-test, both stored as `privy_sol_<uuid>` with txHash null - while the
+     * transactions were finalised on chain the whole time under signatures
+     * Sivan had thrown away.
+     *
+     * The cost: nothing could look those transfers up. No confirmation, no
+     * explorer link, no support answer to "did it arrive?" beyond reading the
+     * recipient's balance by hand. It is also why the user concluded the money
+     * had not been sent.
+     *
+     * Their documented 200 body (api-reference/wallets/solana/sign-and-send-
+     * transaction) is:
+     *   { method, data: { hash, signed_transaction, caip2, transaction_id } }
+     * so transaction_id is nested under `data` as well - the top-level read
+     * below never matched either.
+     *
+     * Every historical key is kept as a fallback rather than replaced: an
+     * adapter that only understands today's shape breaks silently the next
+     * time a vendor renames a field, which is exactly what happened here.
+     */
+    const signature = result?.data?.hash || result?.data?.signature || result?.signature || undefined;
+
     return {
       provider: this.name,
-      // Same empty-string trap as the EVM path above.
+      // Same empty-string trap as the EVM path above: `??` would let Privy's
+      // empty string through, so `||` is deliberate.
       providerTransferId:
-        result?.transaction_id || result?.data?.signature || `privy_sol_${crypto.randomUUID()}`,
+        result?.data?.transaction_id ||
+        result?.transaction_id ||
+        signature ||
+        `privy_sol_${crypto.randomUUID()}`,
       status: 'submitted',
-      txHash: result?.data?.signature || result?.signature || undefined,
+      txHash: signature,
       sponsored: Boolean(result?.data?.sponsorship_provider),
       rawProviderPayload: {
         ...result,
