@@ -205,9 +205,19 @@ async function main() {
     // Privy is a key manager, not an indexer. And a chain balance is the wrong
     // number anyway: tokens can arrive that were never a Sivan deposit, and
     // escrow holds funds that exist on-chain but are not spendable.
-    const balances = await new PrivyWalletProvider().getBalances();
-    check('getBalances returns nothing rather than a misleading figure',
-      Array.isArray(balances) && balances.length === 0);
+    //
+    // It must THROW rather than return []. The service layer treats [] as
+    // "loaded, and genuinely zero" and undefined as "could not load", so
+    // returning [] here made the UI assert "Nothing received yet" over a
+    // wallet holding real funds. Throwing sets balancesUnavailable=true and
+    // the user is told the balance is unavailable, which is the truth.
+    let threw = false;
+    try {
+      await new PrivyWalletProvider().getBalances();
+    } catch {
+      threw = true;
+    }
+    check('getBalances signals "unsupported" rather than a false confirmed zero', threw);
   }
 
   console.log('\nthe provider is registered and requires credentials');

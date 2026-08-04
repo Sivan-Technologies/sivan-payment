@@ -1753,7 +1753,8 @@ export default function App() {
                  Sivan asks of them must never be told they are unverified. */}
             {bridgeNeedsAttention
               ? <KycOutcomeNotice customer={customer!} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />
-              : <DashboardAccountNotice summary={verificationSummary} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
+              : <DashboardAccountNotice summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
+
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
               <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
@@ -1763,7 +1764,13 @@ export default function App() {
               <KpiCard label="Total volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
               <KpiCard label="Transactions" value={String(withdrawals.length + onrampOrders.length)} sub="Lifetime" trend={(withdrawals.length + onrampOrders.length) ? `${withdrawals.length + onrampOrders.length} records` : 'Start your first'} />
               <KpiCard label="Avg. payout time" value="1–2 days" sub="Provider + bank rail" trend="Tracked by status" />
-              <KpiCard label="Verification" value={verificationSummary ? verificationSummary.levelLabel.replace(/^Level \d+: /, '') : isVerified ? 'Verified' : 'Incomplete'} sub={verificationSummary ? `Level ${verificationSummary.level}` : isVerified ? 'Ready' : 'Action required'} trend={/* friendlyStatus reads the BRIDGE customer status, which is "Not started" for a Nigerian who verified by bank check. */ verificationSummary ? (verificationSummary.pathComplete ? 'Ready' : verificationSummary.hasPendingPayoutReview ? 'Being checked' : 'Action required') : friendlyStatus(customer?.kycStatus)} />
+              {/* SAME RULE AS THE NOTICE ABOVE: no verdict before the answer.
+ 
+                  Unloaded, this fell to "Incomplete / Action required" - so a
+                  verified user's dashboard accused them twice at once, in the
+                  banner and in the KPI beside it. */}
+              <KpiCard label="Verification" value={!verificationSummaryLoaded ? '—' : verificationSummary ? verificationSummary.levelLabel.replace(/^Level \d+: /, '') : isVerified ? 'Verified' : 'Incomplete'} sub={!verificationSummaryLoaded ? 'Checking…' : verificationSummary ? `Level ${verificationSummary.level}` : isVerified ? 'Ready' : 'Action required'} trend={/* friendlyStatus reads the BRIDGE customer status, which is "Not started" for a Nigerian who verified by bank check. */ !verificationSummaryLoaded ? 'Loading your status' : verificationSummary ? (verificationSummary.pathComplete ? 'Ready' : verificationSummary.hasPendingPayoutReview ? 'Being checked' : 'Action required') : friendlyStatus(customer?.kycStatus)} />
+
             </div>
 
             <div className="dashboard-main-grid">
@@ -1791,7 +1798,12 @@ export default function App() {
                     the card displays means the card disappears exactly when it
                     claims to be done - it cannot hide while still showing
                     outstanding work. */}
-                {setupPercent < 100 && (
+                {/* AND NOT BEFORE THE SUMMARY LANDS, for the same reason:
+                    isVerified and hasBank both fall back to "no" while the
+                    call is in flight, so a finished user got a 33% setup
+                    checklist that then deleted itself. */}
+                {verificationSummaryLoaded && setupPercent < 100 && (
+
                   <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} summary={verificationSummary} onContinue={() => goToView(!isVerified ? 'kyc' : !hasBank ? 'banks' : 'banks')} />
                 )}
               </div>

@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
-import { forbidden } from '../../shared/errors.js';
+import { forbidden, serviceUnavailable } from '../../shared/errors.js';
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
+import { solanaRpc } from '../solana/solana-rpc.js';
+import { erc20BalanceOf, fromBaseUnits } from '../evm/evm-rpc.js';
 import { resolveNetworkMode } from '../network-mode.js';
 import type { NetworkMode } from '../../database/types.js';
 import type { WalletProvider } from './wallet-provider.js';
@@ -573,19 +575,110 @@ export class PrivyWalletProvider implements WalletProvider {
   }
 
   /**
-   * Balances are NOT read from Privy.
+   * Balances are read FROM THE CHAIN, not from Privy.
    *
    * Privy is a key manager, not an indexer - it signs, it does not track token
-   * balances. More importantly, a chain balance is the wrong number anyway:
-   * tokens can arrive that were never a Sivan deposit, and escrow holds funds
-   * that exist on-chain but are not spendable. The LEDGER is the source of
-   * truth, and chain state is used only to reconcile.
+   * balances - so the question has to be put to an RPC node directly.
    *
-   * Returning an empty array rather than throwing, so a caller asking for a
-   * display balance degrades to "unknown" instead of erroring.
+   * WHAT THIS NUMBER IS, AND IS NOT. It is what the address holds on chain. It
+   * is NOT a spendable Sivan balance: tokens can arrive that were never a Sivan
+   * deposit, and the ledger remains the source of truth for what a user may
+   * actually move. Callers must present it as an on-chain balance and reconcile
+   * against the ledger rather than treating it as an entitlement.
+   *
+   * IT THROWS RATHER THAN RETURNING [] when it cannot answer. The two are not
+   * interchangeable: [] is a claim that the address is empty, and the caller
+   * renders it as "Nothing received yet". Returning that over a wallet holding
+   * real funds is precisely the failure this replaced - a user was shown
+   * "Nothing received yet" while 20 USDC sat at their address. An error sets
+   * balancesUnavailable and the UI says so honestly.
    */
-  async getBalances(): Promise<WalletBalance[]> {
-    return [];
+  async getBalances(
+    _providerWalletId?: string,
+    _providerCustomerId?: string,
+    address?: string,
+    chain?: WalletChain
+  ): Promise<WalletBalance[]> {
+    if (!address || !chain) {
+      // Not a zero balance - a caller that did not say WHICH address on WHICH
+      // chain. Guessing here is how a balance gets read off the wrong network.
+      throw serviceUnavailable(
+        'Cannot read a Privy balance without an address and chain.'
+      );
+    }
+
+    const production = isProduction();
+
+    if (chain === 'solana') {
+      return this.solanaBalances(address, production);
+    }
+
+    // USDC and USDT where a contract is known for this chain and network. A
+    // missing entry is skipped rather than reported as zero: Base has no
+    // native USDT, and "0 USDT on Base" would be an invented figure.
+    const balances: WalletBalance[] = [];
+
+    for (const asset of ['usdc', 'usdt'] as const) {
+      const token = erc20TokenAddress(chain, asset, production);
+      if (!token) continue;
+
+      const amount = await erc20BalanceOf(
+        chain,
+        token,
+        address,
+        decimalsFor(asset),
+        { production }
+      );
+
+      balances.push({ asset, chain, amount, contractAddress: token });
+    }
+
+    return balances;
+  }
+
+  /**
+   * SPL token balances for a Solana owner.
+   *
+   * Uses getTokenAccountsByOwner filtered by mint rather than deriving the
+   * associated token address: the derivation needs an off-curve PDA and a
+   * base58 implementation, and the RPC answers the same question directly.
+   *
+   * An owner with NO token account for a mint is a genuine, confirmed zero -
+   * the account has never received that token - so it is reported as "0"
+   * rather than skipped. That is different from an RPC that could not be
+   * reached, which throws.
+   */
+  private async solanaBalances(address: string, production: boolean): Promise<WalletBalance[]> {
+    const balances: WalletBalance[] = [];
+
+    for (const asset of ['usdc', 'usdt'] as const) {
+      const mint = solanaMintFor(asset, production);
+      if (!mint) continue;
+
+      const { result } = await solanaRpc<any>(
+        'getTokenAccountsByOwner',
+        [address, { mint }, { encoding: 'jsonParsed' }],
+        { production }
+      );
+
+      const accounts: any[] = result?.value ?? [];
+
+      // Summed, not first-only. One owner can hold several accounts for the
+      // same mint, and showing only one under-reports the holding.
+      const total = accounts.reduce((sum, account) => {
+        const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
+        return sum + (raw ? BigInt(raw) : 0n);
+      }, 0n);
+
+      balances.push({
+        asset,
+        chain: 'solana',
+        amount: fromBaseUnits(total, 6),
+        contractAddress: mint,
+      });
+    }
+
+    return balances;
   }
 
   /**

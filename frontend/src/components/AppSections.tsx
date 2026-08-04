@@ -355,12 +355,42 @@ function NeedHelpCard() {
  * It now reads the summary, which is path-aware, and only falls back to the
  * generic prompt when there genuinely is no verification.
  */
-export function DashboardAccountNotice({ summary, onVerify, onAddBank, onSell }: {
+export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAddBank, onSell }: {
   summary: VerificationSummary | null;
+  summaryLoaded: boolean;
   onVerify: () => void;
   onAddBank: () => void;
   onSell: () => void;
 }) {
+  /**
+   * BEFORE THE SERVER HAS ANSWERED, SAY NOTHING.
+   *
+   * `summary` is null both while the call is in flight AND when the user has
+   * no verification, and the fallback at the bottom of this function treats
+   * null as the latter. So a fully verified user opening the dashboard was
+   * told "Verify your account" - with a button back into a flow they had
+   * already completed - until the request landed and the card swapped itself
+   * out. Reported from the live app.
+   *
+   * VerificationPage already gates on this exact flag; the dashboard was
+   * simply missed. Same reasoning applies here: the shape is known, the
+   * content is not, so a skeleton and not a spinner.
+   *
+   * Gated on `summaryLoaded` rather than `summary !== null` so a FAILED call
+   * still falls through to the real branches below, instead of hanging on a
+   * skeleton forever.
+   */
+  if (!summaryLoaded) {
+    return <article className="kyc-outcome-notice dashboard-account-notice" aria-busy="true">
+      <div className="kyc-outcome-copy verification-skeleton">
+        <span className="skeleton-line short" />
+        <span className="skeleton-line wide" />
+        <span className="skeleton-line" />
+      </div>
+    </article>;
+  }
+
+
   // A NUBAN sitting with a reviewer. The user cannot act, and must not be told
   // to "verify" again - resubmitting the same account changes nothing.
   if (summary?.hasPendingPayoutReview && !summary.pathComplete) {
