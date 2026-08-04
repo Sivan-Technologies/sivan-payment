@@ -8,6 +8,7 @@ import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrenc
 import { VerificationModal } from './components/verification/VerificationModal';
 import { localVerificationPlan, type VerificationPathPlan, type VerificationPath } from './verificationPath';
 import { payoutAccountOutcomeMessage, type SavedNgnPayoutAccount } from './ngnBank';
+import { closeHandoffTab, deliverHandoff, handoffMessage, paintHandoffTab } from './kycHandoff';
 import { offrampClears, typicalGasUsd } from './ngnMinimum';
 import type { NgnNetworkLists } from './rails';
 import type { WithdrawalReviewState } from './components/AppSections';
@@ -117,6 +118,25 @@ export default function App() {
    * document check to someone who only wanted to look once.
    */
   const [requestedVerificationPath, setRequestedVerificationPath] = useState<VerificationPath | undefined>(undefined);
+  /**
+   * True only while POST /api/customers/kyc-link is in flight.
+   *
+   * Distinct from the global `loading`, which every other call in this file
+   * also sets. The modal has to say something specific and honest here - the
+   * measured p50 on that endpoint is TWELVE SECONDS - and a shared flag cannot
+   * carry "we are talking to the verification partner right now".
+   */
+  const [startingBridge, setStartingBridge] = useState(false);
+  /**
+   * A verification URL we could NOT open for the user.
+   *
+   * Set when the browser blocked the popup. Rendered as a real link in the
+   * modal, because at that point the only thing that will open the tab is a
+   * fresh user gesture - our second window.open is exactly the call that gets
+   * refused. Before this, that case notified "opened in a new tab" and opened
+   * nothing.
+   */
+  const [manualKycUrl, setManualKycUrl] = useState<string | undefined>(undefined);
   // The backend's answer to "how verified, and for how much". Every gate and
   // every limit below reads from this. Nothing is derived locally, because the
   // local derivation was Bridge-only and got Nigerian users wrong.
@@ -908,14 +928,11 @@ export default function App() {
     if (kycUnderReview) return notify('Verification is under review. We will update this page once it is complete.');
     const formBeforeLoading = getForm(event.currentTarget);
     const verificationWindow = window.open('', '_blank');
-    if (verificationWindow) {
-      verificationWindow.document.title = 'Opening Sivan verification';
-      verificationWindow.document.body.style.background = '#07090d';
-      verificationWindow.document.body.style.color = '#eef3f7';
-      verificationWindow.document.body.style.fontFamily = 'Inter, system-ui, sans-serif';
-      verificationWindow.document.body.style.padding = '32px';
-      verificationWindow.document.body.innerHTML = '<h2>Opening secure verification…</h2><p>Please keep this tab open.</p>';
-    }
+    // Same holding page as the modal path. Was hand-rolled DOM poking here and
+    // absent entirely on the modal path, so the two screens behaved
+    // differently during the same twelve-second call.
+    paintHandoffTab(verificationWindow);
+    setManualKycUrl(undefined);
     setLoading(true);
     try {
       const latestControls = await loadControls();
@@ -934,22 +951,18 @@ export default function App() {
         })
       });
       setCustomer(created);
-      const nextVerificationUrl = created.hostedKycLink || created.kycLink;
-      if (nextVerificationUrl) {
-        if (verificationWindow) {
-          verificationWindow.opener = null;
-          verificationWindow.location.assign(nextVerificationUrl);
-        } else {
-          window.open(nextVerificationUrl, '_blank', 'noopener,noreferrer');
-        }
+      const outcome = deliverHandoff(verificationWindow, created.hostedKycLink || created.kycLink);
+      if (outcome.status === 'opened') {
         notify(created.tosStatus === 'approved' ? 'Verification opened in a new tab. Keep this page open and return here when you finish.' : 'Verification opened in a new tab. If Terms remains pending, accept it from the verification status card when you return.');
       } else {
-        verificationWindow?.close();
-        notify('Verification started. Return here after completing the secure verification steps.');
+        if (outcome.status === 'manual') setManualKycUrl(outcome.url);
+        else closeHandoffTab(verificationWindow);
+        const { message, tone } = handoffMessage(outcome);
+        notify(message, tone);
       }
       setView('kyc');
     } catch (error) {
-      verificationWindow?.close();
+      closeHandoffTab(verificationWindow);
       notify((error as Error).message, 'error');
     } finally {
       setLoading(false);
@@ -967,16 +980,35 @@ export default function App() {
    * no form - the country step already decided the path - so this is the same
    * call with 'individual' assumed. Business verification stays on the full
    * verification page, where the type can actually be chosen.
+   *
+   * Reported as "start verification is not opening the bridge verification
+   * page". It does open it - after twelve seconds of a blank tab and a button
+   * that only said "Opening…". Three things changed:
+   *
+   *   - the tab we open on the click is PAINTED immediately, so it explains
+   *     itself instead of sitting blank
+   *   - the modal stays open and shows its own progress, so the user is not
+   *     left staring at a dead button on a screen that never changes
+   *   - a blocked popup is reported as blocked, with a clickable link, rather
+   *     than claiming a tab opened. See frontend/src/kycHandoff.ts.
    */
   const startBridgeVerification = useCallback(async () => {
     if (!user?.id) return notify('Create your account first.', 'error');
     if (!canStartKyc) return notify(systemStatus.message || 'Verification is temporarily paused.', 'error');
     if (kycApproved) return notify('Your identity is already verified.');
     if (kycUnderReview) return notify('Verification is under review. We will update this page once it is complete.');
+    // Double-submit on a 12-second call means two Bridge sessions and two
+    // tabs. The button is disabled too; this is the guard that actually holds.
+    if (startingBridge) return;
 
     // Opened BEFORE the await. A window.open that happens after an async gap
     // is not attributable to the click any more and Safari blocks it.
     const verificationWindow = window.open('', '_blank');
+    // Painted in the same tick, for the same reason: the user is looking at
+    // this tab for the whole round trip.
+    paintHandoffTab(verificationWindow);
+    setManualKycUrl(undefined);
+    setStartingBridge(true);
     setLoading(true);
     try {
       const created = await api<CustomerRecord>('/api/customers/kyc-link', {
@@ -988,28 +1020,27 @@ export default function App() {
         })
       });
       setCustomer(created);
-      const nextVerificationUrl = created.hostedKycLink || created.kycLink;
-      if (nextVerificationUrl) {
-        if (verificationWindow) {
-          verificationWindow.opener = null;
-          verificationWindow.location.assign(nextVerificationUrl);
-        } else {
-          window.open(nextVerificationUrl, '_blank', 'noopener,noreferrer');
-        }
-        notify('Verification opened in a new tab. Return here when you finish.');
+      const outcome = deliverHandoff(verificationWindow, created.hostedKycLink || created.kycLink);
+      const { message, tone } = handoffMessage(outcome);
+      if (outcome.status === 'manual') {
+        // Keep the modal open. The link is the only way through from here and
+        // it lives in the modal, so closing it would strand the user.
+        setManualKycUrl(outcome.url);
+        notify(message, tone);
       } else {
-        verificationWindow?.close();
-        notify('Verification started. Return here after completing the secure verification steps.');
+        if (outcome.status === 'no-link') closeHandoffTab(verificationWindow);
+        notify(message, tone);
+        setVerificationOpen(false);
+        setView('kyc');
       }
-      setVerificationOpen(false);
-      setView('kyc');
     } catch (error) {
-      verificationWindow?.close();
+      closeHandoffTab(verificationWindow);
       notify((error as Error).message, 'error');
     } finally {
+      setStartingBridge(false);
       setLoading(false);
     }
-  }, [api, canStartKyc, kycApproved, kycUnderReview, notify, systemStatus.message, user?.id, verificationRedirectUri]);
+  }, [api, canStartKyc, kycApproved, kycUnderReview, notify, startingBridge, systemStatus.message, user?.id, verificationRedirectUri]);
 
   /**
    * Persist the country picked in the modal.
@@ -1866,10 +1897,12 @@ export default function App() {
         country={user?.country}
         api={api}
         loading={loading}
-        onClose={() => { setVerificationOpen(false); setRequestedVerificationPath(undefined); }}
+        onClose={() => { setVerificationOpen(false); setRequestedVerificationPath(undefined); setManualKycUrl(undefined); }}
         onCountryChange={handleCountryChange}
         onVerified={handleNgnVerified}
         onStartBridge={startBridgeVerification}
+        startingBridge={startingBridge}
+        manualKycUrl={manualKycUrl}
         requestedPath={requestedVerificationPath}
       />
     </div>

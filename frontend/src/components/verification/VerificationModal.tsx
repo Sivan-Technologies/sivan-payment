@@ -43,6 +43,8 @@ export function VerificationModal({
   onCountryChange,
   onVerified,
   onStartBridge,
+  startingBridge,
+  manualKycUrl,
   requestedPath,
 }: {
   open: boolean;
@@ -59,6 +61,10 @@ export function VerificationModal({
   onCountryChange: (country: string) => Promise<void> | void;
   onVerified: (account: SavedNgnPayoutAccount) => void;
   onStartBridge: () => void;
+  /** The kyc-link request is in flight. Drives the modal's own progress copy. */
+  startingBridge?: boolean;
+  /** A verification URL the browser blocked us from opening. Rendered as a link. */
+  manualKycUrl?: string;
   /**
    * An explicit path the user asked for, overriding the country default.
    *
@@ -229,7 +235,7 @@ export function VerificationModal({
                 onVerified={onVerified}
               />
             ) : (
-              <BridgeVerification plan={activePlan} loading={loading} onStart={onStartBridge} />
+              <BridgeVerification plan={activePlan} loading={loading} starting={Boolean(startingBridge)} manualUrl={manualKycUrl} onStart={onStartBridge} />
             )}
 
             <ul className="sv-modal-unlocks">
@@ -560,10 +566,27 @@ function NgnBankVerification({
 function BridgeVerification({
   plan,
   loading,
+  starting,
+  manualUrl,
   onStart,
 }: {
   plan: VerificationPathPlan;
   loading: boolean;
+  /**
+   * The kyc-link call is in flight RIGHT NOW.
+   *
+   * Separate from `loading`, which is the app-wide flag every other request
+   * also raises. This one is allowed to make promises about time.
+   */
+  starting: boolean;
+  /**
+   * A verification URL the browser refused to open for us.
+   *
+   * Rendered as an anchor, not re-opened programmatically: after the await the
+   * click is spent and window.open is exactly what got blocked. Only a fresh
+   * gesture works, so the user has to be given something to press.
+   */
+  manualUrl?: string;
   onStart: () => void;
 }) {
   return (
@@ -582,14 +605,38 @@ function BridgeVerification({
         <li><strong>Your address</strong><span>Where you are based</span></li>
       </ol>
 
-      <p className="sv-muted">
-        This opens our partner Bridge in a new tab. Come back here when you are done — this page
-        updates on its own.
-      </p>
-
-      <button className="sv-primary" disabled={loading} onClick={onStart}>
-        {loading ? 'Opening…' : 'Start verification →'}
-      </button>
+      {manualUrl ? (
+        // The blocked-popup ending. Not an error state the user can only read:
+        // the way out is right here, and the modal stays open around it.
+        <div className="sv-handoff sv-handoff-blocked" role="alert">
+          <p className="sv-warn">Your browser blocked the new tab.</p>
+          <a className="sv-primary sv-primary-link" href={manualUrl} target="_blank" rel="noopener noreferrer">
+            Open verification →
+          </a>
+          <p className="sv-muted">Opens our partner Bridge. Come back here when you are done.</p>
+        </div>
+      ) : starting ? (
+        // Twelve measured seconds of silence is what made this look broken.
+        // The number is in the copy because a progress message that lies is
+        // worse than none.
+        <div className="sv-handoff" aria-live="polite">
+          <p className="sv-handoff-status"><span className="sv-spinner" />Opening secure verification…</p>
+          <p className="sv-muted">
+            We are setting up your session with Bridge. This can take up to 15 seconds — the new tab
+            will load on its own. Please do not close it.
+          </p>
+        </div>
+      ) : (
+        <>
+          <p className="sv-muted">
+            This opens our partner Bridge in a new tab, and can take up to 15 seconds to load. Come
+            back here when you are done — this page updates on its own.
+          </p>
+          <button className="sv-primary" disabled={loading} onClick={onStart}>
+            Start verification →
+          </button>
+        </>
+      )}
     </div>
   );
 }
