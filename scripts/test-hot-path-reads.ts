@@ -113,6 +113,48 @@ function main() {
       !/db\.read\(\)/.test(list), list.slice(0, 120));
   }
 
+  console.log('\nTHE SIGNUP PATH — the slowest thing a new user ever does\n');
+  {
+    /**
+     * verifyEmailAuth() checked ONE OTP by loading the whole database. On the
+     * signup path, so it was the first impression: 4.0-4.9s on api-test.
+     */
+    const auth = code('src/auth/auth.service.ts');
+    const verify = fnBody(auth, 'export async function verifyEmailAuth');
+    check('verifyEmailAuth exists', verify.length > 0);
+    check('and does NOT read the whole database', !/db\.read\(\)/.test(verify), verify.slice(0, 140));
+    check('it uses the targeted challenge query',
+      /db\.activeAuthChallengesForEmail\(/.test(verify));
+    /**
+     * The hash comparison must stay in JS. Pushing a secret-derived value into
+     * a WHERE clause turns it into a query parameter that lands in slow-query
+     * logs.
+     */
+    check('the code hash is still compared in application code, not in SQL',
+      /codeHash === expectedHash/.test(verify));
+
+    const pgAuth = fnBody(read('src/database/postgres-database.ts'), '  async activeAuthChallengesForEmail(');
+    check('unconsumed only, in SQL', /consumed_at is null/.test(pgAuth));
+    check('unexpired only, in SQL', /expires_at > now\(\)/.test(pgAuth));
+    check('newest first', /order by created_at desc/.test(pgAuth));
+    check('and bounded', /limit \d+/.test(pgAuth));
+    /**
+     * Not single-row: a user who requests two codes may legitimately submit
+     * the older one, and LIMIT 1 would reject a code we sent ourselves.
+     */
+    check('but NOT limit 1 — an older still-valid code must work',
+      !/limit 1\b/.test(pgAuth), pgAuth.match(/limit \d+/)?.[0]);
+    check('parameterised', /\[email\]/.test(pgAuth) && !/\$\{/.test(pgAuth));
+
+    const jsonAuth = fnBody(read('src/database/json-database.ts'), '  async activeAuthChallengesForEmail(');
+    check('json filters unconsumed too', /!item\.consumedAt/.test(jsonAuth));
+    check('json filters expiry too', /expiresAt\)\.getTime\(\) > now/.test(jsonAuth));
+    check('json sorts newest first', /b\.createdAt\.localeCompare\(a\.createdAt\)/.test(jsonAuth));
+    const pgLim = pgAuth.match(/limit (\d+)/)?.[1];
+    const jsonLim = jsonAuth.match(/slice\(0, (\d+)\)/)?.[1];
+    check('and the bounds match across backends', pgLim === jsonLim, `pg ${pgLim} vs json ${jsonLim}`);
+  }
+
   console.log('\nTHE TARGETED QUERIES EXIST ON BOTH BACKENDS\n');
   {
     /**
@@ -127,6 +169,7 @@ function main() {
       check(`${label}: latestAuditLogByAction`, /async latestAuditLogByAction\(/.test(impl));
       check(`${label}: listAuditLogsByActions`, /async listAuditLogsByActions\(/.test(impl));
       check(`${label}: readControlTables`, /async readControlTables\(/.test(impl));
+      check(`${label}: activeAuthChallengesForEmail`, /async activeAuthChallengesForEmail\(/.test(impl));
       check(`${label}: findCustomerByUserId`, /async findCustomerByUserId\(/.test(impl));
       check(`${label}: findUserById`, /async findUserById\(/.test(impl));
     }

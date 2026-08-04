@@ -948,6 +948,36 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  /**
+   * Unconsumed, unexpired challenges for one email, newest first.
+   *
+   * verifyEmailAuth() was getting these with db.read() - 47 sequential
+   * `select *` queries, every table, the entire audit history - to check one
+   * OTP. That is the signup path, so it was the slowest thing a brand new user
+   * ever did: 4.0-4.9s measured on api-test against a 30ms health check.
+   *
+   * Fourth instance of this bug (after getAdminPlatformSettings,
+   * getOnrampControls and listUserRestrictions), which is why
+   * test-hot-path-reads.ts now guards the class rather than each case.
+   *
+   * Bounded rather than single-row: a user who requests two codes in quick
+   * succession may legitimately submit the older one, and taking only the
+   * newest would reject a code we ourselves sent. Uses
+   * idx_payments_auth_challenges_email_created (migration 011).
+   */
+  async activeAuthChallengesForEmail(email: string): Promise<AuthChallengeRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `select * from payments_auth_challenges
+          where lower(email) = lower($1) and consumed_at is null and expires_at > now()
+          order by created_at desc limit 20`,
+        [email]
+      );
+      return result.rows.map(mapAuthChallenge);
+    } finally { client.release(); }
+  }
+
   async consumeAuthChallengeAndMarkUserEmail(challengeId: string, userId: string, now: string) {
     const client = await this.pool.connect();
     try {

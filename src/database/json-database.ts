@@ -390,6 +390,18 @@ export class JsonDatabase {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null;
   }
 
+  /** Mirror of the Postgres targeted challenge query. */
+  async activeAuthChallengesForEmail(email: string): Promise<AuthChallengeRecord[]> {
+    const data = await this.read();
+    const now = Date.now();
+    return (data.authChallenges ?? [])
+      .filter((item) => item.email.toLowerCase() === email.toLowerCase())
+      .filter((item) => !item.consumedAt)
+      .filter((item) => new Date(item.expiresAt).getTime() > now)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, 20);
+  }
+
   async consumeAuthChallengeAndMarkUserEmail(challengeId: string, userId: string, now: string) {
     return this.mutate((data) => {
       const challenge = (data.authChallenges ?? []).find((item) => item.id === challengeId);
