@@ -247,6 +247,33 @@ export default function App() {
             : kycFailed ? 'Restart verification'
               : 'Start verification';
   const canSubmitKyc = hasUser && canStartKyc && !loading && !kycApproved && !kycUnderReview;
+
+  /**
+   * Does BRIDGE have something the user must act on?
+   *
+   * Deliberately narrow. A Bridge customer row exists the moment anyone taps
+   * "Verify with ID instead", or from any earlier experiment, and its default
+   * state is kyc_not_started - which is not news, it is the absence of news.
+   * Treating the row's existence as a reason to show Bridge's card is what put
+   * "Verification needs one more step" on the dashboard of a user who was
+   * already Level 1 and 100% set up.
+   *
+   * Only three states are worth interrupting someone for:
+   *
+   *   kyc_incomplete    they started and something is outstanding
+   *   kyc_under_review  submitted, waiting - so "verify" would be wrong
+   *   rejected/failed   it did not work and they can retry
+   *
+   * And NONE of them if their own path is already complete: a Nigerian who
+   * verified by bank check has everything Sivan asks of them, and an abandoned
+   * Bridge attempt on top of that is not a problem to solve on the dashboard.
+   * It still shows on /verification, where they went looking for it.
+   */
+  const bridgeNeedsAttention = Boolean(
+    customer
+    && !verificationSummary?.pathComplete
+    && (kycUnderReview || kycFailed || kycStatus === 'kyc_incomplete')
+  );
   const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
   const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
   const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
@@ -1514,7 +1541,7 @@ export default function App() {
   async function handleUnlinkWhatsapp() {
     setLoading(true);
     try {
-      if (!window.confirm('Unlink this WhatsApp / Escrow identity from your Sivan web account?')) return;
+      if (!window.confirm('Unlink this WhatsApp / Service Agreement identity from your Sivan web account?')) return;
       await api('/api/users/me/identity/unlink-whatsapp', { method: 'POST', body: '{}' });
       setPairingCode('');
       setPairingExpiresAt('');
@@ -1645,7 +1672,34 @@ export default function App() {
 
         {view === 'overview' && (
           <section className="view active dashboard-view app-dashboard">
-            {customer ? <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} /> : <DashboardAccountNotice summary={verificationSummary} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
+            {/* WHICH NOTICE THE DASHBOARD SHOWS.
+ 
+                 Reported with a screenshot: a Nigerian at Level 1, bank
+                 verified, account setup 100%, and the banner at the top of
+                 their dashboard read "Verification needs one more step -
+                 please complete your date of birth and age confirmation".
+                 The KPI beside it said "Bank verified · Level 1 · Ready".
+                 One screen, two opposite claims.
+ 
+                 The condition was `customer ? Bridge : summary`, so the mere
+                 EXISTENCE of a Bridge customer row won - regardless of what
+                 the user had actually completed. A row gets created the
+                 moment anyone taps "Verify with ID instead", or by any
+                 earlier experiment, and from then on the dashboard describes
+                 Bridge's opinion instead of the user's real state.
+ 
+                 The rule now: the summary is authoritative, because it is the
+                 server's answer for whichever path the user is on. Bridge's
+                 card is shown only when Bridge has something the user must
+                 ACT on - a check they started and left incomplete, one under
+                 review, or one that failed - and only when their own path is
+                 not already complete.
+ 
+                 A completed path always wins. Someone who has finished what
+                 Sivan asks of them must never be told they are unverified. */}
+            {bridgeNeedsAttention
+              ? <KycOutcomeNotice customer={customer!} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />
+              : <DashboardAccountNotice summary={verificationSummary} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
               <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
@@ -1662,7 +1716,30 @@ export default function App() {
               <DashboardTransactions withdrawals={withdrawals} onrampOrders={onrampOrders} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onViewAll={() => goToView('history')} />
               <div className="dashboard-side-stack">
                 {showTwoFactorRecommendation && <TwoFactorRecommendationCard completedCount={completedActivityCount} onEnable={goToSettingsSecurity} onDismiss={() => setTwoFactorPromptDismissedUntil(Date.now() + 7 * 24 * 60 * 60 * 1000)} />}
-                <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} summary={verificationSummary} onContinue={() => goToView(!isVerified ? 'kyc' : !hasBank ? 'banks' : 'banks')} />
+                {/* A FINISHED CHECKLIST IS NOT INFORMATION.
+ 
+                    "Account setup 100%" with four green ticks tells the user
+                    nothing they can act on - it just occupies the best space
+                    on the dashboard forever, and its primary button ("Manage
+                    payment methods") duplicates a sidebar link.
+ 
+                    A setup card is scaffolding: it exists to get someone to
+                    the finish line and should come down once they are past
+                    it. Everything it reported is still visible - the
+                    verification KPI shows the level, the account-status
+                    banner shows the headroom, and Payment methods is one
+                    click away in the sidebar.
+ 
+                    setupPercent counts the three REQUIRED steps only (account,
+                    verification, payout bank); WhatsApp is optional and
+                    deliberately outside the maths, which is why the card can
+                    read 100% with WhatsApp unlinked. Gating on the same number
+                    the card displays means the card disappears exactly when it
+                    claims to be done - it cannot hide while still showing
+                    outstanding work. */}
+                {setupPercent < 100 && (
+                  <DashboardSetupPanel setupPercent={setupPercent} hasUser={hasUser} isVerified={isVerified} hasBank={hasBank} user={user} summary={verificationSummary} onContinue={() => goToView(!isVerified ? 'kyc' : !hasBank ? 'banks' : 'banks')} />
+                )}
               </div>
             </div>
           </section>

@@ -68,20 +68,109 @@ export function shouldResolveAccount(bankId: string, accountNumber: string): boo
 }
 
 /**
+ * The banks most Nigerians actually hold, in the order they are likely wanted.
+ *
+ * WHY A CURATED LIST AND NOT PURE ALPHABETICAL.
+ *
+ * The provider returns 169 banks sorted A-Z, so the default screen opened on
+ * Abbey Mortgage Bank, ASO Savings and Loans, Bowen Microfinance, CEMCS
+ * Microfinance... while OPay sat at #26, PalmPay #27, Zenith #43. Nobody's
+ * bank is at the top, so every single user has to scroll or type. On a phone
+ * that is a wall of a hundred and sixty-nine near-identical rows.
+ *
+ * Matched on NAME rather than id, deliberately: bank ids differ between
+ * providers and between Breet's sandbox and production, so pinning ids would
+ * silently stop working the day the rail changes. A name that no longer
+ * matches simply drops out of the shortlist - the bank is still findable by
+ * search, so a stale entry degrades to the old behaviour rather than hiding a
+ * bank.
+ */
+const POPULAR_BANK_MATCHERS: readonly string[] = [
+  'opay',
+  'palmpay',
+  'kuda',
+  'moniepoint',
+  'guaranty trust',
+  'access bank',
+  'zenith bank',
+  'united bank for africa',
+  'first bank of nigeria',
+  'sterling bank',
+  'fidelity bank',
+  'union bank',
+  'wema bank',
+  'stanbic ibtc bank',
+  'polaris bank',
+  'ecobank',
+  'first city monument',
+  'keystone bank',
+];
+
+/** Is this one of the banks most users are looking for? Returns its rank, or -1. */
+function popularRank(bank: NgnBank): number {
+  const name = bank.name.toLowerCase();
+  return POPULAR_BANK_MATCHERS.findIndex((matcher) => name.startsWith(matcher));
+}
+
+/**
+ * The list to show BEFORE the user types anything.
+ *
+ * The common banks first, in popularity order, then everything else
+ * alphabetically. A user whose bank is in the shortlist taps it immediately; a
+ * user whose bank is not still sees a normal list underneath and can search.
+ *
+ * Nothing is hidden. Hiding banks behind a search box would strand anyone with
+ * a microfinance account who does not know its exact spelling.
+ */
+export function orderBanksForDisplay(banks: NgnBank[]): NgnBank[] {
+  const popular: NgnBank[] = [];
+  const rest: NgnBank[] = [];
+
+  for (const bank of banks) {
+    if (popularRank(bank) >= 0) popular.push(bank);
+    else rest.push(bank);
+  }
+
+  popular.sort((a, b) => popularRank(a) - popularRank(b));
+  rest.sort((a, b) => a.name.localeCompare(b.name));
+  return [...popular, ...rest];
+}
+
+/** How many banks are shown as "common" before the rest of the list. */
+export function popularBankCount(banks: NgnBank[]): number {
+  return banks.filter((bank) => popularRank(bank) >= 0).length;
+}
+
+/**
  * Filter the bank list as the user types.
  *
  * 169 banks is far too many to scroll, and Nigerian banks are habitually known
  * by abbreviation - GTB, UBA, FCMB - so the slug is searched alongside the
  * display name.
+ *
+ * RESULTS ARE RANKED, NOT JUST FILTERED.
+ *
+ * A plain substring filter returns provider order, which put the wrong bank
+ * first in real cases:
+ *
+ *   "titan"   -> Paystack-Titan   before TITAN TRUST BANK
+ *   "polaris" -> Polaris Bank     then ASTRAPOLARIS MFB
+ *   "pay"     -> OPay, PalmPay, KongaPay, PayAttitude, Paystack-Titan
+ *
+ * A bank whose name STARTS with what you typed is what you meant; a bank that
+ * merely contains it somewhere is a coincidence. Ranking by where the match
+ * falls - and breaking ties by popularity - puts the intended bank first
+ * without hiding the others.
  */
 export function filterBanks(banks: NgnBank[], query: string): NgnBank[] {
   const term = query.trim().toLowerCase();
-  if (!term) return banks;
+  if (!term) return orderBanksForDisplay(banks);
 
-  return banks.filter((bank) => {
+  const scored: Array<{ bank: NgnBank; score: number }> = [];
+
+  for (const bank of banks) {
     const name = bank.name.toLowerCase();
     const slug = (bank.slug ?? '').toLowerCase();
-    if (name.includes(term) || slug.includes(term)) return true;
 
     // "gtb" should find "Guaranty Trust Bank" and "uba" should find "United
     // Bank For Africa". Initials of EVERY word gives "ubfa" for the latter,
@@ -90,8 +179,53 @@ export function filterBanks(banks: NgnBank[], query: string): NgnBank[] {
     // still finds Guaranty Trust.
     const significantWords = bank.name.split(/\s+/).filter((word) => !['for', 'of', 'and', 'the'].includes(word.toLowerCase()));
     const initials = significantWords.map((word) => word[0] ?? '').join('').toLowerCase();
-    return initials.startsWith(term);
-  });
+
+    // Lower is better.
+    let score: number;
+    if (name === term || slug === term) score = 0;
+    else if (name.startsWith(term)) score = 1;
+    else if (initials.startsWith(term)) score = 2;
+    else if (slug.startsWith(term)) score = 3;
+    // A match at a word boundary ("trust" in "TITAN TRUST BANK") beats one
+    // buried inside a word ("polaris" in "ASTRAPOLARIS").
+    else if (new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(name)) score = 4;
+    else if (name.includes(term) || slug.includes(term)) score = 5;
+    else continue;
+
+    scored.push({ bank, score });
+  }
+
+  const rank = (bank: NgnBank) => {
+    const index = popularRank(bank);
+    return index < 0 ? POPULAR_BANK_MATCHERS.length : index;
+  };
+
+  /**
+   * POPULARITY OUTRANKS MATCH POSITION FOR THE BANKS PEOPLE ACTUALLY HOLD.
+   *
+   * Sorting on match position first was right for "titan" but wrong for "pay":
+   * it produced PayAttitude Online, Paystack-Titan, then OPay and PalmPay -
+   * because those two match mid-name. Nobody typing "pay" on a Nigerian
+   * payments app means PayAttitude before OPay.
+   *
+   * So a shortlisted bank is compared on popularity FIRST and only falls back
+   * to match position against another shortlisted bank. Everything outside the
+   * shortlist still ranks purely on where the match falls, which is what keeps
+   * TITAN TRUST BANK above Paystack-Titan.
+   */
+  const bothPopular = (a: NgnBank, b: NgnBank) => popularRank(a) >= 0 && popularRank(b) >= 0;
+
+  return scored
+    .sort((a, b) => {
+      const aPopular = popularRank(a.bank) >= 0;
+      const bPopular = popularRank(b.bank) >= 0;
+      if (aPopular !== bPopular) return aPopular ? -1 : 1;
+      if (bothPopular(a.bank, b.bank)) {
+        return rank(a.bank) - rank(b.bank) || a.score - b.score;
+      }
+      return a.score - b.score || a.bank.name.localeCompare(b.bank.name);
+    })
+    .map((entry) => entry.bank);
 }
 
 /** Has the quote expired? Quotes are priced against a moving rate. */

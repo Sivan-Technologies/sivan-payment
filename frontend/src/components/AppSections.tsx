@@ -378,9 +378,32 @@ export function DashboardAccountNotice({ summary, onVerify, onAddBank, onSell }:
       ? `You can sell up to ₦${ngn.remainingNgn.toLocaleString('en-NG')} in the next ${summary.windowDays} days.`
       : 'You can sell crypto and withdraw to your bank.';
 
+    /**
+     * AND THE WAY UP, WHERE A VERIFIED USER WILL SEE IT.
+     *
+     * A ceiling with no stated route past it reads as the end of the road.
+     * The dashboard is where someone notices they are near their limit, so it
+     * is where the next rung belongs - not buried on /verification, which a
+     * finished user has no reason to open again.
+     *
+     * Rendered from summary.nextStep so the ladder lives in one place, and
+     * only when the server says one exists - at the top there is nothing to
+     * offer, and inviting an upgrade that cannot happen is a dead end.
+     */
+    const next = summary.nextStep;
+
     return <article className="kyc-outcome-notice ready dashboard-account-notice">
       <span className="kyc-outcome-icon">✓</span>
-      <div className="kyc-outcome-copy"><p className="eyebrow">Account status</p><h3>{summary.levelLabel}</h3><p>{summary.hasPayoutAccount ? headroom : 'You are verified. Add a payout bank to start selling crypto.'}</p></div>
+      <div className="kyc-outcome-copy">
+        <p className="eyebrow">Account status</p>
+        <h3>{summary.levelLabel}</h3>
+        <p>{summary.hasPayoutAccount ? headroom : 'You are verified. Add a payout bank to start selling crypto.'}</p>
+        {next && summary.hasPayoutAccount && (
+          <small className="dashboard-next-level">
+            {next.available ? `Need a higher limit? ${next.description}` : `Higher limits are coming: ${next.description}`}
+          </small>
+        )}
+      </div>
       <div className="kyc-outcome-actions"><button className="primary-btn" onClick={summary.hasPayoutAccount ? onSell : onAddBank}>{summary.hasPayoutAccount ? 'Sell crypto' : 'Add bank account'}</button></div>
     </article>;
   }
