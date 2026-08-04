@@ -47,7 +47,7 @@ const j = async (r) => { const t = await r.text(); try { return JSON.parse(t); }
 async function main() {
   await fs.mkdir(SHOTS, { recursive: true });
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const shot = (n) => page.screenshot({ path: `${SHOTS}${n}.png` }).catch(() => {});
 

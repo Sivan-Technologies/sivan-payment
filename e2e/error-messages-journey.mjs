@@ -98,7 +98,7 @@ async function makeUser(fullName, country) {
 async function main() {
   await fs.mkdir(SHOTS, { recursive: true });
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 420, height: 900 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 420, height: 900 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
@@ -114,7 +114,7 @@ async function main() {
       .filter(Boolean);
   });
 
-  const shot = (name) => page.screenshot({ path: `${SHOTS}${name}.png`, fullPage: true });
+  const shot = (name) => page.screenshot({ path: `${SHOTS}${name}.png`, fullPage: false });
 
   try {
     console.log(`\nfrontend ${FRONTEND}\napi      ${API}\n`);
@@ -295,7 +295,7 @@ async function main() {
 
     await browser.close();
   } catch (error) {
-    await page.screenshot({ path: `${SHOTS}crash.png`, fullPage: true }).catch(() => {});
+    await page.screenshot({ path: `${SHOTS}crash.png`, fullPage: false }).catch(() => {});
     await browser.close();
     throw error;
   }

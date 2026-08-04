@@ -44,7 +44,7 @@ async function main() {
   const browser = await chromium.launch();
   // A real phone viewport. The modal is the screen most likely to break on
   // mobile, and it is where the country names were truncating.
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
 
   const consoleErrors = [];

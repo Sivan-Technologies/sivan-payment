@@ -87,7 +87,7 @@ async function main() {
   }
 
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
   await context.addInitScript(([t, u]) => {
     localStorage.setItem('sivan.authToken', t);
     localStorage.setItem('sivan.user', u);
@@ -95,7 +95,7 @@ async function main() {
   const page = await context.newPage();
   const crashes = [];
   page.on('pageerror', (e) => crashes.push(e.message));
-  const shot = (n) => page.screenshot({ path: `${SHOTS}${n}.png`, fullPage: true }).catch(() => {});
+  const shot = (n) => page.screenshot({ path: `${SHOTS}${n}.png`, fullPage: false }).catch(() => {});
 
   try {
     console.log('1. THE SELL SCREEN');

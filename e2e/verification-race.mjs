@@ -106,7 +106,7 @@ async function watch(browser, seeded, mode, budgetMs = 22000) {
   }
   const finalText = samples[samples.length - 1]?.text ?? '';
   const everBridge = samples.filter((s) => BRIDGE_ONLY.test(s.text));
-  await page.screenshot({ path: new URL(`./shots/race-${mode}.png`, import.meta.url).pathname, fullPage: true }).catch(() => {});
+  await page.screenshot({ path: new URL(`./shots/race-${mode}.png`, import.meta.url).pathname, fullPage: false }).catch(() => {});
   await context.close();
   return { samples, finalText, everBridge, firstCorrectAt };
 }

@@ -71,12 +71,12 @@ async function makeUser(fullName, country) {
 async function main() {
   await fs.mkdir(SHOTS, { recursive: true });
   const browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 1280, height: 1500 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 1500 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
 
-  const shot = (name) => page.screenshot({ path: `${SHOTS}${name}.png`, fullPage: true });
+  const shot = (name) => page.screenshot({ path: `${SHOTS}${name}.png`, fullPage: false });
 
   /** The modal's own text, or null when it is closed. */
   const modalText = () => page.evaluate(() => {
@@ -349,7 +349,7 @@ async function main() {
 
     await browser.close();
   } catch (error) {
-    await page.screenshot({ path: `${SHOTS}crash.png`, fullPage: true }).catch(() => {});
+    await page.screenshot({ path: `${SHOTS}crash.png`, fullPage: false }).catch(() => {});
     await browser.close();
     throw error;
   }

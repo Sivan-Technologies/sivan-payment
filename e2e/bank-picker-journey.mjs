@@ -67,12 +67,12 @@ async function main() {
   const browser = await chromium.launch();
   // A real phone. The complaint was about a phone, and the whole point is
   // whether the search box and a usable bank fit above the fold.
-  const context = await browser.newContext({ viewport: { width: 420, height: 900 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ viewport: { width: 420, height: 900 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const consoleErrors = [];
   page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
 
-  const shot = (name) => page.screenshot({ path: `${SHOTS}${name}.png`, fullPage: true });
+  const shot = (name) => page.screenshot({ path: `${SHOTS}${name}.png`, fullPage: false });
 
   /** Is the element on screen WITHOUT scrolling? */
   const visibleInViewport = (selector) => page.evaluate((sel) => {
@@ -279,7 +279,7 @@ async function main() {
 
     await browser.close();
   } catch (error) {
-    await page.screenshot({ path: `${SHOTS}crash.png`, fullPage: true }).catch(() => {});
+    await page.screenshot({ path: `${SHOTS}crash.png`, fullPage: false }).catch(() => {});
     await browser.close();
     throw error;
   }
