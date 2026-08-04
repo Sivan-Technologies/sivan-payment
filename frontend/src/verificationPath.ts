@@ -159,6 +159,64 @@ export function canRequestVirtualAccount(kycStatus: string | undefined): boolean
   return String(kycStatus ?? '').toLowerCase() === 'approved';
 }
 
+/**
+ * IS THIS USER ALLOWED ONTO A BRIDGE-BACKED FLOW?
+ *
+ * `pathComplete` answers "did you finish the check your COUNTRY asks for",
+ * which for a Nigerian is the bank check. That is the right gate for naira
+ * payouts, which run on Breet and never touch Bridge. It is the WRONG gate for
+ * buying stablecoins, foreign-currency withdrawals and virtual accounts, all
+ * of which Bridge performs and all of which Bridge will refuse without its own
+ * identity check.
+ *
+ * Using `pathComplete` for both is what let a Nigerian at Level 1 fill in the
+ * entire buy form and press the button: the frontend thought "verified", the
+ * server thought "no Bridge KYC", and the user found out by failing after an
+ * eighteen-second wait.
+ *
+ * Deliberately keyed on the Bridge customer status rather than on the level.
+ * Level 2 by NIN/BVN is a Sivan judgement about naira; it is not something
+ * Bridge has agreed to.
+ */
+export function canUseBridgeFlows(kycStatus: string | undefined): boolean {
+  const status = String(kycStatus ?? '').toLowerCase();
+  return status === 'kyc_approved' || status === 'approved' || status === 'active';
+}
+
+/**
+ * Why a Bridge-backed action is unavailable, phrased for a user.
+ *
+ * Mirrors bridgeRequiredMessage() on the server. The two must agree: the
+ * frontend decides whether to offer the button and the server decides whether
+ * to honour it, and a user who is told different things by each has no way to
+ * work out what to do.
+ *
+ * `action` names the thing they were trying to do, so the sentence stays
+ * concrete instead of collapsing into a generic "complete verification".
+ */
+export function bridgeFlowBlockedReason(
+  kycStatus: string | undefined,
+  path: VerificationPath,
+  action: string
+): string | undefined {
+  if (canUseBridgeFlows(kycStatus)) return undefined;
+
+  const status = String(kycStatus ?? '').toLowerCase();
+  if (status === 'kyc_under_review' || status === 'under_review' || status === 'pending') {
+    return `Your identity verification is being reviewed. ${action} unlocks as soon as it is approved.`;
+  }
+  if (status === 'kyc_rejected' || status === 'rejected' || status === 'kyc_incomplete') {
+    return 'Your identity verification was not completed. Reopen it from the Verification page, or contact support.';
+  }
+  // The Nigerian case. Say what they HAVE done before what is missing - being
+  // told to "complete verification" after completing verification is what made
+  // the original report feel like the app was broken.
+  return path === 'ngn_bank'
+    ? `${action} needs identity verification with our partner Bridge — a photo ID and a selfie. `
+      + 'Your bank verification covers naira payouts, but not this.'
+    : `Complete identity verification with our partner Bridge — a photo ID and a selfie — to unlock ${action.toLowerCase()}.`;
+}
+
 /** Why the virtual-account button is disabled, phrased for a user. */
 export function virtualAccountBlockedReason(
   kycStatus: string | undefined,

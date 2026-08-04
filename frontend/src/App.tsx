@@ -6,7 +6,7 @@ import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fa
 import type { UserTwoFactorStatus } from './appUtils';
 import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
 import { VerificationModal } from './components/verification/VerificationModal';
-import { localVerificationPlan, type VerificationPathPlan, type VerificationPath } from './verificationPath';
+import { bridgeFlowBlockedReason, canUseBridgeFlows, localVerificationPlan, type VerificationPathPlan, type VerificationPath } from './verificationPath';
 import { payoutAccountOutcomeMessage, type SavedNgnPayoutAccount } from './ngnBank';
 import { closeHandoffTab, deliverHandoff, handoffMessage, paintHandoffTab } from './kycHandoff';
 import { offrampClears, typicalGasUsd } from './ngnMinimum';
@@ -183,6 +183,26 @@ export default function App() {
   const isVerified = verificationSummary
     ? verificationSummary.pathComplete
     : customer?.kycStatus === 'kyc_approved';
+
+  /**
+   * BRIDGE-BACKED FLOWS NEED BRIDGE'S OWN CHECK, NOT THE COUNTRY PATH.
+   *
+   * `isVerified` above is `pathComplete` - "did you finish what your country
+   * asks". Correct for naira payouts, which run on Breet. Wrong for buying
+   * stablecoins, which runs on Bridge and which Bridge refuses without its own
+   * identity verification.
+   *
+   * Reported from a phone: a Nigerian at Level 1 got the whole buy form,
+   * pressed the button, and was refused by the server 18 seconds later behind
+   * a gateway timeout that said the request "was NOT retried" - the scariest
+   * message we own, on a screen where they had committed nothing.
+   */
+  const canUseBridge = canUseBridgeFlows(customer?.kycStatus);
+  const buyBlockedReason = bridgeFlowBlockedReason(
+    customer?.kycStatus,
+    verificationSummary?.path ?? localVerificationPlan(user?.country).path,
+    'Buying stablecoins'
+  );
 
   /**
    * A payout destination exists - NUBAN or Bridge external account.
@@ -1287,7 +1307,10 @@ export default function App() {
   async function handleOnramp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
-    if (!isVerified) return notify('Please complete verification before buying stablecoins.', 'error');
+    // Bridge's check, not the country path. The screen already refuses to
+    // render the form in this state; this is the guard that actually holds if
+    // it is ever reached another way.
+    if (!canUseBridge) return notify(buyBlockedReason ?? 'Complete identity verification before buying stablecoins.', 'error');
     if (!canCreatePaymentActions) return notify(systemStatus.message || 'New payment actions are temporarily unavailable.', 'error');
     setLoading(true);
     try {
@@ -1877,7 +1900,7 @@ export default function App() {
         )}
 
         {view === 'receive' && <ReceiveView wallets={userWallets} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={loadUserWallets} />}
-        {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
+        {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} balance={balance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} />}
