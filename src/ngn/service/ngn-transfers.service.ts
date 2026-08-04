@@ -115,10 +115,22 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
   const network = String((transfer.metadata as any)?.quoteMetadata?.network ?? '').toLowerCase();
   if (!network) return undefined;
 
-  // Same wallet-selection rule as everywhere else: Solana has its own key,
-  // every EVM chain shares one.
-  const walletChain = network === 'solana' ? 'solana' : 'ethereum';
-  const wallet = await db.findUserWallet(transfer.userId, walletChain as any);
+  /**
+   * Same wallet-selection rule as everywhere else - but asked by FAMILY.
+   *
+   * This used `findUserWallet(userId, network === 'solana' ? 'solana' : 'ethereum')`,
+   * an exact chain-string match. Every wallet provisioned in this deployment
+   * is filed as chain:'base', so a Base off-ramp found no row and returned
+   * undefined here - which this function treats as "nothing to sweep, that is
+   * fine". The user's off-ramp then sat waiting for a crypto deposit that
+   * Sivan was supposed to make on their behalf and silently did not. That is
+   * exactly the `orders_awaiting_deposit` pile-up on api-test.
+   *
+   * The earlier manual sweep proof passed because that particular wallet
+   * happened to be filed as 'ethereum'. Provisioning order decided whether a
+   * user's off-ramp worked.
+   */
+  const wallet = await db.findUserWalletForNetwork(transfer.userId, network);
   if (!wallet) return undefined;
 
   const asset = String(transfer.sourceCurrency ?? 'usdc').toLowerCase();

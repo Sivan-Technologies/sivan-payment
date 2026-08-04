@@ -50,6 +50,9 @@ export function mockWalletBlockedMessage(appEnv: string): string {
   );
 }
 
+/** Single mock instance - see the comment inside getWalletProvider. */
+let mockInstance: MockWalletProvider | undefined;
+
 export function getWalletProvider(
   providerName = process.env.WALLET_PROVIDER || 'mock'
 ): WalletProvider {
@@ -59,7 +62,26 @@ export function getWalletProvider(
     if (!isMockWalletAllowed(env.APP_ENV, process.env.ALLOW_MOCK_WALLETS)) {
       throw new Error(mockWalletBlockedMessage(env.APP_ENV));
     }
-    return new MockWalletProvider();
+    /**
+     * ONE INSTANCE, because the mock keeps its wallets IN MEMORY.
+     *
+     * This was `new MockWalletProvider()`, so every call handed back a fresh
+     * object with an empty Map. A wallet created through one call did not
+     * exist for the next - `getBalances` threw "Mock wallet not found", which
+     * the balance reader correctly interprets as "the chain is unreachable",
+     * which makes every send refuse with "We could not read your wallet
+     * balance just now".
+     *
+     * That is why no test has ever been able to exercise a funded wallet
+     * end-to-end against the mock, and it is a large part of why the
+     * base-vs-ethereum bug survived to production: the one harness that could
+     * have caught it could not hold a balance long enough to try.
+     *
+     * Bridge and Privy are stateless HTTP clients, so per-call construction is
+     * harmless for them. The mock IS the state, so it must not be.
+     */
+    mockInstance ??= new MockWalletProvider();
+    return mockInstance;
   }
 
   if (normalized === 'bridge') {

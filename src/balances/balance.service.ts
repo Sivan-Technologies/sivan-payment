@@ -5,6 +5,7 @@ import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { getSpendable } from './unified-balance.service.js';
+import { chainFamily } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 
@@ -345,8 +346,28 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
    * secp256k1 key; Solana needs its ed25519 wallet. Getting this wrong signs
    * against a wallet that does not hold the funds.
    */
-  const walletChain = transfer.network === 'solana' ? 'solana' : 'ethereum';
-  const wallet = await db.findUserWallet(userId, walletChain as any);
+  /**
+   * WHICH WALLET SIGNS - BY FAMILY, NOT BY LITERAL CHAIN STRING.
+   *
+   * This was:
+   *
+   *   const walletChain = transfer.network === 'solana' ? 'solana' : 'ethereum';
+   *   const wallet = await db.findUserWallet(userId, walletChain);
+   *
+   * findUserWallet matches `chain` exactly. Every wallet actually provisioned
+   * in this deployment is filed as chain:'base' - both `wallet.created` audit
+   * events on api-test read {"chain":"base"} - so a Base send looked for an
+   * 'ethereum' row, found none, and fell into the pooled-custody branch below.
+   *
+   * Reported with a screenshot: a 10 USDC send to Base against a wallet
+   * holding 108 USDC, well under the 1,000 review threshold, came back "held"
+   * and never moved. The alert was right, the diagnosis in the audit log said
+   * "No ethereum wallet - balance is in pooled custody", and both were an
+   * artifact of a string comparison. Base and Ethereum are one secp256k1 key
+   * at one 0x address; which name the row carries is provisioning trivia.
+   */
+  const wallet = await db.findUserWalletForNetwork(userId, transfer.network);
+  const walletChain = chainFamily(transfer.network) === 'solana' ? 'solana' : 'ethereum';
   if (!wallet) {
     /**
      * NO WALLET IS NOT AN ERROR - IT IS A DIFFERENT CUSTODY STORY.

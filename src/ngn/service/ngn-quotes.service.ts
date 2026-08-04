@@ -197,8 +197,13 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
    */
   let recipientAddress: string | undefined;
   if (input.direction === 'onramp') {
-    const walletChain = quoteNetwork === 'solana' ? 'solana' : 'ethereum';
-    const wallet = await db.findUserWallet(input.userId, walletChain as any);
+    /**
+     * By family, not by literal chain name. An exact match on 'ethereum'
+     * misses the chain:'base' rows this deployment actually creates, and the
+     * on-ramp quote would then carry NO recipient address - so the naira a
+     * user paid in would have nowhere documented to land.
+     */
+    const wallet = await db.findUserWalletForNetwork(input.userId, quoteNetwork);
     recipientAddress = wallet?.address;
   }
 

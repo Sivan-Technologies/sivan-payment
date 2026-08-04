@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, WalletControlsRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
+import { walletServesNetwork } from '../wallets/chain-family.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const emptyDb = (): DatabaseShape => ({
@@ -581,6 +582,30 @@ export class JsonDatabase {
   async findUserWallet(userId: string, chain: UserWalletRecord['chain']): Promise<UserWalletRecord | undefined> {
     const data = await this.read();
     return (data.userWallets ?? []).find((w) => w.userId === userId && w.chain === chain && w.status !== 'closed');
+  }
+
+  /**
+   * The wallet that can SIGN for a network, regardless of which chain string
+   * the row happens to be filed under.
+   *
+   * findUserWallet above matches the chain literally, which is right when you
+   * are asking "do I already have a base row" before provisioning one. It is
+   * WRONG for spending: base and ethereum are one secp256k1 key at one 0x
+   * address, so a wallet stored as 'base' can sign an ethereum transfer and
+   * vice versa. Asking literally is what left a real user's 10 USDC send in
+   * pending_review with "No ethereum wallet" while their funds sat in a row
+   * filed as 'base'.
+   *
+   * Prefers an exact match so the row's own chain still wins when both exist,
+   * then falls back to any wallet in the same family.
+   */
+  async findUserWalletForNetwork(userId: string, network: string): Promise<UserWalletRecord | undefined> {
+    const data = await this.read();
+    const open = (data.userWallets ?? []).filter((w) => w.userId === userId && w.status !== 'closed');
+    return (
+      open.find((w) => w.chain === network) ??
+      open.find((w) => walletServesNetwork(w.chain, network))
+    );
   }
 
   async createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord) {

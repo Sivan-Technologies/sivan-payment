@@ -122,10 +122,25 @@ async function main() {
      * them crossed the chain boundary. Base is the default deposit network, so
      * this would have hidden most users' money.
      */
+    /**
+     * UPDATED. These two used to assert the presence of:
+     *
+     *   walletsToProvision().find((entry) => entry.chain === wallet.chain)?.alsoServes
+     *
+     * which is the code that turned out to BE the next bug. walletsToProvision()
+     * lists only 'ethereum' and 'solana', and every wallet this deployment
+     * actually creates is filed as 'base', so that .find returned undefined and
+     * `?? []` quietly narrowed the read back to one chain. The assertions
+     * passed the whole time - they were pinned to an implementation rather than
+     * to the behaviour, so they guarded the bug instead of the fix.
+     *
+     * Now pinned to the behaviour: the served list comes from the key family
+     * and cannot collapse to empty. See test:wallet-chain-family.
+     */
     check('every chain an EVM wallet serves is read, not just its filed chain',
-      /walletsToProvision\(\)\.find\(\(entry\) => entry\.chain === wallet\.chain\)\?\.alsoServes/.test(svc));
-    check('and each (wallet, chain) pair is read separately',
-      /\[wallet\.chain, \.\.\.alsoServes\]\.map/.test(svc));
+      /networksServedByWallet\(wallet\.chain\)/.test(svc));
+    check('and the served list cannot silently fall back to empty',
+      !/alsoServes\s*\?\?\s*\[\]/.test(svc) && !/walletsToProvision/.test(svc));
     check('the balance is read on that chain, not on the wallet record chain',
       /chain as WalletChain/.test(svc) && !/wallet\.chain as WalletChain/.test(svc));
     check('a provider throw is caught per wallet, not for the whole call',
@@ -190,8 +205,16 @@ async function main() {
      * Solana has its own key; every EVM chain shares one. Getting this wrong
      * signs against a wallet that does not hold the funds.
      */
-    check('the signing wallet is chosen by chain family',
-      /network === 'solana' \? 'solana' : 'ethereum'/.test(execute));
+    /**
+     * UPDATED for the same reason. This asserted the literal
+     * `network === 'solana' ? 'solana' : 'ethereum'` ternary, which was fine as
+     * a description of key material and fatal as a DATABASE LOOKUP: the row is
+     * filed as 'base', so findUserWallet(userId, 'ethereum') found nothing and
+     * a real user's 10 USDC send sat in pending_review.
+     */
+    check('the signing wallet is found by chain family, not by literal chain',
+      /findUserWalletForNetwork\(userId, transfer\.network\)/.test(execute)
+      && !/db\.findUserWallet\(/.test(execute));
     check('idempotency is keyed on the transfer, so a retry cannot double-spend',
       /idempotencyKey: `btx_\$\{transfer\.transferId\}`/.test(execute));
     /**
@@ -279,8 +302,9 @@ async function main() {
     check('it refuses to sweep more than is spendable',
       /spendable === null \|\| spendable < amount/.test(sweep));
     check('idempotency is keyed on the transfer', /idempotencyKey: `ngnsweep_\$\{transfer\.id\}`/.test(sweep));
-    check('the signing wallet is chosen by chain family',
-      /network === 'solana' \? 'solana' : 'ethereum'/.test(sweep));
+    check('the signing wallet is found by chain family, not by literal chain',
+      /findUserWalletForNetwork\(transfer\.userId, network\)/.test(sweep)
+      && !/db\.findUserWallet\(/.test(sweep));
     /**
      * NON-FATAL by design: the order and deposit address are already valid, so
      * a sweep failure must not destroy them. Manual send still works and the

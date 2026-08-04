@@ -113,9 +113,31 @@ export class MockWalletProvider implements WalletProvider {
     );
   }
 
-  async getBalances(providerWalletId: string): Promise<WalletBalance[]> {
+  /**
+   * Balances for a wallet, ON THE CHAIN THAT WAS ASKED FOR.
+   *
+   * The chain argument was ignored entirely, so every read returned every
+   * balance the wallet held on any network. That is not what a real provider
+   * does - Privy reads one ERC-20 contract on one network - and it produced a
+   * concrete wrong answer: unified-balance.service.ts reads a base/ethereum
+   * wallet once per network it serves, so 108 USDC held on Base was returned
+   * for the Base read AND for the Ethereum read and summed to 216.
+   *
+   * The mock exists to reproduce production's shape, including its
+   * constraints. Silently over-reporting a balance is the single worst thing a
+   * wallet mock can do, because every downstream test then agrees with it.
+   */
+  async getBalances(
+    providerWalletId: string,
+    _providerCustomerId?: string,
+    _address?: string,
+    chain?: WalletChain
+  ): Promise<WalletBalance[]> {
     const wallet = await this.getWallet(providerWalletId);
-    return wallet.balances ?? [];
+    const balances = wallet.balances ?? [];
+    // No chain given means "everything this wallet holds" - the same latitude
+    // the interface allows, used by callers that only want a total.
+    return chain ? balances.filter((balance) => balance.chain === chain) : balances;
   }
 
   /** Test helper: simulate an inbound deposit so the UI can render balances. */

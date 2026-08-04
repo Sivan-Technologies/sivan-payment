@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { env } from '../config/env.js';
+import { networksServedByWallet } from '../wallets/chain-family.js';
 import type {
   VerificationLimitOverrideRecord,
   WalletControlsRecord,
@@ -1130,6 +1131,34 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try {
       const result = await optionalQuery(client, `select * from payments_user_wallets where user_id = $1 and chain = $2 and status <> 'closed' limit 1`, [userId, chain]);
+      return result.rows[0] ? mapUserWallet(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  /**
+   * See JsonDatabase.findUserWalletForNetwork.
+   *
+   * MUST exist here as well as on the JSON class. Production runs
+   * DATABASE_PROVIDER=postgres, so a fix that only lands on JsonDatabase fixes
+   * nothing for a real user - it would throw "is not a function" on the live
+   * service, which is worse than the bug it replaces.
+   *
+   * Ordered so an exact chain match sorts first, then any wallet in the same
+   * family, so the row filed under the requested chain still wins when both
+   * exist.
+   */
+  async findUserWalletForNetwork(userId: string, network: string): Promise<UserWalletRecord | undefined> {
+    const family = networksServedByWallet(network);
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_user_wallets
+          where user_id = $1 and status <> 'closed' and chain = any($2::text[])
+          order by (chain = $3) desc, created_at asc
+          limit 1`,
+        [userId, family, network]
+      );
       return result.rows[0] ? mapUserWallet(result.rows[0]) : undefined;
     } finally { client.release(); }
   }

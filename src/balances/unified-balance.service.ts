@@ -3,7 +3,7 @@ import { getUserBalance } from './balance.service.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import type { WalletChain } from '../wallets/types/wallet.types.js';
-import { walletsToProvision } from '../wallets/wallet-eligibility.js';
+import { networksServedByWallet } from '../wallets/chain-family.js';
 
 /**
  * ONE BALANCE, ASSEMBLED FROM THE CHAIN AND THE LEDGER.
@@ -119,10 +119,28 @@ async function readChainBalances(userId: string) {
    * SAME address genuinely holds different amounts on Base and on Ethereum,
    * and both are the user's money.
    */
-  const reads = active.flatMap((wallet) => {
-    const alsoServes = walletsToProvision().find((entry) => entry.chain === wallet.chain)?.alsoServes ?? [];
-    return [wallet.chain, ...alsoServes].map((chain) => ({ wallet, chain }));
-  });
+  /**
+   * AND THE LOOKUP MUST NOT DEPEND ON WHICH NAME THE ROW WAS FILED UNDER.
+   *
+   * This previously read:
+   *
+   *   walletsToProvision().find((entry) => entry.chain === wallet.chain)?.alsoServes ?? []
+   *
+   * walletsToProvision() only ever lists 'ethereum' and 'solana'. Every wallet
+   * actually provisioned in this deployment is stored as chain:'base' -
+   * confirmed against the live audit log - so that `.find` returned undefined,
+   * alsoServes fell back to [], and this service read Base ONLY. A user with
+   * funds on Ethereum saw zero; had provisioning gone the other way they would
+   * have seen zero on Base. The fallback silently narrowed the read instead of
+   * failing, which is why it survived a test suite that never crossed a chain
+   * boundary.
+   *
+   * networksServedByWallet() answers from the key family, so it is correct for
+   * a row filed under either name and cannot degrade to an empty list.
+   */
+  const reads = active.flatMap((wallet) =>
+    networksServedByWallet(wallet.chain).map((chain) => ({ wallet, chain }))
+  );
 
   return Promise.all(
     reads.map(async ({ wallet, chain }) => {
@@ -189,6 +207,25 @@ export async function getUnifiedBalance(userId: string): Promise<UnifiedBalance>
   for (const wallet of wallets) {
     if (wallet.balancesUnavailable) continue;
     for (const entry of wallet.balances ?? []) {
+      /**
+       * ONLY COUNT WHAT BELONGS TO THE CHAIN WE ASKED ABOUT.
+       *
+       * The same address is read once per network it serves - Base and
+       * Ethereum for one EVM wallet - and the results are summed, which is
+       * right because those are genuinely different balances.
+       *
+       * It is only right while each read answers about the network it was
+       * asked about. A provider that ignores the chain argument and returns
+       * everything turns that sum into a double count: 108 USDC on Base was
+       * reported for the Base read AND the Ethereum read and totalled 216.
+       * Caught by test:base-wallet-sends against the mock, which did exactly
+       * that.
+       *
+       * Cross-checking here rather than only fixing the mock, because this is
+       * the line that would show a user twice the money they have, and it must
+       * not depend on every present and future adapter being well behaved.
+       */
+      if (entry.chain && String(entry.chain).toLowerCase() !== String(wallet.chain).toLowerCase()) continue;
       const row = ensure(String(entry.asset).toLowerCase());
       row.chain = money(num(row.chain) + num(entry.amount));
     }

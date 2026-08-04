@@ -347,6 +347,15 @@ export default function App() {
   );
 
   const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
+  /**
+   * ONE SOURCE FOR EVERY BALANCE ON EVERY SCREEN.
+   *
+   * Read here rather than recomputed per screen so the dashboard KPI and the
+   * "USDC available to send" figure on the transfer page can never disagree -
+   * they are now literally the same object. The point of the unified balance
+   * was defeated the moment a second screen did its own sum.
+   */
+  const usdcUnified = unifiedBalance?.balances.find((item) => item.asset === 'usdc');
   const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
   const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
   const completedWithdrawalCount = completedWithdrawals.length;
@@ -1795,9 +1804,38 @@ export default function App() {
             </div>
 
             <div className="dashboard-kpis">
-              <KpiCard label="Total volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
+              {/* THE DASHBOARD NEVER SHOWED A BALANCE AT ALL.
+ 
+                   Reported: "in the dashboard balance is reading zero". It was
+                   not reading zero - there was no balance on this screen. The
+                   first KPI is "Total volume", which is lifetime COMPLETED
+                   PAYOUT value and is legitimately $0.00 for a user who has
+                   never sold. Sitting first, in the position every banking app
+                   puts the balance, it reads as one.
+ 
+                   So the user held 108 USDC, the Send screen said so, and the
+                   home screen led with $0.00. Two screens, two numbers, and the
+                   wrong one was the more prominent.
+ 
+                   Fixed by showing the balance FIRST, from the same
+                   unifiedBalance the transfer screen uses - not a second
+                   calculation that can drift from it. Total volume keeps its
+                   place, one column right, with a label that says what it
+                   actually measures. */}
+              <KpiCard
+                label="Your balance"
+                value={!unifiedBalance ? '—' : usdcUnified?.chainUnavailable ? '—' : `${Number(usdcUnified?.spendable ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC`}
+                sub={!unifiedBalance ? 'Loading…' : usdcUnified?.chainUnavailable ? 'Could not reach the network' : 'Available to send or sell'}
+                trend={!unifiedBalance ? 'Checking your wallet' : usdcUnified?.chainUnavailable ? 'Retrying shortly' : Number(usdcUnified?.held ?? 0) > 0 ? `${Number(usdcUnified?.held ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} held for review` : 'Ready'}
+              />
+              <KpiCard label="Payout volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
               <KpiCard label="Transactions" value={String(withdrawals.length + onrampOrders.length)} sub="Lifetime" trend={(withdrawals.length + onrampOrders.length) ? `${withdrawals.length + onrampOrders.length} records` : 'Start your first'} />
-              <KpiCard label="Avg. payout time" value="1–2 days" sub="Provider + bank rail" trend="Tracked by status" />
+              {/* The average-payout-time card was a hardcoded string dressed
+                  as a metric - it never varied, and its "Tracked by status"
+                  footnote implied a measurement that does not exist. Removed so
+                  the balance can take a column without pushing this row to
+                  five, and because a fake number beside a real one damages the
+                  real one. */}
               {/* SAME RULE AS THE NOTICE ABOVE: no verdict before the answer.
  
                   Unloaded, this fell to "Incomplete / Action required" - so a
