@@ -6,6 +6,11 @@ import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/
 import { acceptNgnQuote, acceptNgnQuoteSchema, cancelNgnTransfer, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
+import { db } from '../../database/json-database.js';
+import { getGasUsage, getGasControls } from '../../balances/gas-usage.service.js';
+import { solanaTransactionCostUsd, ataRentCostUsd } from '../../balances/gas-policy.js';
+import { fetchPrivyGasSpendUsd } from '../../wallets/provider/privy-wallet.provider.js';
+import type { UserWalletRecord } from '../../database/types.js';
 import {
   saveNgnPayoutAccount,
   saveNgnPayoutAccountSchema,
@@ -379,6 +384,100 @@ export async function ngnRoutes(app: FastifyInstance) {
    * account. This asks the provider directly: no user, no KYC, nothing
    * created.
    */
+  /**
+   * EVERY WALLET ON THE PLATFORM, for support.
+   *
+   * There was no admin view of who holds a wallet, on which chain, at what
+   * address. Answering "does this user have a Solana address?" meant a
+   * database query, which support cannot run - so the question arrived here
+   * instead, one ticket at a time.
+   *
+   * Deliberately does NOT read balances. That is one RPC round trip per wallet
+   * per chain, so a list of 250 wallets would take minutes and time out behind
+   * the 12s gateway. The list answers "does it exist and where"; a balance is
+   * a per-wallet question asked from the existing detail endpoint.
+   */
+  app.get('/api/admin/wallets', async (request) => {
+    const { query, chain, limit } = request.query as { query?: string; chain?: string; limit?: string };
+    const wallets = await db.listAllOpenWallets();
+    const needle = String(query ?? '').trim().toLowerCase();
+
+    const filtered = wallets
+      .filter((wallet) => (chain ? wallet.chain === chain : true))
+      .filter((wallet) => !needle
+        || wallet.address?.toLowerCase().includes(needle)
+        || wallet.userId?.toLowerCase().includes(needle)
+        || wallet.providerWalletId?.toLowerCase().includes(needle))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+    const capped = Math.min(Number(limit) || 200, 500);
+    return {
+      data: {
+        total: filtered.length,
+        // Counts come from the FULL set, not the page, so an operator filtering
+        // to one chain still sees the platform totals rather than their filter.
+        byChain: wallets.reduce((acc: Record<string, number>, wallet: UserWalletRecord) => {
+          acc[wallet.chain] = (acc[wallet.chain] ?? 0) + 1;
+          return acc;
+        }, {}),
+        delegated: wallets.filter((wallet: UserWalletRecord) => wallet.delegatedSigningEnabled).length,
+        wallets: filtered.slice(0, capped).map((wallet) => ({
+          id: wallet.id,
+          userId: wallet.userId,
+          chain: wallet.chain,
+          address: wallet.address,
+          provider: wallet.provider,
+          providerWalletId: wallet.providerWalletId,
+          status: wallet.status,
+          custodial: wallet.custodial,
+          delegatedSigningEnabled: Boolean(wallet.delegatedSigningEnabled),
+          createdAt: wallet.createdAt,
+        })),
+      },
+    };
+  });
+
+  /**
+   * Gas sponsorship: what has been spent, and what the limits are.
+   *
+   * Reports BOTH our own estimate and Privy's billed figure. They answer
+   * different questions - the estimate drives the circuit breaker in real
+   * time, Privy's is the invoice - and showing only one would hide a drift
+   * between them that is itself worth seeing.
+   */
+  app.get('/api/admin/wallets/gas', async () => {
+    const [usage, controls] = await Promise.all([getGasUsage(), getGasControls()]);
+
+    // Solana wallets only: EVM gas is paid in ETH and is not part of this
+    // budget, so including those ids would inflate Privy's figure against a
+    // budget that never counted them.
+    const wallets = (await db.listAllOpenWallets())
+      .filter((wallet: UserWalletRecord) => wallet.chain === 'solana')
+      .map((wallet: UserWalletRecord) => wallet.providerWalletId)
+      .filter(Boolean);
+
+    const billed = await fetchPrivyGasSpendUsd({
+      walletIds: wallets,
+      startMs: Date.now() - 24 * 3600_000,
+      endMs: Date.now(),
+    });
+
+    return {
+      data: {
+        ...usage,
+        controls,
+        costs: {
+          perTransferUsd: solanaTransactionCostUsd(controls.solPriceUsd),
+          perNewRecipientUsd: ataRentCostUsd(controls.solPriceUsd),
+        },
+        // `ok:false` is surfaced rather than swallowed. An unknown billed
+        // figure is honest; a silent 0 would read as "we have spent nothing".
+        privy: billed,
+        walletsTracked: wallets.length,
+      },
+    };
+  });
+
   app.get('/api/admin/wallets/health', async (request) => {
     const query = request.query as { all?: string };
     return {

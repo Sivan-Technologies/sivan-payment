@@ -258,7 +258,15 @@ export async function approveRequest(approvalId: string, input: z.infer<typeof a
   const requests = await listApprovalRequests();
   const request = requests.find((item) => item.id === approvalId);
   if (!request) throw notFound('Approval request');
-  if (request.status !== 'pending') throw badRequest('Approval request is no longer pending');
+  // Names the current status. "No longer pending" leaves an admin wondering
+  // whether it was approved, rejected, or applied by someone else - and the
+  // list they are looking at may simply be stale.
+  if (request.status !== 'pending') {
+    throw badRequest(
+      `This request is already "${request.status}" and cannot be reviewed again. Refresh the queue to see its outcome.`,
+      { approvalId, status: request.status, reason: 'not_pending' }
+    );
+  }
 
   // --- Separation of duties -------------------------------------------------
   // Compare every identity we know about for the maker against the checker, so
@@ -271,11 +279,37 @@ export async function approveRequest(approvalId: string, input: z.infer<typeof a
 
   const checkerIdentity = normaliseAdminIdentity(input.reviewer);
 
+  /**
+   * SAY WHICH RULE REFUSED, AND WHO THE MAKER WAS.
+   *
+   * Reported from live: POST /approvals/:id/approve returns 400 and the admin
+   * cannot tell why. Five different conditions produce a 400 here - not
+   * pending, unattributable checker, maker == checker, a failed apply, and
+   * schema validation - and the messages did not distinguish the two that an
+   * admin can actually do something about.
+   *
+   * "Maker and checker must be different admins" is correct but useless
+   * without naming the maker: the checker is signed in as themselves and has
+   * no way to see who raised the request, so the natural reading is that the
+   * system is broken rather than that they are the wrong person to approve it.
+   *
+   * `details` carries the identities for support; the message names the maker
+   * because that is the one fact that resolves it.
+   */
   if (!isAttributableIdentity(checkerIdentity)) {
-    throw badRequest('Checker must be a specific named admin. Generic identities such as "ops" or "admin_api_key" cannot approve changes.');
+    throw badRequest(
+      `Checker "${input.reviewer}" is not a specific named admin, so it cannot satisfy separation of duties. `
+      + 'Sign in with your own admin account - generic identities such as "ops", "admin" or "admin_api_key" are refused.',
+      { checker: checkerIdentity, reason: 'checker_not_attributable' }
+    );
   }
   if (makerIdentities.includes(checkerIdentity)) {
-    throw badRequest('Maker and checker must be different admins');
+    const maker = makerIdentities[0] ?? 'the same admin';
+    throw badRequest(
+      `You raised this request (as "${maker}"), so you cannot also approve it. `
+      + 'A DIFFERENT admin must review it - that is the point of maker-checker.',
+      { maker, checker: checkerIdentity, reason: 'maker_equals_checker' }
+    );
   }
 
   let applied: unknown = undefined;

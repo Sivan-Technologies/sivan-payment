@@ -1213,3 +1213,68 @@ export async function probePrivyCredentials(): Promise<{ ok: boolean; status?: n
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 }
+
+/**
+ * WHAT PRIVY HAS ACTUALLY BILLED US, in USD.
+ *
+ * GET /v1/apps/gas_spend is authoritative in a way our own estimate can never
+ * be: gas-policy.ts multiplies a hardcoded rent constant by a hardcoded SOL
+ * price, which is fine for a pre-flight limit and wrong for reconciliation.
+ * Two numbers with different jobs - this one is the invoice.
+ *
+ * Constraints from the API, and each one shapes the call:
+ *   - wallet_ids is REQUIRED and capped at 100, so this batches.
+ *   - the range must not exceed 30 days.
+ *   - "user pays" transfers are excluded by Privy, which is correct: those
+ *     cost our credits nothing.
+ *
+ * Never throws. This feeds a health signal and an admin panel; a Privy outage
+ * must not take either down, and "unknown" is an honest answer that a zero
+ * would not be.
+ */
+export async function fetchPrivyGasSpendUsd(input: {
+  walletIds: string[];
+  startMs: number;
+  endMs: number;
+}): Promise<{ ok: boolean; usd?: number; message?: string }> {
+  const appId = process.env.PRIVY_APP_ID || env.PRIVY_APP_ID;
+  const appSecret = process.env.PRIVY_APP_SECRET || env.PRIVY_APP_SECRET;
+  if (!appId || !appSecret) return { ok: false, message: 'Privy credentials are not configured' };
+  if (!input.walletIds.length) return { ok: true, usd: 0 };
+
+  const auth = `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`;
+  let total = 0;
+
+  try {
+    // 100 ids per request is Privy's documented ceiling.
+    for (let index = 0; index < input.walletIds.length; index += 100) {
+      const batch = input.walletIds.slice(index, index + 100);
+      const params = new URLSearchParams();
+      for (const id of batch) params.append('wallet_ids', id);
+      params.set('start_timestamp', String(Math.floor(input.startMs)));
+      params.set('end_timestamp', String(Math.floor(input.endMs)));
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const response = await fetch(`${PRIVY_BASE}/apps/gas_spend?${params.toString()}`, {
+        headers: { Authorization: auth, 'privy-app-id': appId },
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timer));
+
+      if (!response.ok) {
+        const body: any = await response.json().catch(() => ({}));
+        return {
+          ok: false,
+          message: `Privy gas_spend returned ${response.status}: ${String(body?.error ?? body?.message ?? 'unknown')}`,
+        };
+      }
+
+      const body: any = await response.json().catch(() => ({}));
+      total += Number(body?.value ?? 0);
+    }
+
+    return { ok: true, usd: Math.round(total * 1e6) / 1e6 };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
