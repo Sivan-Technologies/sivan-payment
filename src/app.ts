@@ -67,8 +67,42 @@ export async function buildApp() {
     );
   }
 
+  /**
+   * METHODS MUST BE DECLARED, NOT LEFT TO THE DEFAULT.
+   *
+   * Found by driving the built frontend in a browser against this API:
+   *
+   *   Access to fetch at '.../api/users/{id}/country' has been blocked by CORS
+   *   policy: Method PUT is not allowed by Access-Control-Allow-Methods in
+   *   preflight response.
+   *
+   * @fastify/cors defaults to `GET,HEAD,POST` when `methods` is not given, and
+   * nothing here gave it. Every non-simple verb was therefore refused at the
+   * preflight - 23 routes, among them PUT /api/users/:userId/country,
+   * /username, /name, /preferences, /2fa/recovery-questions and
+   * DELETE /api/users/:userId/avatar, plus every admin PUT.
+   *
+   * WHY NOBODY HIT IT IN PRODUCTION, and why it still had to be fixed: the
+   * deployed frontends do not talk to this service directly. Both
+   * app.sivantech.online and the test frontend are built against
+   * `https://api.sivantech.online/api/payment`, the Cloudflare worker, which
+   * answers preflights itself with
+   * `GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD` and so masks this entirely.
+   * Verified against the live gateway: a real cross-origin PUT returns 401
+   * (auth), not a CORS refusal.
+   *
+   * So this is a latent fault, not a live outage - and exactly the kind that
+   * surfaces at the worst moment. Anything that reaches the API without the
+   * worker in front of it - a direct VITE_API_BASE_URL, a preview deploy, a
+   * partner, the AWS migration that is meant to replace Render, or the worker
+   * being bypassed during an incident - loses every settings write with an
+   * error the user cannot act on.
+   *
+   * OPTIONS is included because the preflight itself is an OPTIONS request.
+   */
   await app.register(cors, {
-    origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim())
+    origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim()),
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
   await app.register(rawBody, {
