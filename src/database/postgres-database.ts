@@ -1116,6 +1116,53 @@ export class PostgresDatabase {
     try { await upsertVirtualAccountRequest(client, record); return record; } finally { client.release(); }
   }
 
+  /**
+   * NARROW READERS FOR THE RISK QUEUE.
+   *
+   * listRiskCases() used db.read() - ~40 sequential `select *` queries to
+   * answer a question about six tables. Measured at 7.4-8.4s, which the admin
+   * proxy reported to the browser as a 503.
+   *
+   * Each of these is one indexed query, and they run in parallel at the
+   * caller. The audit log is deliberately NOT among them: it grows without
+   * bound, and it is read through listAuditLogsByActions() instead, which
+   * filters on action in the database and caps at 200 rows.
+   */
+  async listCustomers(): Promise<CustomerRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      return (await client.query('select * from payments_customers order by created_at asc')).rows.map(mapCustomer);
+    } finally { client.release(); }
+  }
+
+  async listWithdrawals(): Promise<WithdrawalRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      return (await client.query('select * from payments_withdrawals order by created_at asc')).rows.map(mapWithdrawal);
+    } finally { client.release(); }
+  }
+
+  async listOnrampOrders(): Promise<OnrampOrderRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      return (await optionalQuery(client, 'select * from payments_onramp_orders order by created_at asc')).rows.map(mapOnrampOrder);
+    } finally { client.release(); }
+  }
+
+  async listSupportTickets(): Promise<SupportTicketRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      return (await optionalQuery(client, 'select * from payments_support_tickets order by created_at asc')).rows.map(mapSupportTicket);
+    } finally { client.release(); }
+  }
+
+  async listExternalAccounts(): Promise<ExternalAccountRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      return (await client.query('select * from payments_external_accounts order by created_at asc')).rows.map(mapExternalAccount);
+    } finally { client.release(); }
+  }
+
   async listVirtualAccounts(): Promise<VirtualAccountRecord[]> {
     const client = await this.pool.connect();
     try {

@@ -913,6 +913,36 @@ export class JsonDatabase {
     });
   }
 
+  /**
+   * Mirrors of the narrow readers added to postgres-database.ts for the risk
+   * queue. Against the JSON file there is only one read either way, so these
+   * exist to keep the two adapters interface-compatible rather than for speed.
+   */
+  async listCustomers(): Promise<CustomerRecord[]> {
+    const data = await this.read();
+    return data.customers ?? [];
+  }
+
+  async listWithdrawals(): Promise<WithdrawalRecord[]> {
+    const data = await this.read();
+    return data.withdrawals ?? [];
+  }
+
+  async listOnrampOrders(): Promise<OnrampOrderRecord[]> {
+    const data = await this.read();
+    return data.onrampOrders ?? [];
+  }
+
+  async listSupportTickets(): Promise<SupportTicketRecord[]> {
+    const data = await this.read();
+    return data.supportTickets ?? [];
+  }
+
+  async listExternalAccounts(): Promise<ExternalAccountRecord[]> {
+    const data = await this.read();
+    return data.externalAccounts ?? [];
+  }
+
   async listVirtualAccounts(): Promise<VirtualAccountRecord[]> {
     const data = await this.read();
     return data.virtualAccounts ?? [];

@@ -49,7 +49,17 @@ export const approvalRequestSchema = z.object({
 export const approvalReviewSchema = z.object({
   reviewer: z.string().min(2),
   reason: z.string().min(3).max(2000),
-  apply: z.boolean().default(true)
+  apply: z.boolean().default(true),
+  /**
+   * The signed-in admin's ROLE, set by the route from the authenticated
+   * session - never from the request body.
+   *
+   * A client-supplied role would make separation of duties self-certifying:
+   * anyone could post `reviewerRole: 'superadmin'` and approve their own
+   * request. admin.routes.ts overwrites this from `request.adminActor`, which
+   * app.ts populates from the x-sivan-admin-role header behind the admin key.
+   */
+  reviewerRole: z.string().trim().toLowerCase().optional(),
 });
 
 /**
@@ -66,6 +76,44 @@ function normaliseAdminIdentity(value: unknown): string {
 
 /** Identities that never represent a specific human and so can never satisfy separation of duties. */
 const NON_ATTRIBUTABLE_IDENTITIES = new Set(['', 'admin_api_key', 'admin', 'ops', 'unknown', 'system']);
+
+/**
+ * Roles permitted to approve their OWN request.
+ *
+ * A set rather than `role === 'superadmin'` so 'owner' - which app.ts already
+ * treats as equivalent everywhere else - does not silently behave differently
+ * here.
+ */
+const SELF_APPROVAL_ROLES = new Set(['superadmin', 'owner']);
+
+/**
+ * Actions that still require two people, even from a superadmin.
+ *
+ * The dividing line is REVERSIBILITY, not importance. Turning a network off is
+ * undone by turning it back on; a refund is not undone by regretting it. These
+ * four move money or grant access, so they keep the control that stops one
+ * compromised or mistaken account acting alone.
+ */
+const HIGH_RISK_ACTIONS = new Set([
+  'refund_recovery.request',
+  'manual_status_change.request',
+  'admin_user_change.request',
+  'virtual_account.reprovision',
+]);
+
+/**
+ * Changes that no longer need an approval request at all.
+ *
+ * "this is a control settings no need for a maker" - agreed, for the two
+ * actions whose entire content is a reversible setting. Requiring a
+ * maker-checker dance to flip a chain off makes the queue noisy, and a noisy
+ * approval queue is one nobody reads - which costs more safety than it buys.
+ *
+ * Deliberately a small, explicit list. Everything absent from it still routes
+ * through approvals, so adding a money-moving action here has to be a
+ * deliberate edit rather than an accident of category.
+ */
+export const APPROVAL_EXEMPT_ACTIONS = new Set(['controls.update', 'system_status.update']);
 
 function isAttributableIdentity(value: string): boolean {
   return !NON_ATTRIBUTABLE_IDENTITIES.has(value);
@@ -177,8 +225,40 @@ export async function getAdminOnrampOrderDetails(orderId: string) {
 }
 
 export async function listRiskCases(options: { status?: string; severity?: string } = {}) {
-  const data = await db.read();
-  const reviews = getRiskReviews(data.auditLogs ?? []);
+  /**
+   * SIX TABLES, NOT FORTY.
+   *
+   * Reported from the console:
+   *   GET /api/admin/payment/api/admin/risk/cases 503 (Service Unavailable)
+   *
+   * Measured rather than guessed - the endpoint is not broken, it is SLOW:
+   *   direct to the API   7.4s, 7.7s, 7.9s
+   *   through the proxy   8.1s, 8.4s
+   * all returning 200. The 503 is a proxy giving up, and on a cold Render
+   * instance the same call goes past every timeout in front of it.
+   *
+   * The cause was `db.read()`, which issues ~40 sequential `select *` queries -
+   * one per table, including the ENTIRE audit log - to build a page that reads
+   * six of them. buildRiskCases touches customers, withdrawals, onrampOrders,
+   * supportTickets and externalAccounts; getRiskReviews wants exactly one
+   * action out of the audit log.
+   *
+   * So: fetch those six, in parallel, and pull the review rows through the
+   * indexed action query that already exists. The audit log is the important
+   * one - it is the table that grows without bound, so a `select *` against it
+   * gets slower every day the platform runs.
+   */
+  const [customers, withdrawals, onrampOrders, supportTickets, externalAccounts, reviewLogs] = await Promise.all([
+    db.listCustomers(),
+    db.listWithdrawals(),
+    db.listOnrampOrders(),
+    db.listSupportTickets(),
+    db.listExternalAccounts(),
+    db.listAuditLogsByActions(['risk.case_reviewed']),
+  ]);
+
+  const data = { customers, withdrawals, onrampOrders, supportTickets, externalAccounts };
+  const reviews = getRiskReviews(reviewLogs);
   const coreCases = buildRiskCases(data).map((riskCase) => ({ ...riskCase, review: reviews.get(riskCase.id) ?? null, status: reviews.get(riskCase.id)?.status ?? 'open' }));
   const supplierCases = await listSupplierRiskCases();
   const cases = [...coreCases, ...supplierCases];
@@ -303,12 +383,64 @@ export async function approveRequest(approvalId: string, input: z.infer<typeof a
       { checker: checkerIdentity, reason: 'checker_not_attributable' }
     );
   }
-  if (makerIdentities.includes(checkerIdentity)) {
+  /**
+   * SELF-APPROVAL, ALLOWED FOR A SUPERADMIN ONLY.
+   *
+   * Reported: apr_3787d617 was "Disable ETHEREUM for network controls", raised
+   * and reviewed by sup_ola - the only admin account that exists - and refused
+   * with maker_equals_checker. Twice, from the console. The rule was correct
+   * and the product was unusable: with one admin, EVERY approval is
+   * permanently unapprovable, which is not a control, it is a deadlock.
+   *
+   * The requested behaviour: "sup_ola is the super admin so one request should
+   * turn it off... no need for two user admin and this is a control settings".
+   *
+   * Two thirds of that is implemented, and one third deliberately is not.
+   *
+   *   DONE - a superadmin may approve their own request.
+   *   DONE - approvals are no longer required for reversible control changes
+   *          (see APPROVAL_EXEMPT_ACTIONS below).
+   *   NOT DONE - removing maker-checker outright. It still binds every other
+   *          role, and it still binds a superadmin on the actions that move
+   *          money: refunds, recoveries, manual status changes and admin-user
+   *          changes. Deleting it for everyone would remove the only control
+   *          preventing one compromised or mistaken account from paying itself
+   *          out, and that is a different thing from unblocking a config flag.
+   *
+   * Recorded as `selfApproved: true` on the audit log rather than passed over
+   * in silence, so the weakened control is visible to anyone reviewing later.
+   */
+  const checkerIsSuperadmin = SELF_APPROVAL_ROLES.has(String(input.reviewerRole ?? '').trim().toLowerCase());
+  const selfApproved = makerIdentities.includes(checkerIdentity);
+
+  if (selfApproved && !checkerIsSuperadmin) {
     const maker = makerIdentities[0] ?? 'the same admin';
     throw badRequest(
       `You raised this request (as "${maker}"), so you cannot also approve it. `
-      + 'A DIFFERENT admin must review it - that is the point of maker-checker.',
+      + 'A DIFFERENT admin must review it, or a superadmin can approve it directly.',
       { maker, checker: checkerIdentity, reason: 'maker_equals_checker' }
+    );
+  }
+
+  if (selfApproved && HIGH_RISK_ACTIONS.has(String((request.request as any)?.action ?? ''))) {
+    /**
+     * THE LINE A SUPERADMIN DOES NOT CROSS ALONE.
+     *
+     * A config flag is reversible in one click and its blast radius is a
+     * setting. A refund, a recovery, a manual status change or an admin-user
+     * change moves money or grants access, and neither is undone by toggling
+     * it back. Those keep needing two people even for a superadmin - it is the
+     * only remaining protection against one compromised account.
+     */
+    throw badRequest(
+      `"${(request.request as any)?.action}" moves money or changes access, so it needs a second admin `
+      + 'even for a superadmin. Ask another admin to review it.',
+      {
+        maker: makerIdentities[0],
+        checker: checkerIdentity,
+        action: (request.request as any)?.action,
+        reason: 'high_risk_requires_second_admin',
+      }
     );
   }
 
@@ -345,7 +477,18 @@ export async function approveRequest(approvalId: string, input: z.infer<typeof a
     severity: 'warning',
     ipAddress: context.ipAddress,
     userAgent: context.userAgent,
-    metadata: { approvalId, reason: input.reason, applied: input.apply, result: applied }
+    metadata: {
+      approvalId,
+      reason: input.reason,
+      applied: input.apply,
+      result: applied,
+      // Never omitted when true. A self-approval is a weakened control, and a
+      // log that does not distinguish it from a two-person approval cannot be
+      // used to answer "was this reviewed by anyone else".
+      selfApproved,
+      checkerRole: input.reviewerRole ?? null,
+      maker: makerIdentities[0] ?? null,
+    }
   });
   return {
     id: approvalId,

@@ -56,6 +56,7 @@
     "test:wallet-gate-and-cors": "tsx scripts/test-wallet-gate-and-cors.ts",
     "test:cors-methods": "tsx scripts/test-cors-methods.ts",
     "test:user-limits": "tsx scripts/test-user-limits.ts",
+    "test:approval-self-service": "tsx scripts/test-approval-self-service.ts",
     "test:wallet-chain-family": "tsx scripts/test-wallet-chain-family.ts",
     "test:balance-transfer": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-balance-transfer.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock ADMIN_API_KEY=balance-admin-key tsx scripts/test-balance-transfer.ts",
     "test:supplier-payments": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-supplier-payments.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=supplier-admin-key tsx scripts/test-supplier-payments.ts",

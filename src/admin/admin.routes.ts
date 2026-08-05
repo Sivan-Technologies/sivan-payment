@@ -148,7 +148,17 @@ export async function adminRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const body = parseBody(approvalReviewSchema, request.body);
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
-    const payload = actor ? { ...body, reviewer: actor } : body;
+    /**
+     * The role comes from the AUTHENTICATED SESSION, and overwrites anything
+     * in the body. A self-approval right that a client could claim for itself
+     * would not be a right, it would be a hole: any caller could post
+     * `reviewerRole: 'superadmin'` and approve their own request.
+     */
+    const payload = {
+      ...body,
+      ...(actor ? { reviewer: actor } : {}),
+      reviewerRole: (request as any).adminActor?.role,
+    };
     return { data: await approveRequest(id, payload, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
