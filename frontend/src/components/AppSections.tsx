@@ -1153,18 +1153,65 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
     setCopied(true);
     setTimeout(() => setCopied(false), 2200);
   };
+
+  /**
+   * NEVER CRASH THE PAGE OVER A MISSING FIELD ON THIS SCREEN.
+   *
+   * This card renders AFTER the money has already moved. `result.deposit`
+   * was read straight through - `result.deposit.currency.toUpperCase()` - and
+   * the naira rail returns no `deposit` object at all, so every NGN
+   * withdrawal threw here and took the whole app down with it. The user had
+   * been charged and got a black screen; the deposit address they needed in
+   * order to complete the send was in the response that crashed.
+   *
+   * App.tsx now normalises both rails so this should always be populated.
+   * The guard stays anyway, because the cost of being wrong is asymmetric:
+   * a missing chain label is a degraded card, a thrown error is a lost
+   * address.
+   */
+  const depositAddress = result.deposit?.address;
+  const depositCurrency = result.deposit?.currency?.toUpperCase();
+  const depositChain = result.deposit?.chain;
+  const withdrawal = result.withdrawal;
+  // '' rather than undefined so the .includes() and === comparisons below stay
+  // total without each one needing its own guard.
+  const withdrawalStatus = withdrawal?.status ?? '';
+
+
+  // No address means there is nothing actionable to show, but the withdrawal
+  // still exists - so point the user at their history rather than at nothing.
+  if (!depositAddress) {
+    return (
+      <article className="deposit-card live-deposit-card">
+        <p className="eyebrow">Step 3</p>
+        <h3>Withdrawal created</h3>
+        <p className="muted">Your withdrawal was created, but we could not load the deposit address. Open Transactions to view it - your funds are safe and nothing needs to be resubmitted.</p>
+        {result.withdrawal?.id ? <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /></div> : null}
+      </article>
+    );
+  }
+
   return (
     <article className="deposit-card live-deposit-card">
       <p className="eyebrow">Step 3</p>
       <h3>Deposit address created</h3>
-      <p className="muted">Send only {result.deposit.currency.toUpperCase()} on {result.deposit.chain}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</p>
-      <div className="qr-wrap premium-qr"><img src={qrUrl(result.deposit.address)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address clickable-address" title="Click or tap to copy address" onClick={copyDepositAddress} style={{ cursor: 'pointer' }}>{result.deposit.address}</div><button className="secondary-btn" onClick={copyDepositAddress}>{copied ? '✓ Copied to clipboard' : 'Copy address'}</button></div></div>
-      <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /><Kv label="Payout currency" value={result.withdrawal.destinationCurrency.toUpperCase()} /><Kv label="Fee" value={`${result.withdrawal.feePercent || '0'}%`} /><Kv label="Status" value={friendlyStatus(result.withdrawal.status)} /></div>
-      {result.withdrawal.transactionTimeline ? <InlineTransactionTimeline timeline={result.withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
+      <p className="muted">
+        {depositCurrency && depositChain
+          ? <>Send only {depositCurrency} on {depositChain}. </>
+          : <>Send only the asset and network you selected. </>}
+        Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.
+      </p>
+      <div className="qr-wrap premium-qr"><img src={qrUrl(depositAddress)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address clickable-address" title="Click or tap to copy address" onClick={copyDepositAddress} style={{ cursor: 'pointer' }}>{depositAddress}</div><button className="secondary-btn" onClick={copyDepositAddress}>{copied ? '✓ Copied to clipboard' : 'Copy address'}</button></div></div>
+      {/* Kv already renders '—' for null/undefined, so every value below is
+          passed through rather than read into. `withdrawal` itself is
+          optional-chained for the same reason the block above is: this screen
+          runs after the money moved and must never be the thing that throws. */}
+      <div className="details-box"><Kv label="Reference" value={withdrawal?.id ? shortRef(withdrawal.id) : undefined} /><Kv label="Payout currency" value={withdrawal?.destinationCurrency?.toUpperCase()} /><Kv label="Fee" value={withdrawal?.feePercent ? `${withdrawal.feePercent}%` : undefined} /><Kv label="Status" value={withdrawal?.status ? friendlyStatus(withdrawal.status) : undefined} /></div>
+      {withdrawal?.transactionTimeline ? <InlineTransactionTimeline timeline={withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
         <TimelineItem done title="Address created" body="A unique provider-backed deposit address is ready." />
-        <TimelineItem active={result.withdrawal.status === 'pending_deposit'} done={result.withdrawal.status !== 'pending_deposit'} title="Awaiting deposit" body="Send only the selected token and network." />
-        <TimelineItem active={['deposit_received', 'payout_processing'].includes(result.withdrawal.status)} done={result.withdrawal.status === 'completed'} title="Convert and payout" body="Sivan detects the deposit, liquidates, and sends fiat to your bank." />
-        <TimelineItem done={result.withdrawal.status === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
+        <TimelineItem active={withdrawalStatus === 'pending_deposit'} done={Boolean(withdrawalStatus) && withdrawalStatus !== 'pending_deposit'} title="Awaiting deposit" body="Send only the selected token and network." />
+        <TimelineItem active={['deposit_received', 'payout_processing'].includes(withdrawalStatus)} done={withdrawalStatus === 'completed'} title="Convert and payout" body="Sivan detects the deposit, liquidates, and sends fiat to your bank." />
+        <TimelineItem done={withdrawalStatus === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
       </div>}
     </article>
   );

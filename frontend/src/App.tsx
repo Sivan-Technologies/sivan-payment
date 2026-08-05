@@ -1649,12 +1649,67 @@ export default function App() {
     setDepositResult(null);
   }
 
+  /**
+   * MAKE BOTH RAILS ANSWER IN ONE SHAPE.
+   *
+   * The two endpoints do NOT return the same thing, and for a long time the
+   * code pretended they did:
+   *
+   *   /api/withdrawals      -> { withdrawal, deposit: { address, chain, currency } }
+   *   /api/ngn/offramp/orders -> a FLAT NgnTransferRecord, no `deposit`, no `withdrawal`
+   *
+   * Both were cast with `api<DepositResponse>()`. A cast is a compile-time
+   * assertion and nothing more - at runtime the naira response sailed through
+   * with `deposit` undefined, and DepositCard read `result.deposit.currency`
+   * and took the whole page down with it. The withdrawal itself had already
+   * succeeded, so the user watched a black screen having been charged.
+   *
+   * Normalising here, at the boundary, means the render layer sees one
+   * contract and the two providers stay the backend's business.
+   */
+  function normalizeWithdrawalResponse(raw: unknown, review: WithdrawalReviewState): DepositResponse | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const value = raw as Record<string, any>;
+
+    // Bridge already answers in the shape the card wants.
+    if (value.deposit && value.withdrawal) return value as DepositResponse;
+
+    // Breet answers flat. Rebuild the contract from the fields it does send,
+    // falling back to what the user just confirmed on the review screen -
+    // those were server-validated to produce this order, so they are not
+    // guesses.
+    const depositAddress = value.depositAddress ?? value.deposit?.address;
+    if (!depositAddress) return null;
+
+    return {
+      withdrawal: {
+        id: value.id,
+        status: value.status ?? 'pending_deposit',
+        createdAt: value.createdAt ?? new Date().toISOString(),
+        sourceCurrency: value.sourceCurrency ?? review.sourceCurrency,
+        destinationCurrency: value.destinationCurrency ?? review.destinationCurrency,
+        sourceAmount: value.sourceAmount,
+        destinationAmount: value.destinationAmount,
+        feeAmount: value.feeAmount,
+        transactionTimeline: value.timeline ?? value.transactionTimeline,
+      } as WithdrawalRecord,
+      deposit: {
+        address: depositAddress,
+        // The ASSET being sent, not the naira being received. Getting this
+        // backwards would tell someone to send NGN to a crypto address.
+        currency: value.sourceCurrency ?? review.sourceCurrency,
+        chain: value.network ?? review.sourceChain,
+      },
+    };
+  }
+
   async function confirmWithdrawal() {
     if (!withdrawalReview) return;
     setLoading(true);
     try {
       const currency = withdrawalReview.destinationCurrency as PayoutCurrency;
       const rail = payoutRailFor(currency);
+
 
       if (rail === 'breet' && !withdrawalReview.quoteId) {
         // The NGN endpoint settles an ACCEPTED QUOTE. Without one there is
@@ -1679,12 +1734,36 @@ export default function App() {
             body: JSON.stringify(withdrawalReview)
           });
 
+      const normalized = normalizeWithdrawalResponse(result, withdrawalReview);
+      if (!normalized) {
+        throw new Error('The withdrawal was created but the server response was incomplete. Please refresh and check your transaction history.');
+      }
+
       setWithdrawalReview(null);
-      setDepositResult(result);
-      await loadUserData();
+      setDepositResult(normalized);
+
+      /**
+       * ISOLATE THE SUCCESS STATE FROM THE REFRESH.
+       *
+       * The deposit address is ready immediately after the POST succeeds, so
+       * show it first. loadUserData() runs afterward to sync the activity feed,
+       * but if that refresh times out or fails — which is exactly what the
+       * reported console logs show — the user still has their deposit address
+       * and can use it.
+       *
+       * Before this, await loadUserData() ran inline, so a network dropout
+       * during the three parallel refreshes (session, controls, status) would
+       * throw into the same catch block that handles a failed withdrawal POST,
+       * replacing "Deposit address created" with "ERR_CONNECTION_CLOSED" and
+       * leaving the user staring at an error toast while their withdrawal had
+       * actually succeeded.
+       */
       notify(rail === 'breet'
         ? 'Deposit address created. Send only the selected asset and network - naira lands in your bank once it confirms.'
         : 'Deposit address created. Send only the selected asset and network.');
+
+      // Fire and forget: if this fails, the user keeps the success state above.
+      void loadUserData().catch(() => undefined);
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
