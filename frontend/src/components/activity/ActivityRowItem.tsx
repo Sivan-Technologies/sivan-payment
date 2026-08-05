@@ -1,4 +1,5 @@
 import type { ActivityRow } from '../../activityFeed';
+import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
 
 /**
  * ONE ROW, USED BY BOTH THE DASHBOARD AND THE TRANSACTIONS PAGE.
@@ -49,6 +50,37 @@ export function ActivityRowItem({ row, onOpen, selected }: { row: ActivityRow; o
    */
   const sign = row.direction === 'in' ? '+' : row.direction === 'out' ? '−' : '';
 
+  /**
+   * THE CHAIN MARK GOES BESIDE THE CHAIN NAME, NOT IN THE LEADING SLOT.
+   *
+   * Three reasons, in order of weight.
+   *
+   * 1. ONLY SOME ROWS ARE ON-CHAIN AT ALL. Of seven activity sources, four
+   *    carry a network - deposits, crypto sends, naira transfers and now buys.
+   *    Withdrawals, supplier payouts and virtual-account deposits move fiat
+   *    over bank rails and have no chain, correctly. A logo in a fixed leading
+   *    column would therefore be empty on three row types, producing a ragged
+   *    left edge in the exact position the eye uses to scan the list -
+   *    advertising an absence that is not a gap in our data but a fact about
+   *    the transaction.
+   *
+   * 2. THE LEADING SLOT IS ALREADY LOAD-BEARING. It holds the direction arrow,
+   *    which is what carries in/out/internal for a red-green colourblind user
+   *    - roughly 1 in 12 men - because this row deliberately does not rely on
+   *    colour alone. Replacing it with a chain mark would trade an
+   *    accessibility guarantee for decoration.
+   *
+   * 3. IT COSTS NOTHING HORIZONTALLY. The metadata line already renders the
+   *    network name, and this subtitle already ellipsises on a narrow phone.
+   *    Adding ~28px to the anchor column would eat into the label; 14px inline
+   *    sits in space the text occupies anyway.
+   *
+   * undefined for polygon/arbitrum/avalanche, which the on-ramp allows and
+   * this app has no mark for. The name still renders - only the icon is
+   * omitted, which reads as normal rather than broken.
+   */
+  const logoChain = logoChainFor(row.network);
+
   const content = (
     <>
       <span className={`activity-icon ${row.direction}`} aria-hidden="true">{DIRECTION_ICON[row.direction]}</span>
@@ -61,7 +93,19 @@ export function ActivityRowItem({ row, onOpen, selected }: { row: ActivityRow; o
           {/* Capitalised by its own class, not by the parent: a blanket
               text-transform on this line also hit the timestamp and rendered
               "2h ago" as "2h Ago". */}
-          {row.network ? <><span className="activity-network">{row.network.replaceAll('_', ' ')}</span>{' · '}</> : ''}
+          {row.network ? (
+            <>
+              {/* The mark and its name are ONE unit - wrapped so a narrow
+                  screen never breaks the line between a logo and the word it
+                  labels, which would leave an orphaned icon reading as part of
+                  the timestamp. */}
+              <span className="activity-network-tag">
+                {logoChain ? <NetworkLogo chain={logoChain} size={13} /> : null}
+                <span className="activity-network">{row.network.replaceAll('_', ' ')}</span>
+              </span>
+              {' · '}
+            </>
+          ) : ''}
           {timeAgo(row.createdAt)}
         </small>
       </span>

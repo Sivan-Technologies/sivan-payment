@@ -144,7 +144,8 @@
     "test:bank-autoapprove": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-bank-autoapprove.json EMAIL_PROVIDER=console BRIDGE_MOCK_MODE=true NGN_PROVIDER=mock NGN_SETTLEMENT_POLL_SECONDS=0 NGN_TRUST_SANDBOX_BANK_RESOLUTION=true ADMIN_API_KEY=autoapprove-key tsx scripts/test-bank-autoapprove-and-session.ts",
     "test:deposit-idempotency": "tsx scripts/test-deposit-idempotency.ts",
     "test:deposit-detection": "tsx scripts/test-deposit-detection.ts",
-    "test:deposit-notification": "tsx scripts/test-deposit-notification.ts"
+    "test:deposit-notification": "tsx scripts/test-deposit-notification.ts",
+    "test:activity-network-logo": "tsx scripts/test-activity-network-logo.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

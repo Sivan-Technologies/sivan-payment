@@ -17,6 +17,25 @@
 
 export type LogoChain = 'solana' | 'base' | 'ethereum';
 
+/**
+ * Is there a real mark for this chain string?
+ *
+ * Returns undefined rather than a fallback, and callers render NOTHING when it
+ * does. That is the whole point: `destinationChain` on an on-ramp order allows
+ * polygon, arbitrum and avalanche_c_chain, and this file draws marks for three
+ * networks. A generic placeholder blob in the other cases would be worse than
+ * an absent logo - on a screen where the user is deciding which chain their
+ * money is on, an unrecognisable circle next to "Polygon" invites them to read
+ * it as a network they know.
+ *
+ * The text label always renders regardless, so nothing is lost when this
+ * returns undefined; only the icon is omitted.
+ */
+export function logoChainFor(chain?: string): LogoChain | undefined {
+  const key = String(chain ?? '').trim().toLowerCase();
+  return key === 'solana' || key === 'base' || key === 'ethereum' ? key : undefined;
+}
+
 export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: number }) {
   const common = {
     width: size,
@@ -48,13 +67,28 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
   }
 
   if (chain === 'base') {
-    // A circle with a square notch cut from the right - the Base mark.
+    /**
+     * THE BASE MARK IS A BLUE DISC WITH A NOTCH CUT OUT OF THE LEFT EDGE.
+     *
+     * The previous version drew a #0052FF circle and then laid a WHITE shape
+     * over most of it, leaving a blue bar across the middle. Rendered at 13px
+     * in a transaction row that reads unmistakably as a "no entry" sign - a
+     * white disc with a bar through it. A prohibition symbol beside a completed
+     * payment is about the worst accidental meaning available on this screen,
+     * and at the 20px Receive size it was already ambiguous.
+     *
+     * Caught by zooming a real render; every unit assertion passed throughout,
+     * because they check that AN svg exists, not what it depicts.
+     *
+     * Drawn correctly here: one blue path, notch formed by the geometry itself
+     * rather than by a white overlay, so the background shows through the cut
+     * exactly as the official mark does on any colour.
+     */
     return (
       <svg {...common}>
-        <circle cx="16" cy="16" r="16" fill="#0052FF" />
         <path
-          fill="#fff"
-          d="M15.9 27.2c6.2 0 11.2-5 11.2-11.2S22.1 4.8 15.9 4.8C10 4.8 5.2 9.3 4.7 15h14.9v2H4.7c.5 5.7 5.3 10.2 11.2 10.2z"
+          fill="#0052FF"
+          d="M16 32c8.837 0 16-7.163 16-16S24.837 0 16 0C7.616 0 .744 6.451.052 14.657h21.16v2.686H.052C.744 25.549 7.616 32 16 32z"
         />
       </svg>
     );

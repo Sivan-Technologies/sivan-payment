@@ -2327,6 +2327,19 @@ button.activity-row:focus-visible{outline:2px solid rgba(116,221,190,.55);outlin
    line, and this line mixes a chain name with a timestamp. The chain is
    capitalised at its own span instead. */
 .activity-main small{font-size:11.5px;color:#8b9aab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* CHAIN MARK + CHAIN NAME, AS ONE UNIT.
+   inline-flex rather than two loose inline elements: it keeps the logo
+   optically centred against 11.5px text (vertical-align on a bare SVG sits it
+   on the baseline, so the mark hangs low next to lowercase letters), and it
+   stops a narrow phone from wrapping between the icon and the word it labels -
+   an orphaned logo on the next line reads as part of the timestamp.
+   The 3px gap is tighter than the surrounding " · " separators on purpose, so
+   the pair groups as one token rather than competing with them. */
+.activity-network-tag{display:inline-flex;align-items:center;gap:3px;vertical-align:-2px}
+/* flex-shrink:0 because the parent <small> ellipsises. Without it a long label
+   squashes the mark into a sliver before any text is clipped, and a
+   half-width Base circle is not recognisably Base. */
+.activity-network-tag svg{flex:0 0 auto;display:block}
 .activity-network{text-transform:capitalize}
 .activity-figures{display:grid;gap:4px;justify-items:end;text-align:right;white-space:nowrap}
 .activity-amount{font-size:14px;font-variant-numeric:tabular-nums;color:#eef3f7}

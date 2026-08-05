@@ -15,7 +15,7 @@
 // fields this module actually reads are declared.
 type Timeline = { amount?: string; currency?: string; providerReference?: string };
 interface WithdrawalRecord { id: string; status: string; createdAt: string; sourceCurrency?: string; destinationCurrency?: string; sourceAmount?: string; destinationAmount?: string; providerDrainId?: string; destinationReference?: string; transactionTimeline?: Timeline }
-interface OnrampOrderRecord { id: string; status: string; createdAt: string; sourceCurrency?: string; destinationCurrency?: string; amount?: string; providerTransferId?: string; providerReference?: string; transactionTimeline?: Timeline }
+interface OnrampOrderRecord { id: string; status: string; createdAt: string; sourceCurrency?: string; destinationCurrency?: string; amount?: string; providerTransferId?: string; providerReference?: string; destinationChain?: string; transactionTimeline?: Timeline }
 interface NgnTransferRecord { id: string; status: string; createdAt: string; direction: string; sourceCurrency?: string; destinationCurrency?: string; sourceAmount?: string; destinationAmount?: string; providerTransferId?: string; providerQuoteId?: string; network?: string }
 interface BalanceTransferRecord { transferId: string; status: string; createdAt: string; asset: string; amount: string; network?: string; txHash?: string; userOperationHash?: string }
 interface SupplierPaymentRecord { id: string; status: string; createdAt: string; amount: string; sourceAsset?: string; destinationCurrency?: string; providerTransferId?: string; bridgeTransferId?: string; supplier?: { supplierName?: string } | null }
@@ -240,6 +240,16 @@ export function buildActivityFeed(sources: ActivitySources): ActivityRow[] {
       state: activityState(o.status),
       createdAt: o.createdAt,
       providerReference: o.transactionTimeline?.providerReference || o.providerTransferId || o.providerReference,
+      /**
+       * The chain the bought crypto is DELIVERED on.
+       *
+       * Present on the record since the table was created, persisted in
+       * Postgres, and never mapped into the feed - so a buy was the one
+       * on-chain row that could not say which network it landed on. That
+       * matters most to the user who then wonders why their Base USDC is not
+       * showing in a Solana wallet.
+       */
+      network: o.destinationChain,
       timeline: o.transactionTimeline,
       raw: o,
     });
