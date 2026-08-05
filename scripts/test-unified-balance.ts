@@ -315,8 +315,21 @@ async function main() {
       /catch \(error\) \{[\s\S]{0,400}ngn\.sweep_failed/.test(accept));
     check('and the failure is recorded for operators',
       /action: 'ngn\.sweep_failed'/.test(svc));
+    /**
+     * REPINNED. This asserted the literal `if (!wallet) return undefined`.
+     * The sweep was since refactored to route every skip through
+     * recordSweepSkipped(), which returns undefined AND logs the reason - the
+     * behaviour is unchanged and strictly better, but the literal moved.
+     *
+     * Pinned to the BEHAVIOUR now: a missing wallet must still be a skip
+     * rather than a throw, because a user who funds their wallet elsewhere is
+     * a legitimate case and not a failed off-ramp.
+     */
     check('a user with no wallet is skipped, not failed',
-      /if \(!wallet\) return undefined/.test(sweep));
+      /if \(!wallet\) return recordSweepSkipped\(transfer, 'no_wallet_for_network'/.test(sweep));
+    check('and the skip is recorded rather than silent',
+      /return undefined;/.test(fnBody(svc, 'async function recordSweepSkipped'))
+      && /action: 'ngn\.sweep_skipped'/.test(svc));
   }
 
   console.log('\n6. A REFUSAL THE USER CAN ACT ON\n');

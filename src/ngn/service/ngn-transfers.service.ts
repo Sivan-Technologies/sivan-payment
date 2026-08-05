@@ -221,8 +221,128 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
   };
 }
 
+/**
+ * How long an unfunded off-ramp stays open. MUST match the reconciler's
+ * NGN_UNFUNDED_EXPIRY_HOURS - two different numbers here would show a user a
+ * countdown that disagrees with when their order actually closes, which is
+ * worse than showing none.
+ */
+export const NGN_UNFUNDED_EXPIRY_HOURS = Number(process.env.NGN_UNFUNDED_EXPIRY_HOURS || 24);
+
+/** Statuses where the user still owes us crypto and may still cancel. */
+export const NGN_CANCELLABLE_STATUSES = new Set([
+  'created', 'quote_created', 'quote_accepted', 'awaiting_deposit', 'awaiting_crypto_deposit',
+]);
+
+/**
+ * THE NETWORK AND THE DEADLINE, LIFTED OUT OF METADATA.
+ *
+ * Reported with a screenshot: a sell showing a deposit address and no
+ * indication of which chain it belongs to. The address in question -
+ * AVXsBHMhRtc5LqoLTvaQBX7oUayS4f3h1TrATUX1v7Df - is base58, so it is Solana,
+ * but a user cannot be expected to identify a chain by an address format. Send
+ * USDC on the wrong chain to a Breet deposit address and it is gone; there is
+ * no recall on chain and Breet is not watching that network for that address.
+ *
+ * The network was never missing from the DATA - quoteMetadata.network says
+ * "solana" for that exact transfer. It was missing from every layer above it.
+ * NgnTransferRecord has no `network` field, so nothing in the API or the UI
+ * could reach it without knowing to dig through a nested metadata blob.
+ *
+ * Derived here rather than added as a stored column: the value already exists
+ * on every record ever written, so a migration would only duplicate it and
+ * create a second thing that can drift.
+ */
+function decorate(transfer: NgnTransferRecord) {
+  const meta = (typeof transfer.metadata === 'object' && transfer.metadata ? transfer.metadata : {}) as any;
+  const network = meta?.quoteMetadata?.network ? String(meta.quoteMetadata.network).toLowerCase() : undefined;
+
+  const unfunded = NGN_CANCELLABLE_STATUSES.has(String(transfer.status)) && !transfer.destinationTxHash;
+  // The reconciler measures from updatedAt, falling back to createdAt. Matched
+  // exactly, or the countdown lies about the deadline it is describing.
+  const started = Date.parse(transfer.updatedAt ?? transfer.createdAt ?? '');
+  const expiresAt = unfunded && Number.isFinite(started)
+    ? new Date(started + NGN_UNFUNDED_EXPIRY_HOURS * 3_600_000).toISOString()
+    : undefined;
+
+  return {
+    ...transfer,
+    /** Which chain the deposit address lives on. undefined when unknown. */
+    network,
+    /** When an unfunded order closes itself. Absent once funded or finished. */
+    expiresAt,
+    /** Whether the user may cancel right now, decided by the server. */
+    cancellable: unfunded,
+  };
+}
+
 export async function listNgnTransfers(options: { userId?: string; status?: string } = {}) {
-  return (await db.listNgnTransfers()).filter((item) => (!options.userId || item.userId === options.userId) && (!options.status || item.status === options.status)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return (await db.listNgnTransfers())
+    .filter((item) => (!options.userId || item.userId === options.userId) && (!options.status || item.status === options.status))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map(decorate);
+}
+
+/**
+ * Let a user close an off-ramp they have decided not to fund.
+ *
+ * There was NO way to do this. Grep found no cancel route, no service
+ * function, nothing - an unfunded sell simply sat there until the 24h
+ * reconciler swept it. Reported as "seems like a stale sell", which is exactly
+ * right: the user had abandoned it hours earlier and the product still showed
+ * it as live, with a deposit address inviting them to send funds into an order
+ * they no longer wanted.
+ *
+ * REFUSES ONCE CRYPTO IS INVOLVED. A destinationTxHash means coins are on
+ * chain and heading for the rail; "cancelling" that would tell the user
+ * nothing is coming while their money is mid-flight. Those need support, not a
+ * button.
+ */
+export async function cancelNgnTransfer(
+  transferId: string,
+  options: { userId?: string; actorId?: string; reason?: string } = {}
+) {
+  const transfer = (await db.listNgnTransfers()).find((item) => item.id === transferId);
+  if (!transfer) throw notFound('NGN transfer');
+
+  // Ownership is checked HERE as well as at the route. A cancel is a state
+  // change on someone's money; one guard is not enough.
+  if (options.userId && transfer.userId !== options.userId) throw notFound('NGN transfer');
+
+  if (transfer.destinationTxHash) {
+    throw badRequest('Your crypto is already on the way. This order can no longer be cancelled - contact support if something looks wrong.');
+  }
+  if (!NGN_CANCELLABLE_STATUSES.has(String(transfer.status))) {
+    throw badRequest(`This order is ${String(transfer.status).replaceAll('_', ' ')} and can no longer be cancelled.`);
+  }
+
+  const now = nowIso();
+  const cancelled: NgnTransferRecord = {
+    ...transfer,
+    status: 'cancelled',
+    updatedAt: now,
+    metadata: {
+      ...(typeof transfer.metadata === 'object' && transfer.metadata ? transfer.metadata as Record<string, unknown> : {}),
+      cancelledAt: now,
+      cancelledBy: options.actorId || options.userId || 'user',
+      cancelledReason: options.reason || 'Cancelled by the user before funding.',
+      previousStatus: transfer.status,
+    },
+  };
+  cancelled.timeline = buildTimeline(cancelled);
+  await db.upsertNgnTransferRecord(cancelled);
+
+  await createAuditLog({
+    actorType: options.userId ? 'user' : 'admin',
+    actorId: options.actorId || options.userId || 'user',
+    action: 'ngn.transfer_cancelled',
+    resourceType: 'payments_ngn_transfer',
+    resourceId: transferId,
+    severity: 'info',
+    metadata: { previousStatus: transfer.status, reason: options.reason },
+  });
+
+  return decorate(cancelled);
 }
 
 export async function retryNgnTransfer(transferId: string, actorId = 'admin_api_key') {

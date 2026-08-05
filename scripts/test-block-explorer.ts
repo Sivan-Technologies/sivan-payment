@@ -154,7 +154,21 @@ check('the hash column can shrink instead of pushing buttons off the card',
 check('one tap selects the whole reference on mobile',
   /\.chain-receipt-hash\{[^}]*user-select:all/.test(css));
 check('there is a mobile breakpoint', css.includes('@media(max-width:640px)') && css.slice(css.indexOf('@media(max-width:640px)')).includes('.chain-receipt'));
-const mobile = css.slice(css.lastIndexOf('@media(max-width:640px)'));
+/**
+ * SCOPED TO THE ON-CHAIN RECEIPT BLOCK, not "the last 640px media query".
+ *
+ * This used css.lastIndexOf('@media(max-width:640px)'), which was only ever
+ * correct while this happened to be the final block in the file. Adding the
+ * deposit-instruction styles below it silently repointed these three
+ * assertions at unrelated CSS and they failed - the receipt rules were
+ * untouched and present the whole time.
+ *
+ * A test that depends on being last in a file is a test that breaks the next
+ * time anyone appends anything. Anchored to the section it is about instead.
+ */
+const receiptSection = css.slice(css.indexOf('/* ON-CHAIN RECEIPT'), css.indexOf('/* DEPOSIT INSTRUCTION'));
+check('the receipt CSS section is findable', receiptSection.length > 0, 'the section header comment moved or was removed');
+const mobile = receiptSection.slice(receiptSection.indexOf('@media(max-width:640px)'));
 check('it stacks to a single column on a phone', /\.chain-receipt\{grid-template-columns:1fr/.test(mobile));
 check('the hash wraps rather than ellipsing when there is room',
   /\.chain-receipt-hash\{white-space:normal/.test(mobile));

@@ -3,14 +3,14 @@ import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeli
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
-type CustomerTransactionRow = { id: string; kind: 'withdrawal' | 'onramp_order' | 'ngn_transfer'; label: string; direction: 'sell' | 'buy'; asset: string; amount: string; currency: string; status: string; createdAt: string; providerReference?: string; timeline?: TransactionTimeline; depositAddress?: string; raw: WithdrawalRecord | OnrampOrderRecord | NgnTransferRecord; };
+type CustomerTransactionRow = { id: string; kind: 'withdrawal' | 'onramp_order' | 'ngn_transfer'; label: string; direction: 'sell' | 'buy'; asset: string; amount: string; currency: string; status: string; createdAt: string; providerReference?: string; timeline?: TransactionTimeline; depositAddress?: string; network?: string; expiresAt?: string; cancellable?: boolean; raw: WithdrawalRecord | OnrampOrderRecord | NgnTransferRecord; };
 function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
 function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment', payment_received:'Payment received', processing:'Processing', awaiting_crypto_deposit:'Waiting for your crypto', crypto_received:'Crypto received', settling:'Paying your bank', settled:'Paid to your bank', quote_created:'Quote created', flagged:'Being reviewed', expired:'Expired' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
 function Badge({ children, status }: { children: string; status?: string }) { return <span className={`badge ${statusClass(status)}`}>{children}</span>; }
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0,8)}…${value.slice(-6)}`; }
 
-export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], onStart, onBuy }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; onStart: () => void; onBuy: () => void }) {
+export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], onStart, onBuy, onRefresh }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; onStart: () => void; onBuy: () => void; /** Re-reads transfers after a cancel, so the row reflects what the SERVER decided rather than what we hoped. */ onRefresh?: () => Promise<void> }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'sell' | 'buy' | 'processing'>('all');
   const transactions = useMemo<CustomerTransactionRow[]>(() => {
@@ -63,6 +63,12 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
       // The whole point of an off-ramp that is awaiting funds: without this the
       // user has nowhere to send their crypto.
       depositAddress: t.depositAddress,
+      // Server-derived. The chain was always in quoteMetadata.network and
+      // never surfaced, so the deposit panel showed an address with no way to
+      // tell which network it belonged to.
+      network: t.network,
+      expiresAt: t.expiresAt,
+      cancellable: t.cancellable,
       raw: t
     }));
     return [...sells, ...buys, ...naira].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -78,6 +84,20 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
   const [assistantAnswer, setAssistantAnswer] = useState<any>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const selected = filtered.find((tx) => tx.id === selectedId) || filtered[0] || null;
+  /**
+   * Close an unfunded off-ramp at the user's request.
+   *
+   * Refreshes from the server afterwards rather than mutating local state: the
+   * server decides whether a cancel was permitted (crypto already on the way
+   * is refused), so optimistically flipping the row here could show
+   * "Cancelled" for an order that is still live.
+   */
+  async function cancelTransfer(id: string) {
+    if (!user) return;
+    await api(`/api/users/${user.id}/ngn-transfers/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: 'Cancelled from the transactions page.' }) });
+    await onRefresh?.();
+  }
+
   async function askSivanAssistant(tx: CustomerTransactionRow | null) {
     if (!tx || !user) return;
     setAssistantLoading(true);
@@ -89,10 +109,110 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     }
   }
 
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','sell','buy','processing'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'sell' ? 'Sells' : item === 'buy' ? 'Buys' : 'Processing'}</button>)}</div></div>{!transactions.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Start selling</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Status</th><th>Provider Ref</th><th>Request ID</th><th>Date</th></tr></thead><tbody>{filtered.map((tx) => <tr key={tx.id} className={selected?.id === tx.id ? 'selected-row' : ''} onClick={() => setSelectedId(tx.id)}><td><span className={`tx-type ${tx.direction}`}>{tx.direction === 'sell' ? '↗ Sell' : '↙ Buy'}</span></td><td>{tx.asset}</td><td>{tx.amount} {tx.currency}</td><td><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></td><td>{tx.providerReference ? shortRef(tx.providerReference) : 'Pending'}</td><td>{shortRef(tx.id)}</td><td>{new Date(tx.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table>{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} /></div>}</article></section>;
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','sell','buy','processing'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'sell' ? 'Sells' : item === 'buy' ? 'Buys' : 'Processing'}</button>)}</div></div>{!transactions.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Start selling</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Status</th><th>Provider Ref</th><th>Request ID</th><th>Date</th></tr></thead><tbody>{filtered.map((tx) => <tr key={tx.id} className={selected?.id === tx.id ? 'selected-row' : ''} onClick={() => setSelectedId(tx.id)}><td><span className={`tx-type ${tx.direction}`}>{tx.direction === 'sell' ? '↗ Sell' : '↙ Buy'}</span></td><td>{tx.asset}</td><td>{tx.amount} {tx.currency}</td><td><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></td><td>{tx.providerReference ? shortRef(tx.providerReference) : 'Pending'}</td><td>{shortRef(tx.id)}</td><td>{new Date(tx.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table>{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
 }
 
-function TransactionTimelinePanel({ transaction, assistantAnswer, assistantLoading, onAskSivanAssistant }: { transaction: CustomerTransactionRow | null; assistantAnswer?: any; assistantLoading?: boolean; onAskSivanAssistant?: () => void }) {
+/**
+ * Human countdown to the moment an unfunded order closes itself.
+ *
+ * Rounded to whole units and never negative: "-3h left" on a clock that has
+ * already run out is worse than saying nothing.
+ */
+function timeLeft(iso?: string): { text: string; urgent: boolean } | undefined {
+  if (!iso) return undefined;
+  const ms = Date.parse(iso) - Date.now();
+  if (!Number.isFinite(ms)) return undefined;
+  if (ms <= 0) return { text: 'Closing now', urgent: true };
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.floor((ms % 3_600_000) / 60_000);
+  // Under two hours is where a user genuinely needs to act, so that is where
+  // the styling changes rather than at some round number of hours.
+  const urgent = hours < 2;
+  if (hours >= 1) return { text: `${hours}h ${minutes}m left to send`, urgent };
+  return { text: `${minutes}m left to send`, urgent };
+}
+
+/**
+ * WHERE TO SEND, ON WHICH CHAIN, BY WHEN - AND HOW TO BACK OUT.
+ *
+ * Reported with a screenshot of a sell showing a bare deposit address:
+ * "the network should show here telling the user which network chain they
+ * would send to", and "seems like a stale sell".
+ *
+ * THE NETWORK IS THE DANGEROUS OMISSION. The address in that screenshot,
+ * AVXsBHMhRtc5LqoLTvaQBX7oUayS4f3h1TrATUX1v7Df, is Solana - confirmed against
+ * the live record, quoteMetadata.network is "solana". Nothing on screen said
+ * so. USDC exists on Solana, Base, Ethereum and more; send it on the wrong one
+ * and it is gone. There is no recall on chain, and the rail is not watching
+ * that network for that address. Asking a user to infer a chain from whether
+ * a string starts with 0x is not a design.
+ *
+ * So the network is stated FIRST, before the address, in the reading order
+ * someone follows when they are about to move money - and repeated in the
+ * warning underneath, because this is the one mistake that cannot be undone.
+ *
+ * THE STALENESS is the second half. An unfunded sell had no visible deadline
+ * and no way out: it sat looking live until a 24h sweep closed it. Now the
+ * deadline is shown, and the user can close it themselves.
+ */
+function DepositInstruction({ transaction, onCancel }: { transaction: CustomerTransactionRow; onCancel?: (id: string) => Promise<void> | void }) {
+  const [copied, setCopied] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const remaining = timeLeft(transaction.expiresAt);
+  const network = transaction.network;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(transaction.depositAddress!);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard can be blocked by permissions or an insecure context. The
+      // address is selectable text either way.
+    }
+  };
+
+  return <div className="deposit-instruction">
+    <div className="deposit-instruction-head">
+      <strong>Send {transaction.asset} to this address</strong>
+      {remaining && <span className={`deposit-countdown ${remaining.urgent ? 'urgent' : ''}`}>{remaining.text}</span>}
+    </div>
+
+    {/* THE NETWORK, BEFORE THE ADDRESS. A user who has already copied the
+        address has stopped reading. */}
+    <div className="deposit-network-row">
+      <span className="deposit-network-label">Network</span>
+      {network
+        ? <span className="deposit-network-chip">{network.replaceAll('_', ' ')}</span>
+        : <span className="deposit-network-unknown">Not specified - check with support before sending</span>}
+    </div>
+
+    <span className="deposit-address-value" title={transaction.depositAddress}>{transaction.depositAddress}</span>
+
+    <div className="deposit-instruction-actions">
+      <button className="secondary-btn small" onClick={copy}>{copied ? '✓ Copied' : 'Copy address'}</button>
+      {transaction.cancellable && onCancel && (confirming
+        ? <>
+            <button className="danger-btn small" disabled={cancelling} onClick={async () => {
+              setCancelling(true);
+              try { await onCancel(transaction.id); } finally { setCancelling(false); setConfirming(false); }
+            }}>{cancelling ? 'Cancelling…' : 'Yes, cancel it'}</button>
+            <button className="ghost-btn small" disabled={cancelling} onClick={() => setConfirming(false)}>Keep it open</button>
+          </>
+        // Two-step, because a mis-tap next to "Copy address" would otherwise
+        // destroy a live order.
+        : <button className="ghost-btn small" onClick={() => setConfirming(true)}>Cancel this sell</button>)}
+    </div>
+
+    {network
+      ? <small className="deposit-warning">Send only {transaction.asset} on <b>{network.replaceAll('_', ' ')}</b>. Funds sent on any other network cannot be recovered.</small>
+      : <small className="deposit-warning">Confirm the network with support before sending. Funds sent on the wrong network cannot be recovered.</small>}
+    {remaining && <small className="deposit-note">If nothing arrives by then, this order closes on its own and no funds move. You can start a new one at any time.</small>}
+  </div>;
+}
+
+function TransactionTimelinePanel({ transaction, assistantAnswer, assistantLoading, onAskSivanAssistant, onCancelTransfer }: { transaction: CustomerTransactionRow | null; assistantAnswer?: any; assistantLoading?: boolean; onAskSivanAssistant?: () => void; onCancelTransfer?: (id: string) => Promise<void> | void }) {
   // A NAIRA TRANSFER HAS NO BRIDGE TIMELINE, AND MUST NOT FALL THROUGH TO
   // "Select a transaction to see its timeline."
   //
@@ -118,12 +238,7 @@ function TransactionTimelinePanel({ transaction, assistantAnswer, assistantLoadi
         <Kv label="You receive" value={`${transaction.amount} ${transaction.currency}`} />
         <Kv label="Asset" value={transaction.asset} />
       </div>
-      {transaction.depositAddress && <div className="support-reference-box">
-        <strong>Send {transaction.asset} to this address</strong>
-        <span className="deposit-address-value">{transaction.depositAddress}</span>
-        <button className="secondary-btn small"
-          onClick={() => navigator.clipboard?.writeText(transaction.depositAddress!)}>Copy address</button>
-      </div>}
+      {transaction.depositAddress && <DepositInstruction transaction={transaction} onCancel={onCancelTransfer} />}
     </aside>;
   }
   if (!transaction?.timeline) return <aside className="transaction-timeline-card"><Empty>Select a transaction to see its timeline.</Empty></aside>;

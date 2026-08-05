@@ -675,6 +675,19 @@ export interface NgnTransferRecord {
   providerTransferId?: string;
   /** Where the user must send crypto for an off-ramp to settle. */
   depositAddress?: string;
+  /**
+   * WHICH CHAIN THAT ADDRESS IS ON.
+   *
+   * Server-derived from the quote. Sending USDC on the wrong chain to a rail
+   * deposit address loses it permanently, and an address alone does not tell a
+   * user which network it belongs to - a base58 string is Solana, but nobody
+   * should be asked to know that.
+   */
+  network?: string;
+  /** When an unfunded order closes itself. Absent once funded or finished. */
+  expiresAt?: string;
+  /** Whether the user may cancel right now. Decided by the server. */
+  cancellable?: boolean;
   virtualAccount?: unknown;
   metadata?: Record<string, unknown>;
   timeline?: unknown;

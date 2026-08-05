@@ -2168,3 +2168,60 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .field-hint.danger {
   color: var(--danger);
 }
+
+/* DEPOSIT INSTRUCTION - network, deadline, address, and a way out.
+ *
+ * Reported against a sell showing a bare deposit address: "the network should
+ * show here telling the user which network chain they would send to", and
+ * "seems like a stale sell".
+ *
+ * READING ORDER IS THE SAFETY FEATURE. Network sits ABOVE the address, because
+ * a user who has already copied the address has stopped reading. Sending USDC
+ * on the wrong chain to a rail deposit address loses it permanently, so the
+ * chain is stated twice - as a chip before the address, and inside the warning
+ * after it.
+ *
+ * Mobile stacks the head, the network row and the actions; the address already
+ * wraps via word-break:break-all. Buttons go full width in a column so the
+ * destructive one is never a mis-tap away from Copy.
+ */
+.deposit-instruction{display:grid;gap:10px;margin-top:14px;padding:15px;border:1px solid rgba(116,221,190,.2);border-radius:15px;background:linear-gradient(180deg,rgba(116,221,190,.06),rgba(8,13,20,.9));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.deposit-instruction-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.deposit-instruction-head strong{font-size:14.5px;color:#eef3f7;letter-spacing:-.01em}
+/* Neutral until it matters. Amber only under two hours, so the colour still
+   means something when it appears. */
+.deposit-countdown{padding:5px 10px;border-radius:999px;font-size:11px;font-weight:900;letter-spacing:.04em;white-space:nowrap;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);color:#a9b8c7}
+.deposit-countdown.urgent{background:rgba(241,189,114,.14);border-color:rgba(241,189,114,.34);color:#f1bd72}
+.deposit-network-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.deposit-network-label{font-size:9.5px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:#9fb0c2}
+/* The chain name, deliberately the brightest thing in the block after the
+   heading. text-transform:capitalize so 'solana' reads as 'Solana'. */
+.deposit-network-chip{padding:5px 11px;border-radius:999px;background:linear-gradient(135deg,rgba(116,221,190,.2),rgba(76,216,200,.1));border:1px solid rgba(116,221,190,.34);color:#74ddbe;font-size:12.5px;font-weight:900;letter-spacing:.02em;text-transform:capitalize}
+/* Unknown network is a WARNING, not a blank. Amber, because sending without
+   knowing the chain is the exact mistake this block exists to prevent. */
+.deposit-network-unknown{font-size:12px;color:#f1bd72;overflow-wrap:anywhere}
+.deposit-instruction .deposit-address-value{margin:0;user-select:all;cursor:text}
+.deposit-instruction-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.deposit-warning{display:block;font-size:11.5px;line-height:1.5;color:#f1bd72;overflow-wrap:anywhere}
+.deposit-warning b{text-transform:capitalize;color:#f7d9a8}
+.deposit-note{display:block;font-size:11px;line-height:1.5;color:#8b9aab;overflow-wrap:anywhere}
+/* Destructive action. Muted by default rather than a solid red block: this is
+   a legitimate everyday choice, not an alarm - it only needs to be clearly
+   NOT the primary one. */
+.danger-btn{appearance:none;font:inherit;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 13px;border-radius:11px;border:1px solid rgba(240,120,120,.36);background:rgba(240,120,120,.13);color:#f08787;font-weight:850;line-height:1;transition:background .16s ease,border-color .16s ease,transform .16s ease}
+.danger-btn:hover:not(:disabled){background:rgba(240,120,120,.2);border-color:rgba(240,120,120,.5)}
+.danger-btn:active:not(:disabled){transform:translateY(1px)}
+.danger-btn:disabled{opacity:.6;cursor:not-allowed}
+.danger-btn:focus-visible{outline:2px solid rgba(240,120,120,.6);outline-offset:2px}
+.danger-btn.small{padding:7px 11px;font-size:11.5px}
+
+@media(max-width:640px){
+  .deposit-instruction{padding:13px;gap:9px}
+  .deposit-instruction-head{display:grid;grid-template-columns:1fr;gap:7px}
+  .deposit-countdown{justify-self:start}
+  /* Column, full width: the destructive button must never sit a thumb-width
+     from Copy on a phone. */
+  .deposit-instruction-actions{display:grid;grid-template-columns:1fr;gap:8px}
+  .deposit-instruction-actions>button{width:100%;min-height:40px}
+  .deposit-instruction .deposit-address-value{font-size:11.5px}
+}

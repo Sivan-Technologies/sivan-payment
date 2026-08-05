@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { badRequest, forbidden } from '../../shared/errors.js';
 import { parseBody } from '../../shared/validation.js';
 import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
-import { acceptNgnQuote, acceptNgnQuoteSchema, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
+import { acceptNgnQuote, acceptNgnQuoteSchema, cancelNgnTransfer, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
 import {
@@ -72,6 +72,23 @@ export async function ngnRoutes(app: FastifyInstance) {
   app.get('/api/users/:userId/ngn-transfers', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await listNgnTransfers({ userId }) };
+  });
+
+  /**
+   * Let a user close an off-ramp they have decided not to fund.
+   *
+   * There was no way to do this at all - an unfunded sell sat there until the
+   * 24h reconciler swept it, showing a live deposit address for an order the
+   * user had already abandoned. Reported as "seems like a stale sell".
+   *
+   * ensureOwnUser as well as the service-level ownership check: cancelling is
+   * a state change on someone's money, and one guard is not enough.
+   */
+  app.post('/api/users/:userId/ngn-transfers/:id/cancel', async (request) => {
+    const { userId, id } = request.params as { userId: string; id: string };
+    ensureOwnUser(request, userId);
+    const body = (request.body ?? {}) as { reason?: string };
+    return { data: await cancelNgnTransfer(id, { userId, actorId: userId, reason: body.reason }) };
   });
 
 

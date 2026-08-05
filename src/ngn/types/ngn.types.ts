@@ -16,6 +16,14 @@ export type NgnTransferStatus =
   | 'completed'
   | 'failed'
   | 'expired'
+  /**
+   * The USER changed their mind, as opposed to 'expired' where the clock ran
+   * out. Kept distinct deliberately: "I cancelled this" and "Sivan closed this
+   * because you did not fund it" are different facts, and collapsing them
+   * would make the off-ramp funnel unreadable - you could no longer tell
+   * abandonment from a UX problem.
+   */
+  | 'cancelled'
   | 'requires_review';
 
 export interface NgnControlsRecord {
