@@ -2461,6 +2461,14 @@ button.activity-row:focus-visible{outline:2px solid rgba(116,221,190,.55);outlin
    an orphaned logo on the next line reads as part of the timestamp.
    The 3px gap is tighter than the surrounding " · " separators on purpose, so
    the pair groups as one token rather than competing with them. */
+/* Explorer link on a transaction summary.
+   inline-flex so the chain mark sits on the text baseline rather than hanging
+   below it, and so the whole thing stays one tap target on a phone. Sized as a
+   block rather than inline because it is the primary action on that card - the
+   one thing a user can do to verify their money themselves. */
+.transaction-timeline-card .explorer-link{display:inline-flex;align-items:center;gap:7px;margin:12px 0 4px;text-decoration:none}
+.transaction-timeline-card .explorer-link svg{flex:0 0 auto;display:block}
+
 .activity-network-tag{display:inline-flex;align-items:center;gap:3px;vertical-align:-2px}
 /* flex-shrink:0 because the parent <small> ellipsises. Without it a long label
    squashes the mark into a sliver before any text is clipped, and a

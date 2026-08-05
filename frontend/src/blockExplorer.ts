@@ -144,3 +144,34 @@ export function shortHash(value?: string): string {
   if (value.length <= 20) return value;
   return `${value.slice(0, 10)}…${value.slice(-8)}`;
 }
+
+/**
+ * A chain id rendered for a human.
+ *
+ * Chain ids are internal strings. Shown raw they read as a typo - a rendered
+ * screenshot of the transaction panel caught "Sent on solana" and a Network
+ * field reading "base", on the screen where a user is checking where their
+ * money went. Capitalisation is not decoration there; it is the difference
+ * between a product that looks maintained and one that does not.
+ *
+ * Lives here rather than in a component so the panel, the row and anything
+ * added later agree. The backend has its own copy in
+ * deposit-notification.service.ts, deliberately duplicated rather than shared:
+ * a backend import of frontend source is what broke the production build once
+ * already (see tsconfig.json).
+ */
+export function networkLabel(chain?: string): string {
+  const key = String(chain ?? '').trim().toLowerCase();
+  const map: Record<string, string> = {
+    base: 'Base',
+    ethereum: 'Ethereum',
+    solana: 'Solana',
+    polygon: 'Polygon',
+    arbitrum: 'Arbitrum',
+    avalanche_c_chain: 'Avalanche',
+    tron: 'Tron',
+  };
+  // Unknown chains still get their underscores removed and a capital, so a new
+  // network reads as a name rather than as a database column.
+  return map[key] ?? key.replaceAll('_', ' ').replace(/^\w/, (c) => c.toUpperCase());
+}

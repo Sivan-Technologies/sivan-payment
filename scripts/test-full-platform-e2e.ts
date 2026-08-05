@@ -257,6 +257,7 @@ const paymentSteps: Step[] = [
   { name: 'React hook order (guards React #310)', cwd: paymentRoot, command: 'npm run test:react-hook-order' },
   { name: 'Unified activity feed', cwd: paymentRoot, command: 'npm run test:activity-feed' },
   { name: 'Activity chain marks', cwd: paymentRoot, command: 'npm run test:activity-network-logo' },
+  { name: 'Transaction detail panel (a selected row shows detail)', cwd: paymentRoot, command: 'npm run test:transaction-detail-panel' },
   { name: 'Dashboard KPIs', cwd: paymentRoot, command: 'npm run test:dashboard-kpis' },
   { name: 'Dashboard notice', cwd: paymentRoot, command: 'npm run test:dashboard-notice' },
   { name: 'Dashboard setup card', cwd: paymentRoot, command: 'npm run test:dashboard-setup-card' },

@@ -1,7 +1,9 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord } from '../../types';
+import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord, WalletDepositRecord } from '../../types';
 import { buildActivityFeed, filterActivity, searchActivity, type ActivityRow } from '../../activityFeed';
 import { ActivityRowItem } from '../activity/ActivityRowItem';
+import { explorerLink, networkLabel, shortHash } from '../../blockExplorer';
+import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
@@ -12,7 +14,7 @@ function Badge({ children, status }: { children: string; status?: string }) { re
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0,8)}…${value.slice(-6)}`; }
 
-export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], balanceTransfers = [], supplierPayments = [], virtualAccountTransactions = [], initialSelectedId, onStart, onBuy, onRefresh }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; /** Crypto sends, supplier payouts and virtual-account deposits appeared on NEITHER screen before this - not even under View all. */ balanceTransfers?: BalanceTransferRecord[]; supplierPayments?: SupplierPaymentRecord[]; virtualAccountTransactions?: VirtualAccountTransactionRecord[]; /** Row to open on arrival, set when a dashboard row was clicked. */ initialSelectedId?: string; onStart: () => void; onBuy: () => void; /** Re-reads transfers after a cancel, so the row reflects what the SERVER decided rather than what we hoped. */ onRefresh?: () => Promise<void> }) {
+export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], balanceTransfers = [], supplierPayments = [], virtualAccountTransactions = [], walletDeposits = [], networkMode, initialSelectedId, onStart, onBuy, onRefresh }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; /** Crypto sends, supplier payouts and virtual-account deposits appeared on NEITHER screen before this - not even under View all. */ balanceTransfers?: BalanceTransferRecord[]; supplierPayments?: SupplierPaymentRecord[]; virtualAccountTransactions?: VirtualAccountTransactionRecord[]; /** Inbound deposits. Were on the DASHBOARD feed but not here - the same divergence this file's own comment warns about, reintroduced when deposits shipped. */ walletDeposits?: WalletDepositRecord[]; /** Testnet badging on explorer links. Server-stated, never guessed. */ networkMode?: 'mainnet' | 'testnet'; /** Row to open on arrival, set when a dashboard row was clicked. */ initialSelectedId?: string; onStart: () => void; onBuy: () => void; /** Re-reads transfers after a cancel, so the row reflects what the SERVER decided rather than what we hoped. */ onRefresh?: () => Promise<void> }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'in' | 'out' | 'pending'>('all');
   /**
@@ -27,8 +29,8 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
    * vocabulary now, so the two screens cannot drift apart again.
    */
   const feed = useMemo(
-    () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions }),
-    [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions]
+    () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits }),
+    [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits]
   );
 
   /**
@@ -152,7 +154,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
               different horizontal positions and you cannot see both at once.
               The shared row shows label, amount and status in one line that
               reflows instead. */}
-        <div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
+        <div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
 }
 
 /**
@@ -255,7 +257,41 @@ function DepositInstruction({ transaction, onCancel }: { transaction: CustomerTr
   </div>;
 }
 
-function TransactionTimelinePanel({ transaction, assistantAnswer, assistantLoading, onAskSivanAssistant, onCancelTransfer }: { transaction: CustomerTransactionRow | null; assistantAnswer?: any; assistantLoading?: boolean; onAskSivanAssistant?: () => void; onCancelTransfer?: (id: string) => Promise<void> | void }) {
+/**
+ * One sentence explaining what this transaction IS, for rows that have no
+ * server-built timeline.
+ *
+ * Written per kind rather than per status: a user opening a row wants to know
+ * what happened to their money, and the status badge beside it already says
+ * where it has got to. Deliberately does not promise timing - Sivan does not
+ * control when a chain confirms, and a guessed ETA that passes is worse than
+ * no ETA at all.
+ */
+function activitySummaryExplanation(row: ActivityRow): string {
+  const network = row.network ? networkLabel(row.network) : 'the network';
+  if (row.kind === 'balance_transfer') {
+    if (row.state === 'success') return `Sent on ${network}. The recipient has the funds and the transaction is confirmed on chain.`;
+    if (row.state === 'failed') return `This send did not go through, and the amount was returned to your balance. Nothing left your wallet.`;
+    return `Submitted to ${network} and waiting for confirmation. Your balance already reflects it, and it cannot be reversed once broadcast.`;
+  }
+  if (row.kind === 'wallet_deposit') {
+    if (row.state === 'success') return `Received on ${network} and confirmed. It is part of your spendable balance.`;
+    return `We have seen this deposit on ${network} and it is still confirming. You do not need to do anything.`;
+  }
+  if (row.kind === 'supplier_payment') {
+    if (row.state === 'success') return 'Paid to your supplier.';
+    if (row.state === 'failed') return 'This supplier payment did not complete. The amount has not left your balance.';
+    return 'This supplier payment is being processed. Larger payouts are reviewed by a person before they are released.';
+  }
+  if (row.kind === 'virtual_account_deposit') {
+    return row.state === 'success'
+      ? 'This bank deposit has settled into your balance.'
+      : 'This bank deposit has arrived and is being settled into your balance.';
+  }
+  return row.state === 'success' ? 'This transaction is complete.' : 'This transaction is still in progress.';
+}
+
+function TransactionTimelinePanel({ transaction, activityRow, networkMode, assistantAnswer, assistantLoading, onAskSivanAssistant, onCancelTransfer }: { transaction: CustomerTransactionRow | null; activityRow?: ActivityRow | null; networkMode?: 'mainnet' | 'testnet'; assistantAnswer?: any; assistantLoading?: boolean; onAskSivanAssistant?: () => void; onCancelTransfer?: (id: string) => Promise<void> | void }) {
   // A NAIRA TRANSFER HAS NO BRIDGE TIMELINE, AND MUST NOT FALL THROUGH TO
   // "Select a transaction to see its timeline."
   //
@@ -282,6 +318,84 @@ function TransactionTimelinePanel({ transaction, assistantAnswer, assistantLoadi
         <Kv label="Asset" value={transaction.asset} />
       </div>
       {transaction.depositAddress && <DepositInstruction transaction={transaction} onCancel={onCancelTransfer} />}
+    </aside>;
+  }
+  /**
+   * A SELECTED ROW MUST NEVER SHOW "Select a transaction".
+   *
+   * Reported with two screenshots: a crypto send is clicked, the row takes the
+   * green selected border, and the panel still reads "Select a transaction to
+   * see its timeline." The naira sell beside it opens a full detail view, so
+   * the page looks broken rather than incomplete.
+   *
+   * Cause: `detailRows` is built from withdrawals, on-ramp orders and naira
+   * transfers only. A crypto send, deposit, supplier payout or virtual-account
+   * deposit is not in that map, so detailById.get() returned undefined and this
+   * line rendered the empty state - the same state as "nothing is selected".
+   *
+   * Only Bridge-backed flows carry a step-by-step `timeline`, and inventing one
+   * for a crypto send would be fabricating steps the server never reported. But
+   * the feed row already holds everything that matters for these: amount, asset,
+   * network, status, and the transaction hash. So this renders a real summary
+   * from what we actually know, and links to the block explorer where the user
+   * can verify the send themselves.
+   */
+  if (!transaction?.timeline && activityRow) {
+    const link = explorerLink({
+      network: activityRow.network,
+      // providerReference carries txHash || userOperationHash for a send, and
+      // the tx hash for a deposit. explorerLink returns undefined rather than
+      // guessing when it cannot build an honest URL.
+      txHash: activityRow.providerReference,
+      networkMode,
+    });
+    const chainMark = logoChainFor(activityRow.network);
+    /**
+     * Does this transaction happen on a blockchain at all?
+     *
+     * Three of the seven activity kinds - withdrawals, supplier payouts and
+     * virtual-account deposits - move fiat over bank rails. They correctly
+     * carry no network, and the panel must not offer them a hash field or
+     * promise an explorer link that cannot exist.
+     */
+    const onChain = Boolean(activityRow.network);
+    return <aside className="transaction-timeline-card">
+      <div className="timeline-card-head">
+        <div>
+          <p className="eyebrow">Transaction</p>
+          <h3>{activityRow.label}</h3>
+          <small>{activityRow.statusLabel}</small>
+        </div>
+        <Badge status={activityRow.state === 'success' ? 'completed' : activityRow.state === 'failed' ? 'failed' : 'processing'}>{activityRow.statusLabel}</Badge>
+      </div>
+      <div className="transaction-explanation-box">{activitySummaryExplanation(activityRow)}</div>
+      <div className="timeline-meta-grid">
+        <Kv label="Request ID" value={activityRow.id} />
+        <Kv label="Amount" value={`${activityRow.amount} ${activityRow.currency}`} />
+        <Kv label="Asset" value={activityRow.asset ?? activityRow.currency} />
+        <Kv label="Network" value={onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
+        <Kv label="When" value={new Date(activityRow.createdAt).toLocaleString()} />
+        {/* Only for rows that HAVE a chain. A withdrawal to a bank has no
+            transaction hash and never will, so showing "Pending" there implies
+            one is on its way. Omitted entirely rather than shown as a dash. */}
+        {onChain && <Kv label="Transaction hash" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : 'Pending'} />}
+      </div>
+      {link
+        ? <a className="secondary-btn small explorer-link" href={link.url} target="_blank" rel="noreferrer">
+            {chainMark && <NetworkLogo chain={chainMark} size={14} />}
+            View on {link.label} ↗
+          </a>
+        /* No link rather than a guessed one: a 404 reads to the user as
+           evidence about their money, not about our URL.
+           And the "link is coming" note ONLY for on-chain rows - promising a
+           bank payout an explorer link is a promise that can never come true. */
+        : onChain
+          ? <small className="deposit-note">A block explorer link appears once the network confirms this transaction.</small>
+          : null}
+      <div className="support-reference-box">
+        <strong>Need support?</strong>
+        <span>Share the Request ID so support can trace this transaction faster.</span>
+      </div>
     </aside>;
   }
   if (!transaction?.timeline) return <aside className="transaction-timeline-card"><Empty>Select a transaction to see its timeline.</Empty></aside>;
