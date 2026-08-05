@@ -206,6 +206,7 @@ const paymentSteps: Step[] = [
   { name: 'Transfer confirmation (nothing could finish a send)', cwd: paymentRoot, command: 'npm run test:transfer-confirmation' },
   { name: 'Transfer confirm dialog', cwd: paymentRoot, command: 'npm run test:transfer-confirm' },
   { name: 'Wallet error honesty (no 500 that blames the user)', cwd: paymentRoot, command: 'npm run test:wallet-error-honesty' },
+  { name: 'Wallet key quorum misconfiguration (a permanent fault must not say "try again")', cwd: paymentRoot, command: 'npm run test:wallet-quorum-misconfiguration' },
   { name: 'Gas sponsorship limits and circuit breaker', cwd: paymentRoot, command: 'npm run test:gas-limits' },
   { name: 'Transfer fee curve', cwd: paymentRoot, command: 'npm run test:transfer-fee-policy' },
   { name: 'Transfer fee ledger (money must balance)', cwd: paymentRoot, command: 'npm run test:transfer-fee-ledger' },

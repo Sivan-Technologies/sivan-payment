@@ -152,6 +152,7 @@
     "test:transfer-fee-ledger": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-transfer-fee-ledger.json tsx scripts/test-transfer-fee-ledger.ts",
     "test:transfer-fee-e2e": "tsx scripts/test-transfer-fee-e2e.ts",
     "test:wallet-error-honesty": "PRIVY_APP_ID= PRIVY_APP_SECRET= tsx scripts/test-wallet-error-honesty.ts",
+    "test:wallet-quorum-misconfiguration": "tsx scripts/test-wallet-quorum-misconfiguration.ts",
     "test:transaction-detail-panel": "tsx scripts/test-transaction-detail-panel.ts",
     "diagnose:privy": "tsx scripts/diagnose-privy.ts",
     "test:gas-limits": "tsx scripts/test-gas-limits.ts"

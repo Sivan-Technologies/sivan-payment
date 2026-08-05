@@ -31,6 +31,46 @@ try {
   process.exit(1);
 }
 
+/**
+ * SAY AT BOOT THAT WALLET CREATION IS BROKEN, INSTEAD OF LETTING USERS FIND OUT.
+ *
+ * Live spent an unknown number of hours issuing 503s from
+ * POST /api/users/:id/wallets because PRIVY_AUTHORIZATION_KEY_QUORUM_ID named a
+ * quorum belonging to a different Privy app. The information needed to catch it
+ * was available the instant the process started - one authenticated GET - but
+ * nothing asked until a user did, and by then the answer arrived as a Sentry
+ * event rather than a deploy log.
+ *
+ * Deliberately NON-FATAL. Refusing to boot would take the whole API down -
+ * NGN off-ramp, balances, support, everything - over a fault that breaks ONE
+ * route, and on Render a crash-looping service is harder to diagnose than a
+ * running one with a loud log line. It reports; /health/operational already
+ * carries the same fact as a critical signal for anything that pages.
+ *
+ * Fire-and-forget so a slow Privy cannot delay listen().
+ */
+void (async () => {
+  try {
+    const { resolveActiveWalletProvider } = await import('./wallets/wallet-controls.service.js');
+    if ((await resolveActiveWalletProvider()) !== 'privy') return;
+
+    const { probePrivyCredentials } = await import('./wallets/provider/privy-wallet.provider.js');
+    const probe = await probePrivyCredentials();
+    if (probe.ok) {
+      console.log('[startup.wallet_provider] privy reachable; wallet creation preflight passed.');
+      return;
+    }
+
+    const detail = `[startup.wallet_provider] WALLET CREATION WILL FAIL: ${probe.message ?? `HTTP ${probe.status}`}`;
+    console.error(detail);
+    // Sentry, so it is visible without reading a deploy log that scrolls away.
+    captureError(new Error(detail), { source: 'startup_wallet_preflight', status: probe.status });
+  } catch (error) {
+    // A preflight that crashes the process it is protecting is worse than none.
+    console.error('[startup.wallet_provider] preflight itself failed:', error instanceof Error ? error.message : error);
+  }
+})();
+
 try {
   await app.listen({ port: env.PORT, host: '0.0.0.0' });
 } catch (error) {

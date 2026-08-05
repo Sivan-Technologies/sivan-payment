@@ -110,6 +110,14 @@ function headers(idempotencyKey?: string) {
 
 const IN_PROGRESS = /idempotency key is still in progress/i;
 
+/**
+ * Privy's wording when `additional_signers` names a quorum this app does not
+ * own. Matched on the phrase rather than the status because Privy returns it
+ * as a 400 `invalid_data` - indistinguishable by status from a genuinely
+ * malformed request, and the two need opposite responses.
+ */
+const QUORUM_NOT_FOUND = /key quorum/i;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -185,7 +193,7 @@ async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKe
  * text, which leaks provider internals; the raw message is preserved on
  * `details` for the log and for support.
  */
-function privyError(status: number, message: string): AppError {
+export function privyError(status: number, message: string): AppError {
   // Sivan's credentials are wrong, revoked, or pointed at the wrong app. The
   // user can do nothing about it, and it will not fix itself - so it must not
   // read as "try again".
@@ -201,6 +209,58 @@ function privyError(status: number, message: string): AppError {
     return serviceUnavailable(
       'The wallet service is busy right now. Please try again in a moment.',
       { provider: 'privy', status, providerMessage: message }
+    );
+  }
+
+  /**
+   * THE KEY QUORUM DOES NOT BELONG TO THIS PRIVY APP.
+   *
+   * This is the live failure, and it is worth its own branch because it is
+   * the one 4xx that RETRYING CAN NEVER FIX.
+   *
+   * Reproduced against the real Privy API, not inferred:
+   *
+   *     POST /v1/wallets { additional_signers: [{ signer_id: <bad id> }] }
+   *     -> 400 {"error":"Unable to find the specified key quorums for this
+   *              app...","code":"invalid_data"}
+   *
+   * Live was carrying PRIVY_AUTHORIZATION_KEY_QUORUM_ID
+   * "4852a189a600d3364dff80f4c1ffa597", which returns 404 from
+   * GET /v1/key_quorums/{id} on app cms5yve2000rv0cl1m2xk4ejo. Every single
+   * wallet creation sent it as additional_signers, so every single one failed.
+   *
+   * It landed in the generic 4xx branch above, whose message ends "Please try
+   * again or contact support." The first half of that is a lie: the value is
+   * an environment variable, so the hundredth attempt fails exactly like the
+   * first. Users retried, Sentry filled with identical events, and the text
+   * gave nobody - user or operator - the one fact that ends it.
+   *
+   * NOTE WHAT THIS DELIBERATELY DOES NOT DO: fall back to creating the wallet
+   * WITHOUT additional_signers. That would turn a loud, fixable outage into a
+   * silent permanent one - a signer cannot be attached to an existing wallet
+   * (PATCH needs the owner's signature, which Sivan does not hold), so every
+   * wallet minted during the misconfiguration would be undelegatable forever
+   * and no off-ramp could ever sign for it. Failing is the correct behaviour;
+   * failing INFORMATIVELY is the fix.
+   */
+  if (QUORUM_NOT_FOUND.test(message)) {
+    return serviceUnavailable(
+      'Wallet creation is temporarily unavailable. Our team has been notified.',
+      {
+        provider: 'privy',
+        status,
+        providerMessage: message,
+        misconfiguration: 'PRIVY_AUTHORIZATION_KEY_QUORUM_ID',
+        configuredQuorumId:
+          (process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || '').trim()
+          || '(not set)',
+        privyAppId: process.env.PRIVY_APP_ID || env.PRIVY_APP_ID || '(not set)',
+        fix:
+          'PRIVY_AUTHORIZATION_KEY_QUORUM_ID does not exist in this Privy app. '
+          + 'Key quorum ids are per-app. Set it to a quorum returned by '
+          + 'GET /v1/key_quorums/{id} on THIS app id, and set the matching '
+          + 'PRIVY_AUTHORIZATION_PRIVATE_KEY at the same time. Retrying cannot help.',
+      }
     );
   }
 
