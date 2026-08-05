@@ -119,7 +119,23 @@ export interface NgnNetworkOption {
   network: string;
   asset: 'usdc' | 'usdt';
   minimumDepositUsd?: number;
+  /**
+   * The network fee the SERVER will use to build the withdrawal floor.
+   *
+   * Sent by GET /api/ngn/networks so the client no longer keeps its own copy of
+   * the gas table. Both numbers used to be maintained by hand on either side of
+   * the wire and could disagree - the UI would show one fee while the quote was
+   * priced against another.
+   *
+   * The endpoint omits any network it has no figure for, so in practice this is
+   * always present; it stays optional because a client must not crash on a
+   * server that has not been deployed yet.
+   */
+  gasEstimateUsd?: number;
+  /** Display name, e.g. 'BNB Smart Chain' for the slug 'bsc'. */
+  label?: string;
 }
+
 
 export interface NgnNetworkLists {
   asset: 'usdc' | 'usdt';

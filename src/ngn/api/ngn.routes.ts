@@ -29,6 +29,8 @@ import {
   type StableAsset,
 } from '../provider/breet-networks.js';
 import { breetEnvironment } from '../provider/breet.provider.js';
+import { gasEstimateUsd, networkDisplayLabel } from '../network-costs.js';
+
 import {
   getVerificationLimitMatrix,
   setVerificationLimit,
@@ -303,10 +305,36 @@ export async function ngnRoutes(app: FastifyInstance) {
       .filter((n: any) => n.enabled)
       .map((n: any) => n.network as any);
 
+    /**
+     * A network is only offered if we can price BOTH ends of it.
+     *
+     * createNgnQuote() now refuses a chain with no fee estimate rather than
+     * guessing $0.50 (see network-costs.ts). Listing such a chain here would
+     * advertise an option that fails the moment it is picked, so the filter and
+     * the refusal are deliberately driven by the same table.
+     *
+     * The practical effect: an admin enabling a network Sivan has no fee data
+     * for sees it simply not appear, instead of users hitting a dead end after
+     * choosing it.
+     */
     const describe = (networks: readonly any[]) =>
-      networks.map((network) => ({
+      networks
+        .filter((network) => gasEstimateUsd(String(network)) !== undefined)
+        .map((network) => ({
         network,
         asset,
+        /**
+         * Sent so the client stops keeping its own copy of this table.
+         *
+         * The frontend had a duplicate TYPICAL_GAS_USD with its own silent
+         * $0.50 fallback, which could disagree with the server's floor - the UI
+         * would promise one fee while the quote was computed from another.
+         * One source, one number, no drift.
+         */
+        gasEstimateUsd: gasEstimateUsd(String(network)),
+        /** So the UI never has to render a raw slug like 'avalanche_c_chain'. */
+        label: networkDisplayLabel(String(network)),
+
         // Surfaced per network because it is per ASSET, not global, and the
         // user must see it before choosing where to send from.
         //

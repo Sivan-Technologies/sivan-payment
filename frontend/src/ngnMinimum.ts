@@ -85,12 +85,25 @@ export function offrampClears(input: OfframpFloorInput & { amountUsd: number }):
 }
 
 /**
- * Typical gas, in USD, per network.
+ * Typical gas, in USD, per network. A FALLBACK, not the source of truth.
  *
- * Estimates for display only - the real figure comes from the wallet provider
- * at signing time. They are here so the UI can show a floor before the user
- * has picked an amount, and so the ordering (Solana cheapest, Ethereum
- * dearest) is visible at the point of choice.
+ * The authoritative figure now arrives per network on GET /api/ngn/networks,
+ * computed from the same table the server uses to build the withdrawal floor
+ * (src/ngn/network-costs.ts). Prefer `option.gasEstimateUsd` wherever a network
+ * option is in hand; this copy only covers the window before that response
+ * lands, and paths that have a bare network name and no option object.
+ *
+ * WHY THIS NO LONGER GUESSES
+ *
+ * It used to end `?? 0.5`, so an unrecognised chain silently displayed a
+ * 50-cent fee. The server's floor was computed from ITS table, so the two could
+ * disagree - the UI would promise one number while the quote enforced another,
+ * and on a chain dearer than the guess the user is told a withdrawal will clear
+ * when it will not. That failure lands after the money has moved: held by the
+ * provider, uncredited, flag fee charged.
+ *
+ * `undefined` now means "we do not know". Callers must SAY so - or say nothing
+ * - rather than print a number that is not real.
  *
  * Ethereum is deliberately included despite being poor value: $2-10 of gas
  * against a $15 minimum is 13-66% of a small withdrawal. Showing the number is
@@ -104,9 +117,10 @@ export const TYPICAL_GAS_USD: Record<string, number> = {
   polygon: 0.01,
 };
 
-export function typicalGasUsd(network: string): number {
-  return TYPICAL_GAS_USD[network] ?? 0.5;
+export function typicalGasUsd(network: string): number | undefined {
+  return TYPICAL_GAS_USD[String(network ?? '').toLowerCase()];
 }
+
 
 /**
  * Does this quote breach the user's remaining 30-day headroom?

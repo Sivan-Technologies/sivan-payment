@@ -145,7 +145,8 @@ export function NgnPayoutForm({
    * USDC on Base was quoted, shown a minimum, and handed a Solana deposit
    * address - the wrong chain, silently, with funds sent to it unrecoverable.
    */
-  networkOptions: Array<{ network: string; minimumDepositUsd?: number }>;
+  networkOptions: Array<{ network: string; minimumDepositUsd?: number; gasEstimateUsd?: number; label?: string }>;
+
   onNetworkChange?: (network: string) => void;
   asset: 'usdc' | 'usdt';
 
@@ -187,10 +188,29 @@ export function NgnPayoutForm({
   const [now, setNow] = useState(Date.now());
   const [fundingSource, setFundingSource] = useState<NgnFundingSource>('balance');
 
-  const estimatedGasUsd = typicalGasUsd(network);
+  /**
+   * The network fee, taken from the SERVER's own table.
+   *
+   * The client used to keep a private copy with a `?? 0.5` fallback for any
+   * chain it did not recognise, while the server computed the withdrawal floor
+   * from its own. Two hand-maintained tables on either side of the wire: the
+   * hint below could advertise one minimum while the quote enforced another,
+   * and on a chain dearer than the guess the difference lands as a deposit
+   * held under Breet's minimum.
+   *
+   * `undefined` is now a real state - "we do not know this chain's fee" - and
+   * every consumer below is required to handle it rather than print a number
+   * that is not real. The local lookup remains only for the window before the
+   * network list arrives.
+   */
+  const estimatedGasUsd = useMemo(() => {
+    const fromServer = (networkOptions ?? []).find((option) => option?.network === network)?.gasEstimateUsd;
+    return fromServer ?? typicalGasUsd(network);
+  }, [networkOptions, network]);
 
   /**
    * The chains offered, de-duplicated and stably ordered.
+
    *
    * The server composes this list from two sources (admin's enabled networks
    * and what the provider settles), so a repeat is possible; a duplicate key
@@ -293,9 +313,18 @@ export function NgnPayoutForm({
   const overLimit = exceedsRemaining(quotedNgn, remainingNgn);
 
   const naira = (value: number) => `₦${value.toLocaleString('en-NG')}`;
-  const floorVerdict = breetMinimumUsd !== undefined && amountUsd > 0
+  /**
+   * Needs BOTH the provider minimum and the network fee to mean anything.
+   *
+   * Computing it with a missing gas figure defaulted to zero would understate
+   * the floor by exactly the fee, which is the direction that lets an amount
+   * through and gets it flagged on arrival. With either input unknown there is
+   * no verdict, the hint below says nothing, and getQuote refuses.
+   */
+  const floorVerdict = breetMinimumUsd !== undefined && estimatedGasUsd !== undefined && amountUsd > 0
     ? offrampClears({ amountUsd, breetMinimumUsd, estimatedGasUsd })
     : undefined;
+
 
   /**
    * Selling more than the balance holds, caught while typing.
@@ -324,8 +353,21 @@ export function NgnPayoutForm({
      */
     if (!network) return setError('Choose the network you hold your crypto on.');
 
+    /**
+     * An unknown network fee is a refusal, not a pass.
+     *
+     * floorVerdict is undefined both when the amount is fine and when we could
+     * not compute a floor at all, so testing it alone lets an unpriced chain
+     * through unchecked - the one case where the deposit is most likely to
+     * land under Breet's minimum and be held.
+     */
+    if (estimatedGasUsd === undefined) {
+      return setError(`We could not check network fees for ${networkLabel(network)} just now. Try again shortly.`);
+    }
+
     // Checked before spending a quote on an amount that cannot settle.
     if (floorVerdict && !floorVerdict.clears) return setError(floorVerdict.reason ?? 'Amount is below the minimum.');
+
     /**
      * Refused BEFORE the quote, not after acceptance.
      *
@@ -580,9 +622,12 @@ export function NgnPayoutForm({
             {floorVerdict && !floorVerdict.clears && (
               <span className="field-hint danger">{floorVerdict.reason}</span>
             )}
-            {breetMinimumUsd !== undefined && !amount && (
+            {/* Only quotable with a real fee. Without one this said "network
+                fee included" over a figure computed from a guess. */}
+            {breetMinimumUsd !== undefined && estimatedGasUsd !== undefined && !amount && (
               <span className="field-hint">Minimum about ${offrampClears({ amountUsd: 0, breetMinimumUsd, estimatedGasUsd }).minimumUsd.toFixed(2)} on {networkLabel(network)}, network fee included.</span>
             )}
+
             {/* The ceiling, at the moment the amount is entered - which is
                 where it actually changes what someone types. Rendered only
                 when the server has told us the number. */}

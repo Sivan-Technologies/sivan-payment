@@ -28,7 +28,8 @@ import {
   clearAssetIdCache,
   breetMinimumDepositUsd,
 } from '../src/ngn/provider/breet-networks.js';
-import { typicalGasUsd } from '../src/ngn/service/ngn-quotes.service.js';
+import { gasEstimateUsd } from '../src/ngn/network-costs.js';
+
 
 let pass = 0;
 let fail = 0;
@@ -150,15 +151,32 @@ console.log('\nTHE QUOTE ACTUALLY CARRIES A GAS ESTIMATE');
   // ever wrote it - the quote schema had no `network` field at all, so gas was
   // unknowable and the floor was computed with gas = 0. That is precisely the
   // input the buffer exists to account for.
-  check('base has a real estimate', typicalGasUsd('base') === 0.02, String(typicalGasUsd('base')));
-  check('solana is near-free', typicalGasUsd('solana') === 0.001);
-  check('ethereum is visibly dearer', typicalGasUsd('ethereum') >= 1);
-  check('an unknown network gets a cautious default, not zero',
-    typicalGasUsd('nonsense-chain') > 0, String(typicalGasUsd('nonsense-chain')));
+  check('base has a real estimate', gasEstimateUsd('base') === 0.02, String(gasEstimateUsd('base')));
+  check('solana is near-free', gasEstimateUsd('solana') === 0.001);
+  check('ethereum is visibly dearer', (gasEstimateUsd('ethereum') ?? 0) >= 1);
+
+  /**
+   * THIS ASSERTION USED TO SAY THE OPPOSITE, AND IT WAS WRONG.
+   *
+   * It read "an unknown network gets a cautious default, not zero" and passed
+   * because typicalGasUsd() returned 0.5 for anything it did not recognise.
+   * $0.50 is not cautious on a chain that costs $5 - it UNDERSTATES the floor,
+   * which is the precise direction that lets a sub-minimum deposit through and
+   * gets the user's money held uncredited.
+   *
+   * The enabled-network list is admin-editable at runtime while this table
+   * ships with the build, so "a chain we have no figure for" is a state the
+   * product can genuinely reach. It must now be refused, not guessed at.
+   */
+  check('an unknown network yields NO estimate, so callers must refuse',
+    gasEstimateUsd('nonsense-chain') === undefined, String(gasEstimateUsd('nonsense-chain')));
+  check('casing does not create an unknown network',
+    gasEstimateUsd('BASE') === 0.02, String(gasEstimateUsd('BASE')));
 
   // Zero gas understates what ARRIVES, which is the number Breet measures
   // against its minimum.
-  const withGas = offrampClears({ amountUsd: 15.10, breetMinimumUsd: 15, estimatedGasUsd: typicalGasUsd('base') });
+  const withGas = offrampClears({ amountUsd: 15.10, breetMinimumUsd: 15, estimatedGasUsd: gasEstimateUsd('base')! });
+
   const withoutGas = offrampClears({ amountUsd: 15.10, breetMinimumUsd: 15, estimatedGasUsd: 0 });
   check('gas changes the arriving amount', withGas.arrivesUsd < withoutGas.arrivesUsd,
     `${withGas.arrivesUsd} vs ${withoutGas.arrivesUsd}`);

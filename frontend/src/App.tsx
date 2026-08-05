@@ -1531,8 +1531,31 @@ export default function App() {
       let estimatedGasUsd: number | undefined;
 
       if (isNgnPayout) {
-        estimatedGasUsd = typicalGasUsd(data.sourceChain);
-        const breetMinimumUsd = ngnNetworks?.offramp.find((option) => option.network === data.sourceChain)?.minimumDepositUsd;
+        const networkOption = ngnNetworks?.offramp.find((option) => option.network === data.sourceChain);
+
+        /**
+         * The SERVER's fee estimate wins.
+         *
+         * It is the figure the quote's floor is actually built from, so taking
+         * it from the same response removes any chance of the UI promising one
+         * number while the backend enforces another. The local table is only a
+         * fallback for a server that predates this field.
+         */
+        estimatedGasUsd = networkOption?.gasEstimateUsd ?? typicalGasUsd(data.sourceChain);
+        const breetMinimumUsd = networkOption?.minimumDepositUsd;
+
+        /**
+         * No fee estimate means no withdrawal - it used to mean a $0.50 guess.
+         *
+         * Gas is SUBTRACTED from what arrives, so an understated estimate makes
+         * the floor too low, and a deposit that lands under Breet's minimum is
+         * held uncredited with a flag fee. Refusing costs the user a retry;
+         * guessing can cost them the transfer.
+         */
+        if (estimatedGasUsd === undefined) {
+          throw new Error('Network fees for that chain are unavailable right now. Try again shortly.');
+        }
+
 
         if (breetMinimumUsd === undefined) {
           // Refuse rather than guess. A floor set too low is precisely what
@@ -1604,11 +1627,18 @@ export default function App() {
       bankId: account.bankId,
       accountNumber: account.accountNumber,
       minimumUsd: ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd,
-      estimatedGasUsd: typicalGasUsd(ngnNetwork),
+      /**
+       * Prefer the server's number; fall back to the local table when it has
+       * not arrived yet. Both can still yield undefined - which is honest when
+       * we genuinely do not know - but most paths have already refused by this
+       * point if the network has no fee, so in practice this is populated.
+       */
+      estimatedGasUsd: ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.gasEstimateUsd ?? typicalGasUsd(ngnNetwork),
       // Carried so the review screen can say which of the two things is about
       // to happen. The user chose it; the confirmation should reflect it back.
       fundingSource
     });
+
     setDepositResult(null);
   }
 

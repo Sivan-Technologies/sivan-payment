@@ -11,7 +11,9 @@ import { decide, requiresBridgeCustomer } from '../../kyc/service/verification-p
 import { getVerificationState, getCumulativeNgnVolume } from '../../kyc/service/verification-state.js';
 import { VOLUME_WINDOW_DAYS } from '../../kyc/types/verification.types.js';
 import { applySivanMargin } from './ngn-margin.js';
+import { gasEstimateUsd, networkDisplayLabel } from '../network-costs.js';
 import type { NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
+
 
 export const createNgnQuoteSchema = z.object({
   userId: z.string().min(1),
@@ -34,28 +36,13 @@ export const createNgnQuoteSchema = z.object({
 });
 
 /**
- * Typical gas per network, in USD.
- *
- * Estimates for QUOTING only - the real figure is settled by the wallet
- * provider at signing time. They exist so the minimum-withdrawal floor
- * accounts for gas rather than assuming zero, and so a user sees why Base
- * costs less than Ethereum before choosing.
- *
- * Ethereum is deliberately included despite being poor value: $2-10 against a
- * $15 minimum is 13-66% of a small withdrawal, and showing the number is how a
- * user understands the default.
+ * Gas estimates now live in one place, shared with GET /api/ngn/networks, so
+ * the figure the UI shows and the figure the floor is computed from cannot
+ * drift apart. See network-costs.ts for why an unknown chain returns undefined
+ * instead of a guess.
  */
-const TYPICAL_GAS_USD: Record<string, number> = {
-  solana: 0.001,
-  base: 0.02,
-  ethereum: 5,
-  arbitrum: 0.05,
-  polygon: 0.01,
-};
+export { gasEstimateUsd, NETWORK_GAS_USD } from '../network-costs.js';
 
-export function typicalGasUsd(network: string): number {
-  return TYPICAL_GAS_USD[String(network).toLowerCase()] ?? 0.5;
-}
 
 
 /**
@@ -159,7 +146,31 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
 
   // Resolved once so the stored quote and the gas estimate cannot disagree.
   const quoteNetwork = String(input.network ?? env.BREET_DEFAULT_NETWORK ?? 'solana').toLowerCase();
-  const estimatedGasUsd = typicalGasUsd(quoteNetwork);
+
+  /**
+   * NO FEE ESTIMATE MEANS NO QUOTE. IT USED TO MEAN A GUESS OF $0.50.
+   *
+   * This figure is not decorative - it is added to Breet's minimum to produce
+   * the floor that decides whether a withdrawal can clear. The enabled network
+   * list is admin-configurable at runtime while the fee table ships with the
+   * build, so the two CAN disagree, and the old `?? 0.5` fallback resolved that
+   * disagreement by inventing a number.
+   *
+   * On a chain dearer than the guess that understates the floor, the user is
+   * told a too-small amount will clear, and the failure lands after the money
+   * has moved: funds held by the provider, uncredited, flag fee charged.
+   *
+   * Refusing is the safe direction. An admin who enables a chain without adding
+   * its fee gets a clear refusal on the very first quote instead of a slow leak
+   * of stuck withdrawals.
+   */
+  const estimatedGasUsd = gasEstimateUsd(quoteNetwork);
+  if (estimatedGasUsd === undefined) {
+    throw badRequest(
+      `${networkDisplayLabel(quoteNetwork)} is not available for this right now. Please choose another network.`
+    );
+  }
+
 
   /**
    * WHERE THE BOUGHT CRYPTO IS SENT. THE ON-RAMP HAD NOWHERE TO SEND IT.
