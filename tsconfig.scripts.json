@@ -1,0 +1,39 @@
+{
+  // ---------------------------------------------------------------------------
+  // TYPECHECK-ONLY CONFIG FOR TEST SCRIPTS.
+  //
+  // Split out of tsconfig.json after that config's `scripts/**/*.ts` include
+  // broke the production API deploy - see the comment there for the full chain.
+  //
+  // Scripts are run with `tsx`, never from `dist`, so nothing here needs to be
+  // emitted. `noEmit` says so explicitly rather than relying on the runner.
+  //
+  // This config DOES see frontend source, because that is the point: the test
+  // scripts assert against the real frontend modules, and typechecking them
+  // against a stale copy would be worse than not checking at all. It resolves
+  // frontend/node_modules the way the frontend does, so `qrcode-generator`
+  // and anything added after it are found here and are irrelevant to the API.
+  //
+  // moduleResolution is `bundler` and not `node16` to match the frontend's own
+  // tsconfig. Under node16 the backend cannot import frontend `.tsx` or
+  // extensionless paths at all, which is why the shared modules currently
+  // declare their types structurally instead of importing them.
+  // ---------------------------------------------------------------------------
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts", "frontend/src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

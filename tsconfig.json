@@ -12,6 +12,40 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  // ---------------------------------------------------------------------------
+  // THE PRODUCTION API BUILD COMPILES `src` AND NOTHING ELSE.
+  //
+  // `scripts/**/*.ts` used to be in here too, and it broke the live deploy:
+  //
+  //   frontend/src/qrCode.ts(1,20): error TS2307:
+  //     Cannot find module 'qrcode-generator'
+  //
+  // The chain was indirect enough to be worth writing down. 23 test scripts
+  // import frontend source directly - `scripts/test-receive-qr-decode.ts` does
+  // `import { qrDataUri } from '../frontend/src/qrCode.js'` - so including
+  // `scripts` pulled 8 frontend modules into the API's compilation. Seven of
+  // them are self-contained and it worked by luck for months. Then qrCode.ts
+  // gained a real dependency, `qrcode-generator`, which lives in
+  // frontend/package.json. Render's API service runs `npm install` at the repo
+  // root and never installs frontend/node_modules, so the module genuinely is
+  // not there and the build fails.
+  //
+  // Reproduced exactly by moving frontend/node_modules aside and rebuilding:
+  // that one error, and only that one.
+  //
+  // Adding qrcode-generator to the backend's package.json would also make the
+  // build pass, and it is the wrong fix: it makes the API depend on a browser
+  // QR renderer it never calls, and it leaves the real problem in place - the
+  // next frontend-only dependency breaks production the same way. The API
+  // build should not have been reading frontend source at all.
+  //
+  // Test scripts are still typechecked, just not by the artefact that ships.
+  // `npm run typecheck` runs this config AND tsconfig.scripts.json, so a type
+  // error in a test is still a red build locally and in CI.
+  //
+  // Guarded by `npm run test:build-isolation`, which fails if this include
+  // list ever grows back.
+  // ---------------------------------------------------------------------------
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
