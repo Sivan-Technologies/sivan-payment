@@ -1011,6 +1011,82 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   color: #06130f;
   border-color: transparent;
 }
+
+/* RADIO-BACKED SEGMENTED CONTROL.
+   Visually identical to `.seg button`, but each option is a real
+   <input type="radio"> so the set is announced as a group, the chosen one is
+   announced as chosen, and arrow keys move between them. Used for the network
+   picker, where "which is selected" decides which chain the money leaves on
+   and so must not be a purely visual fact. */
+.seg-fieldset {
+  border: 0;
+  padding: 0;
+  /* fieldset carries a default min-width:min-content that refuses to shrink
+     inside a grid, which overflows the card on narrow screens. */
+  min-width: 0;
+  margin: 0;
+}
+/* Matches the global `label` rule, so the group heading reads as a field
+   label like every other one in the form. */
+.seg-fieldset > legend {
+  padding: 0;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+/* The hint sits directly under the options, not 18px away. */
+.seg-fieldset .seg {
+  margin-bottom: 8px;
+}
+.seg-radio {
+  /* `display: grid` is inherited from the global `label` rule and would stack
+     the hidden input above the text, so the row is re-established here. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 13px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 900;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+/* Hidden from view, NOT from assistive tech or the tab order - `display: none`
+   or `visibility: hidden` would drop it out of the radio group entirely and
+   take the keyboard behaviour with it. Also unsets the global `input` rule,
+   which would otherwise paint a full-width bordered box behind each label. */
+.seg-radio input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.seg-radio:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.seg-radio.active {
+  background: linear-gradient(135deg, var(--green), var(--green-strong));
+  color: #06130f;
+  border-color: transparent;
+}
+/* Focus has to show on the LABEL, because the input that actually holds focus
+   is invisible. Without this a keyboard user arrowing through the group gets
+   no indication of where they are. */
+.seg-radio:focus-within {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
 .quote-box.large { margin-top: 0; }
 @media (max-width: 1180px) { .support-card-grid { grid-template-columns: repeat(2,1fr); } .verification-grid, .payment-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .settings-grid-premium, .support-card-grid, .level-grid { grid-template-columns: 1fr; } .transactions-toolbar, .trade-page-head { flex-direction: column; align-items: stretch; } .verification-step { grid-template-columns: 30px 1fr; } .verification-step form, .verification-step button { grid-column: 2; } }

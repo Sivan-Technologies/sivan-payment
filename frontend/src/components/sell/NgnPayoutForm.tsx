@@ -448,28 +448,47 @@ export function NgnPayoutForm({
             supported chain a picker is noise, but the chain is still NAMED,
             because it decides where the money is sent. */}
         {options.length > 1 ? (
-          <label>Network
-            <div className="seg network-seg" role="group" aria-label="Network to sell on">
+          /* A REAL RADIO GROUP, not buttons that merely look like one.
+ 
+             This was a row of <button> elements with an `active` class. It
+             LOOKED chosen and behaved correctly with a mouse, but nothing in
+             the markup said the options were mutually exclusive: a screen
+             reader announced three unrelated buttons, none of them marked as
+             selected, and arrow keys did not move between them.
+ 
+             For the control that decides WHICH CHAIN THE MONEY LEAVES ON,
+             "which one is currently picked" cannot be a purely visual fact.
+             Native <input type="radio"> in a <fieldset> gives the grouping,
+             the selected state, and arrow-key navigation for free - all of it
+             better than a hand-rolled version would be. */
+          <fieldset className="seg-fieldset">
+            <legend>Network</legend>
+            <div className="seg network-seg">
               {options.map((option) => (
-                <button
-                  type="button"
+                <label
                   key={option.network}
-                  className={option.network === network ? 'active' : ''}
-                  onClick={() => {
-                    if (option.network === network) return;
-                    // The old quote was priced on the old chain, and the
-                    // minimum that justified it no longer applies.
-                    setQuote(null);
-                    setError('');
-                    onNetworkChange?.(option.network);
-                  }}
+                  className={`seg-radio ${option.network === network ? 'active' : ''}`}
                 >
-                  {networkLabel(option.network)}
-                </button>
+                  <input
+                    type="radio"
+                    name="sell-network"
+                    value={option.network}
+                    checked={option.network === network}
+                    onChange={() => {
+                      if (option.network === network) return;
+                      // The old quote was priced on the old chain, and the
+                      // minimum that justified it no longer applies.
+                      setQuote(null);
+                      setError('');
+                      onNetworkChange?.(option.network);
+                    }}
+                  />
+                  <span>{networkLabel(option.network)}</span>
+                </label>
               ))}
             </div>
             <span className="field-hint">Send {asset.toUpperCase()} on the network you actually hold it on. Minimums differ per network.</span>
-          </label>
+          </fieldset>
         ) : network ? (
           <p className="field-hint">Selling {asset.toUpperCase()} on {networkLabel(network)}.</p>
         ) : (
