@@ -10,6 +10,8 @@ import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
 import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, type TransferFeeConfig } from './transfer-fee-policy.js';
+import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
+import { resolveNetworkMode } from '../wallets/network-mode.js';
 
 export type BalanceAsset = 'usdc' | 'usdt';
 /**
@@ -94,6 +96,10 @@ type TransferMetadata = {
   fee?: string;
   /** What actually reaches the recipient: amount - fee. */
   netAmount?: string;
+  /** The one-time recipient-account portion of `fee`, when one applied. */
+  newRecipientFee?: string;
+  /** True when this transfer created the recipient's token account. */
+  createsRecipientAccount?: boolean;
   destinationAddress: string;
   status: BalanceTransferStatus;
   note?: string;
@@ -300,12 +306,21 @@ export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
     percent: fees?.transferFeePercent ?? DEFAULT_TRANSFER_FEE.percent,
     minimumUsd: fees?.transferFeeMinimumUsd ?? DEFAULT_TRANSFER_FEE.minimumUsd,
     maximumUsd: fees?.transferFeeMaximumUsd ?? DEFAULT_TRANSFER_FEE.maximumUsd,
+    newRecipientUsd: fees?.transferFeeNewRecipientUsd ?? DEFAULT_TRANSFER_FEE.newRecipientUsd,
   };
 }
 
-/** Price a transfer against the live admin configuration. */
-export async function quoteTransfer(amount: number) {
-  return quoteTransferFee(amount, await getTransferFeeConfig());
+/**
+ * Price a transfer against the live admin configuration.
+ *
+ * `createsRecipientAccount` is supplied by the caller because determining it
+ * needs an RPC round trip to check whether the recipient already holds the
+ * token. The quote ENDPOINT does not know the destination address, so it
+ * quotes the base fee and the UI shows the surcharge as conditional; the
+ * transfer path resolves it for real before charging.
+ */
+export async function quoteTransfer(amount: number, options: { createsRecipientAccount?: boolean } = {}) {
+  return quoteTransferFee(amount, await getTransferFeeConfig(), options);
 }
 
 export async function updateBalanceTransferControls(input: z.infer<typeof balanceTransferControlsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
@@ -539,7 +554,22 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
    * Quoted from the admin fee tab, through the one shared policy module, so
    * the number charged here is the same one the confirm dialog showed.
    */
-  const quote = await quoteTransfer(input.amount);
+  /**
+   * Does this transfer have to create the recipient's token account?
+   *
+   * Solana only - an EVM transfer has no equivalent cost. Checked here rather
+   * than trusted from the client, because the client cannot be allowed to
+   * decide whether it pays a surcharge.
+   */
+  const createsRecipientAccount = input.network === 'solana'
+    ? await recipientNeedsTokenAccount({
+        recipientAddress: input.destinationAddress,
+        asset: input.asset,
+        production: resolveNetworkMode() === 'mainnet',
+      })
+    : false;
+
+  const quote = await quoteTransfer(input.amount, { createsRecipientAccount });
 
   const transfer: TransferMetadata = {
     transferId: id('btx'),
@@ -549,6 +579,10 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     amount: money(input.amount),
     fee: quote.fee,
     netAmount: quote.netAmount,
+    // Recorded so the ledger, the receipt and support can all tell WHY this
+    // transfer cost more than the one before it to the same amount.
+    newRecipientFee: quote.newRecipientFee,
+    createsRecipientAccount: quote.createsRecipientAccount,
     destinationAddress: input.destinationAddress,
     status: needsReview ? 'pending_review' : 'requested',
     note: input.note,
@@ -743,7 +777,14 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     await createBalanceLedgerEntry({
       userId, asset: transfer.asset, amount: transfer.fee as string, kind: 'fee', status: 'completed',
       sourceType: 'balance_transfer', sourceId: transfer.transferId,
-      description: `Sivan transfer fee on ${transfer.network}`,
+      /**
+       * The description names the surcharge when one applied, so a support
+       * agent reading the ledger can answer "why did this transfer cost more
+       * than my last one" without recomputing the curve.
+       */
+      description: Number(transfer.newRecipientFee ?? 0) > 0
+        ? `Sivan transfer fee on ${transfer.network} (includes ${transfer.newRecipientFee} one-time recipient account setup)`
+        : `Sivan transfer fee on ${transfer.network}`,
       network: transfer.network, destinationAddress: transfer.destinationAddress, transferId: transfer.transferId,
     }, { actorType: 'system', actorId: 'balance_transfer' });
   }

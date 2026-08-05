@@ -3,6 +3,8 @@ import { parseBody } from '../shared/validation.js';
 import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
 import { quoteTransfer } from './balance.service.js';
+import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
+import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { listUserDeposits } from '../deposits/deposit.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber } from '../identity/identity.service.js';
@@ -117,12 +119,32 @@ export async function balanceRoutes(app: FastifyInstance) {
    * if the formula appears in frontend source.
    */
   app.get('/api/balance/transfers/quote', async (request) => {
-    const { amount } = request.query as { amount?: string };
+    const { amount, network, asset, destinationAddress } = request.query as {
+      amount?: string; network?: string; asset?: string; destinationAddress?: string;
+    };
     const parsed = Number(amount);
     if (!Number.isFinite(parsed) || parsed <= 0) {
       return { data: await quoteTransfer(0) };
     }
-    return { data: await quoteTransfer(parsed) };
+
+    /**
+     * The new-recipient surcharge needs the DESTINATION, not just the amount.
+     *
+     * Optional on purpose: the confirm dialog quotes as soon as an amount is
+     * typed, before an address may be complete. Without one the quote returns
+     * the base fee and the UI says the surcharge "may apply"; with one it is
+     * exact. The transfer path re-checks regardless, so a stale or absent
+     * quote can never decide what is actually charged.
+     */
+    const createsRecipientAccount = destinationAddress && String(network).toLowerCase() === 'solana'
+      ? await recipientNeedsTokenAccount({
+          recipientAddress: String(destinationAddress),
+          asset: String(asset ?? 'usdc'),
+          production: resolveNetworkMode() === 'mainnet',
+        })
+      : false;
+
+    return { data: await quoteTransfer(parsed, { createsRecipientAccount }) };
   });
 
   app.get('/api/users/:userId/balance/deposits', async (request) => {

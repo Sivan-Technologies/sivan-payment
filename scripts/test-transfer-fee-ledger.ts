@@ -77,9 +77,9 @@ const provider = getWalletProvider('mock') as any;
 console.log('\n── the controls now come from the fee tab ────────────────────');
 
 const controls = await getBalanceTransferControls();
-check('the minimum send amount is 5, not the old hardcoded 10',
-  controls.minimumSendAmount === 5,
-  `${controls.minimumSendAmount} - it must be admin-settable, not env-only`);
+check('the minimum send amount is 10, and admin-settable',
+  controls.minimumSendAmount === 10,
+  `${controls.minimumSendAmount} - it must come from the fee tab, not an env var`);
 check('ethereum is disabled for transfers',
   !controls.supportedNetworks.includes('ethereum' as any),
   `${controls.supportedNetworks.join(',')} - ethereum loses money at every size`);
@@ -182,14 +182,14 @@ const t2 = await requestBalanceTransfer('user_fee', {
   asset: 'usdc', network: 'base', amount: 10,
   destinationAddress: '0xBBB0000000000000000000000000000000000003',
 } as any);
-check('a 10 USDC transfer pays the 0.10 floor', Number((t2 as any).fee) === 0.1, String((t2 as any).fee));
-check('and nets 9.90', Number((t2 as any).netAmount) === 9.9, String((t2 as any).netAmount));
+check('a 10 USDC transfer pays the 0.25 floor', Number((t2 as any).fee) === 0.25, String((t2 as any).fee));
+check('and nets 9.75', Number((t2 as any).netAmount) === 9.75, String((t2 as any).netAmount));
 
 const ledger2 = await listUserBalanceLedger('user_fee');
 const t2fees = ledger2.filter((e: any) => e.kind === 'fee' && e.transferId === t2.transferId);
 check('the second fee is its own entry', t2fees.length === 1, `${t2fees.length}`);
 const totalRevenue = ledger2.filter((e: any) => e.kind === 'fee').reduce((s: number, e: any) => s + num(e.amount), 0);
-check('total revenue is the sum of both fees', Math.abs(totalRevenue - 0.6) < 1e-9, String(totalRevenue));
+check('total revenue is the sum of both fees', Math.abs(totalRevenue - 0.75) < 1e-9, String(totalRevenue));
 
 console.log('\n── the fee ledger entry is idempotent ────────────────────────');
 
@@ -218,8 +218,8 @@ try {
     destinationAddress: '0xCCC0000000000000000000000000000000000004',
   } as any);
 } catch { refused = true; }
-check('a $2 transfer is refused below the $5 minimum', refused,
-  'at $2 the $0.10 floor would be a 5% rate');
+check('a $6 transfer is refused below the $10 minimum', refused,
+  'below $10 a floor that covers an ATA looks extortionate as a percentage');
 
 console.log('\n── a disabled network is refused ─────────────────────────────');
 

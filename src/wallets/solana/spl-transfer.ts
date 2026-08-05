@@ -201,3 +201,45 @@ export async function buildSplTransfer(input: BuildSplTransferInput): Promise<Bu
     instructionCount: instructions.length,
   };
 }
+
+/**
+ * Will a transfer to this address have to CREATE the recipient's token account?
+ *
+ * Answered before the transfer is priced, because the answer costs Sivan about
+ * $0.31 of sponsored rent and the user is entitled to see that in the quote
+ * rather than discover it afterwards.
+ *
+ * Deliberately separate from buildSplTransfer, which answers the same question
+ * as a side effect of constructing the transaction. Pricing happens earlier -
+ * at the confirm dialog - and must not build and discard a transaction to get
+ * one boolean.
+ *
+ * FAILS CLOSED TO `false`. An RPC error here would otherwise add a surcharge
+ * the user did not incur, and overcharging on an unreadable network is worse
+ * than absorbing the rent: the first is a complaint about being cheated, the
+ * second is $0.31.
+ */
+export async function recipientNeedsTokenAccount(input: {
+  recipientAddress: string;
+  asset: string;
+  production: boolean;
+  rpcOptions?: SolanaRpcOptions;
+}): Promise<boolean> {
+  try {
+    const mintAddress = solanaMintFor(input.asset, input.production);
+    if (!mintAddress) return false;
+
+    const mint = new PublicKey(mintAddress);
+    const recipient = new PublicKey(input.recipientAddress);
+    // allowOwnerOffCurve: an exchange deposit address is often a PDA.
+    const ata = getAssociatedTokenAddressSync(mint, recipient, true);
+
+    const exists = await accountExists(ata.toBase58(), {
+      production: input.production,
+      ...(input.rpcOptions ?? {}),
+    });
+    return !exists;
+  } catch {
+    return false;
+  }
+}

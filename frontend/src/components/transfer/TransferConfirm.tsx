@@ -57,6 +57,17 @@ export interface TransferConfirmDetails {
   netAmount?: string;
   /** Effective rate, e.g. "0.50". Server-stated for the same reason. */
   feePercent?: string;
+  /**
+   * The one-time recipient-account portion of `fee`, when one applies.
+   *
+   * Its own field rather than folded into `fee`, so the dialog can explain the
+   * difference. A user sending $10 sees $0.55 where they paid $0.25 last week;
+   * without a reason on screen that reads as arbitrary, which is the most
+   * common way a fee becomes a support ticket.
+   */
+  newRecipientFee?: string;
+  /** Server-stated. Never inferred client-side from the address. */
+  createsRecipientAccount?: boolean;
   /** Testnet warning, server-stated. Never guessed. */
   networkMode?: 'mainnet' | 'testnet';
 }
@@ -186,6 +197,27 @@ export function TransferConfirm({
                   <span>Recipient gets</span>
                   <strong>{details.netAmount} {asset}</strong>
                 </div>
+                {details.createsRecipientAccount && Number(details.newRecipientFee ?? 0) > 0 && (
+                  <div className="confirm-row confirm-row-note">
+                    {/*
+                      WHY THIS COSTS MORE, in the same breath as the number.
+                      Called a recipient account setup, NOT a network or gas
+                      fee: Sivan sponsors the gas, so naming it after the chain
+                      is a claim a user can disprove on an explorer in thirty
+                      seconds. Creating the account genuinely IS a one-time
+                      on-chain cost.
+
+                      "first time only" is the load-bearing half. Without it a
+                      user sending $10 sees $0.55 where they paid $0.25 last
+                      week and reads it as a price rise; with it, they read it
+                      as a one-off and know the next send is cheaper.
+                    */}
+                    <span>
+                      Includes {details.newRecipientFee} {asset} to set up this recipient on chain
+                      <em> — first time only. Future sends to this address cost less.</em>
+                    </span>
+                  </div>
+                )}
               </>
             )}
             <div className="confirm-row">

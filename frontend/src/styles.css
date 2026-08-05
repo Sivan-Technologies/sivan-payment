@@ -2466,6 +2466,15 @@ button.activity-row:focus-visible{outline:2px solid rgba(116,221,190,.55);outlin
    below it, and so the whole thing stays one tap target on a phone. Sized as a
    block rather than inline because it is the primary action on that card - the
    one thing a user can do to verify their money themselves. */
+/* The "why" line under a fee.
+   Spans both grid columns and drops the right-alignment the sibling rows use:
+   this is a sentence, not a value, and right-aligning it would make it read as
+   another figure. Muted and smaller so it explains without competing with the
+   amount above it. */
+.confirm-row.confirm-row-note{grid-template-columns:1fr;gap:0;padding-top:2px}
+.confirm-row.confirm-row-note span{font-size:11.5px;color:#8b9aab;line-height:1.45;text-align:left}
+.confirm-row.confirm-row-note em{font-style:normal;color:#74ddbe}
+
 .transaction-timeline-card .explorer-link{display:inline-flex;align-items:center;gap:7px;margin:12px 0 4px;text-decoration:none}
 .transaction-timeline-card .explorer-link svg{flex:0 0 auto;display:block}
 

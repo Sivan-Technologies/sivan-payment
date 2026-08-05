@@ -107,9 +107,9 @@ try {
   check('the applied rule is named', q100.body?.data?.appliedRule === 'percent');
 
   const q10 = await get('/api/balance/transfers/quote?amount=10');
-  check('a 10 transfer hits the floor', Number(q10.body?.data?.fee) === 0.1, JSON.stringify(q10.body?.data));
-  check('and reports 1.00% rather than the nominal 0.5%',
-    q10.body?.data?.effectivePercent === '1.00',
+  check('a 10 transfer hits the floor', Number(q10.body?.data?.fee) === 0.25, JSON.stringify(q10.body?.data));
+  check('and reports 2.50% rather than the nominal 0.5%',
+    q10.body?.data?.effectivePercent === '2.50',
     'the UI must show what is actually charged, not the headline rate');
 
   const q5000 = await get('/api/balance/transfers/quote?amount=5000');
@@ -118,6 +118,30 @@ try {
   const qBad = await get('/api/balance/transfers/quote?amount=abc');
   check('a nonsense amount does not 500', qBad.status === 200, String(qBad.status));
   check('and quotes zero rather than NaN', Number(qBad.body?.data?.fee) === 0, JSON.stringify(qBad.body?.data));
+
+  console.log('\n── the new-recipient surcharge over HTTP ─────────────────────');
+
+  /**
+   * No destinationAddress: the quote cannot know whether the recipient exists,
+   * so it returns the base fee and the UI shows the surcharge as conditional.
+   */
+  const qBase = await get('/api/balance/transfers/quote?amount=10');
+  check('a quote with no destination returns the base fee only',
+    Number(qBase.body?.data?.fee) === 0.25 && Number(qBase.body?.data?.newRecipientFee) === 0,
+    JSON.stringify(qBase.body?.data));
+  check('and says so explicitly', qBase.body?.data?.createsRecipientAccount === false);
+
+  check('the base fee is reported separately from the total',
+    qBase.body?.data?.baseFee !== undefined,
+    'the UI needs both to explain the difference');
+
+  console.log('\n── the published table, over HTTP ────────────────────────────');
+
+  for (const [amount, expected] of [[10, 0.25], [50, 0.25], [100, 0.5], [1000, 1]] as const) {
+    const q = await get(`/api/balance/transfers/quote?amount=${amount}`);
+    check(`$${amount} quotes $${expected}`, Number(q.body?.data?.fee) === expected,
+      `got ${q.body?.data?.fee}`);
+  }
 
   console.log('\n── the quote matches what is actually charged ────────────────');
 
@@ -179,10 +203,10 @@ try {
   console.log('\n── the minimum send amount is live too ───────────────────────');
 
   const tooSmall = await post('/api/users/user_e2e/balance/transfers', {
-    asset: 'usdc', network: 'base', amount: 6,
+    asset: 'usdc', network: 'base', amount: 7,
     destinationAddress: '0xCCC0000000000000000000000000000000000004',
   });
-  check('a $6 send is refused under the new $8 minimum',
+  check('a $7 send is refused under the new $8 minimum',
     tooSmall.status >= 400,
     `${tooSmall.status} - the admin minimum must gate the send path`);
   check('and the refusal names the limit',

@@ -172,6 +172,21 @@ export const feeSettingsSchema = z.object({
    * the floor would be 10%.
    */
   transferMinimumSendAmount: z.coerce.number().min(0).max(1_000_000).default(DEFAULT_TRANSFER_MIN_SEND),
+  /**
+   * One-time charge when a transfer must CREATE the recipient's token account.
+   *
+   * A Solana Associated Token Account costs 0.00203928 SOL of rent-exempt
+   * deposit - about $0.31 at SOL $150 - and Sivan sponsors it. The transaction
+   * fee itself is $0.00075, so this is 400x the cost of an ordinary transfer
+   * and is the only gas-related number worth pricing.
+   *
+   * A surcharge rather than a higher floor: a floor big enough to cover rent
+   * charges EVERY transfer for a cost most of them never incur. At a $0.45
+   * floor a $10 send pays 4.5% forever, against Nigerian P2P spreads of 1-3%.
+   * Here the same user pays 2.5% to a known recipient and 5.5% once when they
+   * add a new one.
+   */
+  transferFeeNewRecipientUsd: z.coerce.number().min(0).max(100).default(DEFAULT_TRANSFER_FEE.newRecipientUsd),
 
   bridgeOfframpCostPercent: z.coerce.number().min(0).max(100),
   rateSources: z.array(z.object({ name: z.string().min(1), weightPercent: z.coerce.number().min(0).max(100), live: z.boolean().default(true) })).default([]),
@@ -222,6 +237,7 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     transferFeeMinimumUsd: DEFAULT_TRANSFER_FEE.minimumUsd,
     transferFeeMaximumUsd: DEFAULT_TRANSFER_FEE.maximumUsd,
     transferMinimumSendAmount: DEFAULT_TRANSFER_MIN_SEND,
+    transferFeeNewRecipientUsd: DEFAULT_TRANSFER_FEE.newRecipientUsd,
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
       { name: 'Bridge', weightPercent: 40, live: true },
