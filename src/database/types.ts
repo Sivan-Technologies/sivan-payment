@@ -695,6 +695,61 @@ export interface TransactionReferenceRecord {
   updatedAt: string;
 }
 
+/**
+ * How a deposit came to our attention.
+ *
+ * Stored per row rather than read from configuration, because the detector is
+ * expected to change (balance polling now, RPC webhooks next) and the overlap
+ * window - where both run at once - is exactly when you need to know which
+ * one produced a given row.
+ */
+export type DepositDetectionSource = 'balance_poll' | 'rpc_webhook' | 'privy_webhook' | 'manual';
+
+export type WalletDepositStatus = 'pending' | 'confirmed' | 'failed';
+
+/**
+ * MONEY ARRIVING FROM OUTSIDE SIVAN.
+ *
+ * An exchange withdrawal into a user's Sivan address is the most common way
+ * money enters this product, and before this record existed the system did
+ * nothing about it at all - no row, no feed entry, no notification. See
+ * database/migrations/042_create_wallet_deposits.sql for the full account.
+ *
+ * AN OBSERVATION, NOT A BALANCE. Spendable funds are still computed by reading
+ * the chain in unified-balance.service.ts. These rows record that something
+ * was seen; they are never summed to decide what a user can spend.
+ */
+export interface WalletDepositRecord {
+  id: string;
+  userId: string;
+  /** UserWalletRecord.id this landed in. */
+  walletId: string;
+  /**
+   * Denormalised deliberately. The wallet row can be closed or re-filed under
+   * a different chain string; this is the address the user actually pasted
+   * into an exchange, and the one they will quote to support.
+   */
+  address: string;
+  chain: string;
+  asset: string;
+  /** Human units, six decimals. Never wei or lamports - see the migration. */
+  amount: string;
+  /** Absent for the balance-poll detector, which sees a delta, not a tx. */
+  txHash?: string;
+  sender?: string;
+  blockNumber?: number;
+  blockTimestamp?: string;
+  status: WalletDepositStatus;
+  detectionSource: DepositDetectionSource;
+  /** UNIQUE in Postgres. The whole defence against at-least-once delivery. */
+  idempotencyKey: string;
+  /** Null means a notification is still owed. Stamped to claim the row. */
+  notifiedAt?: string;
+  rawPayload?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UnifiedWebhookLogRecord {
   id: string;
   serviceName: string;
@@ -787,4 +842,5 @@ export interface DatabaseShape {
   ngnQuotes: NgnQuoteRecord[];
   ngnTransfers: NgnTransferRecord[];
   ngnWebhooks: NgnWebhookRecord[];
+  walletDeposits: WalletDepositRecord[];
 }

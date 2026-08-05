@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NgnTransferRecord } from './types';
+import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NgnTransferRecord, WalletDepositRecord } from './types';
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { buildActivityFeed } from './activityFeed';
@@ -68,6 +68,8 @@ export default function App() {
    */
   const [unifiedBalance, setUnifiedBalance] = useState<UnifiedBalance | null>(null);
   const [balanceTransfers, setBalanceTransfers] = useState<BalanceTransferRecord[]>([]);
+  // Inbound deposits - money arriving from outside Sivan, the seventh feed source.
+  const [walletDeposits, setWalletDeposits] = useState<WalletDepositRecord[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [supplierPayments, setSupplierPayments] = useState<SupplierPaymentRecord[]>([]);
   const [userPreferences, setUserPreferences] = useState<UserPreferencesRecord | null>(null);
@@ -378,8 +380,8 @@ export default function App() {
    * already loaded here; only two were being handed on.
    */
   const activityFeed = useMemo(
-    () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions }),
-    [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions]
+    () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits }),
+    [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits]
   );
   /**
    * Which row the Transactions page should open on, set when a dashboard row
@@ -441,6 +443,7 @@ export default function App() {
     setBalance(null);
     setUnifiedBalance(null);
     setBalanceTransfers([]);
+    setWalletDeposits([]);
     setSuppliers([]);
     setSupplierPayments([]);
     setUserPreferences(null);
@@ -642,6 +645,7 @@ export default function App() {
     setBalance,
     setUnifiedBalance,
     setBalanceTransfers,
+    setWalletDeposits,
     setSuppliers,
     setSupplierPayments,
     setSupportTickets,

@@ -3,6 +3,8 @@ import { env } from './config/env.js';
 import { captureError, flushMonitoring, initMonitoring } from './monitoring/sentry.js';
 import { reconcileNgnSettlements } from './ngn/service/ngn-settlement-reconciler.js';
 import { confirmBalanceTransfers } from './balances/transfer-confirmation.service.js';
+import { scanForDeposits } from './deposits/deposit-detection.service.js';
+import { notifyPendingDeposits } from './deposits/deposit-notification.service.js';
 
 initMonitoring();
 
@@ -107,6 +109,78 @@ if (env.TRANSFER_CONFIRM_POLL_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'transfer confirmer failed');
       captureError(error as Error, { source: 'transfer_confirmer' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * NOBODY WAS EVER TOLD THAT MONEY ARRIVED.
+ *
+ * A user sells on an exchange and withdraws USDC to their Sivan address - the
+ * most common way money enters this product for the launch market. The system
+ * did nothing about it: no record, no activity row, no notification. The
+ * balance simply read higher on the next refresh, and if the RPC read happened
+ * to fail it did not even do that, while the user held an exchange receipt
+ * saying the money was sent.
+ *
+ * Two loops, deliberately separate. Detection writes records; notification
+ * delivers them. A failing email provider must not stop deposits being
+ * RECORDED, and a slow wallet sweep must not delay the alert for a deposit that
+ * has already been found. They share only the database.
+ *
+ * Same rules as the two reconcilers above: started outside buildApp() so tests
+ * do not spawn timers that talk to a live chain, every failure swallowed and
+ * logged, unref'd, and one run at boot because a deploy is exactly when an
+ * event is most likely to have been missed.
+ */
+if (env.DEPOSIT_POLL_SECONDS > 0) {
+  const intervalMs = env.DEPOSIT_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await scanForDeposits();
+      if (outcome.depositsRecorded > 0) {
+        app.log.info({ recorded: outcome.recorded }, 'inbound deposits detected');
+      }
+      /**
+       * Logged as a warning, not swallowed silently. An unreadable balance is
+       * a deposit we cannot see, so a persistent count here means users are
+       * receiving money the product is blind to - which looks identical to
+       * "no deposits are happening" unless it is surfaced.
+       */
+      if (outcome.unreadable > 0) {
+        app.log.warn(
+          { unreadable: outcome.unreadable, scanned: outcome.walletsScanned },
+          'wallet balances unreadable during deposit scan; deposits on those wallets are invisible'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'deposit scan failed');
+      captureError(error as Error, { source: 'deposit_scan' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+if (env.DEPOSIT_NOTIFY_SECONDS > 0) {
+  const intervalMs = env.DEPOSIT_NOTIFY_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await notifyPendingDeposits();
+      if (outcome.sent > 0) {
+        app.log.info({ sent: outcome.sent }, 'deposit notifications delivered');
+      }
+      if (outcome.failed > 0) {
+        app.log.error(
+          { failed: outcome.failed },
+          'deposit notifications failed to send; the deposits are recorded and visible in-app'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'deposit notifier failed');
+      captureError(error as Error, { source: 'deposit_notifier' });
     }
   };
   setInterval(tick, intervalMs).unref();

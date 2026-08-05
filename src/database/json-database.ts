@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, WalletControlsRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, WalletControlsRecord, WalletDepositRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import { walletServesNetwork } from '../wallets/chain-family.js';
@@ -54,7 +54,8 @@ const emptyDb = (): DatabaseShape => ({
   walletControls: [],
   ngnQuotes: [],
   ngnTransfers: [],
-  ngnWebhooks: []
+  ngnWebhooks: [],
+  walletDeposits: []
 });
 
 export class JsonDatabase {
@@ -606,6 +607,122 @@ export class JsonDatabase {
       open.find((w) => w.chain === network) ??
       open.find((w) => walletServesNetwork(w.chain, network))
     );
+  }
+
+  /**
+   * Every open wallet, across all users.
+   *
+   * The deposit poller needs to sweep wallets, not users. Going via users would
+   * be an N+1 - one listUserWallets call per user - and would silently skip a
+   * wallet whose user row was removed. Wallets are the thing money arrives at,
+   * so they are the thing to enumerate.
+   */
+  async listAllOpenWallets(): Promise<UserWalletRecord[]> {
+    const data = await this.read();
+    return (data.userWallets ?? []).filter((w) => w.status !== 'closed');
+  }
+
+  /**
+   * Find a wallet by the id the PROVIDER knows it by.
+   *
+   * Every other lookup here starts from a userId, because every other caller
+   * already knows whose wallet it wants. A deposit webhook does not: Privy's
+   * wallet.funds_deposited identifies the wallet as `wallet_id` and says
+   * nothing about the user, so without this there is no way to answer "whose
+   * money is this". Kept for the webhook detectors even though the balance
+   * poller does not need it - the poller iterates users and already has one.
+   */
+  async findWalletByProviderWalletId(providerWalletId: string): Promise<UserWalletRecord | undefined> {
+    const data = await this.read();
+    return (data.userWallets ?? []).find((w) => w.providerWalletId === providerWalletId && w.status !== 'closed');
+  }
+
+  /**
+   * Find a wallet by on-chain address, case-insensitively.
+   *
+   * The address is what an RPC webhook keys on, and it is the only identifier
+   * that survives a change of wallet provider - which is the specific reason
+   * address-based detection was preferred over Privy's.
+   *
+   * LOWERCASED ON BOTH SIDES. EVM addresses are hex and arrive in wildly
+   * inconsistent case: EIP-55 checksummed from most tooling, all-lowercase
+   * from some RPC responses, and whatever the user pasted. A case-sensitive
+   * comparison here would silently fail to match a real deposit, which is
+   * indistinguishable from the deposit never arriving. Solana base58 IS
+   * case-sensitive, but lowercasing both sides of a comparison never creates a
+   * false match between two distinct base58 addresses in practice, and being
+   * permissive is the safe direction: a missed deposit is a support ticket
+   * about lost money, a theoretical collision is not a real failure mode here.
+   */
+  async findWalletByAddress(address: string): Promise<UserWalletRecord | undefined> {
+    const data = await this.read();
+    const needle = address.trim().toLowerCase();
+    return (data.userWallets ?? []).find((w) => w.address?.trim().toLowerCase() === needle && w.status !== 'closed');
+  }
+
+  /**
+   * Record a deposit, or return the one already recorded.
+   *
+   * IDEMPOTENT BY CONTRACT, not by convention. Every detector delivers at
+   * least once, and during the poll -> webhook migration two of them run
+   * deliberately at the same time. The caller must be able to hand the same
+   * observation over repeatedly and get one record.
+   *
+   * The JSON store is single-process and mutate() serialises, so a scan is
+   * safe here. Postgres does this with a UNIQUE index instead, because there
+   * a read-then-write genuinely races.
+   */
+  async insertWalletDepositIfNew(record: WalletDepositRecord): Promise<{ record: WalletDepositRecord; created: boolean }> {
+    return this.mutate((data) => {
+      data.walletDeposits = data.walletDeposits ?? [];
+      const existing = data.walletDeposits.find((d) => d.idempotencyKey === record.idempotencyKey);
+      if (existing) return { record: existing, created: false };
+      data.walletDeposits.push(record);
+      return { record, created: true };
+    });
+  }
+
+  async listWalletDeposits(userId: string): Promise<WalletDepositRecord[]> {
+    const data = await this.read();
+    return (data.walletDeposits ?? [])
+      .filter((d) => d.userId === userId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** Deposits nobody has been told about yet. Drives the notifier. */
+  async listUnnotifiedWalletDeposits(limit = 50): Promise<WalletDepositRecord[]> {
+    const data = await this.read();
+    return (data.walletDeposits ?? [])
+      .filter((d) => !d.notifiedAt && d.status !== 'failed')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit);
+  }
+
+  /**
+   * Stamp notifiedAt, but only if it is still unset.
+   *
+   * The guard is what makes a double-send impossible: two notifier ticks that
+   * overlap both try to claim the row, and only the first succeeds. Returns
+   * whether this caller won, so the loser can skip sending.
+   */
+  async markWalletDepositNotified(id: string, at: string): Promise<boolean> {
+    return this.mutate((data) => {
+      const found = (data.walletDeposits ?? []).find((d) => d.id === id);
+      if (!found || found.notifiedAt) return false;
+      found.notifiedAt = at;
+      found.updatedAt = at;
+      return true;
+    });
+  }
+
+  async updateWalletDepositStatus(id: string, status: WalletDepositRecord['status'], at: string): Promise<WalletDepositRecord | undefined> {
+    return this.mutate((data) => {
+      const found = (data.walletDeposits ?? []).find((d) => d.id === id);
+      if (!found) return undefined;
+      found.status = status;
+      found.updatedAt = at;
+      return found;
+    });
   }
 
   async createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord) {

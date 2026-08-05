@@ -20,6 +20,7 @@ interface NgnTransferRecord { id: string; status: string; createdAt: string; dir
 interface BalanceTransferRecord { transferId: string; status: string; createdAt: string; asset: string; amount: string; network?: string; txHash?: string; userOperationHash?: string }
 interface SupplierPaymentRecord { id: string; status: string; createdAt: string; amount: string; sourceAsset?: string; destinationCurrency?: string; providerTransferId?: string; bridgeTransferId?: string; supplier?: { supplierName?: string } | null }
 interface VirtualAccountTransactionRecord { id: string; status: string; createdAt: string; sourceCurrency?: string; destinationCurrency?: string; sourceAmount?: string; destinationAmount?: string; depositReference?: string; depositId?: string }
+interface WalletDepositRecord { id: string; status: string; createdAt: string; asset: string; amount: string; chain: string; txHash?: string; sender?: string; address?: string }
 type TransactionTimeline = Timeline;
 
 /**
@@ -58,7 +59,8 @@ export type ActivityKind =
   | 'ngn_transfer'
   | 'balance_transfer'
   | 'supplier_payment'
-  | 'virtual_account_deposit';
+  | 'virtual_account_deposit'
+  | 'wallet_deposit';
 
 /**
  * WHAT THE USER IS ACTUALLY ASKING, which is not "which table is this in".
@@ -154,6 +156,10 @@ const STATUS_LABELS: Record<string, string> = {
   completed: 'Completed',
   settled: 'Completed',
   success: 'Completed',
+  // A deposit's terminal state. Its own word rather than reusing 'completed':
+  // "Confirmed" is what a user reads on the exchange they withdrew from, so
+  // matching that vocabulary means the two screens agree.
+  confirmed: 'Confirmed',
   failed: 'Failed',
   rejected: 'Rejected',
   cancelled: 'Cancelled',
@@ -161,7 +167,7 @@ const STATUS_LABELS: Record<string, string> = {
   expired: 'Expired',
 };
 
-const SUCCESS_STATUSES = new Set(['completed', 'settled', 'success', 'crypto_sent']);
+const SUCCESS_STATUSES = new Set(['completed', 'settled', 'success', 'crypto_sent', 'confirmed']);
 const FAILED_STATUSES = new Set(['failed', 'rejected', 'cancelled', 'canceled', 'expired']);
 
 export function activityStatusLabel(status?: string): string {
@@ -188,6 +194,7 @@ export interface ActivitySources {
   balanceTransfers?: BalanceTransferRecord[];
   supplierPayments?: SupplierPaymentRecord[];
   virtualAccountTransactions?: VirtualAccountTransactionRecord[];
+  walletDeposits?: WalletDepositRecord[];
 }
 
 /**
@@ -286,6 +293,43 @@ export function buildActivityFeed(sources: ActivitySources): ActivityRow[] {
       providerReference: b.txHash || b.userOperationHash,
       network: b.network,
       raw: b,
+    });
+  }
+
+  /**
+   * INBOUND DEPOSITS - the most common way money arrives, and the feed could
+   * not show it at all.
+   *
+   * Every other source here is a record Sivan CREATED. A user withdrawing USDC
+   * from an exchange to their Sivan address produces no order, no transfer and
+   * no request - so this feed, whose whole premise is "every way money moves",
+   * was structurally blind to the single most common inbound path. The balance
+   * went up and nothing explained why.
+   *
+   * 'in', not 'internal': this money came from outside and the user's holdings
+   * genuinely increased. A crypto SEND is 'internal' because it moves the
+   * user's own funds between places they control; a deposit from an exchange is
+   * arrival.
+   */
+  for (const d of sources.walletDeposits ?? []) {
+    rows.push({
+      id: d.id,
+      kind: 'wallet_deposit',
+      direction: 'in',
+      label: 'Deposit received',
+      amount: d.amount,
+      currency: upper(d.asset) || 'USDC',
+      asset: upper(d.asset) || 'USDC',
+      status: d.status,
+      statusLabel: activityStatusLabel(d.status),
+      state: activityState(d.status),
+      createdAt: d.createdAt,
+      // Absent for the balance-poll detector, which sees a delta rather than a
+      // transaction. blockExplorer.ts renders no link when there is no hash,
+      // so this degrades to a row without a receipt rather than a broken link.
+      providerReference: d.txHash,
+      network: d.chain,
+      raw: d,
     });
   }
 

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
+import { listUserDeposits } from '../deposits/deposit.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber } from '../identity/identity.service.js';
 
@@ -96,6 +97,18 @@ export async function balanceRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = parseBody(createBalanceTransferSchema, request.body);
     return { data: await requestBalanceTransfer(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Inbound deposits - money arriving from outside Sivan.
+   *
+   * The seventh source for the unified activity feed. Sits under /balance/
+   * alongside the other money endpoints and is authenticated identically, by
+   * the same userId path convention every sibling route uses.
+   */
+  app.get('/api/users/:userId/balance/deposits', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await listUserDeposits(userId) };
   });
 
   app.get('/api/admin/balance/controls', async () => ({ data: await getBalanceTransferControls() }));

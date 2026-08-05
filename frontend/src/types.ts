@@ -195,6 +195,37 @@ export interface BalanceLedgerEntry {
   createdAt: string;
 }
 
+/**
+ * MONEY ARRIVING FROM OUTSIDE SIVAN.
+ *
+ * An exchange withdrawal into the user's Sivan address. The seventh activity
+ * source, and the most common inbound path - see the backend record in
+ * src/database/types.ts and migration 042 for why it did not exist before.
+ *
+ * `txHash` and `sender` are OPTIONAL because the current detector polls
+ * balances and sees a delta rather than a transaction. Code must not assume a
+ * deposit has a receipt; blockExplorer.ts already renders no link when the hash
+ * is absent.
+ */
+export interface WalletDepositRecord {
+  id: string;
+  userId: string;
+  walletId: string;
+  address: string;
+  chain: string;
+  asset: string;
+  amount: string;
+  txHash?: string;
+  sender?: string;
+  blockNumber?: number;
+  blockTimestamp?: string;
+  status: 'pending' | 'confirmed' | 'failed';
+  detectionSource: string;
+  notifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BalanceTransferRecord {
   transferId: string;
   userId: string;

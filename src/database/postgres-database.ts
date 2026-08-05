@@ -4,6 +4,7 @@ import { networksServedByWallet } from '../wallets/chain-family.js';
 import type {
   VerificationLimitOverrideRecord,
   WalletControlsRecord,
+  WalletDepositRecord,
   NgnPayoutAccountRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
@@ -213,6 +214,10 @@ export class PostgresDatabase {
       // service can briefly run new code against a pre-037 schema. A hard
       // failure here would take down every read in the app, not just NGN.
       const ngnPayoutAccounts = await optionalQuery(client, 'select * from payments_ngn_payout_accounts order by created_at asc');
+      // Same reasoning as ngnPayoutAccounts above: optionalQuery so a service
+      // running new code against a pre-042 schema degrades to an empty list
+      // rather than failing every read in the application.
+      const walletDeposits = await optionalQuery(client, 'select * from payments_wallet_deposits order by created_at asc');
 
       return {
         users: users.rows.map(mapUser),
@@ -228,6 +233,7 @@ export class PostgresDatabase {
         ngnQuotes: ngnQuotes.rows.map(mapNgnQuote),
         ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
         ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
+        walletDeposits: walletDeposits.rows.map(mapWalletDeposit),
         userPreferences: userPreferences.rows.map(mapUserPreferences),
         userTwoFactor: userTwoFactor.rows.map(mapUserTwoFactor),
         userTwoFactorRecoveryQuestions: userTwoFactorRecoveryQuestions.rows.map(mapUserTwoFactorRecoveryQuestion),
@@ -1163,6 +1169,156 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  /** Every open wallet. The deposit poller sweeps wallets, not users. */
+  async listAllOpenWallets(): Promise<UserWalletRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_user_wallets where status <> 'closed' order by created_at asc`
+      );
+      return result.rows.map(mapUserWallet);
+    } finally { client.release(); }
+  }
+
+  /** See the JSON implementation for why this lookup has to exist. */
+  async findWalletByProviderWalletId(providerWalletId: string): Promise<UserWalletRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_user_wallets
+          where provider_wallet_id = $1 and status <> 'closed'
+          order by created_at asc limit 1`,
+        [providerWalletId]
+      );
+      return result.rows[0] ? mapUserWallet(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  /**
+   * By address, case-insensitively - lower() on BOTH sides.
+   *
+   * EVM addresses arrive EIP-55 checksummed from most tooling and lowercase
+   * from some RPC responses. A case-sensitive match would miss a real deposit,
+   * which to the user is indistinguishable from the money vanishing.
+   */
+  async findWalletByAddress(address: string): Promise<UserWalletRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_user_wallets
+          where lower(address) = lower($1) and status <> 'closed'
+          order by created_at asc limit 1`,
+        [address.trim()]
+      );
+      return result.rows[0] ? mapUserWallet(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  /**
+   * Record a deposit, or hand back the one already recorded.
+   *
+   * ON CONFLICT DO NOTHING against the unique index on idempotency_key, then
+   * re-select when nothing was inserted. This is the only formulation that is
+   * correct under concurrency: a select-then-insert has a window between the
+   * two statements in which another connection inserts the same key, and that
+   * window is wide open during the poll -> webhook migration when both
+   * detectors are deliberately live.
+   *
+   * `created` tells the caller whether this observation was new, which is what
+   * decides whether anything downstream - a feed row, an email - should
+   * happen at all.
+   */
+  async insertWalletDepositIfNew(record: WalletDepositRecord): Promise<{ record: WalletDepositRecord; created: boolean }> {
+    const client = await this.pool.connect();
+    try {
+      const inserted = await client.query(
+        `insert into payments_wallet_deposits
+           (id, user_id, wallet_id, address, chain, asset, amount, tx_hash, sender,
+            block_number, block_timestamp, status, detection_source, idempotency_key,
+            notified_at, raw_payload, created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+         on conflict (idempotency_key) do nothing
+         returning *`,
+        [
+          record.id, record.userId, record.walletId, record.address, record.chain,
+          record.asset, record.amount, record.txHash ?? null, record.sender ?? null,
+          record.blockNumber ?? null, record.blockTimestamp ?? null, record.status,
+          record.detectionSource, record.idempotencyKey, record.notifiedAt ?? null,
+          record.rawPayload ?? null, record.createdAt, record.updatedAt
+        ]
+      );
+      if (inserted.rows[0]) return { record: mapWalletDeposit(inserted.rows[0]), created: true };
+
+      const existing = await client.query(
+        'select * from payments_wallet_deposits where idempotency_key = $1',
+        [record.idempotencyKey]
+      );
+      return { record: mapWalletDeposit(existing.rows[0]), created: false };
+    } finally { client.release(); }
+  }
+
+  async listWalletDeposits(userId: string): Promise<WalletDepositRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        'select * from payments_wallet_deposits where user_id = $1 order by created_at desc',
+        [userId]
+      );
+      return result.rows.map(mapWalletDeposit);
+    } finally { client.release(); }
+  }
+
+  async listUnnotifiedWalletDeposits(limit = 50): Promise<WalletDepositRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_wallet_deposits
+          where notified_at is null and status <> 'failed'
+          order by created_at asc limit $1`,
+        [limit]
+      );
+      return result.rows.map(mapWalletDeposit);
+    } finally { client.release(); }
+  }
+
+  /**
+   * Claim the row for notification.
+   *
+   * `and notified_at is null` in the WHERE is the concurrency guard: two
+   * overlapping notifier ticks both attempt the update, Postgres serialises
+   * them, and the second matches zero rows. rowCount therefore answers "did I
+   * win the right to send this", which is exactly what the caller needs to
+   * know before sending an email it can never un-send.
+   */
+  async markWalletDepositNotified(id: string, at: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `update payments_wallet_deposits
+            set notified_at = $2, updated_at = $2
+          where id = $1 and notified_at is null`,
+        [id, at]
+      );
+      return (result.rowCount ?? 0) > 0;
+    } finally { client.release(); }
+  }
+
+  async updateWalletDepositStatus(id: string, status: WalletDepositRecord['status'], at: string): Promise<WalletDepositRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'update payments_wallet_deposits set status = $2, updated_at = $3 where id = $1 returning *',
+        [id, status, at]
+      );
+      return result.rows[0] ? mapWalletDeposit(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
   async createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord) {
     const client = await this.pool.connect();
     try {
@@ -1859,6 +2015,31 @@ function mapNgnControls(row: any): NgnControlsRecord {
 
 function mapNgnQuote(row: any): NgnQuoteRecord {
   return { id: row.id, userId: row.user_id, customerId: str(row.customer_id), direction: row.direction, provider: row.provider, sourceCurrency: row.source_currency, destinationCurrency: row.destination_currency, sourceAmount: row.source_amount, destinationAmount: row.destination_amount, rate: row.rate, feeAmount: row.fee_amount, status: row.status, providerQuoteId: str(row.provider_quote_id), expiresAt: iso(row.expires_at), metadata: row.metadata, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
+}
+
+function mapWalletDeposit(row: any): WalletDepositRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    walletId: row.wallet_id,
+    address: row.address,
+    chain: row.chain,
+    asset: row.asset,
+    amount: row.amount,
+    txHash: str(row.tx_hash),
+    sender: str(row.sender),
+    // bigint comes back as a string from pg. Number() is safe for block
+    // heights, which are nowhere near Number.MAX_SAFE_INTEGER.
+    blockNumber: row.block_number === null || row.block_number === undefined ? undefined : Number(row.block_number),
+    blockTimestamp: optionalIso(row.block_timestamp),
+    status: row.status,
+    detectionSource: row.detection_source,
+    idempotencyKey: row.idempotency_key,
+    notifiedAt: optionalIso(row.notified_at),
+    rawPayload: row.raw_payload,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
 }
 
 function mapNgnTransfer(row: any): NgnTransferRecord {

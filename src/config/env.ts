@@ -238,6 +238,23 @@ const envSchema = z.object({
   TRANSFER_CONFIRM_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
   /** Age at which an unconfirmed send is escalated to a human, in minutes. */
   TRANSFER_CONFIRM_STALE_MINUTES: z.coerce.number().int().positive().default(30),
+  /**
+   * How often to sweep wallets for inbound deposits, in seconds. 0 disables.
+   *
+   * 60s because an exchange withdrawal takes minutes to arrive on chain, so a
+   * finer interval buys nothing a user could perceive while multiplying RPC
+   * calls by the number of wallets. This is a stopgap detector; the real fix is
+   * RPC webhooks, at which point this goes to 0.
+   */
+  DEPOSIT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  /**
+   * How often to deliver deposit notifications, in seconds. 0 disables.
+   *
+   * Separate from detection on purpose: a failing email provider must not stop
+   * deposits being RECORDED, and a slow sweep must not delay the alert for a
+   * deposit already found. The two loops share only the database.
+   */
+  DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(45),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),
