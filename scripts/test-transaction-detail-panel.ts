@@ -120,8 +120,21 @@ check('a bank transfer shows no transaction hash field',
   /\{onChain && <Kv label="Transaction hash"/.test(panelCode),
   'showing "Pending" implies a hash is coming, and for a bank payout it never is');
 check('and is not promised an explorer link',
-  /: onChain\s*\?\s*<small className="deposit-note">A block explorer link/.test(panelCode),
+  /: onChain && activityRow\.state === 'pending'/.test(panelCode),
   'a promise that can never come true is worse than saying nothing');
+/**
+ * A CONFIRMED on-chain row with no hash will never get one either. The poller
+ * detects deposits by diffing balances, so it sees that money arrived without
+ * ever seeing the transaction - "a link appears once the network confirms" on
+ * a row already reading Confirmed is a promise that silently never resolves.
+ * Caught by looking at a rendered screenshot, after every assertion passed.
+ */
+check('a confirmed row with no hash says so instead of promising a link',
+  /detected from an on-chain balance change/.test(panelCode),
+  'the poller never sees a transaction, so no amount of waiting produces one');
+check('and its hash field reads "Not recorded", not "Pending"',
+  /'Not recorded'/.test(panelCode),
+  'nothing is pending on a confirmed transfer');
 check('its Network field says what it actually is',
   /'Bank transfer'/.test(panelCode),
   'blank reads as missing data; "Bank transfer" is the truth');

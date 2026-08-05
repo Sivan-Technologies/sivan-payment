@@ -378,7 +378,9 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
         {/* Only for rows that HAVE a chain. A withdrawal to a bank has no
             transaction hash and never will, so showing "Pending" there implies
             one is on its way. Omitted entirely rather than shown as a dash. */}
-        {onChain && <Kv label="Transaction hash" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : 'Pending'} />}
+        {/* "Pending" only while it genuinely is. A confirmed row with no hash
+            is not waiting for one - see the note below the grid. */}
+        {onChain && <Kv label="Transaction hash" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Pending' : 'Not recorded'} />}
       </div>
       {link
         ? <a className="secondary-btn small explorer-link" href={link.url} target="_blank" rel="noreferrer">
@@ -389,9 +391,21 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
            evidence about their money, not about our URL.
            And the "link is coming" note ONLY for on-chain rows - promising a
            bank payout an explorer link is a promise that can never come true. */
-        : onChain
+        : onChain && activityRow.state === 'pending'
           ? <small className="deposit-note">A block explorer link appears once the network confirms this transaction.</small>
-          : null}
+          /**
+           * A CONFIRMED transfer with no hash will never get one.
+           *
+           * Caught in a rendered screenshot: a deposit reading "Confirmed" also
+           * said a link would appear "once the network confirms" - it already
+           * had. The poller detects deposits by diffing balances, so it sees
+           * that money arrived without ever seeing the transaction, and no
+           * amount of waiting produces a hash. Saying so is better than a
+           * promise that silently never resolves.
+           */
+          : onChain
+            ? <small className="deposit-note">This was detected from an on-chain balance change, so there is no transaction link for it.</small>
+            : null}
       <div className="support-reference-box">
         <strong>Need support?</strong>
         <span>Share the Request ID so support can trace this transaction faster.</span>
