@@ -279,7 +279,21 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
      * check knows how to reach, and probing an inactive provider would raise
      * alarms about a code path nobody is using.
      */
-    if (provider === 'privy') {
+    /**
+     * NOT IN TESTS, and not merely as an optimisation.
+     *
+     * This makes a real network call to Privy. Left unguarded it fired during
+     * the operational-health suite, where PRIVY_AUTHORIZATION_KEY_QUORUM_ID is
+     * the literal string "stub" - Privy correctly answered 404, the signal went
+     * critical, and a green system reported an outage. A health probe that
+     * turns a fixture into a false alarm trains people to ignore the fixture.
+     *
+     * Guarded on APP_ENV rather than on a bespoke flag so it cannot be switched
+     * off in production by accident: staging and production probe, everything
+     * else does not.
+     */
+    const probeEnabled = env.APP_ENV === 'production' || env.APP_ENV === 'staging';
+    if (provider === 'privy' && probeEnabled) {
       const probe = await probePrivyCredentials();
       const rejected = probe.status === 401 || probe.status === 403;
       signals.push({
@@ -287,7 +301,10 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
         // A rejected credential is an outage: it will not heal, and every
         // wallet creation fails until someone changes a key. An unreachable
         // provider may just be a blip.
-        severity: probe.ok ? 'ok' : rejected ? 'critical' : 'warn',
+        // A 404 is the quorum being wrong, which is permanent until someone
+        // changes an env var - critical, like a rejected credential. Only a
+        // genuine transport failure is a mere warning.
+        severity: probe.ok ? 'ok' : rejected || probe.status === 404 ? 'critical' : 'warn',
         value: probe.ok ? 1 : 0,
         detail: probe.ok
           ? 'Privy answered an authenticated request; wallet creation should work.'
@@ -295,7 +312,16 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
             ? `Privy REJECTED our credentials (${probe.status}): ${probe.message}. `
               + 'PRIVY_APP_ID / PRIVY_APP_SECRET are set but dead - likely rotated, revoked, or pointed at '
               + 'the wrong app. EVERY wallet creation returns an error until this is fixed.'
-            : `Privy did not answer: ${probe.message}. Wallet creation will fail while this lasts.`,
+            /**
+             * A 404 here is the key quorum, not the credentials. Worth its own
+             * wording because the fix is completely different: the app id and
+             * secret are fine and nothing needs rotating - a quorum id from
+             * another Privy app was copied into this environment, which
+             * authenticates and then fails only on wallet CREATION.
+             */
+            : probe.status === 404
+              ? `Wallet creation is broken: ${probe.message}`
+              : `Privy did not answer: ${probe.message}. Wallet creation will fail while this lasts.`,
       });
     }
   }

@@ -135,13 +135,40 @@ check('a reachability signal exists',
 check('it calls the probe rather than reading config',
   /await probePrivyCredentials\(\)/.test(healthCode));
 check('a rejected credential is CRITICAL, not a warning',
-  /rejected \? 'critical'/.test(healthCode),
+  /rejected \|\| probe\.status === 404 \? 'critical'/.test(healthCode),
   'a dead key will not heal, and blocks every wallet creation until changed');
+/**
+ * A 404 from the quorum check is ALSO permanent - it means a quorum id from
+ * another Privy app was copied in, which authenticates fine and then fails
+ * only on wallet creation. Warning severity would leave it unnoticed.
+ */
+check('a missing key quorum is CRITICAL too',
+  /probe\.status === 404 \? 'critical'/.test(healthCode),
+  'the credentials are valid, so this cannot be caught by an auth check');
+check('and it is reported as a wallet-creation fault, not a credential fault',
+  /Wallet creation is broken/.test(healthCode),
+  'the fix is an env var, not a key rotation - the wording must not send an operator to the wrong place');
+
+console.log('\n── the probe checks what wallet CREATION needs ───────────────');
+
+check('the probe verifies the key quorum, not just the credentials',
+  /key_quorums\/\$\{encodeURIComponent\(quorumId\)\}/.test(privyCode),
+  'GET /apps proves the secret authenticates; POST /wallets also sends additional_signers');
+check('it explains that quorum ids are per-app',
+  /Key quorum ids are per-app/.test(privyCode),
+  'copying test env values into production is the usual cause');
+check('a missing quorum is not treated as a failure',
+  /if \(!quorumId\) return \{ ok: true/.test(privyCode),
+  'the quorum is optional; its absence is a separate, already-reported signal');
 check('an unreachable provider is a warning, not critical',
   /: 'warn'/.test(healthCode),
   'a blip must not page someone at 3am');
 check('the detail names what an operator must change',
   /PRIVY_APP_ID \/ PRIVY_APP_SECRET/.test(healthCode));
+
+check('the probe only runs on a DEPLOYED environment',
+  /const probeEnabled = env\.APP_ENV === 'production' \|\| env\.APP_ENV === 'staging'/.test(healthCode),
+  'unguarded it fired in the test suite against a stub quorum and reported a false outage');
 
 console.log('\n── the probe is safe to run on every health poll ─────────────');
 

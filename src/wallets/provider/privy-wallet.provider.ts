@@ -1156,13 +1156,58 @@ export async function probePrivyCredentials(): Promise<{ ok: boolean; status?: n
       signal: controller.signal,
     }).finally(() => clearTimeout(timer));
 
-    if (response.ok) return { ok: true, status: response.status };
+    if (!response.ok) {
+      const body: any = await response.json().catch(() => ({}));
+      return {
+        ok: false,
+        status: response.status,
+        message: String(body?.error ?? body?.message ?? `HTTP ${response.status}`),
+      };
+    }
 
-    const body: any = await response.json().catch(() => ({}));
+    /**
+     * CREDENTIALS BEING VALID IS NOT THE SAME AS WALLET CREATION WORKING.
+     *
+     * Live returned 503 from POST /wallets while this probe reported ok,
+     * because GET /apps only proves the app id and secret authenticate. The
+     * wallet POST sends one thing the read does not:
+     *
+     *     additional_signers: [{ signer_id: PRIVY_AUTHORIZATION_KEY_QUORUM_ID }]
+     *
+     * A quorum id that belongs to a DIFFERENT Privy app - the usual outcome of
+     * copying test env values into production, since quorum ids are per-app -
+     * authenticates perfectly and then fails the create with a 4xx. So the
+     * probe has to check the quorum itself, or it keeps reporting healthy
+     * while no user can get a wallet.
+     *
+     * Only checked when one is configured: the quorum is optional, and its
+     * absence is a different (already reported) signal about delegated
+     * signing rather than a fault.
+     */
+    const quorumId = (process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || '').trim();
+    if (!quorumId) return { ok: true, status: response.status };
+
+    const quorumController = new AbortController();
+    const quorumTimer = setTimeout(() => quorumController.abort(), 6000);
+    const quorumResponse = await fetch(`${PRIVY_BASE}/key_quorums/${encodeURIComponent(quorumId)}`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`,
+        'privy-app-id': appId,
+      },
+      signal: quorumController.signal,
+    }).finally(() => clearTimeout(quorumTimer));
+
+    if (quorumResponse.ok) return { ok: true, status: response.status };
+
+    const quorumBody: any = await quorumResponse.json().catch(() => ({}));
     return {
       ok: false,
-      status: response.status,
-      message: String(body?.error ?? body?.message ?? `HTTP ${response.status}`),
+      status: quorumResponse.status,
+      message:
+        `credentials are valid, but PRIVY_AUTHORIZATION_KEY_QUORUM_ID "${quorumId}" is not usable by this app `
+        + `(${quorumResponse.status}: ${String(quorumBody?.error ?? quorumBody?.message ?? 'not found')}). `
+        + 'Every wallet creation sends this as additional_signers and will fail. '
+        + 'Key quorum ids are per-app - check this one belongs to the PRODUCTION Privy app.',
     };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
