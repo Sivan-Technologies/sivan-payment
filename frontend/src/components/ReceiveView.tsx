@@ -288,11 +288,25 @@ export function ReceiveView({
    * Base and Ethereum are one secp256k1 key at one 0x address, so any EVM row
    * serves any EVM chain. An exact match still wins when it exists.
    */
-  const wallet = useMemo(() => {
-    const open = wallets.filter((w) => w.status !== 'closed');
-    const family = activeChain === 'solana' ? ['solana'] : ['base', 'ethereum'];
-    return open.find((w) => w.chain === activeChain) ?? open.find((w) => family.includes(w.chain));
-  }, [wallets, activeChain]);
+  /**
+   * PLAIN FUNCTION, NOT useMemo. I wrapped this in a hook and shipped React
+   * error #310 - "rendered more hooks than during the previous render".
+   *
+   * This line sits AFTER three early returns (walletsEnabled, verification,
+   * availableChains). Hooks must run in the same order on every render, so a
+   * hook below a conditional return runs only when every guard passes and the
+   * count changes the moment one does not. The screen crashed to the error
+   * boundary the first time a user hit it before wallets had loaded.
+   *
+   * It never needed memoising either: two array scans over a list that is
+   * almost always length 2. The useMemo cost more than it saved and bought a
+   * crash.
+   */
+  const openWallets = wallets.filter((w) => w.status !== 'closed');
+  const walletFamily: string[] = activeChain === 'solana' ? ['solana'] : ['base', 'ethereum'];
+  const wallet =
+    openWallets.find((w) => w.chain === activeChain) ??
+    openWallets.find((w) => walletFamily.includes(w.chain));
 
   // The server returns acceptedAssets per wallet and is authoritative. Fall
   // back to the local matrix before a wallet exists so the warning copy is

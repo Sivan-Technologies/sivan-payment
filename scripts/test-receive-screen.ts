@@ -150,10 +150,19 @@ console.log('\n── the wallet is matched by family, not literal chain ──�
 check('the wallet lookup is no longer an exact chain match',
   !view.includes("wallets.find((w) => w.chain === activeChain && w.status !== 'closed')"),
   'a base-filed wallet would show "No Ethereum address yet"');
+/**
+ * REPOINTED, not weakened. These pinned the useMemo wording, and the useMemo
+ * was removed because it sat below three early returns and shipped React error
+ * #310 - see test:react-hook-order. The BEHAVIOUR is identical and still
+ * required, so the assertions follow it to the plain computation.
+ */
 check('any EVM row serves any EVM chain',
-  view.includes("const family = activeChain === 'solana' ? ['solana'] : ['base', 'ethereum']"));
+  view.includes("walletFamily: string[] = activeChain === 'solana' ? ['solana'] : ['base', 'ethereum']"));
 check('an exact match still wins when one exists',
-  view.includes('open.find((w) => w.chain === activeChain) ??'));
+  view.includes('openWallets.find((w) => w.chain === activeChain) ??'));
+check('the lookup is not inside a hook below the guards',
+  !/const wallet = useMemo/.test(view),
+  'that is the shape that crashed the screen to the error boundary');
 check('closed wallets are still excluded', view.includes("w.status !== 'closed'"));
 
 console.log('\n── network logos ─────────────────────────────────────────────');
