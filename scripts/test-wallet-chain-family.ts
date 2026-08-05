@@ -160,7 +160,19 @@ check('it reads the SAME unified balance the transfer screen uses', app.includes
 check('it does not recompute a balance of its own', !/dashboardBalance\s*=/.test(app));
 check('an unreadable chain shows a dash, never a confident zero', app.includes("chainUnavailable ? '—'"));
 check('"Total volume" no longer sits where a balance belongs', !app.includes('label="Total volume"'));
-check('the payout figure is still shown, correctly labelled', app.includes('label="Payout volume"'));
+/**
+ * SUPERSEDED. This asserted the "Payout volume" card, which was DELETED in the
+ * three-card KPI change: it read only `withdrawals` on a six-source product
+ * (showing $0.00 beside two completed crypto sends) and summed usd|gbp|eur
+ * behind a "$" prefix.
+ *
+ * I should have caught this when I removed the card - I ran a subset of suites
+ * that did not include this one. Repointed at what replaced it, so the
+ * assertion still guards a real card rather than being deleted outright.
+ */
+check('the KPI row shows In progress in its place', app.includes('label="In progress"'));
+check('and the deleted cross-currency card has not crept back',
+  !app.includes('label="Payout volume"'));
 check('the hardcoded "Avg. payout time" pseudo-metric is gone', !app.includes('Avg. payout time'));
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);

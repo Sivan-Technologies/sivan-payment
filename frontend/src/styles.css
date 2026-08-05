@@ -2401,3 +2401,25 @@ button.activity-row:focus-visible{outline:2px solid rgba(116,221,190,.55);outlin
   /* Equal halves so neither network is the easier tap. */
   .receive-subchain-btn{flex:1;min-height:42px;text-align:center}
 }
+
+/* NETWORK LOGOS
+ *
+ * Replaces the coloured dots. Every dot was the same 9px circle differing only
+ * in hue, so the one glanceable differentiator was doing no work - and hue
+ * alone is invisible to a colourblind user. A network mark is recognised
+ * faster than the word beside it, which matters on the screen where someone
+ * picks the chain their money leaves on.
+ */
+.network-logo-stack{display:inline-flex;align-items:center;flex:none}
+.network-logo-stack-item{display:inline-flex;position:relative;border-radius:999px}
+/* A ring in the card colour so overlapping marks stay separable rather than
+   blending into one shape. */
+/* A 2px ring in the card colour keeps overlapping marks separable instead of
+   blending into one shape. */
+.network-logo-stack-item svg{display:block;border-radius:999px;box-shadow:0 0 0 2px #0b1119}
+.receive-family-card.selected .network-logo-stack-item svg{box-shadow:0 0 0 2px #0d1620}
+.receive-family-top svg{flex:none}
+/* The pills now carry a mark, so they become flex rows. */
+.receive-subchain-btn{display:inline-flex;align-items:center;gap:7px}
+.receive-chain-pill{display:inline-flex;align-items:center;gap:6px}
+.receive-chain-pill svg{flex:none}

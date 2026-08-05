@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { qrDataUri } from '../qrCode';
+import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
 import type { AssetControl, NetworkControl, UserWalletRecord } from '../types';
 
 /**
@@ -150,12 +151,18 @@ export function ReceiveView({
       },
       {
         key: 'evm',
-        label: 'Ethereum & Base',
+        label: 'Base & Ethereum',
         // Stating the shared address is the point of the grouping: it tells
         // the user why picking between them below is low-stakes.
         note: 'One 0x address for both networks.',
-        accent: CHAIN_META.ethereum.accent,
-        chains: ['ethereum', 'base'],
+        // BASE, not Ethereum. The accent is the family's identity and Base is
+        // now the default member, so taking Ethereum's colour would highlight
+        // the option we do NOT preselect.
+        accent: CHAIN_META.base.accent,
+        // Base first, and therefore the default when the family is chosen:
+        // it is the cheaper of the two by an order of magnitude, and it is the
+        // chain this product actually settles on.
+        chains: ['base', 'ethereum'],
       },
     ];
     return families
@@ -260,7 +267,32 @@ export function ReceiveView({
   const activeChain = chain ?? availableChains[0];
   const meta = CHAIN_META[activeChain];
   const activeFamily = chainFamilies.find((family) => family.chains.includes(activeChain));
-  const wallet = wallets.find((w) => w.chain === activeChain && w.status !== 'closed');
+  /**
+   * MATCH THE WALLET BY ADDRESS FAMILY, NOT BY LITERAL CHAIN.
+   *
+   * This was `w.chain === activeChain`, and it produced the exact bug in the
+   * reported screenshot: "No Ethereum address yet", with a Generate button,
+   * for a user who already HAS an EVM wallet.
+   *
+   * Every wallet this deployment provisions is stored as chain:'base' -
+   * confirmed against the live audit log, both wallet.created events read
+   * {"chain":"base"}. Selecting Ethereum asked for a row filed under
+   * 'ethereum', found none, and offered to create a second wallet for an
+   * address the user already has.
+   *
+   * This is the same defect fixed server-side in balance.service.ts
+   * (findUserWalletForNetwork) and ngn-transfers.service.ts. The frontend was
+   * missed because nothing had selected Ethereum until this screen grouped the
+   * EVM chains and made the second member reachable.
+   *
+   * Base and Ethereum are one secp256k1 key at one 0x address, so any EVM row
+   * serves any EVM chain. An exact match still wins when it exists.
+   */
+  const wallet = useMemo(() => {
+    const open = wallets.filter((w) => w.status !== 'closed');
+    const family = activeChain === 'solana' ? ['solana'] : ['base', 'ethereum'];
+    return open.find((w) => w.chain === activeChain) ?? open.find((w) => family.includes(w.chain));
+  }, [wallets, activeChain]);
 
   // The server returns acceptedAssets per wallet and is authoritative. Fall
   // back to the local matrix before a wallet exists so the warning copy is
@@ -329,7 +361,12 @@ export function ReceiveView({
                 onClick={() => setChain(family.chains[0])}
               >
                 <span className="receive-family-top">
-                  <span className="receive-chain-dot" style={{ background: family.accent }} />
+                  {/* The mark, not a coloured dot. Every dot was the same
+                      shape and differed only in hue, so the one glanceable
+                      differentiator on the screen was doing nothing - and hue
+                      alone is invisible to a colourblind user. A network logo
+                      is recognised faster than the word next to it. */}
+                  <NetworkFamilyLogo chains={family.chains} size={22} />
                   <strong>{family.label}</strong>
                   {family.recommended && <em className="receive-family-badge">Lowest fees</em>}
                 </span>
@@ -372,6 +409,7 @@ export function ReceiveView({
                     : undefined}
                   onClick={() => setChain(option)}
                 >
+                  <NetworkLogo chain={option} size={16} />
                   {CHAIN_META[option].label}
                 </button>
               ))}
@@ -414,6 +452,7 @@ export function ReceiveView({
               <h3>Send {assetLabel} to this address</h3>
             </div>
             <span className="receive-chain-pill" style={{ background: meta.accent }}>
+              <NetworkLogo chain={activeChain} size={14} />
               {meta.label}
             </span>
           </div>

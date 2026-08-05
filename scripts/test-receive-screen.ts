@@ -116,7 +116,7 @@ console.log('\n── networks grouped by the address they share ─────
 
 check('families are derived, not hardcoded per chain', view.includes('const chainFamilies = useMemo'));
 check('Solana stands alone', /key: 'solana'[\s\S]{0,300}chains: \['solana'\]/.test(view));
-check('Ethereum and Base share one row', /key: 'evm'[\s\S]{0,300}chains: \['ethereum', 'base'\]/.test(view));
+check('Base and Ethereum share one row', /key: 'evm'[\s\S]{0,700}chains: \['base', 'ethereum'\]/.test(view));
 check('the shared address is stated on the row', view.includes("One 0x address for both networks"));
 check('a family with no enabled chains disappears',
   view.includes('.filter((family) => family.chains.length > 0)'),
@@ -131,6 +131,73 @@ check('and it tells the user that mistake is recoverable',
 check('a single-chain family does not repeat its own name',
   view.includes('{family.chains.length > 1 && ('),
   'the Solana card read "Solana ... Solana"');
+
+console.log('\n── the wallet is matched by family, not literal chain ─────────');
+
+/**
+ * THE BUG IN THE REPORTED SCREENSHOT: "No Ethereum address yet", with a
+ * Generate button, for a user who already HAS an EVM wallet.
+ *
+ * Every wallet this deployment provisions is stored as chain:'base' -
+ * confirmed against the live audit log. Selecting Ethereum asked for a row
+ * filed under 'ethereum', found none, and offered to create a SECOND wallet
+ * for an address the user already holds.
+ *
+ * Same defect already fixed server-side in balance.service.ts and
+ * ngn-transfers.service.ts. The frontend was missed because nothing selected
+ * Ethereum until this screen grouped the EVM chains and made it reachable.
+ */
+check('the wallet lookup is no longer an exact chain match',
+  !view.includes("wallets.find((w) => w.chain === activeChain && w.status !== 'closed')"),
+  'a base-filed wallet would show "No Ethereum address yet"');
+check('any EVM row serves any EVM chain',
+  view.includes("const family = activeChain === 'solana' ? ['solana'] : ['base', 'ethereum']"));
+check('an exact match still wins when one exists',
+  view.includes('open.find((w) => w.chain === activeChain) ??'));
+check('closed wallets are still excluded', view.includes("w.status !== 'closed'"));
+
+console.log('\n── network logos ─────────────────────────────────────────────');
+
+const logo = read('frontend/src/components/receive/NetworkLogo.tsx');
+check('logos are inline SVG, not fetched', logo.includes('<svg') && !logo.includes('http'),
+  'a logo that fails to load leaves two rows looking interchangeable');
+check('every supported chain has a mark',
+  ['solana', 'base', 'ethereum'].every((c) => logo.includes(`chain === '${c}'`) || logo.includes('// Ethereum')));
+/**
+ * DECORATIVE FIRST TIME. This only checked the call site, so deleting the
+ * multi-mark branch inside NetworkFamilyLogo left it passing - the component
+ * would have silently rendered one logo for a two-chain family, hiding that
+ * Ethereum is in there at all. Caught by mutation.
+ *
+ * Pinned to the branch that actually maps over the chains.
+ */
+check('family rows show every member mark',
+  view.includes('<NetworkFamilyLogo chains={family.chains}')
+  && /chains\.length === 1[\s\S]{0,220}chains\.map\(/.test(logo),
+  'showing only the first would hide that Ethereum is in the family');
+check('sub-chain pills carry their own mark', view.includes('<NetworkLogo chain={option}'));
+check('marks keep their brand colour, not currentColor',
+  logo.includes('#0052FF') && logo.includes('#627EEA') && logo.includes('#9945FF'),
+  'recolouring them would make Base and Ethereum look like one network');
+check('they are hidden from screen readers', logo.includes("'aria-hidden': true"),
+  'the network name is always adjacent, so announcing both says "Base Base"');
+check('the coloured dot is gone from the family card',
+  !view.includes('<span className="receive-chain-dot" style={{ background: family.accent }} />'),
+  'every dot was the same shape differing only in hue');
+check('stacked marks overlap by a quarter, so the second stays readable',
+  logo.includes('-size / 4'),
+  'at a third the Ethereum diamond sat mostly behind the Base circle');
+check('the first chain sits on top', logo.includes('zIndex: chains.length - index'));
+check('a ring keeps overlapping marks separable', css.includes('.network-logo-stack-item svg{'));
+
+console.log('\n── Base is the default EVM chain ─────────────────────────────');
+
+check('Base comes before Ethereum', /chains: \['base', 'ethereum'\]/.test(view),
+  'Base is cheaper by an order of magnitude and is what this product settles on');
+check('the family is labelled Base first', view.includes("label: 'Base & Ethereum'"));
+check('the family accent is Base blue, not Ethereum',
+  view.includes('accent: CHAIN_META.base.accent'),
+  'the accent marks the default member');
 
 console.log('\n── colour carries meaning ─────────────────────────────────────');
 
