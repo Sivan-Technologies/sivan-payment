@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NgnTransferRecord, WalletDepositRecord } from './types';
+import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NgnTransferRecord, WalletDepositRecord, TransactionTimelineStep } from './types';
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { buildActivityFeed } from './activityFeed';
@@ -1667,6 +1667,54 @@ export default function App() {
    * Normalising here, at the boundary, means the render layer sees one
    * contract and the two providers stay the backend's business.
    */
+  /**
+   * Build a TransactionTimeline the render layer can trust.
+   *
+   * Three inputs are possible and all three reach here:
+   *   - Bridge:  a full object, already the right shape.
+   *   - Breet:   `timeline` as a bare ARRAY of steps.
+   *   - neither: no timeline at all.
+   *
+   * Returns undefined rather than a half-built object when there are no
+   * steps, so the card falls back to its own tracking view instead of
+   * rendering an empty timeline that looks like data is missing.
+   */
+  function normalizeTimeline(value: Record<string, unknown>, review: WithdrawalReviewState) {
+    const raw = (value.timeline ?? value.transactionTimeline) as
+      TransactionTimelineStep[] | TransactionTimeline | undefined;
+    if (!raw) return undefined;
+
+    // Already an object with steps: Bridge's shape, pass it through.
+    if (!Array.isArray(raw)) return raw.steps ? raw : undefined;
+    if (!raw.length) return undefined;
+
+    const str = (key: string) => (value[key] === undefined || value[key] === null ? undefined : String(value[key]));
+
+    const current = raw.find((step) => step?.status === 'current')
+      ?? raw.find((step) => step?.status === 'failed')
+      ?? raw[raw.length - 1];
+
+    return {
+      transactionType: 'withdrawal' as const,
+      requestId: String(value.id ?? ''),
+      internalTransactionId: String(value.id ?? ''),
+      providerReference: str('providerTransferId') ?? str('providerQuoteId'),
+      amount: str('destinationAmount'),
+      // The naira leg is what the user is receiving, and it is what the
+      // amount above is denominated in. Labelling it with the source asset
+      // would show "29,699.80 USDC".
+      currency: String(value.destinationCurrency ?? 'ngn').toUpperCase(),
+      asset: String(value.sourceCurrency ?? review.sourceCurrency ?? 'usdc').toUpperCase(),
+      direction: 'sell' as const,
+      provider: str('provider'),
+      status: str('status') ?? current?.status ?? 'pending',
+      explanation: current?.description ?? '',
+      createdAt: str('createdAt') ?? new Date().toISOString(),
+      updatedAt: str('updatedAt') ?? str('createdAt') ?? new Date().toISOString(),
+      steps: raw,
+    };
+  }
+
   function normalizeWithdrawalResponse(raw: unknown, review: WithdrawalReviewState): DepositResponse | null {
     if (!raw || typeof raw !== 'object') return null;
     const value = raw as Record<string, any>;
@@ -1691,7 +1739,27 @@ export default function App() {
         sourceAmount: value.sourceAmount,
         destinationAmount: value.destinationAmount,
         feeAmount: value.feeAmount,
-        transactionTimeline: value.timeline ?? value.transactionTimeline,
+        /**
+         * THE NAIRA RAIL SENDS AN ARRAY, THE CARD EXPECTS AN OBJECT.
+         *
+         * Verified against the running API rather than assumed:
+         *
+         *   POST /api/ngn/offramp/orders -> timeline: [ {key,label,status,at}, ... ]
+         *   TransactionTimeline          -> { status, steps: [...], requestId, ... }
+         *
+         * Passing the array straight through set `transactionTimeline` to
+         * something truthy with no `.steps`, so AppSections rendered
+         * InlineTransactionTimeline, which did `timeline.steps.map(...)` and
+         * threw. That is the reported crash - the error boundary replaced the
+         * confirmation screen with "Something went wrong" AFTER the withdrawal
+         * had already been created, so the user was left unable to tell
+         * whether their money had moved, and the deposit address they needed
+         * was inside the response that crashed.
+         *
+         * Normalised here, at the same boundary that already reconciles the
+         * two rails, so the render layer keeps seeing one contract.
+         */
+        transactionTimeline: normalizeTimeline(value, review),
       } as WithdrawalRecord,
       deposit: {
         address: depositAddress,

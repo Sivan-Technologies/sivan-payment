@@ -990,6 +990,7 @@ function VirtualAccountCurrencyCard({ currency, request, account, control, loadi
 
 
 
+import { networkLabel } from '../blockExplorer';
 import { InlineTransactionTimeline } from './transactions/TransactionsSection';
 export { TransactionsView, InlineTransactionTimeline } from './transactions/TransactionsSection';
 export { BuyCryptoView, TransferCryptoView } from './transfer/TradeTransferSections';
@@ -1171,7 +1172,14 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
    */
   const depositAddress = result.deposit?.address;
   const depositCurrency = result.deposit?.currency?.toUpperCase();
-  const depositChain = result.deposit?.chain;
+  /**
+   * networkLabel(), not the raw string. The chain arrives as a database value
+   * - 'solana', 'avalanche_c_chain' - and rendering it straight gave
+   * "Send only USDC on solana" on the one screen where a user is deciding
+   * where to send real money. The same helper already fixes this on the
+   * activity rows; a safety warning deserves it at least as much.
+   */
+  const depositChain = result.deposit?.chain ? networkLabel(result.deposit.chain) : undefined;
   const withdrawal = result.withdrawal;
   // '' rather than undefined so the .includes() and === comparisons below stay
   // total without each one needing its own guard.
@@ -1206,7 +1214,21 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
           passed through rather than read into. `withdrawal` itself is
           optional-chained for the same reason the block above is: this screen
           runs after the money moved and must never be the thing that throws. */}
-      <div className="details-box"><Kv label="Reference" value={withdrawal?.id ? shortRef(withdrawal.id) : undefined} /><Kv label="Payout currency" value={withdrawal?.destinationCurrency?.toUpperCase()} /><Kv label="Fee" value={withdrawal?.feePercent ? `${withdrawal.feePercent}%` : undefined} /><Kv label="Status" value={withdrawal?.status ? friendlyStatus(withdrawal.status) : undefined} /></div>
+      {/*
+        FEE READ FROM BOTH RAILS, AND THE AMOUNT SHOWN AT ALL.
+
+        This read only `feePercent`, which Bridge sends and the naira rail
+        does not - so every NGN withdrawal rendered "FEE —" on the one screen
+        that exists to confirm what the user is paying. Breet sends
+        `feeAmount` (an absolute figure in the source asset), so both are
+        read and the absolute number wins when present, because it is the
+        one the user can check against their own arithmetic.
+
+        "You receive" was missing entirely. It is the single number a person
+        actually cares about on a withdrawal confirmation, and it was in the
+        response the whole time.
+      */}
+      <div className="details-box"><Kv label="Reference" value={withdrawal?.id ? shortRef(withdrawal.id) : undefined} /><Kv label="You send" value={withdrawal?.sourceAmount ? `${withdrawal.sourceAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : undefined} /><Kv label="You receive" value={withdrawal?.destinationAmount ? `${Number(withdrawal.destinationAmount).toLocaleString()} ${String(withdrawal.destinationCurrency ?? '').toUpperCase()}` : undefined} /><Kv label="Fee" value={withdrawal?.feeAmount ? `${withdrawal.feeAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : withdrawal?.feePercent ? `${withdrawal.feePercent}%` : undefined} /><Kv label="Status" value={withdrawal?.status ? friendlyStatus(withdrawal.status) : undefined} /></div>
       {withdrawal?.transactionTimeline ? <InlineTransactionTimeline timeline={withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
         <TimelineItem done title="Address created" body="A unique provider-backed deposit address is ready." />
         <TimelineItem active={withdrawalStatus === 'pending_deposit'} done={Boolean(withdrawalStatus) && withdrawalStatus !== 'pending_deposit'} title="Awaiting deposit" body="Send only the selected token and network." />
