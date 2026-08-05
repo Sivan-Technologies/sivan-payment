@@ -987,9 +987,30 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .trade-page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; margin-bottom: 20px; }
 .trade-page-head h1 { margin: 0; font-size: 30px; }
 .trade-page-head p { margin: 4px 0 0; color: var(--muted); }
-.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: #080d14; margin-bottom: 18px; }
-.seg button { padding: 12px; border-radius: 9px; color: var(--muted); font-weight: 900; }
-.seg button.active { background: linear-gradient(135deg,var(--green),var(--green-strong)); color: #06130f; }
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.seg button {
+  padding: 13px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 900;
+  transition: all 0.18s ease;
+}
+.seg button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.seg button.active {
+  background: linear-gradient(135deg, var(--green), var(--green-strong));
+  color: #06130f;
+  border-color: transparent;
+}
 .quote-box.large { margin-top: 0; }
 @media (max-width: 1180px) { .support-card-grid { grid-template-columns: repeat(2,1fr); } .verification-grid, .payment-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .settings-grid-premium, .support-card-grid, .level-grid { grid-template-columns: 1fr; } .transactions-toolbar, .trade-page-head { flex-direction: column; align-items: stretch; } .verification-step { grid-template-columns: 30px 1fr; } .verification-step form, .verification-step button { grid-column: 2; } }
@@ -2167,6 +2188,35 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   text-transform: uppercase;
   border-radius: 10px;
   white-space: nowrap;
+}
+
+/* MOBILE: the amount input collapsed to a ~10px sliver with MAX filling the row.
+ *
+ * The mobile shell sets `.form .primary-btn, .form .secondary-btn, .form
+ * .ghost-btn { width: 100% }` so every button in a form stacks full width. MAX
+ * is a .ghost-btn inside .form, so it inherited that - and because the input
+ * carries `min-width: 0` (needed so it can shrink rather than overflow), flex
+ * had no reason to keep any width for it. The button took the whole line and
+ * the field the user is meant to type in became untappable.
+ *
+ * Fixed by giving the button back its intrinsic width rather than by removing
+ * min-width from the input: the input still has to be allowed to shrink, and
+ * MAX is a four-character label that never needed a full row. Higher
+ * specificity than the blanket rule (3 classes vs 2), so no !important.
+ *
+ * 46px matches the min-height the premium pass gives `.form input`, so the two
+ * halves line up instead of the button sitting a few pixels short.
+ */
+@media (max-width: 900px) {
+  .amount-with-max input {
+    min-height: 46px;
+  }
+  .amount-with-max .ghost-btn.small {
+    width: auto;
+    min-width: 68px;
+    min-height: 46px;
+    justify-content: center;
+  }
 }
 
 .field-hint {
