@@ -130,6 +130,45 @@ async function main() {
     assert(imported.customer.tosStatus === 'approved', 'import maps Bridge terms as approved');
     assert(imported.virtualAccountEligible === true, 'imported customer is virtual-account eligible');
 
+    /**
+     * A VERIFIED PAYOUT ACCOUNT, because a wallet now requires one.
+     *
+     * canProvisionWallet gained WALLET_MINIMUM_LEVEL = BANK, so approving a
+     * virtual account for a user with no verified payout account fails with
+     * "Add and confirm your payout bank account to create your wallet." This
+     * fixture imported a Bridge customer and stopped, describing a user who
+     * can no longer reach a wallet. The guard is right; the fixture had not
+     * caught up with it.
+     *
+     * Written straight into the JSON store rather than through an endpoint:
+     * external accounts are created by Bridge's own onboarding, so there is no
+     * admin route that mints a verified one, and inventing a route purely to
+     * satisfy a test would put a hole in production.
+     *
+     * A Bridge-shaped account rather than a NUBAN, because this suite is
+     * specifically about an imported BRIDGE customer - getVerificationState
+     * accepts either as Level 1 evidence.
+     */
+    {
+      const { db } = await import('../src/database/json-database.js');
+      const stamp = new Date().toISOString();
+      await (db as any).mutate((data: any) => {
+        data.externalAccounts = data.externalAccounts ?? [];
+        data.externalAccounts.push({
+          id: `ext_${user.id}`,
+          userId: user.id,
+          customerId: imported.customer.id,
+          provider: 'bridge',
+          providerExternalAccountId: `bridge_ext_${user.id}`,
+          currency: 'usd',
+          status: 'verified',
+          createdAt: stamp,
+          updatedAt: stamp,
+        });
+        return true;
+      });
+    }
+
     await request('PUT', '/api/admin/offramp/controls', {
       virtualAccounts: [{ currency: 'usd', enabled: true }],
     }, { 'x-admin-api-key': 'bridge-import-admin-key' });

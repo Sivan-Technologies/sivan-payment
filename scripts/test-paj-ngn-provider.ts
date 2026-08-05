@@ -94,6 +94,21 @@ try {
     data.externalAccounts = [
       { id: 'ext_paj_ok', userId: 'usr_paj_ok', customerId: 'cus_paj_ok', provider: 'paj', providerExternalAccountId: 'paj_ext_ok', currency: 'ngn', status: 'verified', createdAt: now, updatedAt: now },
     ];
+    /**
+     * A WALLET, because an on-ramp now needs somewhere to send the crypto.
+     *
+     * acceptNgnQuote refuses without metadata.recipientAddress - "Create your
+     * wallet before buying crypto" - and that address is resolved at quote time
+     * from the user's wallet for the quote's network. This fixture seeded none,
+     * so the accept step had been failing with a 400.
+     *
+     * SOLANA, matching PAJ_RAMP_DEFAULT_CHAIN above: the lookup is by network
+     * family, so an EVM wallet would not satisfy a Solana quote and the address
+     * would be silently omitted again.
+     */
+    data.userWallets = [
+      { id: 'uw_paj_ok', userId: 'usr_paj_ok', customerId: 'cus_paj_ok', provider: 'mock', providerWalletId: 'mock_paj_ok', chain: 'solana', address: 'EevL5P2e3j6p8vEkdxmaFPKf1pKrjigHBF3BGiD39nWm', status: 'active', custodial: false, createdAt: now, updatedAt: now },
+    ];
   });
 
   const token = signUserJwt({ userId: 'usr_paj_ok', email: 'paj-ok@sivan.test' });

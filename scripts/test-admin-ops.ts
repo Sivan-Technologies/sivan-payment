@@ -3,6 +3,14 @@ import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
 
+/**
+ * Uses 'base' throughout, not 'avalanche_c_chain'.
+ *
+ * Avalanche ships DISABLED in DEFAULT_NETWORK_CONTROLS - Breet carries no USDC
+ * or USDT on it either direction - so every request here was refused with
+ * 400 "Avalanche C-Chain network deposits are currently unavailable" and this
+ * suite had been red for as long as that default has been correct.
+ */
 async function main() {
   const dbPath = path.isAbsolute(env.DATABASE_FILE) ? env.DATABASE_FILE : path.join(process.cwd(), env.DATABASE_FILE);
   await fs.rm(dbPath, { force: true });
@@ -55,7 +63,7 @@ async function main() {
       address: { street_line_1: '923 Folsom Street', country: 'USA', state: 'CA', city: 'San Francisco', postal_code: '94107' },
       account: { routing_number: '101019644', account_number: '215268129123', checking_or_savings: 'checking' }
     }, false, 201);
-    const withdrawal = await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'avalanche_c_chain', destinationCurrency: 'usd' }, false, 201);
+    const withdrawal = await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'base', destinationCurrency: 'usd' }, false, 201);
 
     const userDetail = await request('GET', `/api/admin/users/${user.id}/details`, undefined, true);
     assert(userDetail.data.legalAcceptances.length === 1, 'admin user detail includes legal acceptances');
@@ -85,7 +93,7 @@ async function main() {
     const timeline = await request('GET', `/api/admin/users/${user.id}/timeline`, undefined, true);
     assert(timeline.data.events.length >= 3, 'customer timeline returns activity');
     await request('POST', `/api/admin/users/${user.id}/restrictions`, { reason: 'Admin ops restriction test', restrictedBy: 'compliance', restrictionType: 'offramp' }, true);
-    await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'avalanche_c_chain', destinationCurrency: 'usd' }, false, 403);
+    await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'base', destinationCurrency: 'usd' }, false, 403);
     console.log('✓ account restriction blocks off-ramp mutation');
     await request('DELETE', `/api/admin/users/${user.id}/restrictions`, { reason: 'Admin ops unrestrict test', actorId: 'compliance' }, true);
     const providerHealth = await request('GET', '/api/admin/provider-health', undefined, true);
@@ -126,9 +134,9 @@ async function main() {
     await request('PUT', '/api/admin/settings/platform', { ...settings.data, newUserSignups: false, onRampEnabled: false, offRampEnabled: false, updatedBy: 'ops', reason: 'Admin ops settings test' }, true);
     await request('POST', '/api/auth/email/start', { email: `blocked+${Date.now()}@sivan.test`, fullName: 'Blocked Signup', intent: 'signup', legalAcceptance }, false, 400);
     console.log('✓ settings disable new signups');
-    await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'avalanche_c_chain', destinationCurrency: 'usd' }, false, 503);
+    await request('POST', '/api/withdrawals', { userId: user.id, externalAccountId: account.data.id, sourceCurrency: 'usdc', sourceChain: 'base', destinationCurrency: 'usd' }, false, 503);
     console.log('✓ settings disable off-ramp mutations');
-    await request('POST', '/api/onramp/orders', { userId: user.id, sourceCurrency: 'usd', destinationCurrency: 'usdc', destinationChain: 'avalanche_c_chain', destinationAddress: '0x0000000000000000000000000000000000000000', amount: '100' }, false, 503);
+    await request('POST', '/api/onramp/orders', { userId: user.id, sourceCurrency: 'usd', destinationCurrency: 'usdc', destinationChain: 'base', destinationAddress: '0x0000000000000000000000000000000000000000', amount: '100' }, false, 503);
     console.log('✓ settings disable on-ramp mutations');
     await request('POST', '/api/admin/settings/api-keys/bridgeApiKey/rotate', { requestedBy: 'ops', reason: 'Admin ops rotation test' }, true);
     console.log('✓ api key rotation request is audited');

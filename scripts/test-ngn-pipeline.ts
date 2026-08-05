@@ -28,6 +28,24 @@ await db.mutate((data) => {
   // uplift - and that uplift requires Sivan's floor (bank + identity) to be met
   // as well, which is exactly what these two records represent.
   data.externalAccounts = [{ id: 'ext_ngn', userId: 'usr_ngn', customerId: 'cus_ngn', provider: 'bridge', providerExternalAccountId: 'bridge_ext_ngn', currency: 'ngn', status: 'verified', createdAt: now, updatedAt: now } as any];
+  /**
+   * A WALLET, because buying now requires somewhere to send the crypto.
+   *
+   * The on-ramp gained a guard - "Create your wallet before buying crypto, so
+   * we have somewhere to send it" - and this fixture never seeded one, so the
+   * quote step had been failing with a 400 ever since. The guard is correct:
+   * an on-ramp with no destination address credits nobody. The fixture was
+   * simply describing a user who can no longer exist.
+   */
+  data.userWallets = [{
+    id: 'uw_ngn', userId: 'usr_ngn', customerId: 'cus_ngn', provider: 'mock',
+    // SOLANA, matching BREET_DEFAULT_NETWORK - the quote resolves the
+    // recipient wallet by network family, so a 'base' wallet does not satisfy
+    // a Solana quote and the address would be silently omitted.
+    providerWalletId: 'mock_ngn', chain: 'solana',
+    address: 'EevL5P2e3j6p8vEkdxmaFPKf1pKrjigHBF3BGiD39nWm',
+    status: 'active', custodial: false, createdAt: now, updatedAt: now,
+  } as any];
   data.ngnControls = [];
   data.ngnQuotes = [];
   data.ngnTransfers = [];

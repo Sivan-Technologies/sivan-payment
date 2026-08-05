@@ -44,6 +44,22 @@ const baseEnv = {
 };
 
 const paymentSteps: Step[] = [
+  /**
+   * FRONTEND DEPS FIRST, BEFORE THE BACKEND TYPECHECK. Order matters here.
+   *
+   * `npm run typecheck` runs tsconfig.scripts.json as well as the API build,
+   * and the scripts config deliberately sees frontend source - the test suites
+   * assert against the real frontend modules rather than a stale copy. Those
+   * modules import react, qrcode-generator and others that live in
+   * frontend/node_modules.
+   *
+   * With the install further down the list, this step failed on any clean
+   * checkout with a wall of TS2307 "Cannot find module 'react'" - and passed
+   * on any machine that had run the frontend once, which is why it survived
+   * local runs and only broke in CI. Reproduced by moving frontend/node_modules
+   * aside and re-running.
+   */
+  { name: 'Frontend dependency install', cwd: paymentRoot, command: 'npm --prefix frontend ci' },
   { name: 'Backend TypeScript typecheck', cwd: paymentRoot, command: 'npm run typecheck' },
   { name: 'Backend production build', cwd: paymentRoot, command: 'npm run build' },
   /**
@@ -70,7 +86,6 @@ const paymentSteps: Step[] = [
    * suites against devnet, then make this blocking again.
    */
   { name: 'Backend production dependency audit (advisory)', cwd: paymentRoot, command: 'npm audit --omit=dev', required: false },
-  { name: 'Frontend dependency install', cwd: paymentRoot, command: 'npm --prefix frontend ci' },
   /**
    * ESLint, with react-hooks/rules-of-hooks as an ERROR.
    *
@@ -190,6 +205,7 @@ const paymentSteps: Step[] = [
   // ---- Transfers: the path that lost money before ----
   { name: 'Transfer confirmation (nothing could finish a send)', cwd: paymentRoot, command: 'npm run test:transfer-confirmation' },
   { name: 'Transfer confirm dialog', cwd: paymentRoot, command: 'npm run test:transfer-confirm' },
+  { name: 'Wallet error honesty (no 500 that blames the user)', cwd: paymentRoot, command: 'npm run test:wallet-error-honesty' },
   { name: 'Transfer fee curve', cwd: paymentRoot, command: 'npm run test:transfer-fee-policy' },
   { name: 'Transfer fee ledger (money must balance)', cwd: paymentRoot, command: 'npm run test:transfer-fee-ledger' },
   { name: 'Transfer fee end-to-end (admin control is live)', cwd: paymentRoot, command: 'npm run test:transfer-fee-e2e' },

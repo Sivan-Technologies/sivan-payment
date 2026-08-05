@@ -29,6 +29,7 @@ import { getNgnControls } from '../ngn/service/ngn-controls.service.js';
 import { getNgnProvider } from '../ngn/provider/ngn-provider-registry.js';
 import { env } from '../config/env.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
+import { probePrivyCredentials } from '../wallets/provider/privy-wallet.provider.js';
 
 export type AlertSeverity = 'ok' | 'warn' | 'critical';
 
@@ -263,6 +264,40 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
           + 'for all of them. Switch to privy: PUT /api/admin/wallets/controls {"activeProvider":"privy"}.'
         : `Active wallet provider is "${provider}", which can issue wallets to bank-verified users.`,
     });
+
+    /**
+     * 4d. AND WILL IT ANSWER?
+     *
+     * The signal above reports which provider is SELECTED. It says nothing
+     * about whether that provider will respond, and the difference is not
+     * academic: live reported wallet_provider_serves_ngn_users: ok while
+     * POST /wallets returned 500 and the dashboard footer read "All systems
+     * operational". A user was told to check details they could not fix, and
+     * every health indicator agreed with the product that nothing was wrong.
+     *
+     * Only probed when privy is the active provider - it is the only one this
+     * check knows how to reach, and probing an inactive provider would raise
+     * alarms about a code path nobody is using.
+     */
+    if (provider === 'privy') {
+      const probe = await probePrivyCredentials();
+      const rejected = probe.status === 401 || probe.status === 403;
+      signals.push({
+        name: 'wallet_provider_reachable',
+        // A rejected credential is an outage: it will not heal, and every
+        // wallet creation fails until someone changes a key. An unreachable
+        // provider may just be a blip.
+        severity: probe.ok ? 'ok' : rejected ? 'critical' : 'warn',
+        value: probe.ok ? 1 : 0,
+        detail: probe.ok
+          ? 'Privy answered an authenticated request; wallet creation should work.'
+          : rejected
+            ? `Privy REJECTED our credentials (${probe.status}): ${probe.message}. `
+              + 'PRIVY_APP_ID / PRIVY_APP_SECRET are set but dead - likely rotated, revoked, or pointed at '
+              + 'the wrong app. EVERY wallet creation returns an error until this is fixed.'
+            : `Privy did not answer: ${probe.message}. Wallet creation will fail while this lasts.`,
+      });
+    }
   }
 
   // 5. DELEGATED SIGNING. Without it the backend cannot move funds out of a

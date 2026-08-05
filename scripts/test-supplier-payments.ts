@@ -52,8 +52,42 @@ async function main() {
     }, { 'x-admin-api-key': 'supplier-admin-key' });
     assert(controls.manualReviewThreshold === 1000, 'admin controls set dynamic supplier threshold');
 
+    /**
+     * A VERIFIED PAYOUT ACCOUNT, because releasing a payment provisions a
+     * wallet and canProvisionWallet now requires WALLET_MINIMUM_LEVEL = BANK.
+     * Without it the release fails with "Add and confirm your payout bank
+     * account to create your wallet." Seeded directly: a verified external
+     * account is produced by Bridge onboarding, and there is no admin route
+     * that mints one - nor should there be.
+     */
+    {
+      const { db } = await import('../src/database/json-database.js');
+      const stamp = new Date().toISOString();
+      await (db as any).mutate((data: any) => {
+        data.externalAccounts = data.externalAccounts ?? [];
+        data.externalAccounts.push({
+          id: `ext_${user.id}`, userId: user.id, customerId: customer.id,
+          provider: 'bridge', providerExternalAccountId: `bridge_ext_${user.id}`,
+          currency: 'usd', status: 'verified', createdAt: stamp, updatedAt: stamp,
+        });
+        return true;
+      });
+    }
+
     await request('POST', '/api/admin/balance/adjustments', { userId: user.id, asset: 'usdc', amount: 500, status: 'available', reason: 'Seed supplier payment balance', adjustedBy: 'test' }, { 'x-admin-api-key': 'supplier-admin-key' });
-    await request('PUT', '/api/admin/virtual-account-provider-settings', { provider: 'bridge', enabled: true, defaultSettlementAsset: 'usdc', defaultSettlementNetwork: 'base', bridgeWalletId: 'wallet_supplier_test_12345', updatedBy: 'test', reason: 'Configure test Bridge wallet for supplier payouts' }, { 'x-admin-api-key': 'supplier-admin-key' });
+    /**
+     * NO bridgeWalletId. The schema rejects it outright:
+     *   "Pooled settlement wallets are no longer supported. Virtual accounts
+     *    settle into each user's own Bridge wallet."
+     *
+     * That refusal is the point of the change - a pooled wallet means every
+     * user's deposits land in one account and are separated only by a ledger
+     * Sivan maintains, which is precisely the arrangement that turns a
+     * reconciliation bug into a customer's money going to the wrong person.
+     * The test had been sending it since before the removal and failing with a
+     * 400 ever since, which is why it was on the known-failing list.
+     */
+    await request('PUT', '/api/admin/virtual-account-provider-settings', { provider: 'bridge', enabled: true, defaultSettlementAsset: 'usdc', defaultSettlementNetwork: 'base', updatedBy: 'test', reason: 'Configure Bridge virtual account settlement for supplier payouts' }, { 'x-admin-api-key': 'supplier-admin-key' });
 
     const supplier = await request('POST', `/api/users/${user.id}/suppliers`, {
       supplierName: 'ABC Trading Ltd',

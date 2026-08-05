@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
-import { forbidden, serviceUnavailable } from '../../shared/errors.js';
+import { forbidden, serviceUnavailable, type AppError } from '../../shared/errors.js';
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import { solanaRpc } from '../solana/solana-rpc.js';
@@ -132,7 +132,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKey?: string } = {}): Promise<T> {
   const { idempotencyKey, ...rest } = init;
 
-  let lastError: Error | undefined;
+  let lastError: AppError | undefined;
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const response = await fetch(`${PRIVY_BASE}${path}`, {
@@ -144,7 +144,7 @@ async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKe
     if (response.ok) return body as T;
 
     const message = String(body?.error ?? body?.message ?? `HTTP ${response.status}`);
-    lastError = new Error(`Privy: ${message}`);
+    lastError = privyError(response.status, message);
 
     // Anything else - 401, 404, validation - is final. Surface it immediately.
     if (!IN_PROGRESS.test(message)) throw lastError;
@@ -153,7 +153,72 @@ async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKe
     await sleep(150 * 2 ** attempt);
   }
 
-  throw lastError ?? new Error('Privy: request failed.');
+  throw lastError ?? serviceUnavailable('The wallet service did not respond. Please try again in a moment.');
+}
+
+/**
+ * TURN A PRIVY FAILURE INTO AN HONEST HTTP STATUS.
+ *
+ * Reported live: "Generate Solana address" returned
+ *
+ *     POST /api/users/:id/wallets  500 (Internal Server Error)
+ *
+ * and the user saw "We could not complete that request. Please check your
+ * details and try again." Both halves of that are wrong. It is not an internal
+ * error - nothing in Sivan crashed - and there is nothing in the user's details
+ * to check; they cannot fix a Privy credential or a rate limit by editing a
+ * form. So the toast sends them round a loop that cannot terminate.
+ *
+ * The cause was structural rather than specific to any one failure: every
+ * rejection here was raised as a plain `new Error(...)`. app.ts checks
+ * `error instanceof AppError` and falls through to
+ * `err.statusCode ?? 500`, so ANY Privy problem - revoked key, wrong app id,
+ * quota exhausted, chain not enabled on the dashboard, Privy having an
+ * outage - collapsed into one indistinguishable 500. Verified: a plain Error
+ * has no statusCode and is not an AppError.
+ *
+ * Mapping the status back out means the user is told whether to wait or to
+ * contact support, and an operator reading logs or Sentry can tell a
+ * misconfiguration from an outage without reproducing it.
+ *
+ * The MESSAGES here are user-facing and deliberately do not quote Privy's own
+ * text, which leaks provider internals; the raw message is preserved on
+ * `details` for the log and for support.
+ */
+function privyError(status: number, message: string): AppError {
+  // Sivan's credentials are wrong, revoked, or pointed at the wrong app. The
+  // user can do nothing about it, and it will not fix itself - so it must not
+  // read as "try again".
+  if (status === 401 || status === 403) {
+    return serviceUnavailable(
+      'Wallet creation is temporarily unavailable. Our team has been notified.',
+      { provider: 'privy', status, providerMessage: message }
+    );
+  }
+
+  // Rate limited or quota exhausted. Genuinely worth retrying.
+  if (status === 429) {
+    return serviceUnavailable(
+      'The wallet service is busy right now. Please try again in a moment.',
+      { provider: 'privy', status, providerMessage: message }
+    );
+  }
+
+  // Privy rejected the request itself - an unsupported chain, a malformed
+  // owner, a chain not enabled for this app in the Privy dashboard. A
+  // configuration problem on our side, not a user input problem.
+  if (status >= 400 && status < 500) {
+    return serviceUnavailable(
+      'We could not create your wallet on this network right now. Please try again or contact support.',
+      { provider: 'privy', status, providerMessage: message }
+    );
+  }
+
+  // Privy itself is failing.
+  return serviceUnavailable(
+    'The wallet service is temporarily unavailable. Please try again shortly.',
+    { provider: 'privy', status, providerMessage: message }
+  );
 }
 
 /**
@@ -602,8 +667,14 @@ export class PrivyWalletProvider implements WalletProvider {
     if (!address || !chain) {
       // Not a zero balance - a caller that did not say WHICH address on WHICH
       // chain. Guessing here is how a balance gets read off the wrong network.
+      //
+      // The user-facing text names no provider: "Privy" is an implementation
+      // detail they did not choose and cannot act on, and the same wording
+      // would be wrong the moment the provider changes. The specifics stay in
+      // `details`, which reaches the log and Sentry but not the browser.
       throw serviceUnavailable(
-        'Cannot read a Privy balance without an address and chain.'
+        'We could not read your wallet balance just now. Please try again in a moment.',
+        { provider: 'privy', reason: 'getBalances called without an address and chain' }
       );
     }
 
@@ -1047,4 +1118,53 @@ export function chainsPerKey(): { keyType: string; chains: WalletChain[] }[] {
     { keyType: 'evm_secp256k1', chains: ['ethereum', 'base'] },
     { keyType: 'solana_ed25519', chains: ['solana'] },
   ];
+}
+
+/**
+ * Can we actually talk to Privy, right now, with the credentials we hold?
+ *
+ * Exists because operational health reported
+ * `wallet_provider_serves_ngn_users: ok` while POST /wallets was returning 500
+ * on the live API. Both statements were true at once: the signal only read
+ * WHICH provider was selected, never whether that provider would answer. So
+ * "All systems operational" sat at the bottom of the screen while a user was
+ * being told to check details they could not fix.
+ *
+ * Deliberately a READ. GET /apps/:id is authenticated and cheap and creates
+ * nothing - a probe that provisioned a wallet would cost money on every health
+ * poll, and Privy wallets cannot be deleted.
+ *
+ * Never throws: a health probe that can take down the health endpoint is worse
+ * than no probe.
+ */
+export async function probePrivyCredentials(): Promise<{ ok: boolean; status?: number; message?: string }> {
+  const appId = process.env.PRIVY_APP_ID || env.PRIVY_APP_ID;
+  const appSecret = process.env.PRIVY_APP_SECRET || env.PRIVY_APP_SECRET;
+  if (!appId || !appSecret) {
+    return { ok: false, message: 'PRIVY_APP_ID / PRIVY_APP_SECRET are not set' };
+  }
+
+  try {
+    const controller = new AbortController();
+    // Short: this runs inside a health request, which must stay fast.
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const response = await fetch(`${PRIVY_BASE}/apps/${encodeURIComponent(appId)}`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`,
+        'privy-app-id': appId,
+      },
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
+
+    if (response.ok) return { ok: true, status: response.status };
+
+    const body: any = await response.json().catch(() => ({}));
+    return {
+      ok: false,
+      status: response.status,
+      message: String(body?.error ?? body?.message ?? `HTTP ${response.status}`),
+    };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
 }

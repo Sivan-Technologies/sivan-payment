@@ -46,7 +46,15 @@ async function main() {
       userId: user.id,
       sourceCurrency: 'usd',
       destinationCurrency: 'usdc',
-      destinationChain: 'avalanche_c_chain',
+      // 'base', not 'avalanche_c_chain'.
+      //
+      // Avalanche was DELIBERATELY disabled in DEFAULT_NETWORK_CONTROLS: Breet
+      // carries no USDC or USDT on it in either direction, so every NGN quote
+      // on that chain refuses. This suite kept using it as its default and had
+      // been failing on
+      //   400 "Avalanche C-Chain network is currently unavailable"
+      // ever since - testing a network the product does not offer.
+      destinationChain: 'base',
       destinationAddress: '0x0000000000000000000000000000000000000001',
       amount: 100
     });

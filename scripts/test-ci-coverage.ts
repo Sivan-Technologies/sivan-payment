@@ -106,6 +106,32 @@ check('the workflow triggers on push to main',
 check('the workflow triggers on pull requests',
   /pull_request:/.test(workflow));
 
+console.log('\n── steps that depend on an install run after it ──────────────');
+
+/**
+ * ORDERING IS A REAL FAILURE MODE HERE, not a tidiness preference.
+ *
+ * `npm run typecheck` also runs tsconfig.scripts.json, which deliberately sees
+ * frontend source so the test suites assert against real frontend modules.
+ * Those import react and qrcode-generator from frontend/node_modules. With the
+ * frontend install placed after the typecheck, CI failed on every clean
+ * checkout with TS2307 "Cannot find module 'react'" - while passing on any
+ * machine that had run the frontend once. Exactly the class of bug that only
+ * appears on the deploy.
+ */
+const feInstall = runner.indexOf("npm --prefix frontend ci");
+const backendTypecheck = runner.indexOf("command: 'npm run typecheck'");
+const feLint = runner.indexOf('npm --prefix frontend run lint:ci');
+const feBuild = runner.indexOf('npm --prefix frontend run build');
+
+check('the frontend install comes before the backend typecheck',
+  feInstall > 0 && backendTypecheck > 0 && feInstall < backendTypecheck,
+  'typecheck reads frontend source through tsconfig.scripts.json');
+check('the frontend install comes before the frontend lint',
+  feInstall < feLint, 'eslint cannot resolve imports without node_modules');
+check('the frontend install comes before the frontend build',
+  feInstall < feBuild);
+
 console.log('\n── the runner treats every step as blocking ──────────────────');
 
 /**
