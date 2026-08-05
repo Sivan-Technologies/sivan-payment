@@ -132,7 +132,18 @@ check('it reuses the existing modal shell rather than inventing a second one',
 
 console.log('\n── mobile ─────────────────────────────────────────────────────');
 
-const mobile = css.slice(css.lastIndexOf('@media(max-width:640px)'));
+/**
+ * SCOPED TO ITS OWN SECTION. This is the THIRD test to break on
+ * css.lastIndexOf('@media(max-width:640px)') - block-explorer, then
+ * ngn-deposit-instruction, now this one. Every time someone appends a styles
+ * block, the previous "last" media query stops being last and the assertions
+ * silently point at unrelated CSS.
+ *
+ * Fixing the instance three times was the wrong move; the pattern is the bug.
+ */
+const confirmSection = css.slice(css.indexOf('/* TRANSFER CONFIRM'), css.indexOf('/* ACTIVITY FEED'));
+check('the confirm CSS section is findable', confirmSection.length > 0, 'the section header comment moved or was removed');
+const mobile = confirmSection.slice(confirmSection.indexOf('@media(max-width:640px)'));
 check('actions stack on a phone', /\.transfer-confirm-actions\{grid-template-columns:1fr\}/.test(mobile));
 check('Send sits ABOVE Back on mobile',
   /\.transfer-confirm-actions \.primary-btn\{order:-1\}/.test(mobile),

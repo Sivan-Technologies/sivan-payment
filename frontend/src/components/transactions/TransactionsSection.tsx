@@ -1,5 +1,7 @@
-import { FormEvent, useMemo, useState } from 'react';
-import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord } from '../../types';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord } from '../../types';
+import { buildActivityFeed, filterActivity, searchActivity, type ActivityRow } from '../../activityFeed';
+import { ActivityRowItem } from '../activity/ActivityRowItem';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
@@ -10,10 +12,31 @@ function Badge({ children, status }: { children: string; status?: string }) { re
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0,8)}…${value.slice(-6)}`; }
 
-export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], onStart, onBuy, onRefresh }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; onStart: () => void; onBuy: () => void; /** Re-reads transfers after a cancel, so the row reflects what the SERVER decided rather than what we hoped. */ onRefresh?: () => Promise<void> }) {
+export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], balanceTransfers = [], supplierPayments = [], virtualAccountTransactions = [], initialSelectedId, onStart, onBuy, onRefresh }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; /** Crypto sends, supplier payouts and virtual-account deposits appeared on NEITHER screen before this - not even under View all. */ balanceTransfers?: BalanceTransferRecord[]; supplierPayments?: SupplierPaymentRecord[]; virtualAccountTransactions?: VirtualAccountTransactionRecord[]; /** Row to open on arrival, set when a dashboard row was clicked. */ initialSelectedId?: string; onStart: () => void; onBuy: () => void; /** Re-reads transfers after a cancel, so the row reflects what the SERVER decided rather than what we hoped. */ onRefresh?: () => Promise<void> }) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'sell' | 'buy' | 'processing'>('all');
-  const transactions = useMemo<CustomerTransactionRow[]>(() => {
+  const [filter, setFilter] = useState<'all' | 'in' | 'out' | 'pending'>('all');
+  /**
+   * ONE MERGE, SHARED WITH THE DASHBOARD.
+   *
+   * This function used to build its own rows from three sources. The dashboard
+   * built its own from two. That divergence IS the reported bug: a naira
+   * mapper was added here and never there, and crypto sends, supplier payouts
+   * and virtual-account deposits were in neither.
+   *
+   * buildActivityFeed owns the merge, the direction rules and the status
+   * vocabulary now, so the two screens cannot drift apart again.
+   */
+  const feed = useMemo(
+    () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions }),
+    [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions]
+  );
+
+  /**
+   * The detail panel still needs the richer per-source shape (timeline,
+   * deposit address, cancellability), so those rows are kept and looked up by
+   * id. The FEED decides what exists and in what order; this only decorates.
+   */
+  const detailRows = useMemo<CustomerTransactionRow[]>(() => {
     const sells = withdrawals.map((w): CustomerTransactionRow => ({
       id: w.id,
       kind: 'withdrawal',
@@ -71,19 +94,31 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
       cancellable: t.cancellable,
       raw: t
     }));
-    return [...sells, ...buys, ...naira].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return [...sells, ...buys, ...naira];
   }, [withdrawals, onrampOrders, ngnTransfers]);
-  const filtered = transactions.filter((tx) => {
-    if (filter === 'sell' && tx.direction !== 'sell') return false;
-    if (filter === 'buy' && tx.direction !== 'buy') return false;
-    if (filter === 'processing' && ['completed', 'failed', 'cancelled'].includes(tx.status)) return false;
-    const haystack = [tx.id, tx.providerReference, tx.status, tx.amount, tx.currency, tx.asset, tx.label].join(' ').toLowerCase();
-    return haystack.includes(query.trim().toLowerCase());
-  });
-  const [selectedId, setSelectedId] = useState<string>('');
+  const detailById = useMemo(() => new Map(detailRows.map((row) => [row.id, row])), [detailRows]);
+  /**
+   * Filtering and search live in the shared module too. They were a hand-rolled
+   * predicate here that the dashboard had no equivalent of, so "Processing" on
+   * one screen and "in progress" on another could mean different sets.
+   */
+  const filtered = useMemo(() => searchActivity(filterActivity(feed, filter), query), [feed, filter, query]);
+  const [selectedId, setSelectedId] = useState<string>(initialSelectedId ?? '');
+  /**
+   * Follow the dashboard's choice when it changes, but never fight the user:
+   * once they click a different row here, their selection stands until the
+   * dashboard sends a NEW id.
+   */
+  useEffect(() => { if (initialSelectedId) setSelectedId(initialSelectedId); }, [initialSelectedId]);
   const [assistantAnswer, setAssistantAnswer] = useState<any>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
-  const selected = filtered.find((tx) => tx.id === selectedId) || filtered[0] || null;
+  const selectedRow: ActivityRow | null = filtered.find((row) => row.id === selectedId) || filtered[0] || null;
+  /**
+   * The panel wants the richer shape where one exists. A crypto send, supplier
+   * payout or VA deposit has no detail row yet - it falls back to the feed row,
+   * which the panel renders as a summary rather than pretending to a timeline.
+   */
+  const selected = selectedRow ? detailById.get(selectedRow.id) ?? null : null;
   /**
    * Close an unfunded off-ramp at the user's request.
    *
@@ -109,7 +144,15 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     }
   }
 
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','sell','buy','processing'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'sell' ? 'Sells' : item === 'buy' ? 'Buys' : 'Processing'}</button>)}</div></div>{!transactions.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Start selling</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="table-wrap"><table className="table premium-table"><thead><tr><th>Type</th><th>Asset</th><th>Amount</th><th>Status</th><th>Provider Ref</th><th>Request ID</th><th>Date</th></tr></thead><tbody>{filtered.map((tx) => <tr key={tx.id} className={selected?.id === tx.id ? 'selected-row' : ''} onClick={() => setSelectedId(tx.id)}><td><span className={`tx-type ${tx.direction}`}>{tx.direction === 'sell' ? '↗ Sell' : '↙ Buy'}</span></td><td>{tx.asset}</td><td>{tx.amount} {tx.currency}</td><td><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></td><td>{tx.providerReference ? shortRef(tx.providerReference) : 'Pending'}</td><td>{shortRef(tx.id)}</td><td>{new Date(tx.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table>{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}</div></div>{!feed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Start selling</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout">{/* A LIST, NOT A TABLE.
+
+              The old table had 7 columns and a min-width of 760px, so on a
+              phone it scrolled sideways - the single worst pattern for a
+              transaction history, because the amount and the status are in
+              different horizontal positions and you cannot see both at once.
+              The shared row shows label, amount and status in one line that
+              reflows instead. */}
+        <div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
 }
 
 /**
@@ -309,8 +352,13 @@ function fallbackOnrampTimeline(o: OnrampOrderRecord): TransactionTimeline {
   };
 }
 
-function exportTransactions(rows: CustomerTransactionRow[]) {
-  const csv = ['type,requestId,status,amount,currency,providerReference,date', ...rows.map((tx) => [tx.direction, tx.id, tx.status, tx.amount, tx.currency, tx.providerReference || '', tx.createdAt].map(csvCell).join(','))].join('\n');
+/**
+ * Exports the FEED, so a download contains every source the screen shows.
+ * Previously typed to the three-source row, which meant a CSV could never
+ * include a crypto send even once the page listed one.
+ */
+function exportTransactions(rows: ActivityRow[]) {
+  const csv = ['type,direction,requestId,status,amount,currency,asset,network,providerReference,date', ...rows.map((tx) => [tx.kind, tx.direction, tx.id, tx.statusLabel, tx.amount, tx.currency, tx.asset || '', tx.network || '', tx.providerReference || '', tx.createdAt].map(csvCell).join(','))].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

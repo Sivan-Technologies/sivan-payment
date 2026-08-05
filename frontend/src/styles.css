@@ -2279,3 +2279,62 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   .confirm-row{flex-direction:column;align-items:flex-start;gap:4px}
   .confirm-row strong{text-align:left}
 }
+
+/* ACTIVITY FEED
+ *
+ * Reported: the dashboard said "No transactions yet" while the user had 15
+ * real records. Fixed by giving both screens ONE merged feed, which means both
+ * also need one row style - a second row implementation is how the original
+ * divergence happened.
+ *
+ * A LIST, NOT A TABLE. The Transactions page used a 7-column table with
+ * min-width 760px, so on a phone it scrolled sideways: the amount and the
+ * status ended up in different horizontal positions and you could not see both
+ * at once. That is the worst possible layout for a transaction history. This
+ * row keeps label, amount and status on one line that reflows.
+ *
+ * grid-template-columns: icon | flexible | max-content, so a long merchant
+ * name shrinks and the amount never gets pushed off the edge.
+ */
+.activity-list{display:grid;gap:8px}
+.activity-row{display:grid;grid-template-columns:38px minmax(0,1fr) max-content;align-items:center;gap:12px;width:100%;padding:12px 13px;border:1px solid rgba(255,255,255,.06);border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.012));text-align:left;font:inherit;color:inherit;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+button.activity-row{appearance:none;cursor:pointer}
+button.activity-row:hover{border-color:rgba(116,221,190,.26);background:rgba(116,221,190,.045);transform:translateY(-1px)}
+button.activity-row:focus-visible{outline:2px solid rgba(116,221,190,.55);outline-offset:2px}
+.activity-row.selected{border-color:rgba(116,221,190,.34);background:rgba(116,221,190,.07)}
+/* Direction is carried by the ARROW as well as the colour: red/green alone is
+   invisible to roughly 1 in 12 men. */
+.activity-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:13px;font-size:16px;font-weight:900;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);color:#a9b8c7}
+.activity-icon.in{background:rgba(116,221,190,.13);border-color:rgba(116,221,190,.22);color:#74ddbe}
+.activity-icon.out{background:rgba(147,183,223,.12);border-color:rgba(147,183,223,.2);color:#93b7df}
+.activity-icon.internal{background:rgba(76,216,200,.11);border-color:rgba(76,216,200,.18);color:#4cd8c8}
+.activity-main{min-width:0;display:grid;gap:3px}
+.activity-main strong{font-size:14px;color:#eef3f7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* NO blanket capitalize here. It was turning "2h ago" into "2h Ago" and
+   "5 Aug" into "5 Aug" only by luck - text-transform hits every word in the
+   line, and this line mixes a chain name with a timestamp. The chain is
+   capitalised at its own span instead. */
+.activity-main small{font-size:11.5px;color:#8b9aab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.activity-network{text-transform:capitalize}
+.activity-figures{display:grid;gap:4px;justify-items:end;text-align:right;white-space:nowrap}
+.activity-amount{font-size:14px;font-variant-numeric:tabular-nums;color:#eef3f7}
+.activity-amount.in{color:#74ddbe}
+.activity-status{font-size:10.5px;font-weight:900;letter-spacing:.04em;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:#a9b8c7}
+.activity-status.success{background:rgba(116,221,190,.13);border-color:rgba(116,221,190,.24);color:#74ddbe}
+.activity-status.failed{background:rgba(240,120,120,.12);border-color:rgba(240,120,120,.26);color:#f08787}
+/* The page list can be long; cap it and scroll INSIDE rather than growing the
+   card past the detail panel beside it. */
+.activity-list-page{max-height:min(70vh,640px);overflow-y:auto;padding-right:4px;scrollbar-color:rgba(116,221,190,.45) rgba(255,255,255,.04)}
+.activity-list-page::-webkit-scrollbar{width:8px}
+.activity-list-page::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#37c9a1,#4cd8c8);border-radius:999px}
+
+@media(max-width:640px){
+  /* Two rows: identity on top, money underneath and left-aligned. Keeping the
+     amount right-aligned on a 390px screen squeezes the label to nothing. */
+  .activity-row{grid-template-columns:34px minmax(0,1fr);gap:10px;padding:11px}
+  .activity-icon{width:34px;height:34px;border-radius:12px;font-size:15px}
+  .activity-figures{grid-column:2;justify-items:start;text-align:left;flex-direction:row}
+  .activity-figures{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .activity-main strong{white-space:normal}
+  .activity-list-page{max-height:none;overflow:visible;padding-right:0}
+}

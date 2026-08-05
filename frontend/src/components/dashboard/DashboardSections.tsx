@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import type { ActivityRow } from '../../activityFeed';
+import { ActivityRowItem } from '../activity/ActivityRowItem';
 import type { AssetControl, NetworkControl, PaymentControl, UserRecord, WithdrawalRecord, OnrampOrderRecord, VerificationSummary } from '../../types';
 
 function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
@@ -20,53 +22,34 @@ export function KpiCard({ label, value, sub, trend }: { label: string; value: st
   return <article className="kpi-card"><p>{label}</p><strong>{value}</strong><span>{sub}</span><small>{trend}</small></article>;
 }
 
-export function DashboardTransactions({ withdrawals, onrampOrders, onStart, onBuy, onViewAll }: { withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; onStart: () => void; onBuy: () => void; onViewAll: () => void }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const rows = [
-    ...withdrawals.map((withdrawal) => ({
-      id: withdrawal.id,
-      key: `sell:${withdrawal.id}`,
-      direction: 'sell' as const,
-      icon: '↗',
-      title: `Sell · ${withdrawal.sourceAmount || '—'} ${withdrawal.sourceCurrency?.toUpperCase?.() || 'USDC'}`,
-      sub: 'To bank payout',
-      amount: `${withdrawal.destinationAmount || '—'} ${withdrawal.destinationCurrency?.toUpperCase() || ''}`,
-      status: withdrawal.status,
-      createdAt: withdrawal.createdAt,
-      details: [
-        ['Request ID', withdrawal.id],
-        ['Provider reference', withdrawal.providerDrainId || withdrawal.destinationReference || 'Pending'],
-        ['Crypto sent', `${withdrawal.sourceAmount || '—'} ${withdrawal.sourceCurrency?.toUpperCase?.() || 'USDC'}`],
-        ['Bank payout', `${withdrawal.destinationAmount || '—'} ${withdrawal.destinationCurrency?.toUpperCase?.() || ''}`],
-        ['Current stage', friendlyStatus(withdrawal.status)],
-        ['Created', new Date(withdrawal.createdAt).toLocaleString()]
-      ]
-    })),
-    ...onrampOrders.map((order) => ({
-      id: order.id,
-      key: `buy:${order.id}`,
-      direction: 'buy' as const,
-      icon: '↙',
-      title: `Buy · ${order.amount || '—'} ${order.sourceCurrency?.toUpperCase?.() || 'USD'}`,
-      sub: `${order.destinationCurrency?.toUpperCase?.() || 'USDC'} on ${String(order.destinationChain || 'network').replaceAll('_', ' ')}`,
-      amount: `${order.netAmount || '—'} ${order.destinationCurrency?.toUpperCase?.() || ''}`,
-      status: order.status,
-      createdAt: order.createdAt,
-      details: [
-        ['Request ID', order.id],
-        ['Provider reference', order.providerTransferId || order.providerReference || 'Pending'],
-        ['You pay', `${order.amount || '—'} ${order.sourceCurrency?.toUpperCase?.() || 'USD'}`],
-        ['You receive', `${order.netAmount || '—'} ${order.destinationCurrency?.toUpperCase?.() || 'USDC'}`],
-        ['Destination', `${String(order.destinationChain || 'network').replaceAll('_', ' ')}${order.destinationAddress ? ` · ${shortRef(order.destinationAddress)}` : ''}`],
-        ['Current stage', friendlyStatus(order.status)]
-      ]
-    })),
-  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 4);
+/**
+ * RECENT ACTIVITY, FROM EVERY SOURCE.
+ *
+ * Reported: "in my dashboard in the recent transaction i see nothing but in
+ * the send and transfer there something there".
+ *
+ * This component used to take `withdrawals` and `onrampOrders` and build its
+ * own rows. Four of the six money sources were simply never passed in, so a
+ * user with 5 crypto sends and 10 naira transfers was told "No transactions
+ * yet" - measured on the reporter's live account.
+ *
+ * It now renders whatever buildActivityFeed() produces. The merge, the status
+ * vocabulary and the direction rules live in one module shared with the
+ * Transactions page, so the two screens cannot disagree again - which is
+ * exactly how this happened: TransactionsView grew a naira mapper and the
+ * dashboard did not.
+ *
+ * DELIBERATELY NOT EXPANDABLE ANY MORE. The old card opened an inline detail
+ * grid duplicating the Transactions page's timeline panel. A dashboard row
+ * should be a pointer, not a second detail view - it goes to the real one with
+ * the row selected.
+ */
+export function DashboardTransactions({ rows, onStart, onBuy, onViewAll, onOpenRow }: { rows: ActivityRow[]; onStart: () => void; onBuy: () => void; onViewAll: () => void; onOpenRow?: (id: string) => void }) {
+  // Five: enough to show a pattern, few enough that the card does not become
+  // the page. Everything else is one click away.
+  const recent = rows.slice(0, 5);
 
-  return <article className="dashboard-transactions"><div className="dash-card-head"><div><p className="eyebrow">Activity</p><h3>Recent transactions</h3></div><button onClick={onViewAll}>View all ↗</button></div>{!rows.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></div> : <><div className="dashboard-tx-list">{rows.map((tx) => {
-    const open = expandedId === tx.key;
-    return <div className={`dashboard-tx-card ${open ? 'open' : ''}`} key={tx.key}><button type="button" className="dashboard-tx" onClick={() => setExpandedId(open ? null : tx.key)} aria-expanded={open}><span className={`tx-icon ${tx.direction}`}>{tx.icon}</span><div><strong>{tx.title}</strong><small>{tx.sub}</small></div><div><b>{tx.amount}</b><Badge status={tx.status}>{friendlyStatus(tx.status)}</Badge></div><time>{new Date(tx.createdAt).toLocaleDateString()}</time><span className="tx-chevron">⌄</span></button>{open && <div className="dashboard-tx-details"><div className="dashboard-tx-detail-grid">{tx.details.map(([label, value]) => <div className="tx-detail-chip" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><div className="dashboard-tx-detail-footer"><small>This is a quick summary. Open Transactions for the full timeline, support evidence, provider trace and downloadable records.</small><button type="button" className="ghost-btn small" onClick={onViewAll}>Open full timeline →</button></div></div>}</div>;
-  })}</div><div className="button-row dashboard-start-btn"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></>}</article>;
+  return <article className="dashboard-transactions"><div className="dash-card-head"><div><p className="eyebrow">Activity</p><h3>Recent transactions</h3></div><button onClick={onViewAll}>View all ↗</button></div>{!recent.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></div> : <><div className="activity-list">{recent.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} onOpen={onOpenRow ? () => onOpenRow(row.id) : onViewAll} />)}</div><div className="button-row dashboard-start-btn"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></>}</article>;
 }
 
 export function TwoFactorRecommendationCard({ completedCount, onEnable, onDismiss }: { completedCount: number; onEnable: () => void; onDismiss: () => void }) {
