@@ -105,7 +105,28 @@ export default function App() {
    * ref guards.
    */
   const ngnDefaultApplied = useRef(false);
-  const [ngnNetwork, setNgnNetwork] = useState('solana');
+  /**
+   * WHICH CHAIN THE CRYPTO LEG MOVES ON - CHOSEN, NOT ASSUMED.
+   *
+   * This was useState('solana') and setNgnNetwork was never called anywhere,
+   * so it was a constant wearing a hook's clothes. Every naira withdrawal was
+   * priced, gas-estimated and - on the "I'll send crypto myself" path -
+   * ADDRESSED on Solana, no matter what the user held or what an admin had
+   * enabled.
+   *
+   * That is not a cosmetic default. The deposit address is chain-specific:
+   * a user holding Base USDC was handed a Solana address with no way to say
+   * otherwise, and stablecoin sent to an address on the wrong chain is gone.
+   * ngn-transfers.service.ts already makes the neighbouring point - the
+   * address is base58, "a user cannot be expected to identify a chain by an
+   * address format."
+   *
+   * Empty until /api/ngn/networks answers. Empty is the honest state: the
+   * enabled set is the admin's to decide, and guessing here is what produced
+   * the bug. Nothing that consumes a network renders until this is filled.
+   */
+  const [ngnNetwork, setNgnNetwork] = useState('');
+
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
@@ -753,6 +774,35 @@ export default function App() {
     if (!authToken) return;
     void loadNgnNetworks();
   }, [authToken, loadNgnNetworks]);
+
+  /**
+   * THE SELECTED CHAIN IS ALWAYS ONE THE ADMIN CURRENTLY ALLOWS.
+   *
+   * /api/ngn/networks is the source of truth - admin's enabled sourceNetworks
+   * intersected with what Breet can actually do per asset - so the selection
+   * is seeded FROM it rather than defaulted alongside it.
+   *
+   * Re-validating on every change is the part that matters. If an admin
+   * disables the network a user is sitting on, holding the old value would
+   * quietly price a quote against a chain Sivan no longer supports, and the
+   * off-ramp would fail at settlement rather than at selection. Falling out of
+   * a disabled network costs the user a re-pick; staying in one costs them a
+   * failed withdrawal.
+   *
+   * Deliberately NOT `|| 'solana'`. When the list is empty or unreadable the
+   * selection stays empty and the form says so - reintroducing a literal here
+   * would recreate the exact bug this replaces.
+   */
+  useEffect(() => {
+    const options = ngnNetworks?.offramp ?? [];
+    if (!options.length) {
+      if (ngnNetwork) setNgnNetwork('');
+      return;
+    }
+    if (options.some((option) => option.network === ngnNetwork)) return;
+    setNgnNetwork(options[0].network);
+  }, [ngnNetworks, ngnNetwork]);
+
 
   // Wallets are fetched separately from loadUserData because they depend on an
   // authenticated user and must refresh when that user changes.
@@ -2054,7 +2104,17 @@ export default function App() {
             ngnUserId={user?.id}
             ngnApi={api}
             ngnNetwork={ngnNetwork}
+            /**
+             * The admin-approved off-ramp networks, passed whole rather than
+             * as a single pre-picked value, so the form can let the user
+             * choose. The list already is the intersection of what an admin
+             * enabled and what Breet can settle, so there is nothing to
+             * filter here - filtering again is how a second opinion appears.
+             */
+            ngnNetworkOptions={ngnNetworks?.offramp ?? []}
+            onNgnNetworkChange={setNgnNetwork}
             ngnAsset="usdc"
+
             ngnMinimumUsd={ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd}
             ngnRemainingNgn={ngnOfframpAllowance?.remainingNgn}
             /**

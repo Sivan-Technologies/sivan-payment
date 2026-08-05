@@ -116,13 +116,29 @@ export type WithdrawalReviewState = {
   fundingSource?: 'balance' | 'external';
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork = 'solana', ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
   ngnUserId?: string;
   ngnApi?: <T>(path: string, options?: RequestInit) => Promise<T>;
+  /**
+   * The currently selected chain. May be '' before /api/ngn/networks answers,
+   * which is a real state and not a bug - see the NgnPayoutForm guard.
+   */
   ngnNetwork?: string;
+  /**
+   * Every chain this user may off-ramp on, from the server. Admin's enabled
+   * networks intersected with what Breet can actually settle for the asset.
+   *
+   * Passed in rather than derived here so there is ONE list. The previous
+   * `ngnNetwork = 'solana'` default was a second opinion about the same
+   * question, and it disagreed with this one for anybody not on Solana.
+   */
+  ngnNetworkOptions?: Array<{ network: string; minimumDepositUsd?: number }>;
+  onNgnNetworkChange?: (network: string) => void;
   ngnAsset?: 'usdc' | 'usdt';
+
   ngnMinimumUsd?: number;
   /** Remaining NGN headroom from the server. Never computed in the UI. */
   ngnRemainingNgn?: number | null;
@@ -182,7 +198,11 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // Naira needs a different first step entirely: a NUBAN and a
             // quote, not a saved Bridge external account. Bridge account
             // shapes (routing number, sort code, IBAN) cannot express one.
-            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} onReady={onNgnReady!} onCancel={onExitNgn!} />
+            // network falls back to '' - NOT to a chain. '' means "not
+            // resolved yet" and NgnPayoutForm refuses to quote on it; any real
+            // default here would be a guess at where someone's money lives.
+            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} onReady={onNgnReady!} onCancel={onExitNgn!} />
+
             : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} />}

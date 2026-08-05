@@ -71,6 +71,33 @@ function formatCountdown(totalSeconds: number): string {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+/**
+ * A chain's name as its own users write it.
+ *
+ * The API's identifiers are lowercase slugs - 'bsc', 'polygon'. Printed raw
+ * next to a deposit address they read as debug output, and 'bsc' in particular
+ * is not what the network calls itself anywhere the user will have seen it.
+ *
+ * Unknown slugs are capitalised rather than dropped: a chain this map has not
+ * caught up with must still be NAMED, because the name is what stops someone
+ * sending on the wrong one.
+ */
+function networkLabel(network: string): string {
+  const labels: Record<string, string> = {
+    solana: 'Solana',
+    base: 'Base',
+    ethereum: 'Ethereum',
+    polygon: 'Polygon',
+    arbitrum: 'Arbitrum',
+    optimism: 'Optimism',
+    avalanche: 'Avalanche',
+    bsc: 'BNB Smart Chain',
+    tron: 'Tron',
+  };
+  return labels[network] ?? (network ? network.charAt(0).toUpperCase() + network.slice(1) : '');
+}
+
+
 
 /**
  * WHERE THE CRYPTO IS COMING FROM, ASKED UP FRONT.
@@ -93,6 +120,8 @@ export function NgnPayoutForm({
   userId,
   api,
   network,
+  networkOptions,
+  onNetworkChange,
   asset,
   breetMinimumUsd,
   remainingNgn,
@@ -103,8 +132,23 @@ export function NgnPayoutForm({
 }: {
   userId: string;
   api: <T>(path: string, options?: RequestInit) => Promise<T>;
+  /**
+   * The chain the user is selling on. May be '' before the server's network
+   * list arrives - see the guard at the top of the render.
+   */
   network: string;
+  /**
+   * Every chain this user may sell on, from the server.
+   *
+   * This component used to receive a single `network` with a hardcoded
+   * 'solana' default one level up, and no way to change it. A user holding
+   * USDC on Base was quoted, shown a minimum, and handed a Solana deposit
+   * address - the wrong chain, silently, with funds sent to it unrecoverable.
+   */
+  networkOptions: Array<{ network: string; minimumDepositUsd?: number }>;
+  onNetworkChange?: (network: string) => void;
   asset: 'usdc' | 'usdt';
+
   breetMinimumUsd?: number;
   /**
    * What the user can actually sell from their Sivan balance.
@@ -144,6 +188,23 @@ export function NgnPayoutForm({
   const [fundingSource, setFundingSource] = useState<NgnFundingSource>('balance');
 
   const estimatedGasUsd = typicalGasUsd(network);
+
+  /**
+   * The chains offered, de-duplicated and stably ordered.
+   *
+   * The server composes this list from two sources (admin's enabled networks
+   * and what the provider settles), so a repeat is possible; a duplicate key
+   * would break React's reconciliation of the buttons below.
+   */
+  const options = useMemo(() => {
+    const seen = new Set<string>();
+    return (networkOptions ?? []).filter((option) => {
+      if (!option?.network || seen.has(option.network)) return false;
+      seen.add(option.network);
+      return true;
+    });
+  }, [networkOptions]);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -254,6 +315,15 @@ export function NgnPayoutForm({
     setError('');
     if (!resolved) return setError('Verify your bank account first.');
     if (!(amountUsd > 0)) return setError('Enter an amount.');
+    /**
+     * No chain, no quote.
+     *
+     * Omitting the network lets the server fall back to BREET_DEFAULT_NETWORK,
+     * which is how the wrong-chain bug paid out in the first place: the user is
+     * quoted, and on the external path addressed, on a chain nobody chose.
+     */
+    if (!network) return setError('Choose the network you hold your crypto on.');
+
     // Checked before spending a quote on an amount that cannot settle.
     if (floorVerdict && !floorVerdict.clears) return setError(floorVerdict.reason ?? 'Amount is below the minimum.');
     /**
@@ -274,7 +344,9 @@ export function NgnPayoutForm({
     setQuoting(true);
     try {
       const result = await api<NgnQuote>(
-        `/api/ngn/quote?userId=${encodeURIComponent(userId)}&direction=offramp&sourceCurrency=${asset}&destinationCurrency=ngn&sourceAmount=${encodeURIComponent(amount)}`
+        // network is what lets the server price gas for the RIGHT chain -
+        // without it the estimate silently falls back to the default network's.
+        `/api/ngn/quote?userId=${encodeURIComponent(userId)}&direction=offramp&sourceCurrency=${asset}&destinationCurrency=ngn&sourceAmount=${encodeURIComponent(amount)}&network=${encodeURIComponent(network)}`
       );
       setQuote(result);
     } catch (err) {
@@ -315,11 +387,57 @@ export function NgnPayoutForm({
             I'll send crypto myself
           </button>
         </div>
-        {fundingSource === 'external' && (
+        {fundingSource === 'external' && Boolean(network) && (
           <p className="field-hint">
-            We'll show you an address to send {asset.toUpperCase()} to on {network}. The naira is paid out once it arrives.
+            We'll show you an address to send {asset.toUpperCase()} to on {networkLabel(network)}. The naira is paid out once it arrives.
           </p>
         )}
+
+        {/* THE CHAIN, CHOSEN BY THE PERSON WHOSE COINS THEY ARE.
+ 
+            There was no control here at all. The network was fixed to 'solana'
+            by a default parameter one level up, so a user holding USDC on Base
+            or Polygon was quoted against Solana, shown Solana's minimum, and -
+            on the external path - handed a SOLANA deposit address. Sending
+            Base USDC to it loses the funds, and the screen that caused it
+            never mentioned Solana until the address appeared.
+ 
+            Rendered only when the user genuinely has a choice: with one
+            supported chain a picker is noise, but the chain is still NAMED,
+            because it decides where the money is sent. */}
+        {options.length > 1 ? (
+          <label>Network
+            <div className="seg network-seg" role="group" aria-label="Network to sell on">
+              {options.map((option) => (
+                <button
+                  type="button"
+                  key={option.network}
+                  className={option.network === network ? 'active' : ''}
+                  onClick={() => {
+                    if (option.network === network) return;
+                    // The old quote was priced on the old chain, and the
+                    // minimum that justified it no longer applies.
+                    setQuote(null);
+                    setError('');
+                    onNetworkChange?.(option.network);
+                  }}
+                >
+                  {networkLabel(option.network)}
+                </button>
+              ))}
+            </div>
+            <span className="field-hint">Send {asset.toUpperCase()} on the network you actually hold it on. Minimums differ per network.</span>
+          </label>
+        ) : network ? (
+          <p className="field-hint">Selling {asset.toUpperCase()} on {networkLabel(network)}.</p>
+        ) : (
+          /* No chain resolved yet. Quoting now would price against nothing,
+             so the button below stays disabled until this settles. */
+          <p className="field-hint" aria-live="polite">
+            {options.length === 0 ? 'Checking which networks are available…' : 'Choose a network to continue.'}
+          </p>
+        )}
+
 
         <label>Bank
           <input
@@ -463,7 +581,7 @@ export function NgnPayoutForm({
               <span className="field-hint danger">{floorVerdict.reason}</span>
             )}
             {breetMinimumUsd !== undefined && !amount && (
-              <span className="field-hint">Minimum about ${offrampClears({ amountUsd: 0, breetMinimumUsd, estimatedGasUsd }).minimumUsd.toFixed(2)} on {network}, network fee included.</span>
+              <span className="field-hint">Minimum about ${offrampClears({ amountUsd: 0, breetMinimumUsd, estimatedGasUsd }).minimumUsd.toFixed(2)} on {networkLabel(network)}, network fee included.</span>
             )}
             {/* The ceiling, at the moment the amount is entered - which is
                 where it actually changes what someone types. Rendered only
@@ -506,7 +624,7 @@ export function NgnPayoutForm({
             <button
               type="button"
               className="primary-btn"
-              disabled={quoting || !resolved || !(amountUsd > 0) || overBalance || Boolean(floorVerdict && !floorVerdict.clears)}
+              disabled={quoting || !resolved || !network || !(amountUsd > 0) || overBalance || Boolean(floorVerdict && !floorVerdict.clears)}
               onClick={() => void getQuote()}
             >
               {quoting ? 'Pricing…' : quoteExpired ? 'Refresh quote' : 'Get quote →'}
