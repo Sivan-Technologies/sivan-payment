@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import type { CustomerRecord, ExternalAccountRecord, OnrampOrderRecord, SupportTicketRecord, UserRecord, WithdrawalRecord } from '../../types';
 
 function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active','resolved'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
@@ -18,6 +18,40 @@ type AssistantAnswer = { answer: string; confidence: 'high' | 'medium' | 'low'; 
 type AssistantContext = { resourceType: 'withdrawal' | 'onramp_order' | 'virtual_account_transaction' | 'general'; resourceId?: string; ticketType: 'withdrawal' | 'onramp_payment' | 'deposit_not_detected' | 'account_access' | 'verification' | 'other'; subject: string };
 
 const assistantIntro = 'Hi, I’m Sivan Assistant. I can help with payments, verification, transfers, virtual accounts, and account recovery. I can’t move funds or change your account, but I can explain what’s happening and help create a support ticket if needed.';
+/**
+ * What the typing bubble says, by how long the user has been waiting.
+ *
+ * A single fixed string ("Checking safe account evidence...") is honest at 1s
+ * and misleading at 8s: the user cannot tell a slow answer from a dead one, and
+ * the usual response is to press send again or give up. Sivan AI can
+ * legitimately take several seconds, longer on a cold instance, so the wait has
+ * to narrate itself.
+ *
+ * Each line describes something that is really happening, in order: evidence is
+ * gathered locally first, then the model is consulted, and only past ~7s is a
+ * fallback genuinely likely. No invented progress percentages.
+ */
+const assistantWaitStages = [
+  { afterMs: 0, text: 'Checking safe account evidence...' },
+  { afterMs: 2500, text: 'Reviewing your account history...' },
+  { afterMs: 5000, text: 'Composing an answer from what I found...' },
+  { afterMs: 7500, text: 'Still working. If this takes much longer, I will answer from Sivan\u2019s guides instead.' }
+];
+
+function useAssistantWaitStage(busy: boolean) {
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!busy) {
+      setElapsedMs(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const interval = setInterval(() => setElapsedMs(Date.now() - startedAt), 500);
+    return () => clearInterval(interval);
+  }, [busy]);
+  return assistantWaitStages.filter((stage) => elapsedMs >= stage.afterMs).slice(-1)[0]?.text ?? assistantWaitStages[0].text;
+}
+
 const maxSessionMessages = 5;
 const maxDailyMessages = 10;
 function chatId() { return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`; }
@@ -47,6 +81,9 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
   const [chatContext, setChatContext] = useState<AssistantContext>({ resourceType: 'general', ticketType: 'other', subject: 'Sivan Assistant support handoff' });
   const [aiMessagesUsed, setAiMessagesUsed] = useState(0);
   const [lastAnswer, setLastAnswer] = useState<AssistantAnswer | null>(null);
+  // Whether this session already woke Sivan AI. A ref rather than state because
+  // nothing renders from it and flipping it must not cause a re-render.
+  const warmedRef = useRef(false);
   const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
   const latestWithdrawal = useMemo(() => withdrawals.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0], [withdrawals]);
   const latestOrder = useMemo(() => onrampOrders.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0], [onrampOrders]);
@@ -55,6 +92,31 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
     setChatOpen(true);
     setChatError('');
     if (!chatMessages.length) setChatMessages([{ id: chatId(), role: 'assistant', text: assistantIntro, createdAt: new Date().toISOString() }]);
+    void prewarmAssistant();
+  }
+
+  /**
+   * Wake Sivan AI while the user reads the intro and types.
+   *
+   * Sivan AI sleeps after 15 minutes idle and takes ~23s to cold start, which is
+   * far longer than the answer request will wait. Firing this on OPEN rather than
+   * on send moves that wait into the seconds the user spends composing, so the
+   * first question usually meets a warm service instead of a fallback answer.
+   *
+   * Fire-and-forget on purpose: warming is an optimisation, and a user who never
+   * gets a warm instance still gets the local answer. Failure must therefore be
+   * silent - surfacing "warmup failed" would alarm someone about a background
+   * detail that costs them nothing.
+   */
+  async function prewarmAssistant() {
+    if (!hasUser || warmedRef.current) return;
+    warmedRef.current = true;
+    try {
+      await api('/api/ace/warmup', { method: 'POST', body: JSON.stringify({}) });
+    } catch {
+      // Deliberately swallowed - see above. Allow a later retry.
+      warmedRef.current = false;
+    }
   }
 
   async function openTicket(ticket: SupportTicketRecord) {
@@ -195,7 +257,8 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
 }
 
 function AskSivanDrawer({ messages, draft, busy, error, aiMessagesUsed, dailyCount, onDraft, onClose, onSubmit, onQuick, onCreateTicket }: { messages: AssistantChatMessage[]; draft: string; busy: boolean; error: string; aiMessagesUsed: number; dailyCount: number; onDraft: (value: string) => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onQuick: (kind: 'transaction' | 'verification' | 'virtual_account' | 'recovery' | 'human') => void; onCreateTicket: () => void }) {
-  return <div className="ask-sivan-backdrop"><aside className="ask-sivan-drawer"><div className="ask-sivan-head"><div><p className="eyebrow">Ask Sivan</p><h3>Sivan Assistant</h3><span>Read-only guidance · Human support when needed</span></div><button className="ghost-btn small" onClick={onClose}>Close</button></div><div className="ask-sivan-limits"><span>{aiMessagesUsed}/{maxSessionMessages} messages this chat</span><span>{dailyCount}/{maxDailyMessages} today</span></div><div className="ask-sivan-quick"><button onClick={() => onQuick('transaction')}>Where is my transaction?</button><button onClick={() => onQuick('verification')}>Verification help</button><button onClick={() => onQuick('virtual_account')}>Virtual account deposit</button><button onClick={() => onQuick('recovery')}>2FA/account recovery</button><button onClick={() => onQuick('human')}>Talk to support</button></div><div className="ask-sivan-thread">{messages.map((message) => <div className={`ask-sivan-message ${message.role}`} key={message.id}><strong>{message.role === 'assistant' ? 'Sivan Assistant' : message.role === 'system' ? 'System' : 'You'}</strong><p>{message.text}</p>{message.meta?.confidence && <small>Confidence: {message.meta.confidence} · {message.meta.needsHuman ? 'Support review recommended' : 'No human review needed'}</small>}</div>)}{busy && <div className="ask-sivan-message assistant typing"><strong>Sivan Assistant</strong><p>Checking safe account evidence…</p></div>}</div>{error && <div className="form-error">{error}</div>}<div className="ask-sivan-safe-note"><strong>Safety promise</strong><span>Sivan Assistant can explain and guide. It cannot move funds, reset 2FA, change email, approve KYC, retry payouts, or change transaction status.</span></div><form className="ask-sivan-compose" onSubmit={onSubmit}><input value={draft} onChange={(event) => onDraft(event.target.value)} placeholder="Ask about payments, verification, deposits, transfers, or account recovery…" disabled={busy || aiMessagesUsed >= maxSessionMessages || dailyCount >= maxDailyMessages} /><button className="primary-btn small" disabled={busy || !draft.trim() || aiMessagesUsed >= maxSessionMessages || dailyCount >= maxDailyMessages}>{busy ? 'Checking…' : 'Send'}</button></form><button className="secondary-btn ask-sivan-ticket" disabled={busy} onClick={onCreateTicket}>Create support ticket with this chat →</button></aside></div>;
+  const waitStage = useAssistantWaitStage(busy);
+  return <div className="ask-sivan-backdrop"><aside className="ask-sivan-drawer"><div className="ask-sivan-head"><div><p className="eyebrow">Ask Sivan</p><h3>Sivan Assistant</h3><span>Read-only guidance · Human support when needed</span></div><button className="ghost-btn small" onClick={onClose}>Close</button></div><div className="ask-sivan-limits"><span>{aiMessagesUsed}/{maxSessionMessages} messages this chat</span><span>{dailyCount}/{maxDailyMessages} today</span></div><div className="ask-sivan-quick"><button onClick={() => onQuick('transaction')}>Where is my transaction?</button><button onClick={() => onQuick('verification')}>Verification help</button><button onClick={() => onQuick('virtual_account')}>Virtual account deposit</button><button onClick={() => onQuick('recovery')}>2FA/account recovery</button><button onClick={() => onQuick('human')}>Talk to support</button></div><div className="ask-sivan-thread">{messages.map((message) => <div className={`ask-sivan-message ${message.role}`} key={message.id}><strong>{message.role === 'assistant' ? 'Sivan Assistant' : message.role === 'system' ? 'System' : 'You'}</strong><p>{message.text}</p>{message.meta?.confidence && <small>Confidence: {message.meta.confidence} · {message.meta.needsHuman ? 'Support review recommended' : 'No human review needed'}</small>}</div>)}{busy && <div className="ask-sivan-message assistant typing" aria-live="polite"><strong>Sivan Assistant</strong><p>{waitStage}</p></div>}</div>{error && <div className="form-error">{error}</div>}<div className="ask-sivan-safe-note"><strong>Safety promise</strong><span>Sivan Assistant can explain and guide. It cannot move funds, reset 2FA, change email, approve KYC, retry payouts, or change transaction status.</span></div><form className="ask-sivan-compose" onSubmit={onSubmit}><input value={draft} onChange={(event) => onDraft(event.target.value)} placeholder="Ask about payments, verification, deposits, transfers, or account recovery…" disabled={busy || aiMessagesUsed >= maxSessionMessages || dailyCount >= maxDailyMessages} /><button className="primary-btn small" disabled={busy || !draft.trim() || aiMessagesUsed >= maxSessionMessages || dailyCount >= maxDailyMessages}>{busy ? 'Checking…' : 'Send'}</button></form><button className="secondary-btn ask-sivan-ticket" disabled={busy} onClick={onCreateTicket}>Create support ticket with this chat →</button></aside></div>;
 }
 
 function TicketConversation({ ticket, onClose, onReply }: { ticket: SupportTicketRecord; onClose: () => void; onReply: (event: FormEvent<HTMLFormElement>) => void }) {

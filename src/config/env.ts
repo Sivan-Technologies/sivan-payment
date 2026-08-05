@@ -135,7 +135,21 @@ const envSchema = z.object({
   ACE_PROVIDER: z.enum(['local', 'remote']).default('local'),
   SIVAN_AI_API_URL: z.string().url().optional(),
   SIVAN_AI_API_KEY: z.string().optional().default(''),
-  SIVAN_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(3500),
+  // 3500 was too short for a real model call. Sivan AI runs on a free Render
+  // instance that sleeps after 15 minutes; a cold start measured 23s, and even
+  // warm, a knowledge-grounded answer rarely returns inside 3.5s. The practical
+  // effect was that ACE_PROVIDER=remote was set but almost every request aborted
+  // and fell back to the local canned answer - Sia looked "connected" in config
+  // and was not connected in behaviour, silently, because the fallback is quiet.
+  //
+  // 9000 is a ceiling, not a target: it MUST stay under the Cloudflare worker's
+  // 12s UPSTREAM_TIMEOUT_MS. Past that the worker aborts first and the user gets
+  // a 503 instead of the graceful local fallback, which is strictly worse.
+  //
+  // A cold start still exceeds this. That case is handled by warming the service
+  // when the drawer opens (see /api/ace/warmup) rather than by waiting longer.
+  SIVAN_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(9000),
+
   SIVAN_AI_FALLBACK_ENABLED: booleanFromEnv.default(true),
   // 'breet' was missing here while ngn-provider-registry.ts already had a
   // `if (name === 'breet')` branch. The registry could never be reached:

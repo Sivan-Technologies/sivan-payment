@@ -13,6 +13,49 @@ type RemoteAceResponse = {
   aiTrace?: unknown;
 };
 
+/**
+ * Wake Sivan AI without asking it anything.
+ *
+ * Sivan AI is a free Render instance that sleeps after 15 minutes idle; a cold
+ * start measured 23s against the deployed service. That is longer than any
+ * timeout we can afford on the answer path, because the Cloudflare worker in
+ * front of the API aborts at 12s.
+ *
+ * So the wake-up is moved OFF the answer path: the frontend calls this when the
+ * Ask Sivan drawer opens, which is typically several seconds before the user has
+ * finished typing, and by the time the question arrives the instance is warm.
+ *
+ * Deliberately cheap and deliberately quiet. It hits /health rather than the
+ * answer endpoint so warming costs no model tokens, and it resolves a status
+ * rather than throwing: a failed warmup is not a failed support session, it just
+ * means the first answer may fall back to the local one.
+ */
+export async function warmRemoteAce(): Promise<{ warm: boolean; ms: number; reason?: string }> {
+  const startedAt = Date.now();
+  if (env.ACE_PROVIDER !== 'remote' || !env.SIVAN_AI_API_URL) {
+    return { warm: false, ms: 0, reason: 'Sivan AI is not configured as the remote ACE provider.' };
+  }
+  const controller = new AbortController();
+  // Generous relative to the answer timeout, because this call is not blocking a
+  // user-visible response - it runs while they type.
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`${env.SIVAN_AI_API_URL.replace(/\/$/, '')}/health`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: env.SIVAN_AI_API_KEY ? { 'x-sivan-ai-key': env.SIVAN_AI_API_KEY } : {}
+    });
+    return { warm: response.ok, ms: Date.now() - startedAt, reason: response.ok ? undefined : `Sivan AI health returned ${response.status}` };
+  } catch (error) {
+    const reason = error instanceof Error && error.name === 'AbortError'
+      ? 'Sivan AI did not wake within 30s.'
+      : error instanceof Error ? error.message : String(error);
+    return { warm: false, ms: Date.now() - startedAt, reason };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function requestRemoteAceSupport(input: {
   message: string;
   channel: AceSupportChannel;

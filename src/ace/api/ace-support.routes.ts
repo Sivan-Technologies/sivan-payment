@@ -5,6 +5,7 @@ import { env } from '../../config/env.js';
 import { AppError, forbidden } from '../../shared/errors.js';
 import { db } from '../../database/json-database.js';
 import { answerAceSupport } from '../service/ace-support.service.js';
+import { warmRemoteAce } from '../service/ace-remote.service.js';
 import { answerWhatsappAceSupport } from '../service/ace-whatsapp.service.js';
 import { aceSupportRequestSchema } from '../types/ace.types.js';
 
@@ -39,6 +40,22 @@ async function enforceUserAceBudget(userId: string) {
 }
 
 export async function aceSupportRoutes(app: FastifyInstance) {
+  /**
+   * Wake Sivan AI while the user is still typing.
+   *
+   * Deliberately NOT counted against enforceUserAceBudget. Opening the drawer is
+   * not asking a question, and charging it against a 5-per-minute allowance
+   * would mean a user who opens and closes the panel twice has spent nearly half
+   * their questions on nothing.
+   *
+   * Always 200, even when warming fails: the caller uses this to decide what to
+   * SAY while waiting, not whether to proceed. A non-200 here would push the
+   * frontend into an error path for what is only a slower first answer.
+   */
+  app.post('/api/ace/warmup', async () => {
+    return { data: await warmRemoteAce() };
+  });
+
   app.post('/api/users/:userId/ace/support', async (request) => {
     const { userId } = request.params as { userId: string };
     await enforceUserAceBudget(userId);
