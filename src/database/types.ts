@@ -794,6 +794,48 @@ export interface VerificationLimitOverrideRecord {
   updatedAt: string;
 }
 
+/**
+ * A limit ceiling for ONE user, overriding whatever their tier allows.
+ *
+ * Keyed by (userId, flow, rail) and deliberately NOT by level: the exception
+ * describes a person, and it must not stop applying because they completed
+ * another verification step.
+ */
+export interface UserLimitOverrideRecord {
+  id: string;
+  userId: string;
+  flow: string;
+  rail: string;
+  /** NULL is unlimited. 0 closes the flow. The two are not interchangeable. */
+  cumulativeNgn: number | null;
+  reason: string;
+  updatedBy: string;
+  /** NULL is permanent. The admin UI defaults to a date so it rarely is. */
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A forgiven slice of a user's rolling window.
+ *
+ * Records a watermark rather than deleting transactions: usage ignores volume
+ * at or before `resetAt`, and the transactions themselves stay put so the
+ * audit trail survives.
+ */
+export interface UserLimitResetRecord {
+  id: string;
+  userId: string;
+  flow: string;
+  rail: string;
+  resetAt: string;
+  /** What was cleared, captured at the time - it cannot be recomputed later. */
+  forgivenNgn: number;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface DatabaseShape {
   users: UserRecord[];
   customerIdentityLinks: CustomerIdentityLinkRecord[];
@@ -838,6 +880,8 @@ export interface DatabaseShape {
   virtualAccountTransactions: VirtualAccountTransactionRecord[];
   ngnControls: NgnControlsRecord[];
   verificationLimitOverrides: VerificationLimitOverrideRecord[];
+  userLimitOverrides: UserLimitOverrideRecord[];
+  userLimitResets: UserLimitResetRecord[];
   walletControls: WalletControlsRecord[];
   ngnQuotes: NgnQuoteRecord[];
   ngnTransfers: NgnTransferRecord[];

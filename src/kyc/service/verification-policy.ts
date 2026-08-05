@@ -165,7 +165,20 @@ export function decide(
    * Admin ceilings, loaded once by the caller. Omitted in tests and in any
    * path that only cares about the shipped defaults.
    */
-  overrides?: readonly VerificationLimitOverride[]
+  overrides?: readonly VerificationLimitOverride[],
+  /**
+   * THIS USER'S OWN CEILING, when an admin has granted one.
+   *
+   * Passed in rather than fetched, for the same reason `overrides` is: decide()
+   * runs on every quote, and a database read here would put I/O on the hot path
+   * and make the policy untestable without a database.
+   *
+   * `undefined` means no override - fall back to the tier. `{ cumulativeNgn:
+   * null }` means an admin explicitly set this user to UNLIMITED. Those are
+   * different instructions, which is why this is an object rather than a bare
+   * `number | null` that could not distinguish them.
+   */
+  userOverride?: { cumulativeNgn: number | null }
 ): Decision {
   const currentLevel = state.level;
   const amount = Number(request.amountNgn);
@@ -268,7 +281,20 @@ export function decide(
     };
   }
 
-  const limit = limitFor(request.flow, request.rail, currentLevel, overrides);
+  /**
+   * A PER-USER CEILING WINS OVER THE TIER.
+   *
+   * Placed AFTER levelIsIntact() and after the uplift branch on purpose. An
+   * override raises how much a verified user may move; it is not a way to skip
+   * verification, so a user whose level is not intact is still refused above
+   * regardless of any exception granted to them.
+   *
+   * Not clamped against the tier default, in either direction. An admin
+   * lowering one user below their tier is a legitimate risk action - a soft
+   * restriction short of a full freeze - and silently refusing to apply it
+   * would be worse than not offering it.
+   */
+  const limit = userOverride ? userOverride.cumulativeNgn : limitFor(request.flow, request.rail, currentLevel, overrides);
   const total = prior + amount;
 
   if (limit === null) {

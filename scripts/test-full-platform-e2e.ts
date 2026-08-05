@@ -208,6 +208,7 @@ const paymentSteps: Step[] = [
   { name: 'Wallet error honesty (no 500 that blames the user)', cwd: paymentRoot, command: 'npm run test:wallet-error-honesty' },
   { name: 'Wallet key quorum misconfiguration (a permanent fault must not say "try again")', cwd: paymentRoot, command: 'npm run test:wallet-quorum-misconfiguration' },
   { name: 'CORS methods (every verb the frontend sends must survive a preflight)', cwd: paymentRoot, command: 'npm run test:cors-methods' },
+  { name: 'Per-user limits + balance RPC failover', cwd: paymentRoot, command: 'npm run test:user-limits' },
   { name: 'Gas sponsorship limits and circuit breaker', cwd: paymentRoot, command: 'npm run test:gas-limits' },
   { name: 'Transfer fee curve', cwd: paymentRoot, command: 'npm run test:transfer-fee-policy' },
   { name: 'Transfer fee ledger (money must balance)', cwd: paymentRoot, command: 'npm run test:transfer-fee-ledger' },

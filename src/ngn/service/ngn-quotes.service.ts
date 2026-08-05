@@ -9,6 +9,9 @@ import { getNgnProvider } from '../provider/ngn-provider-registry.js';
 import { getNgnControls } from './ngn-controls.service.js';
 import { decide, requiresBridgeCustomer } from '../../kyc/service/verification-policy.js';
 import { getVerificationState, getCumulativeNgnVolume } from '../../kyc/service/verification-state.js';
+import { listVerificationLimitOverrides } from '../../kyc/service/verification-limits.service.js';
+import { userLimitOverrideFor } from '../../kyc/service/user-limits.service.js';
+import { effectiveUsedNgn } from '../../kyc/service/user-limit-usage.js';
 import { VOLUME_WINDOW_DAYS } from '../../kyc/types/verification.types.js';
 import { applySivanMargin } from './ngn-margin.js';
 import { gasEstimateUsd, networkDisplayLabel } from '../network-costs.js';
@@ -59,7 +62,27 @@ export { gasEstimateUsd, NETWORK_GAS_USD } from '../network-costs.js';
  */
 async function requireSivanVerified(userId: string, input: NgnQuoteInput, providerName: NgnProviderName) {
   const state = await getVerificationState(userId);
-  const priorVolumeNgn = await getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS);
+  const flow: 'onramp' | 'offramp' = input.direction === 'onramp' ? 'onramp' : 'offramp';
+
+  /**
+   * THE CEILINGS AN ADMIN HAS ACTUALLY SET, not just the compiled defaults.
+   *
+   * This call previously passed NEITHER override argument to decide(), so it
+   * enforced FLOW_LIMITS as shipped. Two consequences, both real: an admin
+   * raising a tier ceiling in the console changed /verification-summary (which
+   * does load them) but not the quote that enforces it, so the dashboard and
+   * the block disagreed; and a per-user exception would have been purely
+   * decorative here.
+   *
+   * priorVolumeNgn now respects any admin reset for the same reason - a
+   * forgiven window has to be forgiven at the point of enforcement, or the
+   * reset only changes what the user is TOLD they have left.
+   */
+  const [tierOverrides, userOverride, priorVolumeNgn] = await Promise.all([
+    listVerificationLimitOverrides(),
+    userLimitOverrideFor(userId, flow, 'ngn'),
+    effectiveUsedNgn(userId, flow, 'ngn'),
+  ]);
 
   // The naira leg is what an NGN threshold measures, and which leg that is
   // depends on direction: on-ramp sends NGN, off-ramp receives it.
@@ -83,12 +106,12 @@ async function requireSivanVerified(userId: string, input: NgnQuoteInput, provid
     throw forbidden('We could not price that amount. Please try again.');
   }
 
-  const decision = decide(state, {
-    flow: input.direction === 'onramp' ? 'onramp' : 'offramp',
-    rail: 'ngn',
-    amountNgn,
-    priorVolumeNgn,
-  });
+  const decision = decide(
+    state,
+    { flow, rail: 'ngn', amountNgn, priorVolumeNgn },
+    tierOverrides,
+    userOverride
+  );
 
   if (!decision.allowed) throw forbidden(decision.reason);
   return decision;

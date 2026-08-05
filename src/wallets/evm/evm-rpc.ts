@@ -25,14 +25,32 @@ import type { WalletChain } from '../types/wallet.types.js';
  * here so a misconfigured deployment degrades - a balance that reads
  * "unavailable" - instead of failing outright. Never the intended path.
  */
-const PUBLIC_ENDPOINTS: Record<string, { mainnet: string; testnet: string }> = {
+const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }> = {
   ethereum: {
-    mainnet: 'https://eth.llamarpc.com',
-    testnet: 'https://ethereum-sepolia-rpc.publicnode.com',
+    // llamarpc was the SOLE ethereum fallback and returned HTTP 521 for hours.
+    // Verified 2026-08-05: publicnode, 1rpc and drpc all answered
+    // eth_blockNumber 200 in the same second llamarpc was failing. It is kept,
+    // last, because it does recover - but it can no longer be a single point
+    // of failure. (rpc.ankr.com/eth was tested and rejected: it now returns
+    // -32000 "Unauthorized" without a key, so it would only add a wasted hop.)
+    mainnet: [
+      'https://ethereum-rpc.publicnode.com',
+      'https://eth.drpc.org',
+      'https://1rpc.io/eth',
+      'https://eth.llamarpc.com',
+    ],
+    testnet: ['https://ethereum-sepolia-rpc.publicnode.com'],
   },
   base: {
-    mainnet: 'https://mainnet.base.org',
-    testnet: 'https://sepolia.base.org',
+    // base.llamarpc.com was ALSO 521 in the same test, from the same vendor -
+    // which is the argument against relying on one operator for both chains.
+    mainnet: [
+      'https://mainnet.base.org',
+      'https://base-rpc.publicnode.com',
+      'https://base.drpc.org',
+      'https://1rpc.io/base',
+    ],
+    testnet: ['https://sepolia.base.org'],
   },
 };
 
@@ -62,9 +80,9 @@ export function evmRpcEndpoints(chain: WalletChain, options: EvmRpcOptions = {})
   const configured = chain === 'base' ? env.BASE_RPC_URL : env.ETHEREUM_RPC_URL;
   const secondary = chain === 'base' ? env.BASE_RPC_FALLBACK_URL : env.ETHEREUM_RPC_FALLBACK_URL;
   const fallback = PUBLIC_ENDPOINTS[chain];
-  const publicEndpoint = fallback ? (production ? fallback.mainnet : fallback.testnet) : undefined;
+  const publicEndpoints = fallback ? (production ? fallback.mainnet : fallback.testnet) : [];
 
-  const ordered = [configured, secondary, publicEndpoint]
+  const ordered = [configured, secondary, ...publicEndpoints]
     .map((url) => (url ?? '').trim())
     .filter(Boolean);
 

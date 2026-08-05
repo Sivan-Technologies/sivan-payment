@@ -491,6 +491,24 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
 
   if (url.startsWith('/api/admin/notes')) return ['ops', 'operator', 'compliance', 'finance', 'support', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/users') && url.includes('/account-controls')) return ['support', 'ops', 'operator', 'compliance', 'engineering'].includes(role);
+  /**
+   * PER-USER LIMITS: deliberately a NARROWER list than account-controls.
+   *
+   * Without an explicit rule this URL falls through to `return false`, so
+   * every non-superadmin would get a 403 and the feature would look broken for
+   * exactly the people meant to use it.
+   *
+   * `support` is excluded on purpose, and that is the whole judgement here.
+   * Raising a customer's ceiling - or forgiving volume already moved - is an
+   * AML decision, not a customer-service one, and support is the role most
+   * exposed to a persuasive caller. They can still SEE the limits, because
+   * read-only requests are allowed above and answering "why am I capped"
+   * is their job; changing the answer is not.
+   *
+   * `finance` is included: an off-ramp ceiling that blocks a settlement is
+   * routinely theirs to unblock.
+   */
+  if (url.startsWith('/api/admin/users') && url.includes('/limits')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);
   if (url.startsWith('/api/admin/support')) return ['support', 'ops', 'operator', 'compliance'].includes(role);
   if (url.startsWith('/api/admin/risk')) return ['compliance', 'ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/supplier')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);

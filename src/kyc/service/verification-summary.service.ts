@@ -36,6 +36,8 @@ import {
   type FlowType,
   type RailFamily,
 } from '../types/verification.types.js';
+import { getActiveUserLimitOverrides } from './user-limits.service.js';
+import { effectiveUsedNgn } from './user-limit-usage.js';
 import { verificationPathFor } from './verification-path.js';
 import { getNgnControls } from '../../ngn/service/ngn-controls.service.js';
 import { db } from '../../database/json-database.js';
@@ -188,10 +190,17 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
   // the first paint is, on screen, indistinguishable from a summary that was
   // never fetched. Every await removed from this chain is one less chance of
   // showing a Nigerian the Bridge document flow.
-  const [state, overrides, usedNgn, ngnAccounts, bridgeAccounts, controls] = await Promise.all([
+  const [state, overrides, userOverrides, usedNgn, ngnAccounts, bridgeAccounts, controls] = await Promise.all([
     getVerificationState(userId),
     listVerificationLimitOverrides(),
-    getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS),
+    // Per-user exceptions, expired ones already filtered out. Added to the
+    // SAME Promise.all rather than awaited after it: this page's latency is
+    // what caused a Nigerian to be shown the Bridge document flow, and a
+    // sequential await here would reintroduce exactly that.
+    getActiveUserLimitOverrides(userId),
+    // Respects any admin reset watermark, so a forgiven window shows as
+    // forgiven on the user's own card and not only at enforcement.
+    effectiveUsedNgn(userId, 'offramp', 'ngn'),
     db.listNgnPayoutAccounts(userId),
     // One indexed lookup, not the whole database. See the comment on
     // findCustomerByUserId in postgres-database.ts for the measurement.
@@ -215,9 +224,25 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
     // The uplifted ceiling replaces the level's own when it applies, exactly
     // as decide() does. Reporting the level's ceiling to a user who is
     // actually on the uplift would understate their headroom by 20x.
-    const rawLimit = uplifted
-      ? upliftCeilingFor(flow, rail, overrides)
-      : limitFor(flow, rail, state.level, overrides);
+    /**
+     * A PER-USER CEILING WINS, and it must win HERE too.
+     *
+     * The card the user sees ("₦3,839 left") is computed from this number. If
+     * an admin grants an exception and only the enforcement path honours it,
+     * the customer is still told they are capped while their transaction
+     * quietly succeeds - which generates the support ticket the exception was
+     * meant to close.
+     *
+     * Checked before the uplift branch because an explicit per-user decision
+     * outranks an automatic Bridge uplift: an admin who deliberately set this
+     * person's ceiling has said something more specific than a rule.
+     */
+    const userOverride = userOverrides.find((row) => row.flow === flow && row.rail === rail);
+    const rawLimit = userOverride
+      ? userOverride.cumulativeNgn
+      : uplifted
+        ? upliftCeilingFor(flow, rail, overrides)
+        : limitFor(flow, rail, state.level, overrides);
 
     // upliftCeilingFor returns Infinity when an admin has explicitly set the
     // ENHANCED override to null. Normalised to null - the wire format has no

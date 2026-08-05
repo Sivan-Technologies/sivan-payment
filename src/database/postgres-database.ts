@@ -2,7 +2,7 @@ import pg from 'pg';
 import { env } from '../config/env.js';
 import { networksServedByWallet } from '../wallets/chain-family.js';
 import type {
-  VerificationLimitOverrideRecord,
+  VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord,
   WalletControlsRecord,
   WalletDepositRecord,
   NgnPayoutAccountRecord,
@@ -210,6 +210,11 @@ export class PostgresDatabase {
       const userWallets = await optionalQuery(client, 'select * from payments_user_wallets order by created_at asc');
       const verificationLimitOverrides = await optionalQuery(client, 'select * from payments_verification_limit_overrides order by flow asc, rail asc, level asc');
       const walletControls = await optionalQuery(client, 'select * from payments_wallet_controls order by id asc');
+      // optionalQuery for the same reason as the rows above: these arrive in
+      // migration 043 and a service running new code against an older schema
+      // must degrade to an empty list, not fail every read.
+      const userLimitOverrides = await optionalQuery(client, 'select * from payments_user_limit_overrides order by user_id asc, flow asc, rail asc');
+      const userLimitResets = await optionalQuery(client, 'select * from payments_user_limit_resets order by reset_at desc');
       // optionalQuery, not query: Render applies migrations at build time, so a
       // service can briefly run new code against a pre-037 schema. A hard
       // failure here would take down every read in the app, not just NGN.
@@ -229,6 +234,8 @@ export class PostgresDatabase {
         virtualAccountTransactions: virtualAccountTransactions.rows.map(mapVirtualAccountTransaction),
         ngnControls: ngnControls.rows.map(mapNgnControls),
         verificationLimitOverrides: verificationLimitOverrides.rows.map(mapVerificationLimitOverride),
+        userLimitOverrides: userLimitOverrides.rows.map(mapUserLimitOverride),
+        userLimitResets: userLimitResets.rows.map(mapUserLimitReset),
         walletControls: walletControls.rows.map(mapWalletControls),
         ngnQuotes: ngnQuotes.rows.map(mapNgnQuote),
         ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
@@ -820,6 +827,70 @@ export class PostgresDatabase {
         [full.id, full.flow, full.rail, full.level, full.cumulativeNgn, full.reason ?? null, full.updatedBy, full.updatedAt]
       );
       return full;
+    } finally { client.release(); }
+  }
+
+  async listUserLimitOverrides(userId?: string): Promise<UserLimitOverrideRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = userId
+        ? await optionalQuery(client, 'select * from payments_user_limit_overrides where user_id = $1 order by flow asc, rail asc', [userId])
+        : await optionalQuery(client, 'select * from payments_user_limit_overrides order by user_id asc, flow asc, rail asc');
+      return result.rows.map(mapUserLimitOverride);
+    } finally { client.release(); }
+  }
+
+  async upsertUserLimitOverride(record: Omit<UserLimitOverrideRecord, 'id' | 'createdAt'>) {
+    const client = await this.pool.connect();
+    const id = `ulo_${record.userId}_${record.flow}_${record.rail}`;
+    try {
+      // Conflict target matches the UNIQUE in migration 043: one ceiling per
+      // (user, flow, rail). created_at is preserved on update so the row still
+      // says when the exception was first granted.
+      const result = await client.query(
+        `insert into payments_user_limit_overrides (id, user_id, flow, rail, cumulative_ngn, reason, updated_by, expires_at, created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+         on conflict (user_id, flow, rail) do update set
+           cumulative_ngn = excluded.cumulative_ngn,
+           reason = excluded.reason,
+           updated_by = excluded.updated_by,
+           expires_at = excluded.expires_at,
+           updated_at = excluded.updated_at
+         returning *`,
+        [id, record.userId, record.flow, record.rail, record.cumulativeNgn, record.reason, record.updatedBy, record.expiresAt ?? null, record.updatedAt]
+      );
+      return mapUserLimitOverride(result.rows[0]);
+    } finally { client.release(); }
+  }
+
+  async deleteUserLimitOverride(userId: string, flow: string, rail: string) {
+    const client = await this.pool.connect();
+    try {
+      await client.query('delete from payments_user_limit_overrides where user_id = $1 and flow = $2 and rail = $3', [userId, flow, rail]);
+      return true;
+    } finally { client.release(); }
+  }
+
+  async listUserLimitResets(userId?: string): Promise<UserLimitResetRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = userId
+        ? await optionalQuery(client, 'select * from payments_user_limit_resets where user_id = $1 order by reset_at desc', [userId])
+        : await optionalQuery(client, 'select * from payments_user_limit_resets order by reset_at desc');
+      return result.rows.map(mapUserLimitReset);
+    } finally { client.release(); }
+  }
+
+  /** Append-only: a reset is evidence, and must not overwrite an earlier one. */
+  async createUserLimitReset(record: UserLimitResetRecord) {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `insert into payments_user_limit_resets (id, user_id, flow, rail, reset_at, forgiven_ngn, reason, created_by, created_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [record.id, record.userId, record.flow, record.rail, record.resetAt, record.forgivenNgn, record.reason, record.createdBy, record.createdAt]
+      );
+      return record;
     } finally { client.release(); }
   }
 
@@ -2059,6 +2130,37 @@ function mapWalletControls(row: any): WalletControlsRecord {
     reason: row.reason ?? undefined,
     updatedBy: row.updated_by,
     updatedAt: iso(row.updated_at),
+  };
+}
+
+function mapUserLimitOverride(row: any): UserLimitOverrideRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    flow: row.flow,
+    rail: row.rail,
+    // null must survive as null - it means UNLIMITED. Coercing it to 0 would
+    // turn an uplift into a total block, which is the worst misreading here.
+    cumulativeNgn: row.cumulative_ngn === null || row.cumulative_ngn === undefined ? null : Number(row.cumulative_ngn),
+    reason: row.reason,
+    updatedBy: row.updated_by,
+    expiresAt: row.expires_at ? iso(row.expires_at) : undefined,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+  };
+}
+
+function mapUserLimitReset(row: any): UserLimitResetRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    flow: row.flow,
+    rail: row.rail,
+    resetAt: iso(row.reset_at),
+    forgivenNgn: Number(row.forgiven_ngn ?? 0),
+    reason: row.reason,
+    createdBy: row.created_by,
+    createdAt: iso(row.created_at),
   };
 }
 

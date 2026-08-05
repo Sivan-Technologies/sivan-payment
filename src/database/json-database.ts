@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, WalletControlsRecord, WalletDepositRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import { walletServesNetwork } from '../wallets/chain-family.js';
@@ -51,6 +51,8 @@ const emptyDb = (): DatabaseShape => ({
   virtualAccountTransactions: [],
   ngnControls: [],
   verificationLimitOverrides: [],
+  userLimitOverrides: [],
+  userLimitResets: [],
   walletControls: [],
   ngnQuotes: [],
   ngnTransfers: [],
@@ -1031,6 +1033,60 @@ export class JsonDatabase {
         (item) => !(item.flow === flow && item.rail === rail && item.level === level)
       );
       return true;
+    });
+  }
+
+  async listUserLimitOverrides(userId?: string): Promise<UserLimitOverrideRecord[]> {
+    const data = await this.read();
+    const rows = data.userLimitOverrides ?? [];
+    return userId ? rows.filter((item) => item.userId === userId) : rows;
+  }
+
+  async upsertUserLimitOverride(record: Omit<UserLimitOverrideRecord, 'id' | 'createdAt'>) {
+    return this.mutate((data) => {
+      data.userLimitOverrides = data.userLimitOverrides ?? [];
+      // Keyed on (user, flow, rail) to match the UNIQUE constraint in
+      // migration 043. A second row for the same triple would make "which
+      // ceiling applies" depend on insertion order.
+      const index = data.userLimitOverrides.findIndex(
+        (item) => item.userId === record.userId && item.flow === record.flow && item.rail === record.rail
+      );
+      const existing = index >= 0 ? data.userLimitOverrides[index] : undefined;
+      const full: UserLimitOverrideRecord = {
+        id: existing?.id ?? `ulo_${record.userId}_${record.flow}_${record.rail}`,
+        createdAt: existing?.createdAt ?? record.updatedAt,
+        ...record,
+      };
+      if (index >= 0) data.userLimitOverrides[index] = full;
+      else data.userLimitOverrides.push(full);
+      return full;
+    });
+  }
+
+  async deleteUserLimitOverride(userId: string, flow: string, rail: string) {
+    return this.mutate((data) => {
+      data.userLimitOverrides = (data.userLimitOverrides ?? []).filter(
+        (item) => !(item.userId === userId && item.flow === flow && item.rail === rail)
+      );
+      return true;
+    });
+  }
+
+  async listUserLimitResets(userId?: string): Promise<UserLimitResetRecord[]> {
+    const data = await this.read();
+    const rows = data.userLimitResets ?? [];
+    return userId ? rows.filter((item) => item.userId === userId) : rows;
+  }
+
+  /**
+   * Append-only. A reset is evidence that an admin forgave volume, and
+   * overwriting the previous one would erase the fact that it happened.
+   */
+  async createUserLimitReset(record: UserLimitResetRecord) {
+    return this.mutate((data) => {
+      data.userLimitResets = data.userLimitResets ?? [];
+      data.userLimitResets.push(record);
+      return record;
     });
   }
 

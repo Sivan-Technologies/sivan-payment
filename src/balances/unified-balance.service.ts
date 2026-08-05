@@ -1,5 +1,5 @@
 import { db } from '../database/json-database.js';
-import { getUserBalance } from './balance.service.js';
+import { getUserBalance, getBalanceTransferControls } from './balance.service.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import type { WalletChain } from '../wallets/types/wallet.types.js';
@@ -201,7 +201,45 @@ export async function getUnifiedBalance(userId: string): Promise<UnifiedBalance>
    * Caught by pointing this at the real Privy wallet while an upstream RPC was
    * returning HTTP 521.
    */
-  const anyChainUnavailable = wallets.some((wallet) => wallet.balancesUnavailable);
+  /**
+   * A CHAIN WE DO NOT SUPPORT MUST NOT BLANK A BALANCE WE CAN READ.
+   *
+   * Reported with a screenshot: "YOUR BALANCE — Could not reach the network /
+   * Retrying shortly", while Base and Solana were both answering normally.
+   *
+   * Reproduced rather than guessed. Every EVM wallet is read on BOTH networks,
+   * because one secp256k1 key serves them:
+   *
+   *     networksServedByWallet('base') -> ['ethereum', 'base']
+   *
+   * With no RPC configured each chain had exactly ONE public endpoint, and on
+   * 2026-08-05 ethereum's - eth.llamarpc.com - was returning HTTP 521 while
+   * mainnet.base.org and api.mainnet-beta.solana.com both returned 200. This
+   * line was `wallets.some(...)`, so that single dead endpoint set
+   * chainUnavailable on EVERY asset row and the dashboard reported the user's
+   * whole balance as unreadable.
+   *
+   * The insult is that Ethereum is DISABLED for transfers - balance.service.ts
+   * ships `supportedNetworks: ['base','solana']` because Ethereum gas loses
+   * $2-3 on every transfer at any size. So an outage on a chain the product
+   * deliberately does not use was hiding the balance on the chains it does.
+   *
+   * Now only a chain the user can actually TRANSACT on can mark the balance
+   * unreadable. A failed read on an unsupported chain is still recorded on the
+   * per-wallet detail below (nothing is hidden from an operator) but it no
+   * longer degrades the headline figure.
+   *
+   * Deliberately NOT solved by removing Ethereum from the read: the wallet
+   * genuinely holds an Ethereum balance at the same address, a user who
+   * deposited there must still be able to see it, and enabling the network
+   * later must not require remembering to re-add it here.
+   */
+  const spendableNetworks = new Set(
+    (await getBalanceTransferControls()).supportedNetworks.map((network) => String(network).toLowerCase())
+  );
+  const anyChainUnavailable = wallets.some(
+    (wallet) => wallet.balancesUnavailable && spendableNetworks.has(String(wallet.chain).toLowerCase())
+  );
 
   // Chain first: it is the truth, and it decides which assets exist at all.
   for (const wallet of wallets) {
