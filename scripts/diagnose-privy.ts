@@ -136,6 +136,33 @@ console.log();
 // ---------------------------------------------------------------------------
 // Verdict
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 4. WHICH quorum is this? The one thing the health signals cannot tell you.
+// ---------------------------------------------------------------------------
+console.log('4. WHICH QUORUM IS THIS ENVIRONMENT USING?');
+const KNOWN: Record<string, string> = {
+  // From PRIVY-PRODUCTION-SIGNER.md, generated and verified live 2026-08-02.
+  l7t1bfi2oudgbebdszhkkt65: 'PRODUCTION ("sivan-production") - the one live should use',
+  dx66hdbkkv1tm82jpyort0pq: 'TEST ("sivan-base-e2e") - 33 e2e wallets are bound to it',
+};
+if (!quorumId) {
+  console.log('   No quorum configured.');
+} else if (KNOWN[quorumId]) {
+  console.log(`   ${quorumId}`);
+  console.log(`   -> ${KNOWN[quorumId]}`);
+  if (quorumId === 'dx66hdbkkv1tm82jpyort0pq') {
+    verdict.push(
+      'This environment is using the TEST quorum. If this is LIVE, switch it to ' +
+      'l7t1bfi2oudgbebdszhkkt65 BEFORE any real user creates a wallet - the signer ' +
+      'is fixed at creation and cannot be changed afterwards.'
+    );
+  }
+} else {
+  console.log(`   ${quorumId}`);
+  console.log('   -> Not one of the two documented quorums. Unrecognised.');
+}
+console.log();
+
 console.log('════════════════════════════════════════════════════════');
 console.log('  VERDICT');
 console.log('════════════════════════════════════════════════════════');
