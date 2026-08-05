@@ -40,6 +40,39 @@ import { exceedsRemaining, offrampClears, typicalGasUsd } from '../../ngnMinimum
 const POPULAR_BANKS_SHOWN = 6;
 
 /**
+ * Drop the padding zeros an API amount arrives with.
+ *
+ * The quote returns fixed-scale decimal strings - "50.000000" - because that is
+ * the right shape for money in transit, where the scale carries meaning. It is
+ * the wrong shape to read: "You send 50.000000 USDC" makes a round number look
+ * like a precise measurement. Trims the trailing zeros and any orphaned point,
+ * so 50.000000 reads 50 and 50.500000 reads 50.5.
+ *
+ * Operates on the STRING rather than via Number(), so a value too large for a
+ * double is shortened rather than quietly rounded.
+ */
+function trimTrailingZeros(amount: string | number): string {
+  const text = String(amount);
+  if (!text.includes('.')) return text;
+  return text.replace(/\.?0+$/, '');
+}
+
+/**
+ * Seconds as a countdown someone can read at a glance.
+ *
+ * "588s" requires the user to divide in their head to learn how long they have
+ * to accept a quote. Minutes and seconds do not. Below a minute the bare second
+ * count is clearer than "0m 12s", and negatives clamp to zero because an
+ * expired quote is handled separately - it must never render "-3s".
+ */
+function formatCountdown(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+
+/**
  * WHERE THE CRYPTO IS COMING FROM, ASKED UP FRONT.
  *
  * This used to be decided in silence, at the very END of the flow, by whether
@@ -445,12 +478,13 @@ export function NgnPayoutForm({
 
         {quote && !quoteExpired && (
           <div className="details-box">
-            <div><span>You send</span><strong>{quote.sourceAmount} {asset.toUpperCase()}</strong></div>
-            <div><span>You receive</span><strong>{formatPayoutAmount(quote.destinationAmount, 'ngn')}</strong></div>
-            <div><span>Rate</span><strong>1 {asset.toUpperCase()} ≈ {formatPayoutAmount(quote.rate, 'ngn')}</strong></div>
-            <div><span>Fee</span><strong>{quote.feeAmount}</strong></div>
-            {Boolean(quote.expiresAt) && <div><span>Expires in</span><strong>{secondsLeft}s</strong></div>}
+            <div className="kv"><span>You send</span><strong>{trimTrailingZeros(quote.sourceAmount)} {asset.toUpperCase()}</strong></div>
+            <div className="kv"><span>You receive</span><strong>{formatPayoutAmount(quote.destinationAmount, 'ngn')}</strong></div>
+            <div className="kv"><span>Rate</span><strong>1 {asset.toUpperCase()} ≈ {formatPayoutAmount(quote.rate, 'ngn', 2)}</strong></div>
+            <div className="kv"><span>Fee</span><strong>{formatPayoutAmount(quote.feeAmount, 'ngn')}</strong></div>
+            {Boolean(quote.expiresAt) && <div className="kv"><span>Expires in</span><strong>{formatCountdown(secondsLeft)}</strong></div>}
           </div>
+
         )}
 
         {quoteExpired && (

@@ -133,11 +133,20 @@ export interface NgnNetworkLists {
  * Naira is shown without decimals: at ~1605 to the dollar, kobo is noise, and
  * every Nigerian banking app the user has seen omits it.
  */
-export function formatPayoutAmount(amount: number | string, currency: PayoutCurrency): string {
+export function formatPayoutAmount(
+  amount: number | string,
+  currency: PayoutCurrency,
+  fractionDigitsOverride?: number,
+): string {
   const value = typeof amount === 'string' ? Number(amount) : amount;
   if (!Number.isFinite(value)) return `${CURRENCY_SYMBOLS[currency]}0`;
 
-  const fractionDigits = currency === 'ngn' ? 0 : 2;
+  // Payout amounts round to whole naira, but a rate needs more precision than
+  // the amount it produces: at 0 decimals a true rate of 1,885.52 displays as
+  // 1,886, and amount / rate no longer reconciles for a user checking the
+  // arithmetic. Callers showing a rate pass an override.
+  const fractionDigits = fractionDigitsOverride ?? (currency === 'ngn' ? 0 : 2);
+
   return `${CURRENCY_SYMBOLS[currency]}${value.toLocaleString('en-US', {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
