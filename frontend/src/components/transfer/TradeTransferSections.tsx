@@ -1,7 +1,8 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord } from '../../types';
 import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
 import { explorerLink, explorerReference, shortHash } from '../../blockExplorer';
+import { TransferConfirm, type TransferConfirmDetails } from './TransferConfirm';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) { return <span className={`step-node ${active ? 'active' : ''} ${done ? 'done' : ''}`}><span>{done ? '✓' : '•'}</span>{label}</span>; }
@@ -171,6 +172,56 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
   </div>;
 }
 export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, networkMode, loading, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; /** Server-stated, never guessed: a mainnet explorer link for a testnet hash shows "not found", which reads as "your money is gone". */ networkMode?: 'mainnet' | 'testnet'; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
+  /**
+   * REVIEW, THEN SEND - the button now does what it says.
+   *
+   * Reported: pressing "Review and create transfer" showed no review; it
+   * submitted and broadcast on chain immediately.
+   *
+   * The form event is captured here because it does not survive the await:
+   * React pools synthetic events, and by the time the user confirms, the
+   * original event's currentTarget is gone. The values are read now and the
+   * FORM ELEMENT is kept so onSubmit can be replayed against it verbatim -
+   * rather than rebuilding a payload here, which would be a second source of
+   * truth that could drift from what the form actually contains.
+   */
+  const [pendingTransfer, setPendingTransfer] = useState<TransferConfirmDetails | null>(null);
+  const pendingFormRef = useRef<HTMLFormElement | null>(null);
+
+  function handleReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const destinationAddress = String(data.get('destinationAddress') ?? '').trim();
+    const amount = String(data.get('amount') ?? '').trim();
+    // Nothing to review without these, and the browser's own required
+    // attributes have already run by the time submit fires.
+    if (!destinationAddress || !amount) return;
+    pendingFormRef.current = form;
+    setPendingTransfer({
+      asset: String(data.get('asset') ?? 'usdc'),
+      amount,
+      network: String(data.get('network') ?? ''),
+      destinationAddress,
+      note: String(data.get('note') ?? '').trim() || undefined,
+      available,
+      networkMode,
+    });
+  }
+
+  async function confirmTransfer() {
+    const form = pendingFormRef.current;
+    if (!form) return;
+    /**
+     * Replayed as a real submit event against the ORIGINAL form, so onSubmit
+     * reads exactly the fields the user saw. Building a synthetic payload here
+     * would duplicate the contract between this form and App.handleBalanceTransfer.
+     */
+    await onSubmit({ preventDefault() {}, currentTarget: form } as unknown as FormEvent<HTMLFormElement>);
+    setPendingTransfer(null);
+    pendingFormRef.current = null;
+  }
+
   const [activeRoute, setActiveRoute] = useState<'crypto' | 'supplier' | 'user'>('crypto');
   const [supplierCurrency, setSupplierCurrency] = useState<'gbp' | 'usd' | 'eur' | 'mxn' | 'brl'>('gbp');
   const [supplierCurrencyOpen, setSupplierCurrencyOpen] = useState(false);
@@ -216,7 +267,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
           before anything they could actually do. The thing you came here to
           do now leads, the balance it spends from sits under it, and history
           - the least urgent - comes last. */}
-      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer USDC to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={onSubmit}><label>Asset<CustomSelect name="asset" defaultValue="usdc" options={[{ value: 'usdc', label: 'USDC (USD Coin)' }, { value: 'usdt', label: 'USDT (Tether), coming soon', disabled: true }]} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label><div className="warning-box compact">Only send to a wallet on the selected network. Supplier/cross-border payouts use the Pay supplier route with saved bank details, not a stored USD fiat balance.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating transfer…' : available <= 0 ? 'No settled USDC available' : 'Review and create transfer →'}</button></form>}</article>}
+      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer USDC to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" defaultValue="usdc" options={[{ value: 'usdc', label: 'USDC (USD Coin)' }, { value: 'usdt', label: 'USDT (Tether), coming soon', disabled: true }]} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label><div className="warning-box compact">Only send to a wallet on the selected network. Supplier/cross-border payouts use the Pay supplier route with saved bank details, not a stored USD fiat balance.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating transfer…' : available <= 0 ? 'No settled USDC available' : 'Review transfer →'}</button></form>}</article>}
       {activeRoute === 'supplier' && <><article className="panel supplier-directory-card"><div className="panel-head"><div><p className="eyebrow">Supplier directory</p><h3>Saved suppliers</h3></div><Badge status={suppliers.length ? 'active' : 'pending'}>{suppliers.length ? `${suppliers.length} saved` : 'None yet'}</Badge></div>{!suppliers.length ? <Empty>No suppliers added yet.</Empty> : <div className="list supplier-list">{suppliers.map((supplier) => <div className="list-item" key={supplier.id}><strong>{supplier.supplierName}</strong><Badge status={supplier.status}>{friendlyStatus(supplier.status)}</Badge><small>{supplier.currency.toUpperCase()} · {supplier.supplierCountry} · {supplier.bankName} · ****{supplier.accountLast4 || '----'}</small><small>{supplier.status === 'approved' ? 'Ready for supplier payment requests.' : supplier.reviewReason || 'Waiting for compliance review.'}</small></div>)}</div>}<div className="warning-box compact">Sivan chooses the execution provider in the background. Customers see a single Send & Transfer experience; provider diagnostics stay with operations.</div></article>
       {/* remaining lines unchanged */}
       <article className="panel form-panel supplier-form-card"><p className="eyebrow">Pay supplier / cross-border</p><h3>Add supplier bank</h3>{!hasUser || !isVerified ? <Empty>Complete verification before adding suppliers.</Empty> : <form className="form premium-form" onSubmit={onCreateSupplier}><label>Supplier business name<input name="supplierName" placeholder="ABC Trading Ltd" required /></label><div className="split"><label>Currency<input type="hidden" name="currency" value={supplierCurrency} /><div className="custom-select-wrap"><button type="button" className={`custom-select-trigger ${supplierCurrencyOpen ? 'open' : ''}`} onClick={() => setSupplierCurrencyOpen((open) => !open)}><span><strong>{selectedSupplierCurrency.label}</strong><small>{selectedSupplierCurrency.helper}</small></span><em>⌄</em></button>{supplierCurrencyOpen && <div className="custom-select-menu">{supplierCurrencyOptions.map((option) => <button type="button" className={option.value === supplierCurrency ? 'selected' : ''} key={option.value} onClick={() => { setSupplierCurrency(option.value); setSupplierCurrencyOpen(false); }}><span>{option.label}</span><small>{option.helper}</small></button>)}</div>}</div></label><label>Supplier country<input name="supplierCountry" defaultValue={supplierCurrency === 'gbp' ? 'GB' : supplierCurrency === 'usd' ? 'US' : supplierCurrency === 'mxn' ? 'MX' : supplierCurrency === 'brl' ? 'BR' : 'FR'} /></label></div><label>Bank name<input name="bankName" placeholder={supplierCurrency === 'gbp' ? 'Barclays' : supplierCurrency === 'usd' ? 'Lead Bank' : 'Supplier bank'} required /></label><label>Account owner name<input name="accountOwnerName" placeholder="ABC Trading Ltd" required /></label>{supplierCurrency === 'gbp' && <div className="split"><label>GBP account number<input name="gbAccountNumber" placeholder="12345678" required /></label><label>GBP sort code<input name="sortCode" placeholder="123456" required /></label></div>}{supplierCurrency === 'usd' && <div className="split"><label>USD account number<input name="accountNumber" placeholder="215268129123" required /></label><label>USD routing<input name="routingNumber" placeholder="101019644" required /></label></div>}{supplierCurrency === 'eur' && <><label>EUR IBAN<input name="ibanAccountNumber" placeholder="IE04MODR99035512826162" required /></label><label>BIC optional<input name="bic" placeholder="MODRIE22XXX" /></label></>}{supplierCurrency === 'mxn' && <label>CLABE<input name="clabeNumber" placeholder="18-digit CLABE" required /></label>}{supplierCurrency === 'brl' && <label>PIX key<input name="pixKey" placeholder="Supplier PIX key" required /></label>}<label>Supplier address<input name="street" placeholder="Supplier business address" /></label><div className="warning-box compact">{supplierCurrencyLabel} details are saved for compliance review. New suppliers stay pending until admin approval; AI can recommend, but never releases funds.</div><button className="primary-btn" disabled={loading}>{loading ? 'Adding supplier…' : 'Add supplier for review →'}</button></form>}</article>
@@ -248,6 +299,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
                   up, and the thing that differs per send. */}<small>To {shortRef(transfer.destinationAddress)} · {new Date(transfer.createdAt).toLocaleString()}</small>{transfer.status === 'processing' && <small>Submitted to the network. This usually confirms within a minute.</small>}{transfer.note && <small>{transfer.note}</small>}<OnChainReceipt network={transfer.network} txHash={transfer.txHash} userOperationHash={transfer.userOperationHash} networkMode={networkMode} status={transfer.status} /></div>)}</div>}</article>}
       {activeRoute === 'supplier' && <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Supplier payment history</p><h3>Cross-border payouts</h3></div></div>{!supplierPayments.length ? <Empty>No supplier payments yet.</Empty> : <div className="list">{supplierPayments.map((payment) => <div className="list-item" key={payment.id}><strong>{payment.amount} USDC → {payment.destinationCurrency.toUpperCase()}</strong><Badge status={payment.status}>{friendlyStatus(payment.status)}</Badge><small>{payment.supplier?.supplierName || shortRef(payment.supplierId)} · Risk {payment.riskLevel} · {new Date(payment.createdAt).toLocaleString()}</small><small>{payment.reviewReason}</small></div>)}</div>}</article>}
     </div>
+    {pendingTransfer && <TransferConfirm details={pendingTransfer} submitting={loading} onConfirm={() => void confirmTransfer()} onCancel={() => { setPendingTransfer(null); pendingFormRef.current = null; }} />}
     <article className="panel"><div className="panel-head"><div><p className="eyebrow">Stablecoin ledger</p><h3>Deposit, hold and spend trail</h3></div></div>{!balance?.ledger?.length ? <Empty>No stablecoin ledger entries yet. Deposit to your virtual account; after provider settlement, USDC can become spendable.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>Type</th><th>Amount</th><th>Status</th><th>Source</th><th>Date</th></tr></thead><tbody>{balance.ledger.slice(0, 20).map((entry) => <tr key={entry.entryId}><td>{entry.kind.replaceAll('_', ' ')}</td><td>{entry.amount} {entry.asset.toUpperCase()}</td><td><Badge status={entry.status}>{friendlyStatus(entry.status)}</Badge></td><td>{entry.sourceType} · {shortRef(entry.sourceId)}</td><td>{new Date(entry.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>
   </section>;
 }

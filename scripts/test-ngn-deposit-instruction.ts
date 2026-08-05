@@ -154,7 +154,19 @@ check('the countdown is neutral until it is urgent',
   /\.deposit-countdown\{[^}]*a9b8c7/.test(css) && /\.deposit-countdown\.urgent\{[^}]*f1bd72/.test(css));
 check('a danger button style exists for the confirm step', css.includes('.danger-btn{'));
 check('it is keyboard-focusable with a visible ring', css.includes('.danger-btn:focus-visible'));
-const mobile = css.slice(css.lastIndexOf('@media(max-width:640px)'));
+/**
+ * SCOPED TO ITS OWN SECTION, not "the last 640px media query".
+ *
+ * lastIndexOf was only ever correct while this happened to be the final block
+ * in the file. Appending the transfer-confirm styles below it silently
+ * repointed these assertions at unrelated CSS - the deposit rules were
+ * untouched and present the whole time. Exactly the same trap that caught
+ * test:block-explorer, which is why it is worth fixing here too rather than
+ * once.
+ */
+const depositSection = css.slice(css.indexOf('/* DEPOSIT INSTRUCTION'), css.indexOf('/* TRANSFER CONFIRM'));
+check('the deposit CSS section is findable', depositSection.length > 0, 'the section header comment moved or was removed');
+const mobile = depositSection.slice(depositSection.indexOf('@media(max-width:640px)'));
 check('mobile stacks the actions into one column',
   /\.deposit-instruction-actions\{display:grid;grid-template-columns:1fr/.test(mobile),
   'the destructive button must not sit a thumb-width from Copy');

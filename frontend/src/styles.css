@@ -2225,3 +2225,57 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
   .deposit-instruction-actions>button{width:100%;min-height:40px}
   .deposit-instruction .deposit-address-value{font-size:11.5px}
 }
+
+/* TRANSFER CONFIRM
+ *
+ * Reported: "when i click Review and create transfer there is no confirm
+ * screen". The button said review and did none.
+ *
+ * Inherits .sv-modal so it matches the verification dialog exactly - a second
+ * modal style would make the product feel assembled from parts.
+ *
+ * THE ADDRESS IS THE POINT OF THIS SCREEN. An unbroken 44-character string is
+ * read as a blur: people check three characters at each end and skip the
+ * middle, which is precisely the substitution clipboard-hijacking malware
+ * relies on. It is chunked, monospaced and given real size so the eye lands on
+ * every group, with the first and last groups brightened because those are
+ * what a person actually compares against their other device.
+ */
+.transfer-confirm{max-width:480px}
+.transfer-confirm-body{display:grid;gap:16px}
+.confirm-label{display:block;font-size:9.5px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:#9fb0c2;margin-bottom:8px}
+.confirm-address-block{padding:14px;border:1px solid rgba(116,221,190,.22);border-radius:14px;background:linear-gradient(180deg,rgba(116,221,190,.06),rgba(8,13,20,.9))}
+/* flex-wrap + gap does the chunking visually; user-select:all means one tap
+   selects the WHOLE address rather than a single group. */
+.confirm-address{display:flex;flex-wrap:wrap;gap:5px 9px;font-family:var(--mono);font-size:15px;line-height:1.5;color:#dce8f4;user-select:all;word-break:break-all}
+.confirm-address .edge{color:#74ddbe;font-weight:800}
+.confirm-address-hint{display:block;margin-top:9px;font-size:11px;line-height:1.45;color:#8b9aab}
+.confirm-rows{display:grid;gap:1px;border:1px solid rgba(255,255,255,.07);border-radius:13px;overflow:hidden;background:rgba(255,255,255,.06)}
+.confirm-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:11px 13px;background:#0a111a}
+.confirm-row span{font-size:12px;color:#9fb0c2}
+.confirm-row strong{font-size:13.5px;color:#eef3f7;text-align:right;overflow-wrap:anywhere}
+.confirm-network{display:inline-flex;align-items:center;gap:8px;text-transform:capitalize}
+/* Same casing as the row below. Two spellings of one chain reads as two chains. */
+.confirm-network-name{text-transform:capitalize}
+/* Amber, not green: testnet is a warning that the funds are not real. */
+.confirm-testnet{font-style:normal;padding:3px 7px;border-radius:999px;background:rgba(241,189,114,.14);border:1px solid rgba(241,189,114,.3);color:#f1bd72;font-size:9.5px;font-weight:900;letter-spacing:.1em;text-transform:uppercase}
+.confirm-ack{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start;padding:12px;border:1px solid rgba(241,189,114,.22);border-radius:13px;background:rgba(241,189,114,.06);cursor:pointer}
+/* 18px: a checkbox guarding an irreversible action must not be a 13px default
+   that is easy to hit by accident and easy to miss by eye. */
+.confirm-ack input{width:18px;height:18px;margin:1px 0 0;accent-color:#74ddbe;cursor:pointer;flex:none}
+.confirm-ack span{font-size:12px;line-height:1.5;color:#cdd8e3}
+.confirm-ack b{color:#f1bd72;text-transform:capitalize}
+.transfer-confirm-actions{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;margin-top:20px}
+.transfer-confirm-actions button{min-height:46px}
+.transfer-confirm-actions .ghost-btn{padding-inline:20px}
+
+@media(max-width:640px){
+  /* Full width and Back UNDERNEATH, so the destructive-by-default action is
+     not adjacent to the thumb's resting position. */
+  .transfer-confirm-actions{grid-template-columns:1fr}
+  .transfer-confirm-actions .primary-btn{order:-1}
+  .transfer-confirm-actions button{min-height:48px}
+  .confirm-address{font-size:14px;gap:4px 8px}
+  .confirm-row{flex-direction:column;align-items:flex-start;gap:4px}
+  .confirm-row strong{text-align:left}
+}
