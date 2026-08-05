@@ -153,7 +153,8 @@
     "test:transfer-fee-e2e": "tsx scripts/test-transfer-fee-e2e.ts",
     "test:wallet-error-honesty": "PRIVY_APP_ID= PRIVY_APP_SECRET= tsx scripts/test-wallet-error-honesty.ts",
     "test:transaction-detail-panel": "tsx scripts/test-transaction-detail-panel.ts",
-    "diagnose:privy": "tsx scripts/diagnose-privy.ts"
+    "diagnose:privy": "tsx scripts/diagnose-privy.ts",
+    "test:gas-limits": "tsx scripts/test-gas-limits.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

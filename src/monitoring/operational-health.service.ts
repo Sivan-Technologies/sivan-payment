@@ -30,6 +30,7 @@ import { getNgnProvider } from '../ngn/provider/ngn-provider-registry.js';
 import { env } from '../config/env.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { probePrivyCredentials } from '../wallets/provider/privy-wallet.provider.js';
+import { getGasUsage } from '../balances/gas-usage.service.js';
 
 export type AlertSeverity = 'ok' | 'warn' | 'critical';
 
@@ -322,6 +323,37 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
             : probe.status === 404
               ? `Wallet creation is broken: ${probe.message}`
               : `Privy did not answer: ${probe.message}. Wallet creation will fail while this lasts.`,
+      });
+    }
+  }
+
+  /**
+   * 4e. GAS SPONSORSHIP SPEND.
+   *
+   * Sivan pays the network fee on every transfer, so this is a spending
+   * account handed to users. Nothing watched it: the first sign of trouble
+   * would have been transfers failing for reasons unrelated to the real cause,
+   * on a balance nobody was looking at.
+   *
+   * Warns at 50% of the daily budget and goes critical at 100%, where the
+   * breaker refuses new-recipient transfers. Ordinary transfers are unaffected
+   * and the signal says so, because "gas budget exceeded" reads like a total
+   * outage and is not one.
+   */
+  {
+    const usage = await getGasUsage().catch(() => undefined);
+    if (usage && usage.budgetUsd > 0) {
+      const pct = Math.round(usage.budgetUsed * 100);
+      signals.push({
+        name: 'gas_sponsorship_spend_24h',
+        severity: usage.breakerTripped ? 'critical' : usage.budgetUsed >= 0.5 ? 'warn' : 'ok',
+        value: Math.round(usage.spendTodayUsd * 100) / 100,
+        detail: usage.breakerTripped
+          ? `Sponsored spend is $${usage.spendTodayUsd.toFixed(2)} against a $${usage.budgetUsd} daily budget (${pct}%). `
+            + 'Transfers to NEW addresses are being refused; transfers to known addresses still work. '
+            + `${usage.newAccounts24h} new recipient account(s) created in 24h at ~$0.31 each.`
+          : `Sponsored spend is $${usage.spendTodayUsd.toFixed(2)} of a $${usage.budgetUsd} daily budget (${pct}%). `
+            + `${usage.transfers24h} Solana transfer(s), ${usage.newAccounts24h} of which created a recipient account.`,
       });
     }
   }

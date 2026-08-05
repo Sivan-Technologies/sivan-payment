@@ -11,6 +11,7 @@ import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.
 import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
 import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, type TransferFeeConfig } from './transfer-fee-policy.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
+import { evaluateGasLimits } from './gas-usage.service.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 
 export type BalanceAsset = 'usdc' | 'usdt';
@@ -568,6 +569,34 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
         production: resolveNetworkMode() === 'mainnet',
       })
     : false;
+
+  /**
+   * GAS LIMITS. Checked BEFORE the hold and before anything is priced.
+   *
+   * Sivan sponsors the network fee, so an unbounded stream of transfers to
+   * fresh addresses is a direct drain on funds nobody has authorised. See
+   * gas-policy.ts for why the meaningful limit is NEW RECIPIENTS rather than
+   * transfer count.
+   *
+   * In warn mode the decision is computed and audited but not enforced, which
+   * is the intended launch state: these thresholds are guesses until real
+   * traffic exists.
+   */
+  const gasDecision = await evaluateGasLimits({ userId, createsRecipientAccount });
+  if (gasDecision.wouldRefuse) {
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'gas_limits',
+      action: gasDecision.allowed ? 'gas.limit_warned' : 'gas.limit_refused',
+      resourceType: 'balance_transfer',
+      resourceId: userId,
+      severity: gasDecision.allowed ? 'warning' : 'error',
+      metadata: { userId, rule: gasDecision.rule, tier: gasDecision.tier, ...gasDecision.detail },
+    }).catch(() => undefined);
+  }
+  if (!gasDecision.allowed) {
+    throw badRequest(gasDecision.reason ?? 'This transfer exceeds your current daily limit.');
+  }
 
   const quote = await quoteTransfer(input.amount, { createsRecipientAccount });
 

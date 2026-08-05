@@ -6,6 +6,7 @@ import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
 import { validateTiers } from './fee-policy.js';
 import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND } from '../balances/transfer-fee-policy.js';
+import { DEFAULT_GAS_CONTROLS } from '../balances/gas-policy.js';
 
 export const feeTierSchema = z.object({
   tier: z.enum(['starter', 'verified', 'pro', 'vip']),
@@ -188,6 +189,37 @@ export const feeSettingsSchema = z.object({
    */
   transferFeeNewRecipientUsd: z.coerce.number().min(0).max(100).default(DEFAULT_TRANSFER_FEE.newRecipientUsd),
 
+  /**
+   * ───── GAS SPONSORSHIP CONTROLS ─────
+   *
+   * Sivan pays the network fee on every transfer, so these are the limits that
+   * stop that being drained. See gas-policy.ts for the reasoning; the short
+   * version is that transfers cost $0.0008 and NEW RECIPIENTS cost $0.31, so
+   * the second is the only number worth defending.
+   */
+  gasLimitsEnabled: z.boolean().default(true),
+  /**
+   * Report-only, and TRUE by default. The intended launch state: evaluate and
+   * log every limit decision without enforcing, read a fortnight of real
+   * behaviour, then enforce thresholds grounded in it. Guessing wrong in the
+   * strict direction costs customers rather than money.
+   */
+  gasLimitsWarnOnly: z.boolean().default(true),
+  /**
+   * Rolling-24h sponsored spend at which transfers to NEW addresses are
+   * refused. Ordinary transfers keep flowing - halting them over a cost limit
+   * would be an outage in response to a spending problem, and they are not
+   * what drained it.
+   */
+  gasDailyBudgetUsd: z.coerce.number().min(0).max(100_000).default(25),
+  /**
+   * Used to express SOL costs in dollars. Not a price oracle: a breaker whose
+   * threshold moves with the market trips at unpredictable times for reasons
+   * unrelated to usage. Privy's gas_spend endpoint is the number to reconcile
+   * against; this is the pre-flight estimate.
+   */
+  gasSolPriceUsd: z.coerce.number().min(1).max(100_000).default(150),
+
   bridgeOfframpCostPercent: z.coerce.number().min(0).max(100),
   rateSources: z.array(z.object({ name: z.string().min(1), weightPercent: z.coerce.number().min(0).max(100), live: z.boolean().default(true) })).default([]),
   feeTiers: z.array(feeTierSchema).min(1),
@@ -238,6 +270,10 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     transferFeeMaximumUsd: DEFAULT_TRANSFER_FEE.maximumUsd,
     transferMinimumSendAmount: DEFAULT_TRANSFER_MIN_SEND,
     transferFeeNewRecipientUsd: DEFAULT_TRANSFER_FEE.newRecipientUsd,
+    gasLimitsEnabled: DEFAULT_GAS_CONTROLS.limitsEnabled,
+    gasLimitsWarnOnly: DEFAULT_GAS_CONTROLS.warnOnly,
+    gasDailyBudgetUsd: DEFAULT_GAS_CONTROLS.dailyBudgetUsd,
+    gasSolPriceUsd: DEFAULT_GAS_CONTROLS.solPriceUsd,
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
       { name: 'Bridge', weightPercent: 40, live: true },

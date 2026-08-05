@@ -7,6 +7,9 @@ import { acceptNgnQuote, acceptNgnQuoteSchema, cancelNgnTransfer, listNgnTransfe
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
 import { db } from '../../database/json-database.js';
+import { getGasUsage, getGasControls } from '../../balances/gas-usage.service.js';
+import { solanaTransactionCostUsd, ataRentCostUsd } from '../../balances/gas-policy.js';
+import { fetchPrivyGasSpendUsd } from '../../wallets/provider/privy-wallet.provider.js';
 import type { UserWalletRecord } from '../../database/types.js';
 import {
   saveNgnPayoutAccount,
@@ -430,6 +433,47 @@ export async function ngnRoutes(app: FastifyInstance) {
           delegatedSigningEnabled: Boolean(wallet.delegatedSigningEnabled),
           createdAt: wallet.createdAt,
         })),
+      },
+    };
+  });
+
+  /**
+   * Gas sponsorship: what has been spent, and what the limits are.
+   *
+   * Reports BOTH our own estimate and Privy's billed figure. They answer
+   * different questions - the estimate drives the circuit breaker in real
+   * time, Privy's is the invoice - and showing only one would hide a drift
+   * between them that is itself worth seeing.
+   */
+  app.get('/api/admin/wallets/gas', async () => {
+    const [usage, controls] = await Promise.all([getGasUsage(), getGasControls()]);
+
+    // Solana wallets only: EVM gas is paid in ETH and is not part of this
+    // budget, so including those ids would inflate Privy's figure against a
+    // budget that never counted them.
+    const wallets = (await db.listAllOpenWallets())
+      .filter((wallet: UserWalletRecord) => wallet.chain === 'solana')
+      .map((wallet: UserWalletRecord) => wallet.providerWalletId)
+      .filter(Boolean);
+
+    const billed = await fetchPrivyGasSpendUsd({
+      walletIds: wallets,
+      startMs: Date.now() - 24 * 3600_000,
+      endMs: Date.now(),
+    });
+
+    return {
+      data: {
+        ...usage,
+        controls,
+        costs: {
+          perTransferUsd: solanaTransactionCostUsd(controls.solPriceUsd),
+          perNewRecipientUsd: ataRentCostUsd(controls.solPriceUsd),
+        },
+        // `ok:false` is surfaced rather than swallowed. An unknown billed
+        // figure is honest; a silent 0 would read as "we have spent nothing".
+        privy: billed,
+        walletsTracked: wallets.length,
       },
     };
   });
