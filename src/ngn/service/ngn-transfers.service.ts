@@ -104,16 +104,51 @@ export async function acceptNgnQuote(input: z.infer<typeof acceptNgnQuoteSchema>
 }
 
 /**
+ * WHY A SKIPPED SWEEP IS WORTH A LOG.
+ *
+ * Every bail-out below used to be a bare `return undefined`. That is correct
+ * behaviour - a user who intends to send crypto manually is not an error - but
+ * it made two completely different situations identical from the outside:
+ *
+ *   "this user has no balance and does not know they must now deposit"
+ *   "this user always meant to pay from their own wallet"
+ *
+ * Both produced silence and an order sitting in `awaiting_crypto_deposit`. The
+ * `orders_awaiting_deposit` pile-up on api-test was the first kind, and it was
+ * only found by reading the database, because nothing anywhere said so.
+ *
+ * Deliberately `info`, not `error`. A skipped sweep is a normal outcome; it is
+ * the INVISIBILITY that was the defect, not the skip.
+ */
+async function recordSweepSkipped(
+  transfer: NgnTransferRecord,
+  reason: 'no_network' | 'no_wallet_for_network' | 'insufficient_spendable',
+  detail: Record<string, unknown> = {}
+): Promise<undefined> {
+  await createAuditLog({
+    actorType: 'system',
+    actorId: 'ngn_sweep',
+    action: 'ngn.sweep_skipped',
+    resourceType: 'payments_ngn_transfer',
+    resourceId: transfer.id,
+    severity: 'info',
+    metadata: { reason, depositAddress: transfer.depositAddress, ...detail },
+  });
+  return undefined;
+}
+
+/**
  * Send the off-ramp amount from the user's own wallet to the rail's deposit
  * address.
  *
  * Returns undefined - not an error - when there is nothing to sweep from. A
  * user who funded a personal wallet elsewhere and intends to send manually is
- * a legitimate case, not a failure.
+ * a legitimate case, not a failure. Each such exit is recorded so that case can
+ * be told apart from a user who is simply stuck.
  */
 async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, unknown> | undefined> {
   const network = String((transfer.metadata as any)?.quoteMetadata?.network ?? '').toLowerCase();
-  if (!network) return undefined;
+  if (!network) return recordSweepSkipped(transfer, 'no_network');
 
   /**
    * Same wallet-selection rule as everywhere else - but asked by FAMILY.
@@ -131,7 +166,7 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
    * user's off-ramp worked.
    */
   const wallet = await db.findUserWalletForNetwork(transfer.userId, network);
-  if (!wallet) return undefined;
+  if (!wallet) return recordSweepSkipped(transfer, 'no_wallet_for_network', { network });
 
   const asset = String(transfer.sourceCurrency ?? 'usdc').toLowerCase();
   /**
@@ -141,7 +176,22 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
    */
   const spendable = await getSpendable(transfer.userId, asset);
   const amount = Number(transfer.sourceAmount ?? 0);
-  if (spendable === null || spendable < amount || amount <= 0) return undefined;
+  if (spendable === null || spendable < amount || amount <= 0) {
+    /**
+     * The shortfall is the number a human actually needs, so it is computed
+     * here rather than left to be re-derived from two other fields later. A
+     * null `spendable` means the balance could not be READ, which is not the
+     * same as a balance of zero and must not be reported as one.
+     */
+    return recordSweepSkipped(transfer, 'insufficient_spendable', {
+      asset,
+      network,
+      requiredAmount: amount,
+      spendable,
+      shortfall: spendable === null ? null : Math.max(0, amount - spendable),
+      balanceUnreadable: spendable === null,
+    });
+  }
 
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const result = await provider.createTransfer({

@@ -39,6 +39,23 @@ import { exceedsRemaining, offrampClears, typicalGasUsd } from '../../ngnMinimum
  */
 const POPULAR_BANKS_SHOWN = 6;
 
+/**
+ * WHERE THE CRYPTO IS COMING FROM, ASKED UP FRONT.
+ *
+ * This used to be decided in silence, at the very END of the flow, by whether
+ * sweepToRail() happened to find a funded wallet. A user with too small a
+ * balance picked a bank, verified an account, spent a quote, accepted it - and
+ * only then landed on a deposit address, with nothing explaining why. The
+ * order looked identical to one placed by somebody who always intended to send
+ * crypto from their own wallet.
+ *
+ * Asking first turns that dead end into a choice. 'balance' is validated
+ * against what the user actually holds BEFORE a quote is spent; 'external'
+ * skips the balance check entirely and treats the deposit address as the
+ * destination the user asked for.
+ */
+export type NgnFundingSource = 'balance' | 'external';
+
 export function NgnPayoutForm({
   userId,
   api,
@@ -46,6 +63,7 @@ export function NgnPayoutForm({
   asset,
   breetMinimumUsd,
   remainingNgn,
+  spendable,
   windowDays = 30,
   onReady,
   onCancel,
@@ -55,7 +73,16 @@ export function NgnPayoutForm({
   network: string;
   asset: 'usdc' | 'usdt';
   breetMinimumUsd?: number;
-  onReady: (payload: { quote: NgnQuote; account: ResolvedNgnBankAccount }) => void;
+  /**
+   * What the user can actually sell from their Sivan balance.
+   *
+   * Same convention as remainingNgn, and for the same reason: `undefined`
+   * means NOT LOADED and `null` means the balance could not be read. Neither
+   * is zero, and showing "0.00 available" for a balance we simply failed to
+   * fetch would talk a user out of a withdrawal they can afford.
+   */
+  spendable?: number | null;
+  onReady: (payload: { quote: NgnQuote; account: ResolvedNgnBankAccount; fundingSource: NgnFundingSource }) => void;
   /**
    * The user's remaining NGN off-ramp headroom, from the server.
    *
@@ -81,6 +108,7 @@ export function NgnPayoutForm({
   const [quoting, setQuoting] = useState(false);
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
+  const [fundingSource, setFundingSource] = useState<NgnFundingSource>('balance');
 
   const estimatedGasUsd = typicalGasUsd(network);
 
@@ -175,12 +203,40 @@ export function NgnPayoutForm({
     ? offrampClears({ amountUsd, breetMinimumUsd, estimatedGasUsd })
     : undefined;
 
+  /**
+   * Selling more than the balance holds, caught while typing.
+   *
+   * Only meaningful when selling FROM the balance, and only when the number is
+   * actually known - an unread balance (null) or one still loading (undefined)
+   * must not manufacture a shortfall, because the server is the authority and
+   * a false block here stops a legitimate withdrawal.
+   */
+  const balanceKnown = fundingSource === 'balance' && typeof spendable === 'number';
+  const shortfallUsd = balanceKnown && amountUsd > spendable! ? amountUsd - spendable! : 0;
+  const overBalance = shortfallUsd > 0;
+
+  const usd = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   async function getQuote() {
     setError('');
     if (!resolved) return setError('Verify your bank account first.');
     if (!(amountUsd > 0)) return setError('Enter an amount.');
     // Checked before spending a quote on an amount that cannot settle.
     if (floorVerdict && !floorVerdict.clears) return setError(floorVerdict.reason ?? 'Amount is below the minimum.');
+    /**
+     * Refused BEFORE the quote, not after acceptance.
+     *
+     * The server would eventually decline to sweep this, but only once the
+     * quote had been priced and consumed - leaving the user on a deposit
+     * address they did not ask for. Stopping here keeps the quote and gives
+     * them a number they can act on.
+     */
+    if (overBalance) {
+      return setError(
+        `You have ${usd(spendable!)} ${asset.toUpperCase()} available to sell. ` +
+        `Lower the amount, or choose "I'll send crypto myself" to send from another wallet.`
+      );
+    }
 
     setQuoting(true);
     try {
@@ -204,6 +260,34 @@ export function NgnPayoutForm({
       <p className="muted">Choose your bank and enter your account number. We confirm the account name before anything is sent.</p>
 
       <div className="form premium-form">
+        {/* ASKED FIRST, because it changes what every later step means.
+ 
+            Placed above the bank picker deliberately: choosing "I'll send
+            crypto myself" turns off the balance check entirely, and a user who
+            discovers that option AFTER being blocked on an amount has already
+            been told they cannot do something they can. */}
+        <div className="seg" role="group" aria-label="Where the crypto comes from">
+          <button
+            type="button"
+            className={fundingSource === 'balance' ? 'active' : ''}
+            onClick={() => { setFundingSource('balance'); setError(''); }}
+          >
+            From my Sivan balance
+          </button>
+          <button
+            type="button"
+            className={fundingSource === 'external' ? 'active' : ''}
+            onClick={() => { setFundingSource('external'); setError(''); }}
+          >
+            I'll send crypto myself
+          </button>
+        </div>
+        {fundingSource === 'external' && (
+          <p className="field-hint">
+            We'll show you an address to send {asset.toUpperCase()} to on {network}. The naira is paid out once it arrives.
+          </p>
+        )}
+
         <label>Bank
           <input
             placeholder="Search your bank, e.g. GTB or Access"
@@ -306,12 +390,42 @@ export function NgnPayoutForm({
 
         {resolved && (
           <label>Amount to withdraw ({asset.toUpperCase()})
-            <input
-              inputMode="decimal"
-              placeholder={breetMinimumUsd ? String(breetMinimumUsd) : '20'}
-              value={amount}
-              onChange={(event) => { setAmount(event.target.value.replace(/[^0-9.]/g, '')); setQuote(null); }}
-            />
+            <div className="amount-with-max">
+              <input
+                inputMode="decimal"
+                placeholder={breetMinimumUsd ? String(breetMinimumUsd) : '20'}
+                value={amount}
+                onChange={(event) => { setAmount(event.target.value.replace(/[^0-9.]/g, '')); setQuote(null); }}
+              />
+              {/* Only when selling from a balance we have actually read.
+                  A Max button that fills in a number we are not sure of is
+                  worse than no Max button. */}
+              {balanceKnown && spendable! > 0 && (
+                <button
+                  type="button"
+                  className="ghost-btn small"
+                  onClick={() => { setAmount(String(spendable)); setQuote(null); setError(''); }}
+                >
+                  Max
+                </button>
+              )}
+            </div>
+            {/* The balance, where the amount is decided - which is the only
+                place it changes what someone types. */}
+            {fundingSource === 'balance' && (
+              <span className="field-hint">
+                {spendable === undefined
+                  ? 'Checking your balance…'
+                  : spendable === null
+                    ? 'We could not read your balance right now. You can still continue.'
+                    : `${usd(spendable)} ${asset.toUpperCase()} available to sell.`}
+              </span>
+            )}
+            {overBalance && (
+              <span className="field-hint danger">
+                That is {usd(shortfallUsd)} {asset.toUpperCase()} more than you have available.
+              </span>
+            )}
             {floorVerdict && !floorVerdict.clears && (
               <span className="field-hint danger">{floorVerdict.reason}</span>
             )}
@@ -358,7 +472,7 @@ export function NgnPayoutForm({
             <button
               type="button"
               className="primary-btn"
-              disabled={quoting || !resolved || !(amountUsd > 0) || Boolean(floorVerdict && !floorVerdict.clears)}
+              disabled={quoting || !resolved || !(amountUsd > 0) || overBalance || Boolean(floorVerdict && !floorVerdict.clears)}
               onClick={() => void getQuote()}
             >
               {quoting ? 'Pricing…' : quoteExpired ? 'Refresh quote' : 'Get quote →'}
@@ -371,7 +485,7 @@ export function NgnPayoutForm({
               // letting the user reach the review screen only to be rejected
               // there wastes the quote they are racing the expiry on.
               disabled={overLimit}
-              onClick={() => onReady({ quote, account: resolved! })}
+              onClick={() => onReady({ quote, account: resolved!, fundingSource })}
             >
               Continue →
             </button>

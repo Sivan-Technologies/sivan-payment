@@ -1479,7 +1479,7 @@ export default function App() {
    * travels on to confirmation. The account details are carried purely so the
    * review screen can show the user where their money is going.
    */
-  function handleNgnReady({ quote, account }: { quote: any; account: any }) {
+  function handleNgnReady({ quote, account, fundingSource }: { quote: any; account: any; fundingSource: 'balance' | 'external' }) {
     if (!user?.id) return;
     setWithdrawalReview({
       userId: user.id,
@@ -1494,7 +1494,10 @@ export default function App() {
       bankId: account.bankId,
       accountNumber: account.accountNumber,
       minimumUsd: ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd,
-      estimatedGasUsd: typicalGasUsd(ngnNetwork)
+      estimatedGasUsd: typicalGasUsd(ngnNetwork),
+      // Carried so the review screen can say which of the two things is about
+      // to happen. The user chose it; the confirmation should reflect it back.
+      fundingSource
     });
     setDepositResult(null);
   }
@@ -1975,6 +1978,12 @@ export default function App() {
             ngnAsset="usdc"
             ngnMinimumUsd={ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd}
             ngnRemainingNgn={ngnOfframpAllowance?.remainingNgn}
+            /**
+             * undefined while the balance is loading, null when the chain
+             * could not be reached. The form distinguishes all three states,
+             * because "we could not check" is not "you have nothing".
+             */
+            ngnSpendable={!unifiedBalance ? undefined : usdcUnified?.chainUnavailable ? null : Number(usdcUnified?.spendable ?? 0)}
             ngnWindowDays={verificationSummary?.windowDays}
             onNgnReady={handleNgnReady}
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}

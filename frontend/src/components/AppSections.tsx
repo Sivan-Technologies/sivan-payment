@@ -108,9 +108,15 @@ export type WithdrawalReviewState = {
   /** Shown before confirming, so the floor is visible rather than discovered. */
   minimumUsd?: number;
   estimatedGasUsd?: number;
+  /**
+   * Which of the two things is about to happen, as the user chose it.
+   *
+   * NGN rail only. Undefined on the Bridge rail, which has no such choice.
+   */
+  fundingSource?: 'balance' | 'external';
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork = 'solana', ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnWindowDays, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork = 'solana', ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
   ngnUserId?: string;
@@ -120,8 +126,13 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   ngnMinimumUsd?: number;
   /** Remaining NGN headroom from the server. Never computed in the UI. */
   ngnRemainingNgn?: number | null;
+  /**
+   * Spendable balance for the sell asset. undefined = still loading,
+   * null = could not be read. Neither is zero.
+   */
+  ngnSpendable?: number | null;
   ngnWindowDays?: number;
-  onNgnReady?: (payload: { quote: any; account: any }) => void;
+  onNgnReady?: (payload: { quote: any; account: any; fundingSource: 'balance' | 'external' }) => void;
   onExitNgn?: () => void;
   onEnterNgn?: () => void;
   /** Whether the NGN rail has any usable off-ramp network right now. */
@@ -171,7 +182,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // Naira needs a different first step entirely: a NUBAN and a
             // quote, not a saved Bridge external account. Bridge account
             // shapes (routing number, sort code, IBAN) cannot express one.
-            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} windowDays={ngnWindowDays} onReady={onNgnReady!} onCancel={onExitNgn!} />
+            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} onReady={onNgnReady!} onCancel={onExitNgn!} />
             : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} />}
@@ -312,15 +323,37 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
         {review.estimatedGasUsd !== undefined && <Kv label="Estimated network fee" value={`$${review.estimatedGasUsd.toFixed(2)}`} />}
         <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
       </div>
-      {isNgn && review.minimumUsd !== undefined && (
+      {/* WHAT HAPPENS NEXT, SAID PLAINLY BEFORE THEY COMMIT.
+ 
+          Selling from the balance means Sivan moves the crypto itself and the
+          user does nothing further. That is a materially different experience
+          from being handed an address, and the confirmation screen was silent
+          about which one they were about to get. */}
+      {isNgn && review.fundingSource === 'balance' && (
+        <div className="details-box compact">
+          <span>We'll move {review.assetLabel} from your Sivan balance automatically. You don't need to send anything.</span>
+        </div>
+      )}
+      {isNgn && review.minimumUsd !== undefined && review.fundingSource !== 'balance' && (
         // Stated before they send, because afterwards is too late: below the
         // minimum the funds are confirmed on-chain, held, and not credited.
         <div className="warning-box">Send at least <strong>${review.minimumUsd.toFixed(2)}</strong>. A smaller deposit is held by our settlement partner rather than paid out, and costs a fee to recover.</div>
       )}
-      <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</div>
+      {/* The wrong-network warning is about an address the USER sends to. On
+          the balance path there is no such address and no such risk, so
+          showing it there manufactures a fear that does not apply. */}
+      {review.fundingSource !== 'balance' && (
+        <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</div>
+      )}
       <div className="split-actions">
         <button className="ghost-btn" onClick={onCancel}>Edit details</button>
-        <button className="primary-btn" disabled={loading} onClick={onConfirm}>{loading ? 'Creating...' : 'Create deposit address'}</button>
+        {/* The button must name what it does. On the balance path it does not
+            create a deposit address for the user to use - it sells. */}
+        <button className="primary-btn" disabled={loading} onClick={onConfirm}>
+          {loading
+            ? review.fundingSource === 'balance' ? 'Selling…' : 'Creating...'
+            : review.fundingSource === 'balance' ? 'Confirm sale' : 'Create deposit address'}
+        </button>
       </div>
     </article>
   );
