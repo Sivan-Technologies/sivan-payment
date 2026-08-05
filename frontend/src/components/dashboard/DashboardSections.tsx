@@ -18,8 +18,20 @@ export function PublicSidebarCta({ onCreate }: { onCreate: () => void }) {
   return <article className="sidebar-setup-card public-cta"><p>New to Sivan?</p><strong>Start</strong><small>Create your account to access payments, verification, and linked WhatsApp identity.</small><button className="primary-btn" onClick={onCreate}>Create account ›</button></article>;
 }
 
-export function KpiCard({ label, value, sub, trend }: { label: string; value: string; sub: string; trend: string }) {
-  return <article className="kpi-card"><p>{label}</p><strong>{value}</strong><span>{sub}</span><small>{trend}</small></article>;
+/**
+ * `tone` exists because the trend line was hardcoded green for every card, so
+ * "1 needs you" - the one line on the dashboard that asks the user to DO
+ * something - rendered identically to "Ready". Caught by looking at the
+ * render, not the code.
+ *
+ *   ok    default. Nothing to do.
+ *   action something is waiting on the user. Amber, matching the deposit
+ *          countdown and the testnet badge, so "your turn" looks the same
+ *          everywhere in the product.
+ *   muted  loading or unknown - never green, which would read as a verdict.
+ */
+export function KpiCard({ label, value, sub, trend, tone = 'ok' }: { label: string; value: string; sub: string; trend: string; tone?: 'ok' | 'action' | 'muted' }) {
+  return <article className="kpi-card"><p>{label}</p><strong>{value}</strong><span>{sub}</span><small className={`kpi-trend ${tone}`}>{trend}</small></article>;
 }
 
 /**

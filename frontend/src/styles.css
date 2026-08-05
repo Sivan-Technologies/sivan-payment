@@ -871,12 +871,21 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .dashboard-action-card strong { display: block; font-size: 16px; }
 .dashboard-action-card small { color: var(--muted); }
 .dashboard-action-card em { color: var(--muted); font-style: normal; font-size: 24px; }
-.dashboard-kpis { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+/* THREE, not four. Payout volume and Transactions were removed - see the
+   comment in App.tsx. Three also matches the three action cards directly
+   above, so the two rows share a rhythm instead of fighting it. */
+.dashboard-kpis { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
 .kpi-card { min-height: 128px; padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: #0d1520; }
 .kpi-card p { margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; font-size: 11px; font-weight: 900; }
 .kpi-card strong { display: block; margin: 10px 0 4px; font-size: 25px; letter-spacing: -.04em; }
 .kpi-card span { display: block; color: var(--muted); font-size: 13px; }
+/* The trend line used to be green on EVERY card, so "1 needs you" - the one
+   line asking the user to act - looked identical to "Ready". Amber matches the
+   deposit countdown and the testnet badge, so "your turn" is one colour across
+   the product. Muted for loading, because green there reads as a verdict. */
 .kpi-card small { display: block; margin-top: 8px; color: var(--green); font-weight: 850; }
+.kpi-trend.action { color: #f1bd72; }
+.kpi-trend.muted { color: #8b9aab; }
 .dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(330px, .9fr); gap: 18px; align-items: start; }
 .dashboard-transactions, .dashboard-setup-panel, .security-card { border: 1px solid var(--border); border-radius: 18px; background: #0d1520; box-shadow: var(--shadow); }
 .dashboard-transactions { min-height: 520px; padding: 22px; }
@@ -905,6 +914,9 @@ input:focus, select:focus { border-color: rgba(116,221,190,.68); box-shadow: 0 0
 .security-card { display: flex; gap: 16px; padding: 22px; background: linear-gradient(160deg, rgba(15,29,28,.96), #0d1520); }
 .security-icon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; background: rgba(116,221,190,.1); color: var(--green); flex-shrink: 0; }
 .security-card p { color: var(--muted); line-height: 1.55; margin: 8px 0 10px; }
+/* Three cards at 1180px would each be ~340px and the values start wrapping;
+   two is the honest fit. Below 760px they go full width - three abreast on a
+   phone is unreadable at any font size. */
 @media (max-width: 1180px) { .dashboard-kpis { grid-template-columns: repeat(2, minmax(0,1fr)); } .dashboard-main-grid { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .dashboard-actions-row, .dashboard-kpis { grid-template-columns: 1fr; } .setup-banner { flex-direction: column; align-items: stretch; } .search-wrap { display: none; } .user-pill span:last-child { display: none; } }
 

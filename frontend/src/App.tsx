@@ -3,6 +3,7 @@ import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResp
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { buildActivityFeed } from './activityFeed';
+import { inProgressKpi, limitKpi } from './dashboardKpis';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
 import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
@@ -366,6 +367,17 @@ export default function App() {
    */
   const [selectedActivityId, setSelectedActivityId] = useState<string>('');
 
+  /**
+   * The two derived KPI cards. Pure functions of data already on the client,
+   * so they cannot disagree with the activity list below them - which is
+   * exactly how "Payout volume $0.00" ended up above six real transactions.
+   */
+  const inProgress = useMemo(() => inProgressKpi(activityFeed), [activityFeed]);
+  const limitCard = useMemo(
+    () => limitKpi(verificationSummary as any, verificationSummaryLoaded),
+    [verificationSummary, verificationSummaryLoaded]
+  );
+
   const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
   /**
    * ONE SOURCE FOR EVERY BALANCE ON EVERY SCREEN.
@@ -379,7 +391,11 @@ export default function App() {
   const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
   const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
   const completedWithdrawalCount = completedWithdrawals.length;
-  const completedVolume = completedWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.destinationAmount ?? withdrawal.sourceAmount ?? 0), 0);
+  // completedVolume was deleted with the Payout volume card. It summed
+  // destinationAmount across withdrawals whose destinationCurrency is
+  // 'usd' | 'gbp' | 'eur' and the UI prefixed "$", so a GBP and a EUR payout
+  // would have displayed as one dollar figure. Leaving it here as an unused
+  // cross-currency sum would be leaving a loaded gun for the next KPI.
   const completedActivityCount = completedWithdrawalCount
     + onrampOrders.filter((order) => order.status === 'completed').length
     + supplierPayments.filter((payment) => payment.status === 'completed').length
@@ -1875,21 +1891,40 @@ export default function App() {
                 sub={!unifiedBalance ? 'Loading…' : usdcUnified?.chainUnavailable ? 'Could not reach the network' : 'Available to send or sell'}
                 trend={!unifiedBalance ? 'Checking your wallet' : usdcUnified?.chainUnavailable ? 'Retrying shortly' : Number(usdcUnified?.held ?? 0) > 0 ? `${Number(usdcUnified?.held ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} held for review` : 'Ready'}
               />
-              <KpiCard label="Payout volume" value={completedVolume ? `$${completedVolume.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '$0.00'} sub="Completed payouts" trend={completedWithdrawalCount ? `${completedWithdrawalCount} completed` : 'No completed payouts yet'} />
-              <KpiCard label="Transactions" value={String(withdrawals.length + onrampOrders.length)} sub="Lifetime" trend={(withdrawals.length + onrampOrders.length) ? `${withdrawals.length + onrampOrders.length} records` : 'Start your first'} />
-              {/* The average-payout-time card was a hardcoded string dressed
-                  as a metric - it never varied, and its "Tracked by status"
-                  footnote implied a measurement that does not exist. Removed so
-                  the balance can take a column without pushing this row to
-                  five, and because a fake number beside a real one damages the
-                  real one. */}
-              {/* SAME RULE AS THE NOTICE ABOVE: no verdict before the answer.
- 
-                  Unloaded, this fell to "Incomplete / Action required" - so a
-                  verified user's dashboard accused them twice at once, in the
-                  banner and in the KPI beside it. */}
-              <KpiCard label="Verification" value={!verificationSummaryLoaded ? '—' : verificationSummary ? verificationSummary.levelLabel.replace(/^Level \d+: /, '') : isVerified ? 'Verified' : 'Incomplete'} sub={!verificationSummaryLoaded ? 'Checking…' : verificationSummary ? `Level ${verificationSummary.level}` : isVerified ? 'Ready' : 'Action required'} trend={/* friendlyStatus reads the BRIDGE customer status, which is "Not started" for a Nigerian who verified by bank check. */ !verificationSummaryLoaded ? 'Loading your status' : verificationSummary ? (verificationSummary.pathComplete ? 'Ready' : verificationSummary.hasPendingPayoutReview ? 'Being checked' : 'Action required') : friendlyStatus(customer?.kycStatus)} />
+              {/* PAYOUT VOLUME AND TRANSACTIONS ARE GONE.
 
+                   Both were single-source reads on a six-source product, the
+                   same defect the activity feed had. Payout volume summed only
+                   `withdrawals`, so it showed $0.00 on an account with two
+                   COMPLETED crypto sends - and it summed destinationAmount
+                   across usd|gbp|eur behind a "$" prefix, so a GBP and a EUR
+                   payout would have rendered as one dollar figure. That bug
+                   never fired only because nothing had completed yet.
+
+                   Transactions was a count of rows sitting directly above the
+                   list of rows.
+
+                   Both actively contradicted the unified feed once it shipped:
+                   the card read "0 Lifetime" while six transactions sat
+                   underneath. Replaced by the two questions people actually
+                   open the dashboard to answer - is anything stuck, and how
+                   much headroom is left. */}
+              <KpiCard label="In progress" value={inProgress.value} sub={inProgress.sub} trend={inProgress.trend} tone={inProgress.tone} />
+              {/* NAIRA LIMITS ONLY FOR PEOPLE WHO TRANSACT IN NAIRA.
+
+                   limitNgn is the internal denominator for EVERY limit,
+                   including the foreign rail - a UK user selling USDC for GBP
+                   has a real enforced cap, just expressed in a currency they
+                   never touch. So this is not "hide it from non-Nigerians", it
+                   is "never show ₦ to someone who does not use ₦". They get
+                   the verification card instead: a different question for a
+                   different user, not a degraded fallback.
+
+                   Known gap, stated rather than papered over: that leaves a UK
+                   user with no visible limit at all. Closing it needs limits
+                   expressed in their own currency, which is backend work and
+                   not something to fake with a hardcoded rate here. */}
+              <KpiCard label={limitCard.label} value={limitCard.value} sub={limitCard.sub} trend={limitCard.trend} tone={limitCard.tone} />
             </div>
 
             <div className="dashboard-main-grid">
