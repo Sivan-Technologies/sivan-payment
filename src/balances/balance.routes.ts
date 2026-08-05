@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
+import { quoteTransfer } from './balance.service.js';
 import { listUserDeposits } from '../deposits/deposit.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber } from '../identity/identity.service.js';
@@ -106,6 +107,24 @@ export async function balanceRoutes(app: FastifyInstance) {
    * alongside the other money endpoints and is authenticated identically, by
    * the same userId path convention every sibling route uses.
    */
+  /**
+   * What a transfer will cost, before committing to it.
+   *
+   * A GET so the confirm dialog can ask without side effects. The frontend must
+   * NOT recompute the curve: two implementations of a pricing rule is how they
+   * come to disagree, and a UI quoting a different fee from the one charged
+   * reads to a user as theft. Guarded by test:transfer-fee-policy, which fails
+   * if the formula appears in frontend source.
+   */
+  app.get('/api/balance/transfers/quote', async (request) => {
+    const { amount } = request.query as { amount?: string };
+    const parsed = Number(amount);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return { data: await quoteTransfer(0) };
+    }
+    return { data: await quoteTransfer(parsed) };
+  });
+
   app.get('/api/users/:userId/balance/deposits', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await listUserDeposits(userId) };

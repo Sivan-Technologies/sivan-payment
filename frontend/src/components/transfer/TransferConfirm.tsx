@@ -44,6 +44,19 @@ export interface TransferConfirmDetails {
   note?: string;
   /** Spendable balance before this send, so the user sees what is left. */
   available: number;
+  /**
+   * Sivan's fee and what the recipient actually receives.
+   *
+   * QUOTED BY THE SERVER, never computed here. Two implementations of a pricing
+   * rule is how they come to disagree, and a dialog that shows a different fee
+   * from the one charged reads to a user as theft. Optional so the dialog still
+   * renders while the quote is in flight, or if the endpoint fails - in which
+   * case no fee line is shown at all rather than a guessed one.
+   */
+  fee?: string;
+  netAmount?: string;
+  /** Effective rate, e.g. "0.50". Server-stated for the same reason. */
+  feePercent?: string;
   /** Testnet warning, server-stated. Never guessed. */
   networkMode?: 'mainnet' | 'testnet';
 }
@@ -149,6 +162,32 @@ export function TransferConfirm({
               <span>Amount</span>
               <strong>{details.amount} {asset}</strong>
             </div>
+            {details.fee !== undefined && (
+              <>
+                <div className="confirm-row">
+                  {/*
+                    "Transfer fee", NOT "network fee" or "gas fee".
+                    Sivan sponsors the gas - the user never pays it - so calling
+                    this a network fee would be a claim a user can disprove in
+                    thirty seconds on a block explorer, which is far worse than
+                    charging them openly.
+
+                    The effective rate is shown beside it because a fee a user
+                    understands is one they accept; the same number unexplained
+                    is the one that generates a support ticket.
+                  */}
+                  <span>Transfer fee{details.feePercent ? ` (${details.feePercent}%)` : ''}</span>
+                  <strong className="confirm-fee">−{details.fee} {asset}</strong>
+                </div>
+                <div className="confirm-row">
+                  {/* The number the RECIPIENT sees. With a deducted fee this is
+                      not the amount typed, and a user discovering that after the
+                      fact is the complaint this line prevents. */}
+                  <span>Recipient gets</span>
+                  <strong>{details.netAmount} {asset}</strong>
+                </div>
+              </>
+            )}
             <div className="confirm-row">
               <span>Balance after</span>
               {/* Shown because "can I afford this" is the second question

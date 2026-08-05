@@ -8,6 +8,8 @@ import { getSpendable } from './unified-balance.service.js';
 import { chainFamily } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
+import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
+import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, type TransferFeeConfig } from './transfer-fee-policy.js';
 
 export type BalanceAsset = 'usdc' | 'usdt';
 /**
@@ -19,7 +21,20 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
 export type BalanceNetwork = 'base' | 'solana' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
-export type BalanceLedgerKind = 'credit_pending' | 'credit_available' | 'debit_transfer' | 'hold' | 'hold_release' | 'adjustment';
+/**
+ * `fee` is Sivan's transfer margin, recorded as its own entry.
+ *
+ * Not folded into debit_transfer: the fee has to be separable from the amount
+ * sent or Sivan's revenue is unmeasurable, and a support agent looking at a
+ * transfer needs to see what the user paid us distinctly from what left for
+ * the recipient. Same reasoning as the NGN rail, where the provider's cut and
+ * Sivan's margin are reported separately so a provider price rise cannot be
+ * mistaken for Sivan earning more.
+ *
+ * It moves money from `held` to `spent`, exactly like debit_transfer - from
+ * the user's point of view it left, because it did.
+ */
+export type BalanceLedgerKind = 'credit_pending' | 'credit_available' | 'debit_transfer' | 'hold' | 'hold_release' | 'adjustment' | 'fee';
 export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing' | 'completed' | 'rejected' | 'failed';
 
 export const balanceTransferControlsSchema = z.object({
@@ -71,6 +86,14 @@ type TransferMetadata = {
   asset: BalanceAsset;
   network: BalanceNetwork;
   amount: string;
+  /**
+   * Sivan's fee, DEDUCTED from `amount`. The user's balance falls by `amount`;
+   * the recipient receives `netAmount`. Optional because transfers created
+   * before the fee existed have neither.
+   */
+  fee?: string;
+  /** What actually reaches the recipient: amount - fee. */
+  netAmount?: string;
   destinationAddress: string;
   status: BalanceTransferStatus;
   note?: string;
@@ -187,9 +210,21 @@ export async function getBalanceTransferControls() {
     .filter((log) => log.action === 'balance.transfer_controls.updated')
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const saved = (latest?.metadata as any)?.settings as z.infer<typeof balanceTransferControlsSchema> | undefined;
+  /**
+   * The values below are FALLBACKS. `...(saved ?? {})` at the end of this
+   * object overrides every one of them with whatever an admin last saved, so
+   * env is only consulted before anyone has touched the controls. Verified by
+   * saving a minimum of 42 and reading it back.
+   *
+   * The minimum send amount now prefers the FEE TAB, because it only makes
+   * sense beside the fee curve: it is the thing that stops the fee floor
+   * becoming an absurd effective rate on a tiny transfer. Applied after the
+   * spread, below, so it wins over the older per-control value - one number,
+   * one place to set it.
+   */
+  const fees = await getAdminFeeSettings().catch(() => undefined);
   return {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED === 'true',
-    minimumSendAmount: Number(process.env.BALANCE_TRANSFER_MIN_AMOUNT || 10),
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
     // Defaults chosen against what BOTH Breet and the wallet layer can service.
@@ -211,12 +246,66 @@ export async function getBalanceTransferControls() {
     //                       adds support.
     //   avalanche_c_chain - Breet supports AVAX the coin but no USDC or USDT on
     //                       that chain, either direction.
-    supportedNetworks: ['base', 'solana', 'ethereum'] as BalanceNetwork[],
+    /**
+     * ETHEREUM IS DISABLED FOR TRANSFERS, and this is an economic decision
+     * rather than a technical one - the EVM key serves it perfectly well.
+     *
+     * Sivan sponsors gas. Modelled against real 2026 costs (Solana ~$0.0005,
+     * Base ~$0.01, Ethereum L1 ~$3) and the 0.5%/$0.10/$1.00 fee curve:
+     *
+     *     amount    fee     solana     base     ethereum
+     *     $10       $0.10   +0.100     +0.090   -2.900
+     *     $100      $0.50   +0.499     +0.490   -2.500
+     *     $500      $1.00   +1.000     +0.990   -2.000
+     *
+     * Ethereum loses money on EVERY transfer at EVERY size, because a $1 cap
+     * cannot cover $2-5 of L1 gas. Break-even at 0.5% needs a $600 transfer and
+     * the cap prevents ever reaching it. Raising the cap to $5 would make a $10
+     * Ethereum send cost half the amount, which is worse than not offering it.
+     *
+     * Base and Solana serve the identical purpose at roughly 1/300th the cost,
+     * and Base is already the default. Re-enable only alongside an
+     * Ethereum-specific cap, or when L1 gas makes it viable.
+     */
+    supportedNetworks: ['base', 'solana'] as BalanceNetwork[],
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
+    /**
+     * AFTER the spread on purpose.
+     *
+     * The minimum send amount is set in the fee tab, beside the fee curve it
+     * has to agree with, so that value is authoritative when it exists. Placing
+     * it before the spread would let a stale per-control value silently win and
+     * leave two screens disagreeing about the same number.
+     */
+    minimumSendAmount:
+      fees?.transferMinimumSendAmount ??
+      saved?.minimumSendAmount ??
+      Number(process.env.BALANCE_TRANSFER_MIN_AMOUNT || DEFAULT_TRANSFER_MIN_SEND),
     updatedAt: latest?.createdAt ?? (saved as any)?.updatedAt ?? nowIso(),
   };
+}
+
+/**
+ * The fee curve currently in force, from the admin fee tab.
+ *
+ * Falls back to the defaults if the settings cannot be read, rather than
+ * throwing or charging nothing: a fee tab that is briefly unavailable must not
+ * silently make every transfer free.
+ */
+export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
+  const fees = await getAdminFeeSettings().catch(() => undefined);
+  return {
+    percent: fees?.transferFeePercent ?? DEFAULT_TRANSFER_FEE.percent,
+    minimumUsd: fees?.transferFeeMinimumUsd ?? DEFAULT_TRANSFER_FEE.minimumUsd,
+    maximumUsd: fees?.transferFeeMaximumUsd ?? DEFAULT_TRANSFER_FEE.maximumUsd,
+  };
+}
+
+/** Price a transfer against the live admin configuration. */
+export async function quoteTransfer(amount: number) {
+  return quoteTransferFee(amount, await getTransferFeeConfig());
 }
 
 export async function updateBalanceTransferControls(input: z.infer<typeof balanceTransferControlsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
@@ -274,6 +363,10 @@ export async function getUserBalance(userId: string) {
     if (entry.kind === 'hold') { row.available -= value; row.held += value; }
     if (entry.kind === 'hold_release') { row.available += value; row.held -= value; }
     if (entry.kind === 'debit_transfer') { row.held -= value; row.spent += value; }
+    // Identical arithmetic to debit_transfer. The distinction is in the RECORD,
+    // not the balance: the user's money is gone either way, but only this entry
+    // is Sivan's revenue.
+    if (entry.kind === 'fee') { row.held -= value; row.spent += value; }
   }
   return {
     userId,
@@ -432,12 +525,30 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
    * all. With it on, the threshold decides. With it off, nothing is held.
    */
   const needsReview = controls.riskHoldsEnabled && input.amount >= controls.manualReviewThreshold;
+
+  /**
+   * PRICE THE TRANSFER.
+   *
+   * Sivan sponsors gas on every send and charged nothing for it - there was no
+   * fee logic anywhere in this file. The fee is DEDUCTED: the user's balance
+   * falls by the full `amount`, and `netAmount` is what reaches the recipient.
+   * That matches exchange withdrawal behaviour, which is what a user arriving
+   * from Binance already expects, and it means a "send max" can never be
+   * rejected for being fee-short of its own balance.
+   *
+   * Quoted from the admin fee tab, through the one shared policy module, so
+   * the number charged here is the same one the confirm dialog showed.
+   */
+  const quote = await quoteTransfer(input.amount);
+
   const transfer: TransferMetadata = {
     transferId: id('btx'),
     userId,
     asset: input.asset,
     network: input.network,
     amount: money(input.amount),
+    fee: quote.fee,
+    netAmount: quote.netAmount,
     destinationAddress: input.destinationAddress,
     status: needsReview ? 'pending_review' : 'requested',
     note: input.note,
@@ -584,7 +695,17 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     providerCustomerId: wallet.customerId,
     asset: transfer.asset as any,
     chain: transfer.network as any,
-    amount: transfer.amount,
+    /**
+     * THE NET, NOT THE GROSS. The fee is deducted, so the chain moves
+     * `amount - fee` and Sivan keeps the difference. Sending `transfer.amount`
+     * here would move the full sum on chain and leave the fee ledger entry
+     * describing money that never stayed - the ledger and the chain
+     * disagreeing, which is the failure mode this whole file is careful about.
+     *
+     * `?? transfer.amount` for transfers created before the fee existed: they
+     * have no netAmount and must still send their full amount.
+     */
+    amount: transfer.netAmount ?? transfer.amount,
     toAddress: transfer.destinationAddress,
     // Derived from the transfer id, so a retry of the SAME transfer cannot
     // double-spend even if this function is called twice.
@@ -598,11 +719,34 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
    * longer have.
    */
   await createBalanceLedgerEntry({
-    userId, asset: transfer.asset, amount: transfer.amount, kind: 'debit_transfer', status: 'completed',
+    userId, asset: transfer.asset, amount: transfer.netAmount ?? transfer.amount, kind: 'debit_transfer', status: 'completed',
     sourceType: 'balance_transfer', sourceId: transfer.transferId,
     description: `On-chain transfer submitted to ${transfer.network}`,
     network: transfer.network, destinationAddress: transfer.destinationAddress, transferId: transfer.transferId,
   }, { actorType: 'system', actorId: 'balance_transfer' });
+
+  /**
+   * THE FEE, AS ITS OWN ENTRY.
+   *
+   * Written only after the provider accepted the broadcast, and only when
+   * there is one. Charging before the send succeeds would take money for a
+   * transfer that then failed - and the catch below releases the WHOLE hold,
+   * which would leave the user credited back an amount that no longer matches
+   * what was taken.
+   *
+   * debit_transfer above covers the net; this covers the fee. Together they
+   * clear exactly the hold that was placed, so `held` returns to zero. That
+   * conservation is asserted in test:transfer-fee-ledger.
+   */
+  const feeAmount = Number(transfer.fee ?? 0);
+  if (feeAmount > 0) {
+    await createBalanceLedgerEntry({
+      userId, asset: transfer.asset, amount: transfer.fee as string, kind: 'fee', status: 'completed',
+      sourceType: 'balance_transfer', sourceId: transfer.transferId,
+      description: `Sivan transfer fee on ${transfer.network}`,
+      network: transfer.network, destinationAddress: transfer.destinationAddress, transferId: transfer.transferId,
+    }, { actorType: 'system', actorId: 'balance_transfer' });
+  }
 
   const sent: TransferMetadata = {
     ...transfer,

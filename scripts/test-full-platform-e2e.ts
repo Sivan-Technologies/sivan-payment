@@ -190,6 +190,9 @@ const paymentSteps: Step[] = [
   // ---- Transfers: the path that lost money before ----
   { name: 'Transfer confirmation (nothing could finish a send)', cwd: paymentRoot, command: 'npm run test:transfer-confirmation' },
   { name: 'Transfer confirm dialog', cwd: paymentRoot, command: 'npm run test:transfer-confirm' },
+  { name: 'Transfer fee curve', cwd: paymentRoot, command: 'npm run test:transfer-fee-policy' },
+  { name: 'Transfer fee ledger (money must balance)', cwd: paymentRoot, command: 'npm run test:transfer-fee-ledger' },
+  { name: 'Transfer fee end-to-end (admin control is live)', cwd: paymentRoot, command: 'npm run test:transfer-fee-e2e' },
   { name: 'Transfer response deadline', cwd: paymentRoot, command: 'npm run test:transfer-response-deadline' },
   { name: 'Transfer toast honesty', cwd: paymentRoot, command: 'npm run test:transfer-toast-honesty' },
   { name: 'Transfer ordering', cwd: paymentRoot, command: 'npm run test:transfer-order' },

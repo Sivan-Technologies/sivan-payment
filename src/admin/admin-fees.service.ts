@@ -5,6 +5,7 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
 import { validateTiers } from './fee-policy.js';
+import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND } from '../balances/transfer-fee-policy.js';
 
 export const feeTierSchema = z.object({
   tier: z.enum(['starter', 'verified', 'pro', 'vip']),
@@ -119,6 +120,59 @@ export const feeSettingsSchema = z.object({
    * accounts there is no provider restriction here, so this can be set freely.
    */
   ngnMinimumFeeNgn: z.coerce.number().min(0).max(10_000_000).default(0),
+
+  /**
+   * ───── TRANSFER FEE: crypto-to-crypto sends from a user's own wallet ─────
+   *
+   * The only fee in this file NOT constrained by a provider's API. Every
+   * percentage above is shaped by what Bridge or Breet will accept - off-ramp
+   * cannot express a floor at all, because the fee is fixed when the
+   * liquidation address is created and no amount exists yet. This one runs on
+   * Sivan's own wallet layer, so any shape is possible.
+   *
+   * It exists because Sivan sponsors gas on every transfer (`sponsor: true` on
+   * both the EVM and Solana paths) and charged nothing for it - there was no
+   * fee logic anywhere in balance.service.ts.
+   *
+   * A percentage with a floor and a cap rather than a fixed fee: at $0.50 flat
+   * a $10 sender pays 5% while a $100 sender pays 0.5%, ten times the rate for
+   * the same service, and small transfers are the core case for a WhatsApp-
+   * first Nigerian product. See transfer-fee-policy.ts for the full reasoning
+   * and the rejected alternatives.
+   *
+   * DEDUCTED from the amount, not added: the recipient of a 100 USDC send
+   * receives 99.50. Matches exchange withdrawal behaviour.
+   */
+  transferFeePercent: z.coerce.number().min(0).max(100).default(DEFAULT_TRANSFER_FEE.percent),
+  /**
+   * Floor, USD. Without it a $2 transfer earns a cent while still costing a
+   * sponsored gas payment.
+   */
+  transferFeeMinimumUsd: z.coerce.number().min(0).max(100).default(DEFAULT_TRANSFER_FEE.minimumUsd),
+  /**
+   * Cap, USD. Without it 0.5% of a $10,000 transfer is $50 to cover half a cent
+   * of Solana gas - indefensible, and it drives away the largest users.
+   *
+   * This cap is also why ETHEREUM IS DISABLED for transfers rather than priced:
+   * L1 gas is $2-5, so no capped fee covers it at any transfer size. 0 disables
+   * the cap.
+   */
+  transferFeeMaximumUsd: z.coerce.number().min(0).max(10_000).default(DEFAULT_TRANSFER_FEE.maximumUsd),
+  /**
+   * Smallest transfer a user may send.
+   *
+   * Lives in the FEE TAB, beside the curve it has to agree with: the minimum is
+   * what stops the fee floor becoming an absurd effective rate. Previously
+   * `process.env.BALANCE_TRANSFER_MIN_AMOUNT || 10`, so changing it needed a
+   * redeploy.
+   *
+   * Lowered 10 -> 5 alongside the fee. The 10 floor partly existed BECAUSE
+   * small transfers were a pure loss; once priced, that reason weakens. At a
+   * $0.10 fee floor a $5 transfer costs 2% - high but honest. Not lower: at $1
+   * the floor would be 10%.
+   */
+  transferMinimumSendAmount: z.coerce.number().min(0).max(1_000_000).default(DEFAULT_TRANSFER_MIN_SEND),
+
   bridgeOfframpCostPercent: z.coerce.number().min(0).max(100),
   rateSources: z.array(z.object({ name: z.string().min(1), weightPercent: z.coerce.number().min(0).max(100), live: z.boolean().default(true) })).default([]),
   feeTiers: z.array(feeTierSchema).min(1),
@@ -162,6 +216,12 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     ngnOnrampFeePercent: Number(percent(env.SIVAN_NGN_ONRAMP_FEE_PERCENT || 0)),
     ngnOfframpFeePercent: Number(percent(env.SIVAN_NGN_OFFRAMP_FEE_PERCENT || 0)),
     ngnMinimumFeeNgn: Number(env.SIVAN_NGN_MINIMUM_FEE_NGN || 0),
+    // Transfer fee. Defaults come from transfer-fee-policy.ts rather than being
+    // repeated here, so the curve has exactly one definition.
+    transferFeePercent: DEFAULT_TRANSFER_FEE.percent,
+    transferFeeMinimumUsd: DEFAULT_TRANSFER_FEE.minimumUsd,
+    transferFeeMaximumUsd: DEFAULT_TRANSFER_FEE.maximumUsd,
+    transferMinimumSendAmount: DEFAULT_TRANSFER_MIN_SEND,
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
       { name: 'Bridge', weightPercent: 40, live: true },

@@ -93,10 +93,36 @@ check('the testnet badge is amber, not green',
   /\.confirm-testnet\{[^}]*241,189,114/.test(css),
   'it is a warning that the funds are not real, not a confirmation');
 /**
- * Sivan sponsors gas, and the frontend is not told the review threshold. A
- * fee or an ETA here would be a number we do not have.
+ * SIVAN SPONSORS GAS, SO THE USER MUST NEVER BE TOLD THEY PAID FOR IT.
+ *
+ * There IS a fee now - a Sivan transfer fee, deducted from the amount - but it
+ * is ours, not the chain's. Calling it a network or gas fee would be a claim a
+ * user can disprove in thirty seconds on a block explorer, which is far worse
+ * than charging them openly.
+ *
+ * Checked against COMMENT-STRIPPED source. The original regex ran over the
+ * whole file and fired on the comment that explains this very rule - a guard
+ * that forbids discussing the thing it guards is one someone eventually
+ * deletes rather than satisfies.
  */
-check('it does not invent a network fee', !/network fee|gas fee|estimated fee/i.test(confirm));
+const confirmCode = confirm.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/^\s*\/\/.*$/gm, '');
+check('it does not invent a network fee', !/network fee|gas fee|estimated fee/i.test(confirmCode),
+  'Sivan pays the gas; naming our margin a network fee is a lie a user can check');
+check('but it DOES show the Sivan transfer fee', /Transfer fee/.test(confirmCode),
+  'the fee is deducted, so hiding it means the recipient gets less than the user typed with no explanation');
+/**
+ * The row must be REACHABLE, not merely present. `{false && (...)}` keeps every
+ * string in the file while rendering none of them - which passed the check
+ * above until this was added. The guard is that the fee block is gated on the
+ * fee EXISTING, and on nothing else.
+ */
+check('the fee block renders whenever a fee is quoted',
+  /\{details\.fee !== undefined && \(/.test(confirmCode),
+  'the fee row must be gated on the quote, not on a constant that can be flipped off');
+check('and it shows what the recipient actually receives', /Recipient gets/.test(confirmCode));
+check('the fee shown is server-quoted, never computed in the dialog',
+  !/\*\s*0\.005|percent\s*\/\s*100/.test(confirmCode),
+  'a dialog that quotes a different fee from the one charged reads as theft');
 check('it does not invent an arrival time', !/arrives in|estimated arrival|will arrive/i.test(confirm));
 check('it does not re-validate the address itself',
   !confirm.includes('validateAddress'),
