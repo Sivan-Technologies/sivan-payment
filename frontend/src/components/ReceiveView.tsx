@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { qrDataUri } from '../qrCode';
 import type { AssetControl, NetworkControl, UserWalletRecord } from '../types';
 
 /**
@@ -70,9 +71,18 @@ const CHAIN_META: Record<ReceiveChain, {
   },
 };
 
-function qrUrl(value: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(value)}`;
-}
+/**
+ * The QR is generated LOCALLY - see qrCode.ts.
+ *
+ * This used to be `api.qrserver.com/v1/create-qr-code?data=${address}`, which
+ * sent every deposit address this product issues to a third party, and left
+ * the QR blank whenever that host was slow or blocked. A QR is the safest way
+ * to move an address between two phones precisely because it removes the
+ * clipboard, so it must not depend on someone else's uptime.
+ *
+ * Verified by decoding the rendered image with OpenCV: all three address
+ * formats this product issues decode back to the exact input string.
+ */
 
 function truncateMiddle(value: string, lead = 10, tail = 8) {
   if (value.length <= lead + tail + 3) return value;
@@ -110,19 +120,60 @@ export function ReceiveView({
     );
   }, [enabledNetworks]);
 
+  /**
+   * NETWORKS GROUPED BY THE ADDRESS THEY SHARE.
+   *
+   * Derived from availableChains so a network disabled by an admin disappears
+   * from its family, and a family with nothing left disappears entirely -
+   * rather than rendering an empty card.
+   *
+   * Order matters: Solana first because it is the recommended default and the
+   * cheapest, and because putting the separate-address option first makes the
+   * "these two are different" boundary the first thing read.
+   */
+  const chainFamilies = useMemo(() => {
+    const families: Array<{
+      key: string;
+      label: string;
+      note: string;
+      accent: string;
+      recommended?: boolean;
+      chains: ReceiveChain[];
+    }> = [
+      {
+        key: 'solana',
+        label: 'Solana',
+        note: 'Its own address. Fastest and cheapest for most deposits.',
+        accent: CHAIN_META.solana.accent,
+        recommended: true,
+        chains: ['solana'],
+      },
+      {
+        key: 'evm',
+        label: 'Ethereum & Base',
+        // Stating the shared address is the point of the grouping: it tells
+        // the user why picking between them below is low-stakes.
+        note: 'One 0x address for both networks.',
+        accent: CHAIN_META.ethereum.accent,
+        chains: ['ethereum', 'base'],
+      },
+    ];
+    return families
+      .map((family) => ({ ...family, chains: family.chains.filter((c) => availableChains.includes(c)) }))
+      .filter((family) => family.chains.length > 0);
+  }, [availableChains]);
+
   const [chain, setChain] = useState<ReceiveChain | null>(availableChains[0] ?? null);
-  const [acknowledged, setAcknowledged] = useState(false);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!chain && availableChains.length) setChain(availableChains[0]);
   }, [availableChains, chain]);
 
-  // Changing chain must reset the acknowledgement. Otherwise a user who
-  // confirmed "I am sending on Solana" could switch to Base and see an
-  // address already unlocked under the wrong confirmation.
+  // Switching chain clears the "Copied" flag: it referred to the previous
+  // network's address, and leaving it up would suggest the new one is already
+  // on the clipboard.
   useEffect(() => {
-    setAcknowledged(false);
     setCopied(false);
   }, [chain]);
 
@@ -208,6 +259,7 @@ export function ReceiveView({
 
   const activeChain = chain ?? availableChains[0];
   const meta = CHAIN_META[activeChain];
+  const activeFamily = chainFamilies.find((family) => family.chains.includes(activeChain));
   const wallet = wallets.find((w) => w.chain === activeChain && w.status !== 'closed');
 
   // The server returns acceptedAssets per wallet and is authoritative. Fall
@@ -244,82 +296,122 @@ export function ReceiveView({
           </div>
         </div>
 
-        <div className="receive-chain-grid">
-          {availableChains.map((option) => {
-            const optionMeta = CHAIN_META[option];
-            const selected = option === activeChain;
+        {/* GROUPED BY ADDRESS, NOT BY CHAIN.
+
+             Three cards implied three addresses. There are TWO:
+             walletsToProvision() issues one EVM wallet and one Solana wallet,
+             and Base and Ethereum are the SAME secp256k1 key at the SAME 0x
+             string. So the old grid showed the identical address twice under
+             two different headings, each with an equally severe warning.
+
+             That flattened a distinction which decides whether money is
+             recoverable:
+
+               Base <-> Ethereum   same address. A mistake here is recoverable -
+                                   the funds are at an address we control on a
+                                   chain we support.
+               Solana <-> any EVM  different address entirely. Unrecoverable.
+
+             Grouping by address family puts the unrecoverable boundary between
+             the two rows, where it belongs, and it scales: Polygon and
+             Arbitrum become chips on the existing EVM row rather than two more
+             cards showing the same 0x string a third and fourth time. */}
+        <div className="receive-family-grid">
+          {chainFamilies.map((family) => {
+            const selected = family.chains.includes(activeChain);
             return (
               <button
                 type="button"
-                key={option}
-                className={`receive-chain-card${selected ? ' selected' : ''}`}
-                style={selected ? { borderColor: optionMeta.accent } : undefined}
+                key={family.key}
+                className={`receive-family-card${selected ? ' selected' : ''}`}
+                style={selected ? { borderColor: family.accent } : undefined}
                 aria-pressed={selected}
-                onClick={() => setChain(option)}
+                onClick={() => setChain(family.chains[0])}
               >
-                <span className="receive-chain-dot" style={{ background: optionMeta.accent }} />
-                <strong>{optionMeta.label}</strong>
-                <small>{optionMeta.note}</small>
+                <span className="receive-family-top">
+                  <span className="receive-chain-dot" style={{ background: family.accent }} />
+                  <strong>{family.label}</strong>
+                  {family.recommended && <em className="receive-family-badge">Lowest fees</em>}
+                </span>
+                <small>{family.note}</small>
+                {/* The member chains are named so someone hunting for "Base"
+                    finds it without opening anything - but only when the
+                    family HAS more than one. A single-chain family repeated
+                    its own name underneath itself ("Solana ... Solana"), which
+                    is noise where a scannable line should be. */}
+                {family.chains.length > 1 && (
+                  <span className="receive-family-chains">
+                    {family.chains.map((c) => CHAIN_META[c].label).join(' · ')}
+                  </span>
+                )}
               </button>
             );
           })}
         </div>
-      </article>
 
-      <article className="receive-panel">
-        <div className="receive-chain-head">
-          <div>
-            <p className="eyebrow">Step 2</p>
-            <h3>Confirm what you are sending</h3>
-          </div>
-          <span className="receive-chain-pill" style={{ background: meta.accent }}>
-            {meta.label}
-          </span>
-        </div>
-
-        {!assetsOnChain.length ? (
-          <div className="receive-empty">
-            <h3>No assets are enabled on {meta.label}</h3>
-            <p className="muted">Choose a different network above.</p>
-          </div>
-        ) : (
-          <>
-            <div className="receive-warning">
-              <strong>Send only {assetLabel} on {meta.label}.</strong>
-              <span>
-                Sending a different token, or using a different network, will result in
-                permanent loss. Sivan cannot recover funds sent to the wrong network.
-              </span>
-              {unavailableHere.length > 0 && (
-                <span className="receive-warning-sub">
-                  {unavailableHere.join(' and ')} {unavailableHere.length > 1 ? 'are' : 'is'} not
-                  available on {meta.label}. Switch networks to deposit{' '}
-                  {unavailableHere.join(' or ')}.
-                </span>
-              )}
+        {/* Only asked when it still matters. One EVM address serves both
+            chains, so this decides the WARNING copy and the asset list, not
+            which address is shown - and a mistake between them is recoverable,
+            which is why it is a quiet segmented control rather than a second
+            set of cards competing with the choice above. */}
+        {activeFamily && activeFamily.chains.length > 1 && (
+          <div className="receive-subchain">
+            <span className="receive-subchain-label">Sending on</span>
+            <div className="receive-subchain-options" role="group" aria-label="Choose the network you are sending on">
+              {activeFamily.chains.map((option) => (
+                <button
+                  type="button"
+                  key={option}
+                  className={`receive-subchain-btn${option === activeChain ? ' selected' : ''}`}
+                  aria-pressed={option === activeChain}
+                  // The chain's own colour, not the product's success green -
+                  // this is an identity, not a confirmation, and green here
+                  // reads as "correct" for whichever happens to be selected.
+                  style={option === activeChain
+                    ? { borderColor: CHAIN_META[option].accent, color: CHAIN_META[option].accent }
+                    : undefined}
+                  onClick={() => setChain(option)}
+                >
+                  {CHAIN_META[option].label}
+                </button>
+              ))}
             </div>
-
-            <label className="receive-ack">
-              <input
-                type="checkbox"
-                checked={acknowledged}
-                onChange={(event) => setAcknowledged(event.target.checked)}
-              />
-              <span>
-                I understand I must send <strong>{assetLabel}</strong> on the{' '}
-                <strong>{meta.label}</strong> network.
-              </span>
-            </label>
-          </>
+            <small className="receive-subchain-note">
+              Both use the same address, so a mix-up between them is recoverable.
+            </small>
+          </div>
         )}
       </article>
 
-      {acknowledged && assetsOnChain.length > 0 && (
+      {/* STEP 2 AND 3 MERGED, AND THE ADDRESS IS NO LONGER GATED.
+
+           The acknowledgement checkbox used to hide the address and the QR
+           until ticked. Three problems, in increasing order of seriousness:
+
+           1. It reset on every visit. `{view === 'receive' && <ReceiveView/>}`
+              UNMOUNTS the component, and the state was a plain useState(false),
+              so a user depositing to Solana weekly re-confirmed the same box
+              every week to see an address they had already used ten times.
+
+           2. It guarded a moment with no risk in it. The wrong-network mistake
+              does not happen here - the user copies the address, leaves for
+              Phantom or Trust Wallet, and picks the network THERE, minutes
+              later. A checkbox on this screen has no reach into that moment.
+
+           3. It hid the QR, which is the one control that actually reduces
+              wrong-address loss, because it removes the clipboard entirely.
+
+           So the warning stays - louder, and attached to the address itself
+           where it is visible at the moment of copying - and the address is
+           always shown. Compare the send confirm dialog, where an
+           acknowledgement IS right because the irreversible action happens on
+           that screen. */}
+      {assetsOnChain.length > 0 && (
         <article className="receive-panel">
           <div className="receive-chain-head">
             <div>
-              <p className="eyebrow">Step 3</p>
-              <h3>Your {meta.label} deposit address</h3>
+              <p className="eyebrow">Step 2</p>
+              <h3>Send {assetLabel} to this address</h3>
             </div>
             <span className="receive-chain-pill" style={{ background: meta.accent }}>
               {meta.label}
@@ -358,9 +450,31 @@ export function ReceiveView({
                 </div>
               )}
 
+              {/* THE WARNING, AT THE POINT OF COPYING.
+
+                   It used to sit in a separate panel above a checkbox, which
+                   the user had already scrolled past by the time the address
+                   appeared. Here it is inside the same block as the address
+                   and the copy button - the last thing read before the string
+                   goes to the clipboard. */}
+              <div className="receive-network-banner" style={{ borderColor: meta.accent }} role="note">
+                <span className="receive-network-banner-dot" style={{ background: meta.accent }} />
+                <span>
+                  <strong>{meta.label} network only.</strong>{' '}
+                  Send {assetLabel} on {meta.label}. Funds sent on another network cannot be recovered.
+                </span>
+              </div>
+              {unavailableHere.length > 0 && (
+                <p className="receive-unavailable-note">
+                  {unavailableHere.join(' and ')} {unavailableHere.length > 1 ? 'are' : 'is'} not
+                  available on {meta.label}. Switch networks above to deposit{' '}
+                  {unavailableHere.join(' or ')}.
+                </p>
+              )}
+
               <div className="receive-address-wrap">
                 <div className="receive-qr" style={{ borderColor: meta.accent }}>
-                  <img src={qrUrl(wallet.address)} alt={`${meta.label} deposit address QR code`} />
+                  <img src={qrDataUri(wallet.address)} alt={`${meta.label} deposit address QR code`} width={176} height={176} />
                   <span className="receive-qr-chain" style={{ color: meta.accent }}>
                     {meta.label} only
                   </span>

@@ -16,6 +16,7 @@
   "dependencies": {
     "@sentry/react": "^10.65.0",
     "@vitejs/plugin-react": "latest",
+    "qrcode-generator": "^2.0.4",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
