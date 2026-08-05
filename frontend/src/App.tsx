@@ -1182,9 +1182,33 @@ export default function App() {
       });
       setBalanceTransfers((items) => [transfer, ...items.filter((item) => item.transferId !== transfer.transferId)]);
       await loadUserData();
-      notify('Transfer request created. Sivan will process it from your available balance.');
+      notify(transfer.status === 'pending_review'
+        ? 'Transfer submitted for review. We will send it once it is approved.'
+        : 'Transfer submitted. Track it under Crypto sends - it usually confirms within a minute.');
     } catch (error) {
-      notify((error as Error).message, 'error');
+      /**
+       * A TIMED-OUT SEND IS NOT A FAILED SEND.
+       *
+       * Reported: "an error toast would come to the frontend but the transfer
+       * still went through". Confirmed - the Cloudflare worker aborts an
+       * upstream POST at 12s and returns 503 UPSTREAM_UNAVAILABLE, while the
+       * request keeps running on Render and the coins leave the wallet.
+       *
+       * The server side now answers inside that window, so this should be
+       * rare. It is handled anyway, because the honest answer when we do not
+       * know is "we do not know" - telling someone their transfer failed when
+       * it succeeded is what makes them send it a second time, and there is no
+       * recall on chain for the duplicate.
+       *
+       * loadUserData() runs regardless: if the send did land, the list shows
+       * it, and the user can see the truth rather than take our word for it.
+       */
+      const message = (error as Error).message || '';
+      const ambiguous = /UPSTREAM_UNAVAILABLE|did not respond|NOT retried|timed out|Failed to fetch|NetworkError/i.test(message);
+      await loadUserData().catch(() => undefined);
+      notify(ambiguous
+        ? 'We lost the connection before confirming this transfer. It may still have gone through - check Crypto sends below before trying again.'
+        : message, 'error');
     } finally {
       setLoading(false);
     }

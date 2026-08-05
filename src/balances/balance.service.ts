@@ -133,6 +133,12 @@ const TRANSFER_EVENTS = [
    */
   'balance.transfer_confirmed',
   'balance.transfer_stale',
+  /**
+   * Written when the broadcast outlived the HTTP response deadline. Carries
+   * status 'processing', so a transfer that timed out at the gateway still
+   * reads correctly instead of being stuck at whatever the request event said.
+   */
+  'balance.transfer_slow_broadcast',
 ] as const;
 
 /**
@@ -284,6 +290,92 @@ export async function listUserBalanceTransfers(userId: string) {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/**
+ * How long a send may hold the HTTP response open.
+ *
+ * MUST stay under the Cloudflare worker's UPSTREAM_TIMEOUT_MS (12000). At or
+ * above it the worker aborts first and the user gets a 503 for a transfer that
+ * is still running - which is exactly the bug this exists to prevent. 9s
+ * leaves room for the reverse proxy and TLS on both hops.
+ */
+const BROADCAST_RESPONSE_DEADLINE_MS = Number(process.env.BALANCE_TRANSFER_RESPONSE_DEADLINE_MS || 9000);
+
+/** Marker so the caller can tell "still going" apart from "it failed". */
+const BROADCAST_PENDING = Symbol('broadcast_pending');
+
+/**
+ * Run the broadcast, but answer within the deadline whatever happens.
+ *
+ * NOTHING IS CANCELLED ON TIMEOUT. There is no way to un-send a signed
+ * transaction, and pretending otherwise is how a ledger ends up disagreeing
+ * with a chain. The promise keeps running; we simply stop waiting for it.
+ *
+ * The still-running promise gets its own .then/.catch so that whichever way it
+ * finishes is recorded. Without that, a rejection after we have already
+ * responded becomes an unhandled rejection and, on some Node versions, takes
+ * the process down - killing every other in-flight request.
+ */
+async function raceBroadcastDeadline(userId: string, transfer: TransferMetadata): Promise<TransferMetadata> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<typeof BROADCAST_PENDING>((resolve) => {
+    timer = setTimeout(() => resolve(BROADCAST_PENDING), BROADCAST_RESPONSE_DEADLINE_MS);
+    // unref so a pending timer can never hold the process open at shutdown.
+    timer.unref?.();
+  });
+
+  const broadcast = executeBalanceTransfer(userId, transfer);
+
+  /**
+   * Attached BEFORE the race, not after. If the broadcast rejects while we are
+   * still waiting, the race rethrows and the caller's catch releases the hold -
+   * correct. If it rejects AFTER we have responded, this handler is the only
+   * thing standing between us and an unhandled rejection.
+   */
+  broadcast.catch(async (error) => {
+    await createAuditLog({
+      actorType: 'system', actorId: 'balance_transfer', action: 'balance.transfer_failed',
+      resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'error',
+      metadata: {
+        ...transfer, status: 'failed',
+        reason: error instanceof Error ? error.message : String(error),
+        afterResponse: true,
+      },
+    }).catch(() => undefined);
+    await createBalanceLedgerEntry({
+      userId, asset: transfer.asset, amount: transfer.amount, kind: 'hold_release', status: 'available',
+      sourceType: 'balance_transfer', sourceId: transfer.transferId,
+      description: 'Release hold after the transfer failed once the response had already been sent',
+      network: transfer.network, destinationAddress: transfer.destinationAddress, transferId: transfer.transferId,
+    }, { actorType: 'system', actorId: 'balance_transfer' }).catch(() => undefined);
+  });
+
+  const winner = await Promise.race([broadcast, deadline]);
+  if (timer) clearTimeout(timer);
+
+  if (winner !== BROADCAST_PENDING) return winner as TransferMetadata;
+
+  /**
+   * The send is still in flight. Report it as SUBMITTED, not failed, and leave
+   * the hold in place - the coins are on their way out of the wallet.
+   *
+   * 'processing' is the same status a completed broadcast writes, so the UI
+   * needs no new state: the on-chain receipt shows "Waiting for the network
+   * reference" until the signature lands, and the transfer-confirmer promotes
+   * it to completed once the chain confirms.
+   */
+  await createAuditLog({
+    actorType: 'system', actorId: 'balance_transfer', action: 'balance.transfer_slow_broadcast',
+    resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'warning',
+    metadata: {
+      ...transfer,
+      deadlineMs: BROADCAST_RESPONSE_DEADLINE_MS,
+      reason: 'The provider had not answered within the response deadline. The broadcast was NOT cancelled.',
+    },
+  });
+
+  return { ...transfer, status: 'processing', updatedAt: nowIso() };
+}
+
 export async function requestBalanceTransfer(userId: string, input: z.infer<typeof createBalanceTransferSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
   const controls = await getBalanceTransferControls();
   if (!controls.transfersEnabled) throw forbidden('Transfers from settled USDC balance are currently disabled.');
@@ -373,7 +465,41 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
    */
   if (!needsReview) {
     try {
-      const executed = await executeBalanceTransfer(userId, transfer);
+      /**
+       * BROADCAST, BUT NEVER HOLD THE HTTP RESPONSE PAST THE GATEWAY.
+       *
+       * Reported: "during transfer an error toast would come to the frontend
+       * but the transfer still went through".
+       *
+       * Measured, and it is not a mystery. The Cloudflare worker in front of
+       * this API aborts an upstream request at UPSTREAM_TIMEOUT_MS = 12000,
+       * and because a POST is not retryable it returns
+       *
+       *   503 UPSTREAM_UNAVAILABLE ... "it was NOT retried"
+       *
+       * while the request CONTINUES executing on Render. So the send really
+       * did happen; only the answer was thrown away.
+       *
+       * A Solana send does, sequentially: getSpendable (chain reads across
+       * every network the wallet serves), getWallet (a privyRequest whose
+       * IN_PROGRESS backoff alone sums to 9.45s), buildSplTransfer (another
+       * RPC to check the recipient's token account), then signAndSendTransaction.
+       * Comfortably past 12s whenever Privy is slow.
+       *
+       * So the broadcast is raced against a deadline that is DELIBERATELY
+       * under the gateway's. If it wins, the user gets the full result exactly
+       * as before. If it loses, the send is NOT cancelled - it keeps running,
+       * and the user is told the truth: it is submitted and being confirmed.
+       * The transfer-confirmer then moves it to completed once the chain says
+       * so.
+       *
+       * The hold is NOT released on timeout, which is the whole point. The old
+       * catch released it and marked the transfer failed, so a send that was
+       * about to succeed had its money handed back on paper while the coins
+       * left the wallet - the ledger and the chain disagreeing is far worse
+       * than a slow response.
+       */
+      const executed = await raceBroadcastDeadline(userId, transfer);
       return executed;
     } catch (error) {
       await createBalanceLedgerEntry({

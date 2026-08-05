@@ -42,6 +42,8 @@
     "test:ngn-cancel-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-cancel.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock WALLET_PROVIDER=mock APP_ENV=development ADMIN_API_KEY=ngn-cancel-admin-key tsx scripts/test-ngn-cancel-e2e.ts",
     "test:ngn-deposit-instruction": "tsx scripts/test-ngn-deposit-instruction.ts",
     "test:block-explorer": "tsx scripts/test-block-explorer.ts",
+    "test:transfer-toast-honesty": "tsx scripts/test-transfer-toast-honesty.ts",
+    "test:transfer-response-deadline": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-deadline.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock WALLET_PROVIDER=mock APP_ENV=development ADMIN_API_KEY=deadline-admin-key BALANCE_TRANSFER_RESPONSE_DEADLINE_MS=1000 tsx scripts/test-transfer-response-deadline.ts",
     "test:transfer-confirmation": "tsx scripts/test-transfer-confirmation.ts",
     "test:ngn-wallet-provisioning": "tsx scripts/test-ngn-wallet-provisioning.ts",
     "test:wallet-gate-and-cors": "tsx scripts/test-wallet-gate-and-cors.ts",
