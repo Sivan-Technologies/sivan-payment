@@ -23,7 +23,18 @@ const maxDailyMessages = 10;
 function chatId() { return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`; }
 function todayKey(userId?: string) { return `sivan.askSivan.daily.${userId || 'guest'}.${new Date().toISOString().slice(0,10)}`; }
 function readDailyCount(userId?: string) { try { return Number(localStorage.getItem(todayKey(userId)) || 0); } catch { return 0; } }
-function writeDailyCount(userId: string | undefined, count: number) { try { localStorage.setItem(todayKey(userId), String(count)); } catch {} }
+function writeDailyCount(userId: string | undefined, count: number) {
+  try {
+    localStorage.setItem(todayKey(userId), String(count));
+  } catch {
+    // Deliberately swallowed. localStorage.setItem throws in Safari private
+    // browsing and when the origin quota is full, and this is a rate-limit
+    // counter for support tickets - losing it degrades to "the user may open
+    // one more ticket than intended", which is not worth breaking the screen
+    // over. Written as a commented block rather than `catch {}` so the intent
+    // is visible; a bare empty block reads as an unfinished edit.
+  }
+}
 function transcript(messages: AssistantChatMessage[]) { return messages.map((msg) => `${msg.role === 'assistant' ? 'Sivan Assistant' : msg.role === 'system' ? 'System' : 'Customer'}: ${msg.text}`).join('\n\n'); }
 
 export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders, accounts, customer, api, onCreateTicket, onTicketsChanged, loading }: { hasUser: boolean; user: UserRecord | null; tickets: SupportTicketRecord[]; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; accounts: ExternalAccountRecord[]; customer: CustomerRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; onCreateTicket: (event: FormEvent<HTMLFormElement>) => void; onTicketsChanged: (tickets: SupportTicketRecord[]) => void; loading: boolean }) {

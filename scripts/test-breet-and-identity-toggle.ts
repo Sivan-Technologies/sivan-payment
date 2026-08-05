@@ -429,8 +429,27 @@ async function main() {
       { 'x-webhook-secret': 'whsec_breet_test' }
     );
 
-    check('the transaction is fetched from Breet',
-      fetched.some((u) => u.includes('/transactions/trade_9')), JSON.stringify(fetched));
+    /**
+     * FETCHED FROM /trades/sell/:id, NOT /transactions/:id.
+     *
+     * This assertion used to demand /transactions/trade_9, and it went stale
+     * the moment the provider was corrected. Breet's /v1/transactions/{id}
+     * answers "Sorry, requested URL ... not found!" for a real trade id, and
+     * /v1/transactions returns an empty list even with a settled trade on the
+     * account - both verified live against the sandbox. So the provider now
+     * tries /trades/sell/:id FIRST and keeps the documented path only as a
+     * fallback, which means the first URL is the one that matters.
+     *
+     * The test was asserting the broken path was still being used. Loosened to
+     * "the trade was fetched by id", which is the property that actually
+     * protects against a forged amount, while pinning that the WORKING path is
+     * the one tried first.
+     */
+    check('the trade is fetched from Breet by id',
+      fetched.some((u) => u.includes('trade_9')), JSON.stringify(fetched));
+    check('and the path that actually answers is tried first',
+      String(fetched[0] ?? '').includes('/trades/sell/trade_9'),
+      `first call was ${fetched[0]} - /transactions/:id 404s for a real trade id`);
     check("a forged amount does NOT survive - Breet's value wins",
       (forged.payload as any).amountInUSD === 10,
       `credited ${(forged.payload as any).amountInUSD} instead of 10`);

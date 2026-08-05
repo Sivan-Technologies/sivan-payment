@@ -33,8 +33,30 @@ async function main() {
   check('WALLET_PROVIDER resolves to a real provider, not mock',
     provider.name !== 'mock',
     `got "${provider.name}" - unset WALLET_PROVIDER silently defaults to mock`);
-  check('provider is bridge', provider.name === 'bridge', provider.name);
-  check('custody model is stated as custodial', provider.custodyModel === 'custodial');
+  /**
+   * NOT "provider is bridge" ANY MORE.
+   *
+   * This asserted `provider.name === 'bridge'` and `custodyModel ===
+   * 'custodial'`, which stopped being true the moment the active provider was
+   * deliberately moved to Privy - Bridge structurally cannot issue a wallet to
+   * an NGN bank-verified user, because it needs a customer record the Nigerian
+   * path never creates (63ddb53). So the suite was failing for doing its job
+   * against a configuration the product intentionally left behind, and because
+   * it then skipped its live checks it was reporting 1 pass out of 3 while
+   * verifying almost nothing.
+   *
+   * The property this file exists to protect is in its own title: the Receive
+   * screen must never show a MOCK address. Which real provider serves it, and
+   * whether that provider is custodial, are product decisions that change -
+   * Privy is non-custodial by design, and asserting otherwise would now be
+   * asserting a bug.
+   */
+  check('the provider is one of the real adapters',
+    ['bridge', 'privy'].includes(provider.name),
+    `got "${provider.name}" - an unknown adapter may not be safe to hand addresses from`);
+  check('custody model is stated explicitly, whichever it is',
+    provider.custodyModel === 'custodial' || provider.custodyModel === 'non_custodial',
+    `got "${provider.custodyModel}" - the UI decides what it may claim from this`);
 
   if (provider.name !== 'bridge') {
     console.log('\n  Not pointed at Bridge; skipping live checks.\n');

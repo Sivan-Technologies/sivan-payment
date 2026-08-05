@@ -582,11 +582,14 @@ export default function App() {
           continue;
         }
         if (error instanceof DOMException && error.name === 'AbortError') {
-          throw new Error(path.includes('/ace/support') ? 'Sivan Assistant is taking longer than expected. Please try again or create a support ticket.' : 'Request timed out. Please try again.');
+          // `cause` preserves the DOMException. Without it the original abort
+          // is discarded and Sentry only ever sees the friendly copy, which
+          // says nothing about which request died or why.
+          throw new Error(path.includes('/ace/support') ? 'Sivan Assistant is taking longer than expected. Please try again or create a support ticket.' : 'Request timed out. Please try again.', { cause: error });
         }
         const message = error instanceof Error ? error.message.toLowerCase() : String(error || '').toLowerCase();
         if (message.includes('signal is aborted') || message.includes('aborted without reason')) {
-          throw new Error(path.includes('/ace/support') ? 'Sivan Assistant is taking longer than expected. Please try again or create a support ticket.' : 'Request timed out. Please try again.');
+          throw new Error(path.includes('/ace/support') ? 'Sivan Assistant is taking longer than expected. Please try again or create a support ticket.' : 'Request timed out. Please try again.', { cause: error });
         }
         throw error;
       }
