@@ -190,7 +190,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
     <section className="offramp-wizard">
       <div className="trade-head">
         <div>
-          <p className="eyebrow">Sell stablecoins</p>
+          <p className="eyebrow">Withdraw to your bank</p>
           <h3>Withdraw to your bank</h3>
           <p className="muted">Choose a verified bank account, asset, and network. Review carefully before a deposit address is created.</p>
         </div>
@@ -376,7 +376,7 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
       </div>
       {/* WHAT HAPPENS NEXT, SAID PLAINLY BEFORE THEY COMMIT.
  
-          Selling from the balance means Sivan moves the crypto itself and the
+          Withdrawing from the balance means Sivan moves the crypto itself and the
           user does nothing further. That is a materially different experience
           from being handed an address, and the confirmation screen was silent
           about which one they were about to get. */}
@@ -402,7 +402,7 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
             create a deposit address for the user to use - it sells. */}
         <button className="primary-btn" disabled={loading} onClick={onConfirm}>
           {loading
-            ? review.fundingSource === 'balance' ? 'Selling…' : 'Creating...'
+            ? review.fundingSource === 'balance' ? 'Withdrawing…' : 'Creating...'
             : review.fundingSource === 'balance' ? 'Confirm sale' : 'Create deposit address'}
         </button>
       </div>
@@ -489,8 +489,8 @@ export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAdd
     // Headroom in the notice, because "verified" alone does not tell someone
     // what they can actually do next.
     const headroom = ngn && ngn.remainingNgn !== null
-      ? `You can sell up to ₦${ngn.remainingNgn.toLocaleString('en-NG')} in the next ${summary.windowDays} days.`
-      : 'You can sell crypto and withdraw to your bank.';
+      ? `You can withdraw up to ₦${ngn.remainingNgn.toLocaleString('en-NG')} in the next ${summary.windowDays} days.`
+      : 'You can withdraw crypto to your bank.';
 
     /**
      * AND THE WAY UP, WHERE A VERIFIED USER WILL SEE IT.
@@ -511,14 +511,14 @@ export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAdd
       <div className="kyc-outcome-copy">
         <p className="eyebrow">Account status</p>
         <h3>{summary.levelLabel}</h3>
-        <p>{summary.hasPayoutAccount ? headroom : 'You are verified. Add a payout bank to start selling crypto.'}</p>
+        <p>{summary.hasPayoutAccount ? headroom : 'You are verified. Add a payout bank to start withdrawing.'}</p>
         {next && summary.hasPayoutAccount && (
           <small className="dashboard-next-level">
             {next.available ? `Need a higher limit? ${next.description}` : `Higher limits are coming: ${next.description}`}
           </small>
         )}
       </div>
-      <div className="kyc-outcome-actions"><button className="primary-btn" onClick={summary.hasPayoutAccount ? onSell : onAddBank}>{summary.hasPayoutAccount ? 'Sell crypto' : 'Add bank account'}</button></div>
+      <div className="kyc-outcome-actions"><button className="primary-btn" onClick={summary.hasPayoutAccount ? onSell : onAddBank}>{summary.hasPayoutAccount ? 'Withdraw' : 'Add bank account'}</button></div>
     </article>;
   }
 
@@ -541,7 +541,7 @@ export function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onR
   const isFailed = ['kyc_rejected', 'failed', 'cancelled'].includes(status || '');
   const isIncomplete = status === 'kyc_incomplete';
   const copy = isApproved
-    ? { icon: '✓', title: customer.customerAction?.title || (hasBank ? 'Account ready' : 'Verification complete'), body: customer.customerAction?.message || (hasBank ? 'You can buy, sell, transfer, and manage payment methods.' : 'You’re verified. Add a payout bank to start selling crypto or receiving bank payouts.'), primary: hasBank ? readyPrimaryLabel : 'Add bank account' }
+    ? { icon: '✓', title: customer.customerAction?.title || (hasBank ? 'Account ready' : 'Verification complete'), body: customer.customerAction?.message || (hasBank ? 'You can buy, withdraw, transfer, and manage payment methods.' : 'You’re verified. Add a payout bank to start withdrawing or receiving bank payouts.'), primary: hasBank ? readyPrimaryLabel : 'Add bank account' }
     : isReview
       ? { icon: '⏳', title: customer.customerAction?.title || 'Verification under review', body: customer.customerAction?.message || 'Your verification has been submitted and is being reviewed by our team. We will update this page automatically.', primary: 'Refresh status' }
       : isFailed
@@ -605,7 +605,7 @@ function VerificationLimitCard({
 
   return (
     <article className="panel verification-limit-card">
-      <p className="eyebrow">Sell to naira · last {windowDays} days</p>
+      <p className="eyebrow">Withdrawn to naira · last {windowDays} days</p>
       <h3>{naira(remaining)} left</h3>
       <div className="verification-limit-bar"><span style={{ width: `${pctUsed}%` }} /></div>
       <p className="muted">
@@ -762,11 +762,11 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
               <div className="kyc-outcome-copy">
                 <p className="eyebrow">Verification status</p>
                 <h3>{hasBank ? 'Account ready' : 'Bank verified'}</h3>
-                <p>{hasBank ? 'Your bank account is confirmed. You can sell crypto and receive naira payouts.' : 'Your bank account is confirmed and ready for naira payouts.'}</p>
+                <p>{hasBank ? 'Your bank account is confirmed. You can withdraw crypto and receive naira payouts.' : 'Your bank account is confirmed and ready for naira payouts.'}</p>
               </div>
-              <div className="kyc-outcome-actions"><button className="primary-btn small" onClick={hasBank ? onSell : onAddBank}>{hasBank ? 'Sell crypto' : 'Add bank account'}</button></div>
+              <div className="kyc-outcome-actions"><button className="primary-btn small" onClick={hasBank ? onSell : onAddBank}>{hasBank ? 'Withdraw' : 'Add bank account'}</button></div>
             </article>
-          : customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onStartVerification} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Sell crypto" />
+          : customer && <KycOutcomeNotice customer={customer} hasBank={hasBank} onContinue={customer.kycStatus === 'kyc_approved' ? (hasBank ? onSell : onAddBank) : onStartVerification} onSupport={onSupport} onRefresh={onRefresh} readyPrimaryLabel="Withdraw" />
       )}
       <div className="verification-grid">
         <article className="dashboard-setup-panel verification-main-card">
@@ -803,7 +803,7 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
                 path has no Bridge relationship, so showing them a step they can
                 never complete caps their progress permanently. */}
             {!isNgnPath && <VerificationStep done={customer?.tosStatus === 'approved'} index={3} title="Terms accepted" sub="Provider terms are accepted when required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />}
-            <VerificationStep done={hasBank} index={isNgnPath ? 3 : 4} title="Payout bank" sub={isNgnPath ? 'Confirmed with your bank verification' : 'Add a bank when you are ready to sell crypto'} action={hasBank ? 'Completed' : 'Continue'} />
+            <VerificationStep done={hasBank} index={isNgnPath ? 3 : 4} title="Payout bank" sub={isNgnPath ? 'Confirmed with your bank verification' : 'Add a bank when you are ready to withdraw'} action={hasBank ? 'Completed' : 'Continue'} />
             {/* WHAT COMES AFTER "100% COMPLETE".
  
                 A Nigerian who finished Level 1 saw a page that said 100% and

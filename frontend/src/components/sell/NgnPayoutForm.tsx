@@ -327,9 +327,9 @@ export function NgnPayoutForm({
 
 
   /**
-   * Selling more than the balance holds, caught while typing.
+   * Withdrawing more than the balance holds, caught while typing.
    *
-   * Only meaningful when selling FROM the balance, and only when the number is
+   * Only meaningful when withdrawing FROM the balance, and only when the number is
    * actually known - an unread balance (null) or one still loading (undefined)
    * must not manufacture a shortfall, because the server is the authority and
    * a false block here stops a legitimate withdrawal.
@@ -378,7 +378,7 @@ export function NgnPayoutForm({
      */
     if (overBalance) {
       return setError(
-        `You have ${usd(spendable!)} ${asset.toUpperCase()} available to sell. ` +
+        `You have ${usd(spendable!)} ${asset.toUpperCase()} available to withdraw. ` +
         `Lower the amount, or choose "I'll send crypto myself" to send from another wallet.`
       );
     }
@@ -490,7 +490,7 @@ export function NgnPayoutForm({
             <span className="field-hint">Send {asset.toUpperCase()} on the network you actually hold it on. Minimums differ per network.</span>
           </fieldset>
         ) : network ? (
-          <p className="field-hint">Selling {asset.toUpperCase()} on {networkLabel(network)}.</p>
+          <p className="field-hint">Withdrawing {asset.toUpperCase()} on {networkLabel(network)}.</p>
         ) : (
           /* No chain resolved yet. Quoting now would price against nothing,
              so the button below stays disabled until this settles. */
@@ -630,7 +630,7 @@ export function NgnPayoutForm({
                   ? 'Checking your balance…'
                   : spendable === null
                     ? 'We could not read your balance right now. You can still continue.'
-                    : `${usd(spendable)} ${asset.toUpperCase()} available to sell.`}
+                    : `${usd(spendable)} ${asset.toUpperCase()} available to withdraw.`}
               </span>
             )}
             {overBalance && (

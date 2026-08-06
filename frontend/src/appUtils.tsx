@@ -6,7 +6,7 @@ export const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'buy', icon: '↙', label: 'Buy stablecoins' },
   { key: 'receive', icon: '↓', label: 'Receive' },
   { key: 'transfer', icon: '⇆', label: 'Send & transfer' },
-  { key: 'withdraw', icon: '↗', label: 'Sell crypto' },
+  { key: 'withdraw', icon: '↗', label: 'Withdraw' },
   { key: 'history', icon: '◷', label: 'Transactions' },
   { key: 'banks', icon: '▭', label: 'Payment methods' },
   { key: 'virtualAccounts', icon: '▥', label: 'Virtual account' },

@@ -2190,7 +2190,7 @@ export default function App() {
               : <DashboardAccountNotice summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
 
             <div className="dashboard-actions-row">
-              <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Sell crypto</strong><small>Convert crypto to cash in your bank</small></div><em>→</em></button>
+              <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Withdraw</strong><small>Cash out to your bank account</small></div><em>→</em></button>
               <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
             </div>
 
@@ -2346,7 +2346,7 @@ export default function App() {
               <span className="orb" />
               <div className="auth-showcase-badge">Sivan Payments</div>
               <h3>Move money with a safer, cleaner payment account.</h3>
-              <p>Buy stablecoins, sell to bank, receive virtual-account deposits, and use Transfer & Pay, all after secure verification.</p>
+              <p>Buy stablecoins, withdraw to bank, receive virtual-account deposits, and use Transfer & Pay, all after secure verification.</p>
               <div className="auth-flow-preview">
                 <div><span>1</span><strong>Email access</strong><small>One-time secure code</small></div>
                 <div><span>2</span><strong>Verify once</strong><small>Unlock payments</small></div>

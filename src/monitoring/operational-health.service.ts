@@ -311,9 +311,18 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
         detail: probe.ok
           ? 'Privy answered an authenticated request; wallet creation should work.'
           : rejected
-            ? `Privy REJECTED our credentials (${probe.status}): ${probe.message}. `
-              + 'PRIVY_APP_ID / PRIVY_APP_SECRET are set but dead - likely rotated, revoked, or pointed at '
-              + 'the wrong app. EVERY wallet creation returns an error until this is fixed.'
+            /**
+             * THE FIX IS THE SECRET, AND THE MESSAGE MUST SAY ONLY THAT.
+             *
+             * An earlier version of this signal appended "or pointed at the
+             * wrong app" and let the probe blame the key quorum in the same
+             * breath, which sent an operator hunting a quorum that was never
+             * the problem. 401 has exactly one cause - the secret does not
+             * match the app id - and naming a second possible cause is what
+             * turned a two-minute fix into an hour.
+             */
+            ? `Privy REJECTED our credentials (${probe.status}): ${probe.message} `
+              + 'EVERY wallet creation returns an error until this is fixed.'
             /**
              * A 404 here is the key quorum, not the credentials. Worth its own
              * wording because the fix is completely different: the app id and

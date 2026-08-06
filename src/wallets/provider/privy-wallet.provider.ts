@@ -1203,12 +1203,50 @@ export function chainsPerKey(): { keyType: string; chains: WalletChain[] }[] {
  * "All systems operational" sat at the bottom of the screen while a user was
  * being told to check details they could not fix.
  *
- * Deliberately a READ. GET /apps/:id is authenticated and cheap and creates
- * nothing - a probe that provisioned a wallet would cost money on every health
- * poll, and Privy wallets cannot be deleted.
+ * Deliberately a READ. It creates nothing - a probe that provisioned a wallet
+ * would cost money on every health poll, and Privy wallets cannot be deleted.
  *
  * Never throws: a health probe that can take down the health endpoint is worse
  * than no probe.
+ *
+ *
+ * THIS PROBE PREVIOUSLY GAVE A CONFIDENTLY WRONG DIAGNOSIS.
+ *
+ * Live reported, verbatim:
+ *
+ *     PRIVY_AUTHORIZATION_KEY_QUORUM_ID "p6udcvpskmckzjykax1ss83t" is not
+ *     usable by this app (401: Invalid app ID or app secret.)
+ *
+ * That sent the operator hunting a key quorum. The quorum was fine. The app
+ * SECRET was wrong, and Privy never even looked at the quorum because auth
+ * failed first. Measured against the real API rather than assumed:
+ *
+ *     quorum in this app            -> 200
+ *     quorum in a DIFFERENT app     -> 404  Key quorum not found
+ *     quorum that does not exist    -> 404  Key quorum not found
+ *     right app id + wrong secret   -> 401  Invalid app ID or app secret.
+ *     prod app id + sandbox secret  -> 401  Invalid app ID or app secret.
+ *
+ * So 404 means the QUORUM is wrong and 401 means the SECRET is wrong. Two
+ * different faults with two different fixes, and they must never share wording
+ * - rotating a good secret because the probe blamed the wrong thing is a
+ * self-inflicted outage.
+ *
+ * THE ROOT CAUSE WAS THE FIRST CALL, WHICH DID NOT AUTHENTICATE AT ALL.
+ *
+ * The probe used to open with `GET /apps/{id}` as its credential check. That
+ * endpoint does NOT authenticate - verified by calling it with the literal
+ * secret "fake-secret-xyz" and receiving 200 plus the app's real name. So the
+ * credential check passed unconditionally, execution ALWAYS fell through to
+ * the quorum branch, and that branch attributed the resulting 401 to whatever
+ * quorum id it happened to be holding.
+ *
+ * A health probe whose first assertion cannot fail is not a check, it is
+ * decoration - and this one actively misdirected the person debugging it.
+ *
+ * `GET /wallets?limit=1` replaces it: it genuinely 401s on a bad secret
+ * (verified both ways), and it is the closest READ to the write this signal
+ * actually cares about - wallet creation.
  */
 export async function probePrivyCredentials(): Promise<{ ok: boolean; status?: number; message?: string }> {
   const appId = process.env.PRIVY_APP_ID || env.PRIVY_APP_ID;
@@ -1217,40 +1255,56 @@ export async function probePrivyCredentials(): Promise<{ ok: boolean; status?: n
     return { ok: false, message: 'PRIVY_APP_ID / PRIVY_APP_SECRET are not set' };
   }
 
-  try {
+  const auth = {
+    Authorization: `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`,
+    'privy-app-id': appId,
+  };
+
+  /** Short timeout: this runs inside a health request, which must stay fast. */
+  const get = async (path: string) => {
     const controller = new AbortController();
-    // Short: this runs inside a health request, which must stay fast.
     const timer = setTimeout(() => controller.abort(), 6000);
-    const response = await fetch(`${PRIVY_BASE}/apps/${encodeURIComponent(appId)}`, {
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`,
-        'privy-app-id': appId,
-      },
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timer));
+    return fetch(`${PRIVY_BASE}/${path}`, { headers: auth, signal: controller.signal })
+      .finally(() => clearTimeout(timer));
+  };
+
+  try {
+    /**
+     * AN ENDPOINT THAT ACTUALLY REJECTS A BAD SECRET.
+     *
+     * Not GET /apps/{id} - see the header. That returns 200 for any secret at
+     * all, which is why this probe used to blame the quorum for every
+     * credential fault.
+     */
+    const response = await get('wallets?limit=1');
 
     if (!response.ok) {
       const body: any = await response.json().catch(() => ({}));
+      const detail = String(body?.error ?? body?.message ?? `HTTP ${response.status}`);
       return {
         ok: false,
         status: response.status,
-        message: String(body?.error ?? body?.message ?? `HTTP ${response.status}`),
+        message:
+          response.status === 401 || response.status === 403
+            ? `${detail} PRIVY_APP_SECRET does not belong to PRIVY_APP_ID "${appId}". `
+              + 'Copy the App secret from THIS app in the Privy dashboard - a secret from '
+              + 'another app returns exactly this error. The key quorum is NOT involved: '
+              + 'Privy rejects the credentials before it ever reads it.'
+            : detail,
       };
     }
 
     /**
      * CREDENTIALS BEING VALID IS NOT THE SAME AS WALLET CREATION WORKING.
      *
-     * Live returned 503 from POST /wallets while this probe reported ok,
-     * because GET /apps only proves the app id and secret authenticate. The
-     * wallet POST sends one thing the read does not:
+     * The wallet POST sends one thing this read does not:
      *
      *     additional_signers: [{ signer_id: PRIVY_AUTHORIZATION_KEY_QUORUM_ID }]
      *
-     * A quorum id that belongs to a DIFFERENT Privy app - the usual outcome of
+     * A quorum id belonging to a DIFFERENT Privy app - the usual outcome of
      * copying test env values into production, since quorum ids are per-app -
-     * authenticates perfectly and then fails the create with a 4xx. So the
-     * probe has to check the quorum itself, or it keeps reporting healthy
+     * authenticates perfectly and then fails the create with a 404. So the
+     * probe has to check the quorum separately, or it keeps reporting healthy
      * while no user can get a wallet.
      *
      * Only checked when one is configured: the quorum is optional, and its
@@ -1260,16 +1314,7 @@ export async function probePrivyCredentials(): Promise<{ ok: boolean; status?: n
     const quorumId = (process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || '').trim();
     if (!quorumId) return { ok: true, status: response.status };
 
-    const quorumController = new AbortController();
-    const quorumTimer = setTimeout(() => quorumController.abort(), 6000);
-    const quorumResponse = await fetch(`${PRIVY_BASE}/key_quorums/${encodeURIComponent(quorumId)}`, {
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${appId}:${appSecret}`).toString('base64')}`,
-        'privy-app-id': appId,
-      },
-      signal: quorumController.signal,
-    }).finally(() => clearTimeout(quorumTimer));
-
+    const quorumResponse = await get(`key_quorums/${encodeURIComponent(quorumId)}`);
     if (quorumResponse.ok) return { ok: true, status: response.status };
 
     const quorumBody: any = await quorumResponse.json().catch(() => ({}));
@@ -1277,10 +1322,12 @@ export async function probePrivyCredentials(): Promise<{ ok: boolean; status?: n
       ok: false,
       status: quorumResponse.status,
       message:
-        `credentials are valid, but PRIVY_AUTHORIZATION_KEY_QUORUM_ID "${quorumId}" is not usable by this app `
-        + `(${quorumResponse.status}: ${String(quorumBody?.error ?? quorumBody?.message ?? 'not found')}). `
+        `The app secret is CORRECT, but PRIVY_AUTHORIZATION_KEY_QUORUM_ID "${quorumId}" `
+        + `is not in app "${appId}" (${quorumResponse.status}: `
+        + `${String(quorumBody?.error ?? quorumBody?.message ?? 'not found')}). `
         + 'Every wallet creation sends this as additional_signers and will fail. '
-        + 'Key quorum ids are per-app - check this one belongs to the PRODUCTION Privy app.',
+        + 'Key quorum ids are per-app - create one in THIS app, or point PRIVY_APP_ID at the app that owns it. '
+        + 'Do NOT rotate the app secret: it authenticated fine to reach this check.',
     };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };

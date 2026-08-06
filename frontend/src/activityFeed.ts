@@ -212,7 +212,7 @@ export function buildActivityFeed(sources: ActivitySources): ActivityRow[] {
       id: w.id,
       kind: 'withdrawal',
       direction: 'out',
-      label: 'Sell crypto',
+      label: 'Withdrawal',
       amount: w.destinationAmount || w.sourceAmount || w.transactionTimeline?.amount || '—',
       currency: upper(w.destinationCurrency) || upper(w.transactionTimeline?.currency) || '—',
       asset: upper(w.sourceCurrency) || 'USDC',
@@ -263,7 +263,7 @@ export function buildActivityFeed(sources: ActivitySources): ActivityRow[] {
       // An off-ramp is money leaving even though naira arrives in their bank:
       // the asset the user holds AT SIVAN is what goes down.
       direction: offramp ? 'out' : 'in',
-      label: offramp ? 'Sell crypto to naira' : 'Buy crypto with naira',
+      label: offramp ? 'Withdrawal to naira' : 'Buy crypto with naira',
       amount: (offramp ? t.destinationAmount : t.sourceAmount) || '—',
       currency: upper(offramp ? t.destinationCurrency : t.sourceCurrency) || 'NGN',
       asset: upper(offramp ? t.sourceCurrency : t.destinationCurrency) || 'USDC',

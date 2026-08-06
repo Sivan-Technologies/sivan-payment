@@ -62,6 +62,7 @@
     "test:ngn-timeline-advances": "tsx scripts/test-ngn-timeline-advances.ts",
     "test:network-mode-balance": "tsx scripts/test-network-mode-balance.ts",
     "test:balance-ledger-query": "tsx scripts/test-balance-ledger-query.ts",
+    "test:withdraw-vocabulary": "tsx scripts/test-withdraw-vocabulary.ts",
     "test:deposit-confirmation": "tsx scripts/test-deposit-confirmation.ts",
     "test:db-health-honesty": "tsx scripts/test-db-health-honesty.ts",
     "test:wallet-chain-family": "tsx scripts/test-wallet-chain-family.ts",

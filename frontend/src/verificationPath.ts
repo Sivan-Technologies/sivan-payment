@@ -130,7 +130,7 @@ export function localVerificationPlan(
       description:
         'Enter your Nigerian bank account. We confirm the account name matches your name. ' +
         'No documents, no selfie, usually under a minute.',
-      unlocks: ['Sell crypto to naira', 'Withdraw to your Nigerian bank'],
+      unlocks: ['Withdraw crypto to naira', 'Withdraw to your Nigerian bank'],
       costsProviderFee: false,
     };
   }

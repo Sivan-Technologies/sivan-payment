@@ -61,7 +61,7 @@ export function DashboardTransactions({ rows, onStart, onBuy, onViewAll, onOpenR
   // the page. Everything else is one click away.
   const recent = rows.slice(0, 5);
 
-  return <article className="dashboard-transactions"><div className="dash-card-head"><div><p className="eyebrow">Activity</p><h3>Recent transactions</h3></div><button onClick={onViewAll}>View all ↗</button></div>{!recent.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></div> : <><div className="activity-list">{recent.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} onOpen={onOpenRow ? () => onOpenRow(row.id) : onViewAll} />)}</div><div className="button-row dashboard-start-btn"><button className="secondary-btn" onClick={onStart}>⊕ Sell crypto</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></>}</article>;
+  return <article className="dashboard-transactions"><div className="dash-card-head"><div><p className="eyebrow">Activity</p><h3>Recent transactions</h3></div><button onClick={onViewAll}>View all ↗</button></div>{!recent.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>⊕ Withdraw</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></div> : <><div className="activity-list">{recent.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} onOpen={onOpenRow ? () => onOpenRow(row.id) : onViewAll} />)}</div><div className="button-row dashboard-start-btn"><button className="secondary-btn" onClick={onStart}>⊕ Withdraw</button><button className="secondary-btn" onClick={onBuy}>↙ Buy crypto</button></div></>}</article>;
 }
 
 export function TwoFactorRecommendationCard({ completedCount, onEnable, onDismiss }: { completedCount: number; onEnable: () => void; onDismiss: () => void }) {
@@ -94,7 +94,7 @@ export function DashboardSetupPanel({ setupPercent, hasUser, isVerified, hasBank
   // what is left to do.
   const bankSub = hasBank
     ? 'Bank added'
-    : isNgnPath ? 'Added when you verify' : 'Add a bank to sell crypto';
+    : isNgnPath ? 'Added when you verify' : 'Add a bank to withdraw';
 
   return <article className="dashboard-setup-panel"><div className="panel-head"><div><p className="eyebrow">Setup</p><h3>Account setup</h3></div><strong className="setup-percent-pill">{setupPercent}%</strong></div><div className="setup-list"><SetupLine done={hasUser} title="Email confirmed" sub={user?.email ? 'Signed in securely' : 'Create account'} /><SetupLine done={whatsappLinked} optional title="WhatsApp linked" sub="Optional for service agreements and alerts" /><SetupLine done={isVerified} title={verifyTitle} sub={verifySub} /><SetupLine done={hasBank} title="Payout bank" sub={bankSub} /></div><div className="setup-progress"><div><span style={{ width: `${setupPercent}%` }} /></div><strong>{setupPercent}%</strong></div><button className="primary-btn" onClick={onContinue}>{buttonLabel}</button></article>;
 }

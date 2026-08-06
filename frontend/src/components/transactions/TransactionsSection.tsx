@@ -42,7 +42,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     const sells = withdrawals.map((w): CustomerTransactionRow => ({
       id: w.id,
       kind: 'withdrawal',
-      label: 'Sell crypto',
+      label: 'Withdrawal',
       direction: 'sell',
       asset: w.sourceCurrency?.toUpperCase() || 'USDC',
       amount: w.destinationAmount || w.sourceAmount || w.transactionTimeline?.amount || '—',
@@ -76,7 +76,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     const naira = ngnTransfers.map((t): CustomerTransactionRow => ({
       id: t.id,
       kind: 'ngn_transfer',
-      label: t.direction === 'offramp' ? 'Sell crypto to naira' : 'Buy crypto with naira',
+      label: t.direction === 'offramp' ? 'Withdrawal to naira' : 'Buy crypto with naira',
       direction: t.direction === 'offramp' ? 'sell' : 'buy',
       asset: (t.direction === 'offramp' ? t.sourceCurrency : t.destinationCurrency)?.toUpperCase() || 'USDC',
       // Show the leg the user thinks in: naira out for a sell, naira in for a buy.
@@ -146,7 +146,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     }
   }
 
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}</div></div>{!feed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Start selling</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout">{/* A LIST, NOT A TABLE.
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}</div></div>{!feed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout">{/* A LIST, NOT A TABLE.
 
               The old table had 7 columns and a min-width of 760px, so on a
               phone it scrolled sideways - the single worst pattern for a
@@ -247,7 +247,7 @@ function DepositInstruction({ transaction, onCancel }: { transaction: CustomerTr
           </>
         // Two-step, because a mis-tap next to "Copy address" would otherwise
         // destroy a live order.
-        : <button className="ghost-btn small" onClick={() => setConfirming(true)}>Cancel this sell</button>)}
+        : <button className="ghost-btn small" onClick={() => setConfirming(true)}>Cancel this withdrawal</button>)}
     </div>
 
     {network
@@ -309,7 +309,7 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
       <div className="transaction-explanation-box">
         {waiting
           ? `Send ${transaction.asset} to the address below. Your bank is paid automatically once it arrives.`
-          : `We are processing this ${transaction.direction === 'sell' ? 'sell' : 'buy'}. No action is needed from you.`}
+          : `We are processing this ${transaction.direction === 'sell' ? 'withdrawal' : 'buy'}. No action is needed from you.`}
       </div>
       <div className="timeline-meta-grid">
         <Kv label="Request ID" value={transaction.id} />

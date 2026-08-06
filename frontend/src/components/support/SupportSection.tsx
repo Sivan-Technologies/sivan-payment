@@ -84,7 +84,7 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
   // Whether this session already woke Sivan AI. A ref rather than state because
   // nothing renders from it and flipping it must not cause a re-render.
   const warmedRef = useRef(false);
-  const faqs = ['How long does a sell take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
+  const faqs = ['How long does a withdrawal take?', 'What fees does Sivan charge?', 'My payout is delayed. What should I do?', 'What happens if I send the wrong network?'];
   const latestWithdrawal = useMemo(() => withdrawals.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0], [withdrawals]);
   const latestOrder = useMemo(() => onrampOrders.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0], [onrampOrders]);
 
@@ -141,7 +141,7 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
     if (lower.includes('2fa') || lower.includes('authenticator') || lower.includes('account recovery') || lower.includes('login')) return { resourceType: 'general', ticketType: 'account_access', subject: 'Account access / 2FA recovery help requested' };
     if (lower.includes('virtual account') || lower.includes('deposit')) return { resourceType: 'general', ticketType: 'deposit_not_detected', subject: 'Virtual account deposit help requested' };
     if (lower.includes('buy') || lower.includes('on-ramp') || lower.includes('onramp')) return { resourceType: latestOrder ? 'onramp_order' : 'general', resourceId: latestOrder?.id, ticketType: 'onramp_payment', subject: 'Buy order support requested' };
-    if (lower.includes('withdrawal') || lower.includes('sell') || lower.includes('transaction') || lower.includes('money') || lower.includes('payout')) return { resourceType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_order' : 'general', resourceId: latestWithdrawal?.id || latestOrder?.id, ticketType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_payment' : 'other', subject: 'Transaction support requested' };
+    if (lower.includes('withdraw') || lower.includes('sell') || lower.includes('transaction') || lower.includes('money') || lower.includes('payout')) return { resourceType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_order' : 'general', resourceId: latestWithdrawal?.id || latestOrder?.id, ticketType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_payment' : 'other', subject: 'Transaction support requested' };
     return { resourceType: 'general', ticketType: 'other', subject: 'Sivan Assistant support handoff' };
   }
 
