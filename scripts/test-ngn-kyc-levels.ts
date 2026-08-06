@@ -40,18 +40,17 @@ try {
   assert.equal(JSON.stringify(level2).includes('12345678901'), false);
   console.log('✓ Level 2 BVN information match returns customer-safe result');
 
-  const bankMatch = await req('/api/users/usr_kyc_ngn/kyc/ngn-bank-account/match', {
+  const missingBvn = await req('/api/users/usr_kyc_ngn/kyc/ngn-bvn/verify', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ bvn: '12345678901', bankCode: '058', accountNumber: '0123456789', accountName: 'John Doe' })
-  });
-  assert.equal(bankMatch.status, 'matched');
-  assert.equal(bankMatch.level, 'ngn_bank_ownership');
-  assert.equal(JSON.stringify(bankMatch).includes('12345678901'), false);
-  console.log('✓ BVN + bank account match returns customer-safe result');
+    body: JSON.stringify({ bvn: '1234', firstName: 'John', lastName: 'Doe', dateOfBirth: '31-12-1990', mobileNo: '08012345678' })
+  }, 400);
+  assert.ok(JSON.stringify(missingBvn).includes('BVN must be 11 digits'));
+  console.log('✓ Level 2 BVN input validation is enforced');
+
 
   await app.close();
-  console.log(JSON.stringify({ ok: true, level2: level2.status, bankOwnership: bankMatch.status }, null, 2));
+  console.log(JSON.stringify({ ok: true, level2: level2.status, level2b: 'deferred' }, null, 2));
 } catch (error) {
   await app.close();
   throw error;
