@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createAuditLog } from '../audit/audit.service.js';
 import { env } from '../config/env.js';
 import { db } from '../database/json-database.js';
-import type { CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserRecord } from '../database/types.js';
+import type { CustomerIdentityLinkRecord, IdentityChannel, IdentityPairingTokenRecord, UserRecord } from '../database/types.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 
@@ -14,6 +14,32 @@ export const redeemIdentityLinkSchema = z.object({
   whatsappNumber: z.string().min(8).max(32),
   escrowUserId: z.string().min(2).max(120).optional(),
 });
+
+/**
+ * Telegram redemption. Deliberately NOT the same schema as WhatsApp.
+ *
+ * The identity here is `telegramUserId`, taken from `message.from.id`, which
+ * Telegram authenticates on every update and a client cannot forge. It is a
+ * stronger binding than a phone number, which arrives via a contact card the
+ * sender chooses - and Telegram lets you forward ANYONE's contact card.
+ *
+ * No phone is accepted at all. A Telegram user's phone is not needed to
+ * identify them once the code proves which dashboard session they came from.
+ */
+export const redeemTelegramLinkSchema = z.object({
+  token: z.string().min(6).max(32),
+  telegramUserId: z.string().min(1).max(32),
+  telegramUsername: z.string().min(1).max(64).optional(),
+  escrowUserId: z.string().min(2).max(120).optional(),
+});
+
+/**
+ * Rows written before migration 044 have no `channel`. The column default
+ * backfills them to 'whatsapp', so the code must read them the same way or a
+ * legacy link would match no channel at all and appear unlinked.
+ */
+const linkChannel = (link: Pick<CustomerIdentityLinkRecord, 'channel'>): IdentityChannel => link.channel ?? 'whatsapp';
+const tokenChannel = (token: Pick<IdentityPairingTokenRecord, 'channel'>): IdentityChannel => token.channel ?? 'whatsapp';
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 
@@ -42,10 +68,13 @@ function publicLink(link: CustomerIdentityLinkRecord | undefined) {
   return {
     id: link.id,
     status: link.status,
+    channel: linkChannel(link),
     paymentUserId: link.paymentUserId,
     escrowUserId: link.escrowUserId,
     email: link.email,
     whatsappNumber: link.whatsappNumber,
+    telegramUserId: link.telegramUserId,
+    telegramUsername: link.telegramUsername,
     linkedAt: link.linkedAt,
   };
 }
@@ -55,58 +84,98 @@ function publicToken(token: IdentityPairingTokenRecord | undefined) {
   return {
     id: token.id,
     status: token.status,
+    channel: tokenChannel(token),
     expiresAt: token.expiresAt,
     createdAt: token.createdAt,
   };
 }
 
-async function activeLinkForPaymentUser(userId: string) {
+/**
+ * Scoped to a channel, mirroring the (payment_user_id, channel) unique index
+ * from migration 044. Before that migration this was one link per user; a
+ * lookup that ignored channel would now return whichever row happened to sort
+ * first and could report a Telegram link when asked about WhatsApp.
+ */
+async function activeLinkForPaymentUser(userId: string, channel: IdentityChannel) {
   const links = await db.listCustomerIdentityLinks();
-  return links.find((item) => item.paymentUserId === userId && item.status === 'linked');
+  return links.find((item) => item.paymentUserId === userId && item.status === 'linked' && linkChannel(item) === channel);
+}
+
+async function activeLinksForPaymentUser(userId: string) {
+  const links = await db.listCustomerIdentityLinks();
+  return links.filter((item) => item.paymentUserId === userId && item.status === 'linked');
 }
 
 async function activeLinkForWhatsapp(whatsappNumber: string) {
   const links = await db.listCustomerIdentityLinks();
-  return links.find((item) => item.whatsappNumber === whatsappNumber && item.status === 'linked');
+  return links.find((item) => item.whatsappNumber === whatsappNumber && item.status === 'linked' && linkChannel(item) === 'whatsapp');
 }
 
-async function pendingTokenForPaymentUser(userId: string) {
+async function activeLinkForTelegram(telegramUserId: string) {
+  const links = await db.listCustomerIdentityLinks();
+  return links.find((item) => item.telegramUserId === telegramUserId && item.status === 'linked' && linkChannel(item) === 'telegram');
+}
+
+async function pendingTokenForPaymentUser(userId: string, channel: IdentityChannel) {
   const now = nowIso();
   const tokens = await db.listIdentityPairingTokens();
   return tokens
-    .filter((item) => item.paymentUserId === userId && item.status === 'pending' && item.expiresAt > now)
+    .filter((item) => item.paymentUserId === userId && item.status === 'pending' && item.expiresAt > now && tokenChannel(item) === channel)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
+/**
+ * 'both' means email + at least one messaging channel, which is what the
+ * notification router keys off. It deliberately does not try to encode WHICH
+ * messaging channels are live - that is what customer_identity_links is for,
+ * and duplicating it here would give two sources of truth that drift.
+ */
 function inferChannel(user: UserRecord): UserRecord['primaryChannel'] {
-  if (user.email && user.whatsappNumber) return 'both';
+  const hasMessaging = Boolean(user.whatsappNumber || user.telegramUserId);
+  if (user.email && hasMessaging) return 'both';
   if (user.whatsappNumber) return 'whatsapp';
+  if (user.telegramUserId) return 'telegram';
   return 'email';
 }
 
+/**
+ * Both channels, always. A caller that only wants one still gets a stable
+ * shape, and the UI can render two cards without a second round trip.
+ */
 export async function getIdentityStatus(userId: string) {
   const user = await db.findUserById(userId);
   if (!user) throw notFound('User');
-  const link = await activeLinkForPaymentUser(userId);
-  const token = await pendingTokenForPaymentUser(userId);
+  const links = await activeLinksForPaymentUser(userId);
+  const whatsappLink = links.find((item) => linkChannel(item) === 'whatsapp');
+  const telegramLink = links.find((item) => linkChannel(item) === 'telegram');
+  const whatsappPending = await pendingTokenForPaymentUser(userId, 'whatsapp');
+  const telegramPending = await pendingTokenForPaymentUser(userId, 'telegram');
+
   return {
-    linked: Boolean(link),
-    link: publicLink(link),
-    pendingPairing: publicToken(token),
+    // Kept for existing callers: true when ANY channel is linked.
+    linked: links.length > 0,
+    link: publicLink(whatsappLink),
+    pendingPairing: publicToken(whatsappPending),
+    channels: {
+      whatsapp: { linked: Boolean(whatsappLink), link: publicLink(whatsappLink), pendingPairing: publicToken(whatsappPending) },
+      telegram: { linked: Boolean(telegramLink), link: publicLink(telegramLink), pendingPairing: publicToken(telegramPending) },
+    },
   };
 }
 
-export async function startWhatsappLink(userId: string, context: { ipAddress?: string; userAgent?: string } = {}) {
+const CHANNEL_LABEL: Record<IdentityChannel, string> = { whatsapp: 'WhatsApp', telegram: 'Telegram' };
+
+export async function startChannelLink(userId: string, channel: IdentityChannel, context: { ipAddress?: string; userAgent?: string } = {}) {
   const user = await db.findUserById(userId);
   if (!user) throw notFound('User');
-  if (!user.emailVerifiedAt) throw forbidden('Verify your email before linking WhatsApp.');
+  if (!user.emailVerifiedAt) throw forbidden(`Verify your email before linking ${CHANNEL_LABEL[channel]}.`);
 
-  const existingLink = await activeLinkForPaymentUser(userId);
+  const existingLink = await activeLinkForPaymentUser(userId, channel);
   if (existingLink) {
     return { linked: true, link: publicLink(existingLink), token: null };
   }
 
-  const existingPending = await pendingTokenForPaymentUser(userId);
+  const existingPending = await pendingTokenForPaymentUser(userId, channel);
   if (existingPending) {
     return { linked: false, token: publicToken(existingPending), message: 'A valid pairing code already exists. Cancel it before generating a new one.' };
   }
@@ -118,6 +187,7 @@ export async function startWhatsappLink(userId: string, context: { ipAddress?: s
     id: id('idpair'),
     paymentUserId: userId,
     tokenHash: tokenHash(token),
+    channel,
     status: 'pending',
     expiresAt,
     createdAt: now,
@@ -127,38 +197,55 @@ export async function startWhatsappLink(userId: string, context: { ipAddress?: s
   await createAuditLog({
     actorType: 'user',
     actorId: userId,
-    action: 'identity.whatsapp_pairing_started',
+    action: `identity.${channel}_pairing_started`,
     resourceType: 'customer_identity',
     resourceId: userId,
     ipAddress: context.ipAddress,
     userAgent: context.userAgent,
-    metadata: { expiresAt },
+    metadata: { expiresAt, channel },
   });
-  return { linked: false, token, expiresAt, instructions: 'Send this code to Sivan on WhatsApp to link your Escrow account.' };
+  const instructions = channel === 'telegram'
+    ? 'Open Sivan on Telegram and send this code to link your account.'
+    : 'Send this code to Sivan on WhatsApp to link your Escrow account.';
+  return { linked: false, token, expiresAt, channel, instructions };
 }
 
-export async function cancelWhatsappLink(userId: string, context: { ipAddress?: string; userAgent?: string } = {}) {
-  const pending = await pendingTokenForPaymentUser(userId);
+export async function cancelChannelLink(userId: string, channel: IdentityChannel, context: { ipAddress?: string; userAgent?: string } = {}) {
+  const pending = await pendingTokenForPaymentUser(userId, channel);
   if (!pending) return { canceled: false, message: 'No active pairing code.' };
   const now = nowIso();
   await db.upsertIdentityPairingTokenRecord({ ...pending, status: 'canceled', canceledAt: now, updatedAt: now });
-  await createAuditLog({ actorType: 'user', actorId: userId, action: 'identity.whatsapp_pairing_canceled', resourceType: 'customer_identity', resourceId: userId, ipAddress: context.ipAddress, userAgent: context.userAgent });
+  await createAuditLog({ actorType: 'user', actorId: userId, action: `identity.${channel}_pairing_canceled`, resourceType: 'customer_identity', resourceId: userId, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { channel } });
   return { canceled: true };
 }
 
-export async function unlinkWhatsappIdentity(userId: string, context: { ipAddress?: string; userAgent?: string } = {}) {
-  const link = await activeLinkForPaymentUser(userId);
-  if (!link) return { unlinked: false, message: 'No linked WhatsApp identity.' };
+export async function unlinkChannelIdentity(userId: string, channel: IdentityChannel, context: { ipAddress?: string; userAgent?: string } = {}) {
+  const link = await activeLinkForPaymentUser(userId, channel);
+  if (!link) return { unlinked: false, message: `No linked ${CHANNEL_LABEL[channel]} identity.` };
   const user = await db.findUserById(userId);
   const now = nowIso();
   await db.upsertCustomerIdentityLinkRecord({ ...link, status: 'unlinked', unlinkedAt: now, updatedAt: now });
   if (user) {
-    const updated: UserRecord = { ...user, whatsappNumber: undefined, whatsappVerifiedAt: undefined, primaryChannel: inferChannel({ ...user, whatsappNumber: undefined }), updatedAt: now };
-    await db.updateUserRecord(updated);
+    // Clear only the channel being unlinked. Wiping both would silently
+    // disconnect WhatsApp when a user detaches Telegram.
+    const cleared: UserRecord = channel === 'whatsapp'
+      ? { ...user, whatsappNumber: undefined, whatsappVerifiedAt: undefined }
+      : { ...user, telegramUserId: undefined, telegramUsername: undefined, telegramVerifiedAt: undefined };
+    await db.updateUserRecord({ ...cleared, primaryChannel: inferChannel(cleared), updatedAt: now });
   }
-  await createAuditLog({ actorType: 'user', actorId: userId, action: 'identity.whatsapp_unlinked', resourceType: 'customer_identity', resourceId: link.id, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { whatsappNumber: link.whatsappNumber, escrowUserId: link.escrowUserId } });
+  await createAuditLog({ actorType: 'user', actorId: userId, action: `identity.${channel}_unlinked`, resourceType: 'customer_identity', resourceId: link.id, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { channel, whatsappNumber: link.whatsappNumber, telegramUserId: link.telegramUserId, escrowUserId: link.escrowUserId } });
   return { unlinked: true };
 }
+
+// WhatsApp-named wrappers. whatsapp-bot and ace-whatsapp.service.ts import
+// these by name; keeping them means the Telegram work touches no WhatsApp code.
+export const startWhatsappLink = (userId: string, context: { ipAddress?: string; userAgent?: string } = {}) => startChannelLink(userId, 'whatsapp', context);
+export const cancelWhatsappLink = (userId: string, context: { ipAddress?: string; userAgent?: string } = {}) => cancelChannelLink(userId, 'whatsapp', context);
+export const unlinkWhatsappIdentity = (userId: string, context: { ipAddress?: string; userAgent?: string } = {}) => unlinkChannelIdentity(userId, 'whatsapp', context);
+
+export const startTelegramLink = (userId: string, context: { ipAddress?: string; userAgent?: string } = {}) => startChannelLink(userId, 'telegram', context);
+export const cancelTelegramLink = (userId: string, context: { ipAddress?: string; userAgent?: string } = {}) => cancelChannelLink(userId, 'telegram', context);
+export const unlinkTelegramIdentity = (userId: string, context: { ipAddress?: string; userAgent?: string } = {}) => unlinkChannelIdentity(userId, 'telegram', context);
 
 export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLinkSchema>, context: { source?: string; ipAddress?: string; userAgent?: string } = {}) {
   const parsed = redeemIdentityLinkSchema.parse(input);
@@ -178,7 +265,7 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
 
   const linkForWhatsapp = await activeLinkForWhatsapp(whatsappNumber);
   if (linkForWhatsapp && linkForWhatsapp.paymentUserId !== user.id) throw badRequest('This WhatsApp number is already linked to another Sivan payment account.');
-  const linkForUser = await activeLinkForPaymentUser(user.id);
+  const linkForUser = await activeLinkForPaymentUser(user.id, 'whatsapp');
   if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) throw badRequest('This Sivan payment account is already linked to another WhatsApp number.');
 
   const updatedUser: UserRecord = {
@@ -194,6 +281,7 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
     id: id('identity'),
     paymentUserId: user.id,
     email: normalizeEmail(user.email),
+    channel: 'whatsapp',
     whatsappNumber,
     status: 'linked',
     createdAt: now,
@@ -203,6 +291,7 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
     ...link,
     escrowUserId: parsed.escrowUserId ?? link.escrowUserId,
     email: normalizeEmail(user.email),
+    channel: 'whatsapp',
     whatsappNumber,
     status: 'linked',
     linkedAt: link.linkedAt ?? now,
@@ -217,5 +306,115 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
     linked: true,
     link: publicLink(savedLink),
     paymentUser: { id: updatedUser.id, email: updatedUser.email, fullName: updatedUser.fullName, whatsappNumber: updatedUser.whatsappNumber },
+  };
+}
+
+/**
+ * Redeem a pairing code from Telegram.
+ *
+ * Structurally the WhatsApp twin, with two deliberate differences:
+ *
+ *   - The token must have been ISSUED for Telegram. Without that check either
+ *     bot could redeem any pending code, so a user generating a WhatsApp code
+ *     could have it consumed by whoever reached the Telegram bot first.
+ *
+ *   - No phone number is involved. The account keeps whatever phone it already
+ *     had, which is what lets a user run WhatsApp on one number and Telegram on
+ *     another and still be one Sivan account.
+ */
+export async function redeemTelegramLink(input: z.infer<typeof redeemTelegramLinkSchema>, context: { source?: string; ipAddress?: string; userAgent?: string } = {}) {
+  const parsed = redeemTelegramLinkSchema.parse(input);
+  const tokenClean = parsed.token.toUpperCase().trim();
+  const telegramUserId = parsed.telegramUserId.trim();
+  const now = nowIso();
+
+  const tokens = await db.listIdentityPairingTokens();
+  const token = tokens.find((item) => item.tokenHash === tokenHash(tokenClean));
+  if (!token || token.status !== 'pending') throw badRequest('Invalid or expired pairing code.');
+  if (tokenChannel(token) !== 'telegram') throw badRequest('That code was not issued for Telegram. Generate a Telegram code from your Sivan dashboard.');
+  if (token.expiresAt <= now) {
+    await db.upsertIdentityPairingTokenRecord({ ...token, status: 'expired', updatedAt: now });
+    throw badRequest('Pairing code has expired. Generate a new code from your Sivan web dashboard.');
+  }
+
+  const user = await db.findUserById(token.paymentUserId);
+  if (!user) throw notFound('Payment user');
+
+  const linkForTelegram = await activeLinkForTelegram(telegramUserId);
+  if (linkForTelegram && linkForTelegram.paymentUserId !== user.id) throw badRequest('This Telegram account is already linked to another Sivan payment account.');
+  const linkForUser = await activeLinkForPaymentUser(user.id, 'telegram');
+  if (linkForUser && linkForUser.telegramUserId !== telegramUserId) throw badRequest('This Sivan payment account is already linked to another Telegram account.');
+
+  const updatedUser: UserRecord = {
+    ...user,
+    telegramUserId,
+    telegramUsername: parsed.telegramUsername ?? user.telegramUsername,
+    telegramVerifiedAt: now,
+    updatedAt: now,
+  };
+  await db.updateUserRecord({ ...updatedUser, primaryChannel: inferChannel(updatedUser) });
+
+  const link: CustomerIdentityLinkRecord = linkForUser ?? {
+    id: id('identity'),
+    paymentUserId: user.id,
+    email: normalizeEmail(user.email),
+    channel: 'telegram',
+    telegramUserId,
+    status: 'linked',
+    createdAt: now,
+    updatedAt: now,
+  };
+  const savedLink: CustomerIdentityLinkRecord = {
+    ...link,
+    escrowUserId: parsed.escrowUserId ?? link.escrowUserId,
+    email: normalizeEmail(user.email),
+    channel: 'telegram',
+    telegramUserId,
+    telegramUsername: parsed.telegramUsername ?? link.telegramUsername,
+    status: 'linked',
+    linkedAt: link.linkedAt ?? now,
+    updatedAt: now,
+    metadata: { ...(typeof link.metadata === 'object' && link.metadata ? link.metadata as Record<string, unknown> : {}), source: context.source ?? 'telegram', redeemedAt: now },
+  };
+  await db.upsertCustomerIdentityLinkRecord(savedLink);
+  await db.upsertIdentityPairingTokenRecord({ ...token, status: 'redeemed', redeemedAt: now, telegramUserId, escrowUserId: parsed.escrowUserId, updatedAt: now });
+  await createAuditLog({ actorType: 'system', actorId: 'identity_link_service', action: 'identity.telegram_linked', resourceType: 'customer_identity', resourceId: savedLink.id, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { paymentUserId: user.id, escrowUserId: parsed.escrowUserId, telegramUserId } });
+
+  return {
+    linked: true,
+    link: publicLink(savedLink),
+    paymentUser: {
+      id: updatedUser.id,
+      email: updatedUser.email,
+      fullName: updatedUser.fullName,
+      // The phone from the WhatsApp link, if there is one. The Telegram layer
+      // needs it because the escrow API is addressed by phone; absent means
+      // this user can pair and see balances but cannot yet create agreements.
+      whatsappNumber: updatedUser.whatsappNumber,
+      telegramUserId: updatedUser.telegramUserId,
+    },
+  };
+}
+
+/**
+ * Resolve a Telegram account to its Sivan identity.
+ *
+ * The Telegram layer calls this on every action rather than caching, because
+ * its session store is in-memory and a restart would otherwise appear to
+ * un-link everyone.
+ */
+export async function lookupTelegramIdentity(telegramUserId: string) {
+  const link = await activeLinkForTelegram(telegramUserId.trim());
+  if (!link) return { linked: false as const };
+  const user = await db.findUserById(link.paymentUserId);
+  if (!user) return { linked: false as const };
+  return {
+    linked: true as const,
+    paymentUserId: user.id,
+    escrowUserId: link.escrowUserId,
+    email: user.email,
+    fullName: user.fullName,
+    whatsappNumber: user.whatsappNumber,
+    canTransact: Boolean(user.whatsappNumber),
   };
 }

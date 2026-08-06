@@ -218,7 +218,11 @@ export interface UserRecord {
   country?: string;
   username?: string;
   usernameUpdatedAt?: string;
-  primaryChannel?: 'email' | 'whatsapp' | 'both';
+  /** Numeric Telegram user id, as a string. Set once a Telegram link is redeemed. */
+  telegramUserId?: string;
+  telegramUsername?: string;
+  telegramVerifiedAt?: string;
+  primaryChannel?: 'email' | 'whatsapp' | 'telegram' | 'both';
   avatarUrl?: string;
   avatarObjectKey?: string;
   avatarUpdatedAt?: string;
@@ -229,12 +233,26 @@ export interface UserRecord {
 }
 
 
+/** The messaging channels a Sivan account can be reachable on. */
+export type IdentityChannel = 'whatsapp' | 'telegram';
+
 export interface CustomerIdentityLinkRecord {
   id: string;
   paymentUserId: string;
   escrowUserId?: string;
   email: string;
-  whatsappNumber: string;
+  /**
+   * Which channel this link is for. Optional in the type because rows written
+   * before migration 044 have no value; treat `undefined` as 'whatsapp', which
+   * is what the column default backfills them to.
+   */
+  channel?: IdentityChannel;
+  /** Set when channel is 'whatsapp'. A Telegram link has no phone number. */
+  whatsappNumber?: string;
+  /** Set when channel is 'telegram'. Authenticated by Telegram on every update. */
+  telegramUserId?: string;
+  /** Display only: Telegram usernames can be changed and re-registered. */
+  telegramUsername?: string;
   status: 'linked' | 'unlinked';
   linkedAt?: string;
   unlinkedAt?: string;
@@ -247,11 +265,18 @@ export interface IdentityPairingTokenRecord {
   id: string;
   paymentUserId: string;
   tokenHash: string;
+  /**
+   * Which channel this code was issued for. A code generated for Telegram must
+   * not be redeemable by the WhatsApp bot, or either bot could claim any
+   * pending code for a user. Undefined on pre-044 rows, which are all WhatsApp.
+   */
+  channel?: IdentityChannel;
   status: 'pending' | 'redeemed' | 'canceled' | 'expired';
   expiresAt: string;
   redeemedAt?: string;
   canceledAt?: string;
   whatsappNumber?: string;
+  telegramUserId?: string;
   escrowUserId?: string;
   createdAt: string;
   updatedAt: string;

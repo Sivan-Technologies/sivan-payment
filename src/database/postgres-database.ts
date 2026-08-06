@@ -1822,6 +1822,9 @@ function mapUser(row: any): UserRecord {
     country: str(row.country),
     username: str(row.username),
     usernameUpdatedAt: optionalIso(row.username_updated_at),
+    telegramUserId: str(row.telegram_user_id),
+    telegramUsername: str(row.telegram_username),
+    telegramVerifiedAt: optionalIso(row.telegram_verified_at),
     primaryChannel: row.primary_channel,
     avatarUrl: str(row.avatar_url),
     avatarObjectKey: str(row.avatar_object_key),
@@ -2626,7 +2629,12 @@ function mapCustomerIdentityLink(row: any): CustomerIdentityLinkRecord {
     paymentUserId: row.payment_user_id,
     escrowUserId: str(row.escrow_user_id),
     email: row.email,
-    whatsappNumber: row.whatsapp_number,
+    // Pre-044 rows have no channel; the column default backfills them to
+    // 'whatsapp' and the service treats undefined the same way.
+    channel: str(row.channel) as CustomerIdentityLinkRecord['channel'],
+    whatsappNumber: str(row.whatsapp_number),
+    telegramUserId: str(row.telegram_user_id),
+    telegramUsername: str(row.telegram_username),
     status: row.status,
     linkedAt: optionalIso(row.linked_at),
     unlinkedAt: optionalIso(row.unlinked_at),
@@ -2641,11 +2649,13 @@ function mapIdentityPairingToken(row: any): IdentityPairingTokenRecord {
     id: row.id,
     paymentUserId: row.payment_user_id,
     tokenHash: row.token_hash,
+    channel: str(row.channel) as IdentityPairingTokenRecord['channel'],
     status: row.status,
     expiresAt: iso(row.expires_at),
     redeemedAt: optionalIso(row.redeemed_at),
     canceledAt: optionalIso(row.canceled_at),
     whatsappNumber: str(row.whatsapp_number),
+    telegramUserId: str(row.telegram_user_id),
     escrowUserId: str(row.escrow_user_id),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at)
@@ -2654,37 +2664,42 @@ function mapIdentityPairingToken(row: any): IdentityPairingTokenRecord {
 
 async function upsertCustomerIdentityLink(client: pg.PoolClient, item: CustomerIdentityLinkRecord) {
   await client.query(
-    `insert into customer_identity_links (id, payment_user_id, escrow_user_id, email, whatsapp_number, status, linked_at, unlinked_at, metadata, created_at, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    `insert into customer_identity_links (id, payment_user_id, escrow_user_id, email, channel, whatsapp_number, telegram_user_id, telegram_username, status, linked_at, unlinked_at, metadata, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (id) do update set
        payment_user_id=excluded.payment_user_id,
        escrow_user_id=excluded.escrow_user_id,
        email=excluded.email,
+       channel=excluded.channel,
        whatsapp_number=excluded.whatsapp_number,
+       telegram_user_id=excluded.telegram_user_id,
+       telegram_username=excluded.telegram_username,
        status=excluded.status,
        linked_at=excluded.linked_at,
        unlinked_at=excluded.unlinked_at,
        metadata=excluded.metadata,
        updated_at=excluded.updated_at`,
-    [item.id, item.paymentUserId, item.escrowUserId ?? null, item.email, item.whatsappNumber, item.status, item.linkedAt ?? null, item.unlinkedAt ?? null, item.metadata ?? null, item.createdAt, item.updatedAt]
+    [item.id, item.paymentUserId, item.escrowUserId ?? null, item.email, item.channel ?? 'whatsapp', item.whatsappNumber ?? null, item.telegramUserId ?? null, item.telegramUsername ?? null, item.status, item.linkedAt ?? null, item.unlinkedAt ?? null, item.metadata ?? null, item.createdAt, item.updatedAt]
   );
 }
 
 async function upsertIdentityPairingToken(client: pg.PoolClient, item: IdentityPairingTokenRecord) {
   await client.query(
-    `insert into identity_pairing_tokens (id, payment_user_id, token_hash, status, expires_at, redeemed_at, canceled_at, whatsapp_number, escrow_user_id, created_at, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    `insert into identity_pairing_tokens (id, payment_user_id, token_hash, channel, status, expires_at, redeemed_at, canceled_at, whatsapp_number, telegram_user_id, escrow_user_id, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      on conflict (id) do update set
        payment_user_id=excluded.payment_user_id,
        token_hash=excluded.token_hash,
+       channel=excluded.channel,
        status=excluded.status,
        expires_at=excluded.expires_at,
        redeemed_at=excluded.redeemed_at,
        canceled_at=excluded.canceled_at,
        whatsapp_number=excluded.whatsapp_number,
+       telegram_user_id=excluded.telegram_user_id,
        escrow_user_id=excluded.escrow_user_id,
        updated_at=excluded.updated_at`,
-    [item.id, item.paymentUserId, item.tokenHash, item.status, item.expiresAt, item.redeemedAt ?? null, item.canceledAt ?? null, item.whatsappNumber ?? null, item.escrowUserId ?? null, item.createdAt, item.updatedAt]
+    [item.id, item.paymentUserId, item.tokenHash, item.channel ?? 'whatsapp', item.status, item.expiresAt, item.redeemedAt ?? null, item.canceledAt ?? null, item.whatsappNumber ?? null, item.telegramUserId ?? null, item.escrowUserId ?? null, item.createdAt, item.updatedAt]
   );
 }
 
@@ -2692,8 +2707,8 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
   const { firstName, lastName } = splitName(user.fullName);
   const primaryChannel = user.primaryChannel ?? inferPrimaryChannel(user.email, user.whatsappNumber);
   await client.query(
-    `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, role_history, primary_channel, username, username_updated_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+    `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, role_history, primary_channel, username, username_updated_at, telegram_user_id, telegram_username, telegram_verified_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
      on conflict (user_id) do update set
        whatsapp_number = excluded.whatsapp_number,
        email = excluded.email,
@@ -2703,13 +2718,16 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
        primary_channel = excluded.primary_channel,
        username = excluded.username,
        username_updated_at = excluded.username_updated_at,
+       telegram_user_id = excluded.telegram_user_id,
+       telegram_username = excluded.telegram_username,
+       telegram_verified_at = excluded.telegram_verified_at,
        avatar_url = excluded.avatar_url,
        avatar_object_key = excluded.avatar_object_key,
        avatar_updated_at = excluded.avatar_updated_at,
        email_verified_at = excluded.email_verified_at,
        whatsapp_verified_at = excluded.whatsapp_verified_at,
        updated_at = excluded.updated_at`,
-    [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
+    [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.telegramUserId ?? null, user.telegramUsername ?? null, user.telegramVerifiedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
   );
 }
 
