@@ -44,3 +44,7 @@ frontend-admin/vite.config.d.ts
 # screenshot in the repo is worse than none because it shows a UI that no
 # longer exists. Kept on disk for inspecting the current run; never committed.
 e2e/shots/
+
+# Live/sandbox credential files - never commit
+.env-*
+!.env-*.example
