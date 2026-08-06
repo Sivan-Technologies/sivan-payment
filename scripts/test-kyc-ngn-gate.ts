@@ -132,9 +132,12 @@ async function main() {
   console.log('\nthe ceiling is cumulative, not per-transaction');
   {
     // With identity toggled off the user is Level 2, so the on-ramp ceiling is
-    // NGN 1,000,000. Slice it in 999,000 chunks.
-    const first = await quoteFails('usr_bank', '999000');
-    check('first NGN 999,000 passes', first === undefined, first);
+    // NGN 5,000,000 (raised from 1,000,000 when BVN verification became real).
+    // Slice it in 4,999,000 chunks so the SECOND slice still crosses the line -
+    // at the old 999,000 the two together sat under the new ceiling and the
+    // anti-slicing assertion silently stopped testing anything.
+    const first = await quoteFails('usr_bank', '4999000');
+    check('first NGN 4,999,000 passes', first === undefined, first);
 
     // Record it as completed volume, as a settled transfer would.
     await db.mutate((data: any) => {
@@ -147,7 +150,7 @@ async function main() {
         provider: 'paj',
         sourceCurrency: 'ngn',
         destinationCurrency: 'usdc',
-        sourceAmount: '999000',
+        sourceAmount: '4999000',
         destinationAmount: '60',
         rate: '1650',
         feeAmount: '0',
@@ -159,10 +162,10 @@ async function main() {
     });
 
     const volume = await getCumulativeNgnVolume('usr_bank', VOLUME_WINDOW_DAYS);
-    check('completed volume is counted', volume === 999_000, `got ${volume}`);
+    check('completed volume is counted', volume === 4_999_000, `got ${volume}`);
 
-    const second = await quoteFails('usr_bank', '999000');
-    check('a second NGN 999,000 is refused - slicing does not work',
+    const second = await quoteFails('usr_bank', '4999000');
+    check('a second NGN 4,999,000 is refused - slicing does not work',
       second !== undefined, 'it was allowed');
     check('and the message names the remaining headroom',
       /1,000/.test(second ?? ''), second);
@@ -185,8 +188,11 @@ async function main() {
     const offOk = await quoteFails('usr_bank', '200', 'offramp');
     check('~NGN 300,000 off-ramp passes', offOk === undefined, offOk);
 
-    const offOver = await quoteFails('usr_bank', '400', 'offramp');
-    check('~NGN 600,000 off-ramp is refused (Level 2 off-ramp ceiling is 500,000)',
+    // 400 USDC (~NGN 600,000) now sits UNDER the raised Level 2 off-ramp
+    // ceiling of 5,000,000, so it no longer demonstrates a refusal. Sized above
+    // the new line instead: ~NGN 9,000,000.
+    const offOver = await quoteFails('usr_bank', '6000', 'offramp');
+    check('~NGN 9,000,000 off-ramp is refused (Level 2 off-ramp ceiling is 5,000,000)',
       offOver !== undefined, 'it was allowed');
 
     const onOk = await quoteFails('usr_bank', '600000', 'onramp');

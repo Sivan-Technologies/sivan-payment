@@ -170,7 +170,11 @@ async function main() {
     const err = await threw(() => setVerificationLimit({
       flow: 'offramp', rail: 'ngn',
       level: VerificationLevel.BANK,
-      cumulativeNgn: 900_000, // IDENTITY default is 500,000
+      // Must exceed the IDENTITY ceiling, which is now 5,000,000 (was 500,000
+      // before BVN verification became a real persisted check). At 900,000
+      // this no longer inverted the ladder, so the guard had nothing to refuse
+      // and the assertion failed against correct code.
+      cumulativeNgn: 6_000_000,
       updatedBy: 'test',
     }));
     check('raising BANK above IDENTITY is refused', Boolean(err), 'it was accepted');

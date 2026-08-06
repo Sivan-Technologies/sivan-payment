@@ -203,7 +203,17 @@ async function main() {
       check('and headroom is ceiling minus used',
         off.remainingNgn === 70_000, String(off.remainingNgn));
 
-      // A PENDING transfer must not consume headroom.
+      /**
+       * A PENDING TRANSFER NOW *DOES* CONSUME HEADROOM. REVERSED DELIBERATELY.
+       *
+       * This asserted the opposite, and the opposite was a hole: a cumulative
+       * ceiling that ignores money currently moving is not a ceiling. A user
+       * could start a withdrawal and, while it sat in settlement_processing,
+       * start another against headroom the first had not yet claimed.
+       *
+       * Only terminal FAILURE - failed, expired, cancelled - releases it now.
+       * See NGN_LIMIT_CONSUMING_STATUSES.
+       */
       await db.upsertNgnTransferRecord({
         id: 'ngnt_pending', userId, quoteId: 'q2', direction: 'offramp',
         sourceCurrency: 'usdc', destinationCurrency: 'ngn',
@@ -211,8 +221,8 @@ async function main() {
         status: 'awaiting_crypto_deposit', provider: 'mock', createdAt: now, updatedAt: now
       } as any);
       const afterPending = await call('GET', `/api/users/${userId}/verification-summary`);
-      check('a pending transfer does not consume headroom',
-        allowance(afterPending.body, 'offramp', 'ngn').usedNgn === 30_000,
+      check('a pending transfer DOES consume headroom',
+        allowance(afterPending.body, 'offramp', 'ngn').usedNgn === 45_000,
         String(allowance(afterPending.body, 'offramp', 'ngn').usedNgn));
 
       // THE WINDOW IS A ROLLING 30 DAYS, AND THAT WAS NEVER ASSERTED.
@@ -231,10 +241,10 @@ async function main() {
       } as any);
       const afterOld = await call('GET', `/api/users/${userId}/verification-summary`);
       check('volume older than the window has expired out of it',
-        allowance(afterOld.body, 'offramp', 'ngn').usedNgn === 30_000,
+        allowance(afterOld.body, 'offramp', 'ngn').usedNgn === 45_000,
         String(allowance(afterOld.body, 'offramp', 'ngn').usedNgn));
       check('so headroom is not eaten by last year',
-        allowance(afterOld.body, 'offramp', 'ngn').remainingNgn === 70_000,
+        allowance(afterOld.body, 'offramp', 'ngn').remainingNgn === 55_000,
         String(allowance(afterOld.body, 'offramp', 'ngn').remainingNgn));
 
       // ANOTHER USER'S VOLUME IS NOT YOURS.
@@ -249,8 +259,10 @@ async function main() {
         status: 'completed', provider: 'mock', createdAt: now, updatedAt: now
       } as any);
       const afterStranger = await call('GET', `/api/users/${userId}/verification-summary`);
+      // 45,000 is this user's own total (30,000 completed + 15,000 in flight),
+      // UNCHANGED by the stranger's 90,000 - which is what this asserts.
       check('a stranger\'s completed transfer does not consume your headroom',
-        allowance(afterStranger.body, 'offramp', 'ngn').usedNgn === 30_000,
+        allowance(afterStranger.body, 'offramp', 'ngn').usedNgn === 45_000,
         String(allowance(afterStranger.body, 'offramp', 'ngn').usedNgn));
     }
 
@@ -353,8 +365,11 @@ async function main() {
         JSON.stringify(atZero.body.nextStep));
       check('and it is described as NIN/BVN, not documents',
         atZero.body.nextStep?.action === 'nin_bvn', atZero.body.nextStep?.action);
+      // Raised to 5,000,000 when BVN verification became a real persisted
+      // check. Matching /500,?000/ would also match "5,000,000" by accident,
+      // so the assertion is anchored on the full figure.
       check('the description names the actual ceiling it unlocks',
-        /500,?000/.test(atZero.body.nextStep?.description ?? ''),
+        /5,000,000/.test(atZero.body.nextStep?.description ?? ''),
         atZero.body.nextStep?.description);
 
       /**
@@ -365,8 +380,17 @@ async function main() {
        * "coming soon", because a user who clicks a dead button blames
        * themselves. So the rung is STATED and marked unavailable.
        */
-      check('but it is marked unavailable while no NIN/BVN provider exists',
-        atZero.body.nextStep?.available === false,
+      /**
+       * NOW AVAILABLE - a BVN provider exists and is wired up.
+       *
+       * This asserted `available === false` because no provider was
+       * integrated. That premise is gone: the Monnify/mock provider answers,
+       * the result persists, and the step grants Level 2. Availability is also
+       * no longer read from identityVerificationEnabled, which conflated "is a
+       * check required" with "is a check possible".
+       */
+      check('and it is available, because a BVN provider is wired up',
+        atZero.body.nextStep?.available === true,
         String(atZero.body.nextStep?.available));
 
       console.log('\n  A BRIDGE USER CLIMBS A DIFFERENT LADDER');

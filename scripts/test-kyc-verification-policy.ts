@@ -160,13 +160,23 @@ console.log('\noff-ramp is never held looser than escrow');
   check('and IDENTITY is what lifts it', second.requiredLevel === VerificationLevel.IDENTITY);
 }
 
-console.log('\nidentity level: up to NGN 1,000,000 escrow');
+console.log('\nidentity level: up to NGN 5,000,000 escrow');
 {
   const ok = decide(identityVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 900_000, priorVolumeNgn: 0 });
   check('NGN 900,000 passes', ok.allowed);
 
-  const over = decide(identityVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 1_200_000, priorVolumeNgn: 0 });
-  check('NGN 1,200,000 is refused', !over.allowed);
+  /**
+   * RAISED WITH THE LEVEL 2 CEILING. Escrow at IDENTITY went 1,000,000 ->
+   * 5,000,000 when BVN verification became a real, persisted check rather than
+   * a promise, so 1,200,000 now PASSES and the refusal has to be tested above
+   * the new line. Left as 1,200,000 this asserted the old policy and failed
+   * against correct code.
+   */
+  const stillOk = decide(identityVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 1_200_000, priorVolumeNgn: 0 });
+  check('NGN 1,200,000 now passes at the raised ceiling', stillOk.allowed);
+
+  const over = decide(identityVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 6_000_000, priorVolumeNgn: 0 });
+  check('NGN 6,000,000 is refused', !over.allowed);
   check('and now asks for ID plus address', over.requiredLevel === VerificationLevel.ENHANCED,
     `got ${over.requiredLevel}`);
 }
@@ -274,8 +284,12 @@ console.log('\nthe ladder asks for the least that unblocks');
     lowestSufficientLevel('escrow', 'ngn', 60_000) === VerificationLevel.BANK);
   check('NGN 600,000 escrow -> identity',
     lowestSufficientLevel('escrow', 'ngn', 600_000) === VerificationLevel.IDENTITY);
-  check('NGN 5,000,000 escrow -> enhanced',
-    lowestSufficientLevel('escrow', 'ngn', 5_000_000) === VerificationLevel.ENHANCED);
+  // 5,000,000 is now exactly the IDENTITY ceiling, so it is satisfied AT
+  // identity. Only above it does enhanced become the lowest sufficient level.
+  check('NGN 5,000,000 escrow -> identity (the new ceiling)',
+    lowestSufficientLevel('escrow', 'ngn', 5_000_000) === VerificationLevel.IDENTITY);
+  check('NGN 6,000,000 escrow -> enhanced',
+    lowestSufficientLevel('escrow', 'ngn', 6_000_000) === VerificationLevel.ENHANCED);
 }
 
 console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
@@ -468,8 +482,10 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
     bridgeKycStatus: 'kyc_rejected',
   });
   check('a Bridge rejection gives no uplift', !upliftApplies(rejected));
+  // 2,000,000 sits UNDER the raised Level 2 ceiling, so it no longer proves a
+  // fallback. Tested above 5,000,000, where the uplift would have mattered.
   check('and the user falls back to their Level 2 ceiling',
-    !decide(rejected, { flow: 'escrow', rail: 'ngn', amountNgn: 2_000_000, priorVolumeNgn: 0 }).allowed);
+    !decide(rejected, { flow: 'escrow', rail: 'ngn', amountNgn: 6_000_000, priorVolumeNgn: 0 }).allowed);
 
   // A failed underlying check still wins, even with Bridge approval.
   const revokedBank = state({
