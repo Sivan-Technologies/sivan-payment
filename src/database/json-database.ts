@@ -747,6 +747,23 @@ export class JsonDatabase {
     });
   }
 
+  /**
+   * Deposits still awaiting finality. Drives the confirmer.
+   *
+   * OLDEST FIRST, which is the opposite of every other deposit reader here.
+   * The user-facing list is newest-first because that is what a person wants
+   * to see; a backlog must be worked in arrival order, or a burst of new
+   * deposits under a `limit` would starve the oldest stuck row forever - and
+   * the oldest stuck row is precisely the one someone is complaining about.
+   */
+  async listPendingWalletDeposits(limit = 100): Promise<WalletDepositRecord[]> {
+    const data = await this.read();
+    return (data.walletDeposits ?? [])
+      .filter((d) => d.status === 'pending')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(0, limit);
+  }
+
   async updateWalletDepositStatus(id: string, status: WalletDepositRecord['status'], at: string): Promise<WalletDepositRecord | undefined> {
     return this.mutate((data) => {
       const found = (data.walletDeposits ?? []).find((d) => d.id === id);
