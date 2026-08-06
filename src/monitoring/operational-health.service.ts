@@ -25,6 +25,7 @@
  */
 
 import { db } from '../database/json-database.js';
+import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { getNgnControls } from '../ngn/service/ngn-controls.service.js';
 import { getNgnProvider } from '../ngn/provider/ngn-provider-registry.js';
 import { env } from '../config/env.js';
@@ -384,6 +385,44 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
       detail: offrampOn
         ? 'NGN off-ramp is enabled.'
         : 'NGN off-ramp is DISABLED. If this was not deliberate, users cannot withdraw to naira.',
+    });
+  }
+
+  // 6b. WHICH CHAIN THE BALANCE READER IS POINTED AT.
+  //
+  //     Reported as "Could not reach the network / Retrying shortly" with a
+  //     blank balance, immediately after receiving 20 USDC on Base. Nothing
+  //     was unreachable: every Base endpoint answered 200, and the money was
+  //     real. It was on Base SEPOLIA while NETWORK_MODE was mainnet, so the
+  //     reader queried the mainnet USDC contract, found 0, and the UI reported
+  //     the honest-but-useless "could not reach".
+  //
+  //     Confirmed by reading the same address on both chains:
+  //       mainnet 0x833589fC...  ->  0 USDC
+  //       sepolia 0x036CbD53...  ->  20 USDC
+  //
+  //     The cost is not only a wrong dashboard number. getSpendable() feeds
+  //     the off-ramp sweep, so a testnet balance reading as zero makes the
+  //     sweep skip with insufficient_spendable and quietly leaves the user to
+  //     send the crypto themselves.
+  //
+  //     A test deployment defaulting to mainnet is the wrong default, and it
+  //     fails silently, so it is worth a signal rather than a comment.
+  {
+    const mode = resolveNetworkMode();
+    const appIsLive = env.APP_ENV === 'production';
+    const mismatched = appIsLive !== (mode === 'mainnet');
+    signals.push({
+      name: 'network_mode_matches_environment',
+      // Both directions are wrong, and the live one is worse: a production
+      // service on testnet would read real users' balances off Sepolia.
+      severity: mismatched ? (appIsLive ? 'critical' : 'warn') : 'ok',
+      value: mode === 'mainnet' ? 1 : 0,
+      detail: mismatched
+        ? `APP_ENV is "${env.APP_ENV}" but NETWORK_MODE is "${mode}". Balances, deposit detection and `
+          + 'off-ramp sweeps all read that chain, so funds held on the other one read as zero - which '
+          + 'surfaces to users as "Could not reach the network". Set NETWORK_MODE explicitly on this deployment.'
+        : `NETWORK_MODE is "${mode}", which matches APP_ENV "${env.APP_ENV}".`,
     });
   }
 

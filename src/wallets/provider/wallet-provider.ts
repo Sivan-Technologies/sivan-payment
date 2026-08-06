@@ -1,3 +1,4 @@
+import type { NetworkMode } from '../../database/types.js';
 import type {
   CreateWalletInput,
   ProviderWallet,
@@ -46,7 +47,26 @@ export interface WalletProvider {
     providerWalletId: string,
     providerCustomerId?: string,
     address?: string,
-    chain?: WalletChain
+    chain?: WalletChain,
+    /**
+     * WHICH NETWORK TO READ. Passed, not inferred.
+     *
+     * createTransfer already takes a per-request networkMode and picks its
+     * CAIP-2 chain id from it, while this read fell back to a process-wide
+     * resolveNetworkMode(). The two could therefore disagree about the same
+     * wallet: a transfer signed on Base Sepolia, a balance queried on Base
+     * mainnet. Observed - a user held 20 USDC on Base Sepolia and every read
+     * returned 0, because the mainnet USDC contract was queried instead.
+     *
+     * That is not only a wrong number on a dashboard. getSpendable() feeds the
+     * off-ramp sweep, so a testnet balance reading as zero makes the sweep skip
+     * with insufficient_spendable and silently leaves the user to send the
+     * crypto by hand.
+     *
+     * Optional so Bridge and Mock, which index balances themselves, are
+     * unaffected.
+     */
+    networkMode?: NetworkMode
   ): Promise<WalletBalance[]>;
 
   /**

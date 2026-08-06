@@ -722,7 +722,8 @@ export class PrivyWalletProvider implements WalletProvider {
     _providerWalletId?: string,
     _providerCustomerId?: string,
     address?: string,
-    chain?: WalletChain
+    chain?: WalletChain,
+    networkMode?: NetworkMode
   ): Promise<WalletBalance[]> {
     if (!address || !chain) {
       // Not a zero balance - a caller that did not say WHICH address on WHICH
@@ -738,7 +739,19 @@ export class PrivyWalletProvider implements WalletProvider {
       );
     }
 
-    const production = isProduction();
+    /**
+     * THE SAME MODE THE TRANSFER WOULD USE.
+     *
+     * This was a bare isProduction(), which reads the process-wide
+     * NETWORK_MODE, while createTransfer honours a per-request one. So a
+     * wallet could be transferred from on Base Sepolia and read on Base
+     * mainnet - and it was: a user's 20 USDC on Sepolia returned 0, because
+     * the mainnet USDC contract has no balance for that address.
+     *
+     * isProduction(mode) falls back to resolveNetworkMode() when the caller
+     * passes nothing, so existing callers keep their behaviour.
+     */
+    const production = isProduction(networkMode);
 
     if (chain === 'solana') {
       return this.solanaBalances(address, production);
