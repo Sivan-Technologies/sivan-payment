@@ -29,6 +29,17 @@ import { usePaymentDataLoader } from './hooks/usePaymentData';
  */
 const OTP_RESEND_COOLDOWN_MS = 61_000;
 
+/**
+ * How often the live deposit card re-reads its transfer.
+ *
+ * 5s, not 10s. At 10s a 13-second observation window saw only ONE poll -
+ * measured, by counting responses in a browser - which is too tight a margin
+ * for a screen a user is actively watching for progress. Halving it is one
+ * indexed query per tick against the user's own transfers, not a dashboard
+ * refresh, and the card stops polling entirely once the order is terminal.
+ */
+const POLL_INTERVAL_MS = 5_000;
+
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -602,6 +613,89 @@ export default function App() {
     if (authToken) localStorage.setItem('sivan.authToken', authToken);
     else localStorage.removeItem('sivan.authToken');
   }, [authToken]);
+
+  /**
+   * KEEP THE DEPOSIT CARD ALIVE WHILE THE MONEY MOVES.
+   *
+   * Reported with a screenshot: the crypto had been sent, Breet had it
+   * (trade.pending, confirmations: 1, real txHash), the BACKEND had already
+   * advanced the transfer to settlement_processing - and the screen still read
+   * "Waiting for crypto deposit". Confirmed by reading the same transfer off
+   * the API while the user was looking at the stale version:
+   *
+   *     server:  status settlement_processing, current step settlement_processing
+   *     screen:  Waiting for crypto deposit
+   *
+   * The cause was not the reconciler this time. `depositResult` is set once,
+   * when the POST returns, and nothing ever asked again - there was no polling
+   * anywhere on this screen. So the card was a photograph of the instant the
+   * order was created, and it could never show progress no matter how well the
+   * backend tracked it. A user watching it would conclude their crypto never
+   * arrived.
+   *
+   * Polls the user's own transfer list and re-renders the card from the live
+   * record. Deliberately:
+   *
+   *   - only while a deposit card is on screen, so it costs nothing elsewhere
+   *   - stops at a terminal status, so a completed order does not poll forever
+   *   - 5s, which is under the reconciler's own cadence and cheap: this is
+   *     one indexed query per tick, not the whole dashboard refresh
+   *   - failures are swallowed. A missed tick means the card shows slightly
+   *     old data for 10 more seconds; throwing here would take down a screen
+   *     whose entire job is to display a deposit address the user still needs.
+   */
+  useEffect(() => {
+    const transferId = depositResult?.withdrawal?.id;
+    if (!transferId || !user?.id) return;
+
+    const TERMINAL = ['completed', 'failed', 'expired', 'cancelled'];
+    if (TERMINAL.includes(String(depositResult?.withdrawal?.status ?? ''))) return;
+
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        /**
+         * api() ALREADY UNWRAPS `data` - it returns `json.data ?? json`.
+         *
+         * My first version typed this as `{ data: any[] }` and then read
+         * `response.data`, which on an already-unwrapped array is undefined,
+         * so `live` was never found and the card never moved. The poll was
+         * firing correctly the whole time - verified by counting responses in
+         * a browser and seeing blockchain_confirmed come back on the wire -
+         * which made it look like a rendering bug when it was this line.
+         */
+        const rows = await api<any[]>(`/api/users/${user.id}/ngn-transfers`);
+        if (cancelled) return;
+        const live = (Array.isArray(rows) ? rows : []).find((row) => row?.id === transferId);
+        if (!live) return;
+
+        setDepositResult((previous) => {
+          if (!previous) return previous;
+          // Nothing changed - return the SAME object so React skips the render.
+          if (previous.withdrawal?.status === live.status) return previous;
+          return {
+            ...previous,
+            withdrawal: {
+              ...previous.withdrawal,
+              status: live.status,
+              destinationTxHash: live.destinationTxHash ?? previous.withdrawal?.destinationTxHash,
+              transactionTimeline: normalizeTimeline(live, {
+                sourceCurrency: previous.withdrawal?.sourceCurrency,
+              } as WithdrawalReviewState) ?? previous.withdrawal?.transactionTimeline,
+            } as WithdrawalRecord,
+          };
+        });
+      } catch {
+        // See the comment above: a failed poll must never break this screen.
+      }
+    };
+
+    void refresh();
+    const timer = setInterval(refresh, POLL_INTERVAL_MS);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [api, user?.id, depositResult?.withdrawal?.id, depositResult?.withdrawal?.status]);
+
 
   useEffect(() => {
     if (user) localStorage.setItem('sivan.user', JSON.stringify(user));

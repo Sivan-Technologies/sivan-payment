@@ -1,12 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { badRequest, forbidden } from '../../shared/errors.js';
+import { badRequest, forbidden, notFound } from '../../shared/errors.js';
 import { parseBody } from '../../shared/validation.js';
 import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
-import { acceptNgnQuote, acceptNgnQuoteSchema, cancelNgnTransfer, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
+import { acceptNgnQuote, acceptNgnQuoteSchema, buildTimeline, cancelNgnTransfer, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
 import { db } from '../../database/json-database.js';
+import { env } from '../../config/env.js';
 import { getGasUsage, getGasControls } from '../../balances/gas-usage.service.js';
 import { solanaTransactionCostUsd, ataRentCostUsd } from '../../balances/gas-policy.js';
 import { fetchPrivyGasSpendUsd } from '../../wallets/provider/privy-wallet.provider.js';
@@ -610,6 +611,43 @@ export async function ngnRoutes(app: FastifyInstance) {
    * The timer does this every few minutes; this is the button for when
    * somebody is standing over a stuck payout and does not want to wait.
    */
+  /**
+   * ADVANCE A TRANSFER'S STATUS. DEVELOPMENT AND TEST ONLY.
+   *
+   * Exists so an automated test can prove the customer's deposit card FOLLOWS
+   * the order rather than photographing it - the reported bug where crypto had
+   * arrived, the backend knew, and the screen still read "Waiting for crypto
+   * deposit" forever.
+   *
+   * Driving that from the outside is otherwise impossible in a harness: the
+   * mock NGN provider has no settlement to reconcile against, and writing the
+   * JSON store directly does not work because that backend caches the database
+   * in memory, so the running server never sees the change.
+   *
+   * REFUSED OUTRIGHT IN PRODUCTION. A route that can set any transfer to
+   * "completed" is a way to mark money paid that never moved, so it is gated
+   * on APP_ENV rather than on an admin role - a role can be granted by
+   * mistake, an environment cannot. It also rebuilds the timeline, because a
+   * status written without one is the very bug this test defends.
+   */
+  app.post('/api/admin/ngn/transfers/:id/dev-status', async (request, reply) => {
+    if (env.APP_ENV === 'production' || env.APP_ENV === 'staging') {
+      return reply.code(404).send({ error: { code: 'not_found', message: 'Not found' } });
+    }
+    const { id } = request.params as { id: string };
+    const body = request.body as { status?: string };
+    const status = String(body?.status ?? '').trim();
+    if (!status) throw badRequest('status is required.');
+
+    const transfer = (await db.listNgnTransfers()).find((row) => row.id === id);
+    if (!transfer) throw notFound('NGN transfer');
+
+    const updated = { ...transfer, status, updatedAt: new Date().toISOString() } as typeof transfer;
+    updated.timeline = buildTimeline(updated);
+    await db.upsertNgnTransferRecord(updated);
+    return { data: updated };
+  });
+
   app.post('/api/admin/ngn/reconcile-settlements', async (request) => ({
     data: await reconcileNgnSettlements({
       actorId: (request as any).adminActor?.email || 'admin_api_key',
