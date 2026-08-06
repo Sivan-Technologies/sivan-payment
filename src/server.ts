@@ -5,6 +5,7 @@ import { reconcileNgnSettlements } from './ngn/service/ngn-settlement-reconciler
 import { confirmBalanceTransfers } from './balances/transfer-confirmation.service.js';
 import { scanForDeposits } from './deposits/deposit-detection.service.js';
 import { notifyPendingDeposits } from './deposits/deposit-notification.service.js';
+import { confirmDeposits } from './deposits/deposit-confirmation.service.js';
 
 initMonitoring();
 
@@ -198,6 +199,58 @@ if (env.DEPOSIT_POLL_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'deposit scan failed');
       captureError(error as Error, { source: 'deposit_scan' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * THE LOOP THAT MOVES A DEPOSIT OFF "In progress".
+ *
+ * Reported with a screenshot showing the dashboard contradicting itself: the
+ * balance card read "20 USDC / Available to send or sell / Ready" while the
+ * activity row directly beneath it read "Deposit received ... In progress",
+ * 28 minutes after the money had landed and been spendable.
+ *
+ * Nothing was broken in the sense of throwing. `recordDeposit` writes
+ * 'pending', the status enum declares 'confirmed', both drivers implement
+ * `updateWalletDepositStatus`, and migration 042 even indexes the pending set -
+ * but there were ZERO callers of that writer. 'pending' was a permanent label
+ * rather than a state, so the badge could never change.
+ *
+ * A THIRD timer rather than folding this into the scan, for the same reason
+ * detection and notification are already separate: a slow chain read while
+ * confirming an old deposit must not delay DETECTING a new one, which is the
+ * job whose latency a user actually feels. They share only the database.
+ *
+ * 45s, matching the notifier rather than the 60s scan. A deposit only becomes
+ * confirmable after it is recorded, so this interval is the tail of the delay a
+ * user watches, and there is no chain read to save by waiting longer.
+ */
+if (env.DEPOSIT_CONFIRM_SECONDS > 0) {
+  const intervalMs = env.DEPOSIT_CONFIRM_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await confirmDeposits();
+      if (outcome.confirmed.length > 0) {
+        app.log.info({ confirmed: outcome.confirmed.length }, 'inbound deposits confirmed');
+      }
+      /**
+       * Escalated as an ERROR, not a warning. A stale pending deposit means a
+       * user is looking at "In progress" against money that is already in
+       * their balance - the exact contradiction this loop exists to remove -
+       * and it will not clear itself.
+       */
+      if (outcome.stale.length > 0) {
+        app.log.error(
+          { stale: outcome.stale },
+          'deposits unconfirmed far longer than any chain takes; the badge is wrong, the money may well be spendable'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'deposit confirmation failed');
+      captureError(error as Error, { source: 'deposit_confirmation' });
     }
   };
   setInterval(tick, intervalMs).unref();

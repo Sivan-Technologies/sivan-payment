@@ -269,6 +269,20 @@ const envSchema = z.object({
    * deposit already found. The two loops share only the database.
    */
   DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(45),
+  /**
+   * How often to re-check pending deposits for finality, in seconds. 0
+   * disables.
+   *
+   * Separate from both detection and notification, for the same reason those
+   * two are separate from each other: a slow chain read while confirming an
+   * old deposit must not delay DETECTING a new one. Without this loop a
+   * deposit stays 'pending' forever - which is exactly what shipped, and what
+   * put "In progress" next to money the balance card already called spendable.
+   *
+   * 45s rather than the scan's 60s: confirmation is the tail of the delay a
+   * user actually watches, and waiting longer saves no chain reads.
+   */
+  DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(45),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),

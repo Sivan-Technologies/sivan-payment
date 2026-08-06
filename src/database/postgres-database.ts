@@ -1496,6 +1496,36 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  /**
+   * Deposits still awaiting finality. Drives the confirmer.
+   *
+   * This is the query 042's partial index was created for:
+   *
+   *   payments_wallet_deposits_pending_idx on (created_at) where status = 'pending'
+   *
+   * The index shipped with the table and, until this method existed, nothing
+   * ever used it - the confirmer it was built for was never written, which is
+   * why a deposit could sit 'pending' indefinitely while its money was
+   * spendable. The `where status = 'pending'` predicate must stay written
+   * exactly this way for the planner to match the partial index.
+   *
+   * Oldest first: a backlog is worked in arrival order so a burst of new
+   * deposits cannot starve the oldest stuck row under the limit.
+   */
+  async listPendingWalletDeposits(limit = 100): Promise<WalletDepositRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_wallet_deposits
+          where status = 'pending'
+          order by created_at asc limit $1`,
+        [limit]
+      );
+      return result.rows.map(mapWalletDeposit);
+    } finally { client.release(); }
+  }
+
   async updateWalletDepositStatus(id: string, status: WalletDepositRecord['status'], at: string): Promise<WalletDepositRecord | undefined> {
     const client = await this.pool.connect();
     try {
