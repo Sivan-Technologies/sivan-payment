@@ -62,6 +62,7 @@
     "test:ngn-timeline-advances": "tsx scripts/test-ngn-timeline-advances.ts",
     "test:network-mode-balance": "tsx scripts/test-network-mode-balance.ts",
     "test:balance-ledger-query": "tsx scripts/test-balance-ledger-query.ts",
+    "test:db-health-honesty": "tsx scripts/test-db-health-honesty.ts",
     "test:wallet-chain-family": "tsx scripts/test-wallet-chain-family.ts",
     "test:balance-transfer": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-balance-transfer.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock ADMIN_API_KEY=balance-admin-key tsx scripts/test-balance-transfer.ts",
     "test:supplier-payments": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-supplier-payments.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=supplier-admin-key tsx scripts/test-supplier-payments.ts",

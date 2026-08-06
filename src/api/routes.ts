@@ -28,7 +28,28 @@ export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
   app.get('/ping', async (_request, reply) => reply.type('text/plain').send('ok'));
   app.get('/health', async () => ({ status: 'ok', service: 'sivan-payments' }));
-  app.get('/health/db', async () => ({ status: 'ok', database: db.getPoolStats() }));
+  /**
+   * ASK THE DATABASE, DO NOT DESCRIBE THE POOL.
+   *
+   * This returned a hardcoded `status: 'ok'` alongside pool counters, so it
+   * stayed green through an outage where every database-backed endpoint 500'd.
+   * `totalCount: 0` - no connection ever established - was reported as healthy.
+   *
+   * Now it runs `select 1` and answers honestly, and 503s when it fails so a
+   * plain uptime monitor alerts without parsing the body.
+   */
+  app.get('/health/db', async (_request, reply) => {
+    const probe = await db.ping();
+    return reply.code(probe.ok ? 200 : 503).send({
+      status: probe.ok ? 'ok' : 'unavailable',
+      latencyMs: probe.latencyMs,
+      // The driver's message names the real cause - expired credentials, a
+      // suspended instance, an exhausted connection limit - and it is the one
+      // thing an operator needs. It is not user-facing.
+      ...(probe.error ? { error: probe.error } : {}),
+      database: db.getPoolStats(),
+    });
+  });
 
   /**
    * Is the money moving?

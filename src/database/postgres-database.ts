@@ -153,6 +153,39 @@ export class PostgresDatabase {
     }) as any;
   }
 
+  /**
+   * Does the database actually ANSWER? Not: is there a pool object.
+   *
+   * /health/db reported `status: "ok"` throughout a total outage in which every
+   * database-backed endpoint returned 500 - auth, users, wallets, quotes - and
+   * the operational signals all read zero. It said ok because it only printed
+   * pool counters, and `totalCount: 0` was reported as healthy when it in fact
+   * meant no connection had ever been established.
+   *
+   * A health check that stays green while the product is down is worse than
+   * having none: it actively misdirects whoever is debugging, and it cost real
+   * time here.
+   *
+   * `select 1` and nothing more. It must be cheap enough to run on every poll
+   * and must never touch application data.
+   */
+  async ping(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+    const started = Date.now();
+    try {
+      const client = await this.pool.connect();
+      try {
+        await client.query('select 1');
+        return { ok: true, latencyMs: Date.now() - started };
+      } finally { client.release(); }
+    } catch (error) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   getPoolStats() {
     return {
       totalCount: this.pool.totalCount,

@@ -215,6 +215,7 @@ const paymentSteps: Step[] = [
   { name: 'NGN timeline advances with status (waiting-for-asset forever)', cwd: paymentRoot, command: 'npm run test:ngn-timeline-advances' },
   { name: 'Network mode drives balance reads (funds on the other chain read as zero)', cwd: paymentRoot, command: 'npm run test:network-mode-balance' },
   { name: 'Balance ledger query (no whole-DB read, no 200-row truncation)', cwd: paymentRoot, command: 'npm run test:balance-ledger-query' },
+  { name: 'DB health honesty (green through a total outage)', cwd: paymentRoot, command: 'npm run test:db-health-honesty' },
   { name: 'Gas sponsorship limits and circuit breaker', cwd: paymentRoot, command: 'npm run test:gas-limits' },
   { name: 'Transfer fee curve', cwd: paymentRoot, command: 'npm run test:transfer-fee-policy' },
   { name: 'Transfer fee ledger (money must balance)', cwd: paymentRoot, command: 'npm run test:transfer-fee-ledger' },

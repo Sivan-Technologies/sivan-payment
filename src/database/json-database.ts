@@ -69,6 +69,24 @@ export class JsonDatabase {
     this.filePath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
   }
 
+  /**
+   * Mirror of the Postgres probe. The JSON backend reads a file, so this
+   * proves the file is readable rather than that a socket is open.
+   */
+  async ping(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+    const started = Date.now();
+    try {
+      await this.read();
+      return { ok: true, latencyMs: Date.now() - started };
+    } catch (error) {
+      return {
+        ok: false,
+        latencyMs: Date.now() - started,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   getPoolStats() {
     return { totalCount: 0, idleCount: 0, waitingCount: 0, provider: 'json' };
   }
