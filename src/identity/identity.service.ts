@@ -255,6 +255,13 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
   const tokens = await db.listIdentityPairingTokens();
   const token = tokens.find((item) => item.tokenHash === tokenHash(tokenClean));
   if (!token || token.status !== 'pending') throw badRequest('Invalid or expired pairing code.');
+  // The token must have been ISSUED for WhatsApp. This mirrors the identical
+  // check in redeemTelegramLink and must not be removed from either side:
+  // without it, a code generated for one channel can be consumed by the other,
+  // so whoever reaches the opposite bot first binds THEIR account to this user.
+  // Legacy tokens predating migration 044 have no channel and read as
+  // 'whatsapp', which is correct - they could only ever have been WhatsApp.
+  if (tokenChannel(token) !== 'whatsapp') throw badRequest('That code was not issued for WhatsApp. Generate a WhatsApp code from your Sivan dashboard.');
   if (token.expiresAt <= now) {
     await db.upsertIdentityPairingTokenRecord({ ...token, status: 'expired', updatedAt: now });
     throw badRequest('Pairing code has expired. Generate a new code from your Sivan web dashboard.');

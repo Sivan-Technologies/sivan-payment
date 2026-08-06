@@ -26,6 +26,7 @@
     "test:admin-ops": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-admin-ops.json tsx scripts/test-admin-ops.ts",
     "ops:monitoring-check": "tsx scripts/monitoring-alerts-check.ts",
     "test:identity": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-shared-identity.json IDENTITY_LINK_SERVICE_SECRET=identity-test-secret ADMIN_API_KEY=identity-test-admin-key tsx scripts/test-shared-identity.ts",
+    "test:telegram-pairing": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-telegram-pairing.json IDENTITY_LINK_SERVICE_SECRET=identity-test-secret ADMIN_API_KEY=identity-test-admin-key tsx scripts/test-telegram-pairing.ts",
     "test:virtual-accounts": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock DATABASE_FILE=.data/test-virtual-accounts.json ADMIN_API_KEY=virtual-account-test-admin-key VIRTUAL_ACCOUNT_REQUESTS_ENABLED=true VIRTUAL_ACCOUNTS_ENABLED=true VIRTUAL_ACCOUNT_PROVIDER=mock tsx scripts/test-virtual-accounts.ts",
     "test:bridge-virtual-accounts": "tsx scripts/test-bridge-virtual-account-mapping.ts",
     "test:virtual-account-events": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-virtual-account-events.json tsx scripts/test-virtual-account-events.ts",
