@@ -82,25 +82,98 @@ export async function acceptNgnQuote(input: z.infer<typeof acceptNgnQuoteSchema>
    * manual route still works and the reconciler still watches the address.
    * Throwing here would lose a real order over a recoverable RPC error.
    */
+  /**
+   * AND IT MUST NOT BLOCK THE RESPONSE.
+   *
+   * Reported from the console, with a screenshot of the Review screen:
+   *
+   *     POST /api/ngn/offramp/orders 503 (Service Unavailable)
+   *     "The payments-api service did not respond. This was a POST request and
+   *      it was NOT retried, because repeating it could duplicate the action."
+   *
+   * That toast is the Cloudflare worker giving up at UPSTREAM_TIMEOUT_MS =
+   * 12000. It is not the API refusing - the order had already been created.
+   * The user saw a failure for something that had in fact happened, which is
+   * the worst possible outcome on a money screen: retry and you may double it,
+   * do nothing and you cannot tell.
+   *
+   * WHY IT TOOK >12s. Awaiting the sweep put an ON-CHAIN TRANSFER inside an
+   * HTTP request. The chain is sequential and unbounded:
+   *
+   *     findUserWalletForNetwork   db
+   *     getSpendable               reads EVERY wallet on EVERY network it
+   *                                serves - for one EVM wallet that is an
+   *                                ethereum read AND a base read, plus solana
+   *     createTransfer             Privy signs and broadcasts
+   *
+   * Each hop is fast alone - measured Privy 0.21s, Solana 0.12s, Base 0.14s -
+   * but they are serial, and any one of them stalling (a cold Render dyno, a
+   * rate-limited public RPC) spends the entire 12s budget. The request cannot
+   * be made reliably fast, because it is waiting on a blockchain.
+   *
+   * So the sweep no longer runs inside the request. It is scheduled, and the
+   * response returns as soon as the ORDER exists - which is the only thing the
+   * user is waiting to hear.
+   *
+   * THIS IS SAFE PRECISELY BECAUSE THE SWEEP WAS ALREADY DESIGNED TO FAIL:
+   *   - it was already non-fatal, so nothing downstream assumed it completed
+   *   - createTransfer is keyed `ngnsweep_${transfer.id}`, so a retry cannot
+   *     sweep twice
+   *   - ngn-settlement-reconciler already polls and only ever moves a transfer
+   *     FORWARD, so it converges whether or not this attempt lands
+   *
+   * The deposit address is valid either way, so the manual route still works
+   * for anyone who would rather send the crypto themselves.
+   */
   if (transfer.direction === 'offramp' && transfer.depositAddress) {
-    try {
-      const swept = await sweepToRail(transfer);
-      if (swept) {
-        transfer.status = 'settlement_processing';
-        transfer.metadata = { ...(transfer.metadata as Record<string, unknown>), sweep: swept };
-        transfer.timeline = buildTimeline(transfer);
-        await db.upsertNgnTransferRecord(transfer);
-      }
-    } catch (error) {
-      await createAuditLog({
-        actorType: 'system', actorId: 'ngn_sweep', action: 'ngn.sweep_failed',
-        resourceType: 'payments_ngn_transfer', resourceId: transfer.id, severity: 'error',
-        metadata: { depositAddress: transfer.depositAddress, reason: error instanceof Error ? error.message : String(error) },
-      });
-    }
+    scheduleSweep(transfer);
   }
 
   return transfer;
+}
+
+/**
+ * Run the sweep after the response has been sent.
+ *
+ * setImmediate rather than a floating promise: the handler returns first, and
+ * the sweep starts on the next tick with nothing awaiting it. Errors are
+ * captured here rather than escaping - an unhandled rejection in Node 15+
+ * terminates the process, and losing the API over a slow RPC would be a far
+ * worse bug than the one being fixed.
+ *
+ * Deliberately NOT a queue. A queue is the right answer at volume, but it is
+ * infrastructure this deployment does not have, and the reconciler already
+ * provides the durability a queue would: if this in-process attempt is lost to
+ * a restart, the next reconciler pass still settles the transfer. Adding a
+ * queue here would be a bigger change with no additional guarantee today.
+ */
+function scheduleSweep(transfer: NgnTransferRecord): void {
+  setImmediate(() => {
+    void (async () => {
+      try {
+        const swept = await sweepToRail(transfer);
+        if (swept) {
+          // Re-read before writing. The reconciler or a webhook may have moved
+          // this transfer while the sweep was in flight, and blindly writing a
+          // stale in-memory copy would roll that progress back.
+          const current = (await db.listNgnTransfers())
+            .find((row) => row.id === transfer.id) ?? transfer;
+
+          current.status = 'settlement_processing';
+          current.metadata = { ...(current.metadata as Record<string, unknown>), sweep: swept };
+          current.timeline = buildTimeline(current);
+          current.updatedAt = nowIso();
+          await db.upsertNgnTransferRecord(current);
+        }
+      } catch (error) {
+        await createAuditLog({
+          actorType: 'system', actorId: 'ngn_sweep', action: 'ngn.sweep_failed',
+          resourceType: 'payments_ngn_transfer', resourceId: transfer.id, severity: 'error',
+          metadata: { depositAddress: transfer.depositAddress, reason: error instanceof Error ? error.message : String(error) },
+        }).catch(() => { /* the audit write is the last thing that may fail; never rethrow from a detached task */ });
+      }
+    })();
+  });
 }
 
 /**

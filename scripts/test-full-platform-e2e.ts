@@ -211,6 +211,7 @@ const paymentSteps: Step[] = [
   { name: 'Per-user limits + balance RPC failover', cwd: paymentRoot, command: 'npm run test:user-limits' },
   { name: 'Approval self-service (superadmin) + risk queue latency', cwd: paymentRoot, command: 'npm run test:approval-self-service' },
   { name: 'NGN withdraw timeline (the crash after the money moved)', cwd: paymentRoot, command: 'npm run test:ngn-withdraw-timeline' },
+  { name: 'Off-ramp response latency (no chain call inside the request)', cwd: paymentRoot, command: 'npm run test:offramp-response-latency' },
   { name: 'Gas sponsorship limits and circuit breaker', cwd: paymentRoot, command: 'npm run test:gas-limits' },
   { name: 'Transfer fee curve', cwd: paymentRoot, command: 'npm run test:transfer-fee-policy' },
   { name: 'Transfer fee ledger (money must balance)', cwd: paymentRoot, command: 'npm run test:transfer-fee-ledger' },

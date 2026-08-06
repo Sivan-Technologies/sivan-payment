@@ -116,6 +116,57 @@ try {
   check('the fee is a value, not a dash', /FEE\s*0\.3/i.test(body.replace(/\s+/g, ' ')),
     'every NGN withdrawal rendered "FEE —" because only feePercent was read');
 
+  console.log('\n── the REVIEW panel (reported screenshot) ────────────────────');
+  // Re-open the wizard to inspect the review step, which the loop above walked past.
+  await page.goto(`${FRONTEND}/withdraw`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
+  await page.locator('text=Nigerian bank (NGN)').first().click().catch(() => {});
+  await page.waitForTimeout(1000);
+  await page.locator("text=I'll send crypto myself").first().click().catch(() => {});
+  await page.waitForTimeout(500);
+  await page.locator('button:has-text("Access Bank")').first().click().catch(() => {});
+  await page.waitForTimeout(1000);
+  await page.locator('input[placeholder*="NUBAN"]').first().fill('1111111111').catch(() => {});
+  await page.waitForTimeout(2200);
+  await page.locator('input[placeholder="20"]').first().fill('20').catch(() => {});
+  await page.waitForTimeout(600);
+  await page.locator('button:has-text("Get quote")').first().click().catch(() => {});
+  await page.waitForTimeout(2500);
+  await page.locator('button:has-text("Continue")').first().click().catch(() => {});
+  await page.waitForTimeout(2500);
+  await shot('04-review');
+  const review = (await page.textContent('body')) ?? '';
+
+  /**
+   * Matched on the FLATTENED panel text. My first version used a
+   * case-insensitive /NETWORK\s*solana/i, which matches the correctly
+   * capitalised "NETWORK Solana" too - so it failed against a screen that was
+   * already fixed. Assert the exact rendered casing instead.
+   */
+  const flat = review.replace(/\s+/g, ' ');
+  /**
+   * The label is rendered as "Network" and uppercased by CSS, so the DOM text
+   * is mixed case. Matching on the literal uppercase found nothing at all -
+   * a test that silently matches nothing is worse than one that fails loudly,
+   * so this now reports the row it did find.
+   */
+  /**
+   * Kv renders label and value as adjacent elements with no whitespace
+   * between them, so textContent reads "NetworkSolana". Two earlier versions
+   * of this assertion expected a space and matched NOTHING - reporting "no
+   * row found" rather than a real result. Verified against the actual DOM
+   * before writing this one.
+   */
+  check('the review panel says "Solana", not "solana"',
+    /NetworkSolana/.test(flat) && !/Networksolana/.test(flat),
+    flat.match(/Network[A-Za-z]+/)?.[0] ?? 'no Network row found');
+  check('the deposit warning also names it properly',
+    !/on solana\b/.test(flat),
+    'the Kv row and the warning text are two separate reads of the same value');
+  check('the gas estimate is not a false $0.00',
+    /Estimated network fee\$0\.0010/.test(flat),
+    flat.match(/Estimated network fee\S+/)?.[0] ?? 'no fee row found');
+
   console.log('\n── the network is named properly ─────────────────────────────');
   check('the warning says "on Solana", not "on solana"',
     /on Solana/.test(body) && !/on solana\b/.test(body),

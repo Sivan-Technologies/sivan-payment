@@ -310,9 +310,23 @@ async function main() {
      * a sweep failure must not destroy them. Manual send still works and the
      * reconciler still watches the address.
      */
-    const accept = fnBody(svc, 'export async function acceptNgnQuote');
+    /**
+     * REPINNED. This searched acceptNgnQuote's own body for the try/catch.
+     * The sweep now runs in scheduleSweep(), a detached task started AFTER the
+     * response is sent - because awaiting an on-chain transfer inside the HTTP
+     * handler blew the Cloudflare worker's 12s budget and returned a 503 for
+     * an order that had actually been created.
+     *
+     * The PROPERTY is unchanged and is what this still asserts: a sweep
+     * failure is caught and audited, never thrown, so the order and its
+     * deposit address survive. Only the function it lives in moved.
+     */
+    const sweepTask = fnBody(svc, 'function scheduleSweep');
     check('a sweep failure does not destroy the order',
-      /catch \(error\) \{[\s\S]{0,400}ngn\.sweep_failed/.test(accept));
+      /catch \(error\) \{[\s\S]{0,400}ngn\.sweep_failed/.test(sweepTask));
+    check('and the order is created before the sweep is even attempted',
+      /scheduleSweep\(transfer\)/.test(fnBody(svc, 'export async function acceptNgnQuote')),
+      'the response must not wait on a blockchain');
     check('and the failure is recorded for operators',
       /action: 'ngn\.sweep_failed'/.test(svc));
     /**

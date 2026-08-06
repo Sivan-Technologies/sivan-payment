@@ -1,7 +1,24 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord, VerificationSummary, FlowAllowance } from '../types';
 import { BRIDGE_CURRENCIES, CURRENCY_LABELS, RAIL_LABELS, formatPayoutAmount, isNgnCurrency, payoutRailFor, type PayoutCurrency } from '../rails';
+import { networkLabel } from '../blockExplorer';
 import { NgnPayoutForm } from './sell/NgnPayoutForm';
+
+/**
+ * A gas estimate the user can believe.
+ *
+ * Fixed 2dp turned Solana's real cost (~$0.0008) into "$0.00", which on a
+ * confirmation screen reads as "free" rather than "very small". Both are
+ * wrong to state, but claiming zero is the one that becomes a complaint when
+ * a fee later appears.
+ */
+export function formatGasUsd(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return '$0.00';
+  if (usd < 0.0001) return 'under $0.0001';
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 
 function statusClass(status?: string) {
   if (!status) return 'pending';
@@ -335,12 +352,26 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
       <p className="muted">Check these details carefully. Your deposit address will be tied to the selected asset, network, and bank payout.</p>
       <div className="details-box">
         <Kv label="Asset" value={review.assetLabel} />
-        <Kv label="Network" value={review.networkLabel} />
+        {/* networkLabel(), for the same reason the deposit warning uses it:
+            review.networkLabel carries the raw chain string, so this rendered
+            "NETWORK solana" on the confirmation screen. */}
+        <Kv label="Network" value={networkLabel(review.networkLabel)} />
         <Kv label="Bank payout" value={review.bankLabel} />
         <Kv label="Payout currency" value={CURRENCY_LABELS[review.destinationCurrency as PayoutCurrency] ?? review.destinationCurrency.toUpperCase()} />
         <Kv label="Settlement" value={RAIL_LABELS[rail]} />
         {review.minimumUsd !== undefined && <Kv label="Minimum for this network" value={`$${review.minimumUsd.toFixed(2)}`} />}
-        {review.estimatedGasUsd !== undefined && <Kv label="Estimated network fee" value={`$${review.estimatedGasUsd.toFixed(2)}`} />}
+        {/*
+            A SUB-CENT FEE IS NOT ZERO.
+
+            toFixed(2) rendered Solana's real cost - about $0.0008 - as
+            "$0.00", which reads as "this is free" on the screen where someone
+            decides whether to go ahead. Small values now keep enough digits to
+            be true, and anything genuinely below a hundredth of a cent is
+            called what it is rather than rounded away.
+        */}
+        {review.estimatedGasUsd !== undefined && (
+          <Kv label="Estimated network fee" value={formatGasUsd(review.estimatedGasUsd)} />
+        )}
         <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
       </div>
       {/* WHAT HAPPENS NEXT, SAID PLAINLY BEFORE THEY COMMIT.
@@ -363,7 +394,7 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
           the balance path there is no such address and no such risk, so
           showing it there manufactures a fear that does not apply. */}
       {review.fundingSource !== 'balance' && (
-        <div className="warning-box">Send only {review.assetLabel} on {review.networkLabel}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</div>
+        <div className="warning-box">Send only {review.assetLabel} on {networkLabel(review.networkLabel)}. Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.</div>
       )}
       <div className="split-actions">
         <button className="ghost-btn" onClick={onCancel}>Edit details</button>
@@ -990,7 +1021,6 @@ function VirtualAccountCurrencyCard({ currency, request, account, control, loadi
 
 
 
-import { networkLabel } from '../blockExplorer';
 import { InlineTransactionTimeline } from './transactions/TransactionsSection';
 export { TransactionsView, InlineTransactionTimeline } from './transactions/TransactionsSection';
 export { BuyCryptoView, TransferCryptoView } from './transfer/TradeTransferSections';
