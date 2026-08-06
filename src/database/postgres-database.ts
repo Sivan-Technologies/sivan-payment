@@ -2224,6 +2224,7 @@ function mapNgnControls(row: any): NgnControlsRecord {
     bankSettlementEnabled: Boolean(row.bank_settlement_enabled),
     virtualAccountEnabled: Boolean(row.virtual_account_enabled),
     identityVerificationEnabled: Boolean(row.identity_verification_enabled),
+    externalFundingEnabled: Boolean(row.external_funding_enabled),
     activeProvider: row.active_provider,
     backupProvider: str(row.backup_provider) as any,
     maxTransactionNgn: row.max_transaction_ngn,
@@ -2330,7 +2331,7 @@ function mapVerificationLimitOverride(row: any): VerificationLimitOverrideRecord
 }
 
 async function upsertNgnControls(client: pg.PoolClient, item: NgnControlsRecord) {
-  await client.query(`insert into payments_ngn_controls (id,onramp_enabled,offramp_enabled,mock_provider_enabled,bank_settlement_enabled,virtual_account_enabled,identity_verification_enabled,active_provider,backup_provider,max_transaction_ngn,daily_limit_ngn,high_value_review_threshold_ngn,updated_by,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) on conflict (id) do update set onramp_enabled=excluded.onramp_enabled,offramp_enabled=excluded.offramp_enabled,mock_provider_enabled=excluded.mock_provider_enabled,bank_settlement_enabled=excluded.bank_settlement_enabled,virtual_account_enabled=excluded.virtual_account_enabled,identity_verification_enabled=excluded.identity_verification_enabled,active_provider=excluded.active_provider,backup_provider=excluded.backup_provider,max_transaction_ngn=excluded.max_transaction_ngn,daily_limit_ngn=excluded.daily_limit_ngn,high_value_review_threshold_ngn=excluded.high_value_review_threshold_ngn,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, [item.id, item.onrampEnabled, item.offrampEnabled, item.mockProviderEnabled, item.bankSettlementEnabled, item.virtualAccountEnabled, item.identityVerificationEnabled ?? false, item.activeProvider, item.backupProvider, item.maxTransactionNgn, item.dailyLimitNgn, item.highValueReviewThresholdNgn, item.updatedBy, item.updatedAt]);
+  await client.query(`insert into payments_ngn_controls (id,onramp_enabled,offramp_enabled,mock_provider_enabled,bank_settlement_enabled,virtual_account_enabled,identity_verification_enabled,external_funding_enabled,active_provider,backup_provider,max_transaction_ngn,daily_limit_ngn,high_value_review_threshold_ngn,updated_by,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) on conflict (id) do update set onramp_enabled=excluded.onramp_enabled,offramp_enabled=excluded.offramp_enabled,mock_provider_enabled=excluded.mock_provider_enabled,bank_settlement_enabled=excluded.bank_settlement_enabled,virtual_account_enabled=excluded.virtual_account_enabled,identity_verification_enabled=excluded.identity_verification_enabled,external_funding_enabled=excluded.external_funding_enabled,active_provider=excluded.active_provider,backup_provider=excluded.backup_provider,max_transaction_ngn=excluded.max_transaction_ngn,daily_limit_ngn=excluded.daily_limit_ngn,high_value_review_threshold_ngn=excluded.high_value_review_threshold_ngn,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, [item.id, item.onrampEnabled, item.offrampEnabled, item.mockProviderEnabled, item.bankSettlementEnabled, item.virtualAccountEnabled, item.identityVerificationEnabled ?? false, item.externalFundingEnabled ?? false, item.activeProvider, item.backupProvider, item.maxTransactionNgn, item.dailyLimitNgn, item.highValueReviewThresholdNgn, item.updatedBy, item.updatedAt]);
 }
 async function upsertNgnQuote(client: pg.PoolClient, item: NgnQuoteRecord) {
   await client.query(`insert into payments_ngn_quotes (id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,expires_at,metadata,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) on conflict (id) do update set status=excluded.status,updated_at=excluded.updated_at,metadata=excluded.metadata`, [item.id,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.expiresAt,jsonParam(item.metadata),item.createdAt,item.updatedAt]);
@@ -2407,7 +2408,7 @@ async function upsertSupportTicket(client: pg.PoolClient, item: SupportTicketRec
 async function upsertSupportTicketMessage(client: pg.PoolClient, item: SupportTicketMessageRecord) {
   await client.query(
     `insert into payments_support_ticket_messages (id, ticket_id, sender_type, sender_id, message, attachments, internal_note, message_type, note_type, title, status_after, visible_to_customer, metadata, created_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      on conflict (id) do update set
        sender_type=excluded.sender_type,
        sender_id=excluded.sender_id,
@@ -2695,7 +2696,7 @@ function mapIdentityPairingToken(row: any): IdentityPairingTokenRecord {
 async function upsertCustomerIdentityLink(client: pg.PoolClient, item: CustomerIdentityLinkRecord) {
   await client.query(
     `insert into customer_identity_links (id, payment_user_id, escrow_user_id, email, channel, whatsapp_number, telegram_user_id, telegram_username, status, linked_at, unlinked_at, metadata, created_at, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      on conflict (id) do update set
        payment_user_id=excluded.payment_user_id,
        escrow_user_id=excluded.escrow_user_id,
@@ -3102,7 +3103,7 @@ function mapAuthChallenge(row: any): AuthChallengeRecord {
 async function upsertAuthChallenge(client: pg.PoolClient, item: AuthChallengeRecord) {
   await client.query(
     `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at, legal_terms_version, legal_privacy_version, legal_risk_disclosure_version, legal_accepted_at, legal_acceptance_ip_address, legal_acceptance_user_agent)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      on conflict (id) do update set
        code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at, legal_terms_version=excluded.legal_terms_version, legal_privacy_version=excluded.legal_privacy_version, legal_risk_disclosure_version=excluded.legal_risk_disclosure_version, legal_accepted_at=excluded.legal_accepted_at, legal_acceptance_ip_address=excluded.legal_acceptance_ip_address, legal_acceptance_user_agent=excluded.legal_acceptance_user_agent`,
     [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt, item.legalTermsVersion, item.legalPrivacyVersion, item.legalRiskDisclosureVersion, item.legalAcceptedAt, item.legalAcceptanceIpAddress, item.legalAcceptanceUserAgent]

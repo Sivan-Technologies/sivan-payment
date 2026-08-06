@@ -127,6 +127,7 @@ export function NgnPayoutForm({
   remainingNgn,
   spendable,
   windowDays = 30,
+  externalFundingEnabled,
   onReady,
   onCancel,
 }: {
@@ -160,6 +161,15 @@ export function NgnPayoutForm({
    * fetch would talk a user out of a withdrawal they can afford.
    */
   spendable?: number | null;
+  /**
+   * Admin toggle for the manual-funding path. See migration 045.
+   *
+   * `=== true` at the use site, never truthiness: an older API build omits the
+   * field, and `undefined` must read as OFF. Defaulting an absent flag to ON
+   * would surface the withdrawn flow on exactly the deployments least likely
+   * to be watched.
+   */
+  externalFundingEnabled?: boolean;
   onReady: (payload: { quote: NgnQuote; account: ResolvedNgnBankAccount; fundingSource: NgnFundingSource }) => void;
   /**
    * The user's remaining NGN off-ramp headroom, from the server.
@@ -187,6 +197,21 @@ export function NgnPayoutForm({
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
   const [fundingSource, setFundingSource] = useState<NgnFundingSource>('balance');
+
+  /**
+   * MAY THE USER FUND THIS BY SENDING CRYPTO THEMSELVES?
+   *
+   * `=== true`, not truthiness: an older API build omits the field entirely,
+   * and `undefined` has to read as OFF. The server also defaults it to false
+   * and fails closed if its own controls read throws, so there are two
+   * independent reasons this lands on "hidden" rather than one.
+   *
+   * fundingSource is left at its 'balance' initial value and never moves while
+   * this is false - the only setter is the button being removed below - so no
+   * effect is needed to force it back, and there is no window where a stale
+   * 'external' selection could survive the flag being turned off mid-session.
+   */
+  const canFundExternally = externalFundingEnabled === true;
 
   /**
    * The network fee, taken from the SERVER's own table.
@@ -379,7 +404,17 @@ export function NgnPayoutForm({
     if (overBalance) {
       return setError(
         `You have ${usd(spendable!)} ${asset.toUpperCase()} available to withdraw. ` +
-        `Lower the amount, or choose "I'll send crypto myself" to send from another wallet.`
+        (canFundExternally
+          ? `Lower the amount, or choose "I'll send crypto myself" to send from another wallet.`
+          /**
+           * THE ADVICE MUST MATCH THE BUTTONS ON SCREEN.
+           *
+           * With manual funding hidden behind the admin flag, naming that
+           * button points the user at a control they cannot see - which reads
+           * as the app being broken. Caught by grepping the BUILT bundle for
+           * the button text, not from the source diff.
+           */
+          : `Lower the amount to continue.`)
       );
     }
 
@@ -413,22 +448,35 @@ export function NgnPayoutForm({
             crypto myself" turns off the balance check entirely, and a user who
             discovers that option AFTER being blocked on an amount has already
             been told they cannot do something they can. */}
-        <div className="seg" role="group" aria-label="Where the crypto comes from">
-          <button
-            type="button"
-            className={fundingSource === 'balance' ? 'active' : ''}
-            onClick={() => { setFundingSource('balance'); setError(''); }}
-          >
-            From my Sivan balance
-          </button>
-          <button
-            type="button"
-            className={fundingSource === 'external' ? 'active' : ''}
-            onClick={() => { setFundingSource('external'); setError(''); }}
-          >
-            I'll send crypto myself
-          </button>
-        </div>
+        {/* HIDDEN, NOT DISABLED, WHEN THE ADMIN TOGGLE IS OFF.
+ 
+            A greyed-out button asks "why can't I click this?" about a feature
+            deliberately withdrawn, which is a support ticket for no gain. With
+            one funding source there is also no CHOICE to present - a segmented
+            control with a single option is just a label - so the whole group
+            goes and the hint below states the funding source as a fact.
+ 
+            The `external` branch throughout this file is intentionally left
+            intact rather than deleted: it works, it is ~30 lines, and it comes
+            back the moment deposit-address UX is solid. See migration 045. */}
+        {canFundExternally && (
+          <div className="seg" role="group" aria-label="Where the crypto comes from">
+            <button
+              type="button"
+              className={fundingSource === 'balance' ? 'active' : ''}
+              onClick={() => { setFundingSource('balance'); setError(''); }}
+            >
+              From my Sivan balance
+            </button>
+            <button
+              type="button"
+              className={fundingSource === 'external' ? 'active' : ''}
+              onClick={() => { setFundingSource('external'); setError(''); }}
+            >
+              I'll send crypto myself
+            </button>
+          </div>
+        )}
         {fundingSource === 'external' && Boolean(network) && (
           <p className="field-hint">
             We'll show you an address to send {asset.toUpperCase()} to on {networkLabel(network)}. The naira is paid out once it arrives.
@@ -487,7 +535,19 @@ export function NgnPayoutForm({
                 </label>
               ))}
             </div>
-            <span className="field-hint">Send {asset.toUpperCase()} on the network you actually hold it on. Minimums differ per network.</span>
+            {/* THE HINT HAS TO DESCRIBE THE FLOW THE USER IS ACTUALLY IN.
+ 
+                "Send USDC on the network you actually hold it on" is manual-
+                funding language: it tells someone to make a transfer. With
+                balance funding the user sends nothing - Sivan moves it - and
+                the only thing the network choice affects is which balance is
+                debited and what it costs. Caught by LOOKING at the rendered
+                screenshot; the code and the tests were both already green. */}
+            <span className="field-hint">
+              {canFundExternally
+                ? `Send ${asset.toUpperCase()} on the network you actually hold it on. Minimums differ per network.`
+                : `Choose the network holding your ${asset.toUpperCase()}. Fees differ per network.`}
+            </span>
           </fieldset>
         ) : network ? (
           <p className="field-hint">Withdrawing {asset.toUpperCase()} on {networkLabel(network)}.</p>

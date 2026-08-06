@@ -47,6 +47,38 @@ export interface NgnControlsRecord {
    * provider exists.
    */
   identityVerificationEnabled: boolean;
+  /**
+   * Whether the user may fund an off-ramp by SENDING CRYPTO THEMSELVES.
+   *
+   * OFF for launch, at the founders' request. The withdraw screen offered two
+   * buttons - "From my Sivan balance" and "I'll send crypto myself" - and the
+   * second is the path that produced "its got delivered to the breet sandbox
+   * but i kept seeing waiting for your asset till now". It shows a bare
+   * deposit address with no balance check in front of it, while the balance
+   * path shows a concrete "60.00 USDC available to withdraw" the user can act
+   * on. Narrowing launch to the guarded path removes the flow that has
+   * actually confused people.
+   *
+   * WHAT THIS FLAG DOES, STATED PRECISELY, BECAUSE THE NAME OVERPROMISES.
+   *
+   * It hides the manual-funding INSTRUCTIONS. It does not disable a code path,
+   * because there is no separate code path to disable: both buttons POST the
+   * same /api/ngn/offramp/orders, the server creates a deposit address either
+   * way, and ngn-transfers.service.ts always calls scheduleSweep() from the
+   * user's balance. "I'll send crypto myself" is simply what happens when that
+   * sweep cannot fund the order - the deposit address stays valid and still
+   * settles, exactly as its own comment says:
+   *
+   *     "The deposit address is valid either way, so the manual route still
+   *      works for anyone who would rather send the crypto themselves."
+   *
+   * So a user who already knows an address can still fund one. Genuinely
+   * refusing externally-funded deposits would mean rejecting settled on-chain
+   * money, which loses funds and is not something to ship days before launch.
+   * This is a UI narrowing, deliberately, and it is reversible from the admin
+   * hub without a deploy.
+   */
+  externalFundingEnabled: boolean;
   maxTransactionNgn: string;
   dailyLimitNgn: string;
   highValueReviewThresholdNgn: string;

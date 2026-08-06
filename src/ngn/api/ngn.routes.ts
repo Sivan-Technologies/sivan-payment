@@ -363,11 +363,36 @@ export async function ngnRoutes(app: FastifyInstance) {
         minimumDepositUsd: breetMinimumDepositUsd(network, asset, breetEnvironment()),
       }));
 
+    /**
+     * Whether the withdraw screen may offer "I'll send crypto myself".
+     *
+     * Carried on THIS endpoint rather than a new one because the withdraw form
+     * already awaits it before it can render a network, so the flag arrives in
+     * a request the user is already paying for. A second fetch would add a
+     * round trip and a second thing that can fail.
+     *
+     * Read from the admin control, so turning the manual path back on is a
+     * toggle in the admin hub rather than a deploy.
+     */
+    const ngnControls = await getNgnControls().catch(() => null);
+
     return {
       data: {
         asset,
         offramp: describe(usableForOfframp(enabled, asset)),
         onramp: describe(usableForOnramp(enabled, asset)),
+        /**
+         * FAILS CLOSED, DELIBERATELY.
+         *
+         * `?? false` covers the catch above: if the controls read fails we hide
+         * the manual-funding button rather than show it. That is the safe
+         * direction HERE specifically because balance funding still works and
+         * is the only path we want at launch - the user loses nothing they can
+         * see, whereas failing open would surface, on a database blip, the one
+         * flow the founders asked to withdraw. Written down rather than left
+         * accidental.
+         */
+        externalFundingEnabled: ngnControls?.externalFundingEnabled ?? false,
       },
     };
   });

@@ -141,6 +141,14 @@ export interface NgnNetworkLists {
   asset: 'usdc' | 'usdt';
   offramp: NgnNetworkOption[];
   onramp: NgnNetworkOption[];
+  /**
+   * Whether the withdraw screen may offer "I'll send crypto myself".
+   *
+   * Optional because an older API build does not send it, and `undefined`
+   * must not read as `true` - see the `=== true` test at the use site. Server
+   * default is false: launch runs balance-funded withdrawals only.
+   */
+  externalFundingEnabled?: boolean;
 }
 
 /**

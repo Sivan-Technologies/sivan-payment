@@ -35,6 +35,7 @@ export const updateNgnControlsSchema = z.object({
   activeProvider: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj', 'breet']).optional(),
   backupProvider: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj', 'breet']).optional().nullable(),
   identityVerificationEnabled: z.boolean().optional(),
+  externalFundingEnabled: z.boolean().optional(),
   maxTransactionNgn: z.string().optional(),
   dailyLimitNgn: z.string().optional(),
   highValueReviewThresholdNgn: z.string().optional(),
@@ -42,7 +43,7 @@ export const updateNgnControlsSchema = z.object({
 });
 
 export function defaultNgnControls(): NgnControlsRecord {
-  return { id: 'global', onrampEnabled: false, offrampEnabled: false, mockProviderEnabled: true, bankSettlementEnabled: false, virtualAccountEnabled: false, activeProvider: 'mock', backupProvider: undefined, identityVerificationEnabled: false, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
+  return { id: 'global', onrampEnabled: false, offrampEnabled: false, mockProviderEnabled: true, bankSettlementEnabled: false, virtualAccountEnabled: false, activeProvider: 'mock', backupProvider: undefined, identityVerificationEnabled: false, externalFundingEnabled: false, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
 }
 
 export async function getNgnControls() {

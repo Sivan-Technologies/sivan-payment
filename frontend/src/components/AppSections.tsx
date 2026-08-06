@@ -133,7 +133,7 @@ export type WithdrawalReviewState = {
   fundingSource?: 'balance' | 'external';
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
 
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
@@ -166,6 +166,8 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   ngnSpendable?: number | null;
   ngnWindowDays?: number;
   onNgnReady?: (payload: { quote: any; account: any; fundingSource: 'balance' | 'external' }) => void;
+  /** Admin toggle: may the withdraw screen offer "I'll send crypto myself"? */
+  ngnExternalFundingEnabled?: boolean;
   onExitNgn?: () => void;
   onEnterNgn?: () => void;
   /** Whether the NGN rail has any usable off-ramp network right now. */
@@ -218,7 +220,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // network falls back to '' - NOT to a chain. '' means "not
             // resolved yet" and NgnPayoutForm refuses to quote on it; any real
             // default here would be a guess at where someone's money lives.
-            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} onReady={onNgnReady!} onCancel={onExitNgn!} />
+            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
 
             : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}

@@ -1,0 +1,31 @@
+-- Admin toggle for "I'll send crypto myself" on the withdraw screen.
+--
+-- Defaults to FALSE for launch. The withdraw screen offered two buttons -
+-- "From my Sivan balance" and "I'll send crypto myself" - and the second is
+-- the path that produced the report "its got delivered to the breet sandbox
+-- but i kept seeing waiting for your asset till now". It shows a bare deposit
+-- address with no balance check in front of it, while the balance path shows a
+-- concrete "60.00 USDC available to withdraw". Narrowing launch to the guarded
+-- path removes the flow that has actually confused people.
+--
+-- WHAT THIS COLUMN DOES, PRECISELY, BECAUSE THE NAME OVERPROMISES.
+--
+-- It hides the manual-funding INSTRUCTIONS in the UI. It does not disable a
+-- server code path, because there is no separate one: both buttons POST the
+-- same /api/ngn/offramp/orders, the server creates a deposit address either
+-- way, and ngn-transfers.service.ts always calls scheduleSweep() from the
+-- user's Sivan balance. "I'll send crypto myself" is simply what happens when
+-- that sweep cannot fund the order - the deposit address remains valid and
+-- still settles.
+--
+-- So a user who already holds a deposit address can still fund one while this
+-- is false. Genuinely refusing externally-funded deposits would mean rejecting
+-- money that has already settled on chain, which loses user funds; that is not
+-- a change to ship days before launch. This is a deliberate UI narrowing,
+-- reversible from the admin hub without a deploy.
+--
+-- NOT NULL DEFAULT FALSE, matching 032. Existing rows get the launch behaviour
+-- automatically, so no backfill and no deployment window where the column is
+-- null and the adapter's Boolean() coerces an unknown into a silent false.
+alter table payments_ngn_controls
+  add column if not exists external_funding_enabled boolean not null default false;

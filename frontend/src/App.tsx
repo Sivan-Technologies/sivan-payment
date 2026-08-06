@@ -2402,6 +2402,10 @@ export default function App() {
              */
             ngnSpendable={!unifiedBalance ? undefined : usdcUnified?.chainUnavailable ? null : Number(usdcUnified?.spendable ?? 0)}
             ngnWindowDays={verificationSummary?.windowDays}
+            /* From GET /api/ngn/networks, which this screen already awaits.
+               Undefined until it answers, which reads as OFF - the withdraw
+               form tests `=== true`. */
+            ngnExternalFundingEnabled={ngnNetworks?.externalFundingEnabled}
             onNgnReady={handleNgnReady}
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
