@@ -455,6 +455,76 @@ export async function ngnRoutes(app: FastifyInstance) {
    * time, Privy's is the invoice - and showing only one would hide a drift
    * between them that is itself worth seeing.
    */
+  /**
+   * WHY DOES THIS USER'S BALANCE READ ZERO? ASK THE CHAIN, PER WALLET.
+   *
+   * Reported twice, an hour apart: "Could not reach the network / Retrying
+   * shortly" with a blank balance, while the money was demonstrably on chain.
+   * Tracing it took reading the wallet table, deriving the token contract for
+   * the configured network mode, and curling three RPCs by hand - none of
+   * which support can do, and none of which is visible from the admin.
+   *
+   * The blank card cannot distinguish four different situations:
+   *
+   *   - the balance really is zero
+   *   - the RPC failed, so we do not know
+   *   - NETWORK_MODE points at the other chain, so we read an empty contract
+   *   - the wallet row is filed under a chain we did not query
+   *
+   * This returns all four as data: the network mode in force, every wallet,
+   * every network each one serves, the exact token contract queried, and
+   * whether that specific read succeeded. `unavailable` is reported per read
+   * rather than collapsed, because ONE failing chain is what blanks the whole
+   * card and knowing which is the entire diagnosis.
+   *
+   * Read-only. It creates nothing and moves nothing.
+   */
+  app.get('/api/admin/users/:userId/balance-trace', async (request) => {
+    const { userId } = request.params as { userId: string };
+
+    const { getUnifiedBalance } = await import('../../balances/unified-balance.service.js');
+    const { resolveNetworkMode } = await import('../../wallets/network-mode.js');
+    const { erc20TokenAddress } = await import('../../wallets/provider/privy-wallet.provider.js');
+    const { networksServedByWallet } = await import('../../wallets/chain-family.js');
+
+    const mode = resolveNetworkMode();
+    const production = mode === 'mainnet';
+    const wallets = await db.listUserWallets(userId);
+
+    const unified = await getUnifiedBalance(userId).catch((error) => ({
+      error: error instanceof Error ? error.message : String(error),
+      balances: [],
+      wallets: [],
+    }));
+
+    return {
+      data: {
+        userId,
+        // The single most common cause, stated first: funds on the chain this
+        // deployment is NOT pointed at read as a confident zero.
+        networkMode: mode,
+        appEnv: env.APP_ENV,
+        expectation: production
+          ? 'Reading MAINNET. Funds held on Sepolia/devnet will read as zero.'
+          : 'Reading TESTNET (Base Sepolia, Ethereum Sepolia, Solana devnet). Mainnet funds will read as zero.',
+        walletsOnFile: wallets.map((wallet) => ({
+          id: wallet.id,
+          filedUnderChain: wallet.chain,
+          address: wallet.address,
+          // A wallet filed as 'base' is READ on ethereum and base both - the
+          // reason a dead Ethereum RPC once blanked a healthy Base balance.
+          networksRead: networksServedByWallet(wallet.chain),
+          tokenContracts: networksServedByWallet(wallet.chain).map((chain) => ({
+            chain,
+            usdc: erc20TokenAddress(chain as never, 'usdc', production) ?? 'n/a (non-EVM or unlisted)',
+          })),
+        })),
+        // What the customer's dashboard would show, from the same call it makes.
+        unified,
+      },
+    };
+  });
+
   app.get('/api/admin/wallets/gas', async () => {
     const [usage, controls] = await Promise.all([getGasUsage(), getGasControls()]);
 
