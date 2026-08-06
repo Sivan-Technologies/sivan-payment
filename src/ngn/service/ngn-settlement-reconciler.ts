@@ -2,6 +2,7 @@ import { db } from '../../database/json-database.js';
 import { createAuditLog } from '../../audit/audit.service.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
 import { getNgnControls } from './ngn-controls.service.js';
+import { buildTimeline } from './ngn-transfers.service.js';
 import type { NgnProviderSettlement } from '../provider/ngn-provider.js';
 import type { NgnTransferRecord } from '../types/ngn.types.js';
 
@@ -164,7 +165,10 @@ async function expireUnfundedOrders(
     const started = Date.parse(transfer.updatedAt ?? transfer.createdAt ?? '');
     if (!Number.isFinite(started) || started > cutoff) continue;
 
-    await db.upsertNgnTransferRecord({
+    // Same reasoning as the advance path above: an expired order whose
+    // timeline still says "Waiting for crypto deposit" tells the user to keep
+    // waiting for something that has been closed.
+    const expiredRecord = {
       ...transfer,
       status: 'expired',
       updatedAt: new Date().toISOString(),
@@ -173,7 +177,9 @@ async function expireUnfundedOrders(
         expiredReason: `No crypto deposit received within ${UNFUNDED_EXPIRY_HOURS}h.`,
         expiredAt: new Date().toISOString(),
       },
-    } as NgnTransferRecord);
+    } as NgnTransferRecord;
+    expiredRecord.timeline = buildTimeline(expiredRecord);
+    await db.upsertNgnTransferRecord(expiredRecord);
 
     await createAuditLog({
       actorType: 'system',
@@ -285,6 +291,24 @@ export async function reconcileNgnSettlements(
       },
       updatedAt: now,
     };
+
+    /**
+     * REBUILD THE TIMELINE, NOT JUST THE STATUS.
+     *
+     * Reported: "its got delivered to the breet sandbox but i kept seeing
+     * waiting for your asset till now". Confirmed on the test API - transfer
+     * ngnt_4f2d3ec0 read status "blockchain_confirmed" while its timeline
+     * still had awaiting_crypto_deposit marked `current`.
+     *
+     * The UI renders the TIMELINE, not the status field, so the user was told
+     * the crypto had never arrived for something the backend already knew had
+     * confirmed. This service wrote `status` and left `timeline` exactly as it
+     * was when the order was created - the word "timeline" did not appear in
+     * this file at all.
+     *
+     * Rebuilt from the updated record, so the two can no longer disagree.
+     */
+    updated.timeline = buildTimeline(updated);
 
     await db.upsertNgnTransferRecord(updated);
     outcome.advanced.push({

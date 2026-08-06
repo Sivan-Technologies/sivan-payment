@@ -12,7 +12,15 @@ import { resolveActiveWalletProvider } from '../../wallets/wallet-controls.servi
 
 export const acceptNgnQuoteSchema = z.object({ userId: z.string().min(1), quoteId: z.string().min(1) });
 
-function buildTimeline(transfer: NgnTransferRecord): NgnTimelineStep[] {
+/**
+ * Exported so the RECONCILER can rebuild it too.
+ *
+ * It was module-private, and the reconciler consequently advanced `status`
+ * while leaving `timeline` frozen at whatever it was when the order was
+ * created. The UI reads the timeline, so a transfer that had genuinely reached
+ * blockchain_confirmed still rendered "Waiting for crypto deposit" forever.
+ */
+export function buildTimeline(transfer: NgnTransferRecord): NgnTimelineStep[] {
   const onramp = transfer.direction === 'onramp';
   const keys = onramp
     ? [
