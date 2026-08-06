@@ -275,9 +275,26 @@ export const FLOW_LIMITS: readonly FlowLimit[] = [
   { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 100_000 },
   { flow: 'onramp',  rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 100_000 },
 
-  { flow: 'escrow',  rail: 'ngn', level: VerificationLevel.IDENTITY, cumulativeNgn: 1_000_000 },
-  { flow: 'offramp', rail: 'ngn', level: VerificationLevel.IDENTITY, cumulativeNgn: 500_000 },
-  { flow: 'onramp',  rail: 'ngn', level: VerificationLevel.IDENTITY, cumulativeNgn: 1_000_000 },
+  /**
+   * LEVEL 2 CEILINGS, RAISED TO NGN 5,000,000 ON THE FOUNDERS' CALL.
+   *
+   * Level 2 is now reachable by a real BVN check against the government
+   * registry (name, date of birth, phone) rather than only by Bridge document
+   * KYC, so the evidence behind this tier is materially stronger than when
+   * these numbers were set.
+   *
+   * UNLIMITED WAS ASKED FOR AND DELIBERATELY NOT SHIPPED. A single identity
+   * check is not the same as knowing where the money comes from - that is
+   * Level 4, which expects proof of address and source of funds. An uncapped
+   * tier also removes the blast-radius bound on a compromised account, which
+   * is the one thing a ceiling is for, and it is the profile a banking partner
+   * looks at hardest. 5,000,000 is 10x the old figure and above any realistic
+   * individual user; the handful who genuinely need more are served by a
+   * per-user override, which is auditable and reversible.
+   */
+  { flow: 'escrow',  rail: 'ngn', level: VerificationLevel.IDENTITY, cumulativeNgn: 5_000_000 },
+  { flow: 'offramp', rail: 'ngn', level: VerificationLevel.IDENTITY, cumulativeNgn: 5_000_000 },
+  { flow: 'onramp',  rail: 'ngn', level: VerificationLevel.IDENTITY, cumulativeNgn: 5_000_000 },
 
   { flow: 'escrow',  rail: 'ngn', level: VerificationLevel.ENHANCED, cumulativeNgn: null },
   { flow: 'offramp', rail: 'ngn', level: VerificationLevel.ENHANCED, cumulativeNgn: null },

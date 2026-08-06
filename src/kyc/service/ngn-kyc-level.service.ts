@@ -1,5 +1,10 @@
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { forbidden } from '../../shared/errors.js';
+import { db } from '../../database/json-database.js';
+import { createAuditLog } from '../../audit/audit.service.js';
+import { id, nowIso } from '../../shared/id.js';
+import { env } from '../../config/env.js';
 import { getKycLevelProvider } from '../providers/kyc-level-provider-registry.js';
 import type { KycLevelMatchResult } from '../providers/kyc-level-provider.js';
 
@@ -53,10 +58,103 @@ function toCustomerSafe(result: KycLevelMatchResult, level: 'ngn_level_2' | 'ngn
   };
 }
 
+/**
+ * Hash a BVN for cross-account comparison, never for retrieval.
+ *
+ * Peppered with USER_JWT_SECRET rather than salted per row. A per-row salt is
+ * the right default for passwords and the WRONG one here: the entire purpose
+ * is to notice the same BVN appearing under two accounts, and per-row salts
+ * make identical inputs hash differently, which defeats it.
+ *
+ * The pepper means a stolen database alone cannot be brute-forced against the
+ * 11-digit BVN space - which is small enough (10^11) to enumerate offline
+ * without one.
+ */
+function hashBvn(bvn: string): string {
+  return crypto
+    .createHmac('sha256', env.USER_JWT_SECRET)
+    .update(String(bvn).replace(/\D/g, ''))
+    .digest('hex');
+}
+
 export async function verifyNgnBvnIdentity(userId: string, input: z.infer<typeof bvnInfoMatchSchema>) {
   enforceAttemptLimit(attemptKey(userId, 'bvn_info'));
   const provider = getKycLevelProvider();
   const result = await provider.verifyBvnIdentity(input);
+
+  /**
+   * PERSIST THE OUTCOME. Without this the whole feature is a no-op.
+   *
+   * The provider, service and route all existed and worked - a user could
+   * submit and Monnify would answer 'matched' - but grep showed this file
+   * touching the database zero times. The result lived only in the HTTP
+   * response, so a refresh put the user back at Level 1 with no record they
+   * had ever verified. Same shape as the deposit confirmer: machinery built,
+   * outcome never written, feature unable to take effect.
+   *
+   * Every outcome is stored, not just success. A 'review' is a case a human
+   * must pick up and there is no queue without a row; a 'failed' is what
+   * support reads when a user says "I tried and it did not work".
+   */
+  const at = nowIso();
+  const bvnHash = hashBvn(input.bvn);
+
+  const record = await db.upsertNgnIdentityVerification({
+    id: id('ngnkyc'),
+    userId,
+    checkType: 'bvn_info',
+    status: result.status,
+    provider: result.provider,
+    providerReference: result.providerReference,
+    bvnLast4: result.bvnLast4,
+    bvnHash,
+    matchedFields: result.matchedFields,
+    // ONLY a match sets this, and only this grants Level 2.
+    verifiedAt: result.status === 'matched' ? at : undefined,
+    createdAt: at,
+    updatedAt: at
+  });
+
+  /**
+   * ONE BVN, SEVERAL ACCOUNTS - the pattern this check exists to catch.
+   *
+   * Recorded rather than blocked. A shared BVN has innocent explanations (a
+   * user who lost access to an old email and re-registered) and refusing
+   * automatically would strand them with no route back. Flagged at warning
+   * severity so it is findable, and left for a human.
+   */
+  if (result.status === 'matched') {
+    const others = await db.countUsersWithBvnHash(bvnHash, userId).catch(() => 0);
+    if (others > 0) {
+      await createAuditLog({
+        actorType: 'system',
+        action: 'kyc.bvn_reused_across_accounts',
+        resourceType: 'ngn_identity_verification',
+        resourceId: record.id,
+        severity: 'warning',
+        metadata: { userId, bvnLast4: result.bvnLast4, otherAccounts: others }
+      }).catch(() => undefined);
+    }
+  }
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: userId,
+    action: 'kyc.ngn_bvn_verification',
+    resourceType: 'ngn_identity_verification',
+    resourceId: record.id,
+    severity: result.status === 'matched' ? 'info' : 'warning',
+    // The BVN is deliberately absent. Only its last four digits and the
+    // provider's verdict are recorded - an audit log is not a place to leak
+    // the identifier the table itself refuses to store.
+    metadata: {
+      status: result.status,
+      provider: result.provider,
+      bvnLast4: result.bvnLast4,
+      providerReference: result.providerReference ?? null
+    }
+  }).catch(() => undefined);
+
   return toCustomerSafe(result, 'ngn_level_2');
 }
 

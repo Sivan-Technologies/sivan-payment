@@ -6,6 +6,7 @@ import type {
   VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord,
   WalletControlsRecord,
   WalletDepositRecord,
+  NgnIdentityVerificationRecord,
   NgnPayoutAccountRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
@@ -275,6 +276,7 @@ export class PostgresDatabase {
         ngnTransfers: ngnTransfers.rows.map(mapNgnTransfer),
         ngnWebhooks: ngnWebhooks.rows.map(mapNgnWebhook),
         walletDeposits: walletDeposits.rows.map(mapWalletDeposit),
+        ngnIdentityVerifications: [],
         userPreferences: userPreferences.rows.map(mapUserPreferences),
         userTwoFactor: userTwoFactor.rows.map(mapUserTwoFactor),
         userTwoFactorRecoveryQuestions: userTwoFactorRecoveryQuestions.rows.map(mapUserTwoFactorRecoveryQuestion),
@@ -1557,6 +1559,80 @@ export class PostgresDatabase {
    * Oldest first: a backlog is worked in arrival order so a burst of new
    * deposits cannot starve the oldest stuck row under the limit.
    */
+  async listNgnIdentityVerifications(userId: string): Promise<NgnIdentityVerificationRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_ngn_identity_verifications
+          where user_id = $1 order by created_at desc`,
+        [userId]
+      );
+      return result.rows.map(mapNgnIdentityVerification);
+    } finally { client.release(); }
+  }
+
+  /**
+   * Upsert on (user_id, check_type).
+   *
+   * The conflict target is a plain pair, but migration 047's unique index is
+   * PARTIAL (`where verified_at is not null`), so it cannot serve this
+   * statement. A failed attempt therefore inserts a new row while a matched
+   * one is protected from duplication by that index - which is the behaviour
+   * wanted: retries after a failure are legitimate, two successes are not.
+   */
+  async upsertNgnIdentityVerification(record: NgnIdentityVerificationRecord): Promise<NgnIdentityVerificationRecord> {
+    const client = await this.pool.connect();
+    try {
+      const existing = await optionalQuery(
+        client,
+        `select id from payments_ngn_identity_verifications
+          where user_id = $1 and check_type = $2 and verified_at is not null limit 1`,
+        [record.userId, record.checkType]
+      );
+
+      // Already verified: keep the original row and its timestamp. Re-writing
+      // verified_at on a repeat submission would move the date the user became
+      // Level 2, which is exactly the fact an auditor asks for.
+      if (existing.rows[0]) {
+        const current = await optionalQuery(
+          client,
+          'select * from payments_ngn_identity_verifications where id = $1',
+          [existing.rows[0].id]
+        );
+        return mapNgnIdentityVerification(current.rows[0]);
+      }
+
+      const result = await client.query(
+        `insert into payments_ngn_identity_verifications
+           (id, user_id, check_type, status, provider, provider_reference, bvn_last4, bvn_hash, matched_fields, verified_at, created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         returning *`,
+        [
+          record.id, record.userId, record.checkType, record.status, record.provider,
+          record.providerReference ?? null, record.bvnLast4 ?? null, record.bvnHash ?? null,
+          record.matchedFields ?? null, record.verifiedAt ?? null, record.createdAt, record.updatedAt
+        ]
+      );
+      return mapNgnIdentityVerification(result.rows[0]);
+    } finally { client.release(); }
+  }
+
+  async countUsersWithBvnHash(bvnHash: string, excludeUserId?: string): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select count(distinct user_id)::int as n
+           from payments_ngn_identity_verifications
+          where bvn_hash = $1 and verified_at is not null
+            and ($2::text is null or user_id <> $2)`,
+        [bvnHash, excludeUserId ?? null]
+      );
+      return Number(result.rows[0]?.n ?? 0);
+    } finally { client.release(); }
+  }
+
   async listPendingWalletDeposits(limit = 100): Promise<WalletDepositRecord[]> {
     const client = await this.pool.connect();
     try {
@@ -2288,6 +2364,23 @@ function mapNgnControls(row: any): NgnControlsRecord {
 
 function mapNgnQuote(row: any): NgnQuoteRecord {
   return { id: row.id, userId: row.user_id, customerId: str(row.customer_id), direction: row.direction, provider: row.provider, sourceCurrency: row.source_currency, destinationCurrency: row.destination_currency, sourceAmount: row.source_amount, destinationAmount: row.destination_amount, rate: row.rate, feeAmount: row.fee_amount, status: row.status, providerQuoteId: str(row.provider_quote_id), expiresAt: iso(row.expires_at), metadata: row.metadata, createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
+}
+
+function mapNgnIdentityVerification(row: any): NgnIdentityVerificationRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    checkType: row.check_type,
+    status: row.status,
+    provider: row.provider,
+    providerReference: str(row.provider_reference),
+    bvnLast4: str(row.bvn_last4),
+    bvnHash: str(row.bvn_hash),
+    matchedFields: row.matched_fields ?? undefined,
+    verifiedAt: optionalIso(row.verified_at),
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at)
+  };
 }
 
 function mapWalletDeposit(row: any): WalletDepositRecord {

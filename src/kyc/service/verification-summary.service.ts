@@ -28,6 +28,7 @@
 import { getVerificationState, getCumulativeNgnVolume } from './verification-state.js';
 import { listVerificationLimitOverrides } from './verification-limits.service.js';
 import { limitFor, lowestSufficientLevel, upliftCeilingFor } from './verification-policy.js';
+import { isKycLevelProviderConfigured } from '../providers/kyc-level-provider-registry.js';
 import {
   UPLIFT_CEILING_NGN,
   VOLUME_WINDOW_DAYS,
@@ -140,10 +141,24 @@ function nextStepFor(
       level: VerificationLevel.IDENTITY,
       label: 'Level 2: Identity verified',
       description:
-        'Add your NIN or BVN to raise your limit from ₦100,000 to ₦500,000 per 30 days.',
+        'Add your BVN to raise your limit from ₦100,000 to ₦5,000,000 per 30 days.',
       action: 'nin_bvn',
-      // No NIN/BVN provider is integrated yet. Stated, not hidden, and not
-      // offered as a button that cannot work.
+      /**
+       * GATED ON A BVN PROVIDER EXISTING, NOT ON identityVerificationEnabled.
+       *
+       * This used to read the identity toggle, which is a different control
+       * with a different job: it decides whether a NIN/BVN is REQUIRED for
+       * Level 2, and it is deliberately off because requiring one while no
+       * provider existed would have stranded every user at Level 1.
+       *
+       * Reading it here conflated "is a check mandatory" with "is a check
+       * possible", so the step stayed "Coming soon" even after the Monnify
+       * provider was wired up and working - the button could never appear
+       * without also making the check compulsory.
+       *
+       * The honest question is whether a provider can answer, which is what
+       * this now asks.
+       */
       available: ninBvnAvailable,
     };
   }
@@ -293,7 +308,7 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
      *
      * Stated by the server because the server owns the ladder.
      */
-    nextStep: nextStepFor(path, state.level, controls.identityVerificationEnabled === true),
+    nextStep: nextStepFor(path, state.level, isKycLevelProviderConfigured()),
     hasPayoutAccount: hasVerifiedNgnAccount || hasBridgeAccount,
     hasPendingPayoutReview,
     windowDays: VOLUME_WINDOW_DAYS,

@@ -775,6 +775,37 @@ export interface WalletDepositRecord {
   updatedAt: string;
 }
 
+export type NgnIdentityCheckStatus = 'matched' | 'review' | 'failed';
+
+/**
+ * A Level 2 identity check against a Nigerian BVN.
+ *
+ * THE BVN ITSELF IS NEVER STORED - see migration 047. A BVN links every bank
+ * account a Nigerian holds, so keeping the digits turns any future leak into
+ * an identity-theft incident, and Sivan gains nothing: the provider has
+ * already answered the only question we asked.
+ */
+export interface NgnIdentityVerificationRecord {
+  id: string;
+  userId: string;
+  checkType: 'bvn_info' | 'bvn_bank';
+  status: NgnIdentityCheckStatus;
+  provider: string;
+  providerReference?: string;
+  /** Last four digits, so support can say "the one ending 4821". */
+  bvnLast4?: string;
+  /** SHA-256 + pepper. Detects one BVN across accounts; not reversible. */
+  bvnHash?: string;
+  matchedFields?: Record<string, boolean | string>;
+  /**
+   * Set ONLY on a matched row, and the single fact that grants Level 2.
+   * Separate from createdAt because a failed attempt has one of those too.
+   */
+  verifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UnifiedWebhookLogRecord {
   id: string;
   serviceName: string;
@@ -912,4 +943,5 @@ export interface DatabaseShape {
   ngnTransfers: NgnTransferRecord[];
   ngnWebhooks: NgnWebhookRecord[];
   walletDeposits: WalletDepositRecord[];
+  ngnIdentityVerifications: NgnIdentityVerificationRecord[];
 }

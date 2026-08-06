@@ -3,5 +3,7 @@
   "private": true,
   "type": "module",
   "//": "Separate from the backend package.json so the Playwright dependency does not ship with the API. Browsers live in ~/.cache/ms-playwright, which snapshots do not keep - reinstall with: npm install && npx playwright install chromium",
-  "dependencies": { "playwright": "^1.56.0" }
+  "dependencies": {
+    "playwright": "^1.62.1"
+  }
 }

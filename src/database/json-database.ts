@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord} from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnTransferStatus, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
@@ -58,7 +58,7 @@ const emptyDb = (): DatabaseShape => ({
   ngnQuotes: [],
   ngnTransfers: [],
   ngnWebhooks: [],
-  walletDeposits: []
+  walletDeposits: [], ngnIdentityVerifications: []
 });
 
 export class JsonDatabase {
@@ -773,6 +773,51 @@ export class JsonDatabase {
    * deposits under a `limit` would starve the oldest stuck row forever - and
    * the oldest stuck row is precisely the one someone is complaining about.
    */
+  /**
+   * The user's identity checks, newest first.
+   *
+   * Returns every attempt, not just the successful one: a 'review' row is a
+   * case a human must pick up, and a 'failed' row is what support reads when a
+   * user says "I tried and it did not work".
+   */
+  async listNgnIdentityVerifications(userId: string): Promise<NgnIdentityVerificationRecord[]> {
+    const data = await this.read();
+    return (data.ngnIdentityVerifications ?? [])
+      .filter((row) => row.userId === userId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /**
+   * Record an attempt, replacing any earlier one of the same type.
+   *
+   * Upsert rather than append: the Postgres side has a partial unique index on
+   * (user_id, check_type) where verified_at is not null, so a second matched
+   * row is impossible there. Appending here would let the two drivers disagree
+   * about how many verifications a user has.
+   */
+  async upsertNgnIdentityVerification(record: NgnIdentityVerificationRecord): Promise<NgnIdentityVerificationRecord> {
+    return this.mutate((data) => {
+      data.ngnIdentityVerifications = data.ngnIdentityVerifications ?? [];
+      const at = data.ngnIdentityVerifications.findIndex(
+        (row) => row.userId === record.userId && row.checkType === record.checkType
+      );
+      if (at >= 0) data.ngnIdentityVerifications[at] = record;
+      else data.ngnIdentityVerifications.push(record);
+      return record;
+    });
+  }
+
+  /** How many DIFFERENT users have verified with this BVN. Fraud signal. */
+  async countUsersWithBvnHash(bvnHash: string, excludeUserId?: string): Promise<number> {
+    const data = await this.read();
+    const users = new Set(
+      (data.ngnIdentityVerifications ?? [])
+        .filter((row) => row.bvnHash === bvnHash && row.verifiedAt && row.userId !== excludeUserId)
+        .map((row) => row.userId)
+    );
+    return users.size;
+  }
+
   async listPendingWalletDeposits(limit = 100): Promise<WalletDepositRecord[]> {
     const data = await this.read();
     return (data.walletDeposits ?? [])

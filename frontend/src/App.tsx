@@ -1220,7 +1220,25 @@ export default function App() {
   }
 
   async function refreshKyc() {
-    await refreshKycStatus(true);
+    /**
+     * BOTH, NOT JUST THE BRIDGE CUSTOMER.
+     *
+     * refreshKycStatus() refetches /api/customers/:id/kyc-status - the BRIDGE
+     * record - and nothing else. The verification summary, which is what
+     * renders the level badge, the step list and the naira allowance, is
+     * loaded only by loadUserData().
+     *
+     * So after a successful BVN check the server was already reporting Level 2
+     * with a NGN 5,000,000 ceiling while the page still showed "Level 1: Bank
+     * verified" and "₦100,000 left". Caught by LOOKING at the screenshot: the
+     * success message and the refresh toast both appeared, every assertion
+     * passed, and the two panels beside them still disagreed with the API.
+     *
+     * A Nigerian user has no Bridge customer at all, so for them the old
+     * refresh fetched the one thing that could not have changed and skipped
+     * the one that had.
+     */
+    await Promise.all([refreshKycStatus(true), loadUserData()]);
   }
 
   /**

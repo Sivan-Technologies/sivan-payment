@@ -686,6 +686,20 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
       });
       setNgnLevel2Result(result);
       form.reset();
+
+      /**
+       * REFRESH THE SUMMARY, OR THE SCREEN LIES.
+       *
+       * Without this the POST succeeds, the user is Level 2 in the database,
+       * and the page they are looking at still shows "Level 1: Bank verified"
+       * with the old ceiling - so the only way to see the result of a
+       * successful verification was to reload manually. Level 1 refreshes
+       * after its bank check for exactly this reason.
+       *
+       * Only on a match: a 'review' or 'failed' outcome changes nothing about
+       * the level, and re-fetching would just make the form flicker.
+       */
+      if ((result as any)?.status === 'matched') onRefresh();
     } catch (error) {
       setNgnLevel2Error(error instanceof Error ? error.message : 'Could not complete Level 2 verification.');
     } finally {

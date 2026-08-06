@@ -63,6 +63,7 @@
     "test:ngn-timeline-advances": "tsx scripts/test-ngn-timeline-advances.ts",
     "test:network-mode-balance": "tsx scripts/test-network-mode-balance.ts",
     "test:balance-ledger-query": "tsx scripts/test-balance-ledger-query.ts",
+    "test:ngn-bvn-level2": "tsx scripts/test-ngn-bvn-level2.ts",
     "test:auth-signup-signin": "tsx scripts/test-auth-signup-signin.ts",
     "test:ngn-limit-enforcement": "tsx scripts/test-ngn-limit-enforcement.ts",
     "test:external-funding-toggle": "tsx scripts/test-external-funding-toggle.ts",

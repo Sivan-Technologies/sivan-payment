@@ -61,6 +61,22 @@ export async function getVerificationState(userId: string): Promise<Verification
     db.listNgnPayoutAccounts(userId),
   ]);
 
+  /**
+   * LEVEL 2 EVIDENCE: a persisted, matched BVN check.
+   *
+   * Read here rather than inferred, because until migration 047 there was
+   * nothing to read - the BVN service returned a verdict and stored none of
+   * it, so a user who verified was Level 1 again on refresh.
+   *
+   * `verifiedAt` and not `status`, deliberately. A row exists for failed and
+   * review attempts too, and only the timestamp is written on a match, so
+   * testing the timestamp cannot mistake an attempt for a success.
+   */
+  const identityChecks = await db.listNgnIdentityVerifications(userId).catch(() => []);
+  const bvnVerified = identityChecks.some(
+    (row: any) => row.checkType === 'bvn_info' && Boolean(row.verifiedAt)
+  );
+
   // A payout account that has been name-resolved against the bank is Sivan's
   // Level 1 evidence. Since the CBN directive effective 1 March 2024 a Nigerian
   // bank account cannot transact without BVN/NIN linkage, so an account that
@@ -118,7 +134,24 @@ export async function getVerificationState(userId: string): Promise<Verification
   const identityRequired = controls.identityVerificationEnabled === true;
   const bridgeApproved = isApprovedKycStatus(customer?.kycStatus);
 
-  const identityVerified = identityRequired ? bridgeApproved : bridgeAccountVerified;
+  /**
+   * A MATCHED BVN IS LEVEL 2 EVIDENCE IN ITS OWN RIGHT.
+   *
+   * Previously identity could only come from Bridge (document KYC, $2 a head),
+   * or - with the toggle off - was inherited from a bank match, which the
+   * comment above rightly calls insufficient on its own.
+   *
+   * A BVN check is neither of those. It is a direct government-registry match
+   * on name, date of birth and phone, and it is precisely the "add your NIN or
+   * BVN" step the product has been promising users. Adding it as an
+   * independent source means a Nigerian can reach Level 2 without Bridge ever
+   * being involved, which is the whole point of the NGN path.
+   *
+   * Placed FIRST so it holds even when identityVerificationEnabled is on: with
+   * that toggle set, `bridgeApproved` alone would ignore a real BVN match and
+   * tell a verified user to go and verify.
+   */
+  const identityVerified = bvnVerified || (identityRequired ? bridgeApproved : bridgeAccountVerified);
 
   // When the toggle is OFF, the level is granted without a NIN/BVN check - so
   // the per-check statuses must say so too, or levelIsIntact() sees a Level 2
@@ -134,7 +167,16 @@ export async function getVerificationState(userId: string): Promise<Verification
   const ninStatus = bridgeApproved || (identityVerified && !identityRequired)
     ? CheckStatus.VERIFIED
     : CheckStatus.NOT_STARTED;
-  const bvnStatus = CheckStatus.NOT_STARTED;
+  /**
+   * Now reflects reality. This was hardcoded NOT_STARTED, so a user who had
+   * genuinely verified their BVN was still told they had not - and any screen
+   * driven by this field showed a completed step as outstanding.
+   */
+  const bvnStatus = bvnVerified
+    ? CheckStatus.VERIFIED
+    : identityChecks.some((row: any) => row.checkType === 'bvn_info' && row.status === 'review')
+      ? CheckStatus.PENDING
+      : CheckStatus.NOT_STARTED;
 
   /**
    * WHERE that identity came from, stated honestly.
