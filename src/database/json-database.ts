@@ -275,6 +275,18 @@ export class JsonDatabase {
    * correct shape for a bypass guard - it should take two mistakes, not one.
    */
   /** Mirror of the Postgres targeted audit query. Cheap on JSON. */
+  /**
+   * Mirror of the Postgres method. Unlimited by design: a truncated ledger
+   * understates a balance, which is worse than a slow one.
+   */
+  async listBalanceLedgerLogs(userId?: string) {
+    const data = await this.read();
+    return (data.auditLogs ?? [])
+      .filter((log) => log.action === 'balance.ledger_entry')
+      .filter((log) => !userId || (log.metadata as { userId?: string } | undefined)?.userId === userId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
   async listAuditLogsByActions(actions: string[], resourceId?: string) {
     const data = await this.read();
     return (data.auditLogs ?? [])

@@ -547,6 +547,43 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  /**
+   * Every ledger entry for one user. No limit, and that is the point.
+   *
+   * listAuditLogsByActions caps at 200 rows, which is right for a support view
+   * and CATASTROPHIC for a balance: a user past 200 entries would have their
+   * oldest credits silently dropped and their balance understated. Money
+   * arithmetic cannot run on a truncated set.
+   *
+   * Filtered on user_id in SQL rather than in Node - the previous
+   * implementation read the whole database and filtered in memory, which took
+   * ~10s on the deployed test API and put the balance card one slow second
+   * from the gateway's 12s timeout.
+   *
+   * The ->> operator reads a JSONB field; metadata.userId is where the ledger
+   * entry records its owner.
+   */
+  async listBalanceLedgerLogs(userId?: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = userId
+        ? await optionalQuery(
+            client,
+            `select * from payments_audit_logs
+             where action = 'balance.ledger_entry' and metadata->>'userId' = $1
+             order by created_at asc`,
+            [userId]
+          )
+        : await optionalQuery(
+            client,
+            `select * from payments_audit_logs
+             where action = 'balance.ledger_entry'
+             order by created_at asc`
+          );
+      return result.rows.map(mapAuditLog);
+    } finally { client.release(); }
+  }
+
   async latestAuditLogByAction(action: string) {
     const client = await this.pool.connect();
     try {

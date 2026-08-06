@@ -129,9 +129,25 @@ function money(value: number) {
   return value.toFixed(6).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
 }
 
-function ledgerLogs() {
-  return db.read().then((data) => (data.auditLogs ?? [])
-    .filter((log) => log.action === 'balance.ledger_entry')
+/**
+ * ONE INDEXED QUERY, NOT THE WHOLE DATABASE.
+ *
+ * This was db.read(), which issues ~40 sequential `select *` queries - every
+ * table, including the entire audit log - to find rows with a single action.
+ *
+ * Measured on the deployed test API: GET /api/users/:id/balance/unified took
+ * 9.8s, 10.2s, 10.1s. The Cloudflare worker gives up at 12s, so the balance
+ * card sat one bad second away from a 503 on every load - and when it lost,
+ * the user saw "Could not reach the network / Retrying shortly" while their
+ * money was perfectly readable on chain. That is exactly the reported bug, and
+ * it explains why it came and went rather than failing consistently.
+ *
+ * The audit log is the specific problem: it grows without bound, so this got
+ * slower every day the platform ran. listAuditLogsByActions filters on action
+ * IN THE DATABASE and the ledger read stops scaling with unrelated traffic.
+ */
+function ledgerLogs(userId?: string) {
+  return db.listBalanceLedgerLogs(userId).then((logs) => logs
     .map((log) => ({ log, entry: log.metadata as LedgerMetadata }))
     .filter((item) => item.entry?.entryId));
 }
@@ -361,7 +377,9 @@ export async function createBalanceLedgerEntry(input: Omit<LedgerMetadata, 'entr
 }
 
 export async function listUserBalanceLedger(userId: string) {
-  return (await ledgerLogs())
+  // userId pushed into the query. The .filter below is kept as a belt-and-
+  // braces check on the JSONB match, not as the primary filter.
+  return (await ledgerLogs(userId))
     .map((item) => ({ ...item.entry, createdAt: item.log.createdAt }))
     .filter((entry) => entry.userId === userId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
