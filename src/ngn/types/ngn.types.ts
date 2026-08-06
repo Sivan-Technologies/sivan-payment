@@ -54,9 +54,39 @@ export type NgnTransferStatus =
  * address, and two open addresses are two ways to be over the ceiling.
  *
  * EXCLUDED: 'failed', 'expired', 'cancelled' - nothing moved, or it moved back.
- * Also 'requires_review', deliberately: a flagged transfer is frozen pending a
- * human, and holding a user's headroom hostage to a queue we control would
- * punish them for our own latency.
+ *
+ *
+ * 'requires_review' CONSUMES. THIS REVERSES AN EARLIER DECISION HERE.
+ *
+ * It was excluded, with a fair argument: a flagged transfer is frozen pending a
+ * human, and holding a user's headroom hostage to a queue WE control punishes
+ * them for our latency. That concern is real and is answered below - but not
+ * by releasing the headroom.
+ *
+ * What the status actually means, from breet.provider.ts mapStatus():
+ *
+ *     'flagged' -> confirmed on-chain but below the asset minimum. Breet holds
+ *                  the funds and does NOT credit. That needs a human.
+ *
+ * So the user's crypto HAS left their wallet, no naira has been paid, and the
+ * transfer may still be resolved in their favour. It is pending, not cancelled.
+ * Releasing its headroom means a user with NGN 90,000 held in review can start
+ * another NGN 50,000 withdrawal; if the review then approves, NGN 140,000 has
+ * been paid against a NGN 100,000 tier ceiling. Nobody broke a rule at any
+ * single moment, and the ceiling has still been exceeded.
+ *
+ * The two positions fail in opposite directions, which is what decides it:
+ *
+ *     release -> a user can exceed their verification limit  (compliance breach)
+ *     consume -> a user waits until we clear our own queue    (inconvenience)
+ *
+ * A limit that leaks is not a limit. The fairness problem is answered by the
+ * `flagged_review_age` operational signal, which escalates to CRITICAL once a
+ * flagged transfer has sat for FLAGGED_REVIEW_CRITICAL_HOURS - so "we are slow"
+ * becomes an alert on us rather than a silent cost to the customer.
+ *
+ * Note also that the transfer is flagged because something was UNUSUAL about
+ * it. That is the moment to hold a ceiling tighter, not looser.
  */
 export const NGN_LIMIT_CONSUMING_STATUSES: ReadonlySet<NgnTransferStatus> = new Set([
   'created',
@@ -71,6 +101,11 @@ export const NGN_LIMIT_CONSUMING_STATUSES: ReadonlySet<NgnTransferStatus> = new 
   'bank_processing',
   'crypto_sent',
   'completed',
+  /**
+   * Held by us, still payable - see the header. Money the user has already
+   * parted with and that a human may yet release must not free up headroom.
+   */
+  'requires_review',
   /**
    * 'settled' WAS HERE AND HAS BEEN REMOVED - it is not a real status.
    *
@@ -92,7 +127,6 @@ export const NGN_LIMIT_RELEASING_STATUSES: ReadonlySet<string> = new Set([
   'failed',
   'expired',
   'cancelled',
-  'requires_review',
 ]);
 
 export interface NgnControlsRecord {

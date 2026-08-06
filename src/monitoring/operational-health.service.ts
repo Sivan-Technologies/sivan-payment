@@ -68,6 +68,27 @@ const STALE_REVIEW_HOURS = 24;
 const CRITICAL_REVIEW_HOURS = 48;
 
 /**
+ * How long a FLAGGED transfer may sit before the delay is our problem, loudly.
+ *
+ * This threshold is the other half of a deliberate limits decision. A
+ * 'requires_review' transfer CONSUMES the user's limit headroom
+ * (NGN_LIMIT_CONSUMING_STATUSES), because the money has left their wallet and
+ * may still be paid out - releasing it would let a user exceed their tier
+ * ceiling while a review is open.
+ *
+ * The fair objection to that is: the user is now blocked by OUR queue. This
+ * signal is the answer. Holding the headroom is only defensible if the queue
+ * moves, so a flagged transfer ageing past these hours escalates against us
+ * rather than quietly costing the customer their limit.
+ *
+ * Tighter than the name-review thresholds above on purpose: a flagged transfer
+ * is money already taken from a user and not yet credited, which is a worse
+ * state to leave someone in than an unreviewed bank name.
+ */
+const FLAGGED_REVIEW_STALE_HOURS = 12;
+const FLAGGED_REVIEW_CRITICAL_HOURS = 24;
+
+/**
  * States where SIVAN OR A PROVIDER HOLDS THE USER'S MONEY.
  *
  * This is the whole point of the signal: crypto has left the user's control
@@ -161,6 +182,41 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
       detail: held.length
         ? `${held.length} deposit(s) flagged below the asset minimum. Breet is holding the funds; recovering each costs the flag fee.`
         : 'No flagged deposits.',
+    });
+
+    /**
+     * 2b. HOW LONG THE OLDEST ONE HAS BEEN WAITING.
+     *
+     * The count alone cannot escalate: it warns at one flagged transfer and
+     * says exactly the same thing three days later. That matters more than it
+     * used to, because a flagged transfer now CONSUMES the user's limit
+     * headroom - the money left their wallet and may still be paid, so
+     * releasing it would let them exceed their tier ceiling mid-review.
+     *
+     * Holding that headroom is only fair while the queue actually moves. This
+     * signal is the commitment: past FLAGGED_REVIEW_CRITICAL_HOURS the delay
+     * is an incident on us, not a silent cost to the customer.
+     *
+     * Measured from updatedAt (the moment it became flagged), falling back to
+     * createdAt - a transfer created days ago and flagged an hour ago has been
+     * waiting an hour, and dating it from creation would page someone for a
+     * delay that has not happened.
+     */
+    const oldestFlagged = Math.max(0, ...held.map((t: any) => hoursSince(t.updatedAt ?? t.createdAt)));
+    const flaggedSeverity: AlertSeverity =
+      oldestFlagged >= FLAGGED_REVIEW_CRITICAL_HOURS ? 'critical'
+        : oldestFlagged >= FLAGGED_REVIEW_STALE_HOURS ? 'warn'
+          : 'ok';
+
+    signals.push({
+      name: 'flagged_review_age',
+      severity: held.length ? flaggedSeverity : 'ok',
+      value: held.length ? Math.round(oldestFlagged) : 0,
+      detail: !held.length
+        ? 'No flagged deposits awaiting review.'
+        : `Oldest flagged deposit has waited ${Math.round(oldestFlagged)}h. `
+          + 'These consume the user\'s limit headroom while open, so they cannot '
+          + `withdraw again until it is resolved. Target is under ${FLAGGED_REVIEW_STALE_HOURS}h.`,
     });
   }
 

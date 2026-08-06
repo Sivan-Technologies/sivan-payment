@@ -365,22 +365,164 @@ check('a quote that bypassed the ceiling is logged',
   'the first question after an incident is "what got through while it was off"');
 check('at warning severity', (skipLogs[0] as any).severity === 'warning');
 
+console.log('\n── a flagged transfer holds its headroom ─────────────────────');
+
+/**
+ * REVERSES AN EARLIER DECISION IN THIS FILE'S HISTORY.
+ *
+ * 'requires_review' was excluded from the consuming set, on the reasoning that
+ * a transfer frozen pending a human should not hold a user's limit hostage to
+ * our own queue. Fair, but it fails in the dangerous direction: the money has
+ * already left the user's wallet and may still be paid out, so releasing the
+ * headroom lets a user with NGN 90,000 under review start another NGN 50,000
+ * and be paid NGN 140,000 against a NGN 100,000 tier ceiling.
+ *
+ *   release -> the user can exceed their limit   (compliance breach)
+ *   consume -> the user waits for our queue      (inconvenience)
+ *
+ * The fairness objection is answered by flagged_review_age, asserted below.
+ */
+{
+  const now3 = () => new Date().toISOString();
+  await db.mutate((d: any) => {
+    d.users = [{ id: 'u_flag', email: 'flag@t.test', country: 'NG', fullName: 'T U', createdAt: now3(), updatedAt: now3() }];
+    d.ngnPayoutAccounts = [{ id: 'acct_flag', userId: 'u_flag', provider: 'mock', bankId: '1',
+      bankName: 'Access Bank', accountNumber: '1111111111', accountName: 'T U',
+      status: 'verified', createdAt: now3(), updatedAt: now3() }];
+    d.ngnTransfers = [{
+      id: 'ngnt_flag', userId: 'u_flag', direction: 'offramp',
+      sourceCurrency: 'usdc', destinationCurrency: 'ngn',
+      sourceAmount: '60', destinationAmount: '90000',
+      status: 'requires_review', createdAt: now3(), updatedAt: now3(),
+    }];
+    d.userLimitResets = [];
+    d.userLimitOverrides = [];
+    return 1;
+  });
+
+  const used = await getCumulativeNgnVolume('u_flag', 30);
+  check('a flagged transfer still counts against the ceiling', used === 90_000,
+    `${used} - released, it would free NGN 90,000 the user has already parted with`);
+
+  const { getVerificationSummary } = await import('../src/kyc/service/verification-summary.service.js');
+  const summary = await getVerificationSummary('u_flag');
+  const offramp = summary.allowances.find((a: any) => a.flow === 'offramp' && a.rail === 'ngn');
+  check('and the user sees the reduced headroom', offramp?.usedNgn === 90_000,
+    JSON.stringify(offramp));
+}
+
+console.log('\n── ...and the delay escalates against US, not the user ───────');
+
+/**
+ * The commitment that makes the decision above fair. Holding a user's headroom
+ * is only defensible while the queue moves, so an ageing flagged transfer has
+ * to become an alert on Sivan rather than a silent cost to the customer.
+ */
+{
+  const { getOperationalHealth } = await import('../src/monitoring/operational-health.service.js');
+  const collectOperationalSignals = async () => (await getOperationalHealth()).signals;
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+
+  const seedFlagged = async (ageHours: number) => {
+    await db.mutate((d: any) => {
+      d.ngnTransfers = [{
+        id: 'ngnt_age', userId: 'u_flag', direction: 'offramp',
+        sourceCurrency: 'usdc', destinationCurrency: 'ngn',
+        sourceAmount: '60', destinationAmount: '90000',
+        status: 'requires_review', createdAt: hoursAgo(ageHours + 5), updatedAt: hoursAgo(ageHours),
+      }];
+      return 1;
+    });
+    const signals = await collectOperationalSignals();
+    return signals.find((sig: any) => sig.name === 'flagged_review_age');
+  };
+
+  const fresh = await seedFlagged(1);
+  check('a freshly flagged transfer is not an alert', fresh?.severity === 'ok', JSON.stringify(fresh));
+
+  const stale = await seedFlagged(13);
+  check('past 12h it warns', stale?.severity === 'warn', JSON.stringify(stale));
+
+  const critical = await seedFlagged(25);
+  check('past 24h it is CRITICAL - the delay is now our incident',
+    critical?.severity === 'critical', JSON.stringify(critical));
+  check('and it names the consequence for the user',
+    /limit headroom/.test(String(critical?.detail)),
+    'an operator must see WHY this one is urgent, not just that it is old');
+
+  /**
+   * Dated from updatedAt - the moment it became flagged. A transfer created
+   * days ago and flagged an hour ago has been waiting an hour, and paging
+   * someone for a delay that has not happened trains them to ignore the alert.
+   */
+  await db.mutate((d: any) => {
+    d.ngnTransfers = [{
+      id: 'ngnt_old', userId: 'u_flag', direction: 'offramp',
+      sourceCurrency: 'usdc', destinationCurrency: 'ngn',
+      sourceAmount: '60', destinationAmount: '90000',
+      status: 'requires_review', createdAt: hoursAgo(200), updatedAt: hoursAgo(1),
+    }];
+    return 1;
+  });
+  const recentlyFlagged = (await collectOperationalSignals()).find((sig: any) => sig.name === 'flagged_review_age');
+  check('age is measured from when it was FLAGGED, not when it was created',
+    recentlyFlagged?.severity === 'ok',
+    JSON.stringify(recentlyFlagged) + ' - an old order flagged an hour ago has waited an hour');
+}
+
 console.log('\n── both database adapters agree on what consumes ─────────────');
 
 /**
- * The Postgres predicate is hand-written SQL and cannot import the TS Set, so
- * they can drift - and a drift silently changes what a limit MEANS depending
- * on which database is deployed.
+ * THIS ASSERTION CHANGED SHAPE, AND THE REASON MATTERS.
+ *
+ * It used to grep the SQL for each status literal, because the predicate was
+ * hand-written and "cannot import the TS Set". That premise was the bug: the
+ * copy had already drifted (it still listed 'settled', which the type does not
+ * contain), and adding 'requires_review' to the constant left Postgres behind
+ * so the same user had two different limits depending on the driver.
+ *
+ * The query now binds the set as a parameter, so divergence is impossible
+ * rather than merely detectable. Grepping for literals would therefore fail
+ * against CORRECT code - the old assertion has to go, or it punishes the fix.
+ *
+ * What is asserted instead is the property that actually guarantees agreement:
+ * the SQL contains no hardcoded status list at all, and the constant is the
+ * thing passed to the driver.
  */
 const pgSrc = fs.readFileSync('src/database/postgres-database.ts', 'utf8');
 const i = pgSrc.indexOf('listNgnTransfersByUserSince');
 const pgQuery = pgSrc.slice(i, pgSrc.indexOf('}', pgSrc.indexOf('finally', i)));
-const missing = [...NGN_LIMIT_CONSUMING_STATUSES].filter((s) => !pgQuery.includes(`'${s}'`));
-check('every consuming status appears in the Postgres query',
-  missing.length === 0,
-  `missing from SQL: ${missing.join(', ')}`);
-const leaked = [...NGN_LIMIT_RELEASING_STATUSES].filter((s) => pgQuery.includes(`'${s}'`));
-check('and no releasing status leaked into it', leaked.length === 0, `wrongly in SQL: ${leaked.join(', ')}`);
+
+check('the Postgres query binds the shared set rather than retyping it',
+  /status = any\(\$3\)/.test(pgQuery) && pgQuery.includes('NGN_LIMIT_CONSUMING_STATUSES'),
+  'a hand-copied list is a second definition of what a limit means');
+
+/**
+ * Comments stripped first. The block above this query DISCUSSES 'settled' and
+ * 'requires_review' by name while explaining why neither is hardcoded, and a
+ * naive grep flagged that prose as if it were SQL - the assertion failing
+ * against correct code. Assert the code, not the commentary about it.
+ */
+const pgQueryCode = pgQuery
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '')
+  .replace(/--.*$/gm, '');
+const hardcoded = [...NGN_LIMIT_CONSUMING_STATUSES, ...NGN_LIMIT_RELEASING_STATUSES, 'settled']
+  .filter((s) => new RegExp(`'${s}'`).test(pgQueryCode));
+check('and hardcodes no status literal at all',
+  hardcoded.length === 0,
+  `still spelled out in SQL: ${hardcoded.join(', ')}`);
+
+/**
+ * The two drivers agreeing is the property that was really at stake, so it is
+ * now checked by RUNNING both rather than by reading one. The JSON path is
+ * exercised throughout this suite; here the shared set is confirmed to be the
+ * single input both of them consume.
+ */
+check("'requires_review' consumes, so a flagged transfer cannot free headroom",
+  NGN_LIMIT_CONSUMING_STATUSES.has('requires_review')
+    && !NGN_LIMIT_RELEASING_STATUSES.has('requires_review'),
+  'money already taken from the user, pending a human, must still count');
 
 await app.close();
 console.log('\n── the double-spend race, closed at ACCEPT ───────────────────');

@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { env } from '../config/env.js';
 import { networksServedByWallet } from '../wallets/chain-family.js';
+import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
 import type {
   VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord,
   WalletControlsRecord,
@@ -711,21 +712,31 @@ export class PostgresDatabase {
     try {
       const result = await optionalQuery(
         client,
+        /**
+         * THE STATUS LIST IS BOUND, NOT RETYPED.
+         *
+         * It used to be spelled out inline here, with a comment asking the
+         * reader to keep it in sync with NGN_LIMIT_CONSUMING_STATUSES. That
+         * held exactly as long as nobody changed the set: adding
+         * 'requires_review' to the constant left this query unchanged, so the
+         * same user had two different limits depending on which database
+         * driver was running. A test caught it, but only because someone had
+         * written that test - the shape itself was the hazard.
+         *
+         * The hand-written copy had also drifted already: it still listed
+         * 'settled', a status the type does not contain and nothing ever
+         * writes.
+         *
+         * Passing the set as a parameter makes divergence impossible rather
+         * than merely detectable. `= any($3)` is the array form of `in (...)`
+         * and uses the same index.
+         */
         `select * from payments_ngn_transfers
           where user_id = $1
-            -- Live money counts, not just settled money. Kept in sync with
-            -- NGN_LIMIT_CONSUMING_STATUSES, which a test asserts against this
-            -- exact query - a drift between the two silently changes what a
-            -- limit means on Postgres versus JSON.
-            and status in (
-              'created','quote_created','quote_accepted','awaiting_deposit',
-              'awaiting_crypto_deposit','deposit_received','blockchain_confirmed',
-              'processing','settlement_processing','bank_processing','crypto_sent',
-              'completed','settled'
-            )
+            and status = any($3)
             and coalesce(updated_at, created_at) >= $2
           order by created_at asc`,
-        [userId, sinceIso]
+        [userId, sinceIso, [...NGN_LIMIT_CONSUMING_STATUSES]]
       );
       return result.rows.map(mapNgnTransfer);
     } finally { client.release(); }
