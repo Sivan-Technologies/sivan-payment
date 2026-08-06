@@ -506,5 +506,57 @@ console.log('\n── the consuming set is TYPED, so phantom statuses cannot hid
     'a fake fixture matching a fake predicate is how this went unnoticed');
 }
 
+
+console.log('\n── the visibility half of grandfathering ─────────────────────');
+
+/**
+ * Existing transfers are never blocked when a ceiling is enabled or tightened
+ * - money in settlement_processing has left the user's wallet. That is right,
+ * but applied silently a policy can fail to bind with nobody noticing. The
+ * operator must be able to SEE who is over at the moment they flip the switch.
+ */
+{
+  const { listUsersOverCeiling, setUserLimit } = await import('../src/kyc/service/user-limits.service.js');
+  const now2 = () => new Date().toISOString();
+
+  await db.mutate((d: any) => {
+    d.users = [{ id: 'u_over', email: 'over@t.test', country: 'NG', fullName: 'T U', createdAt: now2(), updatedAt: now2() }];
+    // Bank-verified, so the tier ceiling is NGN 100,000 rather than Level 0's
+    // zero - otherwise "within the ceiling" is vacuously false and the first
+    // assertion tests nothing.
+    d.ngnPayoutAccounts = [{ id: 'acct_over', userId: 'u_over', provider: 'mock', bankId: '1',
+      bankName: 'Access Bank', accountNumber: '1111111111', accountName: 'T U',
+      status: 'verified', createdAt: now2(), updatedAt: now2() }];
+    d.ngnTransfers = [{
+      id: 'ngnt_over', userId: 'u_over', direction: 'offramp',
+      sourceCurrency: 'usdc', destinationCurrency: 'ngn',
+      sourceAmount: '60', destinationAmount: '90000',
+      status: 'settlement_processing', createdAt: now2(), updatedAt: now2(),
+    }];
+    d.userLimitResets = [];
+    d.userLimitOverrides = [];
+    return 1;
+  });
+
+  const within = await listUsersOverCeiling({ flow: 'offramp', rail: 'ngn' });
+  check('a user within their ceiling is not reported',
+    within.users.every((u: any) => u.userId !== 'u_over'),
+    JSON.stringify(within));
+
+  // Tighten below the in-flight amount: the real grandfather case.
+  await setUserLimit({ userId: 'u_over', flow: 'offramp', rail: 'ngn', cumulativeNgn: 50_000,
+    reason: 'tightened under in-flight money', createdBy: 'admin' } as any);
+
+  const over = await listUsersOverCeiling({ flow: 'offramp', rail: 'ngn' });
+  const row = over.users.find((u: any) => u.userId === 'u_over');
+  check('once the ceiling drops below in-flight volume, the admin sees it', Boolean(row), JSON.stringify(over));
+  check('and by exactly how much', row?.overByNgn === 40_000, String(row?.overByNgn));
+
+  const still = (await db.read()).ngnTransfers.filter((t: any) => t.userId === 'u_over');
+  check('while the transfer itself is NOT blocked',
+    still.length === 1 && still[0].status === 'settlement_processing',
+    'money that has left the wallet must never be stranded by a config change');
+}
+
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

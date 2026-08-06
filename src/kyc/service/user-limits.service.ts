@@ -337,6 +337,65 @@ export async function resetUserWindow(input: z.infer<typeof resetUserWindowSchem
 }
 
 /**
+ * Users whose consumed volume already exceeds their ceiling on a flow.
+ *
+ * THE VISIBILITY HALF OF GRANDFATHERING.
+ *
+ * Enabling enforcement, or tightening a ceiling, never blocks a transfer that
+ * already exists: money in settlement_processing has left the user's wallet,
+ * and refusing it would strand funds with no automated release. That decision
+ * is right, but silently applied it means a policy can fail to bind without
+ * anyone noticing. An operator flipping a switch has to be able to see "these
+ * users are over the new ceiling, by this much" at that moment, rather than
+ * learning it from a support ticket weeks later.
+ *
+ * Reports; never acts. Nothing here changes a ceiling, a transfer or a reset.
+ */
+export async function listUsersOverCeiling(input: { flow: FlowType; rail: RailFamily }) {
+  // Reuses db.listUsers(), the same reader the bulk reset uses. A second
+  // "all users" query would be a second place to get the users table's
+  // primary key wrong - which that method's own comment records happening.
+  const userIds = (await db.listUsers()).map((u) => u.id);
+  const { getCumulativeNgnVolume, getVerificationState } = await import('./verification-state.js');
+  const { effectiveUsedNgn } = await import('./user-limit-usage.js');
+  const { listVerificationLimitOverrides } = await import('./verification-limits.service.js');
+  // limitFor, not defaultLimitFor: it consults the admin TIER overrides, so
+  // this report agrees with what the quote path actually enforces. Reading the
+  // compiled defaults would flag users the system is not in fact blocking.
+  const { limitFor } = await import('./verification-policy.js');
+
+  const tierOverrides = await listVerificationLimitOverrides();
+  const over: Array<{ userId: string; level: number; usedNgn: number; limitNgn: number; overByNgn: number }> = [];
+
+  for (const userId of userIds) {
+    try {
+      const rawUsed = await getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS);
+      const usedNgn = await effectiveUsedNgn(userId, input.flow, input.rail, rawUsed);
+      if (!(usedNgn > 0)) continue;
+
+      const state = await getVerificationState(userId);
+      const userOverride = await userLimitOverrideFor(userId, input.flow, input.rail);
+      const limitNgn = userOverride
+        ? userOverride.cumulativeNgn
+        : limitFor(input.flow, input.rail, state.level, tierOverrides);
+
+      // null / Infinity is "no ceiling" - the top tier can never be over.
+      if (limitNgn === null || !Number.isFinite(limitNgn)) continue;
+      if (usedNgn <= limitNgn) continue;
+
+      over.push({ userId, level: state.level, usedNgn, limitNgn, overByNgn: usedNgn - limitNgn });
+    } catch {
+      // One unreadable user must not hide every other user who is over.
+      continue;
+    }
+  }
+
+  // Worst first: an operator reads the top of this list and stops.
+  over.sort((a, b) => b.overByNgn - a.overByNgn);
+  return { flow: input.flow, rail: input.rail, count: over.length, users: over };
+}
+
+/**
  * Everything an admin needs to judge one user's limits, in one call.
  *
  * Returns tier default, per-user override and the EFFECTIVE figure together.

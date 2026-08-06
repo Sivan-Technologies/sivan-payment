@@ -54,6 +54,7 @@ import {
   resetUserWindowSchema,
   resetAllUserWindows,
   resetAllUserWindowsSchema,
+  listUsersOverCeiling,
   listUsersConsumingLimit,
 } from '../../kyc/service/user-limits.service.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
@@ -713,6 +714,23 @@ export async function ngnRoutes(app: FastifyInstance) {
       ...(actor ? { createdBy: actor } : {}),
     });
     return { data: await resetAllUserWindows(body) };
+  });
+
+  /**
+   * Who is currently over the ceiling, and by how much.
+   *
+   * The companion to grandfathering: existing transfers are never blocked when
+   * a limit is enabled or tightened, so without this an operator has no way to
+   * see that a policy is not yet binding on some users.
+   */
+  app.get('/api/admin/limits/over-ceiling', async (request) => {
+    const query = request.query as { flow?: string; rail?: string };
+    return {
+      data: await listUsersOverCeiling({
+        flow: (query.flow as any) ?? 'offramp',
+        rail: (query.rail as any) ?? 'ngn',
+      }),
+    };
   });
 
   app.get('/api/admin/ngn/quotes', async (request) => {
