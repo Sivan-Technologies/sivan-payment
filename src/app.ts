@@ -32,6 +32,40 @@ export async function buildApp() {
   }
 
   /**
+   * USER_JWT_SECRET is the master encryption key for every signed user token,
+   * two-factor session, recovery code, and identity-linking token across the
+   * entire payment service. A production deployment with the default throws at
+   * boot rather than signing production tokens with a published constant.
+   *
+   * The Zod schema already rejects an empty string (z.string().min(1)), but
+   * that does not prevent the schema from ACCEPTING the default when
+   * USER_JWT_SECRET is literally not set in the environment. This guard blocks
+   * the repo-committed fallback explicitly, even when Zod would parse it.
+   *
+   * The "dev-user-jwt-secret-change-me" literal appears in three places:
+   *   1. This check, which refuses it in production/staging.
+   *   2. env.ts, where it WAS the schema default until this commit removed it.
+   *   3. .env.example, where it documents what the variable looks like.
+   *
+   * Why the schema default was removed: an UNSET variable now fails the build
+   * with "Expected string, received undefined" — loud and early, no process
+   * boots. That is strictly safer than a default that appears to work but
+   * signs with a known constant. This assertion remains as defense-in-depth:
+   * even if an operator manually restores the default or copy-pastes it from
+   * the example into production, the service refuses to start.
+   */
+  if (
+    (env.APP_ENV === 'production' || env.APP_ENV === 'staging') &&
+    env.USER_JWT_SECRET === 'dev-user-jwt-secret-change-me'
+  ) {
+    throw new Error(
+      'USER_JWT_SECRET must be a strong random value in production, not the example default. ' +
+        'This key signs every user session, two-factor recovery code, and identity link.'
+    );
+  }
+
+
+  /**
    * A TEST-ONLY TRUST OVERRIDE MUST NOT BE ABLE TO REACH ANYWHERE REAL.
    *
    * NGN_TRUST_SANDBOX_BANK_RESOLUTION makes an unverifiable sandbox name match

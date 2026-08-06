@@ -30,8 +30,9 @@ const envSchema = z.object({
   RATE_LIMIT_AUTH_START_MAX: z.coerce.number().int().positive().default(5),
   RATE_LIMIT_AUTH_VERIFY_MAX: z.coerce.number().int().positive().default(20),
   ADMIN_API_KEY: z.string().optional().default(''),
-  USER_JWT_SECRET: z.string().default('dev-user-jwt-secret-change-me'),
+  USER_JWT_SECRET: z.string().min(1),
   USER_JWT_EXPIRES_MINUTES: z.coerce.number().int().positive().default(60),
+
   AUTH_OTP_EXPIRES_MINUTES: z.coerce.number().int().positive().default(10),
   /**
    * Minimum gap between two OTP emails to the SAME address.

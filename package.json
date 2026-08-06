@@ -194,5 +194,14 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "bigint-buffer": "npm:@trufflesuite/bigint-buffer@^1.1.10",
+    "@fastify/ajv-compiler": {
+      "fast-uri": "^3.1.5"
+    },
+    "fast-json-stringify": {
+      "fast-uri": "^4.1.2"
+    }
   }
 }
