@@ -52,6 +52,9 @@ import {
   clearUserLimitSchema,
   resetUserWindow,
   resetUserWindowSchema,
+  resetAllUserWindows,
+  resetAllUserWindowsSchema,
+  listUsersConsumingLimit,
 } from '../../kyc/service/user-limits.service.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
 import { PajNgnProvider } from '../provider/paj.provider.js';
@@ -683,6 +686,35 @@ export async function ngnRoutes(app: FastifyInstance) {
     });
     return { data: await resetUserWindow(body) };
   });
+  /**
+   * WHO IS CONSUMING HEADROOM RIGHT NOW.
+   *
+   * Read-only. Intended to be checked BEFORE switching enforcement on, so an
+   * admin sees "3 users are over the new ceiling" instead of learning it from
+   * a support ticket. In-flight transfers are never blocked retroactively -
+   * they complete - but they do count against the next quote, and this is
+   * where that becomes visible.
+   */
+  app.get('/api/admin/limits/consumption', async (request) => {
+    const query = request.query as { flow?: string; rail?: string };
+    const flow = (query.flow ?? 'offramp') as any;
+    const rail = (query.rail ?? 'ngn') as any;
+    return { data: await listUsersConsumingLimit(flow, rail) };
+  });
+
+  /**
+   * BULK WINDOW RESET. Defaults to a DRY RUN - see resetAllUserWindowsSchema
+   * for the three guards and why each one is there.
+   */
+  app.post('/api/admin/limits/reset-all', async (request) => {
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
+    const body = parseBody(resetAllUserWindowsSchema, {
+      ...(request.body as object),
+      ...(actor ? { createdBy: actor } : {}),
+    });
+    return { data: await resetAllUserWindows(body) };
+  });
+
   app.get('/api/admin/ngn/quotes', async (request) => {
     const query = request.query as { userId?: string };
     return { data: await listNgnQuotes({ userId: query.userId }) };

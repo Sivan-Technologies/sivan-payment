@@ -3,6 +3,7 @@ import path from 'node:path';
 import { env } from '../config/env.js';
 import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
+import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import { walletServesNetwork } from '../wallets/chain-family.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -228,6 +229,19 @@ export class JsonDatabase {
   async findUserByWhatsappNumber(whatsappNumber: string) {
     const data = await this.read();
     return data.users.find((user) => user.whatsappNumber === whatsappNumber);
+  }
+
+  /**
+   * Every user id and email, and nothing else.
+   *
+   * Narrow on purpose. listAdminUsersView() is paginated and joins customers,
+   * identity links and three counts per row - correct for an admin table,
+   * wasteful for "who has consumed limit headroom", which needs two columns
+   * for every user with no page size.
+   */
+  async listUsers(): Promise<Array<{ id: string; email?: string }>> {
+    const data = await this.read();
+    return (data.users ?? []).map((user) => ({ id: user.id, email: user.email }));
   }
 
   async listAdminUsersView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
@@ -556,7 +570,10 @@ export class JsonDatabase {
     const cutoff = Date.parse(sinceIso);
     return (data.ngnTransfers ?? []).filter((item: any) => {
       if (item.userId !== userId) return false;
-      if (item.status !== 'completed' && item.status !== 'settled') return false;
+      // Live money counts, not just settled money. See
+      // NGN_LIMIT_CONSUMING_STATUSES for why - an in-flight transfer used to
+      // count as zero, which let a user hold two orders over one ceiling.
+      if (!NGN_LIMIT_CONSUMING_STATUSES.has(String(item.status))) return false;
       const at = Date.parse(item.updatedAt ?? item.createdAt ?? '');
       return Number.isFinite(at) && at >= cutoff;
     });

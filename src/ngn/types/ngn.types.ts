@@ -26,6 +26,62 @@ export type NgnTransferStatus =
   | 'cancelled'
   | 'requires_review';
 
+/**
+ * STATUSES THAT CONSUME A USER'S LIMIT HEADROOM.
+ *
+ * THE BUG THIS FIXES. getCumulativeNgnVolume counted only
+ * `status in ('completed','settled')`, so money mid-flight counted as ZERO.
+ * Measured, not assumed:
+ *
+ *     in-flight NGN 90,000 + completed NGN 15,000
+ *     counted against the limit -> 15,000
+ *
+ * At the Level 2 ceiling of NGN 100,000 that is a real bypass. A user starts a
+ * 90,000 withdrawal; while it sits in settlement_processing they start another;
+ * the second quote sees 15,000 used and 85,000 free and is approved. 180,000 is
+ * now in flight against a 100,000 limit, and no single request broke a rule.
+ *
+ * WHY THE OLD BEHAVIOUR WAS DEFENSIBLE, AND STILL WRONG. Its comment said
+ * "counting pending ones would let a user reduce their own consumed volume by
+ * abandoning transactions". That risk is real - but the answer is not to
+ * ignore live money, it is to count live states and RELEASE terminal-failed
+ * ones. Abandonment refunds headroom precisely because the transfer lands in
+ * 'expired' or 'cancelled', both excluded below.
+ *
+ * INCLUDED: everything from the moment an order exists until it is terminal.
+ * The cancellable early states (created, quote_accepted, awaiting_deposit...)
+ * are included too. They hold no crypto yet, but they hold a live deposit
+ * address, and two open addresses are two ways to be over the ceiling.
+ *
+ * EXCLUDED: 'failed', 'expired', 'cancelled' - nothing moved, or it moved back.
+ * Also 'requires_review', deliberately: a flagged transfer is frozen pending a
+ * human, and holding a user's headroom hostage to a queue we control would
+ * punish them for our own latency.
+ */
+export const NGN_LIMIT_CONSUMING_STATUSES: ReadonlySet<string> = new Set([
+  'created',
+  'quote_created',
+  'quote_accepted',
+  'awaiting_deposit',
+  'awaiting_crypto_deposit',
+  'deposit_received',
+  'blockchain_confirmed',
+  'processing',
+  'settlement_processing',
+  'bank_processing',
+  'crypto_sent',
+  'completed',
+  'settled',
+]);
+
+/** Terminal states that release headroom. The complement of the set above. */
+export const NGN_LIMIT_RELEASING_STATUSES: ReadonlySet<string> = new Set([
+  'failed',
+  'expired',
+  'cancelled',
+  'requires_review',
+]);
+
 export interface NgnControlsRecord {
   id: 'global';
   onrampEnabled: boolean;
@@ -79,6 +135,28 @@ export interface NgnControlsRecord {
    * hub without a deploy.
    */
   externalFundingEnabled: boolean;
+  /**
+   * PER-FLOW ENFORCEMENT OF VERIFICATION-TIER CEILINGS.
+   *
+   * Deliberately three switches and NOT one master "limits off".
+   *
+   * A global kill switch is a single click that removes every ceiling for
+   * every user at once, and it is exactly the control that gets flipped during
+   * a 2am incident and never flipped back. This is the compliance boundary;
+   * it should not have a single point of total failure. Per-flow means an
+   * operator loosening on-ramp cannot silently uncap off-ramp, which is the
+   * riskier direction (crypto of unknown origin becoming naira).
+   *
+   * Default TRUE. A deployment that forgets to seed these enforces limits
+   * rather than skipping them - the safe direction for a control whose whole
+   * job is to refuse.
+   *
+   * Turning one OFF does not release money already moving: in-flight transfers
+   * always complete. See assertNgnLimit for the grandfathering rule.
+   */
+  limitEnforcementOfframp: boolean;
+  limitEnforcementOnramp: boolean;
+  limitEnforcementEscrow: boolean;
   maxTransactionNgn: string;
   dailyLimitNgn: string;
   highValueReviewThresholdNgn: string;

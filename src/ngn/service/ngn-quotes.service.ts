@@ -15,7 +15,7 @@ import { effectiveUsedNgn } from '../../kyc/service/user-limit-usage.js';
 import { VOLUME_WINDOW_DAYS } from '../../kyc/types/verification.types.js';
 import { applySivanMargin } from './ngn-margin.js';
 import { gasEstimateUsd, networkDisplayLabel } from '../network-costs.js';
-import type { NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
+import type { NgnControlsRecord, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
 
 
 export const createNgnQuoteSchema = z.object({
@@ -60,9 +60,46 @@ export { gasEstimateUsd, NETWORK_GAS_USD } from '../network-costs.js';
  * Naira never reaches Bridge, so Bridge must not gate naira. What gates it is
  * Sivan's own verification level against a cumulative volume ceiling.
  */
-async function requireSivanVerified(userId: string, input: NgnQuoteInput, providerName: NgnProviderName) {
+/**
+ * Is tier-limit enforcement switched on for this flow?
+ *
+ * Three independent switches rather than one master off - see
+ * NgnControlsRecord. Defaults to TRUE for an unknown flow and for a control
+ * row that predates the columns: a control whose job is to refuse must refuse
+ * when nobody has said otherwise.
+ */
+function limitEnforcementEnabled(controls: NgnControlsRecord, flow: 'onramp' | 'offramp'): boolean {
+  if (flow === 'onramp') return controls.limitEnforcementOnramp ?? true;
+  return controls.limitEnforcementOfframp ?? true;
+}
+
+async function requireSivanVerified(userId: string, input: NgnQuoteInput, providerName: NgnProviderName, controls: NgnControlsRecord) {
   const state = await getVerificationState(userId);
   const flow: 'onramp' | 'offramp' = input.direction === 'onramp' ? 'onramp' : 'offramp';
+
+  /**
+   * THE SWITCH IS READ HERE, AT THE ONE PLACE THAT REFUSES.
+   *
+   * Not in the route, and not in the UI. A limit that is skipped anywhere
+   * other than the single enforcement point is a limit with two definitions,
+   * and the softer one always wins. Everything above still runs - state,
+   * overrides, the naira-leg calculation - so /verification-summary keeps
+   * reporting the true consumed figure while enforcement is off. Turning it
+   * back on therefore takes effect immediately, with no gap in the numbers.
+   */
+  if (!limitEnforcementEnabled(controls, flow)) {
+    await createAuditLog({
+      actorType: 'system',
+      action: 'ngn.limit_enforcement_skipped',
+      resourceType: 'payments_ngn_quote',
+      resourceId: userId,
+      // Warning, not info: a quote that bypassed the compliance ceiling is
+      // the first thing anyone will look for afterwards.
+      severity: 'warning',
+      metadata: { flow, rail: 'ngn', userId, sourceAmount: input.sourceAmount, sourceCurrency: input.sourceCurrency },
+    }).catch(() => undefined);
+    return { allowed: true as const, reason: 'limit enforcement disabled for this flow' };
+  }
 
   /**
    * THE CEILINGS AN ADMIN HAS ACTUALLY SET, not just the compiled defaults.
@@ -130,7 +167,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   if (input.direction === 'onramp' && !controls.onrampEnabled) throw forbidden('NGN on-ramp is currently disabled.');
   if (input.direction === 'offramp' && !controls.offrampEnabled) throw forbidden('NGN off-ramp is currently disabled.');
   if (Number(input.sourceAmount) > Number(controls.maxTransactionNgn) && input.sourceCurrency === 'ngn') throw forbidden('NGN amount exceeds current transaction limit.');
-  await requireSivanVerified(input.userId, input, controls.activeProvider);
+  await requireSivanVerified(input.userId, input, controls.activeProvider, controls);
 
   // A Bridge customer is looked up only when the flow actually needs one. NGN
   // rails do not, so a user with no Bridge customer - which under this model is

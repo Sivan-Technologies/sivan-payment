@@ -90,6 +90,37 @@ export const resetUserWindowSchema = z.object({
   createdBy: z.string().trim().min(1).default('admin'),
 });
 
+/**
+ * BULK WINDOW RESET - every user with consumed volume on one flow.
+ *
+ * The per-user reset already existed. This is the "forgive everybody" button,
+ * for the case it is actually for: enforcement was misconfigured, or a
+ * provider outage burned volume against ceilings for transfers that never
+ * delivered, and reversing that one user at a time is not realistic.
+ *
+ * THREE GUARDS, BECAUSE THIS IS THE MOST DESTRUCTIVE ADMIN ACTION IN THE
+ * SYSTEM. It forgives money that has already moved, for every user at once,
+ * and it cannot be undone - there is no un-reset, only a new limit.
+ *
+ *   1. A typed confirmation phrase. Not a boolean: `{confirm:true}` is what a
+ *      mis-scoped script sends by accident, whereas RESET_ALL_LIMITS has to be
+ *      typed on purpose.
+ *   2. A mandatory reason, stored on every row produced.
+ *   3. dryRun defaults TRUE. The default call tells you who WOULD be affected
+ *      and changes nothing. Wiping every ceiling must be the deliberate second
+ *      call, never the accidental first.
+ */
+export const resetAllUserWindowsSchema = z.object({
+  flow: z.enum(FLOWS),
+  rail: z.enum(RAILS),
+  reason: z.string().trim().min(1).max(500),
+  /** Must be the literal phrase. See guard 1. */
+  confirm: z.literal('RESET_ALL_LIMITS'),
+  /** Defaults to a preview. See guard 3. */
+  dryRun: z.boolean().default(true),
+  createdBy: z.string().trim().min(1).default('admin'),
+});
+
 export type SetUserLimitInput = z.infer<typeof setUserLimitSchema>;
 
 /**
@@ -312,6 +343,95 @@ export async function resetUserWindow(input: z.infer<typeof resetUserWindowSchem
  * An operator cannot judge a ceiling without seeing what it was changed from -
  * the same reasoning as getVerificationLimitMatrix(), applied per user.
  */
+/**
+ * Who is currently consuming headroom on a flow, and how much.
+ *
+ * Two jobs. It is the dry-run body for the bulk reset, and it is what an admin
+ * should see BEFORE switching enforcement on - "3 users are over the new
+ * ceiling with NGN X in flight" rather than discovering it from a support
+ * ticket. Silent grandfathering is how a policy quietly fails to apply.
+ */
+export async function listUsersConsumingLimit(flow: FlowType, rail: RailFamily) {
+  const { effectiveUsedNgn } = await import('./user-limit-usage.js');
+  const users = await db.listUsers();
+
+  const rows = [];
+  for (const user of users) {
+    const usedNgn = await effectiveUsedNgn(user.id, flow, rail);
+    // Only users with something to forgive. A reset row for a user at zero
+    // records an event that did nothing and clutters the audit trail.
+    if (usedNgn > 0) rows.push({ userId: user.id, email: user.email, usedNgn });
+  }
+
+  return {
+    flow,
+    rail,
+    windowDays: VOLUME_WINDOW_DAYS,
+    userCount: rows.length,
+    totalNgn: rows.reduce((sum, row) => sum + row.usedNgn, 0),
+    users: rows.sort((a, b) => b.usedNgn - a.usedNgn),
+  };
+}
+
+/**
+ * Forgive the rolling window for EVERY user on one flow. See the schema for
+ * the three guards and why each exists.
+ */
+export async function resetAllUserWindows(input: z.infer<typeof resetAllUserWindowsSchema>) {
+  const preview = await listUsersConsumingLimit(input.flow, input.rail);
+
+  /**
+   * A dry run writes NOTHING - no reset rows, and no audit entry either. It is
+   * a read, and recording it as an admin action would bury the real resets
+   * among previews of resets.
+   */
+  if (input.dryRun) {
+    return { dryRun: true as const, ...preview, resetCount: 0 };
+  }
+
+  /**
+   * Sequential, not Promise.all. Each reset re-reads the user's window to
+   * record what it forgave, and firing hundreds of those concurrently at one
+   * Postgres pool is how a maintenance action becomes an outage. This is rare
+   * and manual; slow is the correct trade.
+   */
+  let resetCount = 0;
+  for (const row of preview.users) {
+    await resetUserWindow({
+      userId: row.userId,
+      flow: input.flow,
+      rail: input.rail,
+      reason: input.reason,
+      createdBy: input.createdBy,
+    }).then(() => { resetCount += 1; }).catch(() => undefined);
+  }
+
+  /**
+   * One audit entry for the BULK action, in addition to the per-user rows
+   * resetUserWindow already writes. Without it the log shows 200 individual
+   * resets and no record that they were one decision by one person.
+   */
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: input.createdBy,
+    action: 'admin.user_limit_window_reset_all',
+    resourceType: 'user_limit_reset',
+    resourceId: `${input.flow}:${input.rail}`,
+    severity: 'warning',
+    metadata: {
+      flow: input.flow,
+      rail: input.rail,
+      reason: input.reason,
+      userCount: preview.userCount,
+      resetCount,
+      totalForgivenNgn: preview.totalNgn,
+      windowDays: VOLUME_WINDOW_DAYS,
+    },
+  }).catch(() => undefined);
+
+  return { dryRun: false as const, ...preview, resetCount };
+}
+
 export async function getUserLimitDetail(userId: string) {
   await requireUser(userId);
 

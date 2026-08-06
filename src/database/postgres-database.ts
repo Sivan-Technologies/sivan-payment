@@ -460,6 +460,31 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  /**
+   * Every user id and email, and nothing else.
+   *
+   * Narrow on purpose. listAdminUsersView() is paginated and joins customers,
+   * identity links and three counts per row - correct for an admin table,
+   * wasteful for "who has consumed limit headroom", which needs two columns
+   * for every user with no page size.
+   */
+  async listUsers(): Promise<Array<{ id: string; email?: string }>> {
+    const client = await this.pool.connect();
+    try {
+      /**
+       * THE PRIMARY KEY IS `user_id`, NOT `id`.
+       *
+       * mapUser() reads `id: row.user_id`. Selecting `id` here threw
+       * "column id of relation users does not exist" on Postgres while every
+       * JSON-backed test passed - the exact class of bug where the adapters
+       * disagree and only one is covered. Caught by running it against the
+       * real Neon database rather than trusting the suite.
+       */
+      const result = await optionalQuery(client, 'select user_id, email from users order by created_at asc');
+      return result.rows.map((row: any) => ({ id: row.user_id, email: row.email ?? undefined }));
+    } finally { client.release(); }
+  }
+
   async listAdminUsersView({ limit = 100, offset = 0 }: { limit?: number; offset?: number } = {}) {
     const client = await this.pool.connect();
     try {
@@ -688,7 +713,16 @@ export class PostgresDatabase {
         client,
         `select * from payments_ngn_transfers
           where user_id = $1
-            and status in ('completed','settled')
+            -- Live money counts, not just settled money. Kept in sync with
+            -- NGN_LIMIT_CONSUMING_STATUSES, which a test asserts against this
+            -- exact query - a drift between the two silently changes what a
+            -- limit means on Postgres versus JSON.
+            and status in (
+              'created','quote_created','quote_accepted','awaiting_deposit',
+              'awaiting_crypto_deposit','deposit_received','blockchain_confirmed',
+              'processing','settlement_processing','bank_processing','crypto_sent',
+              'completed','settled'
+            )
             and coalesce(updated_at, created_at) >= $2
           order by created_at asc`,
         [userId, sinceIso]
@@ -2225,6 +2259,12 @@ function mapNgnControls(row: any): NgnControlsRecord {
     virtualAccountEnabled: Boolean(row.virtual_account_enabled),
     identityVerificationEnabled: Boolean(row.identity_verification_enabled),
     externalFundingEnabled: Boolean(row.external_funding_enabled),
+    // `?? true`, not Boolean(): these default ON, so a row predating the
+    // column (null) must ENFORCE. Boolean(null) is false, which would
+    // silently uncap every flow on an un-migrated row.
+    limitEnforcementOfframp: row.limit_enforcement_offramp ?? true,
+    limitEnforcementOnramp: row.limit_enforcement_onramp ?? true,
+    limitEnforcementEscrow: row.limit_enforcement_escrow ?? true,
     activeProvider: row.active_provider,
     backupProvider: str(row.backup_provider) as any,
     maxTransactionNgn: row.max_transaction_ngn,
@@ -2331,7 +2371,7 @@ function mapVerificationLimitOverride(row: any): VerificationLimitOverrideRecord
 }
 
 async function upsertNgnControls(client: pg.PoolClient, item: NgnControlsRecord) {
-  await client.query(`insert into payments_ngn_controls (id,onramp_enabled,offramp_enabled,mock_provider_enabled,bank_settlement_enabled,virtual_account_enabled,identity_verification_enabled,external_funding_enabled,active_provider,backup_provider,max_transaction_ngn,daily_limit_ngn,high_value_review_threshold_ngn,updated_by,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) on conflict (id) do update set onramp_enabled=excluded.onramp_enabled,offramp_enabled=excluded.offramp_enabled,mock_provider_enabled=excluded.mock_provider_enabled,bank_settlement_enabled=excluded.bank_settlement_enabled,virtual_account_enabled=excluded.virtual_account_enabled,identity_verification_enabled=excluded.identity_verification_enabled,external_funding_enabled=excluded.external_funding_enabled,active_provider=excluded.active_provider,backup_provider=excluded.backup_provider,max_transaction_ngn=excluded.max_transaction_ngn,daily_limit_ngn=excluded.daily_limit_ngn,high_value_review_threshold_ngn=excluded.high_value_review_threshold_ngn,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, [item.id, item.onrampEnabled, item.offrampEnabled, item.mockProviderEnabled, item.bankSettlementEnabled, item.virtualAccountEnabled, item.identityVerificationEnabled ?? false, item.externalFundingEnabled ?? false, item.activeProvider, item.backupProvider, item.maxTransactionNgn, item.dailyLimitNgn, item.highValueReviewThresholdNgn, item.updatedBy, item.updatedAt]);
+  await client.query(`insert into payments_ngn_controls (id,onramp_enabled,offramp_enabled,mock_provider_enabled,bank_settlement_enabled,virtual_account_enabled,identity_verification_enabled,external_funding_enabled,limit_enforcement_offramp,limit_enforcement_onramp,limit_enforcement_escrow,active_provider,backup_provider,max_transaction_ngn,daily_limit_ngn,high_value_review_threshold_ngn,updated_by,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) on conflict (id) do update set onramp_enabled=excluded.onramp_enabled,offramp_enabled=excluded.offramp_enabled,mock_provider_enabled=excluded.mock_provider_enabled,bank_settlement_enabled=excluded.bank_settlement_enabled,virtual_account_enabled=excluded.virtual_account_enabled,identity_verification_enabled=excluded.identity_verification_enabled,external_funding_enabled=excluded.external_funding_enabled,limit_enforcement_offramp=excluded.limit_enforcement_offramp,limit_enforcement_onramp=excluded.limit_enforcement_onramp,limit_enforcement_escrow=excluded.limit_enforcement_escrow,active_provider=excluded.active_provider,backup_provider=excluded.backup_provider,max_transaction_ngn=excluded.max_transaction_ngn,daily_limit_ngn=excluded.daily_limit_ngn,high_value_review_threshold_ngn=excluded.high_value_review_threshold_ngn,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, [item.id, item.onrampEnabled, item.offrampEnabled, item.mockProviderEnabled, item.bankSettlementEnabled, item.virtualAccountEnabled, item.identityVerificationEnabled ?? false, item.externalFundingEnabled ?? false, item.limitEnforcementOfframp ?? true, item.limitEnforcementOnramp ?? true, item.limitEnforcementEscrow ?? true, item.activeProvider, item.backupProvider, item.maxTransactionNgn, item.dailyLimitNgn, item.highValueReviewThresholdNgn, item.updatedBy, item.updatedAt]);
 }
 async function upsertNgnQuote(client: pg.PoolClient, item: NgnQuoteRecord) {
   await client.query(`insert into payments_ngn_quotes (id,user_id,customer_id,direction,provider,source_currency,destination_currency,source_amount,destination_amount,rate,fee_amount,status,provider_quote_id,expires_at,metadata,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) on conflict (id) do update set status=excluded.status,updated_at=excluded.updated_at,metadata=excluded.metadata`, [item.id,item.userId,item.customerId,item.direction,item.provider,item.sourceCurrency,item.destinationCurrency,item.sourceAmount,item.destinationAmount,item.rate,item.feeAmount,item.status,item.providerQuoteId,item.expiresAt,jsonParam(item.metadata),item.createdAt,item.updatedAt]);
