@@ -287,7 +287,16 @@ for (const [i, amount] of [50_000, 30_000].entries()) {
   await db.upsertNgnTransferRecord({
     id: `ngnt_test_${i}`,
     userId: USER,
-    status: 'settled',
+    /**
+     * 'completed', not 'settled'.
+     *
+     * 'settled' IS NOT A MEMBER of NgnTransferStatus - the system can never
+     * produce it. This fixture passed only because the query it exercised
+     * filtered on the same non-existent value: a fake status matching a fake
+     * predicate. Typing NGN_LIMIT_CONSUMING_STATUSES to the union exposed
+     * both halves at once.
+     */
+    status: 'completed',
     sourceCurrency: 'ngn',
     sourceAmount: amount,
     destinationCurrency: 'usdc',
@@ -330,7 +339,7 @@ check('a reset on one flow does not forgive another',
 await db.upsertNgnTransferRecord({
   id: 'ngnt_test_after',
   userId: USER,
-  status: 'settled',
+  status: 'completed',
   sourceCurrency: 'ngn',
   sourceAmount: 25_000,
   destinationCurrency: 'usdc',

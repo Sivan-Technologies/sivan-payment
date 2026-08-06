@@ -58,7 +58,7 @@ export type NgnTransferStatus =
  * human, and holding a user's headroom hostage to a queue we control would
  * punish them for our own latency.
  */
-export const NGN_LIMIT_CONSUMING_STATUSES: ReadonlySet<string> = new Set([
+export const NGN_LIMIT_CONSUMING_STATUSES: ReadonlySet<NgnTransferStatus> = new Set([
   'created',
   'quote_created',
   'quote_accepted',
@@ -71,7 +71,20 @@ export const NGN_LIMIT_CONSUMING_STATUSES: ReadonlySet<string> = new Set([
   'bank_processing',
   'crypto_sent',
   'completed',
-  'settled',
+  /**
+   * 'settled' WAS HERE AND HAS BEEN REMOVED - it is not a real status.
+   *
+   * Typing this set to NgnTransferStatus (rather than string) made the
+   * compiler reject it immediately. The original query read
+   * `status in ('completed','settled')`, so that half of the predicate matched
+   * nothing, ever - a value the system cannot produce. An untyped status list
+   * in a hand-written query is exactly how a security predicate ends up
+   * testing for something impossible while still running cleanly.
+   *
+   * It also hid a second bug: scripts/test-user-limits.ts seeded fixtures with
+   * status 'settled', so a fake status matched a fake predicate and the pair
+   * looked correct.
+   */
 ]);
 
 /** Terminal states that release headroom. The complement of the set above. */

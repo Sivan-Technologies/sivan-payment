@@ -44,11 +44,88 @@ export function buildTimeline(transfer: NgnTransferRecord): NgnTimelineStep[] {
   return keys.map(([key, label, description], index) => ({ key, label, description, status: transfer.status === 'failed' || transfer.status === 'requires_review' ? (index <= currentIndex ? 'failed' : 'pending') : index < currentIndex ? 'completed' : index === currentIndex ? 'current' : 'pending', at: index <= currentIndex ? transfer.updatedAt : undefined } as NgnTimelineStep));
 }
 
+/**
+ * The limit check, repeated against CURRENT usage at acceptance time.
+ *
+ * Deliberately re-reads rather than trusting anything computed at quote time:
+ * the whole point is that the world changed between the two calls.
+ *
+ * GRANDFATHERING IS EXPLICIT HERE. This runs BEFORE the transfer exists, so it
+ * can only ever refuse a NEW commitment. Nothing in this function can touch a
+ * transfer already in flight - which is the guarantee that turning a limit on
+ * cannot strand money that is already moving. A transfer past
+ * awaiting_crypto_deposit has had the user's USDC leave their wallet; blocking
+ * it would mean holding settled funds with no naira paid and no automated way
+ * to release them.
+ */
+async function assertQuoteStillWithinLimit(quote: { userId: string; direction: string; sourceCurrency: string; destinationCurrency: string; sourceAmount: string; destinationAmount: string }) {
+  const { getNgnControls } = await import('./ngn-controls.service.js');
+  const controls = await getNgnControls();
+  const flow: 'onramp' | 'offramp' = quote.direction === 'onramp' ? 'onramp' : 'offramp';
+
+  const enforced =
+    flow === 'onramp' ? controls.limitEnforcementOnramp !== false : controls.limitEnforcementOfframp !== false;
+  if (!enforced) return;
+
+  // The naira leg is what an NGN ceiling measures - source for an on-ramp,
+  // destination for an off-ramp. Reading the wrong one is the bug that let an
+  // NGN 80,000 off-ramp pass a 50,000 cap, so it is spelled out rather than
+  // assumed.
+  const amountNgn = quote.sourceCurrency === 'ngn'
+    ? Number(quote.sourceAmount)
+    : Number(quote.destinationAmount);
+  if (!Number.isFinite(amountNgn) || amountNgn <= 0) return;
+
+  const [{ getVerificationState }, { decide }, { listVerificationLimitOverrides }, { userLimitOverrideFor }, { effectiveUsedNgn }] =
+    await Promise.all([
+      import('../../kyc/service/verification-state.js'),
+      import('../../kyc/service/verification-policy.js'),
+      import('../../kyc/service/verification-limits.service.js'),
+      import('../../kyc/service/user-limits.service.js'),
+      import('../../kyc/service/user-limit-usage.js'),
+    ]);
+
+  const [state, tierOverrides, userOverride, priorVolumeNgn] = await Promise.all([
+    getVerificationState(quote.userId),
+    listVerificationLimitOverrides(),
+    userLimitOverrideFor(quote.userId, flow, 'ngn'),
+    effectiveUsedNgn(quote.userId, flow, 'ngn'),
+  ]);
+
+  const decision = decide(
+    state,
+    { flow, rail: 'ngn', amountNgn, priorVolumeNgn },
+    tierOverrides,
+    userOverride
+  );
+
+  if (!decision.allowed) {
+    const { forbidden } = await import('../../shared/errors.js');
+    throw forbidden(decision.reason);
+  }
+}
+
 export async function acceptNgnQuote(input: z.infer<typeof acceptNgnQuoteSchema>) {
   const quote = await getNgnQuote(input.quoteId);
   if (quote.userId !== input.userId) throw notFound('NGN quote');
   if (quote.status !== 'quote_created') throw badRequest('NGN quote is not available to accept.');
   if (quote.expiresAt <= nowIso()) throw badRequest('NGN quote has expired. Request a new quote.');
+
+  /**
+   * RE-CHECK THE LIMIT AT ACCEPT, NOT ONLY AT QUOTE.
+   *
+   * The ceiling was enforced when the quote was created and never again,
+   * which leaves a real gap even with single-use, expiring quotes:
+   *
+   *   1. quote A for NGN 60,000 -> 0 used, allowed
+   *   2. quote B for NGN 60,000 -> STILL 0 used, allowed (nothing accepted yet)
+   *   3. accept A, then accept B -> 120,000 against a 100,000 cap
+   *
+   * No request broke a rule when it was made. Checking again here closes it:
+   * by step 3, quote A has become a transfer in a limit-consuming status and
+   * B's re-check sees it. Verified over live HTTP against Postgres.
+   */
+  await assertQuoteStillWithinLimit(quote);
   /**
    * AN ON-RAMP NEEDS SOMEWHERE TO SEND THE CRYPTO.
    *

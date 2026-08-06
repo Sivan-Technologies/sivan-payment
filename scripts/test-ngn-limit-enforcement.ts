@@ -108,10 +108,10 @@ console.log('\n── the two status sets are exhaustive and disjoint ───�
 const overlap = [...NGN_LIMIT_CONSUMING_STATUSES].filter((s) => NGN_LIMIT_RELEASING_STATUSES.has(s));
 check('no status both consumes and releases headroom', overlap.length === 0, overlap.join(','));
 check('in-flight states consume',
-  ['processing', 'settlement_processing', 'bank_processing', 'deposit_received'].every((s) => NGN_LIMIT_CONSUMING_STATUSES.has(s)),
+  ['processing', 'settlement_processing', 'bank_processing', 'deposit_received'].every((s) => NGN_LIMIT_CONSUMING_STATUSES.has(s as any)),
   'this is the bypass being closed');
 check('early cancellable states consume too',
-  ['created', 'quote_accepted', 'awaiting_crypto_deposit'].every((s) => NGN_LIMIT_CONSUMING_STATUSES.has(s)),
+  ['created', 'quote_accepted', 'awaiting_crypto_deposit'].every((s) => NGN_LIMIT_CONSUMING_STATUSES.has(s as any)),
   'two open deposit addresses are two ways over one ceiling');
 check('terminal-failed states release',
   ['failed', 'expired', 'cancelled'].every((s) => NGN_LIMIT_RELEASING_STATUSES.has(s)),
@@ -383,5 +383,128 @@ const leaked = [...NGN_LIMIT_RELEASING_STATUSES].filter((s) => pgQuery.includes(
 check('and no releasing status leaked into it', leaked.length === 0, `wrongly in SQL: ${leaked.join(', ')}`);
 
 await app.close();
+console.log('\n── the double-spend race, closed at ACCEPT ───────────────────');
+
+/**
+ * NOT COVERED BEFORE THIS. The ceiling was enforced when a quote was created
+ * and never again, so two quotes taken while usage was zero were BOTH
+ * legitimately allowed - and both could then be accepted.
+ *
+ *   quote A 40 USDC (~59,400) -> allowed, 0 used
+ *   quote B 40 USDC (~59,400) -> allowed, STILL 0 used
+ *   accept A, accept B        -> 118,800 against a 100,000 cap
+ *
+ * Verified over live HTTP against Neon Postgres as well as here.
+ */
+{
+  const { createNgnQuote } = await import('../src/ngn/service/ngn-quotes.service.js');
+  const { acceptNgnQuote } = await import('../src/ngn/service/ngn-transfers.service.js');
+
+  const raceUser = 'usr_race_limits';
+  await seedUser(raceUser);
+
+  const mkQuote = (usdc: number) => createNgnQuote({
+    userId: raceUser, direction: 'offramp', sourceCurrency: 'usdc',
+    destinationCurrency: 'ngn', sourceAmount: String(usdc), network: 'solana',
+  } as any);
+
+  const tryIt = async (fn: () => Promise<unknown>) => {
+    try { await fn(); return null; } catch (e) { return (e as Error).message; }
+  };
+
+  const qa: any = await mkQuote(40);
+  const qb: any = await mkQuote(40);
+  check('two quotes, each under the cap, are both issued',
+    Boolean(qa?.id && qb?.id),
+    'each is legitimately allowed at the moment it is created');
+
+  const a = await tryIt(() => acceptNgnQuote({ userId: raceUser, quoteId: qa.id }));
+  check('the first accept succeeds', a === null, String(a));
+
+  const b = await tryIt(() => acceptNgnQuote({ userId: raceUser, quoteId: qb.id }));
+  check('the SECOND accept is REFUSED - the race is closed',
+    Boolean(b),
+    'quote-time checks alone let both through; this is why accept re-checks');
+  check('and the refusal names the limit, not something else',
+    /limit|left of your/i.test(String(b)), String(b));
+}
+
+console.log('\n── bulk reset is restricted more tightly than per-user ───────');
+
+{
+  const appSrc = fs.readFileSync('src/app.ts', 'utf8');
+  /**
+   * Forgiving one user's window is routine ops work; forgiving EVERY user's is
+   * a policy act. finance and operator can do the former and must not be able
+   * to do the latter, and the narrow rule has to come FIRST or the broad
+   * /api/admin/limits rule matches and wins.
+   */
+  const resetAllIdx = appSrc.indexOf("'/api/admin/limits/reset-all'");
+  const generalIdx = appSrc.indexOf("url.startsWith('/api/admin/limits')");
+  check('reset-all has its own RBAC rule',
+    resetAllIdx > -1,
+    'otherwise it inherits the broader limits roles');
+  check('and it is ordered BEFORE the general limits rule',
+    resetAllIdx > -1 && resetAllIdx < generalIdx,
+    'first match wins; ordered after, the narrow rule is dead code');
+  // Sliced to the END OF THE LINE, not a fixed character count: 200 chars ran
+  // past this rule into the NEXT one, which legitimately contains 'finance',
+  // so the assertion failed against correct code.
+  const rule = appSrc.slice(resetAllIdx, appSrc.indexOf('\n', resetAllIdx));
+  check('finance cannot clear the whole base',
+    !/finance/.test(rule),
+    'finance may unblock one settlement, not forgive everybody');
+}
+
+console.log('\n── the consuming set is TYPED, so phantom statuses cannot hide ──');
+
+/**
+ * MUTATION-TESTED AND FOUND DECORATIVE FIRST TIME.
+ *
+ * Re-adding 'settled' to the consuming set broke nothing: every suite stayed
+ * green. That is exactly how the original bug survived - the query filtered on
+ * 'settled', the fixtures were seeded with 'settled', and neither is a member
+ * of NgnTransferStatus, so a fake status matched a fake predicate.
+ *
+ * Asserting the runtime set is not enough, because a phantom entry is inert at
+ * runtime. The protection is that the set is TYPED to the union, so the
+ * compiler rejects the entry - and this checks the declaration itself.
+ */
+{
+  const typesSrc = fs.readFileSync('src/ngn/types/ngn.types.ts', 'utf8');
+  check('the consuming set is typed to NgnTransferStatus, not string',
+    /NGN_LIMIT_CONSUMING_STATUSES:\s*ReadonlySet<NgnTransferStatus>/.test(typesSrc),
+    'ReadonlySet<string> lets a status that cannot exist sit in the predicate forever');
+
+  /**
+   * COMMENTS STRIPPED FIRST.
+   *
+   * Without this the slice picked up the word 'settled' out of the comment
+   * that EXPLAINS why 'settled' was removed, so the union appeared to declare
+   * it and the phantom check passed against a deliberately broken build.
+   * Caught by mutation-testing this very assertion: re-adding the phantom
+   * status left the suite green.
+   */
+  const unionSrc = typesSrc
+    .slice(typesSrc.indexOf('export type NgnTransferStatus'), typesSrc.indexOf('export interface'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const declared = new Set(
+    (unionSrc.match(/'([a-z_]+)'/g) ?? []).map((m) => m.replaceAll("'", ''))
+  );
+  check('the union parse itself is sane',
+    declared.has('completed') && declared.has('failed') && !declared.has('settled'),
+    `parsed: ${[...declared].sort().join(',')}`);
+  const phantom = [...NGN_LIMIT_CONSUMING_STATUSES].filter((st) => !declared.has(String(st)));
+  check('no status in the consuming set is absent from the union',
+    phantom.length === 0,
+    `phantom: ${phantom.join(',')} - a value the system can never produce`);
+
+  const fixtureSrc = fs.readFileSync('scripts/test-user-limits.ts', 'utf8');
+  check("no fixture seeds the non-existent 'settled' status",
+    !/status: 'settled'/.test(fixtureSrc),
+    'a fake fixture matching a fake predicate is how this went unnoticed');
+}
+
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

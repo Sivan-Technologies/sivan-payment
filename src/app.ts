@@ -513,6 +513,16 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
   if (url.startsWith('/api/admin/risk')) return ['compliance', 'ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/supplier')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);
   if (url.startsWith('/api/admin/fees')) return ['finance'].includes(role);
+  /**
+   * BULK reset is narrower than every other limits control.
+   *
+   * Forgiving one user's window is routine operations work. Forgiving EVERY
+   * user's window at once is a policy act with a compliance consequence, so
+   * `finance` - who may legitimately unblock a single stuck settlement - and
+   * `operator` are not given the power to clear the entire base in one call.
+   * Ordered ABOVE the general /api/admin/limits rule because first match wins.
+   */
+  if (url.startsWith('/api/admin/limits/reset-all')) return ['ops', 'compliance'].includes(role);
   if (url.startsWith('/api/admin/limits')) return ['ops', 'operator', 'finance'].includes(role);
   if (url.startsWith('/api/admin/settings/platform') || url.startsWith('/api/admin/offramp/controls') || url.startsWith('/api/admin/system/status') || url.startsWith('/api/admin/system/incidents')) return ['ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/settings/team') || url.startsWith('/api/admin/settings/api-keys')) return ['ops', 'operator'].includes(role);

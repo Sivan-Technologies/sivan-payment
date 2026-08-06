@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
 import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord } from './types.js';
-import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
+import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnTransferStatus, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
 import { walletServesNetwork } from '../wallets/chain-family.js';
@@ -573,7 +573,7 @@ export class JsonDatabase {
       // Live money counts, not just settled money. See
       // NGN_LIMIT_CONSUMING_STATUSES for why - an in-flight transfer used to
       // count as zero, which let a user hold two orders over one ceiling.
-      if (!NGN_LIMIT_CONSUMING_STATUSES.has(String(item.status))) return false;
+      if (!NGN_LIMIT_CONSUMING_STATUSES.has(item.status as NgnTransferStatus)) return false;
       const at = Date.parse(item.updatedAt ?? item.createdAt ?? '');
       return Number.isFinite(at) && at >= cutoff;
     });
