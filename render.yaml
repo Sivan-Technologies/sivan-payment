@@ -221,6 +221,28 @@ services:
       - key: SIVAN_AI_FALLBACK_ENABLED
         value: "true"
 
+      - key: KYC_LEVEL_PROVIDER
+        value: mock
+      - key: MONNIFY_BASE_URL
+        value: https://api.monnify.com
+      - key: MONNIFY_API_KEY
+        sync: false
+      - key: MONNIFY_SECRET_KEY
+        sync: false
+      - key: MONNIFY_CONTRACT_CODE
+        sync: false
+
+      - key: KYC_LEVEL_PROVIDER
+        value: mock
+      - key: MONNIFY_BASE_URL
+        value: https://api.monnify.com
+      - key: MONNIFY_API_KEY
+        sync: false
+      - key: MONNIFY_SECRET_KEY
+        sync: false
+      - key: MONNIFY_CONTRACT_CODE
+        sync: false
+
       # sync:false, not a literal. Same trap as WALLET_PROVIDER: a hardcoded
       # value is re-applied on every blueprint sync and silently overwrites
       # the dashboard, so switching paj -> breet would revert on the next

@@ -2459,7 +2459,7 @@ async function upsertSupportTicket(client: pg.PoolClient, item: SupportTicketRec
 async function upsertSupportTicketMessage(client: pg.PoolClient, item: SupportTicketMessageRecord) {
   await client.query(
     `insert into payments_support_ticket_messages (id, ticket_id, sender_type, sender_id, message, attachments, internal_note, message_type, note_type, title, status_after, visible_to_customer, metadata, created_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (id) do update set
        sender_type=excluded.sender_type,
        sender_id=excluded.sender_id,
@@ -2747,7 +2747,7 @@ function mapIdentityPairingToken(row: any): IdentityPairingTokenRecord {
 async function upsertCustomerIdentityLink(client: pg.PoolClient, item: CustomerIdentityLinkRecord) {
   await client.query(
     `insert into customer_identity_links (id, payment_user_id, escrow_user_id, email, channel, whatsapp_number, telegram_user_id, telegram_username, status, linked_at, unlinked_at, metadata, created_at, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (id) do update set
        payment_user_id=excluded.payment_user_id,
        escrow_user_id=excluded.escrow_user_id,
@@ -3151,10 +3151,35 @@ function mapAuthChallenge(row: any): AuthChallengeRecord {
   };
 }
 
+/**
+ * NOBODY COULD SIGN UP OR LOG IN ON POSTGRES.
+ *
+ * Reported as a 500 from POST /api/auth/email/start. Reproduced against the
+ * live test database, which named it exactly:
+ *
+ *     error: INSERT has more expressions than target columns
+ *       at upsertAuthChallenge (postgres-database.ts:3155)
+ *       at startEmailAuth (auth.service.ts:101)
+ *
+ * The column list has FOURTEEN names and the parameter array has FOURTEEN
+ * values, but the values clause counted to $15. Postgres rejects the statement
+ * before touching a row, so every OTP - signup and signin alike - failed. The
+ * whole product was unreachable to a new user on the Postgres driver.
+ *
+ * WHY NO TEST CAUGHT IT. Every auth suite runs DATABASE_PROVIDER=json, and the
+ * JSON adapter pushes an object with no SQL involved. The two drivers are only
+ * required to agree by convention, so a malformed query here is invisible until
+ * something runs it against a real database - which, before the Neon
+ * migration, nothing in CI did.
+ *
+ * The count is now asserted directly by test:auth-signup-signin rather than
+ * left to review: placeholders, column names and bound parameters must all be
+ * the same number, checked by parsing this statement.
+ */
 async function upsertAuthChallenge(client: pg.PoolClient, item: AuthChallengeRecord) {
   await client.query(
     `insert into payments_auth_challenges (id, email, code_hash, intent, full_name, expires_at, consumed_at, created_at, legal_terms_version, legal_privacy_version, legal_risk_disclosure_version, legal_accepted_at, legal_acceptance_ip_address, legal_acceptance_user_agent)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      on conflict (id) do update set
        code_hash=excluded.code_hash, intent=excluded.intent, full_name=excluded.full_name, expires_at=excluded.expires_at, consumed_at=excluded.consumed_at, legal_terms_version=excluded.legal_terms_version, legal_privacy_version=excluded.legal_privacy_version, legal_risk_disclosure_version=excluded.legal_risk_disclosure_version, legal_accepted_at=excluded.legal_accepted_at, legal_acceptance_ip_address=excluded.legal_acceptance_ip_address, legal_acceptance_user_agent=excluded.legal_acceptance_user_agent`,
     [item.id, item.email, item.codeHash, item.intent, item.fullName, item.expiresAt, item.consumedAt, item.createdAt, item.legalTermsVersion, item.legalPrivacyVersion, item.legalRiskDisclosureVersion, item.legalAcceptedAt, item.legalAcceptanceIpAddress, item.legalAcceptanceUserAgent]

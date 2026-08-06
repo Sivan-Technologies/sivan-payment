@@ -2357,7 +2357,7 @@ export default function App() {
           </section>
         )}
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onSubmit={handleKyc} onStartVerification={() => openVerification()} onStartBridgeVerification={openBridgeVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} userId={user?.id} api={api} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onSubmit={handleKyc} onStartVerification={() => openVerification()} onStartBridgeVerification={openBridgeVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 

@@ -2604,3 +2604,6 @@ button.activity-row:focus-visible{outline:2px solid rgba(116,221,190,.55);outlin
 .receive-subchain-btn{display:inline-flex;align-items:center;gap:7px}
 .receive-chain-pill{display:inline-flex;align-items:center;gap:6px}
 .receive-chain-pill svg{flex:none}
+
+/* NGN Level 2 BVN verification form */
+.ngn-level2-card{display:grid;gap:13px;margin-top:12px;padding:16px;border:1px solid rgba(116,221,190,.22);border-radius:18px;background:linear-gradient(180deg,rgba(116,221,190,.075),rgba(8,13,20,.95));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}.ngn-level2-card h3{margin:2px 0 5px;color:#eef3f7}.ngn-level2-card .muted{margin:0;line-height:1.5}.ngn-level2-card input{min-height:44px;border-radius:13px}.ngn-level2-card .success-note span{display:block;margin-top:4px;color:#a9b8c7}@media(max-width:760px){.ngn-level2-card .split{grid-template-columns:1fr}.ngn-level2-card .primary-btn{width:100%}}

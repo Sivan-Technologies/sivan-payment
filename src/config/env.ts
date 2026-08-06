@@ -315,7 +315,12 @@ const envSchema = z.object({
   PAJ_RAMP_MERCHANT_TOKEN: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_BANK_ID: z.string().optional().default(''),
-  PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default('')
+  PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
+  KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify']).default('mock'),
+  MONNIFY_BASE_URL: z.string().url().optional().default('https://api.monnify.com'),
+  MONNIFY_API_KEY: z.string().optional().default(''),
+  MONNIFY_SECRET_KEY: z.string().optional().default(''),
+  MONNIFY_CONTRACT_CODE: z.string().optional().default('')
 });
 
 export const env = envSchema.parse(process.env);

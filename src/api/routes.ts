@@ -23,6 +23,7 @@ import { aceSupportRoutes } from '../ace/api/ace-support.routes.js';
 import { ngnRoutes } from '../ngn/api/ngn.routes.js';
 import { balanceRoutes } from '../balances/balance.routes.js';
 import { supplierRoutes } from '../suppliers/supplier.routes.js';
+import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -89,6 +90,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await ngnRoutes(app);
   await balanceRoutes(app);
   await supplierRoutes(app);
+  await kycLevelRoutes(app);
   await supportRoutes(app);
   await aceSupportRoutes(app);
   await adminRoutes(app);

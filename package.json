@@ -63,6 +63,7 @@
     "test:ngn-timeline-advances": "tsx scripts/test-ngn-timeline-advances.ts",
     "test:network-mode-balance": "tsx scripts/test-network-mode-balance.ts",
     "test:balance-ledger-query": "tsx scripts/test-balance-ledger-query.ts",
+    "test:auth-signup-signin": "tsx scripts/test-auth-signup-signin.ts",
     "test:ngn-limit-enforcement": "tsx scripts/test-ngn-limit-enforcement.ts",
     "test:external-funding-toggle": "tsx scripts/test-external-funding-toggle.ts",
     "test:withdraw-vocabulary": "tsx scripts/test-withdraw-vocabulary.ts",
@@ -169,7 +170,8 @@
     "test:wallet-quorum-misconfiguration": "tsx scripts/test-wallet-quorum-misconfiguration.ts",
     "test:transaction-detail-panel": "tsx scripts/test-transaction-detail-panel.ts",
     "diagnose:privy": "tsx scripts/diagnose-privy.ts",
-    "test:gas-limits": "tsx scripts/test-gas-limits.ts"
+    "test:gas-limits": "tsx scripts/test-gas-limits.ts",
+    "test:ngn-kyc-levels": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-kyc-levels.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=kyc-admin-key KYC_LEVEL_PROVIDER=mock tsx scripts/test-ngn-kyc-levels.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

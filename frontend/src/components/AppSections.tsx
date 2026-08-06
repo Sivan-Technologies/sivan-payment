@@ -640,7 +640,7 @@ function VerificationLimitCard({
   );
 }
 
-export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, summaryLoaded, onSubmit, onStartVerification, onStartBridgeVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; summaryLoaded: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; /** Opens the modal on the DOCUMENT path explicitly, whatever the country default is. */ onStartBridgeVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
+export function VerificationPage({ hasUser, userId, api, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, summaryLoaded, onSubmit, onStartVerification, onStartBridgeVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; userId?: string; api: <T>(path: string, options?: RequestInit) => Promise<T>; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; summaryLoaded: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; /** Opens the modal on the DOCUMENT path explicitly, whatever the country default is. */ onStartBridgeVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
   const emailDone = hasUser;
   // COUNTRY DECIDES THE PATH, so the page cannot describe one flow.
   //
@@ -666,6 +666,33 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
 
   const levelLabel = summary?.levelLabel ?? (identityDone ? 'Level 1: Verified' : 'Level 0: Starter');
   const ngnOfframp = summary?.allowances.find((item) => item.flow === 'offramp' && item.rail === 'ngn');
+  const [showNgnLevel2Form, setShowNgnLevel2Form] = useState(false);
+  const [ngnLevel2Busy, setNgnLevel2Busy] = useState(false);
+  const [ngnLevel2Result, setNgnLevel2Result] = useState<null | { status: string; message: string; bvnLast4?: string }>(null);
+  const [ngnLevel2Error, setNgnLevel2Error] = useState('');
+
+  async function submitNgnLevel2(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!userId) return setNgnLevel2Error('Sign in before starting Level 2 verification.');
+    const form = event.currentTarget;
+    const data = getForm(form);
+    setNgnLevel2Busy(true);
+    setNgnLevel2Error('');
+    setNgnLevel2Result(null);
+    try {
+      const result = await api<{ status: string; message: string; bvnLast4?: string }>(`/api/users/${userId}/kyc/ngn-bvn/verify`, {
+        method: 'POST',
+        body: JSON.stringify({ bvn: data.bvn, firstName: data.firstName, lastName: data.lastName, dateOfBirth: data.dateOfBirth, mobileNo: data.mobileNo })
+      });
+      setNgnLevel2Result(result);
+      form.reset();
+    } catch (error) {
+      setNgnLevel2Error(error instanceof Error ? error.message : 'Could not complete Level 2 verification.');
+    } finally {
+      setNgnLevel2Busy(false);
+    }
+  }
+
 
   /**
    * SAY NOTHING UNTIL THERE IS SOMETHING TRUE TO SAY.
@@ -832,9 +859,12 @@ export function VerificationPage({ hasUser, customer, customerTypes, kycFailed, 
                 </div>
                 {summary.nextStep.action === 'contact_support'
                   ? <button className="primary-btn small" onClick={onSupport}>Contact support</button>
-                  : <button className="primary-btn small" onClick={onStartVerification} disabled={!summary.nextStep.available || !canSubmitKyc}>{summary.nextStep.available ? 'Continue' : 'Coming soon'}</button>}
+                  : summary.nextStep.action === 'nin_bvn'
+                    ? <button className="primary-btn small" onClick={() => setShowNgnLevel2Form((open) => !open)}>{showNgnLevel2Form ? 'Close' : 'Start Level 2'}</button>
+                    : <button className="primary-btn small" onClick={onStartVerification} disabled={!summary.nextStep.available || !canSubmitKyc}>{summary.nextStep.available ? 'Continue' : 'Coming soon'}</button>}
               </div>
             )}
+            {showNgnLevel2Form && <NgnLevel2VerificationForm busy={ngnLevel2Busy} result={ngnLevel2Result} error={ngnLevel2Error} onSubmit={submitNgnLevel2} />}
           </div>
           {/* A NIGERIAN MAY WANT THE DOCUMENT PATH TOO.
  
@@ -1076,6 +1106,22 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
   return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map((link) => <a key={link.label} href={link.href} target="_blank" rel="noreferrer">{link.label} ↗</a>)}</div></article>;
 }
 
+
+
+
+
+function NgnLevel2VerificationForm({ busy, result, error, onSubmit }: { busy: boolean; result: null | { status: string; message: string; bvnLast4?: string }; error: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <form className="ngn-level2-card" onSubmit={onSubmit}>
+    <div><p className="eyebrow">Level 2 · Nigerian identity</p><h3>Verify your BVN identity</h3><p className="muted">This checks your BVN identity details. We never show your full BVN after submission and this does not run automatically.</p></div>
+    <div className="split"><label>First name<input name="firstName" placeholder="John" autoComplete="given-name" required /></label><label>Last name<input name="lastName" placeholder="Doe" autoComplete="family-name" required /></label></div>
+    <div className="split"><label>Date of birth<input name="dateOfBirth" placeholder="dd-MM-yyyy" inputMode="numeric" required /></label><label>Mobile number<input name="mobileNo" placeholder="08012345678" inputMode="tel" autoComplete="tel" required /></label></div>
+    <label>BVN<input name="bvn" placeholder="11-digit BVN" inputMode="numeric" autoComplete="off" required minLength={11} maxLength={11} /></label>
+    <div className="warning-box compact">BVN is sensitive. Sivan uses it only for this Level 2 check. It is not sent to Sivan Assistant and should not be shared in support chat.</div>
+    {result && <div className={result.status === 'matched' ? 'success-note' : 'verification-note'}><strong>{result.message}</strong>{result.bvnLast4 && <span> BVN ending {result.bvnLast4}</span>}</div>}
+    {error && <div className="form-error">{error}</div>}
+    <button className="primary-btn" disabled={busy}>{busy ? 'Checking…' : 'Submit Level 2 check'}</button>
+  </form>;
+}
 
 
 

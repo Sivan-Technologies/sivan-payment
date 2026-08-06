@@ -499,6 +499,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/users\/[^/]+\/supplier-payments/,
     /^\/api\/users\/[^/]+\/virtual-accounts/,
     /^\/api\/users\/[^/]+\/legal-acceptances/,
+    /^\/api\/users\/[^/]+\/kyc\/ngn/,
     /^\/api\/users\/[^/]+\/external-accounts/,
     /^\/api\/users\/[^/]+\/withdrawals/,
     /^\/api\/users\/[^/]+\/deposit-addresses/,
