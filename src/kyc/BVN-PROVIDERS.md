@@ -104,6 +104,60 @@ moment a user presses it.
 
 ---
 
+## 3b. Automatic failover (Monnify → Flutterwave)
+
+`getKycLevelProvider()` returns a **chain** when more than one real vendor is
+configured. `KYC_LEVEL_PROVIDER` still names the vendor that should answer
+whenever it can; the other sits underneath it as a net.
+
+```
+KYC_LEVEL_PROVIDER=monnify        # preferred, even while unapproved
+MONNIFY_API_KEY=...               # omit until Monnify approves you
+FLUTTERWAVE_SECRET_KEY=FLWSECK-...
+FLUTTERWAVE_BVN_ALLOW_V2_DIRECT=true
+```
+
+With Monnify's keys absent it is left **out** of the chain entirely — attempting
+a vendor with no key turns one clean failure into two. Flutterwave answers, and
+`isKycLevelProviderConfigured()` returns true so the Level 2 button is still
+offered. (It previously read only `KYC_LEVEL_PROVIDER`, so it hid the step even
+when the backup could answer — exactly the Monnify-unapproved case.)
+
+The day Monnify approves the account, add the keys. Monnify leads the chain
+again on the next request. **No code change, no deploy.**
+
+### The rule: fail over on errors, never on verdicts
+
+| Provider outcome | Meaning | Behaviour |
+|---|---|---|
+| throws 403 / 503 / network | "cannot answer" | **fall through** |
+| throws 400 | *our* request is malformed | **rethrow** — a second vendor cannot help, and it costs another ₦50 |
+| returns `failed` | "answered: name does not match" | **return it** |
+| returns `review` | "answered: needs a human" | **return it** |
+| returns `matched` | "answered: yes" | **return it** |
+
+Failing over on a `failed` verdict would mean asking each vendor in turn until
+one says `matched` — shopping for a yes. A user whose BVN belongs to somebody
+else would be refused by Monnify, handed to Flutterwave for a second opinion on
+identical facts, and any disagreement becomes a free pass to Level 2 and a
+₦5,000,000 ceiling. Only a thrown error advances the chain.
+
+### Visibility
+
+- every fall-through → `kyc.provider_failover`, severity **warning**
+- all vendors down → `kyc.provider_chain_exhausted`, severity **error**, HTTP **503**
+- the stored verification row records the vendor that **actually answered**,
+  not the word "failover"
+- audits carry `bvnLast4` only, never the BVN
+
+`health()` reports the whole chain — `chain: monnify=down, flutterwave=up —
+PRIMARY monnify IS DOWN, serving from flutterwave` — so an operator can see the
+primary is broken while the feature still works.
+
+Tested in `scripts/test-kyc-provider-failover.ts` (42 assertions, 5 mutations).
+
+---
+
 ## 4. Capability differences — read before switching
 
 | Check | Monnify | Flutterwave |

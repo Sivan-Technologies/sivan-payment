@@ -178,7 +178,8 @@
     "test:ngn-kyc-levels": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-kyc-levels.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=kyc-admin-key KYC_LEVEL_PROVIDER=mock tsx scripts/test-ngn-kyc-levels.ts",
     "e2e:country-dashboard": "node e2e/country-dashboard-journey.mjs",
     "test:foreign-limit-accumulates": "tsx scripts/test-foreign-limit-accumulates.ts",
-    "test:flutterwave-bvn": "tsx scripts/test-flutterwave-bvn.ts"
+    "test:flutterwave-bvn": "tsx scripts/test-flutterwave-bvn.ts",
+    "test:kyc-provider-failover": "tsx scripts/test-kyc-provider-failover.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
