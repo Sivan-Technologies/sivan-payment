@@ -36,6 +36,49 @@ import type { VirtualAccountTransactionRecord } from '../types/virtual-account.t
  *
  * THE USER NEVER SEES THE BRIDGE ADDRESS. It is plumbing between the bank and
  * their wallet. Exposing it would invite deposits Sivan cannot attribute.
+ *
+ * ─────────────────────────────────────────────────────────────────────
+ * WHAT HAS AND HAS NOT BEEN PROVEN AGAINST REAL BRIDGE (2026-08-07)
+ *
+ * Probed against api.sandbox.bridge.xyz with a live sandbox key. Note the
+ * production host rejects that key with "an API key from a wrong environment
+ * is used", so BRIDGE_API_URL must point at the sandbox host in test.
+ *
+ * PROVEN:
+ *   - This exact request shape is ACCEPTED. POST /v0/transfers with
+ *     source.payment_rail = 'bridge_wallet' and destination.payment_rail =
+ *     'solana' passed every schema and permission check and was rejected ONLY
+ *     on "amount is higher than the balance of the wallet". Bridge is not
+ *     refusing wallet-sourced sends, which retires the earlier (wrong) belief
+ *     that they were compliance-blocked.
+ *   - A real virtual account exists on that customer carrying
+ *     developer_fee_percent "1.25", confirming the compulsory fee landed on
+ *     Bridge's side.
+ *   - `initiation_required` is ABSENT on the wallet, so the `initiation`
+ *     object the docs require for some wallets does not apply here. If Bridge
+ *     ever sets it, createTransfer must start sending one.
+ *
+ * NOT PROVEN - a settled transfer has never been observed:
+ *   GET /v0/transfers returns zero records for this account, and the wallet
+ *   holds 0.0 USDC. The documented sandbox funding route
+ *   (POST .../wallets/{id}/simulate_deposit) returns 401 on this key, so the
+ *   wallet cannot be funded here. Consequently NOT observed:
+ *     - the terminal state of a wallet -> chain transfer
+ *     - receipt.exchange_fee / final_amount for this route
+ *     - destination_tx_hash appearing
+ *
+ * GAS. Bridge's own minimums page states minimums exist to "cover associated
+ * blockchain or liquidity costs", and the published Solana USDC minimum is
+ * 1 USDC - so Bridge absorbs the network fee and expresses it as a floor
+ * rather than billing it. That is consistent with the assumption that gas is
+ * not Sivan's problem on this leg, but it is a DOCUMENTED claim, not a
+ * measured one: no settled transfer receipt has been read back.
+ *
+ * MIN_BRIDGE_SWEEP_USD is therefore still justified, but note it is defended
+ * below on SOLANA ATA RENT (~$0.31, charged to the RECIPIENT the first time a
+ * wallet sees an SPL token), which is a different cost from gas and is not
+ * covered by Bridge's minimum. $6 also sits comfortably above Bridge's own
+ * 1 USDC floor for this route.
  */
 
 /**

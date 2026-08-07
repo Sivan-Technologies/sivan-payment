@@ -358,11 +358,53 @@ const envSchema = z.object({
   PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_BANK_ID: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
-  KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify']).default('mock'),
+  KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify', 'flutterwave']).default('mock'),
   MONNIFY_BASE_URL: z.string().url().optional().default('https://api.monnify.com'),
   MONNIFY_API_KEY: z.string().optional().default(''),
   MONNIFY_SECRET_KEY: z.string().optional().default(''),
-  MONNIFY_CONTRACT_CODE: z.string().optional().default('')
+  MONNIFY_CONTRACT_CODE: z.string().optional().default(''),
+
+  /**
+   * FLUTTERWAVE, as a SECOND BVN provider alongside Monnify.
+   *
+   * Two providers rather than one because a single BVN vendor is a single
+   * point of failure on the step that gates every Nigerian's limits. If
+   * Monnify is down or rejects a valid BVN, an operator can switch rather than
+   * strand Level 2 for everybody.
+   *
+   * v3 (consent) is the CBN-compliant path and the one to use: NIBSS requires
+   * the BVN owner to approve the merchant before their data is released. v2 is
+   * a direct lookup with no consent step - kept reachable behind a flag
+   * because some accounts still have it enabled, but it must not be the
+   * default. See KYC-DESIGN.md.
+   */
+  FLUTTERWAVE_BASE_URL: z.string().url().optional().default('https://api.flutterwave.com'),
+  FLUTTERWAVE_V2_BASE_URL: z.string().url().optional().default('https://api.ravepay.co'),
+  FLUTTERWAVE_SECRET_KEY: z.string().optional().default(''),
+  /**
+   * Where NIBSS returns the customer after they approve or decline.
+   *
+   * Required by the consent endpoint. Pointed at the frontend, not the API:
+   * the customer is a human in a browser and must land on a page, not on JSON.
+   */
+  FLUTTERWAVE_BVN_REDIRECT_URL: z.string().optional().default(''),
+  /**
+   * Use the v2 direct lookup instead of v3 consent. OFF by default.
+   *
+   * A deliberate, visible switch rather than a silent fallback: skipping
+   * consent is a compliance decision, not a technical one, and it should be
+   * something an operator turns on knowingly.
+   */
+  /**
+   * booleanFromEnv, NOT z.coerce.boolean().
+   *
+   * z.coerce.boolean() is JavaScript truthiness: the STRING 'false' is a
+   * non-empty string and therefore coerces to TRUE. Setting
+   * FLUTTERWAVE_BVN_ALLOW_V2_DIRECT=false would have silently ENABLED the
+   * no-consent lookup - the exact opposite of the operator's instruction, on
+   * a compliance switch. Caught by a test that expected v3 and got v2.
+   */
+  FLUTTERWAVE_BVN_ALLOW_V2_DIRECT: booleanFromEnv.default(false)
 });
 
 export const env = envSchema.parse(process.env);
