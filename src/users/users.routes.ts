@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { createUser, createUserSchema, getUser, setUserCountry, setUserCountrySchema, setUserName, setUserNameSchema } from './users.service.js';
+import { createUser, createUserSchema, getUser, setUserCountry, setUserCountrySchema,
+  setUserDateOfBirth,
+  setUserDateOfBirthSchema, setUserName, setUserNameSchema } from './users.service.js';
 import { db } from '../database/json-database.js';
 import { isApprovedKycStatus } from '../kyc/types/verification.types.js';
 import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema } from './user-preferences.service.js';
@@ -127,6 +129,20 @@ export async function usersRoutes(app: FastifyInstance) {
    * idempotent - reopening the modal and picking the same country again must
    * not be an error.
    */
+  /**
+   * Set the declared date of birth.
+   *
+   * Separate from /country even though both are collected in the verification
+   * modal: country is a routing hint that changes which form a user sees, and
+   * this is data forwarded to a provider to satisfy a compliance requirement.
+   * Folding them together would make one request that half-succeeds.
+   */
+  app.put('/api/users/:userId/date-of-birth', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(setUserDateOfBirthSchema, request.body);
+    return { data: await setUserDateOfBirth(userId, body) };
+  });
+
   app.put('/api/users/:userId/country', async (request) => {
     const { userId } = request.params as { userId: string };
     const body = parseBody(setUserCountrySchema, request.body);

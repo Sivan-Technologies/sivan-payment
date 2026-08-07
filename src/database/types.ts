@@ -247,6 +247,15 @@ export interface UserRecord {
    * PERMITTED to do is decided by verified evidence, never by this field.
    */
   country?: string;
+  /**
+   * Declared date of birth, ISO yyyy-MM-dd. DECLARED, not proven.
+   *
+   * Forwarded to Bridge as `birth_date` to satisfy the `date_of_birth` and
+   * `min_age_18` endorsement requirements. Persona verifies it against a
+   * government ID during the hosted flow; this field is what unblocks the
+   * customer record so that flow can complete at all.
+   */
+  dateOfBirth?: string;
   username?: string;
   usernameUpdatedAt?: string;
   /** Numeric Telegram user id, as a string. Set once a Telegram link is redeemed. */

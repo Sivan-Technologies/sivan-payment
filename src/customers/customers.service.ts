@@ -69,6 +69,27 @@ export async function startKyc(input: z.infer<typeof startKycSchema>) {
     idempotencyKey: idempotencyKey('kyc')
   });
 
+  /**
+   * PUSH THE DATE OF BIRTH, because /kyc_links threw it away.
+   *
+   * Bridge blocks approval while the `base`/`sepa` endorsements are missing
+   * `date_of_birth` and `min_age_18` - which is the "Verification needs one
+   * more step" banner users were seeing with no way to act on it.
+   *
+   * It CANNOT be set on the create call. Measured against the real sandbox:
+   * POST /v0/kyc_links with birth_date returned 201, and reading the customer
+   * back showed `birth_date: null` with the requirement still missing. Accepted
+   * and silently dropped. A follow-up PUT is the only thing that works, and one
+   * PUT moved both requirements into `complete`.
+   *
+   * NON-FATAL. The KYC link is already valid and the customer already exists;
+   * losing that over a patch failure would be a far worse outcome than a
+   * customer who needs the date re-applied. The value is stored on the user, so
+   * a retry has something to retry from - which is most of why it is stored at
+   * all.
+   */
+  await pushDateOfBirthToProvider(provider, kyc.customerId, user);
+
   const now = nowIso();
   const customer = {
     id: id('cus'),
@@ -89,6 +110,89 @@ export async function startKyc(input: z.infer<typeof startKycSchema>) {
     updatedAt: now
   };
   return db.insertCustomerRecord(customer);
+}
+
+
+/**
+ * Send a user's declared date of birth to the provider, if we have one.
+ *
+ * Silent when there is nothing to send: Nigerians verify by bank-name
+ * resolution and may never have been asked, and a missing date is a normal
+ * state rather than an error. Failures are audited, never thrown - see the
+ * call site.
+ */
+async function pushDateOfBirthToProvider(
+  provider: { name: string; updateCustomer?: (id: string, patch: Record<string, unknown>) => Promise<unknown> },
+  providerCustomerId: string | undefined,
+  user: { id: string; dateOfBirth?: string }
+): Promise<void> {
+  if (!providerCustomerId || !user.dateOfBirth) return;
+  if (typeof provider.updateCustomer !== 'function') return;
+
+  try {
+    await provider.updateCustomer(providerCustomerId, { birth_date: user.dateOfBirth });
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'kyc_dob_sync',
+      action: 'customer.birth_date_pushed',
+      resourceType: 'payments_customer',
+      resourceId: providerCustomerId,
+      severity: 'info',
+      metadata: { userId: user.id, provider: provider.name }
+    }).catch(() => undefined);
+  } catch (error) {
+    /**
+     * Loud on the inside, invisible on the outside. The user's verification
+     * link works; what is broken is a requirement they will hit LATER, and
+     * there is nothing they can do about it in the moment.
+     */
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'kyc_dob_sync',
+      action: 'customer.birth_date_push_failed',
+      resourceType: 'payments_customer',
+      resourceId: providerCustomerId,
+      severity: 'error',
+      metadata: {
+        userId: user.id,
+        provider: provider.name,
+        reason: error instanceof Error ? error.message : String(error)
+      }
+    }).catch(() => undefined);
+  }
+}
+
+/**
+ * Re-apply a stored date of birth to an EXISTING provider customer.
+ *
+ * The backfill path: every customer created before this existed is sitting on
+ * Bridge missing `date_of_birth`, and asking those users to start verification
+ * again would create a second customer and spend $2 twice.
+ */
+export async function syncCustomerDateOfBirth(userId: string) {
+  const user = await requireUser(userId);
+  if (!user.dateOfBirth) throw badRequest('Add your date of birth first.');
+
+  const customer = await getCustomerByUserId(userId);
+  if (!customer.providerCustomerId) throw badRequest('This account has no provider customer yet.');
+
+  const provider: any = getOfframpProvider(customer.provider);
+  if (typeof provider.updateCustomer !== 'function') {
+    throw badRequest(`The ${customer.provider} provider cannot update a customer record.`);
+  }
+
+  await provider.updateCustomer(customer.providerCustomerId, { birth_date: user.dateOfBirth });
+  await createAuditLog({
+    actorType: 'system',
+    actorId: 'kyc_dob_sync',
+    action: 'customer.birth_date_pushed',
+    resourceType: 'payments_customer',
+    resourceId: customer.providerCustomerId,
+    severity: 'info',
+    metadata: { userId, provider: customer.provider, backfill: true }
+  }).catch(() => undefined);
+
+  return { userId, providerCustomerId: customer.providerCustomerId, dateOfBirth: user.dateOfBirth };
 }
 
 export async function createBridgeCustomer(input: z.infer<typeof createBridgeCustomerSchema>) {

@@ -43,6 +43,21 @@ export class BridgeProvider implements OfframpProvider {
     return mapKycLink(raw);
   }
 
+  /**
+   * PATCH a customer after creation.
+   *
+   * Verified against the real sandbox: PUT /v0/customers/{id} with
+   * {"birth_date":"1990-01-15"} moved `date_of_birth` and `min_age_18` out of
+   * the endorsement's `missing` list and into `complete`.
+   *
+   * NO IDEMPOTENCY KEY. Bridge treats PUT as a patch, so re-sending the same
+   * body is naturally idempotent - and a stale key would make a legitimate
+   * correction silently return the previous state.
+   */
+  async updateCustomer(customerId: string, patch: Record<string, unknown>): Promise<unknown> {
+    return this.client.request(`/customers/${customerId}`, { method: 'PUT', body: patch });
+  }
+
   async getKycLink(kycLinkId: string): Promise<ProviderKycLink> {
     const raw: any = await this.client.request(`/kyc_links/${kycLinkId}`);
     return mapKycLink(raw);

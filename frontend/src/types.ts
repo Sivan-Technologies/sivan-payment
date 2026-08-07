@@ -7,6 +7,8 @@ export interface UserRecord {
   email: string;
   whatsappNumber?: string;
   fullName: string;
+  /** Declared date of birth, yyyy-MM-dd. Forwarded to Bridge as birth_date. */
+  dateOfBirth?: string;
   /**
    * ISO 3166-1 alpha-2, uppercase. Set from the verification modal, not at
    * signup. Undefined for every user who existed before it was collected, and
