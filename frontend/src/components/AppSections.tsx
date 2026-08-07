@@ -624,7 +624,13 @@ export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAdd
     const ngn = summary.allowances.find((item) => item.flow === 'offramp' && item.rail === 'ngn');
     // Headroom in the notice, because "verified" alone does not tell someone
     // what they can actually do next.
-    const headroom = ngn && ngn.remainingNgn !== null
+    //
+    // GATED ON THE PATH, like dashboardKpis.showsNairaLimit already is. This
+    // read the naira allowance for every user, so a verified American was told
+    // "You can withdraw up to ₦0" - the same class of bug as the limit card,
+    // from a second place that had its own copy of the rule.
+    const showsNaira = summary.path === 'ngn_bank';
+    const headroom = showsNaira && ngn && ngn.remainingNgn !== null
       ? `You can withdraw up to ₦${ngn.remainingNgn.toLocaleString('en-NG')} in the next ${summary.windowDays} days.`
       : 'You can withdraw crypto to your bank.';
 
@@ -720,7 +726,20 @@ function VerificationLimitCard({
   /** The server's next rung. See the comment where it is rendered. */
   nextStep?: VerificationSummary['nextStep'];
 }) {
+  /**
+   * The naira formatter is now conditional, because this card is rendered for
+   * BOTH rails. Printing '₦' beside a foreign allowance is what put
+   * "₦0 left" on an American's dashboard.
+   *
+   * The underlying figures are still NGN-denominated on both rails - that is
+   * the policy engine's unit - so the foreign rail is labelled by what it
+   * MEASURES rather than mislabelled with a currency the user never sees.
+   * Denominating the foreign ceiling in USD is a separate, agreed change; this
+   * one stops the screen lying in the meantime.
+   */
+  const isForeign = allowance.rail === 'foreign';
   const naira = (value: number) => `₦${value.toLocaleString('en-NG')}`;
+  const amount = (value: number) => (isForeign ? value.toLocaleString('en-US') : naira(value));
 
   // null is genuinely uncapped - not zero, and not "unknown".
   if (allowance.limitNgn === null) {
@@ -738,14 +757,43 @@ function VerificationLimitCard({
   const used = allowance.usedNgn;
   const pctUsed = limit > 0 ? Math.min(Math.round((used / limit) * 100), 100) : 100;
 
+  /**
+   * A CEILING OF ZERO IS A LOCKED RAIL, NOT AN EMPTY ONE.
+   *
+   * Rendered through the normal path this said "₦0 left · ₦0 of ₦0 used" with
+   * a full progress bar - which is what the reported screenshot shows. Every
+   * word of it is technically true and the whole thing is misleading: it reads
+   * as "you have spent your allowance", when in fact the user has done nothing
+   * wrong and simply has not verified yet.
+   *
+   * A brand-new user of ANY country lands here, so this is the first thing a
+   * beta signup sees. It should tell them what to do, not show them a spent
+   * bar and an unfamiliar currency.
+   */
+  if (limit === 0) {
+    return (
+      <article className="panel verification-limit-card">
+        <p className="eyebrow">Withdrawal limit</p>
+        <h3>Not unlocked yet</h3>
+        <p className="muted">
+          {isForeign
+            ? 'Verify your identity to start withdrawing to your bank.'
+            : 'Verify your identity to start withdrawing to your Nigerian bank.'}
+        </p>
+        {nextStep && <p className="verification-limit-next">Next: {nextStep.description}</p>}
+      </article>
+    );
+  }
 
   return (
     <article className="panel verification-limit-card">
-      <p className="eyebrow">Withdrawn to naira · last {windowDays} days</p>
-      <h3>{naira(remaining)} left</h3>
+      {/* Names the rail the user is actually on. "Withdrawn to naira" was
+          hardcoded and shown to everyone, including users with no naira rail. */}
+      <p className="eyebrow">{isForeign ? 'Withdrawn' : 'Withdrawn to naira'} · last {windowDays} days</p>
+      <h3>{amount(remaining)} left</h3>
       <div className="verification-limit-bar"><span style={{ width: `${pctUsed}%` }} /></div>
       <p className="muted">
-        {naira(used)} of {naira(limit)} used.
+        {amount(used)} of {amount(limit)} used.
         {upliftApplies ? ' Your identity check is complete.' : ''}
       </p>
       {/* THE LADDER IS THE SERVER'S, NOT THIS FILE'S.
@@ -799,7 +847,30 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
   const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
 
   const levelLabel = summary?.levelLabel ?? (identityDone ? 'Level 1: Verified' : 'Level 0: Starter');
-  const ngnOfframp = summary?.allowances.find((item) => item.flow === 'offramp' && item.rail === 'ngn');
+  /**
+   * THE ALLOWANCE THIS USER ACTUALLY TRANSACTS ON, chosen by their path.
+   *
+   * This was hardcoded to `rail === 'ngn'`. Reported with a photo of the
+   * dashboard: an American who had just signed up was shown
+   *
+   *     WITHDRAWN TO NAIRA · LAST 30 DAYS
+   *     ₦0 left
+   *     ₦0 of ₦0 used.
+   *
+   * Three things wrong at once, all from this one line. The heading names a
+   * currency they will never touch - Bridge has no naira rail, and
+   * payoutRailFor() has always refused to route them there. The figure is the
+   * NGN ceiling, which is correctly 0 for a non-Nigerian and therefore reads
+   * as "you can withdraw nothing" rather than "this rail is not yours". And
+   * because the row exists for everyone, nothing looked broken.
+   *
+   * The server already answers this: summary.path is 'ngn_bank' or
+   * 'bridge_kyc', decided from country by verificationPathFor(). Selecting on
+   * it means the card describes the rail the user is on, and a new rail cannot
+   * be added without this following it.
+   */
+  const railForPath: 'ngn' | 'foreign' = summary?.path === 'ngn_bank' ? 'ngn' : 'foreign';
+  const primaryOfframp = summary?.allowances.find((item) => item.flow === 'offramp' && item.rail === railForPath);
   const [showNgnLevel2Form, setShowNgnLevel2Form] = useState(false);
   const [ngnLevel2Busy, setNgnLevel2Busy] = useState(false);
   const [ngnLevel2Result, setNgnLevel2Result] = useState<null | { status: string; message: string; bvnLast4?: string }>(null);
@@ -1047,7 +1118,7 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
               starts a withdrawal finds out at the point of failure. Every
               figure comes from the admin-overridable limit table, so moving a
               ceiling in the hub changes this immediately with no deploy. */}
-          {ngnOfframp && <VerificationLimitCard allowance={ngnOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} nextStep={summary?.nextStep} />}
+          {primaryOfframp && <VerificationLimitCard allowance={primaryOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} nextStep={summary?.nextStep} />}
           {/* CustomerDetails renders Bridge's KYC status, account type and
               terms state. For a Nigerian on the bank path there IS no Bridge
               customer, so it printed "Status: Not started / Terms: Pending"
