@@ -93,6 +93,27 @@ export async function buildApp() {
    * both are refused. Neither condition is true on api-test, which is what
    * keeps the override usable where it is meant to be used.
    */
+  /**
+   * The custody configuration, refused at BOOT rather than at first use.
+   *
+   * VIRTUAL_ACCOUNT_PROVIDER and BRIDGE_WALLETS_APPROVED are both enforced
+   * lazily by their registries - only when a provider is asked for - so a
+   * production deploy with either wrong boots green and fails hours later on
+   * one user's request. See production-guards.ts for why each matters.
+   *
+   * Reads the ACTIVE wallet provider from the database control, not just the
+   * env fallback, because that is what actually decides who issues wallets.
+   */
+  const { assertProductionWalletConfig } = await import('./config/production-guards.js');
+  const { resolveActiveWalletProvider } = await import('./wallets/wallet-controls.service.js');
+  assertProductionWalletConfig({
+    appEnv: env.APP_ENV,
+    virtualAccountsEnabled: env.VIRTUAL_ACCOUNTS_ENABLED,
+    virtualAccountProvider: process.env.VIRTUAL_ACCOUNT_PROVIDER,
+    bridgeWalletsApproved: process.env.BRIDGE_WALLETS_APPROVED,
+    activeWalletProvider: await resolveActiveWalletProvider().catch(() => undefined),
+  });
+
   const ngnRailIsLive = env.BREET_ENV === 'production' || env.PAJ_RAMP_ENV === 'production';
   if ((ngnRailIsLive || env.APP_ENV === 'production') && env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) {
     throw new Error(

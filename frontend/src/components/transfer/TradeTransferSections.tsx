@@ -4,6 +4,23 @@ import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
 import { explorerLink, explorerReference, shortHash } from '../../blockExplorer';
 import { TransferConfirm, type TransferConfirmDetails } from './TransferConfirm';
 
+/**
+ * The shape of GET /api/balance/transfers/quote.
+ *
+ * Mirrors TransferFeeQuote server-side. Only the fields this dialog renders
+ * are declared - the endpoint returns more, and listing fields we do not use
+ * would imply a dependency that does not exist.
+ */
+interface TransferFeeQuoteResponse {
+  amount: string;
+  fee: string;
+  netAmount: string;
+  /** The rate ACTUALLY charged, not the nominal percent - a floored fee on a small send is far above 0.5%. */
+  effectivePercent: string;
+  newRecipientFee: string;
+  createsRecipientAccount: boolean;
+}
+
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) { return <span className={`step-node ${active ? 'active' : ''} ${done ? 'done' : ''}`}><span>{done ? '✓' : '•'}</span>{label}</span>; }
 function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
@@ -171,7 +188,7 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
     <div className="warning-box compact">Send the exact amount and include the reference/memo. Missing or incorrect references can delay matching and settlement.</div>
   </div>;
 }
-export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, networkMode, loading, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; isVerified: boolean; /** Server-stated, never guessed: a mainnet explorer link for a testnet hash shows "not found", which reads as "your money is gone". */ networkMode?: 'mainnet' | 'testnet'; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
+export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, networkMode, loading, api, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; /** Used to price the transfer BEFORE the user confirms. The server owns the fee curve; a client-side copy would drift the moment an admin changes it. */ api?: <T>(path: string, options?: RequestInit) => Promise<T>; isVerified: boolean; /** Server-stated, never guessed: a mainnet explorer link for a testnet hash shows "not found", which reads as "your money is gone". */ networkMode?: 'mainnet' | 'testnet'; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
   /**
    * REVIEW, THEN SEND - the button now does what it says.
    *
@@ -188,7 +205,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
   const [pendingTransfer, setPendingTransfer] = useState<TransferConfirmDetails | null>(null);
   const pendingFormRef = useRef<HTMLFormElement | null>(null);
 
-  function handleReview(event: FormEvent<HTMLFormElement>) {
+  async function handleReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
@@ -198,15 +215,75 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
     // attributes have already run by the time submit fires.
     if (!destinationAddress || !amount) return;
     pendingFormRef.current = form;
-    setPendingTransfer({
-      asset: String(data.get('asset') ?? 'usdc'),
+
+    const asset = String(data.get('asset') ?? 'usdc');
+    const network = String(data.get('network') ?? '');
+
+    const base = {
+      asset,
       amount,
-      network: String(data.get('network') ?? ''),
+      network,
       destinationAddress,
       note: String(data.get('note') ?? '').trim() || undefined,
       available,
       networkMode,
-    });
+    };
+
+    /**
+     * PRICE IT BEFORE ASKING THEM TO CONFIRM.
+     *
+     * Reported from a screenshot of this dialog: it showed Amount and
+     * "Balance after" and no fee at all, while the transfer path was charging
+     * one - 0.5% with a $0.25 floor, so a 5 USDC send quietly cost $0.25 and
+     * the recipient got 4.75. The dialog could already render every fee line;
+     * nothing was passing the numbers, so `details.fee` was undefined and the
+     * whole block was skipped. A confirmation screen that hides the price is
+     * the worst place in the product to be silent.
+     *
+     * FROM THE SERVER, NOT COMPUTED HERE. The fee curve is admin-configurable
+     * (percent, floor, cap, new-recipient surcharge) and
+     * GET /api/balance/transfers/quote is the same function the transfer path
+     * itself charges with. Re-implementing it client-side would drift the
+     * moment someone edits the fee tab - and a dialog that shows a different
+     * fee from the one charged is worse than showing none.
+     *
+     * The destination is sent too: the new-recipient surcharge depends on
+     * whether the recipient already holds the token, which only the server can
+     * answer.
+     */
+    setPendingTransfer(base);
+    if (!api) return;
+    try {
+      const query = new URLSearchParams({ amount, network, asset, destinationAddress });
+      const quote = await api<TransferFeeQuoteResponse>(`/api/balance/transfers/quote?${query.toString()}`);
+      setPendingTransfer((current) =>
+        /**
+         * Only if the user is still looking at THIS transfer. They can cancel
+         * or edit while the quote is in flight, and writing a stale fee into a
+         * dialog they have since changed is how a user confirms a number that
+         * belongs to a different transfer.
+         */
+        current && current.amount === amount && current.destinationAddress === destinationAddress
+          ? {
+              ...current,
+              fee: quote.fee,
+              netAmount: quote.netAmount,
+              feePercent: quote.effectivePercent,
+              newRecipientFee: quote.newRecipientFee,
+              createsRecipientAccount: quote.createsRecipientAccount,
+            }
+          : current
+      );
+    } catch {
+      /**
+       * Deliberately silent, and deliberately NOT a guessed fee.
+       *
+       * The dialog renders no fee line when `fee` is undefined, which is
+       * honest: we could not price it. The transfer path prices it again
+       * server-side regardless, so a failed quote cannot change what is
+       * actually charged - only what we were able to show.
+       */
+    }
   }
 
   async function confirmTransfer() {
