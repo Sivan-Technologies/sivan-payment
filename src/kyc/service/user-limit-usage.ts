@@ -33,6 +33,23 @@ export async function effectiveUsedNgn(
    */
   rawUsedNgn?: number
 ): Promise<number> {
+  /**
+   * THE PRE-COMPUTED TOTAL IS A NAIRA TOTAL, so it may only be used for the
+   * naira rail.
+   *
+   * getUserLimitDetail() computes one raw figure and passes it in for all six
+   * (flow, rail) pairs to avoid six queries. That is correct for the three
+   * `ngn` rows and WRONG for the `foreign` one, which is measured from a
+   * different table entirely. Honouring the shortcut there is precisely how
+   * the foreign rail ended up reporting naira volume - or, before that source
+   * existed, zero.
+   *
+   * So the shortcut is ignored for `foreign`, which costs one extra bounded
+   * query per user detail view and buys a figure that is actually about the
+   * rail it is printed under.
+   */
+  const usableRaw = rail === 'foreign' ? undefined : rawUsedNgn;
+
   const resets = await db.listUserLimitResets(userId);
   const forFlow = resets
     .filter((row) => row.flow === flow && row.rail === rail)
@@ -42,9 +59,9 @@ export async function effectiveUsedNgn(
 
   // No reset for this flow: the raw window total already is the answer.
   if (!watermark) {
-    if (typeof rawUsedNgn === 'number') return rawUsedNgn;
-    const { getCumulativeNgnVolume } = await import('./verification-state.js');
-    return getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS);
+    if (typeof usableRaw === 'number') return usableRaw;
+    const { getCumulativeVolumeNgn } = await import('./verification-state.js');
+    return getCumulativeVolumeNgn(userId, rail, VOLUME_WINDOW_DAYS);
   }
 
   const windowStart = Date.now() - VOLUME_WINDOW_DAYS * 24 * 60 * 60 * 1000;
@@ -57,9 +74,24 @@ export async function effectiveUsedNgn(
    * suppressing volume it was never meant to cover.
    */
   if (!Number.isFinite(cutoffMs) || cutoffMs <= windowStart) {
-    if (typeof rawUsedNgn === 'number') return rawUsedNgn;
-    const { getCumulativeNgnVolume } = await import('./verification-state.js');
-    return getCumulativeNgnVolume(userId, VOLUME_WINDOW_DAYS);
+    if (typeof usableRaw === 'number') return usableRaw;
+    const { getCumulativeVolumeNgn } = await import('./verification-state.js');
+    return getCumulativeVolumeNgn(userId, rail, VOLUME_WINDOW_DAYS);
+  }
+
+  /**
+   * A RESET ON THE FOREIGN RAIL MUST FORGIVE FOREIGN VOLUME.
+   *
+   * Everything below re-reads NGN transfers from the watermark. Left
+   * unbranched, resetting a user's foreign window would recompute their NAIRA
+   * volume and write it under `offramp/foreign` - so an admin clearing a
+   * customer's foreign usage could silently give them a figure belonging to a
+   * different rail. Same measurement, same floor, correct table.
+   */
+  if (rail === 'foreign') {
+    const { getCumulativeForeignVolumeNgn } = await import('./verification-state.js');
+    const sinceMs = Date.now() - cutoffMs;
+    return getCumulativeForeignVolumeNgn(userId, sinceMs / (24 * 60 * 60 * 1000));
   }
 
   // Re-read from the watermark rather than the window start. The DB filter is

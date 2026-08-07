@@ -2,6 +2,7 @@ import pg from 'pg';
 import { env } from '../config/env.js';
 import { networksServedByWallet } from '../wallets/chain-family.js';
 import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
+import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
 import type {
   VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord,
   WalletControlsRecord,
@@ -1256,6 +1257,36 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try {
       return (await client.query('select * from payments_withdrawals order by created_at asc')).rows.map(mapWithdrawal);
+    } finally { client.release(); }
+  }
+
+  /**
+   * One user's limit-consuming withdrawals in a window.
+   *
+   * FILTERED IN THE DATABASE, like its NGN twin - this runs on every
+   * /verification-summary, and pulling the whole withdrawals table into Node
+   * to filter it there is the pattern that cost 8.9 seconds on the deployed
+   * test API before getVerificationState was rewritten.
+   *
+   * The status set is PASSED AS A PARAMETER rather than written into the SQL.
+   * The NGN query used to spell its list out inline with a comment asking the
+   * reader to keep it in sync; it drifted, and the same user got two different
+   * limits depending on which driver was running. `= any($3)` is the array
+   * form of `in (...)` and uses the same index.
+   */
+  async listWithdrawalsByUserSince(userId: string, sinceIso: string): Promise<WithdrawalRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        `select * from payments_withdrawals
+          where user_id = $1
+            and status = any($3)
+            and coalesce(updated_at, created_at) >= $2
+          order by created_at asc`,
+        [userId, sinceIso, [...WITHDRAWAL_LIMIT_CONSUMING_STATUSES]]
+      );
+      return result.rows.map(mapWithdrawal);
     } finally { client.release(); }
   }
 

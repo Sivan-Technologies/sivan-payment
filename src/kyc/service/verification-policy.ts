@@ -247,7 +247,27 @@ export function decide(
   // ENHANCED is exempt: that user HAS supplied proof of address and source of
   // funds, so there is nothing further to ask for and the table's own `null`
   // applies below.
-  if (currentLevel < VerificationLevel.ENHANCED && upliftApplies(state)) {
+  /**
+   * A PER-USER OVERRIDE BEATS THE UPLIFT, so this branch is skipped when one
+   * exists.
+   *
+   * Found by a test that refused to go green: an admin pinned a user to
+   * NGN 1,000,000, the user had 800,000 of volume, and a 400,000 withdrawal
+   * was still ALLOWED. The uplift branch returns before the override is ever
+   * read, so anyone who had cleared Bridge KYC - which is to say every user an
+   * exception would realistically be granted to - silently kept the
+   * 10,000,000 uplift ceiling no matter what an operator set.
+   *
+   * That breaks the feature in both directions. Raising a merchant's cap
+   * appeared to work and changed nothing; LOWERING one as a soft restriction
+   * short of a freeze also changed nothing, while the admin hub displayed the
+   * new figure as though it were in force. A limit screen that lies is worse
+   * than no limit screen.
+   *
+   * The override still cannot bypass verification: levelIsIntact() runs above
+   * this and is unaffected.
+   */
+  if (currentLevel < VerificationLevel.ENHANCED && upliftApplies(state) && !userOverride) {
     const upliftLimit = upliftCeilingFor(request.flow, request.rail, overrides);
     const upliftTotal = prior + amount;
     const upliftRemaining = Math.max(upliftLimit - prior, 0);

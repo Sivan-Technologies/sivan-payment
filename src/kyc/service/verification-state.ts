@@ -251,4 +251,64 @@ export async function getCumulativeNgnVolume(userId: string, windowDays: number)
   }, 0);
 }
 
+/**
+ * Completed + in-flight FOREIGN volume for a user, expressed in NGN.
+ *
+ * THIS DID NOT EXIST, AND THAT WAS THE BUG.
+ *
+ * `offramp/foreign` has always had a real ceiling and has been reported by
+ * /verification-summary since it was written. Its usage figure, though, came
+ * from getCumulativeNgnVolume(), which reads payments_ngn_transfers and sums
+ * only the legs where sourceCurrency or destinationCurrency is 'ngn'.
+ *
+ * A Bridge withdrawal is USDC -> USD. It is not an NGN transfer, so it never
+ * appeared in that query, so priorVolumeNgn for the foreign rail was
+ * PERMANENTLY ZERO. The ceiling was therefore applied to each withdrawal in
+ * isolation: ten $9,000 withdrawals each passed a cap that one $10,000
+ * withdrawal would have failed. A cumulative limit that does not accumulate
+ * is not a limit, and the number shown in the admin hub was decorative.
+ *
+ * Converted through the same usdToNgn() the enforcement path uses, so the
+ * volume counted and the amount checked are measured with one rate. (Moving
+ * the foreign rail to native USD denomination is a separate agreed change;
+ * doing it here would mean the ceiling and the usage briefly disagreed.)
+ */
+export async function getCumulativeForeignVolumeNgn(userId: string, windowDays: number): Promise<number> {
+  const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+  const withdrawals = await db.listWithdrawalsByUserSince(userId, new Date(cutoff).toISOString());
+  const { usdToNgn } = await import('./foreign-rail-fx.js');
+
+  return withdrawals.reduce((sum: number, w: any) => {
+    /**
+     * sourceAmount is the USDC leg, and USDC is dollar-pegged - so it is the
+     * figure to convert. It is OPTIONAL on the record: a manual-send
+     * withdrawal has no amount at creation because the user decides it by how
+     * much they send. Those contribute 0 until a drain tells us the real
+     * number, which is honest - inventing a figure for them would charge a
+     * ceiling for money that may never arrive.
+     */
+    const usd = Number(w.sourceAmount ?? 0);
+    const ngn = usdToNgn(usd);
+    return sum + (Number.isFinite(ngn) ? ngn : 0);
+  }, 0);
+}
+
+/**
+ * The right volume source for a (flow, rail), so callers stop guessing.
+ *
+ * Every call site that needed "how much has this user used" reached straight
+ * for getCumulativeNgnVolume, which silently answered for the naira rail no
+ * matter what rail was being asked about. Routing through one function makes
+ * the rail an argument rather than an assumption.
+ */
+export async function getCumulativeVolumeNgn(
+  userId: string,
+  rail: 'ngn' | 'foreign',
+  windowDays: number
+): Promise<number> {
+  return rail === 'foreign'
+    ? getCumulativeForeignVolumeNgn(userId, windowDays)
+    : getCumulativeNgnVolume(userId, windowDays);
+}
+
 export { isApprovedKycStatus };

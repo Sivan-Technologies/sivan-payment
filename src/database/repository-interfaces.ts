@@ -59,6 +59,8 @@ export interface PaymentsWriteRepository {
   updateExternalAccountRecord(record: ExternalAccountRecord): Promise<ExternalAccountRecord>;
   createWithdrawalRecords(liquidationAddress: LiquidationAddressRecord, withdrawal: WithdrawalRecord): Promise<{ liquidationAddress: LiquidationAddressRecord; withdrawal: WithdrawalRecord }>;
   updateWithdrawalRecord(record: WithdrawalRecord): Promise<WithdrawalRecord>;
+  /** One user's limit-consuming withdrawals since an ISO timestamp. */
+  listWithdrawalsByUserSince(userId: string, sinceIso: string): Promise<WithdrawalRecord[]>;
   insertOnrampOrderRecord(record: OnrampOrderRecord): Promise<OnrampOrderRecord>;
   updateOnrampOrderRecord(record: OnrampOrderRecord): Promise<OnrampOrderRecord>;
 }

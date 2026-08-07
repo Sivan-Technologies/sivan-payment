@@ -2,6 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
 import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord} from './types.js';
+// A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
+// line above, which is erased at compile time.
+import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnTransferStatus, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
 import { PostgresDatabase } from './postgres-database.js';
@@ -1035,6 +1038,25 @@ export class JsonDatabase {
   async listWithdrawals(): Promise<WithdrawalRecord[]> {
     const data = await this.read();
     return data.withdrawals ?? [];
+  }
+
+  /**
+   * One user's limit-consuming withdrawals in a window.
+   *
+   * The foreign-rail counterpart of listNgnTransfersByUserSince, filtered on
+   * exactly the same three predicates so the two rails measure volume the same
+   * way. Without this the foreign ceiling had no usage source at all and
+   * priorVolume was permanently 0.
+   */
+  async listWithdrawalsByUserSince(userId: string, sinceIso: string): Promise<WithdrawalRecord[]> {
+    const data = await this.read();
+    const cutoff = Date.parse(sinceIso);
+    return (data.withdrawals ?? []).filter((item) => {
+      if (item.userId !== userId) return false;
+      if (!WITHDRAWAL_LIMIT_CONSUMING_STATUSES.has(item.status)) return false;
+      const at = Date.parse(item.updatedAt ?? item.createdAt ?? '');
+      return Number.isFinite(at) && at >= cutoff;
+    });
   }
 
   async listOnrampOrders(): Promise<OnrampOrderRecord[]> {

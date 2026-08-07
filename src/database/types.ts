@@ -19,6 +19,37 @@ export type WithdrawalStatus =
   | 'cancelled'
   | 'requires_action';
 
+/**
+ * Withdrawal statuses that CONSUME foreign-rail headroom.
+ *
+ * The exact counterpart of NGN_LIMIT_CONSUMING_STATUSES, and deliberately
+ * shaped the same way: typed to WithdrawalStatus so a status that does not
+ * exist cannot be listed, and exported as one constant so the JSON driver and
+ * the Postgres query cannot disagree about what counts. A hand-copied status
+ * list in a limit predicate is how the NGN version silently matched nothing
+ * for a while.
+ *
+ * IN-FLIGHT MONEY COUNTS. A withdrawal sitting at pending_deposit has a live
+ * liquidation address and, on the balance-funded path, may already have had
+ * the user's USDC swept to it. Treating that as zero is what lets someone hold
+ * several withdrawals over a single ceiling - the same hole that was closed on
+ * the naira side.
+ *
+ * failed and cancelled are absent on purpose: nothing moved, and charging a
+ * user's ceiling for a provider outage or their own abandonment would be
+ * punishing them for it. 'requires_action' IS counted - the money is with us
+ * pending a human, exactly like the NGN 'requires_review' case.
+ */
+export const WITHDRAWAL_LIMIT_CONSUMING_STATUSES: ReadonlySet<WithdrawalStatus> = new Set([
+  'created',
+  'pending_deposit',
+  'deposit_received',
+  'converting',
+  'payout_processing',
+  'completed',
+  'requires_action',
+]);
+
 
 
 
