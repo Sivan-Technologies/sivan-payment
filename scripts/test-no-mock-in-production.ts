@@ -16,6 +16,7 @@
  * Run: npm run test:no-mock-in-production
  */
 
+import { fileURLToPath } from 'node:url';
 import { getOfframpProvider } from '../src/providers/provider-registry.js';
 import { isMockWalletAllowed } from '../src/wallets/provider/provider-registry.js';
 
@@ -62,7 +63,11 @@ async function main() {
   // instant providerName === 'mock', before any environment check. A routing
   // decision or a stored provider name could therefore hand production a mock.
   const source = await import('node:fs/promises').then((fs) =>
-    fs.readFile(new URL('../src/providers/provider-registry.js', import.meta.url).pathname.replace('.js', '.ts'), 'utf8')
+    // fileURLToPath, not .pathname: .pathname leaves the URL percent-encoded, so
+    // a checkout under a directory with a space (".../Project X/...") resolved to
+    // ".../Project%20X/..." and the read failed with ENOENT. The suite passed in
+    // CI purely because that path has no spaces.
+    fs.readFile(fileURLToPath(new URL('../src/providers/provider-registry.ts', import.meta.url)), 'utf8')
   );
   check("an explicit 'mock' request now goes through the guard",
     /providerName === 'mock'[\s\S]{0,200}assertMockAllowed/.test(source),

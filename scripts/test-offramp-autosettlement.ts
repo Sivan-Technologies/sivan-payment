@@ -145,7 +145,15 @@ async function main() {
       check('the pending account is still first in insertion order',
         accounts[0]?.status === 'pending_review', String(accounts[0]?.status));
 
-      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=60&network=base`);
+      // Deliberately small. The order placed earlier in this suite already
+      // consumed most of the Level 1 30-day allowance, so a second 60 USDC
+      // quote is refused for the limit before any payout account is attached -
+      // leaving metadata empty and failing this check for a reason that has
+      // nothing to do with account selection. The amount is irrelevant to what
+      // is being proven here: only that the quote succeeds and carries the
+      // VERIFIED account rather than the pending one inserted first.
+      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=5&network=base`);
+      check('the quote is created', quote.status === 200, `${quote.status} ${JSON.stringify(quote.body).slice(0, 140)}`);
       const meta = quote.body?.metadata ?? {};
       check('but the VERIFIED account number is the one attached',
         meta.accountNumber === '8102524846',
