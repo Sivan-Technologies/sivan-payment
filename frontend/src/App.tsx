@@ -88,6 +88,17 @@ export default function App() {
   const [twoFactorStatus, setTwoFactorStatus] = useState<UserTwoFactorStatus | null>(null);
   const [pairingCode, setPairingCode] = useState('');
   const [pairingExpiresAt, setPairingExpiresAt] = useState('');
+  /**
+   * Telegram pairing, held separately from the WhatsApp pair above.
+   *
+   * The plain code is returned ONLY by .../link-telegram/start - publicToken()
+   * omits it from the identity status - so it cannot be recovered on reload.
+   * That is why it lives in component state, and why the card falls back to
+   * "a code is pending" rather than an empty box after a refresh.
+   */
+  const [telegramPairingCode, setTelegramPairingCode] = useState('');
+  const [telegramPairingExpiresAt, setTelegramPairingExpiresAt] = useState('');
+
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: [], sourceNetworks: [] });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
@@ -459,6 +470,10 @@ export default function App() {
     setSupplierPayments([]);
     setUserPreferences(null);
     setIdentityStatus(null);
+    setPairingCode('');
+    setPairingExpiresAt('');
+    setTelegramPairingCode('');
+    setTelegramPairingExpiresAt('');
     setTwoFactorStatus(null);
     // Must be cleared: a stale summary would carry one account's verification
     // level and ceilings into the next sign-in.
@@ -2103,7 +2118,66 @@ export default function App() {
     }
   }
 
+  /**
+   * The Telegram equivalents of the three handlers above.
+   *
+   * Separate functions rather than a channel parameter, because the copy
+   * differs at every step: a WhatsApp user is told to send the code to a
+   * number, a Telegram user is told to type /link in the bot. Sharing the body
+   * would mean a channel switch inside each message anyway.
+   */
+  async function handleStartTelegramLink() {
+    if (!user?.id) return notify('Create your account first.', 'error');
+    setLoading(true);
+    try {
+      const result = await api<any>('/api/users/me/identity/link-telegram/start', { method: 'POST', body: '{}' });
+      if (result?.token) {
+        setTelegramPairingCode(result.token);
+        setTelegramPairingExpiresAt(result.expiresAt || '');
+      }
+      await loadUserData();
+      if (result?.token) notify('Pairing code generated. Send /link with this code to the Sivan bot on Telegram.');
+      else notify(result?.message || 'Pairing request is ready.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCancelTelegramLink() {
+    setLoading(true);
+    try {
+      await api('/api/users/me/identity/link-telegram/cancel', { method: 'POST', body: '{}' });
+      setTelegramPairingCode('');
+      setTelegramPairingExpiresAt('');
+      await loadUserData();
+      notify('Pairing code canceled.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleUnlinkTelegram() {
+    setLoading(true);
+    try {
+      if (!window.confirm('Unlink this Telegram account from your Sivan web account?')) return;
+      await api('/api/users/me/identity/unlink-telegram', { method: 'POST', body: '{}' });
+      setTelegramPairingCode('');
+      setTelegramPairingExpiresAt('');
+      await loadUserData();
+      notify('Telegram account unlinked.');
+    } catch (error) {
+      notify((error as Error).message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleCreateSupportTicket(event: FormEvent<HTMLFormElement>) {
+
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
     const form = event.currentTarget;
@@ -2480,7 +2554,7 @@ export default function App() {
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} balanceTransfers={balanceTransfers} supplierPayments={supplierPayments} virtualAccountTransactions={virtualAccountTransactions} walletDeposits={walletDeposits} networkMode={userPreferences?.networkMode} initialSelectedId={selectedActivityId} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onRefresh={loadUserData} />}
 
-        {view === 'settings' && <SettingsView api={api} user={user} isVerified={isVerified} onUserUpdated={(updated) => { setUser(updated); localStorage.setItem('sivan.user', JSON.stringify(updated)); }} preferences={userPreferences} initialTab={settingsInitialTab} twoFactorStatus={twoFactorStatus} onTwoFactorStatusChanged={setTwoFactorStatus} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
+        {view === 'settings' && <SettingsView api={api} user={user} isVerified={isVerified} onUserUpdated={(updated) => { setUser(updated); localStorage.setItem('sivan.user', JSON.stringify(updated)); }} preferences={userPreferences} initialTab={settingsInitialTab} twoFactorStatus={twoFactorStatus} onTwoFactorStatusChanged={setTwoFactorStatus} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} telegramPairingCode={telegramPairingCode} telegramPairingExpiresAt={telegramPairingExpiresAt} onStartTelegramLink={handleStartTelegramLink} onCancelTelegramLink={handleCancelTelegramLink} onUnlinkTelegram={handleUnlinkTelegram} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} user={user} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
 
       </main>

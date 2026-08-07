@@ -26,6 +26,20 @@ export function forbidden(message: string, details?: unknown): AppError {
 }
 
 /**
+ * The caller is being throttled by an application-level control, as opposed to
+ * the per-IP limiter in shared/rate-limit.ts.
+ *
+ * Kept separate from badRequest because the distinction is the whole point: a
+ * 400 says "that code was wrong, try another", which is exactly the signal a
+ * brute-force wants. A 429 says "stop", and the client can surface a wait
+ * instead of inviting one more guess.
+ */
+export function tooManyRequests(message: string, details?: unknown): AppError {
+  return new AppError(429, message, 'too_many_requests', details);
+}
+
+
+/**
  * An upstream provider is down or rejecting us.
  *
  * 503, not 500. "Internal server error" tells a user we crashed and tells an

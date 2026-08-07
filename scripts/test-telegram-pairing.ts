@@ -38,6 +38,8 @@ import {
   cancelTelegramLink,
   getIdentityStatus,
 } from '../src/identity/identity.service.js';
+import { __resetPairingAttempts } from '../src/identity/pairing-attempts.js';
+
 
 let passed = 0;
 
@@ -231,7 +233,84 @@ async function main() {
     const bobStillLinked: any = await lookupTelegramIdentity('999000999');
     assert(bobStillLinked.linked === true, "one user's unlink does not affect another user's link");
 
+    // 9. BRUTE-FORCE LOCKOUT ---------------------------------------------
+    //
+    // The per-IP rate limiter cannot cover this: both bots relay every user
+    // from one IP, so its allowance is sized for a population. These
+    // assertions are the actual brute-force control, so they go through
+    // redeemTelegramLink rather than poking the counter directly - a test
+    // that called recordFailedPairingAttempt() itself would still pass if the
+    // service forgot to call it, which is the bug worth catching.
+    __resetPairingAttempts();
+    const attacker = '777000777';
+    const maxAttempts = env.IDENTITY_PAIRING_MAX_FAILED_ATTEMPTS;
+
+    for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
+      await rejects(
+        () => redeemTelegramLink({ token: 'SVP-ZZZZ-99', telegramUserId: attacker }),
+        'Invalid or expired pairing code',
+        `guess ${attempt} of ${maxAttempts} is refused as a bad code, not a lockout`
+      );
+    }
+
+    // The Nth failure trips the lock. The message must change: while a wrong
+    // code and a locked account read the same, an attacker cannot tell that
+    // guessing has stopped working.
+    await rejects(
+      () => redeemTelegramLink({ token: 'SVP-ZZZZ-99', telegramUserId: attacker }),
+      'Invalid or expired pairing code',
+      `guess ${maxAttempts} still reports a bad code (the lock arms on this failure)`
+    );
+    await rejects(
+      () => redeemTelegramLink({ token: 'SVP-ZZZZ-99', telegramUserId: attacker }),
+      'Too many incorrect pairing codes',
+      `guess ${maxAttempts + 1} is refused by the lockout instead`
+    );
+
+    // A VALID code must also be refused while locked. If a real code still
+    // worked, the lockout would be decoration: an attacker who found one on
+    // the last allowed guess could simply keep going.
+    const carol = await createUser('carol');
+    const realCode: any = await startTelegramLink(carol.id);
+
+    await rejects(
+      () => redeemTelegramLink({ token: realCode.token, telegramUserId: attacker }),
+      'Too many incorrect pairing codes',
+      'a VALID code is refused while the redeemer is locked out'
+    );
+
+    // The lock is per-identity. One attacker must not deny service to
+    // everyone else the bot relays - which is exactly what keying this on IP
+    // would have done.
+    const bystander = '888000888';
+    await rejects(
+      () => redeemTelegramLink({ token: 'SVP-YYYY-88', telegramUserId: bystander }),
+      'Invalid or expired pairing code',
+      'a different telegram user is unaffected by another identity\'s lockout'
+    );
+
+    // Success clears the counter: a user who fumbles then succeeds carries no
+    // penalty into their next link.
+    __resetPairingAttempts();
+    const fumbler = '666000666';
+    await rejects(
+      () => redeemTelegramLink({ token: 'SVP-XXXX-77', telegramUserId: fumbler }),
+      'Invalid or expired pairing code',
+      'fumbled first attempt is counted'
+    );
+    // Reuses Carol's code from the locked-out attempt above. That it is still
+    // redeemable is itself the point: the lockout refused that attempt BEFORE
+    // the token lookup, so a locked-out attacker cannot burn a real code they
+    // happened to guess. (Minting a second code here would also not work -
+    // startChannelLink returns the existing pending token as an object rather
+    // than a string while one is live. See the note in section 5.)
+    const fumblerRedeemed: any = await redeemTelegramLink({ token: realCode.token, telegramUserId: fumbler });
+    assert(fumblerRedeemed.linked === true, 'a correct code still works after an earlier failure');
+    assert(fumblerRedeemed.link.paymentUserId === carol.id, 'the code locked-out attempts touched was never consumed');
+
+
     await app.close();
+
     console.log(`\n✅ Telegram pairing E2E passed (${passed} assertions, provider=${env.DATABASE_PROVIDER})`);
   } catch (error) {
     await app.close();

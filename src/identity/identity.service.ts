@@ -6,8 +6,27 @@ import { db } from '../database/json-database.js';
 import type { CustomerIdentityLinkRecord, IdentityChannel, IdentityPairingTokenRecord, UserRecord } from '../database/types.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
+import {
+  assertPairingAttemptAllowed,
+  clearPairingAttempts,
+  recordFailedPairingAttempt
+} from './pairing-attempts.js';
 
 const TOKEN_PREFIX = 'SVP';
+
+/**
+ * Reject a redemption AND count it against the redeemer's attempt budget.
+ *
+ * Every rejection in both redeem paths goes through here rather than throwing
+ * badRequest directly, because an uncounted rejection is a free guess. The
+ * `never` return type lets call sites keep reading as plain `throw`-style
+ * guards while making it impossible to reject without recording.
+ */
+function rejectPairing(channel: IdentityChannel, identity: string, message: string): never {
+  recordFailedPairingAttempt(channel, identity);
+  throw badRequest(message);
+}
+
 
 export const redeemIdentityLinkSchema = z.object({
   token: z.string().min(6).max(32),
@@ -252,28 +271,35 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
   const tokenClean = parsed.token.toUpperCase().trim();
   const whatsappNumber = normalizeWhatsappNumber(parsed.whatsappNumber);
   const now = nowIso();
+
+  // See the matching call in redeemTelegramLink: before the lookup, so a
+  // locked-out caller cannot tell a real code from a wrong one.
+  assertPairingAttemptAllowed('whatsapp', whatsappNumber);
+
   const tokens = await db.listIdentityPairingTokens();
   const token = tokens.find((item) => item.tokenHash === tokenHash(tokenClean));
-  if (!token || token.status !== 'pending') throw badRequest('Invalid or expired pairing code.');
+  if (!token || token.status !== 'pending') rejectPairing('whatsapp', whatsappNumber, 'Invalid or expired pairing code.');
+
   // The token must have been ISSUED for WhatsApp. This mirrors the identical
   // check in redeemTelegramLink and must not be removed from either side:
   // without it, a code generated for one channel can be consumed by the other,
   // so whoever reaches the opposite bot first binds THEIR account to this user.
   // Legacy tokens predating migration 044 have no channel and read as
   // 'whatsapp', which is correct - they could only ever have been WhatsApp.
-  if (tokenChannel(token) !== 'whatsapp') throw badRequest('That code was not issued for WhatsApp. Generate a WhatsApp code from your Sivan dashboard.');
+  if (tokenChannel(token) !== 'whatsapp') rejectPairing('whatsapp', whatsappNumber, 'That code was not issued for WhatsApp. Generate a WhatsApp code from your Sivan dashboard.');
   if (token.expiresAt <= now) {
     await db.upsertIdentityPairingTokenRecord({ ...token, status: 'expired', updatedAt: now });
-    throw badRequest('Pairing code has expired. Generate a new code from your Sivan web dashboard.');
+    rejectPairing('whatsapp', whatsappNumber, 'Pairing code has expired. Generate a new code from your Sivan web dashboard.');
   }
 
   const user = await db.findUserById(token.paymentUserId);
   if (!user) throw notFound('Payment user');
 
   const linkForWhatsapp = await activeLinkForWhatsapp(whatsappNumber);
-  if (linkForWhatsapp && linkForWhatsapp.paymentUserId !== user.id) throw badRequest('This WhatsApp number is already linked to another Sivan payment account.');
+  if (linkForWhatsapp && linkForWhatsapp.paymentUserId !== user.id) rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
   const linkForUser = await activeLinkForPaymentUser(user.id, 'whatsapp');
-  if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) throw badRequest('This Sivan payment account is already linked to another WhatsApp number.');
+  if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) rejectPairing('whatsapp', whatsappNumber, 'This Sivan payment account is already linked to another WhatsApp number.');
+
 
   const updatedUser: UserRecord = {
     ...user,
@@ -309,8 +335,13 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
   await db.upsertIdentityPairingTokenRecord({ ...token, status: 'redeemed', redeemedAt: now, whatsappNumber, escrowUserId: parsed.escrowUserId, updatedAt: now });
   await createAuditLog({ actorType: 'system', actorId: 'identity_link_service', action: 'identity.whatsapp_linked', resourceType: 'customer_identity', resourceId: savedLink.id, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { paymentUserId: user.id, escrowUserId: parsed.escrowUserId, whatsappNumber } });
 
+  // Only unbroken runs of failure count. A user who mistyped twice before
+  // getting it right starts clean next time.
+  clearPairingAttempts('whatsapp', whatsappNumber);
+
   return {
     linked: true,
+
     link: publicLink(savedLink),
     paymentUser: { id: updatedUser.id, email: updatedUser.email, fullName: updatedUser.fullName, whatsappNumber: updatedUser.whatsappNumber },
   };
@@ -335,22 +366,27 @@ export async function redeemTelegramLink(input: z.infer<typeof redeemTelegramLin
   const telegramUserId = parsed.telegramUserId.trim();
   const now = nowIso();
 
+  // Before the token lookup, so a locked-out caller learns nothing about
+  // whether their guess was real. See pairing-attempts.ts.
+  assertPairingAttemptAllowed('telegram', telegramUserId);
+
   const tokens = await db.listIdentityPairingTokens();
   const token = tokens.find((item) => item.tokenHash === tokenHash(tokenClean));
-  if (!token || token.status !== 'pending') throw badRequest('Invalid or expired pairing code.');
-  if (tokenChannel(token) !== 'telegram') throw badRequest('That code was not issued for Telegram. Generate a Telegram code from your Sivan dashboard.');
+  if (!token || token.status !== 'pending') rejectPairing('telegram', telegramUserId, 'Invalid or expired pairing code.');
+  if (tokenChannel(token) !== 'telegram') rejectPairing('telegram', telegramUserId, 'That code was not issued for Telegram. Generate a Telegram code from your Sivan dashboard.');
   if (token.expiresAt <= now) {
     await db.upsertIdentityPairingTokenRecord({ ...token, status: 'expired', updatedAt: now });
-    throw badRequest('Pairing code has expired. Generate a new code from your Sivan web dashboard.');
+    rejectPairing('telegram', telegramUserId, 'Pairing code has expired. Generate a new code from your Sivan web dashboard.');
   }
 
   const user = await db.findUserById(token.paymentUserId);
   if (!user) throw notFound('Payment user');
 
   const linkForTelegram = await activeLinkForTelegram(telegramUserId);
-  if (linkForTelegram && linkForTelegram.paymentUserId !== user.id) throw badRequest('This Telegram account is already linked to another Sivan payment account.');
+  if (linkForTelegram && linkForTelegram.paymentUserId !== user.id) rejectPairing('telegram', telegramUserId, 'This Telegram account is already linked to another Sivan payment account.');
   const linkForUser = await activeLinkForPaymentUser(user.id, 'telegram');
-  if (linkForUser && linkForUser.telegramUserId !== telegramUserId) throw badRequest('This Sivan payment account is already linked to another Telegram account.');
+  if (linkForUser && linkForUser.telegramUserId !== telegramUserId) rejectPairing('telegram', telegramUserId, 'This Sivan payment account is already linked to another Telegram account.');
+
 
   const updatedUser: UserRecord = {
     ...user,
@@ -387,8 +423,12 @@ export async function redeemTelegramLink(input: z.infer<typeof redeemTelegramLin
   await db.upsertIdentityPairingTokenRecord({ ...token, status: 'redeemed', redeemedAt: now, telegramUserId, escrowUserId: parsed.escrowUserId, updatedAt: now });
   await createAuditLog({ actorType: 'system', actorId: 'identity_link_service', action: 'identity.telegram_linked', resourceType: 'customer_identity', resourceId: savedLink.id, ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { paymentUserId: user.id, escrowUserId: parsed.escrowUserId, telegramUserId } });
 
+  // See the WhatsApp twin: success ends the run of failures.
+  clearPairingAttempts('telegram', telegramUserId);
+
   return {
     linked: true,
+
     link: publicLink(savedLink),
     paymentUser: {
       id: updatedUser.id,
