@@ -47,6 +47,21 @@ const envSchema = z.object({
   AUTH_REQUIRE_USER: booleanFromEnv.default(true),
   IDENTITY_LINK_SERVICE_SECRET: z.string().optional().default(''),
   IDENTITY_PAIRING_TOKEN_EXPIRES_MINUTES: z.coerce.number().int().positive().default(10),
+
+  /**
+   * Failed-attempt lockout on pairing-code redemption. See
+   * identity/pairing-attempts.ts for why this exists alongside the per-IP
+   * rate limiter rather than relying on it.
+   *
+   * 6 attempts is chosen to sit above human error and below useful guessing: a
+   * user reading a code off another screen gets several tries, an attacker gets
+   * 6 shots per 15 minutes at ~21M combinations. The lockout is per
+   * (channel, redeeming identity), so one user's fumbling never blocks another.
+   */
+  IDENTITY_PAIRING_LOCKOUT_ENABLED: booleanFromEnv.default(true),
+  IDENTITY_PAIRING_MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(6),
+  IDENTITY_PAIRING_LOCKOUT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+  IDENTITY_PAIRING_LOCKOUT_MINUTES: z.coerce.number().int().positive().default(15),
   EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional().default(''),
   EMAIL_FROM: z.string().optional().default('Sivan <no-reply@sivan.local>'),

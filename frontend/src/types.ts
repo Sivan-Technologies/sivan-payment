@@ -28,24 +28,62 @@ export interface UserRecord {
   updatedAt: string;
 }
 
-export interface IdentityStatus {
+export interface IdentityLink {
+  id: string;
+  status: 'linked';
+  channel: 'whatsapp' | 'telegram';
+  paymentUserId: string;
+  escrowUserId?: string;
+  email: string;
+  /**
+   * OPTIONAL, because a Telegram link record has no phone number. Both
+   * channels share this one shape, and typing it as required made every
+   * Telegram link a type error.
+   */
+  whatsappNumber?: string;
+  telegramUserId?: string;
+  /** Display only. Telegram usernames can be changed and re-registered. */
+  telegramUsername?: string;
+  linkedAt?: string;
+}
+
+export interface IdentityPendingPairing {
+  id: string;
+  status: 'pending';
+  channel: 'whatsapp' | 'telegram';
+  expiresAt: string;
+  createdAt: string;
+  /**
+   * NO `token` FIELD, DELIBERATELY. publicToken() in identity.service.ts omits
+   * the code, which exists only in the response to .../start. So after a page
+   * reload a pending code cannot be shown again, and the card must say "a code
+   * is pending" rather than render a blank box.
+   */
+}
+
+export interface IdentityChannelStatus {
   linked: boolean;
-  link: null | {
-    id: string;
-    status: 'linked';
-    paymentUserId: string;
-    escrowUserId?: string;
-    email: string;
-    whatsappNumber: string;
-    linkedAt?: string;
-  };
-  pendingPairing: null | {
-    id: string;
-    status: 'pending';
-    expiresAt: string;
-    createdAt: string;
+  link: IdentityLink | null;
+  pendingPairing: IdentityPendingPairing | null;
+}
+
+export interface IdentityStatus {
+  /** True when ANY channel is linked. */
+  linked: boolean;
+  /**
+   * The WhatsApp link, kept as a top-level alias of channels.whatsapp.link.
+   * The dashboard setup panel and ProfileSettingsPanel still read these, so
+   * this widening is purely additive - `channels` was already arriving on the
+   * wire and was simply being dropped by the old type.
+   */
+  link: IdentityLink | null;
+  pendingPairing: IdentityPendingPairing | null;
+  channels: {
+    whatsapp: IdentityChannelStatus;
+    telegram: IdentityChannelStatus;
   };
 }
+
 
 export interface CustomerRecord {
   id: string;
