@@ -183,7 +183,8 @@
     "test:customer-dob": "tsx scripts/test-customer-date-of-birth.ts",
     "bridge:va-smoke": "tsx scripts/bridge-va-and-transfer-smoke.ts",
     "test:bridge-sandbox": "tsx scripts/bridge-live-sandbox-soft-test.ts",
-    "bridge:live-va-smoke": "tsx scripts/bridge-live-va-and-sweep-smoke.ts"
+    "bridge:live-va-smoke": "tsx scripts/bridge-live-va-and-sweep-smoke.ts",
+    "test:production-config-guards": "tsx scripts/test-production-config-guards.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
