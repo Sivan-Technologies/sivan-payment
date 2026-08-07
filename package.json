@@ -180,7 +180,8 @@
     "test:foreign-limit-accumulates": "tsx scripts/test-foreign-limit-accumulates.ts",
     "test:flutterwave-bvn": "tsx scripts/test-flutterwave-bvn.ts",
     "test:kyc-provider-failover": "tsx scripts/test-kyc-provider-failover.ts",
-    "test:customer-dob": "tsx scripts/test-customer-date-of-birth.ts"
+    "test:customer-dob": "tsx scripts/test-customer-date-of-birth.ts",
+    "bridge:live-va-smoke": "tsx scripts/bridge-live-va-and-sweep-smoke.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",
