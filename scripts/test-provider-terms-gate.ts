@@ -417,6 +417,105 @@ check('a customer Bridge says has NOT accepted stays pending',
 (MockBridgeProvider as any).prototype.getCustomer = originalGetCustomer;
 (MockBridgeProvider as any).prototype.getKycLink = originalGetKycLink;
 
+
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 7. the gate heals a stale flag instead of holding money ───');
+
+/**
+ * THE HOLE THAT MEASURING THE BLAST RADIUS EXPOSED.
+ *
+ * The gate reads a STORED flag. The sync that refreshes it runs on the
+ * verification page load, the admin refresh route, and Bridge webhooks - none
+ * of which a user touches when they withdraw from the API, WhatsApp or
+ * Telegram. Such a user could be refused for terms they accepted weeks ago,
+ * with nothing in their path that would ever correct the record.
+ *
+ * So the money paths ask the provider before refusing.
+ */
+const { requireCustomerTermsFresh } = await import('../src/customers/customer-terms.js');
+
+const staleCustomer: any = {
+  id: 'cus_stale', userId: 'usr_stale', provider: 'bridge',
+  providerCustomerId: 'bridge_cus_stale', customerType: 'individual',
+  kycStatus: 'kyc_approved', tosStatus: 'pending',
+  createdAt: now(), updatedAt: now(),
+};
+
+let persisted: any = null;
+const healed = await requireCustomerTermsFresh(staleCustomer, {
+  getProvider: () => ({ getCustomer: async () => ({ tosAccepted: true }) }),
+  persist: async (c: any) => { persisted = c; return c; },
+  now,
+}).then(() => 'allowed').catch((e: Error) => e);
+
+check('a STALE pending flag does not block a user Bridge says accepted',
+  healed === 'allowed', String(healed));
+check('and the corrected value is written back, so it heals once not every time',
+  persisted?.tosStatus === 'approved', JSON.stringify(persisted));
+
+/**
+ * A PROVIDER OUTAGE MUST REFUSE, NOT ALLOW.
+ *
+ * Terms acceptance is a compliance precondition. Letting a payout through
+ * because Bridge was unreachable would be inventing consent from an outage -
+ * the exact failure mode that makes "fail open" unacceptable here.
+ */
+const outage = await requireCustomerTermsFresh(staleCustomer, {
+  getProvider: () => ({ getCustomer: async () => { throw new Error('Bridge 503'); } }),
+  persist: async () => { throw new Error('must not persist on an outage'); },
+  now,
+}).then(() => 'allowed').catch((e: Error) => e);
+check('a Bridge outage REFUSES rather than failing open',
+  outage instanceof AppError, String(outage));
+
+/**
+ * THE STUBS BELOW RECORD, THEY DO NOT THROW.
+ *
+ * Caught by mutation testing. These originally used
+ * `persist: async () => { throw new Error('must not persist') }` as the
+ * assertion. When the consent check was mutated to `!== false`, the code took
+ * the HEAL branch, persist threw, and the function's own catch swallowed it
+ * into a refusal - so the test passed while the mutant was allowing consent it
+ * should have refused. The stub was masking the bug it existed to find.
+ *
+ * Recording the call and asserting on it afterwards tests the real behaviour.
+ */
+let refusalPersists = 0;
+const genuine = await requireCustomerTermsFresh(staleCustomer, {
+  getProvider: () => ({ getCustomer: async () => ({ tosAccepted: false }) }),
+  persist: async (c: any) => { refusalPersists += 1; return c; },
+  now,
+}).then(() => 'allowed').catch((e: Error) => e);
+check('a user who genuinely has NOT accepted is still refused',
+  genuine instanceof AppError, String(genuine));
+check('and nothing was written for that refusal',
+  refusalPersists === 0, `${refusalPersists} write(s)`);
+
+// `undefined` is not consent.
+let unknownPersists = 0;
+const unknown = await requireCustomerTermsFresh(staleCustomer, {
+  getProvider: () => ({ getCustomer: async () => ({}) }),
+  persist: async (c: any) => { unknownPersists += 1; return c; },
+  now,
+}).then(() => 'allowed').catch((e: Error) => e);
+check('"Bridge did not say" is not treated as consent',
+  unknown instanceof AppError, String(unknown));
+check('and an unknown answer is never written back as approved',
+  unknownPersists === 0, `${unknownPersists} write(s)`);
+
+/**
+ * NO REMOTE CALL ON THE HAPPY PATH. An already-accepted user must not pay an
+ * HTTP round trip on every withdrawal.
+ */
+let called = { n: 0 };
+await requireCustomerTermsFresh({ ...staleCustomer, tosStatus: 'approved' } as any, {
+  getProvider: () => ({ getCustomer: async () => { called.n += 1; return { tosAccepted: true }; } }),
+  persist: async () => { throw new Error('must not persist'); },
+  now,
+});
+check('an already-accepted user costs no provider call',
+  called.n === 0, `${called.n} call(s)`);
+
 // ─────────────────────────────────────────────────────────────────────
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

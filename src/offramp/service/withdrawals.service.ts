@@ -10,7 +10,7 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled, requireAssetSupportedOnChain } from '../../controls/payment-controls.service.js';
 import { syncPaymentTransactionReferencesForResource } from '../../references/transaction-references.service.js';
 import { attachWithdrawalTimeline } from '../../timeline/transaction-timeline.service.js';
-import { requireCustomerTerms } from '../../customers/customer-terms.js';
+import { requireCustomerTermsFresh } from '../../customers/customer-terms.js';
 
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
@@ -71,9 +71,22 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
   const customer = data.customers.find((c) => c.id === externalAccount.customerId);
   if (!customer) throw notFound('Customer');
   if (customer.kycStatus !== 'kyc_approved') throw badRequest('KYC must be approved before withdrawals');
-  // Bridge requires terms acceptance separately from KYC, and a payout is
-  // exactly the kind of instruction its terms govern.
-  requireCustomerTerms(customer);
+  /**
+   * Bridge requires terms acceptance separately from KYC, and a payout is
+   * exactly the kind of instruction its terms govern.
+   *
+   * The FRESH variant, because a withdrawal can be started from the API,
+   * WhatsApp or Telegram - none of which load the verification page that
+   * refreshes this flag. Refusing a payout on a stale 'pending' with nothing
+   * in the user's path to correct it is the one way this gate could hold
+   * someone's money hostage. If Bridge says they accepted, we record that and
+   * continue.
+   */
+  await requireCustomerTermsFresh(customer, {
+    getProvider: (name) => getOfframpProvider(name),
+    persist: (updated) => db.updateCustomerRecord(updated),
+    now: nowIso,
+  });
 
   /**
    * Which of the two things the user is asking for, decided ONCE.

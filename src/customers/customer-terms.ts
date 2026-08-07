@@ -51,3 +51,57 @@ export const TERMS_REQUIRED_MESSAGE =
 export function requireCustomerTerms(customer: Pick<CustomerRecord, 'provider' | 'tosStatus'> | null | undefined): void {
   if (customerTermsOutstanding(customer)) throw badRequest(TERMS_REQUIRED_MESSAGE);
 }
+
+/**
+ * THE SELF-HEALING GATE. Prefer this at any site that moves money.
+ *
+ * requireCustomerTerms() reads a STORED flag, and a stored flag can be stale.
+ * The sync that refreshes it runs on the verification page load, the admin
+ * refresh route, and Bridge webhooks - none of which a user touches when they
+ * withdraw straight from the API, WhatsApp or Telegram. Such a user could be
+ * refused for terms they accepted weeks ago, with nothing in their path that
+ * would ever correct the record.
+ *
+ * So before refusing, ASK THE PROVIDER. If Bridge says the terms are accepted,
+ * the stored value was simply out of date: persist the correction and let the
+ * payment through.
+ *
+ * COSTS NOTHING IN THE NORMAL CASE. The remote read happens only when the
+ * stored flag says "outstanding", which for an accepted user is never. It buys
+ * one HTTP call on the path that was about to fail anyway.
+ *
+ * FAILURE IS A REFUSAL, NOT AN ALLOW. If Bridge cannot be reached we keep the
+ * stored answer and refuse. Terms acceptance is a compliance precondition;
+ * letting a payout through because the provider was unreachable would be
+ * inventing consent from an outage.
+ */
+export async function requireCustomerTermsFresh(
+  customer: CustomerRecord | null | undefined,
+  deps: {
+    getProvider: (name: string) => { getCustomer?: (id: string) => Promise<{ tosAccepted?: boolean }> };
+    persist: (customer: CustomerRecord) => Promise<unknown>;
+    now: () => string;
+  }
+): Promise<void> {
+  if (!customerTermsOutstanding(customer)) return;
+  const record = customer as CustomerRecord;
+
+  if (record.providerCustomerId) {
+    try {
+      const provider = deps.getProvider(record.provider);
+      if (provider.getCustomer) {
+        const snapshot = await provider.getCustomer(record.providerCustomerId);
+        // Tri-state. Only an explicit `true` clears the gate - `undefined`
+        // means Bridge said nothing usable, which is not consent.
+        if (snapshot.tosAccepted === true) {
+          await deps.persist({ ...record, tosStatus: 'approved', updatedAt: deps.now() });
+          return;
+        }
+      }
+    } catch {
+      // Unreachable provider: fall through to the refusal below.
+    }
+  }
+
+  throw badRequest(TERMS_REQUIRED_MESSAGE);
+}
