@@ -2002,6 +2002,9 @@ function mapUser(row: any): UserRecord {
     whatsappNumber: str(row.whatsapp_number),
     fullName: [first, last].filter(Boolean).join(' ') || displayIdentity,
     country: str(row.country),
+    // A DATE column comes back as a JS Date; the rest of the app speaks
+    // yyyy-MM-dd, so it is normalised here rather than at every read site.
+    dateOfBirth: row.date_of_birth ? String(iso(row.date_of_birth)).slice(0, 10) : undefined,
     username: str(row.username),
     usernameUpdatedAt: optionalIso(row.username_updated_at),
     telegramUserId: str(row.telegram_user_id),
@@ -2913,14 +2916,15 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
   const { firstName, lastName } = splitName(user.fullName);
   const primaryChannel = user.primaryChannel ?? inferPrimaryChannel(user.email, user.whatsappNumber);
   await client.query(
-    `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, role_history, primary_channel, username, username_updated_at, telegram_user_id, telegram_username, telegram_verified_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+    `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, date_of_birth, role_history, primary_channel, username, username_updated_at, telegram_user_id, telegram_username, telegram_verified_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
      on conflict (user_id) do update set
        whatsapp_number = excluded.whatsapp_number,
        email = excluded.email,
        first_name = excluded.first_name,
        last_name = excluded.last_name,
        country = excluded.country,
+       date_of_birth = excluded.date_of_birth,
        primary_channel = excluded.primary_channel,
        username = excluded.username,
        username_updated_at = excluded.username_updated_at,
@@ -2933,7 +2937,7 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
        email_verified_at = excluded.email_verified_at,
        whatsapp_verified_at = excluded.whatsapp_verified_at,
        updated_at = excluded.updated_at`,
-    [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.telegramUserId ?? null, user.telegramUsername ?? null, user.telegramVerifiedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
+    [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, user.dateOfBirth ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.telegramUserId ?? null, user.telegramUsername ?? null, user.telegramVerifiedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
   );
 }
 

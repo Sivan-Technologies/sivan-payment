@@ -102,6 +102,18 @@ export interface OfframpProvider {
   name: string;
   createCustomer(input: CreateCustomerInput): Promise<ProviderCustomer>;
   createKycLink(input: CreateKycLinkInput): Promise<ProviderKycLink>;
+  /**
+   * Patch fields onto an existing provider customer.
+   *
+   * Exists because POST /kyc_links SILENTLY IGNORES birth_date - measured:
+   * sent it, got 201, read the customer back and the field was null with
+   * `date_of_birth` still in `missing`. The only way to set it is a follow-up
+   * PUT, so the interface needs a way to express one.
+   *
+   * OPTIONAL, so providers that cannot patch a customer are not forced to
+   * pretend they can.
+   */
+  updateCustomer?(customerId: string, patch: Record<string, unknown>): Promise<unknown>;
   getKycLink(kycLinkId: string): Promise<ProviderKycLink>;
   getHostedKycLink(customerId: string, redirectUri?: string, endorsement?: string): Promise<{ url: string; raw: unknown }>;
   createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount>;

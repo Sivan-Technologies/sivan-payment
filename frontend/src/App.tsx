@@ -1344,6 +1344,31 @@ export default function App() {
   }, [api, user?.id]);
 
   /**
+   * Persist the date of birth collected in the verification modal.
+   *
+   * Stored on the Sivan user AND, once a Bridge customer exists, pushed to
+   * Bridge as `birth_date`. Both, because POST /kyc_links silently drops the
+   * field - measured - so the value has to survive the create call and be
+   * applied by a follow-up PUT.
+   */
+  const handleDateOfBirthChange = useCallback(async (dateOfBirth: string) => {
+    if (!user?.id) throw new Error('Create your account first.');
+    const updated = await api<UserRecord>(`/api/users/${user.id}/date-of-birth`, {
+      method: 'PUT',
+      body: JSON.stringify({ dateOfBirth })
+    });
+    setUser(updated);
+    /**
+     * If a customer already exists, patch it now rather than waiting for a
+     * verification restart. Non-fatal: the date is saved either way, and the
+     * push retries at the next kyc-link call.
+     */
+    if (customer?.providerCustomerId) {
+      await api(`/api/customers/${user.id}/sync-date-of-birth`, { method: 'POST' }).catch(() => undefined);
+    }
+  }, [api, user?.id, customer?.providerCustomerId]);
+
+  /**
    * A resolved Nigerian bank account, confirmed by the user as theirs.
    *
    * By this point the modal has already POSTed to /api/ngn/payout-accounts,
@@ -2576,6 +2601,8 @@ export default function App() {
         startingBridge={startingBridge}
         manualKycUrl={manualKycUrl}
         requestedPath={requestedVerificationPath}
+        dateOfBirth={user?.dateOfBirth}
+        onDateOfBirthChange={handleDateOfBirthChange}
       />
     </div>
   );

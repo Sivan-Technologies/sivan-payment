@@ -103,6 +103,79 @@ export async function setUserCountry(userId: string, input: z.infer<typeof setUs
  * A UI-only lock is not a lock. There is a readOnly attribute on the settings
  * input, and it takes one curl to bypass. This is the enforcement.
  */
+/**
+ * DATE OF BIRTH, and the 18+ rule.
+ *
+ * WHY THIS EXISTS. Bridge will not approve a customer whose `base`/`sepa`
+ * endorsements are missing `date_of_birth` and `min_age_18`. Measured against
+ * the real sandbox: a stuck customer showed
+ *
+ *   base incomplete  missing: ["date_of_birth", "min_age_18", ...]
+ *
+ * and one PUT /v0/customers/{id} {"birth_date": ...} moved both to `complete`.
+ *
+ * ENFORCED HERE, ON THE SERVER. The form also checks 18+, but a UI check is a
+ * courtesy, not a rule - it takes one curl to bypass. Bridge would refuse the
+ * customer anyway, so letting an under-age date through would spend $2 to be
+ * told no, and strand the user with a rejection they cannot fix.
+ */
+export const MINIMUM_AGE_YEARS = 18;
+
+/**
+ * Whole years between a date and now, calendar-correct.
+ *
+ * Deliberately NOT `(now - dob) / 365.25 days`. That drifts around leap years
+ * and can call someone 18 the day before their birthday - which is exactly the
+ * kind of off-by-one that turns into a compliance finding rather than a bug
+ * report. Comparing month and day directly cannot drift.
+ */
+export function ageInYears(isoDate: string, now = new Date()): number {
+  const dob = new Date(`${isoDate}T00:00:00Z`);
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const monthDelta = now.getUTCMonth() - dob.getUTCMonth();
+  if (monthDelta < 0 || (monthDelta === 0 && now.getUTCDate() < dob.getUTCDate())) age -= 1;
+  return age;
+}
+
+export const setUserDateOfBirthSchema = z.object({
+  /**
+   * ISO yyyy-MM-dd, which is what Bridge's `birth_date` takes. The NGN BVN
+   * form uses dd-MM-yyyy; converting is the caller's job so there is exactly
+   * one format at this boundary and no ambiguity about whether 01-02-1990 is
+   * January or February.
+   */
+  dateOfBirth: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'dateOfBirth must be yyyy-MM-dd')
+});
+
+export async function setUserDateOfBirth(
+  userId: string,
+  input: z.infer<typeof setUserDateOfBirthSchema>
+) {
+  const user = await getUser(userId);
+
+  const parsed = new Date(`${input.dateOfBirth}T00:00:00Z`);
+  // Catches 1990-13-45: the regex accepts the shape, only Date rejects the value.
+  if (Number.isNaN(parsed.getTime())) throw badRequest('That is not a real date.');
+
+  const now = new Date();
+  if (parsed.getTime() > now.getTime()) {
+    throw badRequest('Date of birth cannot be in the future.');
+  }
+
+  const age = ageInYears(input.dateOfBirth, now);
+  if (age < MINIMUM_AGE_YEARS) {
+    throw badRequest(`You must be at least ${MINIMUM_AGE_YEARS} to verify your identity.`);
+  }
+  // A date implying an implausible age is a typo, not a customer. Refusing is
+  // kinder than sending it to Bridge and having them reject the person.
+  if (age > 120) throw badRequest('Check your date of birth and try again.');
+
+  const updated = { ...user, dateOfBirth: input.dateOfBirth, updatedAt: nowIso() };
+  return db.updateUserRecord(updated);
+}
+
 export const setUserNameSchema = z.object({
   // A single character is not a legal name, and a bare surname cannot be
   // matched against a Nigerian bank record with any confidence.

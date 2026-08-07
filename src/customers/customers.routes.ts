@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { AppError } from '../shared/errors.js';
-import { createBridgeCustomer, createBridgeCustomerSchema, getCustomerByUserId, refreshKycStatus, simulateSandboxKycApproval, startKyc, startKycSchema } from './customers.service.js';
+import { createBridgeCustomer, createBridgeCustomerSchema, syncCustomerDateOfBirth, getCustomerByUserId, refreshKycStatus, simulateSandboxKycApproval, startKyc, startKycSchema } from './customers.service.js';
 
 export async function customersRoutes(app: FastifyInstance) {
   app.post('/api/customers/kyc-link', async (request, reply) => {
@@ -14,6 +14,17 @@ export async function customersRoutes(app: FastifyInstance) {
     const body = parseBody(createBridgeCustomerSchema, request.body);
     const customer = await createBridgeCustomer(body);
     return reply.code(201).send({ data: customer });
+  });
+
+  /**
+   * Re-apply a stored date of birth to an existing provider customer.
+   *
+   * The backfill route for customers created before DOB was collected. Also
+   * what support calls when the automatic push at link-creation failed.
+   */
+  app.post('/api/customers/:userId/sync-date-of-birth', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await syncCustomerDateOfBirth(userId) };
   });
 
   app.get('/api/customers/:userId', async (request) => {

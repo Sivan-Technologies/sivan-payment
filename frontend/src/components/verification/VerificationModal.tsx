@@ -46,6 +46,8 @@ export function VerificationModal({
   startingBridge,
   manualKycUrl,
   requestedPath,
+  dateOfBirth,
+  onDateOfBirthChange,
 }: {
   open: boolean;
   /** The server's plan for the country already on file, if any. */
@@ -61,6 +63,10 @@ export function VerificationModal({
   onCountryChange: (country: string) => Promise<void> | void;
   onVerified: (account: SavedNgnPayoutAccount) => void;
   onStartBridge: () => void;
+  /** Date of birth on the user record, yyyy-MM-dd. */
+  dateOfBirth?: string;
+  /** Persists it before Bridge verification may start. */
+  onDateOfBirthChange: (dateOfBirth: string) => Promise<void>;
   /** The kyc-link request is in flight. Drives the modal's own progress copy. */
   startingBridge?: boolean;
   /** A verification URL the browser blocked us from opening. Rendered as a link. */
@@ -235,7 +241,7 @@ export function VerificationModal({
                 onVerified={onVerified}
               />
             ) : (
-              <BridgeVerification plan={activePlan} loading={loading} starting={Boolean(startingBridge)} manualUrl={manualKycUrl} onStart={onStartBridge} />
+              <BridgeVerification plan={activePlan} loading={loading} starting={Boolean(startingBridge)} manualUrl={manualKycUrl} onStart={onStartBridge} dateOfBirth={dateOfBirth} onDateOfBirthChange={onDateOfBirthChange} />
             )}
 
             <ul className="sv-modal-unlocks">
@@ -569,6 +575,8 @@ function BridgeVerification({
   starting,
   manualUrl,
   onStart,
+  dateOfBirth,
+  onDateOfBirthChange,
 }: {
   plan: VerificationPathPlan;
   loading: boolean;
@@ -588,7 +596,71 @@ function BridgeVerification({
    */
   manualUrl?: string;
   onStart: () => void;
+  /** Date of birth already on file, yyyy-MM-dd. Undefined if never asked. */
+  dateOfBirth?: string;
+  /** Persists the date. Must resolve before verification may start. */
+  onDateOfBirthChange: (dateOfBirth: string) => Promise<void>;
 }) {
+  /**
+   * DATE OF BIRTH IS COLLECTED BEFORE THE BUTTON, NOT AFTER.
+   *
+   * Bridge blocks approval while the customer record is missing
+   * `date_of_birth` and `min_age_18` - which produced the "Verification needs
+   * one more step" banner with nothing on screen to act on.
+   *
+   * Asked here rather than on a profile page because it is verification data,
+   * not a preference: sending someone to Settings mid-flow means they have to
+   * find their way back, and a Bridge customer costs $2 whether or not they
+   * ever return. Asked BEFORE the button so the customer record is complete
+   * the moment it is created.
+   */
+  const [dob, setDob] = useState(dateOfBirth ?? '');
+  const [dobError, setDobError] = useState('');
+  const [savingDob, setSavingDob] = useState(false);
+  const [dobSaved, setDobSaved] = useState(Boolean(dateOfBirth));
+
+  // 18 years ago today, as the latest date the picker will accept. The browser
+  // then cannot offer an invalid choice at all, which is a better experience
+  // than typing a date and being told no.
+  const maxDob = new Date(Date.now() - 18 * 365.25 * 24 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  function ageFrom(value: string): number {
+    const born = new Date(`${value}T00:00:00Z`);
+    const now = new Date();
+    let age = now.getUTCFullYear() - born.getUTCFullYear();
+    const m = now.getUTCMonth() - born.getUTCMonth();
+    if (m < 0 || (m === 0 && now.getUTCDate() < born.getUTCDate())) age -= 1;
+    return age;
+  }
+
+  async function saveDob() {
+    setDobError('');
+    if (!dob) return setDobError('Enter your date of birth.');
+    const born = new Date(`${dob}T00:00:00Z`);
+    if (Number.isNaN(born.getTime())) return setDobError('That is not a real date.');
+    if (born.getTime() > Date.now()) return setDobError('Date of birth cannot be in the future.');
+    /**
+     * The 18+ rule, checked here so the user finds out immediately - but the
+     * SERVER enforces it too. A UI check is a courtesy; it takes one curl to
+     * bypass, and Bridge would refuse the customer anyway after we had already
+     * spent $2 creating it.
+     */
+    if (ageFrom(dob) < 18) return setDobError('You must be at least 18 to verify your identity.');
+    if (ageFrom(dob) > 120) return setDobError('Check your date of birth and try again.');
+
+    setSavingDob(true);
+    try {
+      await onDateOfBirthChange(dob);
+      setDobSaved(true);
+    } catch (error) {
+      setDobError((error as Error).message || 'Could not save your date of birth.');
+    } finally {
+      setSavingDob(false);
+    }
+  }
+
   return (
     <div className="sv-modal-body">
       {plan.isFallback && (
@@ -626,11 +698,38 @@ function BridgeVerification({
             tab will load on its own. Please do not close it.
           </p>
         </div>
+      ) : !dobSaved ? (
+        // STEP 1. Nothing else is offered until this is on file - a Start
+        // button here would create a customer Bridge cannot approve.
+        <div className="sv-dob-step">
+          <label className="sv-field">
+            <span>Date of birth</span>
+            <input
+              type="date"
+              value={dob}
+              max={maxDob}
+              onChange={(event) => { setDob(event.target.value); setDobError(''); }}
+            />
+          </label>
+          <p className="sv-muted">
+            Bridge needs this to verify you. It must match the ID you are about to upload.
+          </p>
+          {dobError && <p className="sv-warn" role="alert">{dobError}</p>}
+          <button className="sv-primary" disabled={savingDob} onClick={saveDob}>
+            {savingDob ? 'Saving…' : 'Continue →'}
+          </button>
+        </div>
       ) : (
         <>
           <p className="sv-muted">
             This opens our partner Bridge in a new tab, and can take up to 15 seconds to load. Come
             back here when you are done. This page updates on its own.
+          </p>
+          {/* Shown back, and editable, because a wrong date here fails the ID
+              check later with a message that will not mention the date. */}
+          <p className="sv-muted sv-dob-confirmed">
+            Date of birth: <strong>{dob}</strong>{' '}
+            <button type="button" className="sv-linkish" onClick={() => setDobSaved(false)}>Change</button>
           </p>
           <button className="sv-primary" disabled={loading} onClick={onStart}>
             Start verification →
