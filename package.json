@@ -185,7 +185,8 @@
     "test:bridge-sandbox": "tsx scripts/bridge-live-sandbox-soft-test.ts",
     "bridge:live-va-smoke": "tsx scripts/bridge-live-va-and-sweep-smoke.ts",
     "test:production-config-guards": "tsx scripts/test-production-config-guards.ts",
-    "e2e:transfer-fee-visible": "node e2e/transfer-fee-visible-journey.mjs"
+    "e2e:transfer-fee-visible": "node e2e/transfer-fee-visible-journey.mjs",
+    "e2e:transfer-assets": "node e2e/transfer-assets-from-admin-journey.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

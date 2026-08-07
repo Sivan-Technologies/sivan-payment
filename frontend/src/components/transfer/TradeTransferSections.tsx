@@ -188,7 +188,17 @@ function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
     <div className="warning-box compact">Send the exact amount and include the reference/memo. Missing or incorrect references can delay matching and settlement.</div>
   </div>;
 }
-export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, networkMode, loading, api, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; /** Used to price the transfer BEFORE the user confirms. The server owns the fee curve; a client-side copy would drift the moment an admin changes it. */ api?: <T>(path: string, options?: RequestInit) => Promise<T>; isVerified: boolean; /** Server-stated, never guessed: a mainnet explorer link for a testnet hash shows "not found", which reads as "your money is gone". */ networkMode?: 'mainnet' | 'testnet'; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
+export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalance, transfers, suppliers, supplierPayments, enabledNetworks, enabledAssets, networkMode, loading, api, onSubmit, onCreateSupplier, onSupplierPayment, onContinue, onRefresh }: { hasUser: boolean; /** Used to price the transfer BEFORE the user confirms. The server owns the fee curve; a client-side copy would drift the moment an admin changes it. */ api?: <T>(path: string, options?: RequestInit) => Promise<T>; isVerified: boolean; /** Server-stated, never guessed: a mainnet explorer link for a testnet hash shows "not found", which reads as "your money is gone". */ networkMode?: 'mainnet' | 'testnet'; balance: BalanceSummary | null; /** chain + ledger credits - holds. Preferred over `balance`. */ unifiedBalance?: UnifiedBalance | null; transfers: BalanceTransferRecord[]; suppliers: SupplierRecord[]; supplierPayments: SupplierPaymentRecord[]; enabledNetworks: NetworkControl[]; /**
+   * Assets the ADMIN has switched on, from GET /api/offramp/controls.
+   *
+   * The asset list was hardcoded here as `usdc` plus `usdt, coming soon`,
+   * disabled. USDT had already been enabled in admin - so the product was
+   * telling users a live asset was unavailable, which is the same class of
+   * lie as a hidden fee: the screen and the system disagreed and the screen
+   * won. Driven from the server so turning an asset on or off in admin is all
+   * it takes, with no deploy.
+   */
+  enabledAssets: AssetControl[]; loading: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCreateSupplier: (event: FormEvent<HTMLFormElement>) => void; onSupplierPayment: (event: FormEvent<HTMLFormElement>) => void; onContinue: () => void; onRefresh: () => Promise<void> }) {
   /**
    * REVIEW, THEN SEND - the button now does what it says.
    *
@@ -299,6 +309,33 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
     pendingFormRef.current = null;
   }
 
+  /**
+   * Assets this user may actually send, from the admin controls.
+   *
+   * A disabled asset is REMOVED, not greyed out. The previous list showed
+   * "USDT (Tether), coming soon" as a permanently disabled option while USDT
+   * was already switched on in admin - so the one asset the operator had
+   * enabled was the one the UI called unavailable. Filtering on `enabled`
+   * means the dropdown is whatever admin says, both directions, with no
+   * deploy.
+   */
+  const sendableAssets = (enabledAssets ?? []).filter((item) => item.enabled);
+
+  /**
+   * "USDC (USD Coin)" from the admin's short label.
+   *
+   * The full names are not in the control record - it carries `label: 'USDC'`
+   * - so they are expanded here rather than lost. An asset with no expansion
+   * falls back to the admin label, which is always something rather than
+   * blank.
+   */
+  const ASSET_FULL_NAMES: Record<string, string> = { usdc: 'USD Coin', usdt: 'Tether' };
+  const assetLabel = (item: { asset: string; label?: string }) => {
+    const short = (item.label || item.asset).toUpperCase();
+    const full = ASSET_FULL_NAMES[item.asset];
+    return full ? `${short} (${full})` : short;
+  };
+
   const [activeRoute, setActiveRoute] = useState<'crypto' | 'supplier' | 'user'>('crypto');
   const [supplierCurrency, setSupplierCurrency] = useState<'gbp' | 'usd' | 'eur' | 'mxn' | 'brl'>('gbp');
   const [supplierCurrencyOpen, setSupplierCurrencyOpen] = useState(false);
@@ -335,7 +372,14 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
     <div className="transfer-route-grid route-tabs">
       <button type="button" className={`transfer-route-card ${activeRoute === 'crypto' ? 'active' : ''}`} onClick={() => setActiveRoute('crypto')}><span>⇆</span><div><strong>Send crypto</strong><small>Transfer settled USDC to your own wallet on a supported network.</small></div><Badge status="active">Available</Badge></button>
       <button type="button" className={`transfer-route-card ${activeRoute === 'supplier' ? 'active' : ''}`} onClick={() => setActiveRoute('supplier')}><span>▭</span><div><strong>Pay supplier / cross-border</strong><small>Crypto-to-fiat payout to a saved supplier bank account after compliance checks.</small></div><Badge status="pending">Review</Badge></button>
-      <button type="button" className={`transfer-route-card ${activeRoute === 'user' ? 'active' : ''}`} onClick={() => setActiveRoute('user')}><span>◇</span><div><strong>Transfer to @username</strong><small>Instant transfer to another verified Sivan user.</small></div><Badge status="pending">Coming soon</Badge></button>
+      {/* "Transfer to @username" is NOT SHOWN.
+ 
+          It advertised a route that does nothing: clicking it opened a panel
+          whose only content was "Roadmap - this future route will let...".
+          A disabled third of the chooser is a promise the product cannot keep
+          today, and on a money page it invites a user to plan around a feature
+          that does not exist. It comes back by restoring this card when the
+          route ships - the `user` branch below is left intact for that. */}
     </div>
     <div className="transfer-grid">
       {/* ACTIONS FIRST, BALANCE SECOND.
@@ -344,7 +388,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
           before anything they could actually do. The thing you came here to
           do now leads, the balance it spends from sits under it, and history
           - the least urgent - comes last. */}
-      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer USDC to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" defaultValue="usdc" options={[{ value: 'usdc', label: 'USDC (USD Coin)' }, { value: 'usdt', label: 'USDT (Tether), coming soon', disabled: true }]} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label><div className="warning-box compact">Only send to a wallet on the selected network. Supplier/cross-border payouts use the Pay supplier route with saved bank details, not a stored USD fiat balance.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating transfer…' : available <= 0 ? 'No settled USDC available' : 'Review transfer →'}</button></form>}</article>}
+      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer USDC to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" defaultValue={sendableAssets[0]?.asset || 'usdc'} options={sendableAssets.map((item) => ({ value: item.asset, label: assetLabel(item) }))} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label><div className="warning-box compact">Only send to a wallet on the selected network. Supplier/cross-border payouts use the Pay supplier route with saved bank details, not a stored USD fiat balance.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating transfer…' : available <= 0 ? 'No settled USDC available' : 'Review transfer →'}</button></form>}</article>}
       {activeRoute === 'supplier' && <><article className="panel supplier-directory-card"><div className="panel-head"><div><p className="eyebrow">Supplier directory</p><h3>Saved suppliers</h3></div><Badge status={suppliers.length ? 'active' : 'pending'}>{suppliers.length ? `${suppliers.length} saved` : 'None yet'}</Badge></div>{!suppliers.length ? <Empty>No suppliers added yet.</Empty> : <div className="list supplier-list">{suppliers.map((supplier) => <div className="list-item" key={supplier.id}><strong>{supplier.supplierName}</strong><Badge status={supplier.status}>{friendlyStatus(supplier.status)}</Badge><small>{supplier.currency.toUpperCase()} · {supplier.supplierCountry} · {supplier.bankName} · ****{supplier.accountLast4 || '----'}</small><small>{supplier.status === 'approved' ? 'Ready for supplier payment requests.' : supplier.reviewReason || 'Waiting for compliance review.'}</small></div>)}</div>}<div className="warning-box compact">Sivan chooses the execution provider in the background. Customers see a single Send & Transfer experience; provider diagnostics stay with operations.</div></article>
       {/* remaining lines unchanged */}
       <article className="panel form-panel supplier-form-card"><p className="eyebrow">Pay supplier / cross-border</p><h3>Add supplier bank</h3>{!hasUser || !isVerified ? <Empty>Complete verification before adding suppliers.</Empty> : <form className="form premium-form" onSubmit={onCreateSupplier}><label>Supplier business name<input name="supplierName" placeholder="ABC Trading Ltd" required /></label><div className="split"><label>Currency<input type="hidden" name="currency" value={supplierCurrency} /><div className="custom-select-wrap"><button type="button" className={`custom-select-trigger ${supplierCurrencyOpen ? 'open' : ''}`} onClick={() => setSupplierCurrencyOpen((open) => !open)}><span><strong>{selectedSupplierCurrency.label}</strong><small>{selectedSupplierCurrency.helper}</small></span><em>⌄</em></button>{supplierCurrencyOpen && <div className="custom-select-menu">{supplierCurrencyOptions.map((option) => <button type="button" className={option.value === supplierCurrency ? 'selected' : ''} key={option.value} onClick={() => { setSupplierCurrency(option.value); setSupplierCurrencyOpen(false); }}><span>{option.label}</span><small>{option.helper}</small></button>)}</div>}</div></label><label>Supplier country<input name="supplierCountry" defaultValue={supplierCurrency === 'gbp' ? 'GB' : supplierCurrency === 'usd' ? 'US' : supplierCurrency === 'mxn' ? 'MX' : supplierCurrency === 'brl' ? 'BR' : 'FR'} /></label></div><label>Bank name<input name="bankName" placeholder={supplierCurrency === 'gbp' ? 'Barclays' : supplierCurrency === 'usd' ? 'Lead Bank' : 'Supplier bank'} required /></label><label>Account owner name<input name="accountOwnerName" placeholder="ABC Trading Ltd" required /></label>{supplierCurrency === 'gbp' && <div className="split"><label>GBP account number<input name="gbAccountNumber" placeholder="12345678" required /></label><label>GBP sort code<input name="sortCode" placeholder="123456" required /></label></div>}{supplierCurrency === 'usd' && <div className="split"><label>USD account number<input name="accountNumber" placeholder="215268129123" required /></label><label>USD routing<input name="routingNumber" placeholder="101019644" required /></label></div>}{supplierCurrency === 'eur' && <><label>EUR IBAN<input name="ibanAccountNumber" placeholder="IE04MODR99035512826162" required /></label><label>BIC optional<input name="bic" placeholder="MODRIE22XXX" /></label></>}{supplierCurrency === 'mxn' && <label>CLABE<input name="clabeNumber" placeholder="18-digit CLABE" required /></label>}{supplierCurrency === 'brl' && <label>PIX key<input name="pixKey" placeholder="Supplier PIX key" required /></label>}<label>Supplier address<input name="street" placeholder="Supplier business address" /></label><div className="warning-box compact">{supplierCurrencyLabel} details are saved for compliance review. New suppliers stay pending until admin approval; AI can recommend, but never releases funds.</div><button className="primary-btn" disabled={loading}>{loading ? 'Adding supplier…' : 'Add supplier for review →'}</button></form>}</article>
