@@ -42,6 +42,26 @@ export function getRateLimitPolicy(method: string, url: string): RateLimitPolicy
     return { name: 'webhook', windowMs: 60_000, max: env.RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE };
   }
 
+  /**
+   * Pairing-code redemption, called by the WhatsApp and Telegram bots.
+   *
+   * Uses the webhook allowance rather than the default bucket because the
+   * shape of the traffic is the same: ONE upstream service relaying many
+   * users, all arriving from a single IP. The default per-IP bucket would
+   * throttle every user at once as soon as the bot got busy, and a user whose
+   * code was refused for that reason cannot tell it from a bad code.
+   *
+   * This bounds a flood; it is not the brute-force control. A code is
+   * SVP-XXXX-99 over a 24-letter, 8-digit alphabet (~21M combinations) and
+   * both routes already require the service secret, so an attacker needs the
+   * bot's credential before they can guess at all. A per-telegramUserId
+   * attempt limit in the service would be the tighter control and is worth
+   * adding, but belongs next to the token lookup rather than here.
+   */
+  if (method === 'POST' && url.startsWith('/api/identity/link-')) {
+    return { name: 'identity_redeem', windowMs: 60_000, max: env.RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE };
+  }
+
   // OTP endpoints are the most abuse-sensitive.
   if (method === 'POST' && url.startsWith('/api/auth/email/start')) {
     return { name: 'auth_start', windowMs: env.RATE_LIMIT_AUTH_WINDOW_MS, max: env.RATE_LIMIT_AUTH_START_MAX };

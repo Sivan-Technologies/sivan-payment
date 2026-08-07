@@ -466,6 +466,7 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/admin')) return false;
   if (url.startsWith('/api/auth')) return false;
   if (url.startsWith('/api/identity/link-whatsapp/redeem')) return false;
+  if (url.startsWith('/api/identity/link-telegram/redeem')) return false;
   if (url.startsWith('/api/ace/whatsapp/support')) return false;
   if (method === 'POST' && url === '/api/users') return false;
 
