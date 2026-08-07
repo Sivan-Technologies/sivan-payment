@@ -6,11 +6,13 @@ import type {
   OfframpProvider,
   ProviderCustomer,
   ProviderExternalAccount,
+  ProviderCustomerSnapshot,
   ProviderKycLink,
   ProviderLiquidationAddress,
   ProviderSupplierPayout
 } from '../offramp-provider.interface.js';
 import { BridgeClient } from './bridge.client.js';
+import { bridgeCustomerTermsAccepted } from './bridge-terms.js';
 import { verifyBridgeWebhookSignature } from './bridge.webhooks.js';
 import type { Currency, SourceCurrency, Chain } from '../../database/types.js';
 
@@ -56,6 +58,21 @@ export class BridgeProvider implements OfframpProvider {
    */
   async updateCustomer(customerId: string, patch: Record<string, unknown>): Promise<unknown> {
     return this.client.request(`/customers/${customerId}`, { method: 'PUT', body: patch });
+  }
+
+  /**
+   * Read the customer object, for the terms acceptance the kyc_link cannot
+   * always answer for. See OfframpProvider.getCustomer.
+   */
+  async getCustomer(customerId: string): Promise<ProviderCustomerSnapshot> {
+    const raw: any = await this.client.request(`/customers/${customerId}`);
+    return {
+      id: raw?.id ?? customerId,
+      status: raw?.status,
+      kycStatus: raw?.status,
+      tosAccepted: bridgeCustomerTermsAccepted(raw),
+      raw
+    };
   }
 
   async getKycLink(kycLinkId: string): Promise<ProviderKycLink> {

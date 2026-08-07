@@ -4,6 +4,7 @@ import { getOfframpProvider } from '../providers/provider-registry.js';
 import { badRequest, conflict, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { mapBridgeKycStatus } from '../customers/customer-mapping.js';
+import { bridgeCustomerTermsAccepted } from '../providers/bridge/bridge-terms.js';
 import { mapBridgeDrainState } from '../offramp/service/withdrawal-mapping.js';
 import { mapBridgeTransferState } from '../onramp/service/onramp-mapping.js';
 import { applyBridgeVirtualAccountEvent, isVirtualAccountWebhook } from '../virtual-accounts/service/virtual-account-events.service.js';
@@ -171,6 +172,20 @@ function applyCustomerEvent(data: any, payload: BridgeWebhookPayload): any | und
   const customer = data.customers.find((c: any) => c.providerCustomerId === customerObject.id);
   if (!customer) return undefined;
   customer.kycStatus = mapBridgeKycStatus(customerObject.kyc_status ?? customerObject.status ?? payload.event_object_status);
+  /**
+   * TERMS TOO, not just KYC.
+   *
+   * This handler read `kyc_status` and dropped the terms field on the floor,
+   * so the ONLY thing that could ever move tosStatus was a `kyc_link` event.
+   * A customer who accepts terms after their link is done emits a `customer`
+   * event and nothing else - we stored the new KYC status and left terms at
+   * 'pending'.
+   *
+   * Tri-state, and it only upgrades: `undefined` (Bridge did not say) and
+   * `false` both leave the stored value alone. A webhook body that happens to
+   * omit the field must not revoke an acceptance we have already recorded.
+   */
+  if (bridgeCustomerTermsAccepted(customerObject) === true) customer.tosStatus = 'approved';
   customer.raw = customerObject;
   customer.updatedAt = nowIso();
   return customer;
@@ -246,3 +261,14 @@ function applyExternalAccountEvent(data: any, payload: BridgeWebhookPayload): an
   account.updatedAt = nowIso();
   return account;
 }
+
+/**
+ * Exported for tests ONLY.
+ *
+ * The webhook effects are otherwise reachable only through
+ * processBridgeWebhook, which verifies a real Bridge signature first. Testing
+ * the terms-sync behaviour through that would mean either holding a signing
+ * secret in the test or stubbing the verifier - both of which test the
+ * signature plumbing rather than the thing under test.
+ */
+export const __applyBridgeWebhookEffectsForTest = applyBridgeWebhookEffects;

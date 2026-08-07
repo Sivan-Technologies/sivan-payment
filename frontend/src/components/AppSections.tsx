@@ -832,19 +832,52 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
   // page showed 25% and "Government-issued ID and selfie" to someone who had
   // already completed everything Sivan asks of them.
   const isNgnPath = summary?.path === 'ngn_bank';
-  const identityDone = summary ? summary.pathComplete : customer?.kycStatus === 'kyc_approved';
+  /**
+   * `identityComplete`, NOT `pathComplete`.
+   *
+   * pathComplete now includes the terms acceptance, and this value drives the
+   * step-2 tick, the "Bank verified"/"Identity verified" stepper cell and the
+   * Level badge. Reading the combined field made a user whose ID was verified
+   * but whose terms were pending see step 2 as unfinished - a green "Verified"
+   * badge beside an un-ticked "2". Caught in a screenshot, not in the code.
+   */
+  const identityDone = summary ? summary.identityComplete : customer?.kycStatus === 'kyc_approved';
   const verificationLink = customer?.hostedKycLink || customer?.kycLink;
   // Only meaningful on the Bridge path; a Nigerian has no hosted link to resume.
   const canOpenExistingVerification = Boolean(!isNgnPath && verificationLink && customer?.id && !identityDone && !kycFailed);
   const started = Boolean(customer?.id);
   const bankDone = hasBank;
 
-  // Terms are a Bridge requirement. Counting them for a Nigerian caps their
-  // progress at 75% forever with a step they can never complete.
-  const steps = isNgnPath
-    ? [emailDone, identityDone, bankDone]
-    : [emailDone, identityDone, customer?.tosStatus === 'approved', bankDone];
+  /**
+   * TERMS, FROM THE SERVER.
+   *
+   * `required` is "does a Bridge customer exist", which is the same question
+   * the withdrawal/bank/virtual-account gates ask. Keying it off `isNgnPath`
+   * as before meant a Nigerian who took the "Verify with ID instead" route had
+   * a terms obligation the page refused to acknowledge.
+   *
+   * Falls back to the customer record until the summary lands so the row and
+   * the percentage do not jump once it does.
+   */
+  const termsRequired = summary ? summary.terms.required : Boolean(customer?.id && !isNgnPath);
+  const termsAccepted = summary ? summary.terms.accepted : customer?.tosStatus === 'approved';
+  const termsLink = summary?.terms.link ?? customer?.tosLink;
+
+  // Counted only when actually required, so a user who owes nothing is not
+  // held below 100% by a step that does not apply to them.
+  const steps = [emailDone, identityDone, ...(termsRequired ? [termsAccepted] : []), bankDone];
   const pct = Math.round((steps.filter(Boolean).length / steps.length) * 100);
+
+  /**
+   * OUTSTANDING TERMS ARE A BLOCK, and the page must say so before the user
+   * discovers it at the withdrawal screen.
+   *
+   * identityDone can be true while terms are not - Bridge approves the
+   * document check and the terms acceptance independently - and in that state
+   * every payout route is refused server-side. The old page showed a green
+   * "Account ready" banner in exactly that situation.
+   */
+  const termsBlocking = termsRequired && !termsAccepted;
 
   const levelLabel = summary?.levelLabel ?? (identityDone ? 'Level 1: Verified' : 'Level 0: Starter');
   /**
@@ -968,7 +1001,33 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
 
           The user's own words for what they did must win over a provider
           status that has no opinion about it. */}
-      {summary?.hasPendingPayoutReview && !summary.pathComplete ? (
+      {/* OUTSTANDING TERMS OUTRANK EVERY OTHER BANNER.
+ 
+          KycOutcomeNotice renders a green "Verification successful - you can
+          now use Sivan Payment features that require KYC" card off
+          kycStatus === 'kyc_approved' ALONE. Bridge approves the document
+          check and the terms acceptance independently, so a user can sit in
+          exactly that state with terms still pending - and every payout route
+          refused server-side. The page congratulated them and the withdrawal
+          screen then turned them away.
+ 
+          Placed first because it is the only thing standing between the user
+          and a working account, and it is one click to fix. */}
+      {termsBlocking ? (
+        <article className="kyc-outcome-notice dashboard-account-notice">
+          <span className="kyc-outcome-icon">!</span>
+          <div className="kyc-outcome-copy">
+            <p className="eyebrow">One step left</p>
+            <h3>Accept the provider terms</h3>
+            <p>Our payments provider needs you to accept its terms before you can withdraw, add a payout bank, or open a virtual account.</p>
+          </div>
+          <div className="kyc-outcome-actions">
+            {termsLink
+              ? <a className="primary-btn small" href={termsLink} target="_blank" rel="noreferrer">Accept terms</a>
+              : <button className="ghost-btn small" onClick={onRefresh}>Refresh status</button>}
+          </div>
+        </article>
+      ) : summary?.hasPendingPayoutReview && !summary.pathComplete ? (
         <article className="kyc-outcome-notice dashboard-account-notice">
           <span className="kyc-outcome-icon">⏳</span>
           <div className="kyc-outcome-copy">
@@ -1047,10 +1106,38 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
    has no customer-type step and a business cannot be verified by a personal
    bank account. */
 <button className="primary-btn small" onClick={onStartVerification} disabled={!canSubmitKyc}>{kycActionLabel}</button>}</div>
-            {/* Bridge requires its own terms acceptance. A Nigerian on the bank
-                path has no Bridge relationship, so showing them a step they can
-                never complete caps their progress permanently. */}
-            {!isNgnPath && <VerificationStep done={customer?.tosStatus === 'approved'} index={3} title="Terms accepted" sub="Provider terms are accepted when required" action={customer?.tosStatus === 'approved' ? 'Completed' : started ? 'Continue' : 'Continue'} />}
+            {/* THE TERMS STEP, VISIBLE AND ACTIONABLE.
+ 
+                Two things were wrong with the row this replaces.
+ 
+                It was hidden behind `!isNgnPath`, on the reasoning that a
+                Nigerian on the bank path has no Bridge relationship. True
+                until they use the "Verify with ID instead" button lower down
+                on THIS PAGE - the documented route to USD/GBP/EUR rails. From
+                that moment they have a Bridge customer and a real terms
+                obligation, and the row stayed hidden. They were refused at
+                withdrawal for a step the screen never showed them.
+ 
+                And its button was `disabled` with the label "Continue" - for
+                everyone, always. VerificationStep renders a disabled button by
+                design; it is a status row, not an action. So even on the Bridge
+                path where the step WAS shown, there was nothing to click. The
+                only working link was buried in a status card further down,
+                which is what "ToS should not be hidden" is about.
+ 
+                `summary.terms.required` comes from the server and asks the
+                same question the enforcement gate asks - does a Bridge
+                customer exist - so the row appears exactly when the block can
+                bite. Falls back to the customer record while the summary is
+                still loading, so the step does not flicker in late. */}
+            {(summary ? summary.terms.required : Boolean(customer?.id && !isNgnPath)) && (
+              <TermsStep
+                index={3}
+                accepted={termsAccepted}
+                link={termsLink}
+                onRefresh={onRefresh}
+              />
+            )}
             <VerificationStep done={hasBank} index={isNgnPath ? 3 : 4} title="Payout bank" sub={isNgnPath ? 'Confirmed with your bank verification' : 'Add a bank when you are ready to withdraw'} action={hasBank ? 'Completed' : 'Continue'} />
             {/* WHAT COMES AFTER "100% COMPLETE".
  
@@ -1136,6 +1223,49 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
 
 function VerificationStep({ done, index, title, sub, action }: { done: boolean; index: number; title: string; sub: string; action: string }) {
   return <div className={`verification-step ${done ? 'done' : ''}`}><span>{done ? '✓' : index}</span><div><strong>{title}</strong><small>{sub}</small></div><button className={`small ${done ? 'ghost-btn' : 'primary-btn'}`} disabled>{action}</button></div>;
+}
+
+/**
+ * The provider terms step.
+ *
+ * NOT a VerificationStep, because that component renders a permanently
+ * disabled button - it is a status row. Terms are the one step on this page
+ * the user completes by clicking something here, so it needs its own row with
+ * a live control.
+ *
+ * THE LINK IS AN <a>, NOT A BUTTON. Bridge's terms are a hosted page on
+ * Bridge's domain; there is nothing to accept in-app and pretending otherwise
+ * would mean a button that fakes a signature we never collected.
+ *
+ * WHEN THERE IS NO LINK the row says so and offers a refresh instead of
+ * rendering a dead anchor. That happens for a customer created before we
+ * stored tosLink, and for an admin-imported one - a real state, and a user
+ * staring at an unclickable "Accept terms" has no way to know why.
+ */
+function TermsStep({ index, accepted, link, onRefresh }: { index: number; accepted: boolean; link?: string; onRefresh: () => void }) {
+  return (
+    <div className={`verification-step ${accepted ? 'done' : ''}`}>
+      <span>{accepted ? '✓' : index}</span>
+      <div>
+        <strong>Accept provider terms</strong>
+        <small>
+          {accepted
+            ? 'You have accepted the provider terms.'
+            : 'Our payments provider needs you to accept its terms before you can withdraw, add a payout bank, or open a virtual account.'}
+        </small>
+        {/* SAYS WHAT TO DO AFTER, because the acceptance happens on another
+            domain and nothing tells this page when it finished. Without this
+            the user accepts, comes back to a row still showing "Accept
+            terms", and reasonably concludes it did not work. */}
+        {!accepted && link && <small className="verification-pending-note">Opens in a new tab. Come back here and refresh when you are done.</small>}
+      </div>
+      {accepted
+        ? <button className="ghost-btn small" disabled>Completed</button>
+        : link
+          ? <a className="primary-btn small" href={link} target="_blank" rel="noreferrer">Accept terms</a>
+          : <button className="ghost-btn small" onClick={onRefresh}>Refresh status</button>}
+    </div>
+  );
 }
 
 export function PaymentMethodsView({ accounts, onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv, onRefresh }: { accounts: ExternalAccountRecord[]; onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean; onRefresh: () => void }) {
@@ -1388,7 +1518,20 @@ function CustomerDetails({ customer }: { customer: CustomerRecord }) {
       )}
       {!approved && !underReview && !termsApproved && <div className="verification-note">If you already finished, allow a few moments for processing and refresh status.</div>}
       {underReview && <div className="verification-note success-note">Your verification is under review. We will update your account as soon as it is approved.</div>}
-      {approved && <div className="verification-note success-note">You are verified. You can now add a bank account and use Sivan payment features.</div>}
+      {/* THE SUCCESS LINE MUST NOT PROMISE WHAT TERMS ARE BLOCKING.
+ 
+          Read `approved` alone - a Bridge KYC field - so it printed "You can
+          now add a bank account and use Sivan payment features" on the very
+          screen that was refusing both for want of a terms acceptance. Caught
+          in a screenshot: this green note sat directly under a "Terms:
+          Pending" row and an "Accept terms to finish" card.
+ 
+          Both halves are true statements about different things, so both are
+          kept - the identity check really did pass - but the entitlement is
+          only claimed once it is real. */}
+      {approved && (termsApproved
+        ? <div className="verification-note success-note">You are verified. You can now add a bank account and use Sivan payment features.</div>
+        : <div className="verification-note">Your identity is verified. Accept the provider terms above to finish and unlock payouts.</div>)}
     </div>
   );
 }

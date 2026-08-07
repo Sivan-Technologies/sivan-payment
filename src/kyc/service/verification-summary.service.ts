@@ -43,6 +43,7 @@ import { verificationPathFor } from './verification-path.js';
 import { getNgnControls } from '../../ngn/service/ngn-controls.service.js';
 import { db } from '../../database/json-database.js';
 import { notFound } from '../../shared/errors.js';
+import { customerTermsOutstanding } from '../../customers/customer-terms.js';
 
 export interface FlowAllowance {
   flow: FlowType;
@@ -76,7 +77,47 @@ export interface VerificationSummary {
   /** True when the uplifted ceiling is in force rather than the level's own. */
   upliftApplies: boolean;
 
-  /** Has the user completed the check their country's path requires? */
+  /**
+   * The provider terms step, as a first-class part of verification.
+   *
+   * SERVER-OWNED because the gate is server-enforced. The page used to decide
+   * for itself whether to show a Terms row - it hid it for Nigerians and drew
+   * a permanently-disabled button for everyone else - which meant the screen's
+   * idea of "done" and the API's idea of "allowed" were computed in two places
+   * from two different rules. Now there is one answer and the UI renders it.
+   *
+   * `required: false` for a user with no Bridge customer: there is no terms
+   * document that applies to them and no link they could open.
+   */
+  terms: {
+    /** Does this user owe a provider terms acceptance at all? */
+    required: boolean;
+    accepted: boolean;
+    /** Bridge's hosted terms page. Absent when we have not been given one. */
+    link?: string;
+  };
+
+  /**
+   * Has the user completed the IDENTITY check their country's path requires?
+   *
+   * Deliberately EXCLUDES terms. `pathComplete` includes them, and the
+   * verification page derives its step-2 tick from "is the path done" - so
+   * folding terms into that one field made a verified identity render as an
+   * incomplete step. Caught in a screenshot: a green "Verified" badge sitting
+   * beside an un-ticked "2" circle, and 50% on a page showing three of four
+   * steps finished.
+   *
+   * Two different questions needed two different fields: "is your ID
+   * confirmed" and "are you finished".
+   */
+  identityComplete: boolean;
+
+  /**
+   * Is the user finished with EVERYTHING their path requires, terms included?
+   *
+   * This is the gate - it drives isVerified in the frontend and the overall
+   * progress. A user who owes a terms acceptance is not finished.
+   */
   pathComplete: boolean;
   /** A payout destination exists and is usable. */
   hasPayoutAccount: boolean;
@@ -205,7 +246,7 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
   // the first paint is, on screen, indistinguishable from a summary that was
   // never fetched. Every await removed from this chain is one less chance of
   // showing a Nigerian the Bridge document flow.
-  const [state, overrides, userOverrides, usedNgn, ngnAccounts, bridgeAccounts, controls] = await Promise.all([
+  const [state, overrides, userOverrides, usedNgn, ngnAccounts, bridgeAccounts, controls, customer] = await Promise.all([
     getVerificationState(userId),
     listVerificationLimitOverrides(),
     // Per-user exceptions, expired ones already filtered out. Added to the
@@ -223,6 +264,17 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
     // Whether NIN/BVN is even offerable. Read here rather than assumed,
     // because turning the provider on must change the page with no deploy.
     getNgnControls(),
+    /**
+     * The Bridge customer, for the terms step.
+     *
+     * getVerificationState() already reads this row and exposes
+     * `bridgeTosStatus` off it, but not the tosLink - and the UI needs
+     * somewhere to send the user, not just a boolean telling them they are
+     * blocked. Fetched here rather than widening VerificationState because
+     * this is a presentational detail of one step, and it joins the existing
+     * Promise.all so it costs no extra round trip.
+     */
+    db.findCustomerByUserId(userId).catch(() => null),
   ]);
   const path = verificationPathFor(user.country);
 
@@ -292,10 +344,40 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
     },
     identitySource: state.identitySource,
     upliftApplies: uplifted,
+    /**
+     * PRESENCE OF A BRIDGE CUSTOMER DECIDES THIS, NOT COUNTRY.
+     *
+     * The page keyed the Terms row off `!isNgnPath`, so a Nigerian who went on
+     * to start a Bridge verification - the documented route to USD/GBP/EUR
+     * rails, offered by a button on that very page - had a Bridge customer, a
+     * real terms obligation, and no Terms row anywhere in the UI. They were
+     * blocked at withdrawal by a step the screen never showed them.
+     *
+     * Asking whether the customer exists is the same question the enforcement
+     * gate asks, so the screen and the API cannot disagree.
+     */
+    terms: {
+      required: customer?.provider === 'bridge',
+      accepted: customer?.tosStatus === 'approved',
+      link: customer?.tosLink,
+    },
     // The Nigerian path is complete when a NUBAN cleared the name match; the
     // Bridge path when Bridge approved. Asking "is this user verified" without
     // reference to their path is what produced the original bug.
-    pathComplete: path === 'ngn_bank' ? hasVerifiedNgnAccount : state.level >= VerificationLevel.IDENTITY,
+    /**
+     * TERMS ARE PART OF BEING DONE.
+     *
+     * The user asked for terms to be one of the criteria for finishing
+     * verification, and this is the field that means "finished" - it drives
+     * the progress bar, the "Account ready" banner and the step ticks.
+     *
+     * `!termsOutstanding` and not `terms.accepted`: a user with no Bridge
+     * customer owes nothing, so an unaccepted-but-not-required terms status
+     * must not hold them at 99% forever. Same distinction the gate makes.
+     */
+    identityComplete: path === 'ngn_bank' ? hasVerifiedNgnAccount : state.level >= VerificationLevel.IDENTITY,
+    pathComplete: (path === 'ngn_bank' ? hasVerifiedNgnAccount : state.level >= VerificationLevel.IDENTITY)
+      && !customerTermsOutstanding(customer),
     /**
      * IS THERE A HIGHER LEVEL, AND WHAT WOULD IT TAKE?
      *

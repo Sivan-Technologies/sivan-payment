@@ -10,6 +10,7 @@ import { buildSupplierAceReview, defaultSupplierControls, evaluateSupplierRisk, 
 import { routeSupplierPayout } from './supplier-provider-routing.service.js';
 import { getVirtualAccountProviderSettings } from '../virtual-accounts/service/virtual-account-provider-settings.service.js';
 import { resolveSettlementWalletId } from '../wallets/user-wallet.service.js';
+import { requireCustomerTerms } from '../customers/customer-terms.js';
 
 const currencySchema = z.enum(['usd', 'gbp', 'eur', 'mxn', 'brl']);
 const addressSchema = z.object({
@@ -155,7 +156,11 @@ export async function createSupplier(input: z.infer<typeof createSupplierSchema>
   if (!controls.supplierPaymentsEnabled) throw forbidden('Supplier payments are currently disabled.');
   if (!controls.thirdPartySupplierPayoutsEnabled) throw forbidden('Third-party supplier payouts are currently disabled.');
   const { data, user, customer } = await customerForUser(input.userId);
-  if (customer.kycStatus !== 'kyc_approved' || customer.tosStatus !== 'approved') throw badRequest('KYC and Terms approval are required before adding a supplier.');
+  if (customer.kycStatus !== 'kyc_approved') throw badRequest('KYC and Terms approval are required before adding a supplier.');
+  // Was an inline `tosStatus !== 'approved'` with the message above. Routed
+  // through the shared gate so this site says the same actionable thing as
+  // every other one, and cannot drift from the rule.
+  requireCustomerTerms(customer);
 
   const route = routeSupplierPayout({ currency: input.currency as SupplierPayoutCurrency, country: input.supplierCountry, accountType: input.accountType });
   const provider = getOfframpProvider(route.provider === 'bridge' ? customer.provider : route.provider);

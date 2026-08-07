@@ -7,6 +7,7 @@ import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, idempotencyKey, nowIso } from '../shared/id.js';
 import { requireUser } from '../users/users.service.js';
 import { mapBridgeKycStatus } from './customer-mapping.js';
+import { bridgeCustomerTermsAccepted } from '../providers/bridge/bridge-terms.js';
 import { requireCustomerTypeEnabled } from '../controls/payment-controls.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import type { CustomerStatus } from '../database/types.js';
@@ -315,13 +316,70 @@ export async function getCustomerByUserId(userId: string) {
   return customer;
 }
 
+/**
+ * Pull the provider's current view of this customer into our record.
+ *
+ * TWO SOURCES, BECAUSE NEITHER ONE IS ALWAYS PRESENT.
+ *
+ * `tos_status` lives on the KYC LINK. `has_accepted_terms_of_service` lives on
+ * the CUSTOMER. This function used to read only the first and, worse, to
+ * `return` early when there was no kycLinkId - so for any customer without one
+ * (every admin-imported customer, and anyone whose hosted link we never
+ * stored) it fetched nothing at all and `tosStatus` stayed at whatever it was
+ * created with: 'pending', permanently.
+ *
+ * That was survivable while terms were only a label on a card. It is NOT
+ * survivable now that terms gate transacting - it would refuse withdrawals to
+ * users who accepted Bridge's terms months ago. The gate and this sync ship
+ * together for that reason.
+ */
 export async function refreshKycStatus(userId: string) {
   const customer = await getCustomerByUserId(userId);
-  if (!customer.kycLinkId) return enrichCustomerKycAction(customer);
   const provider = getOfframpProvider(customer.provider);
-  const kyc = await provider.getKycLink(customer.kycLinkId);
-  const record = { ...customer, kycStatus: mapBridgeKycStatus(kyc.kycStatus), tosStatus: kyc.tosStatus === 'approved' ? 'approved' as const : 'pending' as const, raw: kyc.raw, updatedAt: nowIso() };
-  const saved = await db.updateCustomerRecord(record);
+
+  let next = { ...customer };
+  let changed = false;
+
+  if (customer.kycLinkId) {
+    const kyc = await provider.getKycLink(customer.kycLinkId);
+    next = {
+      ...next,
+      kycStatus: mapBridgeKycStatus(kyc.kycStatus),
+      // ONLY EVER UPGRADES. The kyc_link keeps reporting 'pending' for a user
+      // who accepted terms through some other route, and overwriting a real
+      // 'approved' with that would un-accept them on every page refresh.
+      tosStatus: kyc.tosStatus === 'approved' ? 'approved' as const : next.tosStatus,
+      raw: kyc.raw
+    };
+    changed = true;
+  }
+
+  /**
+   * THE CUSTOMER OBJECT IS THE AUTHORITY ON TERMS, so ask it whenever the
+   * link has not already given us an 'approved'.
+   *
+   * Failure here is swallowed deliberately. This runs on the page-load
+   * refresh path; a Bridge blip must not turn a status card into an error
+   * screen, and the stored value remains whatever it already was.
+   */
+  if (next.tosStatus !== 'approved' && customer.providerCustomerId && provider.getCustomer) {
+    try {
+      const snapshot = await provider.getCustomer(customer.providerCustomerId);
+      // Tri-state: `undefined` means Bridge said nothing usable. Only an
+      // explicit `true` moves the stored value, and nothing here can move it
+      // backwards to 'pending'.
+      if (snapshot.tosAccepted === true) {
+        next = { ...next, tosStatus: 'approved' as const };
+        changed = true;
+      }
+    } catch {
+      // Keep the record as it stands.
+    }
+  }
+
+  if (!changed) return enrichCustomerKycAction(customer);
+
+  const saved = await db.updateCustomerRecord({ ...next, updatedAt: nowIso() });
   return enrichCustomerKycAction(saved);
 }
 
@@ -435,10 +493,22 @@ function mapImportedBridgeCustomerStatus(bridgeCustomer: any): CustomerStatus {
   return mapBridgeKycStatus(status || undefined);
 }
 
+/**
+ * Now delegates to the shared rule in bridge-terms.ts.
+ *
+ * The old body here stringified the WHOLE endorsements array and asked
+ * `/terms_of_service/i.test(x) && /complete/i.test(x)` - two independent
+ * substring tests over one blob, so an endorsement with terms in `missing`
+ * and anything at all in `complete` read as accepted. That is a false
+ * positive on a compliance field.
+ *
+ * `?? false` because this caller writes a two-state DB column at import time
+ * and has no third value to store. The GATE does not go through here - it
+ * reads the tri-state directly, so "unknown" can never be mistaken for a
+ * refusal on the path that blocks a user.
+ */
 function bridgeTermsApproved(bridgeCustomer: any): boolean {
-  if (bridgeCustomer?.has_accepted_terms_of_service === true) return true;
-  const requirements = JSON.stringify(bridgeCustomer?.endorsements || []);
-  return /terms_of_service/i.test(requirements) && /complete/i.test(requirements);
+  return bridgeCustomerTermsAccepted(bridgeCustomer) ?? false;
 }
 
 function summarizeImportedBridgeCustomer(bridgeCustomer: any) {

@@ -8,6 +8,7 @@ import type {
   OfframpProvider,
   ProviderCustomer,
   ProviderExternalAccount,
+  ProviderCustomerSnapshot,
   ProviderKycLink,
   ProviderLiquidationAddress,
   ProviderSupplierPayout
@@ -46,6 +47,16 @@ export class MockBridgeProvider implements OfframpProvider {
       tosStatus: raw.tos_status,
       raw
     };
+  }
+
+  /**
+   * Mirrors the real provider's customer read. Approved, as everything in the
+   * mock is - it exists so the sync path has something to call rather than
+   * skipping silently and reporting a pass it never earned.
+   */
+  async getCustomer(customerId: string): Promise<ProviderCustomerSnapshot> {
+    const raw = { id: customerId, status: 'active', has_accepted_terms_of_service: true };
+    return { id: customerId, status: 'active', kycStatus: 'active', tosAccepted: true, raw };
   }
 
   async getKycLink(kycLinkId: string): Promise<ProviderKycLink> {

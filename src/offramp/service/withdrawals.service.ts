@@ -10,6 +10,7 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { requireCurrencyEnabled, requireSourceAssetEnabled, requireSourceNetworkEnabled, requireAssetSupportedOnChain } from '../../controls/payment-controls.service.js';
 import { syncPaymentTransactionReferencesForResource } from '../../references/transaction-references.service.js';
 import { attachWithdrawalTimeline } from '../../timeline/transaction-timeline.service.js';
+import { requireCustomerTerms } from '../../customers/customer-terms.js';
 
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
@@ -70,6 +71,9 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
   const customer = data.customers.find((c) => c.id === externalAccount.customerId);
   if (!customer) throw notFound('Customer');
   if (customer.kycStatus !== 'kyc_approved') throw badRequest('KYC must be approved before withdrawals');
+  // Bridge requires terms acceptance separately from KYC, and a payout is
+  // exactly the kind of instruction its terms govern.
+  requireCustomerTerms(customer);
 
   /**
    * Which of the two things the user is asking for, decided ONCE.

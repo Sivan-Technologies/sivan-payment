@@ -4,6 +4,7 @@ import { badRequest, notFound } from '../../shared/errors.js';
 import { listPaymentControls, requireAssetSupportedOnChain } from '../../controls/payment-controls.service.js';
 import { verificationPathFor } from '../../kyc/service/verification-path.js';
 import type { CreateOnrampOrderInput } from '../types/onramp.schemas.js';
+import { requireCustomerTerms } from '../../customers/customer-terms.js';
 
 /**
  * WHY THIS ORDERS ITSELF THE WAY IT DOES.
@@ -72,6 +73,7 @@ export async function validateOnrampOrderInput(input: CreateOnrampOrderInput) {
   if (!customer || customer.kycStatus !== 'kyc_approved') {
     throw badRequest(bridgeRequiredMessage(path, customer?.kycStatus));
   }
+  requireCustomerTerms(customer);
 
   const currency = controls.payoutCurrencies.find((item) => item.currency === input.sourceCurrency);
   if (!currency?.enabled) {

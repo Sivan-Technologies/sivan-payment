@@ -7,6 +7,7 @@ import { id, idempotencyKey, nowIso } from '../../shared/id.js';
 import { addressSchema } from '../../shared/validation.js';
 import { getCustomerByUserId } from '../../customers/customers.service.js';
 import { requireCurrencyEnabled } from '../../controls/payment-controls.service.js';
+import { requireCustomerTerms } from '../../customers/customer-terms.js';
 
 const baseAccountSchema = z.object({
   userId: z.string().min(1),
@@ -59,6 +60,7 @@ export async function createExternalAccount(input: z.infer<typeof createExternal
   if (customer.kycStatus !== 'kyc_approved') {
     throw badRequest('KYC must be approved before adding a withdrawal bank account');
   }
+  requireCustomerTerms(customer);
 
   const provider = getOfframpProvider(customer.provider);
   const payload: Record<string, unknown> = {

@@ -692,6 +692,28 @@ export interface VerificationSummary {
   };
   identitySource?: 'sivan' | 'bridge';
   upliftApplies: boolean;
+  /**
+   * The provider terms step, decided by the SERVER.
+   *
+   * `required` is presence-of-a-Bridge-customer, NOT country. The page used to
+   * key the Terms row off `!isNgnPath`, which hid it from a Nigerian who had
+   * started a Bridge verification - so they owed an acceptance, were blocked
+   * at withdrawal for it, and had no row anywhere offering the link.
+   */
+  terms: {
+    required: boolean;
+    accepted: boolean;
+    link?: string;
+  };
+  /**
+   * The IDENTITY check alone, terms excluded.
+   *
+   * Separate from pathComplete because the step list needs "is your ID
+   * confirmed" while the gate needs "are you finished". Collapsing the two
+   * made a verified identity render as an incomplete step the moment terms
+   * were outstanding.
+   */
+  identityComplete: boolean;
   pathComplete: boolean;
   hasPayoutAccount: boolean;
   hasPendingPayoutReview: boolean;

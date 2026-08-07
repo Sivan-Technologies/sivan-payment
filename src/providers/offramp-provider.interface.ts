@@ -18,6 +18,23 @@ export interface ProviderKycLink {
   raw: unknown;
 }
 
+/**
+ * What the provider's CUSTOMER object says about a user, as opposed to what
+ * their hosted verification link says.
+ *
+ * `tosAccepted` is deliberately a tri-state. `undefined` means "the provider
+ * did not tell us", which is NOT the same as `false` - and conflating them is
+ * exactly how a terms gate locks out a user who has accepted. Callers must
+ * treat undefined as "no new information" and leave the stored value alone.
+ */
+export interface ProviderCustomerSnapshot {
+  id: string;
+  status?: string;
+  kycStatus?: string;
+  tosAccepted?: boolean;
+  raw: unknown;
+}
+
 export interface ProviderExternalAccount {
   id: string;
   customerId: string;
@@ -114,6 +131,26 @@ export interface OfframpProvider {
    * pretend they can.
    */
   updateCustomer?(customerId: string, patch: Record<string, unknown>): Promise<unknown>;
+  /**
+   * Read the CUSTOMER object's own terms-of-service acceptance.
+   *
+   * Separate from getKycLink() because the two carry the fact on different
+   * objects and only one of them is always present. `tos_status` lives on the
+   * kyc_link; `has_accepted_terms_of_service` lives on the customer. A user
+   * imported by an admin, or one whose hosted link has been consumed, has a
+   * customer and NO kycLinkId - so the kyc_link route cannot answer for them
+   * at all, and refreshKycStatus() returned early leaving tosStatus 'pending'
+   * forever.
+   *
+   * Verified against the real sandbox on customer
+   * 1245c57f-9bc2-4942-8776-3bfa6998dcae: `has_accepted_terms_of_service` is
+   * `true` and both endorsements list `terms_of_service_v1`/`_v2` under
+   * `requirements.complete`, agreeing with the kyc_link's `tos_status:
+   * 'approved'`. The two sources do not disagree; one is just always there.
+   *
+   * OPTIONAL, so a provider with no such concept is not made to invent one.
+   */
+  getCustomer?(customerId: string): Promise<ProviderCustomerSnapshot>;
   getKycLink(kycLinkId: string): Promise<ProviderKycLink>;
   getHostedKycLink(customerId: string, redirectUri?: string, endorsement?: string): Promise<{ url: string; raw: unknown }>;
   createExternalAccount(input: CreateExternalAccountInput): Promise<ProviderExternalAccount>;

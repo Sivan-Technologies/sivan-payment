@@ -1,6 +1,7 @@
 import { env } from '../../config/env.js';
 import { db } from '../../database/json-database.js';
 import type { VirtualAccountCurrency } from '../types/virtual-account.types.js';
+import { customerTermsOutstanding, TERMS_REQUIRED_MESSAGE } from '../../customers/customer-terms.js';
 
 export type VirtualAccountEligibility = {
   eligible: boolean;
@@ -19,6 +20,9 @@ export async function checkVirtualAccountEligibility(userId: string, currency: V
   const customer = data.customers.find((item) => item.userId === userId);
   if (!customer) reasons.push('Payment customer/KYC profile is required.');
   if (customer && customer.kycStatus !== 'kyc_approved') reasons.push('KYC must be approved before requesting a virtual account.');
+  // A virtual account is issued by Bridge in the user's name. Issuing one to
+  // someone who has not accepted Bridge's terms is the clearest case of all.
+  if (customerTermsOutstanding(customer)) reasons.push(TERMS_REQUIRED_MESSAGE);
   if (customer && env.VIRTUAL_ACCOUNT_PROVIDER === 'bridge' && customer.provider !== 'bridge') {
     reasons.push('A real Bridge verification profile is required before requesting a virtual account.');
   }
