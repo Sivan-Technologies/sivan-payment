@@ -176,6 +176,58 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     ? await getCustomerByUserId(input.userId)
     : await getCustomerByUserId(input.userId).catch(() => undefined);
 
+  /**
+   * A BALANCE THAT CANNOT MOVE MUST NOT BE QUOTED.
+   *
+   * unified-balance counts `credited` - ledger value with no chain behind it,
+   * such as a Bridge virtual-account settlement - as spendable, correctly:
+   * the user really does own it. But the off-ramp sweep signs from an ON-CHAIN
+   * wallet, and a user funded entirely by a virtual account may have none.
+   *
+   * The result was a quote that priced happily, an order that was created, and
+   * a sweep that skipped with `no_wallet_for_network` - leaving the transfer at
+   * `awaiting_crypto_deposit` forever, telling the user to send crypto Sivan
+   * had promised to move for them. Verified end to end before this guard.
+   *
+   * Refused at the QUOTE, which is the last point where nothing has been
+   * created yet and the user can be told something true.
+   *
+   * Deliberately only when there is no wallet AND the balance is credit-only:
+   * a user with a real wallet is unaffected, and a user with neither has
+   * nothing to quote anyway and is caught by the balance check downstream.
+   */
+  if (input.direction === 'offramp') {
+    const network = String((input as any).network ?? '').toLowerCase();
+    if (network) {
+      const wallet = await db.findUserWalletForNetwork(input.userId, network);
+      if (!wallet) {
+        /**
+         * SCOPED TO VIRTUAL-ACCOUNT CREDIT, NOT ALL CREDIT.
+         *
+         * The first version refused on any `credited > 0`, which caught admin
+         * balance adjustments too - and those are exactly how support funds a
+         * user who then legitimately quotes. test:failure-paths went from 55/55
+         * to 42/13 and named it: "a verified user can quote -> 403".
+         *
+         * The condition that actually matters is narrower: money that arrived
+         * from a BANK DEPOSIT and is still sitting with Bridge. An admin
+         * adjustment is a bookkeeping entry an operator made deliberately and
+         * can settle deliberately; a virtual-account settlement is the one
+         * that silently has no chain behind it.
+         */
+        const vaCredits = (await db.listVirtualAccountTransactions())
+          .filter((item: any) => item.userId === input.userId && item.status === 'completed');
+        if (vaCredits.length > 0) {
+          throw forbidden(
+            'This balance arrived by bank deposit and is still held with our settlement partner, so it ' +
+            'cannot be sent on chain yet. Our team moves these manually - contact support and we will ' +
+            'release it, usually the same day.'
+          );
+        }
+      }
+    }
+  }
+
   const provider = getNgnProvider(controls.activeProvider);
   // input.network is forwarded so the provider prices - and stamps the assetId
   // for - the chain the user actually picked.

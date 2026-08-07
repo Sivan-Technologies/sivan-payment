@@ -390,8 +390,21 @@ services:
         value: "true"
       - key: BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY
         value: usdc
+      # Solana: the chain the product runs on and the one every Nigerian
+      # off-ramp already quotes. Was base.
       - key: BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL
-        value: base
+        value: solana
+      # Bridge FIXES this at virtual-account creation and will not apply a
+      # later change to deposits already received, so a wrong value here is
+      # permanent revenue loss on that account. Provisioning refuses below
+      # 1.25% rather than locking in a fee that earns nothing.
+      - key: BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT
+        value: "1.25"
+      # Minimum USD before a settlement is swept Bridge -> Privy. Applies to
+      # THAT hand-off only, never to user-requested transfers. Sized against
+      # the ~$0.31 first-time SPL token-account rent.
+      - key: BRIDGE_TO_PRIVY_MIN_SWEEP_USD
+        value: "6"
       - key: BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID
         sync: false
 
@@ -487,6 +500,23 @@ services:
         value: bridge
       - key: BRIDGE_VIRTUAL_ACCOUNTS_ENABLED
         value: "true"
+      # ALL FOUR WERE ABSENT ON LIVE, so production silently ran on whatever
+      # env.ts defaulted to. That is fine while the defaults are right and
+      # invisible when they are not - and one of them fixes an unreclaimable
+      # fee at account creation. Stated explicitly here so the value
+      # production uses is readable in this file.
+      - key: VIRTUAL_ACCOUNTS_ENABLED
+        value: "true"
+      - key: VIRTUAL_ACCOUNT_REQUESTS_ENABLED
+        value: "true"
+      - key: BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY
+        value: usdc
+      - key: BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL
+        value: solana
+      - key: BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT
+        value: "1.25"
+      - key: BRIDGE_TO_PRIVY_MIN_SWEEP_USD
+        value: "6"
       - key: DEFAULT_OFFRAMP_PROVIDER
         value: bridge
       - key: BRIDGE_BASE_URL

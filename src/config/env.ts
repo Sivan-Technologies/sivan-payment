@@ -95,7 +95,18 @@ const envSchema = z.object({
   ETHEREUM_RPC_URL: z.string().url().optional(),
   ETHEREUM_RPC_FALLBACK_URL: z.string().url().optional(),
   WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
-  SIVAN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
+  /**
+   * 1.25%, not 0.
+   *
+   * A zero default meant a deployment that forgot the variable earned Sivan
+   * nothing on every off-ramp, silently and indefinitely. Worse, this figure
+   * is the FALLBACK for the virtual-account fee, and Bridge fixes a VA fee at
+   * provisioning time and will not change it retroactively - so a VA created
+   * while this was 0 earned nothing for the life of the account, unreclaimably.
+   *
+   * A revenue default of zero is not a safe default. It is a silent one.
+   */
+  SIVAN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(1.25),
   SIVAN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   BRIDGE_OFFRAMP_COST_PERCENT: z.coerce.number().min(0).max(100).default(0.5),
   BRIDGE_KYC_COST_USD: z.coerce.number().min(0).default(2),
@@ -123,8 +134,26 @@ const envSchema = z.object({
   VIRTUAL_ACCOUNT_REQUESTS_ENABLED: booleanFromEnv.default(false),
   VIRTUAL_ACCOUNT_PROVIDER: z.enum(['mock', 'bridge', 'nomba', 'monnify', 'flutterwave']).default('mock'),
   BRIDGE_VIRTUAL_ACCOUNTS_ENABLED: booleanFromEnv.default(false),
+  /**
+   * Minimum USD before a virtual-account settlement is swept Bridge -> Privy.
+   *
+   * SIX DOLLARS, AND FOR THIS SWEEP ONLY. Not Sivan/Privy user transfers, not
+   * the NGN off-ramp sweep - those move money a user explicitly asked to move,
+   * where a minimum would block a legitimate instruction. This one is an
+   * automatic internal hand-off nobody requested, so it is the only place a
+   * "not worth the gas" floor belongs.
+   *
+   * Sized against the ~$0.31 first-time SPL token-account rent rather than the
+   * network fee. Below the floor the balance stays credited and spendable, and
+   * the next deposit sweeps the accumulated total.
+   */
+  BRIDGE_TO_PRIVY_MIN_SWEEP_USD: z.coerce.number().min(0).default(6),
   BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY: z.string().default('usdc'),
-  BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL: z.string().default('base'),
+  /**
+   * Solana. Settlement lands on the chain the product actually runs on -
+   * cheapest gas, and the network every Nigerian off-ramp already quotes.
+   */
+  BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL: z.string().default('solana'),
   // Removed: these named a single pooled wallet/address that every virtual
   // account settled into, making Sivan the holder of user funds contrary to
   // Bridge ToS 2.1(m). Settlement is now each user's own Bridge wallet.
@@ -132,7 +161,20 @@ const envSchema = z.object({
   // .env file has no effect and cannot silently restore pooled settlement.
   //   BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_ADDRESS
   //   BRIDGE_VIRTUAL_ACCOUNT_BRIDGE_WALLET_ID
-  BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT: z.string().default('0.0'),
+  /**
+   * The developer fee Bridge charges on virtual-account deposits, as a percent.
+   *
+   * FIXED AT PROVISIONING. Bridge accepts developer_fee_percent when the
+   * virtual account is created; every deposit that lands afterwards is billed
+   * at whatever was set then, and those cannot be reclaimed. A wrong value here
+   * is not a config mistake to be corrected later - it is permanent revenue
+   * loss for that account.
+   *
+   * Defaulted to 1.25 rather than '0.0' for that reason, and enforced as a
+   * non-zero floor at the provisioning call itself - see
+   * assertVirtualAccountFeeConfigured().
+   */
+  BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT: z.string().default('1.25'),
   ACE_PROVIDER: z.enum(['local', 'remote']).default('local'),
   SIVAN_AI_API_URL: z.string().url().optional(),
   SIVAN_AI_API_KEY: z.string().optional().default(''),

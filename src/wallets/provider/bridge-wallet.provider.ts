@@ -138,6 +138,21 @@ export function mapBridgeWallet(raw: BridgeWalletResponse, context = 'wallet'): 
   };
 }
 
+
+/**
+ * Bridge transfer state -> Sivan's four-value status.
+ *
+ * Anything unrecognised maps to 'submitted', not 'failed': an unknown state is
+ * a state we have not learned about yet, and calling it a failure would tell a
+ * user their money did not move when it may well have.
+ */
+function mapBridgeTransferStatus(state?: string): WalletTransfer['status'] {
+  const value = String(state ?? '').toLowerCase();
+  if (['payment_processed', 'completed', 'confirmed'].includes(value)) return 'confirmed';
+  if (['failed', 'canceled', 'cancelled', 'returned', 'error'].includes(value)) return 'failed';
+  return 'submitted';
+}
+
 export class BridgeWalletProvider implements WalletProvider {
   readonly name = 'bridge' as const;
 
@@ -202,23 +217,93 @@ export class BridgeWalletProvider implements WalletProvider {
   }
 
   /**
-   * Outbound transfers.
+   * Outbound transfers, via Bridge's Orchestration API.
    *
-   * Bridge requires all fund movement to go through the Orchestration
-   * (transfers) API rather than direct chain sends. Sivan's off-ramp already
-   * has a reviewed path through withdrawals.service.ts, so this is left
-   * unimplemented rather than opening a second, unreviewed way for money to
-   * leave a user's wallet.
+   * PREVIOUSLY THIS THREW, AND THE REASON GIVEN WAS WRONG.
+   *
+   * The old message said fund movement was blocked pending "Bridge Legal &
+   * Compliance approval". That was never a Bridge restriction - Bridge
+   * documents wallet-to-address sends explicitly, and Sivan ALREADY does
+   * exactly this in createSupplierPayout():
+   *
+   *     POST /v0/transfers
+   *     source: { payment_rail: 'bridge_wallet', bridge_wallet_id }
+   *
+   * It was an internal decision not to open a second exit path before one was
+   * reviewed. That review has happened, so the capability is wired to the same
+   * endpoint the supplier payout has used in production all along.
+   *
+   * WHAT BRIDGE REQUIRES, AND WHY THE ADDRESS IS NOT SIGNED FOR HERE.
+   *
+   * "You must use Bridge's orchestration APIs to move funds. Do not attempt to
+   * send directly from the wallet address." Bridge holds the keys - there is
+   * no local signing step, which is why this returns 'submitted' rather than a
+   * transaction hash. The hash arrives later by webhook, exactly as the
+   * supplier payout path already handles.
    */
-  async createTransfer(_input: WalletTransferInput): Promise<WalletTransfer> {
-    throw new Error(
-      'Bridge wallet transfers are not enabled. Fund movement must use the reviewed off-ramp ' +
-      'path (withdrawals.service.ts) so that limits, approvals and fees are applied. ' +
-      'Enable here only after Bridge Legal & Compliance approves the fund flow.'
-    );
+  async createTransfer(input: WalletTransferInput): Promise<WalletTransfer> {
+    const customerId = assertCustomerId(input.providerCustomerId, 'transfer');
+
+    if (!input.providerWalletId) {
+      throw new Error('Bridge transfers require the source bridge_wallet_id.');
+    }
+
+    /**
+     * `on_behalf_of` is the CUSTOMER, not the wallet. Bridge attributes the
+     * movement to a KYC-approved customer, and omitting it is how a transfer
+     * ends up unattributable in their compliance reporting.
+     */
+    const raw: any = await this.client.request('/transfers', {
+      method: 'POST',
+      idempotencyKey: input.idempotencyKey,
+      body: {
+        amount: input.amount,
+        on_behalf_of: customerId,
+        /**
+         * Zero, deliberately. Sivan's fee is already applied upstream in
+         * balance.service.ts, which sends the NET amount - charging a Bridge
+         * developer_fee here as well would take it twice from the same
+         * transfer.
+         */
+        developer_fee: '0.0',
+        ...(input.reference ? { client_reference_id: input.reference } : {}),
+        source: {
+          payment_rail: 'bridge_wallet',
+          currency: String(input.asset).toLowerCase(),
+          bridge_wallet_id: input.providerWalletId,
+        },
+        destination: {
+          // The chain the funds are going TO, which for a same-chain send is
+          // the chain the wallet lives on.
+          payment_rail: String(input.chain).toLowerCase(),
+          currency: String(input.asset).toLowerCase(),
+          to_address: input.toAddress,
+        },
+      },
+    });
+
+    return {
+      provider: this.name,
+      providerTransferId: String(raw?.id ?? ''),
+      /**
+       * 'submitted', never 'confirmed'. Bridge accepting the instruction is
+       * not the chain including it, and reporting confirmation we have not
+       * observed is how a user is told their money arrived before it did.
+       */
+      status: 'submitted',
+      txHash: raw?.destination_tx_hash || undefined,
+      rawProviderPayload: raw,
+    };
   }
 
-  async getTransfer(_providerTransferId: string): Promise<WalletTransfer> {
-    throw new Error('Bridge wallet transfers are not enabled.');
+  async getTransfer(providerTransferId: string): Promise<WalletTransfer> {
+    const raw: any = await this.client.request(`/transfers/${providerTransferId}`);
+    return {
+      provider: this.name,
+      providerTransferId: String(raw?.id ?? providerTransferId),
+      status: mapBridgeTransferStatus(raw?.state ?? raw?.status),
+      txHash: raw?.destination_tx_hash || undefined,
+      rawProviderPayload: raw,
+    };
   }
 }

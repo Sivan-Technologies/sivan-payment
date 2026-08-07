@@ -63,6 +63,7 @@
     "test:ngn-timeline-advances": "tsx scripts/test-ngn-timeline-advances.ts",
     "test:network-mode-balance": "tsx scripts/test-network-mode-balance.ts",
     "test:balance-ledger-query": "tsx scripts/test-balance-ledger-query.ts",
+    "test:va-fee-and-bridge-sweep": "tsx scripts/test-va-fee-and-bridge-sweep.ts",
     "test:ngn-offramp-sweep-address": "tsx scripts/test-ngn-offramp-sweep-address.ts",
     "test:ngn-bvn-level2": "tsx scripts/test-ngn-bvn-level2.ts",
     "test:auth-signup-signin": "tsx scripts/test-auth-signup-signin.ts",

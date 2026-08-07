@@ -10,7 +10,11 @@ export const virtualAccountProviderSettingsSchema = z.object({
   provider: z.enum(['mock', 'bridge', 'nomba', 'monnify', 'flutterwave']).default('bridge'),
   enabled: z.boolean().default(false),
   defaultSettlementAsset: z.enum(['usdc', 'usdt']).default('usdc'),
-  defaultSettlementNetwork: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum']).default('base'),
+  /**
+   * Solana by default - the chain the product runs on, and the one every
+   * Nigerian off-ramp already quotes. Was 'base'.
+   */
+  defaultSettlementNetwork: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum']).default('solana'),
   /**
    * REMOVED, deliberately rejected rather than ignored.
    *
@@ -65,11 +69,19 @@ function normalizeNetwork(value: string): VirtualAccountProviderSettings['defaul
   // applied while settlement quietly kept using Base. Warn loudly instead.
   if (candidate) {
     console.warn(
-      `[virtual-accounts] Unsupported settlement network "${value}" — falling back to "base". ` +
+      `[virtual-accounts] Unsupported settlement network "${value}" — falling back to "solana". ` +
       `Supported: ${SUPPORTED_SETTLEMENT_NETWORKS.join(', ')}`
     );
   }
-  return 'base';
+  /**
+   * The fallback and the warning MUST name the same chain.
+   *
+   * This returned 'base' while the message said solana - so an operator with a
+   * typo in the env var would read "falling back to solana" and get Base
+   * settlement. A warning that misreports the behaviour it is warning about is
+   * worse than no warning.
+   */
+  return 'solana';
 }
 
 function latestSettingsFromAudit(): Partial<VirtualAccountProviderSettings> | undefined {

@@ -3,6 +3,7 @@ import { id, nowIso } from '../../shared/id.js';
 import type { BridgeWebhookPayload } from '../../webhooks/webhooks.service.js';
 import { syncPaymentTransactionReferencesForResource, upsertTransactionReference } from '../../references/transaction-references.service.js';
 import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
+import { scheduleBridgeToPrivySweep } from './bridge-to-privy-sweep.service.js';
 import type { VirtualAccountEventRecord, VirtualAccountEventType, VirtualAccountTransactionRecord, VirtualAccountTransactionStatus, VirtualAccountCurrency } from '../types/virtual-account.types.js';
 
 function normalizeEventType(value: unknown): VirtualAccountEventType {
@@ -115,5 +116,20 @@ export async function applyBridgeVirtualAccountEvent(payload: BridgeWebhookPaylo
       await createBalanceLedgerEntry({ userId: transaction.userId, customerId: transaction.customerId, asset: 'usdc', amount: transaction.destinationAmount || transaction.sourceAmount || '0', kind: 'credit_pending', status: 'pending', sourceType: 'virtual_account_transaction', sourceId: transaction.id, description: 'Bridge virtual account deposit pending settlement' }, { actorType: 'provider', actorId: 'bridge' });
     }
   }
+  /**
+   * HAND THE SETTLEMENT OFF TO THE USER'S OWN WALLET.
+   *
+   * Fired only once the deposit is COMPLETED - a pending settlement has no
+   * funds in the Bridge wallet yet, and sweeping one would fail for lack of
+   * balance. The ledger credit above already makes it visible to the user
+   * before this runs, so the money is never invisible while it moves.
+   *
+   * Scheduled, not awaited: Bridge expects a prompt 2xx and an on-chain
+   * hand-off does not belong inside a webhook request.
+   */
+  if (transaction.userId && status === 'completed') {
+    scheduleBridgeToPrivySweep(transaction);
+  }
+
   return { event: eventRecord, transaction };
 }

@@ -770,7 +770,25 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     return queued;
   }
 
-  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  /**
+   * THE WALLET'S OWN PROVIDER, NOT THE ACTIVE ONE.
+   *
+   * This read resolveActiveWalletProvider(), which is a deployment-wide
+   * setting for issuing NEW wallets - it says nothing about who holds THIS
+   * wallet. Every existing wallet row records the provider that issued it,
+   * precisely because the active provider can change and existing wallets keep
+   * their custodian.
+   *
+   * With one provider in use the two happened to agree, so the bug was
+   * invisible. It stops being invisible the moment a user holds a Bridge
+   * wallet (virtual-account settlement) while the active provider is Privy:
+   * a Bridge wallet id would be handed to Privy, which has never heard of it.
+   * At best the send fails; at worst it is attempted against the wrong wallet.
+   *
+   * Falling back to the active provider only when the row has no provider
+   * recorded - old rows predating the column.
+   */
+  const provider = getWalletProvider(wallet.provider ?? (await resolveActiveWalletProvider()));
   const result = await provider.createTransfer({
     providerWalletId: wallet.providerWalletId,
     providerCustomerId: wallet.customerId,

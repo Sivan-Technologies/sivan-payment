@@ -1,7 +1,7 @@
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { idempotencyKey } from '../../shared/id.js';
 import { ensureUserWallet } from '../../wallets/user-wallet.service.js';
-import { getVirtualAccountFeeSelection } from '../../offramp/service/fees.service.js';
+import { assertVirtualAccountFeeConfigured, getVirtualAccountFeeSelection } from '../../offramp/service/fees.service.js';
 import { getVirtualAccountProviderSettings } from '../service/virtual-account-provider-settings.service.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountStatus } from '../types/virtual-account.types.js';
 import type { VirtualAccountProvider } from './virtual-account-provider.js';
@@ -41,11 +41,35 @@ function sourceCurrency(raw: any, fallback: VirtualAccountCurrency): VirtualAcco
  * misconfiguration must fail loudly rather than silently route a user's money
  * into a shared treasury wallet.
  */
-async function destinationPayload(wallet: { providerWalletId: string; chain: string }) {
+async function destinationPayload(wallet: { providerWalletId: string; chain: string; provider?: string }) {
   const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
 
   if (!wallet?.providerWalletId) {
     throw new Error('Virtual account settlement requires the customer\'s own Bridge wallet id.');
+  }
+
+  /**
+   * THE WALLET MUST ACTUALLY BE BRIDGE'S.
+   *
+   * `bridge_wallet_id` is Bridge's own identifier. ensureUserWallet() returns
+   * whatever the ACTIVE wallet provider issued, and on this deployment that is
+   * Privy - so this field was being sent a Privy wallet id, which Bridge does
+   * not recognise. Every provisioning attempt failed at the Bridge API with a
+   * generic error, and the platform had zero virtual accounts to show for it.
+   *
+   * Checked here rather than trusted, because the failure was silent from
+   * Sivan's side: the request looked well-formed and the mismatch only existed
+   * across a provider boundary. A named refusal tells the operator which
+   * control to change (Admin > Wallets > active provider, or issue the user a
+   * Bridge wallet) instead of leaving them reading Bridge's error text.
+   */
+  const issuer = String(wallet.provider ?? '').toLowerCase();
+  if (issuer && issuer !== 'bridge') {
+    throw new Error(
+      `Virtual account settlement requires a BRIDGE wallet, but this user's wallet was issued by ` +
+      `"${issuer}". bridge_wallet_id only accepts Bridge's own wallet ids, so Bridge would reject ` +
+      `this request. Provision a Bridge wallet for the user before issuing a virtual account.`
+    );
   }
 
   return {
@@ -110,6 +134,13 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
     // One resolver decides between developer_fee_percent and fee_config.
     // Bridge rejects both in the same request, and each clears the other on
     // update, so the choice must be made in a single place.
+    /**
+     * REFUSE TO PROVISION WITHOUT A FEE. Bridge fixes developer_fee_percent at
+     * creation and it cannot be reclaimed on deposits already received, so a
+     * 0% account earns nothing for its entire life. Throwing is recoverable;
+     * a permanently wrong fee is not.
+     */
+    await assertVirtualAccountFeeConfigured();
     const feeSelection = await getVirtualAccountFeeSelection();
 
     const raw: any = await this.client.request(`/customers/${input.providerCustomerId}/virtual_accounts`, {

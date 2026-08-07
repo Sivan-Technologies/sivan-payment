@@ -1,3 +1,4 @@
+import { badRequest } from '../../shared/errors.js';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
@@ -104,6 +105,48 @@ export interface VirtualAccountFeeSelection {
  * setting degrades to a working plain percentage instead of breaking
  * provisioning entirely.
  */
+/**
+ * The floor below which a virtual account must not be provisioned.
+ *
+ * Bridge fixes developer_fee_percent AT CREATION. Every deposit that lands
+ * afterwards is billed at whatever was set then, and none of it can be
+ * reclaimed - PUT /virtual_accounts can change the figure for FUTURE deposits
+ * only. So a virtual account created at 0% is not a setting to correct later,
+ * it is permanent revenue loss on that account for as long as the user keeps
+ * depositing.
+ *
+ * Which is exactly what happened: virtualAccountFeePercent falls back to
+ * SIVAN_OFFRAMP_FEE_PERCENT, that defaulted to 0, and getVirtualAccountFeeSelection()
+ * returned `{ reason: 'No virtual account fee configured' }` with no fee at
+ * all - a clean, well-worded, revenue-free provisioning.
+ */
+export const MINIMUM_VIRTUAL_ACCOUNT_FEE_PERCENT = 1.25;
+
+/**
+ * Refuse to provision a virtual account with no fee, or below the floor.
+ *
+ * THROWS rather than defaulting silently. Substituting 1.25% here would work
+ * for the first account and hide a misconfiguration that an operator needs to
+ * see - and the fee is unreclaimable, so "worked but wrong" is the expensive
+ * outcome. Failing the request is recoverable; a wrong permanent fee is not.
+ */
+export async function assertVirtualAccountFeeConfigured(): Promise<number> {
+  const settings = await getAdminFeeSettings();
+  const percent = Number(settings.virtualAccountFeePercent);
+
+  if (!Number.isFinite(percent) || percent < MINIMUM_VIRTUAL_ACCOUNT_FEE_PERCENT) {
+    throw badRequest(
+      `Virtual account fee is ${Number.isFinite(percent) ? `${percent}%` : 'not set'}, below the required ` +
+      `minimum of ${MINIMUM_VIRTUAL_ACCOUNT_FEE_PERCENT}%. Bridge fixes this fee when the account is created ` +
+      `and it cannot be reclaimed on deposits already received, so provisioning is refused rather than ` +
+      `locking in a fee that earns nothing. Set virtualAccountFeePercent in Admin > Fees, or ` +
+      `BRIDGE_VIRTUAL_ACCOUNT_DEVELOPER_FEE_PERCENT, then retry.`
+    );
+  }
+
+  return percent;
+}
+
 export async function getVirtualAccountFeeSelection(): Promise<VirtualAccountFeeSelection> {
   const settings = await getAdminFeeSettings();
   const percent = normalizePercent(settings.virtualAccountFeePercent);
