@@ -3,6 +3,7 @@ import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecor
 import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
 import { explorerLink, explorerReference, shortHash } from '../../blockExplorer';
 import { TransferConfirm, type TransferConfirmDetails } from './TransferConfirm';
+import { SupplierPaymentConfirm, type SupplierPaymentConfirmDetails } from './SupplierPaymentConfirm';
 
 /**
  * The shape of GET /api/balance/transfers/quote.
@@ -336,6 +337,63 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
     return full ? `${short} (${full})` : short;
   };
 
+  /**
+   * REVIEW A SUPPLIER PAYOUT BEFORE CREATING IT.
+   *
+   * This route submitted straight from the form - to a third party's bank
+   * account, in another currency, through a compliance path the user cannot
+   * reverse. The crypto route got a confirm step; this one, the higher-stakes
+   * of the two, did not.
+   *
+   * Same capture pattern as handleReview: React pools synthetic events, so the
+   * form ELEMENT is kept and replayed verbatim rather than a payload being
+   * rebuilt here, which would be a second source of truth that can drift from
+   * what the form actually contains.
+   */
+  const [pendingSupplierPayment, setPendingSupplierPayment] = useState<SupplierPaymentConfirmDetails | null>(null);
+  const pendingSupplierFormRef = useRef<HTMLFormElement | null>(null);
+
+  function handleSupplierReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const supplierId = String(data.get('supplierId') ?? '').trim();
+    const amount = String(data.get('amount') ?? '').trim();
+    const paymentPurpose = String(data.get('paymentPurpose') ?? '').trim();
+    if (!supplierId || !amount || !paymentPurpose) return;
+
+    /**
+     * Resolved from the SAVED supplier, not from the form. The dropdown shows
+     * a name; the bank, country and payout currency live on the record, and
+     * they are what the user actually needs to check. Reading them from the
+     * approved list means the dialog cannot show details for a supplier that
+     * is not the one being paid.
+     */
+    const supplier = approvedSuppliers.find((item) => item.id === supplierId);
+    if (!supplier) return;
+
+    pendingSupplierFormRef.current = form;
+    setPendingSupplierPayment({
+      supplierName: supplier.supplierName,
+      bankName: supplier.bankName,
+      accountLast4: supplier.accountLast4,
+      supplierCountry: supplier.supplierCountry,
+      amount,
+      destinationCurrency: supplier.currency,
+      paymentPurpose,
+      invoiceUrl: String(data.get('invoiceUrl') ?? '').trim() || undefined,
+      available,
+    });
+  }
+
+  async function confirmSupplierPayment() {
+    const form = pendingSupplierFormRef.current;
+    if (!form) return;
+    await onSupplierPayment({ preventDefault() {}, currentTarget: form } as unknown as FormEvent<HTMLFormElement>);
+    setPendingSupplierPayment(null);
+    pendingSupplierFormRef.current = null;
+  }
+
   const [activeRoute, setActiveRoute] = useState<'crypto' | 'supplier' | 'user'>('crypto');
   const [supplierCurrency, setSupplierCurrency] = useState<'gbp' | 'usd' | 'eur' | 'mxn' | 'brl'>('gbp');
   const [supplierCurrencyOpen, setSupplierCurrencyOpen] = useState(false);
@@ -392,7 +450,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
       {activeRoute === 'supplier' && <><article className="panel supplier-directory-card"><div className="panel-head"><div><p className="eyebrow">Supplier directory</p><h3>Saved suppliers</h3></div><Badge status={suppliers.length ? 'active' : 'pending'}>{suppliers.length ? `${suppliers.length} saved` : 'None yet'}</Badge></div>{!suppliers.length ? <Empty>No suppliers added yet.</Empty> : <div className="list supplier-list">{suppliers.map((supplier) => <div className="list-item" key={supplier.id}><strong>{supplier.supplierName}</strong><Badge status={supplier.status}>{friendlyStatus(supplier.status)}</Badge><small>{supplier.currency.toUpperCase()} · {supplier.supplierCountry} · {supplier.bankName} · ****{supplier.accountLast4 || '----'}</small><small>{supplier.status === 'approved' ? 'Ready for supplier payment requests.' : supplier.reviewReason || 'Waiting for compliance review.'}</small></div>)}</div>}<div className="warning-box compact">Sivan chooses the execution provider in the background. Customers see a single Send & Transfer experience; provider diagnostics stay with operations.</div></article>
       {/* remaining lines unchanged */}
       <article className="panel form-panel supplier-form-card"><p className="eyebrow">Pay supplier / cross-border</p><h3>Add supplier bank</h3>{!hasUser || !isVerified ? <Empty>Complete verification before adding suppliers.</Empty> : <form className="form premium-form" onSubmit={onCreateSupplier}><label>Supplier business name<input name="supplierName" placeholder="ABC Trading Ltd" required /></label><div className="split"><label>Currency<input type="hidden" name="currency" value={supplierCurrency} /><div className="custom-select-wrap"><button type="button" className={`custom-select-trigger ${supplierCurrencyOpen ? 'open' : ''}`} onClick={() => setSupplierCurrencyOpen((open) => !open)}><span><strong>{selectedSupplierCurrency.label}</strong><small>{selectedSupplierCurrency.helper}</small></span><em>⌄</em></button>{supplierCurrencyOpen && <div className="custom-select-menu">{supplierCurrencyOptions.map((option) => <button type="button" className={option.value === supplierCurrency ? 'selected' : ''} key={option.value} onClick={() => { setSupplierCurrency(option.value); setSupplierCurrencyOpen(false); }}><span>{option.label}</span><small>{option.helper}</small></button>)}</div>}</div></label><label>Supplier country<input name="supplierCountry" defaultValue={supplierCurrency === 'gbp' ? 'GB' : supplierCurrency === 'usd' ? 'US' : supplierCurrency === 'mxn' ? 'MX' : supplierCurrency === 'brl' ? 'BR' : 'FR'} /></label></div><label>Bank name<input name="bankName" placeholder={supplierCurrency === 'gbp' ? 'Barclays' : supplierCurrency === 'usd' ? 'Lead Bank' : 'Supplier bank'} required /></label><label>Account owner name<input name="accountOwnerName" placeholder="ABC Trading Ltd" required /></label>{supplierCurrency === 'gbp' && <div className="split"><label>GBP account number<input name="gbAccountNumber" placeholder="12345678" required /></label><label>GBP sort code<input name="sortCode" placeholder="123456" required /></label></div>}{supplierCurrency === 'usd' && <div className="split"><label>USD account number<input name="accountNumber" placeholder="215268129123" required /></label><label>USD routing<input name="routingNumber" placeholder="101019644" required /></label></div>}{supplierCurrency === 'eur' && <><label>EUR IBAN<input name="ibanAccountNumber" placeholder="IE04MODR99035512826162" required /></label><label>BIC optional<input name="bic" placeholder="MODRIE22XXX" /></label></>}{supplierCurrency === 'mxn' && <label>CLABE<input name="clabeNumber" placeholder="18-digit CLABE" required /></label>}{supplierCurrency === 'brl' && <label>PIX key<input name="pixKey" placeholder="Supplier PIX key" required /></label>}<label>Supplier address<input name="street" placeholder="Supplier business address" /></label><div className="warning-box compact">{supplierCurrencyLabel} details are saved for compliance review. New suppliers stay pending until admin approval; AI can recommend, but never releases funds.</div><button className="primary-btn" disabled={loading}>{loading ? 'Adding supplier…' : 'Add supplier for review →'}</button></form>}</article>
-      <article className="panel form-panel supplier-form-card"><p className="eyebrow">Create supplier payment</p><h3>Pay from settled USDC</h3>{!approvedSuppliers.length ? <Empty>Add a supplier and wait for approval before creating a payment.</Empty> : <form className="form premium-form" onSubmit={onSupplierPayment}><label>Supplier<CustomSelect name="supplierId" options={approvedSuppliers.map((supplier) => ({ value: supplier.id, label: supplier.supplierName, helper: `${supplier.currency.toUpperCase()} · approved` }))} /></label><label>Amount USDC<input name="amount" inputMode="decimal" placeholder="300" required /></label><label>Payment purpose<textarea name="paymentPurpose" placeholder="Invoice INV-1001 for software services" required /></label><label>Invoice URL<input name="invoiceUrl" placeholder="https://... optional but recommended" /></label><div className="warning-box compact">Sivan places a hold on settled USDC. Admin/backend risk controls release or reject. AI never releases funds.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating payment…' : available <= 0 ? 'No settled USDC available' : 'Create supplier payment →'}</button></form>}</article></>}
+      <article className="panel form-panel supplier-form-card"><p className="eyebrow">Create supplier payment</p><h3>Pay from settled USDC</h3>{!approvedSuppliers.length ? <Empty>Add a supplier and wait for approval before creating a payment.</Empty> : <form className="form premium-form" onSubmit={handleSupplierReview}><label>Supplier<CustomSelect name="supplierId" options={approvedSuppliers.map((supplier) => ({ value: supplier.id, label: supplier.supplierName, helper: `${supplier.currency.toUpperCase()} · approved` }))} /></label><label>Amount USDC<input name="amount" inputMode="decimal" placeholder="300" required /></label><label>Payment purpose<textarea name="paymentPurpose" placeholder="Invoice INV-1001 for software services" required /></label><label>Invoice URL<input name="invoiceUrl" placeholder="https://... optional but recommended" /></label><div className="warning-box compact">Sivan places a hold on settled USDC. Admin/backend risk controls release or reject. AI never releases funds.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating payment…' : available <= 0 ? 'No settled USDC available' : 'Review payment →'}</button></form>}</article></>}
       {activeRoute === 'user' && <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Coming soon</p><h3>Send to a Sivan user</h3></div><Badge status="pending">Roadmap</Badge></div><p className="muted">This future route will let approved Sivan customers send settled stablecoin value to another approved Sivan account without exposing provider internals.</p><div className="warning-box compact">For now, use Send crypto for wallet transfers or Pay supplier for cross-border bank payouts.</div></article>}
       <article className="panel transfer-balance-card"><p className="eyebrow">USDC available to send</p><h2>{available.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</h2><div className="balance-mini-grid"><Kv label="In your wallet" value={`${(unified ? Number(unified.chain || 0) : 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Pending settlement" value={`${pending.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Held for review" value={`${held.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Spent" value={`${Number(usdc?.spent || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /></div>{/* THE COPY HAD TO CHANGE WITH THE NUMBER.
           It said "an internal mirror of settled stablecoin funds from
@@ -421,6 +479,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
       {activeRoute === 'supplier' && <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Supplier payment history</p><h3>Cross-border payouts</h3></div></div>{!supplierPayments.length ? <Empty>No supplier payments yet.</Empty> : <div className="list">{supplierPayments.map((payment) => <div className="list-item" key={payment.id}><strong>{payment.amount} USDC → {payment.destinationCurrency.toUpperCase()}</strong><Badge status={payment.status}>{friendlyStatus(payment.status)}</Badge><small>{payment.supplier?.supplierName || shortRef(payment.supplierId)} · Risk {payment.riskLevel} · {new Date(payment.createdAt).toLocaleString()}</small><small>{payment.reviewReason}</small></div>)}</div>}</article>}
     </div>
     {pendingTransfer && <TransferConfirm details={pendingTransfer} submitting={loading} onConfirm={() => void confirmTransfer()} onCancel={() => { setPendingTransfer(null); pendingFormRef.current = null; }} />}
+    {pendingSupplierPayment && <SupplierPaymentConfirm details={pendingSupplierPayment} submitting={loading} onConfirm={() => void confirmSupplierPayment()} onCancel={() => { setPendingSupplierPayment(null); pendingSupplierFormRef.current = null; }} />}
     <article className="panel"><div className="panel-head"><div><p className="eyebrow">Stablecoin ledger</p><h3>Deposit, hold and spend trail</h3></div></div>{!balance?.ledger?.length ? <Empty>No stablecoin ledger entries yet. Deposit to your virtual account; after provider settlement, USDC can become spendable.</Empty> : <div className="table-wrap"><table className="table"><thead><tr><th>Type</th><th>Amount</th><th>Status</th><th>Source</th><th>Date</th></tr></thead><tbody>{balance.ledger.slice(0, 20).map((entry) => <tr key={entry.entryId}><td>{entry.kind.replaceAll('_', ' ')}</td><td>{entry.amount} {entry.asset.toUpperCase()}</td><td><Badge status={entry.status}>{friendlyStatus(entry.status)}</Badge></td><td>{entry.sourceType} · {shortRef(entry.sourceId)}</td><td>{new Date(entry.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div>}</article>
   </section>;
 }

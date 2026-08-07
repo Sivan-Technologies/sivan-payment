@@ -187,7 +187,13 @@ export function TransferConfirm({
                     understands is one they accept; the same number unexplained
                     is the one that generates a support ticket.
                   */}
-                  <span>Transfer fee{details.feePercent ? ` (${details.feePercent}%)` : ''}</span>
+                  {/* NO PERCENTAGE. It was shown so a user could see the rate
+                      they were paying, but on a floored fee it reads as alarm:
+                      a $0.25 minimum on a $5 send prints "(5.00%)", which
+                      looks like a rate rather than the flat floor it is. The
+                      cash amount beside it is the number that actually
+                      matters, and it is exact. */}
+                  <span>Transfer fee</span>
                   <strong className="confirm-fee">−{details.fee} {asset}</strong>
                 </div>
                 <div className="confirm-row">
