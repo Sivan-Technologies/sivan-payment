@@ -1687,6 +1687,35 @@ export default function App() {
         if (Number(data.amount ?? 0) > 0 && !verdict.clears) throw new Error(verdict.reason);
       }
 
+      /**
+       * THE FOREIGN RAIL CAN NOW BE FUNDED FROM THE SIVAN BALANCE.
+       *
+       * Both fields are new on this path. Without them the request has no
+       * amount, and an amountless withdrawal is - correctly - treated by the
+       * server as manual-send, which is the behaviour being fixed.
+       */
+      const fundingSource = data.fundingSource === 'external' ? 'external' : 'balance';
+      const amountEntered = String(data.sourceAmount ?? '').trim();
+
+      // Validated HERE rather than at confirm, so the user finds out while
+      // they are still looking at the field they need to change.
+      if (fundingSource === 'balance') {
+        if (!amountEntered) throw new Error('Enter the amount you want to withdraw.');
+        if (!Number.isFinite(Number(amountEntered)) || Number(amountEntered) <= 0) {
+          throw new Error('Enter a valid amount.');
+        }
+        // The SAME expression the wizard renders from, so the number the user
+        // was shown and the number they are checked against are one value.
+        // `chainUnavailable` means the balance could not be read, which is not
+        // zero and must not be used to refuse a withdrawal.
+        const spendableUsdc = !unifiedBalance || usdcUnified?.chainUnavailable
+          ? undefined
+          : Number(usdcUnified?.spendable ?? 0);
+        if (typeof spendableUsdc === 'number' && Number(amountEntered) > spendableUsdc) {
+          throw new Error(`You have ${spendableUsdc.toFixed(2)} available to withdraw.`);
+        }
+      }
+
       setWithdrawalReview({
         userId: user.id,
         externalAccountId: selectedAccount.id,
@@ -1698,7 +1727,9 @@ export default function App() {
         assetLabel,
         networkLabel,
         minimumUsd,
-        estimatedGasUsd
+        estimatedGasUsd,
+        fundingSource,
+        amount: fundingSource === 'balance' ? amountEntered : undefined
       });
       setDepositResult(null);
       notify('Review your withdrawal details before creating a deposit address.');
@@ -1910,8 +1941,20 @@ export default function App() {
             })
           })
         : await api<DepositResponse>(withdrawalEndpointFor(currency), {
+            /**
+             * The review state is posted almost as-is, but `amount` is a UI
+             * field name and the API's is `sourceAmount`. Spreading the review
+             * object alone therefore sent the amount under a key the schema
+             * ignores - the request validated, and the withdrawal silently
+             * became a manual-send one with no amount. Mapped explicitly.
+             */
             method: 'POST',
-            body: JSON.stringify(withdrawalReview)
+            body: JSON.stringify({
+              ...withdrawalReview,
+              sourceAmount: withdrawalReview.fundingSource === 'balance' && withdrawalReview.amount
+                ? Number(withdrawalReview.amount)
+                : undefined,
+            })
           });
 
       const normalized = normalizeWithdrawalResponse(result, withdrawalReview);

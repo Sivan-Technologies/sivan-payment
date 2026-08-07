@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { Keypair } from '@solana/web3.js';
 import type {
   CreateCustomerInput,
   CreateExternalAccountInput,
@@ -149,8 +150,20 @@ export class MockBridgeProvider implements OfframpProvider {
   }
 
   async createLiquidationAddress(input: CreateLiquidationAddressInput): Promise<ProviderLiquidationAddress> {
+    /**
+     * A Solana liquidation address must be REAL base58, for the same reason
+     * the NGN mock provider had to be fixed: the sweep now feeds this straight
+     * into `new PublicKey()`.
+     *
+     * The previous value was `'So' + 22 random BYTES as HEX`. Hex contains
+     * 0-9a-f, and base58 deliberately excludes `0` - so roughly 95% of the
+     * addresses this produced could never be parsed as a Solana public key,
+     * measured at 284/300. While nothing swept to them that was invisible;
+     * the address was only ever shown to a human to copy. It is now a send
+     * target, so it has to decode.
+     */
     const address = input.sourceChain === 'solana'
-      ? `So${crypto.randomBytes(22).toString('hex')}`
+      ? Keypair.generate().publicKey.toBase58()
       : `0x${crypto.randomBytes(20).toString('hex')}`;
     const raw = {
       id: `mock_la_${crypto.randomUUID()}`,

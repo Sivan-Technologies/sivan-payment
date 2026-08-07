@@ -128,9 +128,12 @@ export type WithdrawalReviewState = {
   /**
    * Which of the two things is about to happen, as the user chose it.
    *
-   * NGN rail only. Undefined on the Bridge rail, which has no such choice.
+   * Set on BOTH rails now. It used to be naira-only, because the Bridge rail
+   * genuinely had no such choice - it could only ever hand over an address.
    */
   fundingSource?: 'balance' | 'external';
+  /** How much, when funding from the balance. Shown on review before commit. */
+  amount?: string;
 };
 
 export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
@@ -188,18 +191,26 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
 }) {
   const hasEnabledBank = accounts.some((account) => enabledControls.some((control) => control.currency === account.currency));
   const step = depositResult ? 3 : withdrawalReview ? 2 : 1;
+  /**
+   * Lifted out of the form so the SIDE PANEL and the STEPPER can describe the
+   * same flow the form is in. Kept here rather than in App.tsx because it is
+   * presentation state - the server is told about it via a hidden field on
+   * submit, and the review object carries it from step 2 onward.
+   */
+  const [bridgeFunding, setBridgeFunding] = useState<'balance' | 'external'>('balance');
+  const balanceFunded = !ngnMode && (withdrawalReview?.fundingSource ?? bridgeFunding) === 'balance';
   return (
     <section className="offramp-wizard">
       <div className="trade-head">
         <div>
           <p className="eyebrow">Withdraw to your bank</p>
           <h3>Withdraw to your bank</h3>
-          <p className="muted">Choose a verified bank account, asset, and network. Review carefully before a deposit address is created.</p>
+          <p className="muted">{balanceFunded ? "Choose a verified bank account, asset, and amount. We'll move the crypto from your Sivan balance." : "Choose a verified bank account, asset, and network. Review carefully before a deposit address is created."}</p>
         </div>
         <div className="wizard-stepper">
           <StepDot active={step === 1} done={step > 1} label="Details" />
           <StepDot active={step === 2} done={step > 2} label="Review" />
-          <StepDot active={step === 3} done={false} label="Deposit" />
+          <StepDot active={step === 3} done={false} label={balanceFunded ? "Sending" : "Deposit"} />
         </div>
       </div>
       {step === 1 && ngnAvailable && (
@@ -222,11 +233,15 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // default here would be a guess at where someone's money lives.
             ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
 
-            : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} />}
+            // The balance and the external-funding toggle are the SAME values
+            // the naira form already receives. Reusing them rather than adding
+            // parallel props keeps one source of truth for "how much can this
+            // user spend" across both rails.
+            : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} spendable={ngnSpendable} externalFundingEnabled={ngnExternalFundingEnabled} fundingSource={bridgeFunding} onFundingSourceChange={setBridgeFunding} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} />}
         </div>
-        <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} />
+        <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} balanceFunded={balanceFunded} />
       </div>
     </section>
   );
@@ -236,7 +251,7 @@ function StepDot({ active, done, label }: { active: boolean; done: boolean; labe
   return <div className={`step-node ${active ? 'active' : ''} ${done ? 'done' : ''}`}><span>{done ? '✓' : active ? '•' : ''}</span>{label}</div>;
 }
 
-function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, hasEnabledBank, loading, canCreatePaymentActions, onSubmit }: {
+function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, hasEnabledBank, loading, canCreatePaymentActions, onSubmit, spendable, externalFundingEnabled, fundingSource, onFundingSourceChange }: {
   accounts: ExternalAccountRecord[];
   enabledControls: PaymentControl[];
   enabledAssets: AssetControl[];
@@ -246,14 +261,56 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
   loading: boolean;
   canCreatePaymentActions: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  /**
+   * Spendable balance for the deposit asset. undefined = still loading,
+   * null = could not be READ. Neither of those is zero, and showing "0.00"
+   * for either would tell the user they have no money when we simply do not
+   * know yet.
+   */
+  spendable?: number | null;
+  /** Admin toggle, shared with the naira rail: may we offer manual send? */
+  externalFundingEnabled?: boolean;
+  /** Owned by the wizard, so the side panel can describe the same flow. */
+  fundingSource: 'balance' | 'external';
+  onFundingSourceChange: (next: 'balance' | 'external') => void;
 }) {
+  /**
+   * THE FOREIGN RAIL CAN NOW BE FUNDED FROM THE SIVAN BALANCE.
+   *
+   * It could not before, and the omission was invisible: this screen looked
+   * exactly like the naira one, which HAS self-funded from the Privy wallet
+   * for a while. A user holding USDC in Sivan who wanted dollars in their bank
+   * was quietly handed an address and left to send the crypto by hand from a
+   * wallet Sivan already controls and can already sign for.
+   *
+   * Defaults to 'balance' for the same reason the naira form does: it is the
+   * path that works without the user touching a wallet app, and manual send is
+   * behind the same admin toggle.
+   */
+  const canFundExternally = externalFundingEnabled !== false;
+  const setFundingSource = onFundingSourceChange;
+  const [amount, setAmount] = useState('');
+
+  const effectiveFunding = canFundExternally ? fundingSource : 'balance';
+  const amountUsd = Number(amount);
+  const balanceKnown = effectiveFunding === 'balance' && typeof spendable === 'number';
+  // Only a REAL overdraft, not an empty box. Number('') is 0, which would
+  // otherwise light the warning up before the user has typed anything.
+  const shortfall = balanceKnown && amount !== '' && Number.isFinite(amountUsd) && amountUsd > spendable!
+    ? amountUsd - spendable!
+    : 0;
+
   if (!hasEnabledBank) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Add a bank first</h3><Empty>Add an enabled bank account before creating a withdrawal.</Empty></article>;
   if (!enabledAssets.length || !enabledNetworks.length) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Deposits unavailable</h3><Empty>Deposits are temporarily unavailable.</Empty></article>;
   return (
     <article className="panel form-panel trade-card">
       <p className="eyebrow">Step 1</p>
-      <h3>Choose payout and deposit rail</h3>
-      <p className="muted">Your deposit address will be tied to this bank account, token, and network.</p>
+      {/* Both lines describe a deposit address, which the balance path never
+          creates. Left exactly as-is for manual send, where they are correct. */}
+      <h3>{effectiveFunding === 'balance' ? 'Choose payout and amount' : 'Choose payout and deposit rail'}</h3>
+      <p className="muted">{effectiveFunding === 'balance'
+        ? 'We\'ll send this from your Sivan balance to your bank. Nothing to copy, nothing to paste.'
+        : 'Your deposit address will be tied to this bank account, token, and network.'}</p>
       <form className="form premium-form" onSubmit={onSubmit}>
         <label>Bank payout
           <CustomSelect name="externalAccountId" defaultValue={primaryAccount?.id} options={accounts.filter((account) => enabledControls.some((control) => control.currency === account.currency)).map((account) => ({ value: account.id, label: account.bankName || 'Bank account', helper: `${account.currency.toUpperCase()} · ****${account.accountLast4 || '----'}` }))} />
@@ -262,25 +319,96 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
           <label>Deposit asset<CustomSelect name="sourceCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'} options={enabledAssets.map((asset) => ({ value: asset.asset, label: asset.label }))} /></label>
           <label>Deposit network<CustomSelect name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label>
         </div>
-        <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
-        <div className="warning-box compact">You will review these details before a deposit address is created. Send only the selected token on the selected network.</div>
+
+        {/* Same choice, same words, same default as the naira rail. Two
+            withdraw screens that behave differently is the actual defect
+            being fixed here, so they are deliberately kept in step. */}
+        {canFundExternally && (
+          <div className="seg" role="group" aria-label="Where the crypto comes from">
+            <button
+              type="button"
+              className={fundingSource === 'balance' ? 'active' : ''}
+              onClick={() => setFundingSource('balance')}
+            >
+              From my Sivan balance
+            </button>
+            <button
+              type="button"
+              className={fundingSource === 'external' ? 'active' : ''}
+              onClick={() => setFundingSource('external')}
+            >
+              I'll send crypto myself
+            </button>
+          </div>
+        )}
+        {/* The server decides; this only reports the choice. Sent as a hidden
+            field so the existing FormData submit handler needs no special
+            case, and so what the UI shows and what the API receives cannot
+            disagree. */}
+        <input type="hidden" name="fundingSource" value={effectiveFunding} />
+
+        {effectiveFunding === 'balance' && (
+          <label>Amount
+            <input
+              name="sourceAmount"
+              inputMode="decimal"
+              placeholder="0.00"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ''))}
+            />
+            <span className="field-hint">
+              {spendable === undefined
+                ? 'Checking your balance…'
+                : spendable === null
+                  ? "We couldn't read your balance just now. You can still enter an amount."
+                  : `${spendable.toFixed(2)} available to withdraw.`}
+            </span>
+          </label>
+        )}
+        {shortfall > 0 && (
+          <div className="warning-box compact">
+            That's {shortfall.toFixed(2)} more than you have available. Lower the amount
+            {canFundExternally ? ', or choose "I\'ll send crypto myself".' : '.'}
+          </div>
+        )}
+
+        {effectiveFunding === 'external' && (
+          <label>Refund wallet address<input name="returnAddress" placeholder="Wallet address for returned funds" defaultValue="0x0000000000000000000000000000000000000000" /></label>
+        )}
+        {/* The wrong-network warning belongs to the path where the USER sends.
+            On the balance path Sivan does the sending, so the warning would
+            manufacture a risk that does not exist - the same reasoning already
+            applied on the review card. */}
+        {effectiveFunding === 'external'
+          ? <div className="warning-box compact">You will review these details before a deposit address is created. Send only the selected token on the selected network.</div>
+          : <div className="details-box compact"><span>We'll move the crypto from your Sivan balance automatically. You don't need to send anything.</span></div>}
         <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Preparing review...' : canCreatePaymentActions ? 'Review withdrawal' : 'Withdrawals paused'}</button>
       </form>
     </article>
   );
 }
 
-function OffRampSidePanel({ step, enabledAssets, enabledNetworks }: { step: number; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[] }) {
+function OffRampSidePanel({ step, enabledAssets, enabledNetworks, balanceFunded }: { step: number; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[]; balanceFunded?: boolean }) {
   return (
     <aside className="side-info-stack">
+      {/*
+          THE EXPLAINER HAS TO DESCRIBE THE FLOW THE USER IS ACTUALLY IN.
+
+          This panel described one flow - "we give you an address, you send to
+          it" - because for the foreign rail that was the only flow there was.
+          Now that Sivan can send from the user's balance, the same words are
+          wrong on the default path: step 3 told a user to go and send crypto
+          that Sivan sends for them, which is the single most confusing thing
+          a money screen can do.
+      */}
       <article className="panel">
         <p className="eyebrow">How this works</p>
-        <h3>Provider-backed deposit address</h3>
+        <h3>{balanceFunded ? 'Paid from your Sivan balance' : 'Provider-backed deposit address'}</h3>
         <ol className="ordered-steps">
-          <li className={step >= 1 ? 'active' : ''}>Choose your bank, token, and network.</li>
-          <li className={step >= 2 ? 'active' : ''}>Review the details and safety warning.</li>
-          <li className={step >= 3 ? 'active' : ''}>Send the selected asset to the generated address.</li>
-          <li>Track deposit detection, conversion, and bank payout.</li>
+          <li className={step >= 1 ? 'active' : ''}>Choose your bank, token, and {balanceFunded ? 'amount.' : 'network.'}</li>
+          <li className={step >= 2 ? 'active' : ''}>Review the details {balanceFunded ? 'and confirm.' : 'and safety warning.'}</li>
+          <li className={step >= 3 ? 'active' : ''}>{balanceFunded ? 'We move the crypto for you - nothing to send.' : 'Send the selected asset to the generated address.'}</li>
+          <li>Track {balanceFunded ? 'conversion and bank payout.' : 'deposit detection, conversion, and bank payout.'}</li>
         </ol>
       </article>
       <article className="panel control-summary-card">
@@ -350,8 +478,10 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
   return (
     <article className="deposit-card review-card">
       <p className="eyebrow">Review withdrawal</p>
-      <h3>Confirm before creating your deposit address</h3>
-      <p className="muted">Check these details carefully. Your deposit address will be tied to the selected asset, network, and bank payout.</p>
+      <h3>{review.fundingSource === 'balance' ? 'Confirm your withdrawal' : 'Confirm before creating your deposit address'}</h3>
+      <p className="muted">{review.fundingSource === 'balance'
+        ? 'Check these details carefully. We\'ll move the crypto from your Sivan balance as soon as you confirm.'
+        : 'Check these details carefully. Your deposit address will be tied to the selected asset, network, and bank payout.'}</p>
       <div className="details-box">
         <Kv label="Asset" value={review.assetLabel} />
         {/* networkLabel(), for the same reason the deposit warning uses it:
@@ -382,9 +512,13 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
           user does nothing further. That is a materially different experience
           from being handed an address, and the confirmation screen was silent
           about which one they were about to get. */}
-      {isNgn && review.fundingSource === 'balance' && (
+      {/* NOT gated on isNgn any more. The foreign rail can now be funded from
+          the Sivan balance too, and while this said `isNgn &&` a USD
+          balance-funded withdrawal showed the manual-send copy - telling the
+          user to go and send crypto that Sivan was about to send for them. */}
+      {review.fundingSource === 'balance' && (
         <div className="details-box compact">
-          <span>We'll move {review.assetLabel} from your Sivan balance automatically. You don't need to send anything.</span>
+          <span>We'll move {review.amount ? `${review.amount} ` : ''}{review.assetLabel} from your Sivan balance automatically. You don't need to send anything.</span>
         </div>
       )}
       {isNgn && review.minimumUsd !== undefined && review.fundingSource !== 'balance' && (
