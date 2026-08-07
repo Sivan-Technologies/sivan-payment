@@ -6,7 +6,19 @@ import { db } from '../database/json-database.js';
 import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
 import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
-import { cancelWhatsappLink, getIdentityStatus, redeemIdentityLinkSchema, redeemWhatsappLink, startWhatsappLink, unlinkWhatsappIdentity } from './identity.service.js';
+import {
+  cancelTelegramLink,
+  cancelWhatsappLink,
+  getIdentityStatus,
+  redeemIdentityLinkSchema,
+  redeemTelegramLink,
+  redeemTelegramLinkSchema,
+  redeemWhatsappLink,
+  startTelegramLink,
+  startWhatsappLink,
+  unlinkTelegramIdentity,
+  unlinkWhatsappIdentity,
+} from './identity.service.js';
 
 function getAuthUserId(request: any) {
   return request.authUser?.sub as string | undefined;
@@ -109,5 +121,51 @@ export async function identityRoutes(app: FastifyInstance) {
     requireIdentityServiceSecret(request);
     const body = parseBody(redeemIdentityLinkSchema, request.body);
     return { data: await redeemWhatsappLink(body, { source: 'whatsapp', ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Telegram pairing, mirroring the WhatsApp trio above.
+   *
+   * Separate routes rather than a `channel` parameter on the existing ones: a
+   * caller who could pass the channel could also pass the wrong one, and the
+   * service deliberately keeps the two redemption paths apart so a WhatsApp
+   * code can never be spent on Telegram. Route shape carries the channel, so
+   * the two cannot be confused by a typo in a request body.
+   */
+  app.post('/api/users/me/identity/link-telegram/start', async (request) => {
+    const userId = getAuthUserId(request);
+    if (!userId) throw forbidden('Authentication required.');
+    return { data: await startTelegramLink(userId, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/users/me/identity/link-telegram/cancel', async (request) => {
+    const userId = getAuthUserId(request);
+    if (!userId) throw forbidden('Authentication required.');
+    return { data: await cancelTelegramLink(userId, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/users/me/identity/unlink-telegram', async (request) => {
+    const userId = getAuthUserId(request);
+    if (!userId) throw forbidden('Authentication required.');
+    return { data: await unlinkTelegramIdentity(userId, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Redeemed by the Telegram bot, never by a browser.
+   *
+   * `telegramUserId` comes from `message.from.id` on a signed Telegram webhook,
+   * which the bot can trust but this endpoint cannot - anyone who reaches it
+   * could claim any id. The service secret is therefore what makes the claim
+   * credible: it proves the caller IS the bot. Without it a stranger holding a
+   * leaked pairing code could bind it to their own Telegram account.
+   *
+   * app.ts exempts this path from user JWT auth (the bot has no user session)
+   * and rate-limits it, because a 6-character code over an endpoint with no
+   * attempt limit is brute-forceable.
+   */
+  app.post('/api/identity/link-telegram/redeem', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(redeemTelegramLinkSchema, request.body);
+    return { data: await redeemTelegramLink(body, { source: 'telegram', ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 }
