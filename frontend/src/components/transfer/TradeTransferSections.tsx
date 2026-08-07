@@ -1,5 +1,5 @@
 import { FormEvent, useRef, useState } from 'react';
-import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord } from '../../types';
+import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord, SupplierFeeQuoteResponse } from '../../types';
 import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
 import { explorerLink, explorerReference, shortHash } from '../../blockExplorer';
 import { TransferConfirm, type TransferConfirmDetails } from './TransferConfirm';
@@ -353,7 +353,7 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
   const [pendingSupplierPayment, setPendingSupplierPayment] = useState<SupplierPaymentConfirmDetails | null>(null);
   const pendingSupplierFormRef = useRef<HTMLFormElement | null>(null);
 
-  function handleSupplierReview(event: FormEvent<HTMLFormElement>) {
+  async function handleSupplierReview(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
@@ -384,6 +384,36 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
       invoiceUrl: String(data.get('invoiceUrl') ?? '').trim() || undefined,
       available,
     });
+
+    /**
+     * PRICE IT FROM THE SERVER, exactly as the crypto route does.
+     *
+     * The supplier fee is tiered AND depends on the user's 30-day volume, so
+     * the client cannot compute it without shipping both tables and the
+     * volume - three things that would drift the moment an admin edits the fee
+     * tab. The dialog renders "Calculating…" until this lands.
+     */
+    if (!api) return;
+    try {
+      const query = new URLSearchParams({ amount });
+      const quote = await api<SupplierFeeQuoteResponse>(
+        `/api/users/${supplier.userId}/supplier-payments/quote?${query.toString()}`
+      );
+      setPendingSupplierPayment((current) =>
+        /**
+         * Only if the user is still looking at THIS payment. They can cancel
+         * or change the amount while the quote is in flight, and writing a
+         * stale fee into a dialog they have since edited is how someone
+         * confirms a total that belongs to a different payment.
+         */
+        current && current.amount === amount && current.supplierName === supplier.supplierName
+          ? { ...current, quote }
+          : current
+      );
+    } catch {
+      // Leave the dialog unpriced rather than blocking it. The server prices
+      // the payment authoritatively on submit either way.
+    }
   }
 
   async function confirmSupplierPayment() {

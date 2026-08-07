@@ -121,8 +121,23 @@ async function main() {
 
     const balanceAfterHold = await request('GET', `/api/users/${user.id}/balance`);
     const usdc = balanceAfterHold.balances.find((item: any) => item.asset === 'usdc');
-    assert(Number(usdc.available) === 200, 'supplier payment hold reduces settled USDC available');
-    assert(Number(usdc.held) === 300, 'supplier payment hold increases held balance');
+    /**
+     * 195.50, NOT 200. The hold covers the GROSS.
+     *
+     * This asserted 200 (500 - 300) back when supplier payouts were free. The
+     * fee is now ADDED - the supplier receives their full 300 GBP-equivalent
+     * and the user is debited 304.50 - so a hold of only 300 would leave the
+     * release short by exactly the fee.
+     *
+     * 300 -> 500@1.5% band -> 4.50 fee -> 304.50 held -> 195.50 available.
+     */
+    assert(Number(usdc.available) === 195.5, `supplier payment hold reduces settled USDC available by the gross (got ${usdc.available})`);
+    assert(payment.feeAmount === '4.50', `supplier payment records the fee it charged (got ${payment.feeAmount})`);
+    assert(payment.netAmount === '300.00', `supplier payment records what the supplier receives (got ${payment.netAmount})`);
+    assert(payment.amount === '304.50', `supplier payment amount is the gross sent to the provider (got ${payment.amount})`);
+    // The gross again: what is held must be what will be sent, or the release
+    // draws on funds that were never reserved.
+    assert(Number(usdc.held) === 304.5, `supplier payment hold increases held balance by the gross (got ${usdc.held})`);
 
     const reviewed = await request('POST', `/api/admin/supplier-payments/${payment.id}/review`, { decision: 'reject', reason: 'Test rejection releases hold', reviewedBy: 'compliance' }, { 'x-admin-api-key': 'supplier-admin-key' });
     assert(reviewed.status === 'rejected', 'admin can reject supplier payment');
@@ -146,8 +161,21 @@ async function main() {
 
     const balanceAfterRelease = await request('GET', `/api/users/${user.id}/balance`);
     const finalUsdc = balanceAfterRelease.balances.find((item: any) => item.asset === 'usdc');
-    assert(Number(finalUsdc.available) === 400, 'provider completion debits held supplier payment');
-    assert(Number(finalUsdc.spent) === 100, 'completed supplier payout increases spent balance');
+    /**
+     * 398.00 / 102.00, NOT 400 / 100. The fee is part of what moves.
+     *
+     * The first payment was rejected so its hold returned the balance to 500.
+     * The second is 100 to the supplier plus a 2.00 fee - the $2 FLOOR, since
+     * 1.5% of 100 is only 1.50 and a payment that small does not cover its own
+     * compliance review.
+     *
+     * `spent` is the gross for the same reason the hold is: the fee genuinely
+     * left the user's balance, and recording only the net would leave the
+     * ledger short by every fee Sivan has ever charged.
+     */
+    assert(Number(finalUsdc.available) === 398, `provider completion debits held supplier payment including the fee (got ${finalUsdc.available})`);
+    assert(Number(finalUsdc.spent) === 102, `completed supplier payout increases spent balance by the gross (got ${finalUsdc.spent})`);
+    assert(released.feeAmount === '2.00', `a 100 payment hits the 2.00 fee floor (got ${released.feeAmount})`);
 
     const riskCases = await request('GET', '/api/admin/risk/cases', undefined, { 'x-admin-api-key': 'supplier-admin-key' });
     assert(riskCases.some((item: any) => item.resourceType === 'supplier_payment'), 'supplier payments appear in admin risk cases');

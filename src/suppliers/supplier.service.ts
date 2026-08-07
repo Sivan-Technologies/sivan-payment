@@ -11,6 +11,14 @@ import { routeSupplierPayout } from './supplier-provider-routing.service.js';
 import { getVirtualAccountProviderSettings } from '../virtual-accounts/service/virtual-account-provider-settings.service.js';
 import { resolveSettlementWalletId } from '../wallets/user-wallet.service.js';
 import { requireCustomerTerms } from '../customers/customer-terms.js';
+import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
+import {
+  DEFAULT_SUPPLIER_FEE,
+  SUPPLIER_VOLUME_COUNTING_STATUSES,
+  SUPPLIER_VOLUME_WINDOW_DAYS,
+  quoteSupplierFee,
+  type SupplierFeeConfig,
+} from './supplier-fee-policy.js';
 
 const currencySchema = z.enum(['usd', 'gbp', 'eur', 'mxn', 'brl']);
 const addressSchema = z.object({
@@ -222,6 +230,67 @@ export async function getSupplier(supplierId: string) {
   return supplier;
 }
 
+
+/**
+ * The user's settled supplier volume over the rolling window.
+ *
+ * Counts the NET paid to suppliers, not the gross. Charging fees on fees to
+ * decide a discount would inflate a user toward the next tier using Sivan's
+ * own margin - the discount is meant to reward what they actually send.
+ *
+ * Falls back to `amount` for records written before the split existed; for
+ * those gross and net were the same thing.
+ */
+export async function getSupplierVolumeUsd(userId: string, preloaded?: any): Promise<number> {
+  const data = preloaded ?? await db.read();
+  const cutoff = Date.now() - SUPPLIER_VOLUME_WINDOW_DAYS * 86_400_000;
+  const counting = new Set<string>(SUPPLIER_VOLUME_COUNTING_STATUSES);
+  return (data.supplierPayments ?? [])
+    .filter((item: SupplierPaymentRecord) => item.userId === userId)
+    .filter((item: SupplierPaymentRecord) => counting.has(item.status))
+    .filter((item: SupplierPaymentRecord) => {
+      const at = Date.parse(item.createdAt);
+      return Number.isFinite(at) && at >= cutoff;
+    })
+    .reduce((total: number, item: SupplierPaymentRecord) => total + amount(item.netAmount ?? item.amount), 0);
+}
+
+/**
+ * The active fee curve.
+ *
+ * Reads the admin fee settings so a pricing change takes effect with no
+ * deploy, and falls back to the shipped default when the fee tab has never
+ * been saved. Kept in one place so the quote endpoint and the payment path
+ * cannot disagree about what a payment costs.
+ */
+export async function getSupplierFeeConfig(): Promise<SupplierFeeConfig> {
+  try {
+    const settings: any = await getAdminFeeSettings();
+    if (!settings) return DEFAULT_SUPPLIER_FEE;
+    return {
+      tiers: settings.supplierFeeTiers?.length ? settings.supplierFeeTiers : DEFAULT_SUPPLIER_FEE.tiers,
+      volumeDiscounts: settings.supplierVolumeDiscounts?.length ? settings.supplierVolumeDiscounts : DEFAULT_SUPPLIER_FEE.volumeDiscounts,
+      minimumUsd: settings.supplierFeeMinimumUsd ?? DEFAULT_SUPPLIER_FEE.minimumUsd,
+      maximumUsd: settings.supplierFeeMaximumUsd ?? DEFAULT_SUPPLIER_FEE.maximumUsd,
+    };
+  } catch {
+    return DEFAULT_SUPPLIER_FEE;
+  }
+}
+
+/**
+ * Quote a supplier payment without creating one.
+ *
+ * The confirm dialog calls this. It must run the SAME code the payment path
+ * runs - a UI that quotes a different fee from the one charged is a support
+ * ticket that reads as theft.
+ */
+export async function quoteSupplierPayment(userId: string, netAmount: number) {
+  const volumeUsd = await getSupplierVolumeUsd(userId);
+  const config = await getSupplierFeeConfig();
+  return { ...quoteSupplierFee(netAmount, volumeUsd, config), windowDays: SUPPLIER_VOLUME_WINDOW_DAYS };
+}
+
 export async function createSupplierPayment(input: z.infer<typeof createSupplierPaymentSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
   const controls = await getSupplierPaymentControls();
   if (!controls.supplierPaymentsEnabled) throw forbidden('Supplier payments are currently disabled.');
@@ -231,8 +300,27 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
   if (input.destinationCurrency !== supplier.currency) throw badRequest(`Supplier receives ${supplier.currency.toUpperCase()}, not ${input.destinationCurrency.toUpperCase()}.`);
   if (!supplier.providerExternalAccountId && !supplier.bridgeExternalAccountId) throw badRequest('Supplier bank account is not provider-ready yet. Ask admin to review/provider-check this supplier.');
 
+  /**
+   * PRICE THE PAYMENT BEFORE CHECKING THE BALANCE.
+   *
+   * The fee is ADDED, not deducted - a supplier invoicing $1,000 receives
+   * $1,000 - so the user must be able to cover amount + fee. Checking the
+   * balance against the bare amount would accept a payment the user cannot
+   * actually fund, and the shortfall would surface at release, after a
+   * compliance review, as a failure on money already held.
+   */
+  const volumeUsd = await getSupplierVolumeUsd(input.userId, data);
+  const feeConfig = await getSupplierFeeConfig();
+  const quote = quoteSupplierFee(input.amount, volumeUsd, feeConfig);
+  const grossAmount = Number(quote.grossAmount);
+
   const available = (await getUserBalance(input.userId)).balances.find((item) => item.asset === input.sourceAsset)?.available ?? '0';
-  if (amount(available) < input.amount) throw badRequest('Insufficient settled USDC balance for supplier payment.');
+  if (amount(available) < grossAmount) {
+    throw badRequest(
+      `Insufficient settled USDC balance. This payment needs ${quote.grossAmount} USDC ` +
+      `(${quote.netAmount} to your supplier plus a ${quote.fee} fee) and you have ${available}.`
+    );
+  }
 
   const risk = evaluateSupplierRisk({ user, customer, supplier, amount: input.amount, paymentPurpose: input.paymentPurpose, invoiceUrl: input.invoiceUrl, controls, existingPayments: data.supplierPayments ?? [] });
   const route = routeSupplierPayout({ currency: supplier.currency, country: supplier.supplierCountry, accountType: supplier.accountType });
@@ -242,7 +330,14 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
     id: id('spp'),
     userId: input.userId,
     supplierId: supplier.id,
-    amount: money(input.amount),
+    // GROSS. Bridge deducts developer_fee from the transfer amount, so the
+    // gross is what must be sent for the supplier to receive the net.
+    amount: quote.grossAmount,
+    netAmount: quote.netAmount,
+    feeAmount: quote.fee,
+    feeEffectivePercent: quote.effectivePercent,
+    feeVolumeDiscountPercent: quote.volumeDiscountPercent,
+    feeVolumeUsd: quote.volumeUsd,
     sourceAsset: input.sourceAsset,
     destinationCurrency: input.destinationCurrency,
     paymentPurpose: input.paymentPurpose,
@@ -261,9 +356,9 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
   };
   await db.insertSupplierPaymentRecord(payment);
   if (status !== 'rejected') {
-    await createBalanceLedgerEntry({ userId: input.userId, customerId: customer.id, asset: input.sourceAsset, amount: payment.amount, kind: 'hold', status: 'held', sourceType: 'supplier_payment', sourceId: payment.id, description: `Hold settled USDC for supplier payout to ${supplier.supplierName}`, transferId: payment.id }, { actorType: 'user', actorId: input.userId });
+    await createBalanceLedgerEntry({ userId: input.userId, customerId: customer.id, asset: input.sourceAsset, amount: payment.amount, kind: 'hold', status: 'held', sourceType: 'supplier_payment', sourceId: payment.id, description: `Hold ${quote.grossAmount} USDC for supplier payout to ${supplier.supplierName} (${quote.netAmount} to supplier + ${quote.fee} fee)`, transferId: payment.id }, { actorType: 'user', actorId: input.userId });
   }
-  await createAuditLog({ actorType: 'user', actorId: input.userId, action: 'supplier_payment.created', resourceType: 'supplier_payment', resourceId: payment.id, severity: risk.decision === 'block' ? 'error' : 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { payment, supplier, risk, aceRiskReview: payment.aceRiskReview } });
+  await createAuditLog({ actorType: 'user', actorId: input.userId, action: 'supplier_payment.created', resourceType: 'supplier_payment', resourceId: payment.id, severity: risk.decision === 'block' ? 'error' : 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { payment, supplier, risk, aceRiskReview: payment.aceRiskReview, feeQuote: quote } });
   return { ...payment, supplier };
 }
 
@@ -354,10 +449,26 @@ export async function releaseSupplierPaymentToProvider(paymentId: string, input:
   const provider = getOfframpProvider('bridge');
   if (!provider.createSupplierPayout) throw badRequest('Current provider adapter does not support supplier payout execution.');
 
+  /**
+   * SEND THE FEE, OR SIVAN COLLECTS NOTHING.
+   *
+   * This call omitted developer_fee entirely, so even once the fee was priced,
+   * held and shown to the user, Bridge would have paid the FULL gross to the
+   * supplier and Sivan would have earned zero while the user was debited for
+   * the fee. The fee is stored on the record at creation precisely so it
+   * survives the review queue and arrives here.
+   *
+   * Undefined for records created before supplier pricing existed - those were
+   * genuinely free, and sending "0.00" would be a different claim from sending
+   * nothing.
+   */
+  const developerFee = payment.feeAmount && Number(payment.feeAmount) > 0 ? payment.feeAmount : undefined;
+
   const providerTransfer = await provider.createSupplierPayout({
     customerId: customer.providerCustomerId,
     bridgeWalletId: userWalletId,
     amount: payment.amount,
+    developerFee,
     sourceCurrency: payment.sourceAsset,
     destinationCurrency: payment.destinationCurrency,
     destinationPaymentRail: payment.providerRail || supplier.providerRail || paymentRailForSupplier(supplier),

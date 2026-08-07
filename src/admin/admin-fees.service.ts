@@ -6,6 +6,7 @@ import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
 import { validateTiers } from './fee-policy.js';
 import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND } from '../balances/transfer-fee-policy.js';
+import { DEFAULT_SUPPLIER_FEE } from '../suppliers/supplier-fee-policy.js';
 import { DEFAULT_GAS_CONTROLS } from '../balances/gas-policy.js';
 
 export const feeTierSchema = z.object({
@@ -190,6 +191,44 @@ export const feeSettingsSchema = z.object({
   transferFeeNewRecipientUsd: z.coerce.number().min(0).max(100).default(DEFAULT_TRANSFER_FEE.newRecipientUsd),
 
   /**
+   * ───── SUPPLIER PAYOUT PRICING ─────
+   *
+   * Cross-border supplier payouts were the one flow charging NOTHING. Priced
+   * with MARGINAL bands (each slice of the payment at its own rate) so the
+   * curve is continuous - a banded structure would make a payment of $500.01
+   * cost less than one of $499.99, which at these amounts is tens of dollars
+   * across one cent.
+   *
+   * Expressible here and NOT on off-ramp because Bridge takes supplier payouts
+   * as POST /transfers { developer_fee: "<usd amount>" }, computed per payment,
+   * whereas a liquidation address fixes its percentage at creation with no
+   * amount in existence yet.
+   *
+   * The fee is ADDED to the payment: a supplier invoicing $1,000 receives
+   * $1,000 and the user is debited $1,000 + fee.
+   */
+  supplierFeeTiers: z.array(z.object({
+    upToUsd: z.coerce.number().positive().nullable(),
+    percent: z.coerce.number().min(0).max(100),
+  })).default(DEFAULT_SUPPLIER_FEE.tiers),
+  /**
+   * Discount ON THE FEE for cumulative 30-day volume. A step here can only
+   * ever REDUCE what a user owes, which is why a cliff is acceptable in the
+   * discount ladder while it would be indefensible in the fee bands.
+   */
+  supplierVolumeDiscounts: z.array(z.object({
+    fromVolumeUsd: z.coerce.number().min(0),
+    discountPercent: z.coerce.number().min(0).max(100),
+  })).default(DEFAULT_SUPPLIER_FEE.volumeDiscounts),
+  /**
+   * Floor. A $20 payout at 1.5% earns 30 cents while consuming a compliance
+   * review and an international payout rail - neither of which scales down.
+   */
+  supplierFeeMinimumUsd: z.coerce.number().min(0).max(1_000).default(DEFAULT_SUPPLIER_FEE.minimumUsd),
+  /** Cap. 0 disables it, which is the default for this flow. */
+  supplierFeeMaximumUsd: z.coerce.number().min(0).max(100_000).default(DEFAULT_SUPPLIER_FEE.maximumUsd),
+
+  /**
    * ───── GAS SPONSORSHIP CONTROLS ─────
    *
    * Sivan pays the network fee on every transfer, so these are the limits that
@@ -270,6 +309,10 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     transferFeeMaximumUsd: DEFAULT_TRANSFER_FEE.maximumUsd,
     transferMinimumSendAmount: DEFAULT_TRANSFER_MIN_SEND,
     transferFeeNewRecipientUsd: DEFAULT_TRANSFER_FEE.newRecipientUsd,
+    supplierFeeTiers: DEFAULT_SUPPLIER_FEE.tiers,
+    supplierVolumeDiscounts: DEFAULT_SUPPLIER_FEE.volumeDiscounts,
+    supplierFeeMinimumUsd: DEFAULT_SUPPLIER_FEE.minimumUsd,
+    supplierFeeMaximumUsd: DEFAULT_SUPPLIER_FEE.maximumUsd,
     gasLimitsEnabled: DEFAULT_GAS_CONTROLS.limitsEnabled,
     gasLimitsWarnOnly: DEFAULT_GAS_CONTROLS.warnOnly,
     gasDailyBudgetUsd: DEFAULT_GAS_CONTROLS.dailyBudgetUsd,

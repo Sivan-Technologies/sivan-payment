@@ -182,6 +182,7 @@
     "test:kyc-provider-failover": "tsx scripts/test-kyc-provider-failover.ts",
     "test:customer-dob": "tsx scripts/test-customer-date-of-birth.ts",
     "test:terms-gate": "tsx scripts/test-provider-terms-gate.ts",
+    "test:supplier-fee": "tsx scripts/test-supplier-fee-policy.ts",
     "bridge:va-smoke": "tsx scripts/bridge-va-and-transfer-smoke.ts",
     "test:bridge-sandbox": "tsx scripts/bridge-live-sandbox-soft-test.ts",
     "bridge:live-va-smoke": "tsx scripts/bridge-live-va-and-sweep-smoke.ts",

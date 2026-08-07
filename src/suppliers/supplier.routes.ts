@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { createSupplier, createSupplierPayment, createSupplierPaymentSchema, createSupplierSchema, getSupplierPayment, getSupplierPaymentControls, listAdminSupplierPayments, listAdminSuppliers, listUserSupplierPayments, listUserSuppliers, reviewSupplier, releaseSupplierPaymentSchema, releaseSupplierPaymentToProvider, reviewSupplierPayment, reviewSupplierPaymentSchema, reviewSupplierSchema, syncSupplierPaymentProviderStatus, updateSupplierPaymentControls } from './supplier.service.js';
+import { createSupplier, createSupplierPayment, createSupplierPaymentSchema, createSupplierSchema, getSupplierPayment, getSupplierPaymentControls, listAdminSupplierPayments, listAdminSuppliers, listUserSupplierPayments, listUserSuppliers, reviewSupplier, releaseSupplierPaymentSchema, releaseSupplierPaymentToProvider, reviewSupplierPayment, reviewSupplierPaymentSchema, reviewSupplierSchema, syncSupplierPaymentProviderStatus, updateSupplierPaymentControls, quoteSupplierPayment } from './supplier.service.js';
 import { supplierControlsSchema } from '../risk/supplier-risk.service.js';
+import { badRequest } from '../shared/errors.js';
 
 export async function supplierRoutes(app: FastifyInstance) {
   app.get('/api/users/:userId/suppliers', async (request) => {
@@ -18,6 +19,21 @@ export async function supplierRoutes(app: FastifyInstance) {
   app.get('/api/users/:userId/supplier-payments', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await listUserSupplierPayments(userId) };
+  });
+
+  /**
+   * What a supplier payment would cost, without creating one.
+   *
+   * The confirm dialog calls this rather than doing the arithmetic itself.
+   * Two copies of a pricing rule is how they come to disagree, and a UI that
+   * quotes a different fee from the one charged reads as theft.
+   */
+  app.get('/api/users/:userId/supplier-payments/quote', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const { amount } = request.query as { amount?: string };
+    const parsed = Number(amount);
+    if (!Number.isFinite(parsed) || parsed <= 0) throw badRequest('A positive amount is required to quote a supplier payment.');
+    return { data: await quoteSupplierPayment(userId, parsed) };
   });
 
   app.post('/api/users/:userId/supplier-payments', async (request) => {

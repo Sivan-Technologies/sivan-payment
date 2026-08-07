@@ -39,6 +39,25 @@ export interface SupplierPaymentConfirmDetails {
   invoiceUrl?: string;
   /** Settled USDC available before this payment. */
   available: number;
+  /**
+   * The server's price for this payment. Undefined while it is still loading.
+   *
+   * FETCHED, NEVER COMPUTED HERE. The tier maths lives in
+   * supplier-fee-policy.ts and is served over
+   * GET /users/:id/supplier-payments/quote. A second copy in the frontend is
+   * how the quoted fee and the charged fee come to differ, and that difference
+   * reads to a user as theft.
+   */
+  quote?: {
+    netAmount: string;
+    fee: string;
+    grossAmount: string;
+    effectivePercent: string;
+    volumeDiscountPercent: number;
+    volumeDiscountAmount: string;
+    feeBeforeDiscount: string;
+    explanation: string;
+  };
 }
 
 export function SupplierPaymentConfirm({
@@ -68,8 +87,19 @@ export function SupplierPaymentConfirm({
   }, [onCancel, submitting]);
 
   const amount = Number(details.amount || 0);
-  const remaining = Math.max(details.available - amount, 0);
+  /**
+   * THE TOTAL DEBITED IS THE GROSS, not the amount typed.
+   *
+   * The fee is ADDED on this route so the supplier receives their full
+   * invoice. Showing "balance after" against the bare amount would understate
+   * what the payment costs by exactly the fee - the number the user checks
+   * before agreeing.
+   */
+  const gross = Number(details.quote?.grossAmount ?? details.amount ?? 0);
+  const remaining = Math.max(details.available - gross, 0);
   const currency = details.destinationCurrency.toUpperCase();
+  const fee = details.quote?.fee;
+  const discountPercent = details.quote?.volumeDiscountPercent ?? 0;
 
   return (
     <div
@@ -88,7 +118,10 @@ export function SupplierPaymentConfirm({
       >
         <div className="sv-modal-head">
           <span className="sv-modal-eyebrow">Confirm supplier payment</span>
-          <h2 id="supplier-confirm-title">{details.amount} USDC</h2>
+          {/* The headline is what LEAVES the balance. It used to be the amount
+              typed, which was the same number before the fee existed and is
+              now the smaller of the two. */}
+          <h2 id="supplier-confirm-title">{details.quote?.grossAmount ?? details.amount} USDC</h2>
           {/*
             NOT "this cannot be undone". It genuinely can - the money is held,
             not sent, until a human releases it. Promising irreversibility
@@ -123,8 +156,35 @@ export function SupplierPaymentConfirm({
 
           <div className="confirm-rows">
             <div className="confirm-row">
-              <span>Amount</span>
-              <strong>{details.amount} USDC</strong>
+              <span>Supplier receives</span>
+              <strong>{details.quote?.netAmount ?? details.amount} USDC</strong>
+            </div>
+            {/*
+              THE FEE, SHOWN. The transfer dialog shipped charging a fee it
+              never displayed, which is the bug this row exists to not repeat.
+              Rendered even while the quote loads, so the row cannot appear
+              only after the user has already read the total.
+            */}
+            <div className="confirm-row">
+              <span>Sivan fee{details.quote ? ` (${details.quote.effectivePercent}%)` : ''}</span>
+              <strong>{fee ? `+${fee} USDC` : 'Calculating…'}</strong>
+            </div>
+            {discountPercent > 0 && (
+              /*
+                The saving is stated as money, not just a percentage. "20% off"
+                beside a fee the user cannot see the pre-discount value of is
+                a claim they cannot check.
+              */
+              <div className="confirm-row">
+                <span>Volume discount ({discountPercent}%)</span>
+                <strong className="confirm-positive">
+                  −{details.quote?.volumeDiscountAmount} USDC
+                </strong>
+              </div>
+            )}
+            <div className="confirm-row">
+              <span>Total debited</span>
+              <strong>{details.quote?.grossAmount ?? details.amount} USDC</strong>
             </div>
             <div className="confirm-row">
               {/*
@@ -133,12 +193,20 @@ export function SupplierPaymentConfirm({
                 figure would leave the user guessing which one they are
                 agreeing to.
               */}
-              <span>Supplier receives</span>
+              <span>Paid out in</span>
               <strong>{currency}</strong>
             </div>
             <div className="confirm-row">
               <span>Balance after</span>
-              <strong>{remaining.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</strong>
+              {/*
+                TWO DECIMALS, like every other row in this dialog.
+                `maximumFractionDigits: 6` rendered 4391.30 as "4,391.3" - a
+                lone ragged figure in a column of 608.70 / 600.00 / +8.70 that
+                reads as a rounding glitch on a money screen. Caught in the
+                screenshot; the arithmetic was right and only the format was
+                wrong.
+              */}
+              <strong>{remaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC</strong>
             </div>
             <div className="confirm-row">
               <span>Purpose</span>
@@ -160,7 +228,7 @@ export function SupplierPaymentConfirm({
           */}
           <div className="details-box compact">
             <span>
-              We place a hold on {details.amount} USDC. A Sivan reviewer releases or rejects the
+              We place a hold on {details.quote?.grossAmount ?? details.amount} USDC. A Sivan reviewer releases or rejects the
               payout — this is not sent immediately, and the hold is returned if it is rejected.
             </span>
           </div>
@@ -195,7 +263,7 @@ export function SupplierPaymentConfirm({
             disabled={!acknowledged || submitting}
             onClick={onConfirm}
           >
-            {submitting ? 'Submitting…' : `Pay ${details.amount} USDC`}
+            {submitting ? 'Submitting…' : `Pay ${details.quote?.grossAmount ?? details.amount} USDC`}
           </button>
         </div>
       </div>

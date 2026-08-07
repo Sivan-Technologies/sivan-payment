@@ -787,3 +787,29 @@ export interface NgnTransferRecord {
   createdAt: string;
   updatedAt?: string;
 }
+
+/**
+ * GET /api/users/:id/supplier-payments/quote
+ *
+ * The server's price for a cross-border supplier payout. Fetched rather than
+ * computed: the curve is marginal-tiered AND discounted by the user's 30-day
+ * volume, so a client-side copy would need both tables plus the volume, and
+ * would disagree with the charge the moment an admin edits the fee tab.
+ */
+export interface SupplierFeeQuoteResponse {
+  /** What the supplier receives - the amount the user typed. */
+  netAmount: string;
+  /** Sivan's fee, ADDED on top. Sent to Bridge as developer_fee. */
+  fee: string;
+  /** What leaves the balance: netAmount + fee. */
+  grossAmount: string;
+  feeBeforeDiscount: string;
+  volumeDiscountAmount: string;
+  volumeDiscountPercent: number;
+  volumeUsd: string;
+  effectivePercent: string;
+  appliedRule: 'tiered' | 'minimum' | 'maximum';
+  breakdown: Array<{ fromUsd: number; toUsd: number | null; percent: number; amountInBand: string; feeFromBand: string }>;
+  explanation: string;
+  windowDays: number;
+}

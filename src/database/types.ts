@@ -582,7 +582,36 @@ export interface SupplierPaymentRecord {
   id: string;
   userId: string;
   supplierId: string;
+  /**
+   * THE GROSS: what leaves the user's balance, and what is sent to Bridge as
+   * the transfer `amount`.
+   *
+   * Equals netAmount + feeAmount. Bridge deducts developer_fee FROM the
+   * transfer amount, so submitting the gross is what makes the supplier
+   * receive the full invoice.
+   *
+   * Kept as `amount` rather than renamed: it is what the hold, the ledger and
+   * the provider call all consume, and every one of those already means "the
+   * sum debited". Renaming it would have been a wide, silent change to money
+   * paths for a cosmetic gain.
+   */
   amount: string;
+  /**
+   * What the supplier actually receives - the figure the user typed.
+   *
+   * Optional because payments created before supplier pricing existed have no
+   * fee split. Readers must fall back to `amount` when it is absent, which is
+   * correct for those records: they were charged no fee, so gross == net.
+   */
+  netAmount?: string;
+  /** Sivan's fee, sent to Bridge as developer_fee. Two decimals. */
+  feeAmount?: string;
+  /** Effective rate against netAmount, for display and reporting. */
+  feeEffectivePercent?: string;
+  /** The 30-day volume discount applied, 0 when none. */
+  feeVolumeDiscountPercent?: number;
+  /** The rolling volume the discount was based on, for support questions. */
+  feeVolumeUsd?: string;
   sourceAsset: SourceCurrency;
   destinationCurrency: SupplierPayoutCurrency;
   paymentPurpose: string;

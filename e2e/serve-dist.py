@@ -33,5 +33,11 @@ class SpaHandler(http.server.SimpleHTTPRequestHandler):
 
 
 socketserver.TCPServer.allow_reuse_address = True
-with socketserver.TCPServer(('127.0.0.1', 4173), SpaHandler) as httpd:
+
+# PORT IS OVERRIDABLE so two journeys can run without colliding. Hardcoded
+# 4173 meant a second suite silently reused whichever build the first had
+# left serving - the stale-stack failure that has already cost debugging
+# cycles here.
+PORT = int(os.environ.get('APP_PORT', '4173'))
+with socketserver.TCPServer(('127.0.0.1', PORT), SpaHandler) as httpd:
     httpd.serve_forever()
