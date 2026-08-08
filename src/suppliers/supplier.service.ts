@@ -244,15 +244,77 @@ export async function getSupplier(supplierId: string) {
 export async function getSupplierVolumeUsd(userId: string, preloaded?: any): Promise<number> {
   const data = preloaded ?? await db.read();
   const cutoff = Date.now() - SUPPLIER_VOLUME_WINDOW_DAYS * 86_400_000;
+  const withinWindow = (iso?: string) => {
+    const at = Date.parse(iso ?? '');
+    return Number.isFinite(at) && at >= cutoff;
+  };
+
   const counting = new Set<string>(SUPPLIER_VOLUME_COUNTING_STATUSES);
-  return (data.supplierPayments ?? [])
+  const supplierVolume = (data.supplierPayments ?? [])
     .filter((item: SupplierPaymentRecord) => item.userId === userId)
     .filter((item: SupplierPaymentRecord) => counting.has(item.status))
-    .filter((item: SupplierPaymentRecord) => {
-      const at = Date.parse(item.createdAt);
-      return Number.isFinite(at) && at >= cutoff;
-    })
+    .filter((item: SupplierPaymentRecord) => withinWindow(item.createdAt))
     .reduce((total: number, item: SupplierPaymentRecord) => total + amount(item.netAmount ?? item.amount), 0);
+
+  /**
+   * ALL SIVAN VOLUME COUNTS, NOT JUST SUPPLIER PAYMENTS.
+   *
+   * The discount originally measured supplier payments alone, which punished
+   * the customer it was designed to reward: a business off-ramping $80k a
+   * month and paying two suppliers $3k was treated as a $3k customer. They are
+   * a large customer of Sivan, and the loyalty tier should say so.
+   *
+   * It also created a perverse incentive - to reach a supplier discount you
+   * had to route MORE through the single most compliance-expensive flow,
+   * rather than through the cheap ones.
+   *
+   * Off-ramp withdrawals are included because they are the same wallet, the
+   * same KYC and the same balance sheet. What Sivan CANNOT see is volume the
+   * user settles through another provider entirely, and no amount of internal
+   * accounting fixes that - see the manual override below, which is the
+   * honest answer to it.
+   */
+  const withdrawals = await db.listWithdrawalsByUserSince(userId, new Date(cutoff).toISOString()).catch(() => []);
+  const withdrawalVolume = withdrawals.reduce(
+    (total: number, item: any) => total + amount(item.sourceAmount ?? item.destinationAmount ?? 0),
+    0
+  );
+
+  const earned = supplierVolume + withdrawalVolume;
+
+  /**
+   * AN ADMIN-GRANTED FLOOR, for volume Sivan genuinely cannot observe.
+   *
+   * A user who settles half their invoices through another provider is a
+   * bigger customer than Sivan's own records show, and there is no technical
+   * way to discover that - inferring it would be inventing data. So the
+   * product answer is a deliberate human one: sales agrees a tier, an admin
+   * records it with a reason and an expiry, and it is applied as a FLOOR.
+   *
+   * A floor, not a replacement: if the user's real Sivan volume grows past
+   * the granted figure, the higher one wins and the grant quietly stops
+   * mattering. Directly modelled on the per-user limit overrides in
+   * user-limits.service.ts, which solve the same "the rule is right but this
+   * customer is an exception" problem.
+   */
+  const granted = await getGrantedVolumeFloorUsd(userId, data);
+  return Math.max(earned, granted);
+}
+
+/**
+ * An admin-granted volume floor for one user, or 0.
+ *
+ * Expiry is enforced here rather than by a cleanup job: a grant that outlives
+ * its review date should stop applying on its own, because the failure mode of
+ * a forgotten discount is one that never ends.
+ */
+export async function getGrantedVolumeFloorUsd(userId: string, preloaded?: any): Promise<number> {
+  const data = preloaded ?? await db.read();
+  const now = Date.now();
+  return (data.supplierVolumeGrants ?? [])
+    .filter((row: any) => row.userId === userId)
+    .filter((row: any) => !row.expiresAt || Date.parse(row.expiresAt) > now)
+    .reduce((highest: number, row: any) => Math.max(highest, amount(row.volumeUsd)), 0);
 }
 
 /**
@@ -272,6 +334,7 @@ export async function getSupplierFeeConfig(): Promise<SupplierFeeConfig> {
       volumeDiscounts: settings.supplierVolumeDiscounts?.length ? settings.supplierVolumeDiscounts : DEFAULT_SUPPLIER_FEE.volumeDiscounts,
       minimumUsd: settings.supplierFeeMinimumUsd ?? DEFAULT_SUPPLIER_FEE.minimumUsd,
       maximumUsd: settings.supplierFeeMaximumUsd ?? DEFAULT_SUPPLIER_FEE.maximumUsd,
+      newSupplierUsd: settings.supplierNewSupplierFeeUsd ?? DEFAULT_SUPPLIER_FEE.newSupplierUsd,
     };
   } catch {
     return DEFAULT_SUPPLIER_FEE;
@@ -285,10 +348,98 @@ export async function getSupplierFeeConfig(): Promise<SupplierFeeConfig> {
  * runs - a UI that quotes a different fee from the one charged is a support
  * ticket that reads as theft.
  */
-export async function quoteSupplierPayment(userId: string, netAmount: number) {
-  const volumeUsd = await getSupplierVolumeUsd(userId);
+export async function quoteSupplierPayment(userId: string, netAmount: number, supplierId?: string) {
+  const data = await db.read();
+  const volumeUsd = await getSupplierVolumeUsd(userId, data);
   const config = await getSupplierFeeConfig();
-  return { ...quoteSupplierFee(netAmount, volumeUsd, config), windowDays: SUPPLIER_VOLUME_WINDOW_DAYS };
+  const isFirstPaymentToSupplier = supplierId ? isFirstPaymentTo(data, userId, supplierId) : false;
+  return {
+    ...quoteSupplierFee(netAmount, volumeUsd, config, { isFirstPaymentToSupplier }),
+    windowDays: SUPPLIER_VOLUME_WINDOW_DAYS,
+  };
+}
+
+/**
+ * Has this user already paid this supplier?
+ *
+ * MIRRORS supplier-risk.service.ts EXACTLY - same statuses, same question - so
+ * the payment that gets scored as "first payout to this supplier" is the same
+ * one charged the setup fee. If these two ever disagree, a user is charged for
+ * a review that did not happen or gets a free one that did.
+ */
+function isFirstPaymentTo(data: any, userId: string, supplierId: string): boolean {
+  return !(data.supplierPayments ?? []).some((payment: SupplierPaymentRecord) =>
+    payment.userId === userId
+    && payment.supplierId === supplierId
+    && ['approved', 'processing', 'completed'].includes(payment.status)
+  );
+}
+
+/**
+ * Record an admin-granted volume floor.
+ *
+ * The answer to volume Sivan cannot observe. Requires a reason and defaults to
+ * expiring, because an unexplained permanent discount is how pricing quietly
+ * stops meaning anything.
+ */
+export const grantSupplierVolumeSchema = z.object({
+  userId: z.string().min(1),
+  volumeUsd: z.coerce.number().min(0).max(100_000_000),
+  reason: z.string().min(10).max(1000),
+  grantedBy: z.string().min(2).default('admin_api_key'),
+  /** Days until it lapses. 0 means no expiry, which must be chosen explicitly. */
+  expiresInDays: z.coerce.number().int().min(0).max(3650).default(90),
+});
+
+export async function grantSupplierVolume(
+  input: z.infer<typeof grantSupplierVolumeSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  /**
+   * VALIDATED HERE, not only at the route.
+   *
+   * The route parses the body, so an HTTP caller could not skip the rules -
+   * but any internal caller could, and this function hands out a discount on
+   * Sivan's own margin. Caught by test: a grant with the reason "because"
+   * was accepted, defeating the requirement that every grant carry an
+   * auditable rationale.
+   */
+  input = grantSupplierVolumeSchema.parse(input);
+  const now = nowIso();
+  const record = {
+    id: id('svg'),
+    userId: input.userId,
+    volumeUsd: money(input.volumeUsd),
+    reason: input.reason,
+    grantedBy: input.grantedBy,
+    expiresAt: input.expiresInDays > 0
+      ? new Date(Date.now() + input.expiresInDays * 86_400_000).toISOString()
+      : undefined,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.mutate((d: any) => {
+    d.supplierVolumeGrants = d.supplierVolumeGrants ?? [];
+    d.supplierVolumeGrants.push(record);
+    return 1;
+  });
+  /**
+   * AUDITED AS A WARNING. This hands a customer a permanent discount on
+   * Sivan's own margin without any transaction to justify it, which is
+   * precisely the kind of decision that should be easy to find later.
+   */
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: input.grantedBy,
+    action: 'supplier.volume_grant_created',
+    resourceType: 'supplier_volume_grant',
+    resourceId: record.id,
+    severity: 'warning',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: { grant: record },
+  });
+  return record;
 }
 
 export async function createSupplierPayment(input: z.infer<typeof createSupplierPaymentSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
@@ -311,7 +462,11 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
    */
   const volumeUsd = await getSupplierVolumeUsd(input.userId, data);
   const feeConfig = await getSupplierFeeConfig();
-  const quote = quoteSupplierFee(input.amount, volumeUsd, feeConfig);
+  const quote = quoteSupplierFee(input.amount, volumeUsd, feeConfig, {
+    // Same question the risk engine asks, from the same data, so the payment
+    // charged for onboarding is the one that actually triggers the review.
+    isFirstPaymentToSupplier: isFirstPaymentTo(data, input.userId, supplier.id),
+  });
   const grossAmount = Number(quote.grossAmount);
 
   const available = (await getUserBalance(input.userId)).balances.find((item) => item.asset === input.sourceAsset)?.available ?? '0';
@@ -338,6 +493,7 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
     feeEffectivePercent: quote.effectivePercent,
     feeVolumeDiscountPercent: quote.volumeDiscountPercent,
     feeVolumeUsd: quote.volumeUsd,
+    feeNewSupplierAmount: quote.newSupplierFee,
     sourceAsset: input.sourceAsset,
     destinationCurrency: input.destinationCurrency,
     paymentPurpose: input.paymentPurpose,

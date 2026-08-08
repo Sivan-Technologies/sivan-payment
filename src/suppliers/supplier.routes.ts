@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { createSupplier, createSupplierPayment, createSupplierPaymentSchema, createSupplierSchema, getSupplierPayment, getSupplierPaymentControls, listAdminSupplierPayments, listAdminSuppliers, listUserSupplierPayments, listUserSuppliers, reviewSupplier, releaseSupplierPaymentSchema, releaseSupplierPaymentToProvider, reviewSupplierPayment, reviewSupplierPaymentSchema, reviewSupplierSchema, syncSupplierPaymentProviderStatus, updateSupplierPaymentControls, quoteSupplierPayment } from './supplier.service.js';
+import { createSupplier, createSupplierPayment, createSupplierPaymentSchema, createSupplierSchema, getSupplierPayment, getSupplierPaymentControls, listAdminSupplierPayments, listAdminSuppliers, listUserSupplierPayments, listUserSuppliers, reviewSupplier, releaseSupplierPaymentSchema, releaseSupplierPaymentToProvider, reviewSupplierPayment, reviewSupplierPaymentSchema, reviewSupplierSchema, syncSupplierPaymentProviderStatus, updateSupplierPaymentControls, quoteSupplierPayment, grantSupplierVolume, grantSupplierVolumeSchema } from './supplier.service.js';
 import { supplierControlsSchema } from '../risk/supplier-risk.service.js';
 import { badRequest } from '../shared/errors.js';
 
@@ -30,16 +30,32 @@ export async function supplierRoutes(app: FastifyInstance) {
    */
   app.get('/api/users/:userId/supplier-payments/quote', async (request) => {
     const { userId } = request.params as { userId: string };
-    const { amount } = request.query as { amount?: string };
+    const { amount, supplierId } = request.query as { amount?: string; supplierId?: string };
     const parsed = Number(amount);
     if (!Number.isFinite(parsed) || parsed <= 0) throw badRequest('A positive amount is required to quote a supplier payment.');
-    return { data: await quoteSupplierPayment(userId, parsed) };
+    // supplierId is optional but matters: the one-time setup fee only applies
+    // to the first payment to a GIVEN supplier, so a quote without it cannot
+    // know whether that charge is due.
+    return { data: await quoteSupplierPayment(userId, parsed, supplierId) };
   });
 
   app.post('/api/users/:userId/supplier-payments', async (request) => {
     const { userId } = request.params as { userId: string };
     const body = parseBody(createSupplierPaymentSchema, { ...(request.body as any), userId });
     return { data: await createSupplierPayment(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Credit a user with volume Sivan cannot observe.
+   *
+   * For the customer who settles part of their business through another
+   * provider. Sales agrees a tier, this records it with a reason and an
+   * expiry, and the fee engine applies it as a floor.
+   */
+  app.post('/api/admin/supplier-payments/volume-grants', async (request) => {
+    const body = parseBody(grantSupplierVolumeSchema, request.body);
+    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || body.grantedBy;
+    return { data: await grantSupplierVolume({ ...body, grantedBy: actor }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.get('/api/admin/supplier-payments/controls', async () => ({ data: await getSupplierPaymentControls() }));

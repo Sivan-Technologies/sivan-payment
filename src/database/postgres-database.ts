@@ -213,6 +213,7 @@ export class PostgresDatabase {
       const suppliers = await optionalQuery(client, 'select * from payments_suppliers order by created_at asc');
       const supplierPayments = await optionalQuery(client, 'select * from payments_supplier_payments order by created_at asc');
       const supplierControls = await optionalQuery(client, 'select * from payments_supplier_controls order by id asc');
+      const supplierVolumeGrants = await optionalQuery(client, 'select * from payments_supplier_volume_grants order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
       const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
       const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
@@ -292,6 +293,7 @@ export class PostgresDatabase {
         suppliers: suppliers.rows.map(mapSupplier),
         supplierPayments: supplierPayments.rows.map(mapSupplierPayment),
         supplierControls: supplierControls.rows.map(mapSupplierControls),
+        supplierVolumeGrants: supplierVolumeGrants.rows.map(mapSupplierVolumeGrant),
         webhookEvents: webhookEvents.rows.map(mapWebhookEvent),
         authChallenges: authChallenges.rows.map(mapAuthChallenge),
         auditLogs: auditLogs.rows.map(mapAuditLog),
@@ -1849,6 +1851,7 @@ export class PostgresDatabase {
       for (const supplier of data.suppliers ?? []) await upsertSupplier(client, supplier);
       for (const payment of data.supplierPayments ?? []) await upsertSupplierPayment(client, payment);
       for (const control of data.supplierControls ?? []) await upsertSupplierControls(client, control);
+      for (const grant of data.supplierVolumeGrants ?? []) await upsertSupplierVolumeGrant(client, grant);
       for (const event of data.webhookEvents) await upsertWebhookEvent(client, event);
       for (const challenge of data.authChallenges ?? []) await upsertAuthChallenge(client, challenge);
       for (const auditLog of data.auditLogs ?? []) await upsertAuditLog(client, auditLog);
@@ -2246,6 +2249,29 @@ function mapSupplierPayment(row: any): SupplierPaymentRecord {
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at)
   };
+}
+
+function mapSupplierVolumeGrant(row: any) {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    volumeUsd: numberString(row.volume_usd) ?? '0',
+    reason: row.reason,
+    grantedBy: row.granted_by,
+    expiresAt: iso(row.expires_at),
+    createdAt: iso(row.created_at)!,
+    updatedAt: iso(row.updated_at)!
+  };
+}
+
+async function upsertSupplierVolumeGrant(client: any, item: any) {
+  await client.query(
+    `insert into payments_supplier_volume_grants (id, user_id, volume_usd, reason, granted_by, expires_at, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8)
+     on conflict (id) do update set user_id=excluded.user_id, volume_usd=excluded.volume_usd, reason=excluded.reason,
+       granted_by=excluded.granted_by, expires_at=excluded.expires_at, updated_at=excluded.updated_at`,
+    [item.id, item.userId, item.volumeUsd, item.reason, item.grantedBy, item.expiresAt ?? null, item.createdAt, item.updatedAt]
+  );
 }
 
 function mapSupplierControls(row: any): SupplierControlsRecord {

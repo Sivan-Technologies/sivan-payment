@@ -612,6 +612,8 @@ export interface SupplierPaymentRecord {
   feeVolumeDiscountPercent?: number;
   /** The rolling volume the discount was based on, for support questions. */
   feeVolumeUsd?: string;
+  /** The one-time supplier-onboarding charge, when this was a first payment. */
+  feeNewSupplierAmount?: string;
   sourceAsset: SourceCurrency;
   destinationCurrency: SupplierPayoutCurrency;
   paymentPurpose: string;
@@ -630,6 +632,32 @@ export interface SupplierPaymentRecord {
   reviewReason?: string;
   aceRiskReview?: unknown;
   raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * An admin-granted supplier volume floor.
+ *
+ * WHY THIS EXISTS: the volume discount can only measure what Sivan can see. A
+ * customer who settles half their invoices through another provider is larger
+ * than Sivan's records show, and inferring that would be inventing data. This
+ * is the honest alternative - a human decision, recorded with who made it, why,
+ * and when it lapses.
+ */
+export interface SupplierVolumeGrantRecord {
+  id: string;
+  userId: string;
+  /** The 30-day volume to CREDIT this user with, in USD. Applied as a floor. */
+  volumeUsd: string;
+  /** Why sales/compliance agreed it. Required - a grant with no rationale is unauditable. */
+  reason: string;
+  grantedBy: string;
+  /**
+   * When it lapses. Grants expire by default so a forgotten discount cannot
+   * run forever; the read path enforces this rather than a cleanup job.
+   */
+  expiresAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -979,6 +1007,7 @@ export interface DatabaseShape {
   suppliers: SupplierRecord[];
   supplierPayments: SupplierPaymentRecord[];
   supplierControls: SupplierControlsRecord[];
+  supplierVolumeGrants: SupplierVolumeGrantRecord[];
   webhookEvents: WebhookEventRecord[];
   authChallenges: AuthChallengeRecord[];
   auditLogs: AuditLogRecord[];

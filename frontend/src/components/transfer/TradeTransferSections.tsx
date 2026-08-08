@@ -395,7 +395,9 @@ export function TransferCryptoView({ hasUser, isVerified, balance, unifiedBalanc
      */
     if (!api) return;
     try {
-      const query = new URLSearchParams({ amount });
+      // supplierId matters: the one-time setup fee applies only to the first
+      // payment to THIS supplier, and the server cannot tell without it.
+      const query = new URLSearchParams({ amount, supplierId });
       const quote = await api<SupplierFeeQuoteResponse>(
         `/api/users/${supplier.userId}/supplier-payments/quote?${query.toString()}`
       );

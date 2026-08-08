@@ -72,15 +72,28 @@ if (!supplierId) { console.error('supplier seed failed', JSON.stringify(created)
  * will charge.
  */
 const AMOUNT = '600';
-const quoteRes = await fetch(`${API}/api/users/${user.id}/supplier-payments/quote?amount=${AMOUNT}`).then(r => r.json());
+/**
+ * supplierId IS REQUIRED for a correct quote, and omitting it here proved it:
+ * the API returned 8.70 while the dialog showed 10.20, because without the
+ * supplier the server cannot know this is a first payment. The UI was right
+ * and this call was wrong - a good demonstration that the parameter is load
+ * bearing rather than decorative.
+ */
+const quoteRes = await fetch(`${API}/api/users/${user.id}/supplier-payments/quote?amount=${AMOUNT}&supplierId=${supplierId}`).then(r => r.json());
 const quote = quoteRes.data ?? quoteRes;
 console.log(`  server quote: net=${quote.netAmount} fee=${quote.fee} gross=${quote.grossAmount} rate=${quote.effectivePercent}%`);
 
-// 600 = 500@1.5% (7.50) + 100@1.2% (1.20) = 8.70
-check('the server prices $600 across two marginal bands = 8.70',
-  quote.fee === '8.70', quote.fee);
+/**
+ * 600 = 500@1.5% (7.50) + 100@1.2% (1.20) = 8.70 tiered, PLUS 1.50 one-time
+ * setup because this is the first payment to a freshly created supplier.
+ */
+check('the server prices $600 across two marginal bands, plus setup = 10.20',
+  quote.fee === '10.20', quote.fee);
+check('and itemises the one-time supplier setup charge',
+  quote.newSupplierFee === '1.50' && quote.isFirstPaymentToSupplier === true,
+  `${quote.newSupplierFee} / first=${quote.isFirstPaymentToSupplier}`);
 check('and the gross is the amount plus the fee',
-  quote.grossAmount === '608.70', quote.grossAmount);
+  quote.grossAmount === '610.20', quote.grossAmount);
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 1200 } });
@@ -160,6 +173,27 @@ check('and it is shown with 2 decimals like every other money row',
 
 // ─────────────────────────────────────────────────────────────────────
 console.log('\n── 3. the dialog still tells the truth about what happens ───');
+
+/**
+ * The setup charge must be EXPLAINED on screen. A surcharge appearing with no
+ * reason reads as a rate rise; saying it is one-time tells the user their next
+ * invoice to this supplier is cheaper.
+ */
+check('the one-time setup charge is shown as a row',
+  /New supplier setup/i.test(text),
+  text.split('\n').filter((l) => /setup/i.test(l)).join(' | '));
+/**
+ * The advertised percentage must be the RECURRING rate. It read 1.700% on a
+ * first payment - the setup charge folded into the rate - directly beside a
+ * row saying that charge applies once. Caught in the screenshot.
+ */
+check('the percentage shown is the recurring rate, not inflated by setup',
+  /Sivan fee \(1\.450%\)/.test(text),
+  text.split('\n').filter((l) => /Sivan fee/i.test(l)).join(' | '));
+
+check('and is explained as applying only once',
+  /will not include it|applies once/i.test(text),
+  text.split('\n').filter((l) => /once|future payments/i.test(l)).join(' | '));
 
 check('it still says the money is HELD, not sent',
   /hold/i.test(text) && /review/i.test(text));

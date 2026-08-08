@@ -227,6 +227,15 @@ export const feeSettingsSchema = z.object({
   supplierFeeMinimumUsd: z.coerce.number().min(0).max(1_000).default(DEFAULT_SUPPLIER_FEE.minimumUsd),
   /** Cap. 0 disables it, which is the default for this flow. */
   supplierFeeMaximumUsd: z.coerce.number().min(0).max(100_000).default(DEFAULT_SUPPLIER_FEE.maximumUsd),
+  /**
+   * One-time charge on the FIRST payment to each supplier.
+   *
+   * The compliance review is a per-RELATIONSHIP cost - supplier-risk scores
+   * `isFirstPayment` per supplier, and a repeat payment to an approved one can
+   * auto-approve with no human involved. Recovering it here let the floor drop
+   * from $2.00 to $0.50, so a $50 repeat invoice costs 1.5% instead of 4%.
+   */
+  supplierNewSupplierFeeUsd: z.coerce.number().min(0).max(1_000).default(DEFAULT_SUPPLIER_FEE.newSupplierUsd),
 
   /**
    * ───── GAS SPONSORSHIP CONTROLS ─────
@@ -313,6 +322,7 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     supplierVolumeDiscounts: DEFAULT_SUPPLIER_FEE.volumeDiscounts,
     supplierFeeMinimumUsd: DEFAULT_SUPPLIER_FEE.minimumUsd,
     supplierFeeMaximumUsd: DEFAULT_SUPPLIER_FEE.maximumUsd,
+    supplierNewSupplierFeeUsd: DEFAULT_SUPPLIER_FEE.newSupplierUsd,
     gasLimitsEnabled: DEFAULT_GAS_CONTROLS.limitsEnabled,
     gasLimitsWarnOnly: DEFAULT_GAS_CONTROLS.warnOnly,
     gasDailyBudgetUsd: DEFAULT_GAS_CONTROLS.dailyBudgetUsd,

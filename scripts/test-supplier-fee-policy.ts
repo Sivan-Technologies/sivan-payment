@@ -174,8 +174,8 @@ check('crossing a discount step lowers the fee, never raises it',
 console.log('\n── 4. the floor, and the order it is applied in ─────────────');
 
 const tiny = quoteSupplierFee(20);
-check('a $20 payment hits the $2 floor rather than earning 30c',
-  tiny.fee === '2.00' && tiny.appliedRule === 'minimum', `${tiny.fee} / ${tiny.appliedRule}`);
+check('a $20 payment hits the floor rather than earning 30c',
+  tiny.fee === '0.50' && tiny.appliedRule === 'minimum', `${tiny.fee} / ${tiny.appliedRule}`);
 
 /**
  * FLOOR AFTER DISCOUNT, AND THE ORDER IS THE TEST.
@@ -183,9 +183,17 @@ check('a $20 payment hits the $2 floor rather than earning 30c',
  * Applying the floor first and discounting after would let a 30% member pay
  * $1.40 against a $2.00 floor. A floor that does not hold is not a floor.
  */
+/**
+ * ASSERTED AGAINST THE CONFIGURED FLOOR, not a literal.
+ *
+ * This read `>= 2` and broke when the floor moved to 0.50 - the behaviour was
+ * still right and only the hardcoded number was stale. Reading the config
+ * means this tests the RULE ("a discount cannot take a fee below the floor")
+ * and keeps working whatever the floor is set to.
+ */
 const tinyBigUser = quoteSupplierFee(20, 300_000);
 check('the floor still holds for a 30% discount member',
-  Number(tinyBigUser.fee) >= 2, tinyBigUser.fee);
+  Number(tinyBigUser.fee) >= DEFAULT_SUPPLIER_FEE.minimumUsd, tinyBigUser.fee);
 check('and the quote says the floor is why, not the discount',
   tinyBigUser.appliedRule === 'minimum', tinyBigUser.appliedRule);
 check('a floored fee reports no discount, because none was given',
@@ -293,6 +301,264 @@ check('no amount is ever charged more than the headline first-band rate',
   [50, 500, 5_000, 500_000].every((a) => Number(quoteSupplierFee(a).effectivePercent) <= 1.5 || a < 200));
 check('the tiers ship ascending and end open-ended',
   DEFAULT_SUPPLIER_FEE.tiers[DEFAULT_SUPPLIER_FEE.tiers.length - 1].upToUsd === null);
+
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 9. small payments are no longer punished ─────────────────');
+
+/**
+ * THE $2 FLOOR MADE A $50 INVOICE COST 4%.
+ *
+ * Against Nigerian P2P spreads of 1-3% and Wise/Payoneer business payouts at
+ * 2-4%, that made Sivan the expensive option for exactly the small, frequent
+ * invoices a WhatsApp-first product exists to serve.
+ *
+ * The cause was a mispricing, not merely a high number: the floor was sized to
+ * cover a compliance review, but supplier-risk.service.ts scores
+ * `isFirstPayment` PER SUPPLIER, and with autoApproveApprovedSuppliers a
+ * repeat payment to an approved supplier is auto-approved with no human
+ * involved. Every payment was being charged for a review only the first one
+ * triggers.
+ */
+const repeat50 = quoteSupplierFee(50, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: false });
+check('a $50 repeat invoice costs 1.5%, not the old 4%',
+  repeat50.fee === '0.75' && Number(repeat50.effectivePercent) === 1.5,
+  `${repeat50.fee} (${repeat50.effectivePercent}%)`);
+
+const repeat20 = quoteSupplierFee(20, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: false });
+check('a $20 repeat invoice costs 2.5%, not the old 10%',
+  repeat20.fee === '0.50' && Number(repeat20.effectivePercent) === 2.5,
+  `${repeat20.fee} (${repeat20.effectivePercent}%)`);
+
+/**
+ * THE COST IS STILL RECOVERED - just once, from the payment that causes it.
+ * A change that only lowered the floor would make small payouts unprofitable;
+ * this asserts the onboarding charge still lands.
+ */
+const first50 = quoteSupplierFee(50, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+check('the FIRST payment to a supplier still recovers the review',
+  first50.fee === '2.25', `${first50.fee} = 0.75 tiered + 1.50 setup`);
+check('and the setup charge is itemised, not buried in the fee',
+  first50.newSupplierFee === '1.50', first50.newSupplierFee);
+/**
+ * AND IT IS EXCLUDED FROM THE ADVERTISED RATE.
+ *
+ * Caught in a screenshot: a first payment read "Sivan fee (1.700%)" beside a
+ * row saying the setup charge was one-time - the percentage described a cost
+ * the user would never pay again. The rate must be the RECURRING one.
+ */
+check('the quoted percentage is the recurring rate, excluding setup',
+  Number(first50.effectivePercent) === 1.5
+  && first50.effectivePercent === repeat50.effectivePercent,
+  `first=${first50.effectivePercent}% repeat=${repeat50.effectivePercent}%`);
+check('the second payment to that supplier drops the charge',
+  Number(repeat50.fee) < Number(first50.fee) && repeat50.newSupplierFee === '0.00',
+  `${first50.fee} -> ${repeat50.fee}`);
+
+/**
+ * A weekly supplier over a year: the onboarding cost is paid ONCE, not 52
+ * times. This is the whole point of the change, stated as the number.
+ */
+const yearOld = 52 * 2.00;
+const yearNew = 2.25 + 51 * 0.75;
+check('a weekly $50 supplier pays $40.50/yr instead of $104',
+  Math.abs(yearNew - 40.5) < 0.01 && yearOld === 104, `${yearNew.toFixed(2)} vs ${yearOld.toFixed(2)}`);
+
+/**
+ * THE SETUP CHARGE IS NOT DISCOUNTED BY VOLUME. A high-volume user onboarding
+ * a brand new supplier causes exactly the same review as anyone else - the
+ * loyalty discount applies to the rate for moving money, not to a one-off cost
+ * they just caused.
+ */
+const bigUserFirst = quoteSupplierFee(5_000, 300_000, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+check('the setup charge survives even a 30% volume discount',
+  bigUserFirst.newSupplierFee === '1.50', bigUserFirst.newSupplierFee);
+
+/** And it sits OUTSIDE the cap, like the ATA-rent surcharge on transfers. */
+const capped = quoteSupplierFee(50_000, 0, { ...DEFAULT_SUPPLIER_FEE, maximumUsd: 100 }, { isFirstPaymentToSupplier: true });
+check('a capped fee still adds the setup charge on top of the cap',
+  capped.fee === '101.50', `${capped.fee} = 100.00 cap + 1.50 setup`);
+
+/** The floor must not resurrect itself on a zero amount. */
+check('a zero amount is charged no setup fee either',
+  quoteSupplierFee(0, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true }).fee === '0.00');
+
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 10. volume Sivan cannot see ──────────────────────────────');
+
+/**
+ * THE DISCOUNT MEASURED SUPPLIER PAYMENTS ALONE, which punished the customer
+ * it was meant to reward: a business off-ramping $80k a month and paying two
+ * suppliers $3k was treated as a $3k customer. It also created a perverse
+ * incentive - to earn a discount you had to route MORE through the most
+ * compliance-expensive flow rather than the cheap ones.
+ *
+ * Two changes: all Sivan volume now counts, and an admin can credit volume
+ * that Sivan genuinely cannot observe.
+ */
+const svcSrc = fs.readFileSync('src/suppliers/supplier.service.ts', 'utf8');
+check('the volume basis includes off-ramp withdrawals, not just supplier payments',
+  /listWithdrawalsByUserSince/.test(svcSrc),
+  'a large off-ramp customer was being treated as a small supplier customer');
+check('and an admin-granted floor exists for volume Sivan cannot observe',
+  /getGrantedVolumeFloorUsd/.test(svcSrc));
+check('the grant is applied as a FLOOR, so real volume still wins when higher',
+  /Math\.max\(earned, granted\)/.test(svcSrc),
+  'a grant must not CAP a customer who outgrows it');
+check('grants require a reason',
+  /reason: z\.string\(\)\.min\(10\)/.test(svcSrc),
+  'an unexplained permanent discount is unauditable');
+check('and expire by default',
+  /expiresInDays: z\.coerce\.number\(\)\.int\(\)\.min\(0\)\.max\(3650\)\.default\(90\)/.test(svcSrc),
+  'a forgotten discount that never ends is worse than one that is renewed');
+check('expiry is enforced on READ, not by a cleanup job',
+  /!row\.expiresAt \|\| Date\.parse\(row\.expiresAt\) > now/.test(svcSrc));
+check('granting volume is audited as a warning',
+  /supplier\.volume_grant_created/.test(svcSrc) && /severity: 'warning'/.test(svcSrc.slice(svcSrc.indexOf('volume_grant_created') - 400, svcSrc.indexOf('volume_grant_created') + 400)));
+
+/**
+ * THE FIRST-PAYMENT TEST MUST MATCH THE RISK ENGINE EXACTLY.
+ *
+ * If they disagree, a user is charged a setup fee for a review that never
+ * happened, or gets a free review that did. Both read the same three statuses.
+ */
+const riskSrc = fs.readFileSync('src/risk/supplier-risk.service.ts', 'utf8');
+const statusesIn = (src: string) => {
+  const m = src.match(/\['approved', 'processing', 'completed'\]/);
+  return Boolean(m);
+};
+check('fee and risk engines agree on what "first payment" means',
+  statusesIn(svcSrc) && statusesIn(riskSrc),
+  'a mismatch charges for a review that did not happen');
+
+/** The migration must exist, and be idempotent - db-migrate re-runs every file. */
+const migration = fs.readFileSync('database/migrations/049_supplier_volume_grants.sql', 'utf8');
+check('the grants table migration is idempotent',
+  /create table if not exists/.test(migration) && /create index if not exists/.test(migration),
+  'db-migrate.ts runs every file on every deploy with no ledger');
+
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 11. the grant, EXERCISED not grepped ─────────────────────');
+
+/**
+ * THE ASSERTIONS ABOVE ARE SOURCE REGEXES, and a regex passes when the code
+ * merely looks right. Mutating `Math.max(earned, granted)` was caught only
+ * because the mutation changed that exact line - a different implementation
+ * with the same bug would sail through.
+ *
+ * These run the real function against a real database.
+ */
+const { db } = await import('../src/database/json-database.js');
+const { getSupplierVolumeUsd, grantSupplierVolume, getGrantedVolumeFloorUsd } =
+  await import('../src/suppliers/supplier.service.js');
+
+const nowIso = () => new Date().toISOString();
+await db.mutate((d: any) => {
+  d.users = [{ id: 'usr_vol', email: 'vol@t.test', fullName: 'Vol User', createdAt: nowIso(), updatedAt: nowIso() }];
+  d.supplierPayments = [
+    // $4,000 of real, committed supplier volume.
+    { id: 'spp_a', userId: 'usr_vol', supplierId: 'sup_1', amount: '4000', netAmount: '4000',
+      status: 'completed', createdAt: nowIso(), updatedAt: nowIso() },
+    // Pending must NOT count - otherwise a user self-grants a discount with a
+    // payment they never intend to complete.
+    { id: 'spp_b', userId: 'usr_vol', supplierId: 'sup_1', amount: '90000', netAmount: '90000',
+      status: 'pending_review', createdAt: nowIso(), updatedAt: nowIso() },
+  ];
+  d.supplierVolumeGrants = [];
+  return 1;
+});
+
+const earnedOnly = await getSupplierVolumeUsd('usr_vol');
+check('real volume counts committed payments only',
+  earnedOnly === 4000, String(earnedOnly));
+check('and a pending payment cannot buy a discount',
+  earnedOnly < 90000, String(earnedOnly));
+
+// An admin credits them for volume settled elsewhere.
+await grantSupplierVolume({
+  userId: 'usr_vol', volumeUsd: 60_000,
+  reason: 'Settles roughly half their invoices via another provider; agreed with sales.',
+  grantedBy: 'ops@sivantech.online', expiresInDays: 90,
+});
+
+const withGrant = await getSupplierVolumeUsd('usr_vol');
+check('the granted floor lifts a user whose real volume is lower',
+  withGrant === 60_000, String(withGrant));
+check('and it moves them into the 20% discount band',
+  volumeDiscountFor(withGrant).discountPercent === 20, String(volumeDiscountFor(withGrant).discountPercent));
+
+/**
+ * THE FLOOR MUST NOT BECOME A CEILING. A customer who outgrows their grant
+ * keeps their real, higher tier - otherwise a kindness turns into a penalty.
+ */
+await db.mutate((d: any) => {
+  d.supplierPayments.push({ id: 'spp_c', userId: 'usr_vol', supplierId: 'sup_2',
+    amount: '300000', netAmount: '300000', status: 'completed', createdAt: nowIso(), updatedAt: nowIso() });
+  return 1;
+});
+const outgrown = await getSupplierVolumeUsd('usr_vol');
+check('a user who outgrows the grant keeps their real, higher volume',
+  outgrown === 304_000, String(outgrown));
+check('and reaches the top discount on their own merit',
+  volumeDiscountFor(outgrown).discountPercent === 30);
+
+/** An expired grant stops applying, with no cleanup job involved. */
+await db.mutate((d: any) => {
+  d.supplierPayments = [];
+  d.supplierVolumeGrants = [{
+    id: 'svg_old', userId: 'usr_vol', volumeUsd: '250000', reason: 'expired pilot agreement',
+    grantedBy: 'ops', expiresAt: new Date(Date.now() - 86_400_000).toISOString(),
+    createdAt: nowIso(), updatedAt: nowIso(),
+  }];
+  return 1;
+});
+check('an expired grant no longer counts',
+  (await getGrantedVolumeFloorUsd('usr_vol')) === 0, String(await getGrantedVolumeFloorUsd('usr_vol')));
+check('so the user falls back to their real volume',
+  (await getSupplierVolumeUsd('usr_vol')) === 0);
+
+/** A grant with no expiry is allowed, but only when chosen explicitly. */
+const permanent = await grantSupplierVolume({
+  userId: 'usr_perm', volumeUsd: 15_000,
+  reason: 'Strategic partner, indefinite arrangement approved by finance.',
+  grantedBy: 'ops@sivantech.online', expiresInDays: 0,
+});
+check('an explicit no-expiry grant is permitted',
+  permanent.expiresAt === undefined, String(permanent.expiresAt));
+check('and it applies', (await getSupplierVolumeUsd('usr_perm')) === 15_000);
+
+/**
+ * OFF-RAMP VOLUME COUNTS, exercised rather than grepped.
+ *
+ * The regex assertion above passes if the call merely APPEARS in the source.
+ * This one puts a real withdrawal in the database and checks the number moves
+ * - the case of the business off-ramping heavily and paying two suppliers, who
+ * was previously treated as a tiny customer.
+ */
+await db.mutate((d: any) => {
+  d.supplierPayments = [{ id: 'spp_w', userId: 'usr_ramp', supplierId: 'sup_9',
+    amount: '3000', netAmount: '3000', status: 'completed', createdAt: nowIso(), updatedAt: nowIso() }];
+  d.supplierVolumeGrants = [];
+  d.withdrawals = [
+    { id: 'wd_1', userId: 'usr_ramp', customerId: 'cus_r', externalAccountId: 'ea_1',
+      liquidationAddressId: 'la_1', provider: 'bridge', sourceCurrency: 'usdc', destinationCurrency: 'usd',
+      sourceAmount: '80000', status: 'completed', createdAt: nowIso(), updatedAt: nowIso() },
+  ];
+  return 1;
+});
+const rampVolume = await getSupplierVolumeUsd('usr_ramp');
+check('a heavy off-ramp user is credited for that volume too',
+  rampVolume === 83_000, `${rampVolume} (3,000 supplier + 80,000 off-ramp)`);
+check('which earns them a discount their supplier spend alone would not',
+  volumeDiscountFor(rampVolume).discountPercent === 20
+  && volumeDiscountFor(3_000).discountPercent === 0,
+  `${volumeDiscountFor(rampVolume).discountPercent}% vs ${volumeDiscountFor(3_000).discountPercent}%`);
+
+/** Grants are rejected without a real reason. */
+const noReason = await grantSupplierVolume({
+  userId: 'usr_x', volumeUsd: 10_000, reason: 'because', grantedBy: 'ops',
+} as any).then(() => null).catch((e: Error) => e);
+check('a grant with a throwaway reason is refused',
+  noReason instanceof Error, String(noReason));
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

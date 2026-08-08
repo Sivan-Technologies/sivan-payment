@@ -29,6 +29,7 @@ const emptyDb = (): DatabaseShape => ({
   suppliers: [],
   supplierPayments: [],
   supplierControls: [],
+  supplierVolumeGrants: [],
   webhookEvents: [],
   authChallenges: [],
   auditLogs: [],

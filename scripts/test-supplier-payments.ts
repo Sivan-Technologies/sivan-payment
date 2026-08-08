@@ -129,15 +129,23 @@ async function main() {
      * and the user is debited 304.50 - so a hold of only 300 would leave the
      * release short by exactly the fee.
      *
-     * 300 -> 500@1.5% band -> 4.50 fee -> 304.50 held -> 195.50 available.
+     * 300 -> 500@1.5% band = 4.50, PLUS the 1.50 one-time supplier setup
+     * charge (this is the first payment to this supplier) = 6.00 fee
+     * -> 306.00 held -> 194.00 available.
+     *
+     * The setup charge is a per-RELATIONSHIP cost: the risk engine scores
+     * `isFirstPayment` per supplier, and a repeat payment to an approved
+     * supplier can auto-approve with no human involved. Recovering it once
+     * here is what let the floor drop from 2.00 to 0.50.
      */
-    assert(Number(usdc.available) === 195.5, `supplier payment hold reduces settled USDC available by the gross (got ${usdc.available})`);
-    assert(payment.feeAmount === '4.50', `supplier payment records the fee it charged (got ${payment.feeAmount})`);
+    assert(Number(usdc.available) === 194, `supplier payment hold reduces settled USDC available by the gross (got ${usdc.available})`);
+    assert(payment.feeAmount === '6.00', `supplier payment records the fee it charged (got ${payment.feeAmount})`);
+    assert(payment.feeNewSupplierAmount === '1.50', `first payment to a supplier carries the one-time setup charge (got ${payment.feeNewSupplierAmount})`);
     assert(payment.netAmount === '300.00', `supplier payment records what the supplier receives (got ${payment.netAmount})`);
-    assert(payment.amount === '304.50', `supplier payment amount is the gross sent to the provider (got ${payment.amount})`);
+    assert(payment.amount === '306.00', `supplier payment amount is the gross sent to the provider (got ${payment.amount})`);
     // The gross again: what is held must be what will be sent, or the release
     // draws on funds that were never reserved.
-    assert(Number(usdc.held) === 304.5, `supplier payment hold increases held balance by the gross (got ${usdc.held})`);
+    assert(Number(usdc.held) === 306, `supplier payment hold increases held balance by the gross (got ${usdc.held})`);
 
     const reviewed = await request('POST', `/api/admin/supplier-payments/${payment.id}/review`, { decision: 'reject', reason: 'Test rejection releases hold', reviewedBy: 'compliance' }, { 'x-admin-api-key': 'supplier-admin-key' });
     assert(reviewed.status === 'rejected', 'admin can reject supplier payment');
@@ -164,18 +172,20 @@ async function main() {
     /**
      * 398.00 / 102.00, NOT 400 / 100. The fee is part of what moves.
      *
-     * The first payment was rejected so its hold returned the balance to 500.
-     * The second is 100 to the supplier plus a 2.00 fee - the $2 FLOOR, since
-     * 1.5% of 100 is only 1.50 and a payment that small does not cover its own
-     * compliance review.
+     * The first payment was REJECTED, so its hold returned the balance to 500
+     * and - crucially - it never reached approved/processing/completed, so
+     * this second payment is still the first REAL one to this supplier and
+     * carries the setup charge.
+     *
+     * 100 -> 1.5% = 1.50 tiered, plus 1.50 setup = 3.00 -> 103.00 gross.
      *
      * `spent` is the gross for the same reason the hold is: the fee genuinely
      * left the user's balance, and recording only the net would leave the
      * ledger short by every fee Sivan has ever charged.
      */
-    assert(Number(finalUsdc.available) === 398, `provider completion debits held supplier payment including the fee (got ${finalUsdc.available})`);
-    assert(Number(finalUsdc.spent) === 102, `completed supplier payout increases spent balance by the gross (got ${finalUsdc.spent})`);
-    assert(released.feeAmount === '2.00', `a 100 payment hits the 2.00 fee floor (got ${released.feeAmount})`);
+    assert(Number(finalUsdc.available) === 397, `provider completion debits held supplier payment including the fee (got ${finalUsdc.available})`);
+    assert(Number(finalUsdc.spent) === 103, `completed supplier payout increases spent balance by the gross (got ${finalUsdc.spent})`);
+    assert(released.feeAmount === '3.00', `a 100 first payment is 1.50 tiered + 1.50 setup (got ${released.feeAmount})`);
 
     const riskCases = await request('GET', '/api/admin/risk/cases', undefined, { 'x-admin-api-key': 'supplier-admin-key' });
     assert(riskCases.some((item: any) => item.resourceType === 'supplier_payment'), 'supplier payments appear in admin risk cases');

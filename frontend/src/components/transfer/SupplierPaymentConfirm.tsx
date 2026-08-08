@@ -56,6 +56,8 @@ export interface SupplierPaymentConfirmDetails {
     volumeDiscountPercent: number;
     volumeDiscountAmount: string;
     feeBeforeDiscount: string;
+    newSupplierFee: string;
+    isFirstPaymentToSupplier: boolean;
     explanation: string;
   };
 }
@@ -169,6 +171,19 @@ export function SupplierPaymentConfirm({
               <span>Sivan fee{details.quote ? ` (${details.quote.effectivePercent}%)` : ''}</span>
               <strong>{fee ? `+${fee} USDC` : 'Calculating…'}</strong>
             </div>
+            {/*
+              THE ONE-TIME CHARGE, SAID TO BE ONE-TIME.
+              A surcharge that appears with no explanation reads as a rate
+              rise. Naming it as setup - and saying the next payment to this
+              supplier will not carry it - turns a surprise into a fact the
+              user can plan around.
+            */}
+            {Number(details.quote?.newSupplierFee ?? 0) > 0 && (
+              <div className="confirm-row">
+                <span>New supplier setup (one-time)</span>
+                <strong>+{details.quote?.newSupplierFee} USDC</strong>
+              </div>
+            )}
             {discountPercent > 0 && (
               /*
                 The saving is stated as money, not just a percentage. "20% off"
@@ -232,6 +247,16 @@ export function SupplierPaymentConfirm({
               payout — this is not sent immediately, and the hold is returned if it is rejected.
             </span>
           </div>
+
+          {Number(details.quote?.newSupplierFee ?? 0) > 0 && (
+            <div className="details-box compact">
+              <span>
+                The {details.quote?.newSupplierFee} USDC setup charge covers verifying this
+                supplier's bank details. It applies once — future payments to{' '}
+                {details.supplierName} will not include it.
+              </span>
+            </div>
+          )}
 
           <label className="confirm-ack">
             <input

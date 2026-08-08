@@ -125,6 +125,29 @@ export interface SupplierFeeConfig {
   minimumUsd: number;
   /** Never charge more than this, in USD. 0 disables the cap. */
   maximumUsd: number;
+  /**
+   * Added on the FIRST payment to each supplier, covering the compliance
+   * review that relationship triggers.
+   *
+   * THE COST IS PER RELATIONSHIP, NOT PER PAYMENT - which is why this exists
+   * and why the floor came down to meet it. supplier-risk.service.ts computes
+   * `isFirstPayment` per supplier and scores +25 for it, and with
+   * autoApproveApprovedSuppliers a low-risk repeat payment to an already
+   * approved supplier is auto-approved: no human touches it. So the expensive
+   * event is onboarding a supplier, and every subsequent invoice to that same
+   * supplier is cheap to process.
+   *
+   * A flat $2 floor charged EVERY payment for a review most of them never
+   * trigger. A business paying one supplier weekly paid the onboarding cost
+   * 52 times a year. Now they pay it once.
+   *
+   * Directly mirrors `newRecipientUsd` in transfer-fee-policy.ts, which
+   * recovers Solana ATA rent only on the send that actually creates the
+   * account. Same argument, same shape.
+   *
+   * 0 disables it.
+   */
+  newSupplierUsd: number;
 }
 
 export interface SupplierFeeQuote {
@@ -144,6 +167,10 @@ export interface SupplierFeeQuote {
   volumeUsd: string;
   /** Effective rate against the amount sent. Never the nominal band rate. */
   effectivePercent: string;
+  /** The one-time new-supplier charge, or "0.00" when none applies. */
+  newSupplierFee: string;
+  /** True when this is the first payment to this supplier. */
+  isFirstPaymentToSupplier: boolean;
   /** Which rule set the final number. For the UI, and for support. */
   appliedRule: 'tiered' | 'minimum' | 'maximum';
   /** Per-band breakdown, so the UI can show its work. */
@@ -179,11 +206,22 @@ export const DEFAULT_SUPPLIER_FEE: SupplierFeeConfig = {
     { fromVolumeUsd: 250_000, discountPercent: 30 },
   ],
   /**
-   * Floor. A $20 payment at 1.5% earns 30 cents while consuming a compliance
-   * review and an international payout rail - the two costs that do not scale
-   * down with the amount.
+   * Floor, LOWERED FROM $2.00.
+   *
+   * At $2 a $50 invoice paid 4% - against Nigerian P2P spreads of 1-3% and
+   * Wise/Payoneer business payouts at 2-4%. It made Sivan the expensive option
+   * for exactly the small, frequent invoices a WhatsApp-first product exists
+   * to serve, and it did so by charging every payment for a compliance review
+   * that only the first payment to a supplier actually triggers.
+   *
+   * $0.50 covers the payout rail and the ledger work on a repeat payment. The
+   * review is recovered once, by newSupplierUsd, from the payment that causes
+   * it.
+   *
+   *     $50 repeat  -> $0.75  (1.50%)   was $2.00 (4.00%)
+   *     $20 repeat  -> $0.50  (2.50%)   was $2.00 (10.0%)
    */
-  minimumUsd: 2,
+  minimumUsd: 0.5,
   /**
    * No cap by default. Unlike a crypto send - where the cost is half a cent of
    * gas and an uncapped percentage becomes indefensible - a large cross-border
@@ -191,6 +229,12 @@ export const DEFAULT_SUPPLIER_FEE: SupplierFeeConfig = {
    * Set a non-zero value in the fee tab to cap it.
    */
   maximumUsd: 0,
+  /**
+   * Onboarding a supplier: risk scoring, an approval queue and an admin
+   * decision, plus Bridge's external-account creation. Charged once per
+   * supplier, on the first payment to them.
+   */
+  newSupplierUsd: 1.5,
 };
 
 /** The rolling window the volume discount is measured over. */
@@ -239,7 +283,8 @@ export function nextVolumeDiscount(volumeUsd: number, config: SupplierFeeConfig 
 export function quoteSupplierFee(
   netAmount: number,
   volumeUsd = 0,
-  config: SupplierFeeConfig = DEFAULT_SUPPLIER_FEE
+  config: SupplierFeeConfig = DEFAULT_SUPPLIER_FEE,
+  options: { isFirstPaymentToSupplier?: boolean } = {}
 ): SupplierFeeQuote {
   const net = Number.isFinite(netAmount) && netAmount > 0 ? netAmount : 0;
   const tiers = [...(config.tiers ?? [])].sort((a, b) => {
@@ -321,6 +366,24 @@ export function quoteSupplierFee(
   }
 
   /**
+   * THE ONE-TIME SUPPLIER ONBOARDING CHARGE, added AFTER the cap.
+   *
+   * Deliberately outside the cap, for the same reason the ATA-rent surcharge
+   * is in transfer-fee-policy.ts: the cap limits Sivan's MARGIN, while this
+   * recovers a real cost incurred on this specific payment. Folding it under
+   * the cap would mean a large first payment silently absorbs the review it
+   * triggered - the exact subsidy this exists to remove.
+   *
+   * And NOT discounted by volume. A high-volume user onboarding a brand new
+   * supplier causes exactly the same review as anyone else; the loyalty
+   * discount applies to the rate they pay for moving money, not to a
+   * one-off cost they have just caused.
+   */
+  const isFirstPaymentToSupplier = Boolean(options.isFirstPaymentToSupplier);
+  const newSupplierFee = isFirstPaymentToSupplier && net > 0 ? Math.max(0, config.newSupplierUsd) : 0;
+  fee += newSupplierFee;
+
+  /**
    * BRIDGE REQUIRES developer_fee < amount, MEASURED.
    *
    *   developer_fee "500.00" on amount "1.00"
@@ -340,7 +403,21 @@ export function quoteSupplierFee(
 
   fee = round2(fee);
   const gross = round2(net + fee);
-  const effective = net > 0 ? (fee / net) * 100 : 0;
+  /**
+   * THE RATE EXCLUDES THE ONE-TIME SETUP CHARGE.
+   *
+   * Caught in the screenshot: a $600 first payment showed "Sivan fee (1.700%)"
+   * because the 1.50 onboarding charge was folded into the percentage. That
+   * overstates the ONGOING rate - the next invoice to the same supplier is
+   * 1.450% - so the headline number described a cost the user would never pay
+   * again, right beside a row explaining the charge was one-time. The two
+   * contradicted each other.
+   *
+   * The recurring rate is the honest one to advertise; the setup charge is
+   * shown separately as cash, which is how a one-off should be presented.
+   */
+  const recurringFee = Math.max(0, fee - newSupplierFee);
+  const effective = net > 0 ? (recurringFee / net) * 100 : 0;
 
   const bandsUsed = breakdown.length;
   const base =
@@ -352,13 +429,24 @@ export function quoteSupplierFee(
           ? `Tiered rate across ${bandsUsed} bands`
           : `${breakdown[0]?.percent ?? 0}% of the amount sent`;
 
-  const explanation = discountPercent > 0 && appliedRule === 'tiered'
-    ? `${base}, less ${discountPercent}% for your ${SUPPLIER_VOLUME_WINDOW_DAYS}-day volume. Added on top, so your supplier receives the full $${money2(net)}.`
-    : `${base}. Added on top, so your supplier receives the full $${money2(net)}.`;
+  const discountNote = discountPercent > 0 && appliedRule === 'tiered'
+    ? `, less ${discountPercent}% for your ${SUPPLIER_VOLUME_WINDOW_DAYS}-day volume`
+    : '';
+  /**
+   * Named as a ONE-TIME SETUP cost and said to be once, because the thing a
+   * user needs to know is that the next invoice to this supplier is cheaper.
+   * A surcharge that appears without explanation reads as a rate rise.
+   */
+  const setupNote = newSupplierFee > 0
+    ? `, plus a one-time $${newSupplierFee.toFixed(2)} to set up this supplier (first payment only)`
+    : '';
+  const explanation = `${base}${discountNote}${setupNote}. Added on top, so your supplier receives the full $${money2(net)}.`;
 
   return {
     netAmount: money2(net),
     fee: money2(fee),
+    newSupplierFee: money2(newSupplierFee),
+    isFirstPaymentToSupplier,
     grossAmount: money2(gross),
     feeBeforeDiscount: money2(feeBeforeDiscount),
     volumeDiscountAmount: money2(appliedRule === 'tiered' ? discountAmount : 0),

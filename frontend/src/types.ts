@@ -807,6 +807,9 @@ export interface SupplierFeeQuoteResponse {
   volumeDiscountAmount: string;
   volumeDiscountPercent: number;
   volumeUsd: string;
+  /** One-time supplier-onboarding charge, "0.00" when not a first payment. */
+  newSupplierFee: string;
+  isFirstPaymentToSupplier: boolean;
   effectivePercent: string;
   appliedRule: 'tiered' | 'minimum' | 'maximum';
   breakdown: Array<{ fromUsd: number; toUsd: number | null; percent: number; amountInBand: string; feeFromBand: string }>;
