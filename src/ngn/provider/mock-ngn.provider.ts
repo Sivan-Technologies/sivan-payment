@@ -2,6 +2,7 @@ import { Keypair } from '@solana/web3.js';
 import crypto from 'node:crypto';
 import type { NgnProviderAdapter } from './ngn-provider.js';
 import type { NgnProviderHealth, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
+import { ngnProviderFeePercent } from '../service/ngn-provider-fee.js';
 
 function money(value: number) { return value.toFixed(value >= 100 ? 2 : 6); }
 
@@ -31,7 +32,15 @@ export class MockNgnProvider implements NgnProviderAdapter {
   async createQuote(input: NgnQuoteInput) {
     const rate = 1500;
     const source = Number(input.sourceAmount);
-    const fee = input.direction === 'onramp' ? source * 0.01 : source * 0.005;
+    /**
+     * The CONFIGURED provider rate, not a hardcoded 0.005.
+     *
+     * The mock had the off-ramp fee written into it twice, so a change in the
+     * fee tab was invisible locally and the mock quietly disagreed with the
+     * real provider.
+     */
+    const percent = await ngnProviderFeePercent();
+    const fee = input.direction === 'onramp' ? source * 0.01 : source * (percent / 100);
     const destinationAmount = input.direction === 'onramp'
       ? (Math.max(source - fee, 0) / rate)
       : (source * rate) - (source * rate * 0.01);

@@ -37,47 +37,56 @@ const RATE = 1500;
 const SEND = 51;
 
 // ─────────────────────────────────────────────────────────────────────
-console.log('\n── 1. the provider fee arrives in NAIRA, the gross is USDC ──');
+console.log('\n── 1. every provider reports its fee in the SOURCE asset ────');
 
 /**
- * THE 751% BUG. breet.provider.ts computes its off-ramp fee on the naira
- * gross:
- *     const gross = source * rate;            // 51 -> 76,500
- *     feeAmount = gross * (feePercent / 100); // 382.50
- * while grossAmount here is 51 USDC. Adding those without converting charged
- * 383 USDC on a 51 USDC withdrawal.
+ * THE UNIT IS THE PROVIDER'S TO STATE, AND THEY DISAGREED.
  *
- * Dormant only because the live NGN provider is `mock`, which reports no fee.
- * It would have fired on the first real Breet off-ramp.
+ * breet.provider.ts computed its off-ramp fee on the NAIRA gross
+ * (`gross * percent` = 382.50) while mock-ngn reported USDC (0.255), and
+ * ngn-margin.ts adds providerFeeAmount to a margin denominated in the source
+ * amount. Adding 382.50 to 0.51 charged 383 "USDC" on a 51 USDC withdrawal -
+ * 751%, leaving the user at minus 332.
+ *
+ * MY FIRST FIX CONVERTED BY RATE DOWNSTREAM, and that broke the other
+ * provider: mock's already-correct 0.255 was divided by 1,500 and rendered on
+ * the quote card as "0.00017 USDC". Reported from the screen.
+ *
+ * A caller cannot know which unit a given provider chose. Breet now reports
+ * the source asset like everyone else, and nothing converts.
  */
-const breetFeeNgn = SEND * RATE * 0.005;   // 382.50 NGN, as Breet reports it
-const withRate = await applySivanMargin({
-  direction: 'offramp', grossAmount: SEND, providerFeeAmount: breetFeeNgn, rate: RATE,
+const breetSrc = fs.readFileSync('src/ngn/provider/breet.provider.ts', 'utf8');
+check('Breet computes its off-ramp fee on the SOURCE amount, not the naira gross',
+  /feeAmount = source \* \(feePercent \/ 100\);\n\s*const gross = source \* rate;/.test(breetSrc),
+  'gross * percent gives naira, which the margin service then treats as USDC');
+
+const marginSrc = fs.readFileSync('src/ngn/service/ngn-margin.ts', 'utf8');
+check('and the margin service does NOT convert by rate any more',
+  !/providerFeeInSourceUnits/.test(marginSrc),
+  'converting downstream fixed Breet and broke mock');
+
+/** The exact figure from the screenshot, asserted so it cannot come back. */
+const passthrough = await applySivanMargin({
+  direction: 'offramp', grossAmount: SEND, providerFeeAmount: 0.255,
 } as any);
-
-check('a naira provider fee is converted into source units',
-  Math.abs(withRate.providerFee - 0.255) < 0.001,
-  `${withRate.providerFee} USDC (382.50 NGN / 1500)`);
-check('so the total is 1.5%, not 751%',
-  Math.abs(withRate.effectivePercent - 1.5) < 0.01,
-  `${withRate.effectivePercent}%`);
-check('and the user keeps almost all of their money',
-  (SEND - withRate.totalFee) > 50, `${(SEND - withRate.totalFee).toFixed(4)} USDC left of 51`);
-
-/** The three figures must add up, or an admin screen contradicts itself. */
+check('a 0.255 USDC provider fee stays 0.255, not 0.00017',
+  passthrough.providerFee === 0.255, String(passthrough.providerFee));
+check('so the total is 1.5% and the naira figure is ₦1,148',
+  Math.abs(passthrough.effectivePercent - 1.5) < 0.01
+  && Math.round(passthrough.totalFee * RATE) === 1148,
+  `${passthrough.effectivePercent}% / ₦${Math.round(passthrough.totalFee * RATE)}`);
 check('providerFee + sivanMargin === totalFee',
-  Math.abs((withRate.providerFee + withRate.sivanMargin) - withRate.totalFee) < 0.000001,
-  `${withRate.providerFee} + ${withRate.sivanMargin} vs ${withRate.totalFee}`);
+  Math.abs((passthrough.providerFee + passthrough.sivanMargin) - passthrough.totalFee) < 1e-9);
 
 // ─────────────────────────────────────────────────────────────────────
 console.log('\n── 2. the intended 1.5% = 1% Sivan + 0.5% Breet ─────────────');
 
 check('Sivan takes its configured 1%',
-  Math.abs(withRate.sivanMargin - 0.51) < 0.001, `${withRate.sivanMargin} USDC`);
+  Math.abs(passthrough.sivanMargin - 0.51) < 0.001, `${passthrough.sivanMargin} USDC`);
 check('Breet takes 0.5%',
-  Math.abs(withRate.providerFee - 0.255) < 0.001, `${withRate.providerFee} USDC`);
+  Math.abs(passthrough.providerFee - 0.255) < 0.001, `${passthrough.providerFee} USDC`);
 
-const ngnTaken = withRate.totalFee * RATE;
+const ngnTaken = passthrough.totalFee * RATE;
 check('which is ₦1,148 on a ₦76,500 gross',
   Math.abs(ngnTaken - 1147.5) < 1, `₦${ngnTaken.toFixed(0)}`);
 
@@ -92,19 +101,46 @@ check('with no provider fee reported it is only 1% - the reported symptom',
   Math.abs(noProvider.effectivePercent - 1) < 0.01, `${noProvider.effectivePercent}%`);
 
 // ─────────────────────────────────────────────────────────────────────
-console.log('\n── 3. omitting the rate must not silently 1500x the fee ─────');
+console.log('\n── 3. the provider rate is ADMIN-SET, not hardcoded ─────────');
 
 /**
- * On-ramp and the mock provider both report a fee already in gross units, so
- * `rate` is absent there and the value must pass through untouched.
+ * IT LIVED IN THREE PLACES, none of them changeable without a deploy:
+ * BREET_FEE_PERCENT in the environment, and `0.005` written into
+ * mock-ngn.provider.ts twice. So the mock disagreed with the real provider
+ * whenever the rate moved - local testing showing a fee the user is not
+ * charged - and matching a vendor price change meant shipping code.
  */
-const noRate = await applySivanMargin({
-  direction: 'offramp', grossAmount: SEND, providerFeeAmount: 0.255,
+const { ngnProviderFeePercent } = await import('../src/ngn/service/ngn-provider-fee.js');
+const { getAdminFeeSettings, updateAdminFeeSettings } = await import('../src/admin/admin-fees.service.js');
+
+check('the provider rate is readable from the fee settings',
+  (await ngnProviderFeePercent()) === 0.5, String(await ngnProviderFeePercent()));
+
+const before: any = await getAdminFeeSettings();
+await updateAdminFeeSettings({ ...before, ngnProviderFeePercent: 0.8, updatedBy: 'ops@test', reason: 'raise the provider rate from the fee tab' } as any, {});
+check('an admin change takes effect with no deploy',
+  (await ngnProviderFeePercent()) === 0.8, String(await ngnProviderFeePercent()));
+
+/** It must reach the actual charge, not just the settings read. */
+const raised = await applySivanMargin({
+  direction: 'offramp', grossAmount: SEND, providerFeeAmount: SEND * 0.008,
 } as any);
-check('a fee already in source units is left alone when no rate is given',
-  Math.abs(noRate.providerFee - 0.255) < 0.001, `${noRate.providerFee}`);
-check('and a zero rate does not divide by zero',
-  Number.isFinite((await applySivanMargin({ direction: 'offramp', grossAmount: SEND, providerFeeAmount: 0.255, rate: 0 } as any)).totalFee));
+check('and flows through to what the user pays',
+  Math.abs(raised.effectivePercent - 1.8) < 0.01, `${raised.effectivePercent}%`);
+
+/** 0 is a real setting - some providers bundle the fee into the rate. */
+await updateAdminFeeSettings({ ...before, ngnProviderFeePercent: 0, updatedBy: 'ops@test', reason: 'provider bundles its fee into the rate' } as any, {});
+check('zero is honoured, not treated as "unset"',
+  (await ngnProviderFeePercent()) === 0, String(await ngnProviderFeePercent()));
+
+await updateAdminFeeSettings({ ...before, ngnProviderFeePercent: 0.5, updatedBy: 'ops@test', reason: 'restore' } as any, {});
+
+const mockSrc = fs.readFileSync('src/ngn/provider/mock-ngn.provider.ts', 'utf8');
+check('the mock provider no longer hardcodes 0.005',
+  !/source \* 0\.005/.test(mockSrc),
+  'the mock must charge what the fee tab says, or it tests a fiction');
+check('and reads the same shared source as Breet',
+  /ngnProviderFeePercent\(\)/.test(mockSrc) && /ngnProviderFeePercent\(\)/.test(breetSrc));
 
 // ─────────────────────────────────────────────────────────────────────
 console.log('\n── 4. the screens no longer contradict each other ───────────');
@@ -178,17 +214,30 @@ check('the quote returns the breakdown as a top-level field',
   /fees: \{[\s\S]{0,200}sivanMargin/.test(quoteSrc),
   'it existed only on metadata, where the client never looked');
 
-check('the card renders Sivan margin and provider fee separately',
-  /label: 'Sivan fee'/.test(form) && /label: 'Provider fee'/.test(form));
 /**
- * On the mock provider the provider fee is 0, and a "Provider fee ₦0" row
- * invites a question for no benefit. It appears only when there is one.
+ * ONE ROW, NOT THREE.
+ *
+ * The card briefly showed "Sivan fee", "Provider fee" and "Total fee" as
+ * separate lines. That is the right breakdown for an accounts screen and the
+ * wrong one for a user: the split between Sivan's margin and Breet's cut is
+ * internal cost structure, and the person withdrawing has no decision to make
+ * about it. Three numbers to reconcile where one answers their only question.
  */
-check('the provider row is hidden when the provider charges nothing',
-  /Number\(fees\.providerFee\) > 0/.test(form),
-  'a zero row is noise, not transparency');
-check('and a total appears only once there are two things to add up',
-  /label: `Total fee/.test(form));
+check('the card shows a single combined fee row',
+  /return \[\{ label: `Sivan fee\$\{percent\}`, value: both\(fees\.totalFee\) \}\]/.test(form),
+  'the provider split belongs on an admin screen, not a withdrawal');
+check('and no separate provider row is rendered',
+  !/label: 'Provider fee'/.test(form) && !/label: `Total fee/.test(form));
+/**
+ * INCLUDED, NOT HIDDEN. The single figure is totalFee - Sivan's margin plus
+ * the provider's cut - so removing the row did not remove the charge.
+ */
+check('the one row is the TOTAL, so the provider cut is still charged',
+  /value: both\(fees\.totalFee\)/.test(form),
+  'showing only sivanMargin would understate the fee by the provider cut');
+/** The split is still available where the cost/revenue distinction matters. */
+check('but the breakdown is still returned for admins',
+  /providerFee: String\(margin\.providerFee\)/.test(quoteSrc));
 
 check('naira comes first, the asset second',
   /\$\{naira\} · \$\{inAsset\}/.test(form),

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
+import { ngnProviderFeePercent } from '../service/ngn-provider-fee.js';
 import { forbidden } from '../../shared/errors.js';
 import type { NgnProviderAdapter, NgnProviderSettlement } from './ngn-provider.js';
 import type { NgnProviderHealth, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
@@ -267,7 +268,14 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     const rate = Number(probe?.rate);
     if (!Number.isFinite(rate) || rate <= 0) throw new Error('Breet: rate is unavailable.');
 
-    const feePercent = Number(env.BREET_FEE_PERCENT ?? 0);
+    /**
+     * ADMIN-CONFIGURABLE, not an env var.
+     *
+     * This read BREET_FEE_PERCENT, so matching a change in what Breet charges
+     * required a redeploy. It now comes from the fee tab, falling back to the
+     * env value for deployments that have never opened it.
+     */
+    const feePercent = await ngnProviderFeePercent();
     let destinationAmount: number;
     let feeAmount: number;
 
@@ -276,10 +284,29 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       feeAmount = source * (feePercent / 100);
       destinationAmount = Math.max(source - feeAmount, 0) / rate;
     } else {
-      // Stablecoin in, NGN out.
+      /**
+       * Stablecoin in, NGN out.
+       *
+       * feeAmount IS REPORTED IN THE SOURCE ASSET, not in naira.
+       *
+       * It used to be computed on the naira gross (`gross * percent`), which
+       * made this provider the odd one out: mock-ngn reports its fee in USDC,
+       * and ngn-margin.ts adds providerFeeAmount to a margin denominated in
+       * the source amount. Mixing the two meant a 0.255 USDC fee arriving as
+       * 382.50 and being added to 0.51 as though they were the same unit - a
+       * 1,500x error that reads as a 751% fee.
+       *
+       * Fixed HERE rather than by converting downstream. A caller cannot know
+       * which unit a given provider chose, and the first attempt at a
+       * downstream conversion divided the mock provider's already-correct USDC
+       * figure by the rate, turning 0.255 into 0.00017. The unit is the
+       * provider's to state consistently.
+       *
+       * The naira the user loses is unchanged: fee * rate.
+       */
+      feeAmount = source * (feePercent / 100);
       const gross = source * rate;
-      feeAmount = gross * (feePercent / 100);
-      destinationAmount = Math.max(gross - feeAmount, 0);
+      destinationAmount = Math.max(gross - feeAmount * rate, 0);
     }
 
     return {
@@ -288,6 +315,8 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       sourceAmount: money(source, input.sourceCurrency === 'ngn' ? 2 : 6),
       destinationAmount: money(destinationAmount, input.destinationCurrency === 'ngn' ? 2 : 6),
       rate: money(rate),
+      // 6dp on off-ramp because the fee is now in the source asset (USDC),
+      // not naira - 2dp would round 0.255 to 0.26.
       feeAmount: money(feeAmount, input.direction === 'onramp' ? 2 : 6),
       metadata: {
         breet: true,
@@ -353,7 +382,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     } catch {
       // fall through
     }
-    return Number(env.BREET_FEE_PERCENT ?? 0);
+    return ngnProviderFeePercent();
   }
 
   /**

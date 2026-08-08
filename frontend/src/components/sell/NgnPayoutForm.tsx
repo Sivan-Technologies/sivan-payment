@@ -331,25 +331,23 @@ export function NgnPayoutForm({
     const fees = quote.fees;
     if (!fees) return [{ label: 'Fee', value: both(quote.feeAmount ?? '0') }];
 
-    const rows: Array<{ label: string; value: string }> = [
-      { label: 'Sivan fee', value: both(fees.sivanMargin) },
-    ];
     /**
-     * The provider line appears only when there IS one. On the mock provider
-     * it is zero, and a "Provider fee ₦0" row invites the question "why is
-     * this here" for no benefit.
+     * ONE FEE ROW, NOT THREE.
+     *
+     * This briefly showed "Sivan fee", "Provider fee" and "Total fee" as
+     * separate lines. That is the right breakdown for an ACCOUNTS screen and
+     * the wrong one for a user: the split between Sivan's 1% and Breet's 0.5%
+     * is Sivan's internal cost structure, and the person withdrawing has no
+     * decision to make about it. Three numbers to reconcile, where one answers
+     * the only question they have - what does this cost me.
+     *
+     * The provider fee is not hidden, it is INCLUDED: the total is Sivan's
+     * margin plus the provider's cut, so the single figure is the whole
+     * charge. The split is still returned by the API and still shown to
+     * admins, where the distinction between cost and revenue matters.
      */
-    if (Number(fees.providerFee) > 0) {
-      rows.push({ label: 'Provider fee', value: both(fees.providerFee) });
-      // The total only earns its place once there are two things to add up.
-      rows.push({
-        label: `Total fee${fees.effectivePercent ? ` (${Number(fees.effectivePercent).toFixed(2)}%)` : ''}`,
-        value: both(fees.totalFee),
-      });
-    } else if (fees.effectivePercent) {
-      rows[0].label = `Sivan fee (${Number(fees.effectivePercent).toFixed(2)}%)`;
-    }
-    return rows;
+    const percent = fees.effectivePercent ? ` (${Number(fees.effectivePercent).toFixed(2)}%)` : '';
+    return [{ label: `Sivan fee${percent}`, value: both(fees.totalFee) }];
   })();
 
   /**

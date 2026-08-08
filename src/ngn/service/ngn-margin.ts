@@ -145,36 +145,20 @@ export async function applySivanMargin(input: MarginInput): Promise<MarginResult
   const sivanMargin = round((gross * percent) / 100, 6);
 
   /**
-   * THE PROVIDER FEE MUST BE IN THE SAME UNIT AS THE MARGIN, AND IT WAS NOT.
+   * PROVIDER FEES ARRIVE IN THE SOURCE ASSET, and that is now the contract.
    *
-   * On off-ramp `gross` is the SOURCE amount (USDC), so sivanMargin is USDC.
-   * But breet.provider.ts computes its off-ramp feeAmount on the NAIRA gross:
+   * This briefly converted by rate, because breet.provider.ts computed its
+   * off-ramp fee on the naira gross while mock-ngn reported USDC. Converting
+   * here fixed Breet and BROKE MOCK: a correct 0.255 USDC was divided by 1,500
+   * and rendered as "0.00017 USDC" on the quote card.
    *
-   *     const gross = source * rate;          // 51 USDC -> 76,500 NGN
-   *     feeAmount = gross * (feePercent/100); // 382.5 ... NGN
-   *
-   * Adding 382.5 to 0.51 and calling the result USDC is a 1,500x unit error:
-   * a 51 USDC withdrawal would have been charged 383 USDC - 751% - and the
-   * user would have received nothing.
-   *
-   * Dormant only because the live NGN provider is `mock`, whose quote reports
-   * no fee. It would have fired on the first real Breet off-ramp.
-   *
-   * Converted here rather than in the provider because the provider's number
-   * is correct in its own terms - it is describing a naira deduction - and
-   * this function is the one place that knows which unit the total is in.
+   * The unit is the provider's to state, so breet.provider.ts now reports the
+   * source asset like every other provider and no conversion happens here.
    */
-  const providerFeeInSourceUnits = input.rate && Number(input.rate) > 0
-    ? round(providerFee / Number(input.rate), 6)
-    : providerFee;
-
-  const totalFee = round(providerFeeInSourceUnits + sivanMargin, 6);
+  const totalFee = round(providerFee + sivanMargin, 6);
 
   return {
-    // Reported in SOURCE units so providerFee + sivanMargin === totalFee.
-    // Returning the naira figure here would make the three numbers on an
-    // admin screen fail to add up.
-    providerFee: round(providerFeeInSourceUnits, 6),
+    providerFee: round(providerFee, 6),
     sivanMargin,
     totalFee,
     effectivePercent: round((totalFee / gross) * 100, 4),

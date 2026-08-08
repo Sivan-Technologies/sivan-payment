@@ -246,6 +246,24 @@ export const feeSettingsSchema = z.object({
   supplierNewSupplierMaxPercent: z.coerce.number().min(0).max(100).default(DEFAULT_SUPPLIER_FEE.newSupplierMaxPercent),
 
   /**
+   * What the NGN provider (Breet) charges Sivan, as a percentage.
+   *
+   * PREVIOUSLY BREET_FEE_PERCENT, an environment variable - so changing the
+   * rate your provider charges you needed a redeploy, and the mock provider
+   * had 0.005 hardcoded in two places besides. A cost that a vendor can change
+   * with an email should not require shipping code.
+   *
+   * This is a COST, not revenue: it is what Breet deducts, shown to the user
+   * as part of the total and reported separately to admins so a provider price
+   * rise never looks like extra margin. Sivan's own cut is
+   * ngnOfframpFeePercent.
+   *
+   * 0 is meaningful - some providers bundle their fee into the rate - so this
+   * is not treated as "unset".
+   */
+  ngnProviderFeePercent: z.coerce.number().min(0).max(100).default(0.5),
+
+  /**
    * ───── GAS SPONSORSHIP CONTROLS ─────
    *
    * Sivan pays the network fee on every transfer, so these are the limits that
@@ -332,6 +350,7 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     supplierFeeMaximumUsd: DEFAULT_SUPPLIER_FEE.maximumUsd,
     supplierNewSupplierFeeUsd: DEFAULT_SUPPLIER_FEE.newSupplierUsd,
     supplierNewSupplierMaxPercent: DEFAULT_SUPPLIER_FEE.newSupplierMaxPercent,
+    ngnProviderFeePercent: Number(process.env.BREET_FEE_PERCENT ?? 0.5),
     gasLimitsEnabled: DEFAULT_GAS_CONTROLS.limitsEnabled,
     gasLimitsWarnOnly: DEFAULT_GAS_CONTROLS.warnOnly,
     gasDailyBudgetUsd: DEFAULT_GAS_CONTROLS.dailyBudgetUsd,
