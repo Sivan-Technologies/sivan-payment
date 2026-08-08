@@ -346,8 +346,20 @@ export function NgnPayoutForm({
      * charge. The split is still returned by the API and still shown to
      * admins, where the distinction between cost and revenue matters.
      */
-    const percent = fees.effectivePercent ? ` (${Number(fees.effectivePercent).toFixed(2)}%)` : '';
-    return [{ label: `Sivan fee${percent}`, value: both(fees.totalFee) }];
+    /**
+     * NO PERCENTAGE IN THE LABEL.
+     *
+     * The rate is a derived figure the user cannot act on - they are sending a
+     * fixed amount, so the cash is the whole answer. "Sivan fee (1.50%)"
+     * beside "₦1,148 · 0.765 USDC" is three representations of one charge, and
+     * the percentage is the one nobody checks. It also invites arithmetic
+     * against the rate line, which is how a rounded display starts looking
+     * like a discrepancy.
+     *
+     * Same reasoning that removed the network-fee row and collapsed the
+     * three-row breakdown: one number, the one they are paying.
+     */
+    return [{ label: 'Sivan fee', value: both(fees.totalFee) }];
   })();
 
   /**

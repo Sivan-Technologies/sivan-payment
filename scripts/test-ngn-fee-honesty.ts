@@ -224,8 +224,19 @@ check('the quote returns the breakdown as a top-level field',
  * about it. Three numbers to reconcile where one answers their only question.
  */
 check('the card shows a single combined fee row',
-  /return \[\{ label: `Sivan fee\$\{percent\}`, value: both\(fees\.totalFee\) \}\]/.test(form),
+  /return \[\{ label: 'Sivan fee', value: both\(fees\.totalFee\) \}\]/.test(form),
   'the provider split belongs on an admin screen, not a withdrawal');
+/**
+ * NO PERCENTAGE IN THE LABEL.
+ *
+ * The user is sending a fixed amount, so the cash figure is the whole answer.
+ * A rate beside it is a third representation of one charge that nobody checks,
+ * and it invites arithmetic against the rate line - which is how a rounded
+ * display starts looking like a discrepancy.
+ */
+check('and no percentage in the label',
+  !/label: `Sivan fee\$\{percent\}`/.test(form) && !/effectivePercent\).toFixed\(2\)\}%\)/.test(form),
+  'the cash figure is the whole answer');
 check('and no separate provider row is rendered',
   !/label: 'Provider fee'/.test(form) && !/label: `Total fee/.test(form));
 /**
@@ -308,13 +319,21 @@ const sectionsCode = sectionsRaw.replace(/\/\*[\s\S]*?\*\//g, '');
  */
 const feeDisplayFor = (feeSummary: any, fallback: string) =>
   feeSummary?.ngn
-    ? `${feeSummary.ngn}${feeSummary.asset ? ` · ${feeSummary.asset}` : ''}${feeSummary.percent ? ` (${feeSummary.percent}%)` : ''}`
+    ? `${feeSummary.ngn}${feeSummary.asset ? ` · ${feeSummary.asset}` : ''}`
     : fallback;
 
 check('the confirm screen prefers the cash figure over the percentage',
-  feeDisplayFor({ ngn: '₦765', asset: '0.51 USDC', percent: '1.00' }, '1.25%')
-    === '₦765 · 0.51 USDC (1.00%)',
-  feeDisplayFor({ ngn: '₦765', asset: '0.51 USDC', percent: '1.00' }, '1.25%'));
+  feeDisplayFor({ ngn: '₦1,148', asset: '0.765 USDC' }, '1.25%')
+    === '₦1,148 · 0.765 USDC',
+  feeDisplayFor({ ngn: '₦1,148', asset: '0.765 USDC' }, '1.25%'));
+/**
+ * THE TWO SCREENS MUST STILL MATCH. Dropping the percentage from the quote
+ * card and leaving it here would recreate the mismatch this pair was fixed to
+ * remove - same figures, one screen with a rate and one without.
+ */
+check('and shows exactly what the quote card shows - no trailing percentage',
+  !/\(\$\{review\.feeSummary\.percent\}%\)/.test(sectionsCode),
+  'the quote card no longer shows one, so neither should this');
 
 // And the exact expression must still be wired into the component.
 check('and that expression is the one the component renders',
