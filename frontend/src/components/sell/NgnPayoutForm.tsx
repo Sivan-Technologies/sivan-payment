@@ -723,7 +723,25 @@ export function NgnPayoutForm({
             <div className="kv"><span>You send</span><strong>{trimTrailingZeros(quote.sourceAmount)} {asset.toUpperCase()}</strong></div>
             <div className="kv"><span>You receive</span><strong>{formatPayoutAmount(quote.destinationAmount, 'ngn')}</strong></div>
             <div className="kv"><span>Rate</span><strong>1 {asset.toUpperCase()} ≈ {formatPayoutAmount(quote.rate, 'ngn', 2)}</strong></div>
-            <div className="kv"><span>Fee</span><strong>{formatPayoutAmount(quote.feeAmount, 'ngn')}</strong></div>
+            {/*
+              THE FEE IS IN THE SOURCE ASSET, NOT NAIRA.
+ 
+              This rendered `formatPayoutAmount(quote.feeAmount, 'ngn')`, but on
+              an off-ramp quote feeAmount is denominated in what the user SENDS
+              - USDC - because ngn-margin.ts computes it from `grossAmount`,
+              which is the source amount. So a real fee of 0.5107 USDC was
+              printed as "₦1".
+ 
+              Reported from the screen: 51 USDC at ₦1,500 shows "YOU RECEIVE
+              ₦75,734" against a ₦76,500 gross, so ₦766 was actually taken -
+              766x what the row claimed. A user comparing the two numbers finds
+              money missing and no explanation for it.
+ 
+              Shown in BOTH units: the asset because that is what is charged,
+              and the naira equivalent because that is the column the user is
+              mentally subtracting from.
+            */}
+            <div className="kv"><span>Fee</span><strong>{trimTrailingZeros(quote.feeAmount ?? '0')} {asset.toUpperCase()}{quote.rate ? ` · ${formatPayoutAmount(String(Number(quote.feeAmount ?? 0) * Number(quote.rate)), 'ngn')}` : ''}</strong></div>
             {Boolean(quote.expiresAt) && <div className="kv"><span>Expires in</span><strong>{formatCountdown(secondsLeft)}</strong></div>}
           </div>
 

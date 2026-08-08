@@ -2533,6 +2533,7 @@ export default function App() {
             withdrawalReview={withdrawalReview}
             depositResult={depositResult}
             feePercent={feePolicy?.percent}
+            ngnFeePercent={paymentControls.ngnOfframpFeePercent}
             loading={loading}
             canCreatePaymentActions={canCreatePaymentActions}
             onSubmit={handleWithdraw}

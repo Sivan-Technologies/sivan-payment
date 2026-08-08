@@ -5,6 +5,7 @@ import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { getSupplierPaymentControls } from '../suppliers/supplier.service.js';
+import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
 
 export const DEFAULT_CUSTOMER_TYPE_CONTROLS: CustomerTypeControlRecord[] = [
   { customerType: 'individual', enabled: true, label: 'Individual', updatedBy: 'system', updatedAt: nowIso() },
@@ -105,6 +106,16 @@ export interface OfframpControlsResponse {
    * switched on" answer for assets, networks and payout currencies.
    */
   supplierPayoutsEnabled: boolean;
+  /**
+   * The Sivan margin on a NAIRA payout, as a percentage string.
+   *
+   * The withdrawal confirmation screen was showing `feePolicy.percent` - the
+   * BRIDGE off-ramp rate, 1.25% - on a naira payout that is actually priced by
+   * ngnOfframpFeePercent. The screen promised 1.25% while the quote behind it
+   * charged 1%. Served here so the UI reads the rail's own number instead of
+   * borrowing another rail's.
+   */
+  ngnOfframpFeePercent: string;
 }
 
 export async function listPaymentControls(): Promise<OfframpControlsResponse> {
@@ -125,6 +136,7 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
    * "enabled", the shipped default, rather than silently hiding the feature.
    */
   const supplierControls = await getSupplierPaymentControls().catch(() => null);
+  const feeSettings: any = await getAdminFeeSettings().catch(() => null);
   const existingCustomerTypes = data.customerTypeControls ?? [];
   const existingPayouts = data.paymentControls ?? [];
   const existingAssets = data.assetControls ?? [];
@@ -149,6 +161,14 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
       ...(existingAssets.find((item) => item.asset === defaultControl.asset) ?? {})
     })),
     supplierPayoutsEnabled: supplierControls ? supplierControls.supplierPaymentsEnabled !== false : true,
+    // Zero means "not set", in which case the NGN rail falls back to the
+    // Bridge percentage - mirroring applySivanMargin exactly, so the number
+    // shown is the number charged.
+    ngnOfframpFeePercent: String(
+      Number(feeSettings?.ngnOfframpFeePercent ?? 0) > 0
+        ? feeSettings?.ngnOfframpFeePercent
+        : feeSettings?.offrampFeePercent ?? 0
+    ),
     sourceNetworks: DEFAULT_NETWORK_CONTROLS.map((defaultControl) => ({
       ...defaultControl,
       ...(existingNetworks.find((item) => item.network === defaultControl.network) ?? {})

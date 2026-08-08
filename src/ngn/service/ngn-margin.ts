@@ -43,6 +43,17 @@ export interface MarginInput {
   grossAmount: number;
   /** Fee the provider already deducted, same units as grossAmount. */
   providerFeeAmount: number;
+  /**
+   * NGN per source unit, when the provider's fee is denominated in naira but
+   * the gross is not.
+   *
+   * Off-ramp only. breet.provider.ts computes its off-ramp fee on the NAIRA
+   * gross while `grossAmount` here is USDC, so the two must be reconciled or
+   * the totals are out by the exchange rate - a 1,500x error that reads as a
+   * 751% fee. Optional: when absent the provider fee is assumed to already be
+   * in source units, which is what the mock provider and on-ramp both do.
+   */
+  rate?: number | string;
 }
 
 export interface MarginResult {
@@ -132,10 +143,38 @@ export async function applySivanMargin(input: MarginInput): Promise<MarginResult
 
   const percent = ngnOfframp > 0 ? ngnOfframp : Number(settings.offrampFeePercent ?? 0);
   const sivanMargin = round((gross * percent) / 100, 6);
-  const totalFee = round(providerFee + sivanMargin, 6);
+
+  /**
+   * THE PROVIDER FEE MUST BE IN THE SAME UNIT AS THE MARGIN, AND IT WAS NOT.
+   *
+   * On off-ramp `gross` is the SOURCE amount (USDC), so sivanMargin is USDC.
+   * But breet.provider.ts computes its off-ramp feeAmount on the NAIRA gross:
+   *
+   *     const gross = source * rate;          // 51 USDC -> 76,500 NGN
+   *     feeAmount = gross * (feePercent/100); // 382.5 ... NGN
+   *
+   * Adding 382.5 to 0.51 and calling the result USDC is a 1,500x unit error:
+   * a 51 USDC withdrawal would have been charged 383 USDC - 751% - and the
+   * user would have received nothing.
+   *
+   * Dormant only because the live NGN provider is `mock`, whose quote reports
+   * no fee. It would have fired on the first real Breet off-ramp.
+   *
+   * Converted here rather than in the provider because the provider's number
+   * is correct in its own terms - it is describing a naira deduction - and
+   * this function is the one place that knows which unit the total is in.
+   */
+  const providerFeeInSourceUnits = input.rate && Number(input.rate) > 0
+    ? round(providerFee / Number(input.rate), 6)
+    : providerFee;
+
+  const totalFee = round(providerFeeInSourceUnits + sivanMargin, 6);
 
   return {
-    providerFee: round(providerFee, 6),
+    // Reported in SOURCE units so providerFee + sivanMargin === totalFee.
+    // Returning the naira figure here would make the three numbers on an
+    // admin screen fail to add up.
+    providerFee: round(providerFeeInSourceUnits, 6),
     sivanMargin,
     totalFee,
     effectivePercent: round((totalFee / gross) * 100, 4),

@@ -186,6 +186,7 @@
     "test:supplier-default-off": "tsx scripts/test-supplier-default-off.ts",
     "test:usdt-surcharge": "tsx scripts/test-usdt-surcharge.ts",
     "test:error-diagnostics": "tsx scripts/test-error-diagnostics.ts",
+    "test:ngn-fee-honesty": "tsx scripts/test-ngn-fee-honesty.ts",
     "bridge:va-smoke": "tsx scripts/bridge-va-and-transfer-smoke.ts",
     "test:bridge-sandbox": "tsx scripts/bridge-live-sandbox-soft-test.ts",
     "bridge:live-va-smoke": "tsx scripts/bridge-live-va-and-sweep-smoke.ts",

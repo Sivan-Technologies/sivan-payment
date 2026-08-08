@@ -245,6 +245,8 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     direction: input.direction,
     grossAmount: grossForMargin,
     providerFeeAmount: Number(quote.feeAmount ?? 0),
+    // Off-ramp provider fees come back in naira; the gross here is USDC.
+    rate: input.direction === 'offramp' ? Number(quote.rate ?? 0) : undefined,
   });
 
   // The user receives less by exactly Sivan's margin. Recomputed rather than

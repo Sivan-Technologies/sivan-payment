@@ -136,7 +136,7 @@ export type WithdrawalReviewState = {
   amount?: string;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
 
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
@@ -183,6 +183,8 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   withdrawalReview: WithdrawalReviewState | null;
   depositResult: DepositResponse | null;
   feePercent?: string;
+  /** The naira rail's own Sivan rate, from the NGN controls. */
+  ngnFeePercent?: string;
   loading: boolean;
   canCreatePaymentActions: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -238,7 +240,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // parallel props keeps one source of truth for "how much can this
             // user spend" across both rails.
             : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} spendable={ngnSpendable} externalFundingEnabled={ngnExternalFundingEnabled} fundingSource={bridgeFunding} onFundingSourceChange={setBridgeFunding} />}
-          {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
+          {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} ngnFeePercent={ngnFeePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} />}
         </div>
         <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} balanceFunded={balanceFunded} />
@@ -466,7 +468,7 @@ export function OtpInput({ value, onChange }: { value: string; onChange: (value:
   );
 }
 
-function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm }: { review: WithdrawalReviewState | null; feePercent?: string; loading: boolean; onCancel: () => void; onConfirm: () => void }) {
+function WithdrawalReviewCard({ review, feePercent, ngnFeePercent, loading, onCancel, onConfirm }: { review: WithdrawalReviewState | null; feePercent?: string; /** The naira rail's own rate. Bridge's percentage does not apply to a bank payout. */ ngnFeePercent?: string; loading: boolean; onCancel: () => void; onConfirm: () => void }) {
   if (!review) return null;
 
   // Naming the rail is deliberate. The user is about to send crypto to an
@@ -474,6 +476,16 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
   // should have to infer from the currency.
   const isNgn = isNgnCurrency(review.destinationCurrency);
   const rail = payoutRailFor(review.destinationCurrency as PayoutCurrency);
+  /**
+   * The rate that actually applies to THIS payout.
+   *
+   * A naira payout is priced by the NGN rail, not by Bridge - and this card
+   * was showing Bridge's 1.25% against a quote charged at 1%.
+   */
+  const isNgnPayout = isNgnCurrency(review.destinationCurrency as PayoutCurrency);
+  const sivanFeeLabel = isNgnPayout
+    ? (ngnFeePercent ? `${ngnFeePercent}%` : '—')
+    : (feePercent ? `${feePercent}%` : '—');
 
   return (
     <article className="deposit-card review-card">
@@ -501,10 +513,35 @@ function WithdrawalReviewCard({ review, feePercent, loading, onCancel, onConfirm
             be true, and anything genuinely below a hundredth of a cent is
             called what it is rather than rounded away.
         */}
-        {review.estimatedGasUsd !== undefined && (
+        {/*
+            NETWORK FEE REMOVED FROM THE NAIRA PAYOUT.
+ 
+            On a bank payout the user is not paying gas - Sivan sponsors it -
+            and the amount is $0.0010. Listing a cost the user does not bear,
+            in dollars, on a screen whose every other figure is naira, adds a
+            number to reconcile and answers no question they have. "Sivan fee"
+            is the honest single line, and it is the one they asked for.
+ 
+            KEPT for the foreign/crypto rails, where the gas estimate is a real
+            input to whether the withdrawal clears the network minimum.
+        */}
+        {review.estimatedGasUsd !== undefined && !isNgnPayout && (
           <Kv label="Estimated network fee" value={formatGasUsd(review.estimatedGasUsd)} />
         )}
-        <Kv label="Sivan fee" value={feePercent ? `${feePercent}%` : '—'} />
+        {/*
+            THE NAIRA RAIL HAS ITS OWN RATE, AND THIS SHOWED BRIDGE'S.
+ 
+            `feePercent` is feePolicy.percent - the BRIDGE off-ramp policy,
+            1.25%. A naira payout does not go through Bridge; it is priced by
+            ngnOfframpFeePercent, currently 1%. So this screen promised 1.25%
+            while the quote screen behind it charged 1%, and neither matched
+            the 1.5% intended once Breet's own 0.5% is counted.
+ 
+            Three numbers for one withdrawal is how a user concludes they are
+            being overcharged. The naira rate is passed in explicitly rather
+            than reusing the Bridge one.
+        */}
+        <Kv label="Sivan fee" value={sivanFeeLabel} />
       </div>
       {/* WHAT HAPPENS NEXT, SAID PLAINLY BEFORE THEY COMMIT.
  
