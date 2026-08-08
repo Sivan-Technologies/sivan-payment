@@ -30,13 +30,13 @@ export async function supplierRoutes(app: FastifyInstance) {
    */
   app.get('/api/users/:userId/supplier-payments/quote', async (request) => {
     const { userId } = request.params as { userId: string };
-    const { amount, supplierId } = request.query as { amount?: string; supplierId?: string };
+    const { amount, supplierId, sourceAsset } = request.query as { amount?: string; supplierId?: string; sourceAsset?: string };
     const parsed = Number(amount);
     if (!Number.isFinite(parsed) || parsed <= 0) throw badRequest('A positive amount is required to quote a supplier payment.');
     // supplierId is optional but matters: the one-time setup fee only applies
     // to the first payment to a GIVEN supplier, so a quote without it cannot
     // know whether that charge is due.
-    return { data: await quoteSupplierPayment(userId, parsed, supplierId) };
+    return { data: await quoteSupplierPayment(userId, parsed, supplierId, sourceAsset ?? 'usdc') };
   });
 
   app.post('/api/users/:userId/supplier-payments', async (request) => {

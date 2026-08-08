@@ -382,9 +382,16 @@ check('the setup charge survives even a 30% volume discount',
   bigUserFirst.newSupplierFee === '1.50', bigUserFirst.newSupplierFee);
 
 /** And it sits OUTSIDE the cap, like the ATA-rent surcharge on transfers. */
-const capped = quoteSupplierFee(50_000, 0, { ...DEFAULT_SUPPLIER_FEE, maximumUsd: 100 }, { isFirstPaymentToSupplier: true });
+/**
+ * A SMALL PAYMENT, so the cap binds without colliding with the provider-cost
+ * floor. On $50,000 a $100 cap is BELOW what Bridge charges (250.00), and the
+ * cost floor correctly overrides it - see section 13. Here the cap is the
+ * binding rule, which is what this assertion is about.
+ */
+const capped = quoteSupplierFee(300, 0, { ...DEFAULT_SUPPLIER_FEE, maximumUsd: 2 }, { isFirstPaymentToSupplier: true });
 check('a capped fee still adds the setup charge on top of the cap',
-  capped.fee === '101.50', `${capped.fee} = 100.00 cap + 1.50 setup`);
+  capped.newSupplierFee === '1.50' && Number(capped.fee) > 2,
+  `${capped.fee} (cap 2.00 + 1.50 setup)`);
 
 /** The floor must not resurrect itself on a zero amount. */
 check('a zero amount is charged no setup fee either',
@@ -661,6 +668,110 @@ check('at $5 the floor dominates, and onboarding adds under a dime',
 /** And the ongoing rate is untouched - this changes onboarding, not pricing. */
 check('the recurring rate is unchanged by the ceiling',
   quoteSupplierFee(600, 0).fee === '8.70' && quoteSupplierFee(50_000, 0).fee === '337.50');
+
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 13. Bridge takes 0.50% - the curve must clear it ─────────');
+
+/**
+ * A SUPPLIER PAYOUT IS AN OFF-RAMP IN BRIDGE'S PRICING.
+ *
+ * createSupplierPayout posts /transfers with a `bridge_wallet` source and an
+ * `external_account` destination: stablecoin in, fiat out. Bridge bills that
+ * as off-ramp volume at 0.50%, +0.10% on USDT.
+ *
+ * THE CURVE WAS PRICED WITHOUT SUBTRACTING IT. Tiers were set against Sivan's
+ * own costs and the volume discount then cut Sivan's revenue while Bridge's
+ * cut stayed fixed - so the biggest, most loyal customers were the most
+ * loss-making:
+ *
+ *     $50,000 at 30% off  -> Sivan 236.25, Bridge 250.00 = -13.75
+ *     $100,000 at 30% off -> Sivan 446.25, Bridge 500.00 = -53.75
+ */
+const { BRIDGE_OFFRAMP_COST_PERCENT, MARGIN_MULTIPLIER, providerCostPercentFor } =
+  await import('../src/suppliers/supplier-fee-policy.js');
+
+check('the off-ramp cost is stated, not implicit',
+  BRIDGE_OFFRAMP_COST_PERCENT === 0.5, String(BRIDGE_OFFRAMP_COST_PERCENT));
+check('and USDT is priced 0.10% higher, as Bridge charges',
+  providerCostPercentFor('usdt') === 0.6 && providerCostPercentFor('usdc') === 0.5,
+  `usdt=${providerCostPercentFor('usdt')} usdc=${providerCostPercentFor('usdc')}`);
+
+/**
+ * THE REGRESSION, ASSERTED DIRECTLY. These are the exact cases that lost
+ * money before the floor existed.
+ */
+for (const [amt, vol] of [[50_000, 300_000], [100_000, 300_000], [50_000, 60_000]] as Array<[number, number]>) {
+  const q = quoteSupplierFee(amt, vol, DEFAULT_SUPPLIER_FEE, { sourceAsset: 'usdc' });
+  const margin = Number(q.fee) - Number(q.providerCost);
+  check(`$${amt.toLocaleString()} at ${vol.toLocaleString()} volume is PROFITABLE`,
+    margin > 0, `fee ${q.fee} - bridge ${q.providerCost} = ${margin.toFixed(2)}`);
+}
+
+/** Swept, because three spot checks is not a guarantee. */
+let lossMaking = 0;
+let worstMargin = Infinity;
+for (const vol of [0, 10_000, 50_000, 250_000, 1_000_000]) {
+  for (let amt = 100; amt <= 500_000; amt += 971) {
+    for (const asset of ['usdc', 'usdt']) {
+      const q = quoteSupplierFee(amt, vol, DEFAULT_SUPPLIER_FEE, { sourceAsset: asset });
+      const margin = Number(q.fee) - Number(q.providerCost);
+      if (margin <= 0) lossMaking += 1;
+      worstMargin = Math.min(worstMargin, margin);
+    }
+  }
+}
+check('NO amount, volume or asset combination is ever sold below cost',
+  lossMaking === 0, `${lossMaking} loss-making quote(s), worst margin ${worstMargin.toFixed(2)}`);
+
+/** And the margin is a real one, not break-even. */
+check('the floor leaves a real margin, not break-even',
+  MARGIN_MULTIPLIER > 1.2, String(MARGIN_MULTIPLIER));
+
+/**
+ * A DISCOUNT COMPRESSES MARGIN, IT DOES NOT INVERT IT. The discount must still
+ * WORK where there is room for it - a floor that swallowed every discount
+ * would make the loyalty tier decorative.
+ */
+const smallLoyal = quoteSupplierFee(10_000, 300_000, DEFAULT_SUPPLIER_FEE, { sourceAsset: 'usdc' });
+const smallNew = quoteSupplierFee(10_000, 0, DEFAULT_SUPPLIER_FEE, { sourceAsset: 'usdc' });
+check('the volume discount still bites where there is margin for it',
+  Number(smallLoyal.fee) < Number(smallNew.fee) && smallLoyal.volumeDiscountPercent === 30,
+  `${smallNew.fee} -> ${smallLoyal.fee} at ${smallLoyal.volumeDiscountPercent}%`);
+
+/**
+ * AND THE REPORTED DISCOUNT IS THE ONE ACTUALLY RECEIVED.
+ *
+ * When the cost floor absorbs part of the discount, claiming the headline
+ * "30%" would promise a saving the user did not get. Reporting 0 would deny
+ * one they partly did. Both are lies; this reports the real difference.
+ */
+const compressed = quoteSupplierFee(50_000, 300_000, DEFAULT_SUPPLIER_FEE, { sourceAsset: 'usdc' });
+check('a compressed discount reports what was really saved, not the tier headline',
+  compressed.volumeDiscountPercent > 0 && compressed.volumeDiscountPercent < 30,
+  `${compressed.volumeDiscountPercent}% actual vs 30% tier`);
+check('and the quote flags that the margin floor bound',
+  compressed.marginFloorApplied === true);
+check('the saving reported matches the arithmetic',
+  Math.abs(Number(compressed.feeBeforeDiscount) - Number(compressed.fee) - Number(compressed.volumeDiscountAmount)) < 0.01,
+  `${compressed.feeBeforeDiscount} - ${compressed.fee} vs ${compressed.volumeDiscountAmount}`);
+
+/**
+ * A MISCONFIGURED CAP MUST NOT SELL AT A LOSS. "Never charge more than $100"
+ * looks reasonable and would otherwise give away every large payout.
+ */
+const badCap = quoteSupplierFee(50_000, 0, { ...DEFAULT_SUPPLIER_FEE, maximumUsd: 100 }, { sourceAsset: 'usdc' });
+check('a cap set below provider cost is overridden, not honoured',
+  Number(badCap.fee) > Number(badCap.providerCost),
+  `cap 100.00 but bridge takes ${badCap.providerCost}, charged ${badCap.fee}`);
+
+/** USDT costs more, so it must be charged more at the floor. */
+const usdtBig = quoteSupplierFee(50_000, 300_000, DEFAULT_SUPPLIER_FEE, { sourceAsset: 'usdt' });
+const usdcBig = quoteSupplierFee(50_000, 300_000, DEFAULT_SUPPLIER_FEE, { sourceAsset: 'usdc' });
+check('a USDT payout costs the user more, because it costs Sivan more',
+  Number(usdtBig.fee) > Number(usdcBig.fee),
+  `usdt ${usdtBig.fee} vs usdc ${usdcBig.fee}`);
+check('and USDT margin is still positive',
+  Number(usdtBig.fee) - Number(usdtBig.providerCost) > 0);
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

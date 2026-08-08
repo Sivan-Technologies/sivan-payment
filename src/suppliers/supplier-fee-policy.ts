@@ -205,6 +205,19 @@ export interface SupplierFeeQuote {
   newSupplierFee: string;
   /** True when this is the first payment to this supplier. */
   isFirstPaymentToSupplier: boolean;
+  /**
+   * What Bridge takes for this payout, in USD.
+   *
+   * SIVAN'S COST, NOT A CHARGE TO THE USER. Exposed so the admin hub and
+   * support can see margin on a payment without recomputing provider pricing,
+   * and so a loss-making quote is visible rather than buried.
+   */
+  providerCost: string;
+  /**
+   * True when the provider-cost floor bound - the volume discount was
+   * compressed to keep the payout profitable.
+   */
+  marginFloorApplied: boolean;
   /** Which rule set the final number. For the UI, and for support. */
   appliedRule: 'tiered' | 'minimum' | 'maximum';
   /** Per-band breakdown, so the UI can show its work. */
@@ -323,7 +336,7 @@ export function quoteSupplierFee(
   netAmount: number,
   volumeUsd = 0,
   config: SupplierFeeConfig = DEFAULT_SUPPLIER_FEE,
-  options: { isFirstPaymentToSupplier?: boolean } = {}
+  options: { isFirstPaymentToSupplier?: boolean; sourceAsset?: string } = {}
 ): SupplierFeeQuote {
   const net = Number.isFinite(netAmount) && netAmount > 0 ? netAmount : 0;
   const tiers = [...(config.tiers ?? [])].sort((a, b) => {
@@ -392,6 +405,31 @@ export function quoteSupplierFee(
    * quoted "$0.00 to your supplier, $2.00 fee", and a malformed request would
    * have created a payment that was pure fee. Caught by test, not by reading.
    */
+  /**
+   * THE PROVIDER COST FLOOR - THE ONE THAT STOPS A DISCOUNT LOSING MONEY.
+   *
+   * A supplier payout is an off-ramp in Bridge's pricing (bridge_wallet ->
+   * external_account), so Bridge takes 0.50% of it, +0.10% on USDT. The
+   * original curve never subtracted that, and the volume discount then cut
+   * Sivan's side while Bridge's stayed fixed:
+   *
+   *     $50,000 at 30% off -> Sivan 236.25, Bridge 250.00 = -13.75
+   *
+   * The best customers were the most loss-making, which is the exact opposite
+   * of what a loyalty discount is for.
+   *
+   * Applied AFTER the discount so a discount compresses margin and can never
+   * invert it, and BEFORE the flat floor so whichever is higher wins.
+   */
+  const providerCost = net * (providerCostPercentFor(options.sourceAsset ?? 'usdc') / 100);
+  const marginFloor = providerCost * MARGIN_MULTIPLIER;
+  let marginFloorApplied = false;
+  if (net > 0 && fee < marginFloor) {
+    fee = marginFloor;
+    marginFloorApplied = true;
+    appliedRule = 'minimum';
+  }
+
   const floor = Math.max(0, config.minimumUsd);
   if (net > 0 && floor > 0 && fee < floor) {
     fee = floor;
@@ -400,8 +438,17 @@ export function quoteSupplierFee(
 
   const ceiling = Math.max(0, config.maximumUsd);
   if (ceiling > 0 && fee > ceiling) {
-    fee = ceiling;
-    appliedRule = 'maximum';
+    /**
+     * THE CAP MUST NOT CAP BELOW COST.
+     *
+     * An admin setting maximumUsd low - a reasonable-looking "never charge
+     * more than $100" - would otherwise sell every large payout at a loss,
+     * silently and forever. The cap limits Sivan's MARGIN; it cannot be
+     * allowed to eat the provider's cut.
+     */
+    fee = Math.max(ceiling, marginFloor);
+    appliedRule = fee === ceiling ? 'maximum' : 'minimum';
+    if (fee === marginFloor) marginFloorApplied = true;
   }
 
   /**
@@ -495,12 +542,25 @@ export function quoteSupplierFee(
   return {
     netAmount: money2(net),
     fee: money2(fee),
+    providerCost: money2(providerCost),
+    marginFloorApplied,
     newSupplierFee: money2(newSupplierFee),
     isFirstPaymentToSupplier,
     grossAmount: money2(gross),
     feeBeforeDiscount: money2(feeBeforeDiscount),
-    volumeDiscountAmount: money2(appliedRule === 'tiered' ? discountAmount : 0),
-    volumeDiscountPercent: appliedRule === 'tiered' ? discountPercent : 0,
+    /**
+     * THE DISCOUNT ACTUALLY RECEIVED, not the one the tier promises.
+     *
+     * When the provider-cost floor binds, the tiered discount is partly or
+     * wholly absorbed - so reporting the headline "30%" would tell a user they
+     * got a saving they did not get, and reporting 0 would deny one they
+     * partly did. Both are wrong. This reports the real difference between the
+     * pre-discount fee and what is actually charged.
+     */
+    volumeDiscountAmount: money2(Math.max(0, feeBeforeDiscount - fee + newSupplierFee)),
+    volumeDiscountPercent: feeBeforeDiscount > 0
+      ? Math.round((Math.max(0, feeBeforeDiscount - fee + newSupplierFee) / feeBeforeDiscount) * 100)
+      : 0,
     volumeUsd: money2(Number.isFinite(volumeUsd) && volumeUsd > 0 ? volumeUsd : 0),
     effectivePercent: effective.toFixed(3),
     appliedRule,
@@ -556,3 +616,65 @@ export function supplierEffectiveRateAt(
  * a payment sits in settlement.
  */
 export const SUPPLIER_VOLUME_COUNTING_STATUSES = ['approved', 'processing', 'completed'] as const;
+
+/**
+ * WHAT BRIDGE CHARGES SIVAN FOR A SUPPLIER PAYOUT.
+ *
+ * A supplier payout is `bridge_wallet (USDC) -> external_account (fiat via
+ * ACH/SEPA/wire)`. Stablecoin in, fiat out: that is an OFF-RAMP, and Bridge's
+ * pricing charges 0.50% of off-ramp volume for it. Verified against the
+ * provider call in bridge.provider.ts - createSupplierPayout posts to
+ * /transfers with a `bridge_wallet` source and an `external_account`
+ * destination, exactly the shape Bridge bills as off-ramp.
+ *
+ * THIS WAS MISSED WHEN THE SUPPLIER CURVE WAS FIRST PRICED. The tiers were set
+ * against Sivan's own costs - compliance review, payout rail, balance-sheet
+ * exposure - and never subtracted what the provider takes. The result was a
+ * curve that lost money at the top:
+ *
+ *     $50,000 at 30% volume discount -> Sivan 236.25, Bridge 250.00  = -13.75
+ *     $100,000 at 30%                -> Sivan 446.25, Bridge 500.00  = -53.75
+ *
+ * The discount ladder made it worse rather than better: it reduced Sivan's
+ * revenue while Bridge's cut stayed fixed, so the best customers were the most
+ * loss-making. A discount must come out of MARGIN, never out of cost.
+ */
+export const BRIDGE_OFFRAMP_COST_PERCENT = 0.5;
+
+/**
+ * Bridge's surcharge for USDT.
+ *
+ * "USDT Support: +0.10%". Sivan's admin asset controls already allow USDT to
+ * be enabled per deployment (live test API has it on), so a USDT supplier
+ * payout genuinely costs 0.60% and must be priced as such rather than sharing
+ * the USDC number.
+ */
+export const BRIDGE_USDT_SURCHARGE_PERCENT = 0.1;
+
+/**
+ * The provider's cut for one payout, as a percentage.
+ *
+ * Third-party fees (ACH, wire, gas) are billed at cost by Bridge on top of
+ * this and are NOT modelled here - they are per-rail, not per-volume, and
+ * inventing an average would be a guess dressed as a number. They are covered
+ * instead by the margin multiplier below, which is why that is a multiplier
+ * and not a break-even.
+ */
+export function providerCostPercentFor(sourceAsset: string): number {
+  const usdt = String(sourceAsset).toLowerCase() === 'usdt';
+  return BRIDGE_OFFRAMP_COST_PERCENT + (usdt ? BRIDGE_USDT_SURCHARGE_PERCENT : 0);
+}
+
+/**
+ * The least Sivan may charge and still make money on a payout.
+ *
+ * A MULTIPLE of provider cost, not cost itself. Charging exactly cost leaves
+ * nothing for the third-party fees Bridge passes through (ACH, wire, gas), the
+ * compliance review, or the support load - so break-even pricing is a slow
+ * loss. 1.3x leaves a thin but real margin on the largest, most
+ * discount-heavy payments while keeping Sivan competitive at the top end.
+ *
+ * Applied as a FLOOR, after tiers and after the volume discount, so a discount
+ * can compress margin but can never invert it.
+ */
+export const MARGIN_MULTIPLIER = 1.3;

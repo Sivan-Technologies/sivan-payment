@@ -349,13 +349,13 @@ export async function getSupplierFeeConfig(): Promise<SupplierFeeConfig> {
  * runs - a UI that quotes a different fee from the one charged is a support
  * ticket that reads as theft.
  */
-export async function quoteSupplierPayment(userId: string, netAmount: number, supplierId?: string) {
+export async function quoteSupplierPayment(userId: string, netAmount: number, supplierId?: string, sourceAsset = 'usdc') {
   const data = await db.read();
   const volumeUsd = await getSupplierVolumeUsd(userId, data);
   const config = await getSupplierFeeConfig();
   const isFirstPaymentToSupplier = supplierId ? isFirstPaymentTo(data, userId, supplierId) : false;
   return {
-    ...quoteSupplierFee(netAmount, volumeUsd, config, { isFirstPaymentToSupplier }),
+    ...quoteSupplierFee(netAmount, volumeUsd, config, { isFirstPaymentToSupplier, sourceAsset }),
     windowDays: SUPPLIER_VOLUME_WINDOW_DAYS,
   };
 }
@@ -467,6 +467,9 @@ export async function createSupplierPayment(input: z.infer<typeof createSupplier
     // Same question the risk engine asks, from the same data, so the payment
     // charged for onboarding is the one that actually triggers the review.
     isFirstPaymentToSupplier: isFirstPaymentTo(data, input.userId, supplier.id),
+    // USDT costs Bridge +0.10% on top of the 0.50% off-ramp rate, so the
+    // margin floor has to know which asset is actually moving.
+    sourceAsset: input.sourceAsset,
   });
   const grossAmount = Number(quote.grossAmount);
 
