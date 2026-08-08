@@ -8,23 +8,47 @@ import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { listUserDeposits } from '../deposits/deposit.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber } from '../identity/identity.service.js';
+import { requireIdentityServiceSecret } from '../shared/service-auth.js';
+
+/**
+ * Resolve a chat-channel caller to a payment user.
+ *
+ * The stored `whatsappNumber` carries the `whatsapp:` prefix, so the incoming
+ * bare phone is normalized before comparison - the bots deliberately send a
+ * bare E.164 number and must not be made to know this service's storage format.
+ */
+async function findUserByChannelPhone(phone: string) {
+  const normalized = normalizeWhatsappNumber(phone);
+  const data = await db.read();
+  return (data.users ?? []).find((u: any) => u.whatsappNumber === normalized);
+}
 
 function actor(request: any) {
   return request.adminActor?.email || request.adminActor?.role || 'admin_api_key';
 }
 
 export async function balanceRoutes(app: FastifyInstance) {
-  // ─── WhatsApp-authenticated balance endpoint (used by whatsapp-bot) ──────────
+  /**
+   * Balance for a chat-channel caller. Used by the WhatsApp bot and the
+   * Telegram layer.
+   *
+   * Auth is the shared service-secret guard. The inline check that used to live
+   * here compared against `process.env.PAYMENT_IDENTITY_LINK_SECRET` - the
+   * variable name the BOTS use. This service names the same secret
+   * IDENTITY_LINK_SERVICE_SECRET, so the comparison was against undefined and
+   * this route returned 403 to every caller. Balance never worked from chat.
+   *
+   * Returns BOTH shapes on purpose: a flat `available`/`asset` for callers that
+   * read a single spendable figure, and the full `balances[]` array for callers
+   * that list every asset. Returning only the flat shape made the Telegram
+   * balance card render "Nothing held yet" for users who did hold funds,
+   * because it reads `data.balances`.
+   */
   app.get('/api/users/whatsapp-balance', async (request, reply) => {
-    const secret = request.headers['x-sivan-identity-link-secret'];
-    if (!secret || secret !== process.env.PAYMENT_IDENTITY_LINK_SECRET) {
-      return reply.code(403).send({ error: 'Forbidden' });
-    }
+    requireIdentityServiceSecret(request as any);
     const { whatsapp } = request.query as { whatsapp?: string };
     if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
-    const normalized = normalizeWhatsappNumber(whatsapp);
-    const data = await db.read();
-    const user = (data.users ?? []).find((u: any) => u.whatsappNumber === normalized);
+    const user = await findUserByChannelPhone(whatsapp);
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
     const balance = await getUserBalance(user.id);
     const usdcEntry = balance.balances.find((b: any) => b.asset === 'usdc') ?? balance.balances[0];
@@ -34,23 +58,30 @@ export async function balanceRoutes(app: FastifyInstance) {
         asset: usdcEntry?.asset ?? 'usdc',
         available: Number(usdcEntry?.available ?? 0),
         pending: Number(usdcEntry?.pending ?? 0),
+        balances: (balance.balances ?? []).map((b: any) => ({
+          asset: b.asset,
+          amount: Number(b.available ?? 0),
+          available: Number(b.available ?? 0),
+          pending: Number(b.pending ?? 0),
+        })),
       }
     };
   });
 
-  // ─── WhatsApp-authenticated payout account gate check (used by whatsapp-bot) ──
+  /**
+   * Does this chat user have somewhere to be paid out to?
+   *
+   * Same auth correction as the balance route above; cash out reads this first,
+   * so the 403 here is what made cash out unusable from chat.
+   */
   app.get('/api/users/whatsapp-payout-account', async (request, reply) => {
-    const secret = request.headers['x-sivan-identity-link-secret'];
-    if (!secret || secret !== process.env.PAYMENT_IDENTITY_LINK_SECRET) {
-      return reply.code(403).send({ error: 'Forbidden' });
-    }
+    requireIdentityServiceSecret(request as any);
     const { whatsapp } = request.query as { whatsapp?: string };
     if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
-    const normalized = normalizeWhatsappNumber(whatsapp);
     const data = await db.read();
-    const user = (data.users ?? []).find((u: any) => u.whatsappNumber === normalized);
+    const user = await findUserByChannelPhone(whatsapp);
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
-    
+
     const userAccounts = (data.externalAccounts ?? []).filter(
       (acc: any) => acc.userId === user.id && ['active', 'verified', 'created'].includes(acc.status)
     );

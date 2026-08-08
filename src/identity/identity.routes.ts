@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { parseBody } from '../shared/validation.js';
 import { forbidden, notFound } from '../shared/errors.js';
 import { db } from '../database/json-database.js';
+import { requireIdentityServiceSecret } from '../shared/service-auth.js';
 import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
 import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
@@ -11,6 +12,7 @@ import {
   cancelWhatsappLink,
   getIdentityStatus,
   redeemIdentityLinkSchema,
+  lookupTelegramIdentity,
   redeemTelegramLink,
   redeemTelegramLinkSchema,
   redeemWhatsappLink,
@@ -22,14 +24,6 @@ import {
 
 function getAuthUserId(request: any) {
   return request.authUser?.sub as string | undefined;
-}
-
-function requireIdentityServiceSecret(request: any) {
-  const configured = env.IDENTITY_LINK_SERVICE_SECRET || env.ADMIN_API_KEY;
-  if (!configured) throw forbidden('Identity link service secret is not configured.');
-  const provided = request.headers['x-sivan-identity-link-secret'] || request.headers['x-admin-api-key'];
-  const value = Array.isArray(provided) ? provided[0] : provided;
-  if (value !== configured) throw forbidden('Invalid identity link service secret.');
 }
 
 /**
@@ -167,5 +161,30 @@ export async function identityRoutes(app: FastifyInstance) {
     requireIdentityServiceSecret(request);
     const body = parseBody(redeemTelegramLinkSchema, request.body);
     return { data: await redeemTelegramLink(body, { source: 'telegram', ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Resolve a Telegram account to its current Sivan identity.
+   *
+   * lookupTelegramIdentity has existed since Telegram linking was built, and
+   * its own docstring says the Telegram layer "calls this on every action
+   * rather than caching" - but no route ever exposed it, so the bot could not.
+   * It cached whatever the redeem response happened to contain and never looked
+   * again.
+   *
+   * That cache goes stale in a way users hit constantly: link Telegram first,
+   * add WhatsApp second, and the bot holds `phone: null` forever. The account
+   * HAS a phone; the bot just never asked again. It then refuses to create
+   * agreements with "this account has no phone number on file", which is
+   * false, and the web page it sends them to shows the number already there.
+   *
+   * Returning `linked: false` for an unknown Telegram id is deliberate - not a
+   * 404. An unlinked account is a normal state the bot renders as "link your
+   * account", not an error, and the two must not be conflated.
+   */
+  app.get('/api/identity/telegram/:telegramUserId', async (request) => {
+    requireIdentityServiceSecret(request);
+    const { telegramUserId } = request.params as { telegramUserId: string };
+    return { data: await lookupTelegramIdentity(telegramUserId) };
   });
 }

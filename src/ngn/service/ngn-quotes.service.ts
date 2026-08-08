@@ -240,7 +240,49 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   // Margin is charged on the GROSS, not on what is left after the provider's
   // cut - otherwise a provider raising its rate would quietly shrink Sivan's
   // revenue, which is the opposite of what a margin is for.
-  const grossForMargin = Number(quote.sourceAmount);
+  const providerDestination = Number(quote.destinationAmount);
+  const rate = Number(quote.rate) || 0;
+
+  /**
+   * No rate means the margin cannot be denominated, and a zero margin is a
+   * silent giveaway rather than an error anyone would notice. This file
+   * already refuses to quote a chain with no gas estimate for the same reason:
+   * refusing is the direction that cannot leak money.
+   */
+  if (input.direction === 'offramp' && rate <= 0) {
+    throw badRequest('We could not price that amount right now. Please try again.');
+  }
+
+  /**
+   * THE MARGIN IS COMPUTED IN NAIRA ON BOTH LEGS, BECAUSE THE PROVIDER FEE IS.
+   *
+   * This used to pass the raw sourceAmount for both directions. On an on-ramp
+   * that is naira and everything agreed. On an OFF-RAMP the source is crypto,
+   * so the margin came back in DOLLARS - and was then subtracted straight off
+   * a naira destination:
+   *
+   *     destination(NGN) - sivanMargin(USD)
+   *
+   * On a real $51.20 Breet quote at 1895, Sivan should have earned NGN 970.24
+   * and took NGN 0.51 instead. The margin was not small, it was denominated in
+   * the wrong currency and shrank by the exchange rate on every single
+   * off-ramp - the same "ran at cost" failure this margin was added to fix.
+   *
+   * It also corrupted what the user was SHOWN, because applySivanMargin adds
+   * providerFeeAmount to the margin to make totalFee. Breet's fee arrives in
+   * naira (0.5% of the naira gross), so totalFee summed NGN 485.12 with USD
+   * 0.512 and effectivePercent read 948.5%.
+   *
+   * Converting here rather than inside applySivanMargin keeps that module a
+   * pure percentage calculator with no view on currency, and keeps the unit
+   * contract it documents - gross and providerFee in the SAME currency - true
+   * for both directions.
+   */
+  const grossForMargin =
+    input.direction === 'onramp'
+      ? Number(quote.sourceAmount)
+      : Number(quote.sourceAmount) * rate;
+
   const margin = await applySivanMargin({
     direction: input.direction,
     grossAmount: grossForMargin,
@@ -251,8 +293,9 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
 
   // The user receives less by exactly Sivan's margin. Recomputed rather than
   // re-quoted so the number shown is the number charged.
-  const providerDestination = Number(quote.destinationAmount);
-  const rate = Number(quote.rate) || 0;
+  //
+  // On-ramp the destination is crypto and the margin is naira, so it converts.
+  // Off-ramp both are naira now, so it subtracts directly.
   const destinationAfterMargin =
     input.direction === 'onramp'
       ? Math.max(providerDestination - (rate > 0 ? margin.sivanMargin / rate : 0), 0)

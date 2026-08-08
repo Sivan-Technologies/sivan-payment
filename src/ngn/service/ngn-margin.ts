@@ -37,11 +37,19 @@ import type { NgnDirection } from '../types/ngn.types.js';
 export interface MarginInput {
   direction: NgnDirection;
   /**
-   * Gross amount the margin is charged on, in the currency the fee is
-   * denominated in. On-ramp: NGN. Off-ramp: the USD value of the crypto.
+   * Gross amount the margin is charged on, in NAIRA on both legs.
+   *
+   * On-ramp the source already IS naira. Off-ramp the source is crypto, so the
+   * caller converts at the quoted rate before calling - see the note in
+   * ngn-quotes.service.ts. This used to read "Off-ramp: the USD value of the
+   * crypto", and that mixed-currency contract is exactly what broke: the
+   * dollar margin it returned was subtracted from a naira payout, so Sivan
+   * earned the margin divided by the exchange rate on every off-ramp.
+   *
+   * Both fields must be the same currency or totalFee below is meaningless.
    */
   grossAmount: number;
-  /** Fee the provider already deducted, same units as grossAmount. */
+  /** Fee the provider already deducted, same units as grossAmount (NGN). */
   providerFeeAmount: number;
   /**
    * NGN per source unit, when the provider's fee is denominated in naira but

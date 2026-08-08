@@ -531,6 +531,24 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/identity/link-whatsapp/redeem')) return false;
   if (url.startsWith('/api/identity/link-telegram/redeem')) return false;
   if (url.startsWith('/api/ace/whatsapp/support')) return false;
+  if (method === 'GET' && url.startsWith('/api/identity/telegram/')) return false;
+
+  /**
+   * Read-only lookups for the chat bots, which hold a service secret and never
+   * a user JWT.
+   *
+   * Exempt from USER auth, NOT unauthenticated: both handlers call
+   * requireIdentityServiceSecret as their first statement, so an anonymous
+   * caller still gets 403. The exemption only says "do not demand a user token
+   * here", because there is no user session in a WhatsApp or Telegram thread to
+   * produce one.
+   *
+   * Kept to reads. Nothing that MOVES money may be exempted this way - the bots'
+   * secret authenticates the bot, not the person, and cannot stand in for a
+   * user's intent to withdraw. See docs/withdrawal-pin.md.
+   */
+  if (method === 'GET' && url.startsWith('/api/users/whatsapp-balance')) return false;
+  if (method === 'GET' && url.startsWith('/api/users/whatsapp-payout-account')) return false;
   if (method === 'POST' && url === '/api/users') return false;
 
   if (url === '/api/customers') return true;
