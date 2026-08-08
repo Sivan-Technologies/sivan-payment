@@ -405,14 +405,56 @@ export async function buildApp() {
       return reply.code(error.statusCode).send({ error: { code: error.code, message: safe, details: error.details } });
     }
 
-    const err = error as Error & { statusCode?: number };
+    const err = error as Error & { statusCode?: number; code?: string; detail?: string; constraint?: string; table?: string; column?: string };
     const statusCode = err.statusCode ?? 500;
     captureError(err, { requestId: request.id, url: request.url, method: request.method });
-    request.log.error(err);
+
+    /**
+     * LOG THE 500 EXPLICITLY, WITH THE FIELDS THAT NAME THE CAUSE.
+     *
+     * `request.log.error(err)` alone was not enough to diagnose the production
+     * signup 500, which survived three deploys and several wrong hypotheses -
+     * including two of mine. Two reasons it stayed invisible:
+     *
+     *   1. captureError() returns early when Sentry is not initialised, so on
+     *      a deployment without SENTRY_DSN the stack went nowhere at all.
+     *   2. Postgres errors carry their meaning in NON-ENUMERABLE fields -
+     *      `code`, `detail`, `constraint`, `table`, `column`. A bare
+     *      log.error(err) prints the message ("null value in column x") and
+     *      drops exactly the fields that say WHICH column and WHICH
+     *      constraint.
+     *
+     * Pulled out by name so the answer is in the Render log even with no
+     * error-tracking configured. This is diagnostics, not a behaviour change:
+     * the response the caller receives is unchanged.
+     */
+    request.log.error({
+      err,
+      url: request.url,
+      method: request.method,
+      requestId: request.id,
+      // Postgres puts the actionable part here, and only here.
+      pgCode: err.code,
+      pgDetail: err.detail,
+      pgConstraint: err.constraint,
+      pgTable: err.table,
+      pgColumn: err.column,
+      stack: err.stack,
+    }, 'unhandled error');
+
+    /**
+     * A CORRELATION ID THE USER CAN QUOTE.
+     *
+     * "Internal server error" gives support nothing to search for. The request
+     * id is already in every log line for this request, so returning it turns
+     * an unreproducible report into a log lookup. It is an opaque id and
+     * leaks nothing about the failure.
+     */
     return reply.code(statusCode).send({
       error: {
         code: statusCode === 500 ? 'internal_server_error' : 'request_error',
-        message: statusCode === 500 ? 'Internal server error' : safeUserMessage(err.message, statusCode)
+        message: statusCode === 500 ? 'Internal server error' : safeUserMessage(err.message, statusCode),
+        requestId: String(request.id)
       }
     });
   });
