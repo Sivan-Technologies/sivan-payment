@@ -516,8 +516,20 @@ function WithdrawalReviewCard({ review, feePercent, ngnFeePercent, loading, onCa
    * known and shown. The Bridge rail creates a liquidation address instead -
    * there is no amount yet, so a percentage is the only honest answer there.
    */
+  /**
+   * The percentage is dropped here too, so the two screens keep matching.
+   *
+   * Leaving it would put them back out of sync - the quote card reads "Sivan
+   * fee ₦1,148 · 0.765 USDC" and this would read the same figures with a
+   * "(1.50%)" the previous screen no longer shows, which is exactly the
+   * mismatch this pair of screens was fixed to remove.
+   *
+   * The Bridge rail still falls back to a bare percentage, because it creates
+   * a liquidation address with no amount in existence - there is no cash
+   * figure to state there.
+   */
   const feeDisplay = review.feeSummary?.ngn
-    ? `${review.feeSummary.ngn}${review.feeSummary.asset ? ` · ${review.feeSummary.asset}` : ''}${review.feeSummary.percent ? ` (${review.feeSummary.percent}%)` : ''}`
+    ? `${review.feeSummary.ngn}${review.feeSummary.asset ? ` · ${review.feeSummary.asset}` : ''}`
     : sivanFeeLabel;
 
   return (
