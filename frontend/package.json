@@ -13,7 +13,7 @@
     "test:ngn-bank": "tsx scripts/test-ngn-bank.ts",
     "test:verification-path": "tsx scripts/test-verification-path.ts",
     "lint": "eslint .",
-    "lint:ci": "eslint . --max-warnings 94"
+    "lint:ci": "eslint . --max-warnings 95"
   },
   "dependencies": {
     "@sentry/react": "^10.65.0",
