@@ -397,7 +397,27 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   }, createdAt: now, updatedAt: now };
   await db.upsertNgnQuoteRecord(record);
   await createAuditLog({ actorType: 'user', actorId: input.userId, action: 'ngn.quote_created', resourceType: 'payments_ngn_quote', resourceId: record.id, metadata: { direction: record.direction, provider: record.provider } });
-  return record;
+  /**
+   * FEES PROMOTED TO A TOP-LEVEL FIELD.
+   *
+   * The breakdown already existed on `metadata.fees`, but nothing in the app
+   * read it - the UI had only `feeAmount`, a single number in the SOURCE
+   * asset, which is how a 0.5107 USDC fee came to be rendered as "₦1".
+   *
+   * Returned alongside the record rather than buried, because a user looking
+   * at a naira payout needs three things this makes possible: what Sivan
+   * charges, what the provider charges, and the rate that produced them.
+   */
+  return {
+    ...record,
+    fees: {
+      providerFee: String(margin.providerFee),
+      providerName: quote.provider,
+      sivanMargin: String(margin.sivanMargin),
+      totalFee: String(margin.totalFee),
+      effectivePercent: String(margin.effectivePercent),
+    },
+  };
 }
 
 export async function getNgnQuote(quoteId: string) {

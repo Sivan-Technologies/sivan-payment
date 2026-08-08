@@ -133,8 +133,15 @@ const form = formRaw
 check('the quote fee is no longer labelled naira while holding USDC',
   !/formatPayoutAmount\(quote\.feeAmount, 'ngn'\)/.test(form),
   'a USDC fee printed with a ₦ sign understates it by the exchange rate');
+/**
+ * Rewritten for the itemised rows. The old assertion matched the single-line
+ * markup this replaced, so it went red on a change that IMPROVED the thing it
+ * was guarding - a test pinned to the shape of the fix rather than to its
+ * meaning.
+ */
 check('and it states the asset it is actually charged in',
-  /quote\.feeAmount[\s\S]{0,80}asset\.toUpperCase\(\)/.test(form));
+  /assetUnit = asset\.toUpperCase\(\)/.test(form) && /\$\{inAsset\}/.test(form),
+  'the fee must name USDC, not imply naira');
 
 const sections = fs.readFileSync('frontend/src/components/AppSections.tsx', 'utf8');
 check('the confirm screen uses the NAIRA rate, not Bridge\'s',
@@ -156,6 +163,58 @@ check('the public controls payload carries the NGN off-ramp rate',
 check('and falls back to the Bridge rate exactly as applySivanMargin does',
   /Number\(feeSettings\?\.ngnOfframpFeePercent \?\? 0\) > 0/.test(controls),
   'zero means not-set on both sides, or the shown rate diverges from the charged one');
+
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 5. the fee is ITEMISED on the quote card ─────────────────');
+
+/**
+ * A single opaque number cannot be checked by the person paying it. The
+ * server already computed providerFee / sivanMargin / totalFee and put them
+ * on metadata.fees, and NOTHING read them - the card had only `feeAmount`,
+ * which is how a USDC value came to be printed with a naira sign.
+ */
+const quoteSrc = fs.readFileSync('src/ngn/service/ngn-quotes.service.ts', 'utf8');
+check('the quote returns the breakdown as a top-level field',
+  /fees: \{[\s\S]{0,200}sivanMargin/.test(quoteSrc),
+  'it existed only on metadata, where the client never looked');
+
+check('the card renders Sivan margin and provider fee separately',
+  /label: 'Sivan fee'/.test(form) && /label: 'Provider fee'/.test(form));
+/**
+ * On the mock provider the provider fee is 0, and a "Provider fee ₦0" row
+ * invites a question for no benefit. It appears only when there is one.
+ */
+check('the provider row is hidden when the provider charges nothing',
+  /Number\(fees\.providerFee\) > 0/.test(form),
+  'a zero row is noise, not transparency');
+check('and a total appears only once there are two things to add up',
+  /label: `Total fee/.test(form));
+
+check('naira comes first, the asset second',
+  /\$\{naira\} · \$\{inAsset\}/.test(form),
+  'every other figure on the card is naira; the fee should not force a conversion');
+
+/**
+ * CAUGHT IN A RENDER, NOT IN THE CODE. A 0.5% provider fee on 51 USDC came
+ * out as "₦382.5", and the payout as "₦75,352.5". Naira has kobo, but a bank
+ * transfer settles in whole naira - a half-kobo cannot exist, and one visible
+ * on the card makes every other number look approximate.
+ */
+check('naira amounts are rounded to whole naira',
+  /Math\.round\(amount \* rate\)/.test(form),
+  'a half-kobo is a quantity that cannot be paid out');
+
+/**
+ * THE ROW MUST RECONCILE. A user subtracts "you receive" from the gross and
+ * expects the fee row to match; if it does not, they conclude money went
+ * missing. 51 USDC at 1,500 = 76,500 gross, 1% Sivan fee = 765.
+ */
+const grossNgn = SEND * RATE;
+const feeNgnShown = Math.round(noProvider.totalFee * RATE);
+const receiveNgn = Math.round((SEND - noProvider.totalFee) * RATE);
+check('gross − receive equals the fee row exactly',
+  grossNgn - receiveNgn === feeNgnShown,
+  `${grossNgn} − ${receiveNgn} = ${grossNgn - receiveNgn}, row shows ${feeNgnShown}`);
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

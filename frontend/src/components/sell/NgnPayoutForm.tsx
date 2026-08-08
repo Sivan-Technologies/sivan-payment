@@ -289,6 +289,70 @@ export function NgnPayoutForm({
   const quoteExpired = Boolean(quote?.expiresAt) && secondsLeft <= 0;
 
   /**
+   * THE FEE ROWS, in the order a user reads them.
+   *
+   * NAIRA FIRST. Every other figure on this card is naira - the amount they
+   * receive, the rate, the limit - so a fee quoted only in USDC forces a
+   * mental multiplication at exactly the moment they are deciding whether the
+   * deal is fair. The asset amount follows in the same cell because that is
+   * the unit actually deducted.
+   *
+   * ITEMISED WHEN THE SERVER SENDS THE BREAKDOWN. "Sivan fee" and "Provider
+   * fee" as separate lines is the difference between a number a user accepts
+   * and a number they can check. Falls back to one "Fee" row when `fees` is
+   * absent, so an older server response still renders correctly rather than
+   * showing nothing.
+   */
+  const feeRows = (() => {
+    if (!quote) return [];
+    const rate = Number(quote.rate) || 0;
+    const assetUnit = asset.toUpperCase();
+    // A fee in the source asset, shown as naira with the asset beside it.
+    const both = (sourceAmount: string | number) => {
+      const amount = Number(sourceAmount) || 0;
+      /**
+       * ROUNDED TO WHOLE NAIRA.
+       *
+       * Caught in a render, not in the code: a 0.5% provider fee on 51 USDC
+       * came out as "₦382.5" and the payout as "₦75,352.5". Naira subdivides
+       * into kobo, but a bank transfer settles in whole naira - a half-kobo is
+       * a quantity that cannot exist, and seeing one makes every other figure
+       * on the card look approximate.
+       *
+       * Math.round, not floor: the fee row must still reconcile against the
+       * amount received, and consistently rounding one direction would make
+       * gross minus fee disagree with the receive line by a naira.
+       */
+      const naira = rate > 0 ? formatPayoutAmount(String(Math.round(amount * rate)), 'ngn') : null;
+      const inAsset = `${trimTrailingZeros(String(amount))} ${assetUnit}`;
+      return naira ? `${naira} · ${inAsset}` : inAsset;
+    };
+
+    const fees = quote.fees;
+    if (!fees) return [{ label: 'Fee', value: both(quote.feeAmount ?? '0') }];
+
+    const rows: Array<{ label: string; value: string }> = [
+      { label: 'Sivan fee', value: both(fees.sivanMargin) },
+    ];
+    /**
+     * The provider line appears only when there IS one. On the mock provider
+     * it is zero, and a "Provider fee ₦0" row invites the question "why is
+     * this here" for no benefit.
+     */
+    if (Number(fees.providerFee) > 0) {
+      rows.push({ label: 'Provider fee', value: both(fees.providerFee) });
+      // The total only earns its place once there are two things to add up.
+      rows.push({
+        label: `Total fee${fees.effectivePercent ? ` (${Number(fees.effectivePercent).toFixed(2)}%)` : ''}`,
+        value: both(fees.totalFee),
+      });
+    } else if (fees.effectivePercent) {
+      rows[0].label = `Sivan fee (${Number(fees.effectivePercent).toFixed(2)}%)`;
+    }
+    return rows;
+  })();
+
+  /**
    * Resolve the account to its registered name.
    *
    * Only fires on a complete 10-digit NUBAN with a bank chosen. Resolution is
@@ -718,30 +782,38 @@ export function NgnPayoutForm({
 
         {error && <div className="warning-box compact">{error}</div>}
 
+        {/* Built here rather than inline so the naira/asset conversion is
+            visible and testable, not buried in three nested ternaries. */}
         {quote && !quoteExpired && (
           <div className="details-box">
             <div className="kv"><span>You send</span><strong>{trimTrailingZeros(quote.sourceAmount)} {asset.toUpperCase()}</strong></div>
             <div className="kv"><span>You receive</span><strong>{formatPayoutAmount(quote.destinationAmount, 'ngn')}</strong></div>
             <div className="kv"><span>Rate</span><strong>1 {asset.toUpperCase()} ≈ {formatPayoutAmount(quote.rate, 'ngn', 2)}</strong></div>
             {/*
-              THE FEE IS IN THE SOURCE ASSET, NOT NAIRA.
- 
-              This rendered `formatPayoutAmount(quote.feeAmount, 'ngn')`, but on
-              an off-ramp quote feeAmount is denominated in what the user SENDS
-              - USDC - because ngn-margin.ts computes it from `grossAmount`,
-              which is the source amount. So a real fee of 0.5107 USDC was
-              printed as "₦1".
- 
-              Reported from the screen: 51 USDC at ₦1,500 shows "YOU RECEIVE
+              THE FEE, ITEMISED - WHO CHARGES WHAT, IN BOTH UNITS.
+
+              This row rendered `formatPayoutAmount(quote.feeAmount, 'ngn')`.
+              On an off-ramp quote feeAmount is denominated in what the user
+              SENDS (USDC), because ngn-margin.ts computes it from the source
+              amount - so a real fee of 0.5107 USDC printed as "₦1".
+
+              Reported from the screen: 51 USDC at ₦1,500 showed "YOU RECEIVE
               ₦75,734" against a ₦76,500 gross, so ₦766 was actually taken -
-              766x what the row claimed. A user comparing the two numbers finds
-              money missing and no explanation for it.
- 
-              Shown in BOTH units: the asset because that is what is charged,
-              and the naira equivalent because that is the column the user is
-              mentally subtracting from.
+              766x what the row claimed. A user who subtracts the two numbers
+              finds money missing and nothing on the page explains it.
+
+              Now shown as naira FIRST, because that is the column the user is
+              doing arithmetic in, with the asset amount beside it because that
+              is the unit actually charged. Split into Sivan's margin and the
+              provider's cut when the server sends the breakdown, so the total
+              can be checked rather than trusted.
             */}
-            <div className="kv"><span>Fee</span><strong>{trimTrailingZeros(quote.feeAmount ?? '0')} {asset.toUpperCase()}{quote.rate ? ` · ${formatPayoutAmount(String(Number(quote.feeAmount ?? 0) * Number(quote.rate)), 'ngn')}` : ''}</strong></div>
+            {feeRows.map((row) => (
+              <div className="kv" key={row.label}>
+                <span>{row.label}</span>
+                <strong>{row.value}</strong>
+              </div>
+            ))}
             {Boolean(quote.expiresAt) && <div className="kv"><span>Expires in</span><strong>{formatCountdown(secondsLeft)}</strong></div>}
           </div>
 

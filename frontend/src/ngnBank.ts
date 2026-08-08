@@ -46,7 +46,26 @@ export interface NgnQuote {
   sourceAmount: string;
   destinationAmount: string;
   rate: string;
+  /** TOTAL fee, in the SOURCE asset (USDC on an off-ramp) - never naira. */
   feeAmount: string;
+  /**
+   * The fee broken into who charges what.
+   *
+   * The screen previously had only `feeAmount` and rendered it with a naira
+   * formatter, so 0.5107 USDC displayed as "₦1" on a withdrawal that actually
+   * cost ₦766. A single opaque number cannot be checked by the person paying
+   * it; these three can.
+   */
+  fees?: {
+    /** The NGN provider's cut (Breet). A cost to Sivan, passed on. */
+    providerFee: string;
+    providerName?: string;
+    /** Sivan's own margin. */
+    sivanMargin: string;
+    totalFee: string;
+    /** Total as a percentage of the amount sent. */
+    effectivePercent: string;
+  };
   expiresAt?: string;
   status?: string;
 }
