@@ -1814,6 +1814,32 @@ export default function App() {
       assetLabel: String(quote.sourceCurrency ?? 'usdc').toUpperCase(),
       networkLabel: ngnNetwork,
       quoteId: quote.id,
+      /**
+       * THE SAME NUMBERS THE QUOTE CARD SHOWED, carried rather than recomputed.
+       *
+       * The confirm screen displayed a bare percentage one step after a card
+       * itemising "Sivan fee ₦765 · 0.51 USDC". Recomputing here would risk
+       * the two screens disagreeing by a rounding step; copying the accepted
+       * quote's own figures cannot.
+       *
+       * Math.round to whole naira for the same reason the quote card does it:
+       * a bank transfer settles in whole naira, so a half-kobo is a quantity
+       * that cannot be paid out.
+       */
+      feeSummary: (() => {
+        const rate = Number(quote.rate) || 0;
+        const totalFee = Number(quote.fees?.totalFee ?? quote.feeAmount ?? 0);
+        if (!totalFee) return undefined;
+        return {
+          ngn: rate > 0 ? `₦${Math.round(totalFee * rate).toLocaleString()}` : undefined,
+          asset: `${Number(totalFee)} ${String(quote.sourceCurrency ?? 'usdc').toUpperCase()}`,
+          percent: quote.fees?.effectivePercent ? Number(quote.fees.effectivePercent).toFixed(2) : undefined,
+        };
+      })(),
+      payoutSummary: {
+        send: `${quote.sourceAmount} ${String(quote.sourceCurrency ?? 'usdc').toUpperCase()}`,
+        receive: quote.destinationAmount ? `₦${Math.round(Number(quote.destinationAmount)).toLocaleString()}` : undefined,
+      },
       bankId: account.bankId,
       accountNumber: account.accountNumber,
       minimumUsd: ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd,

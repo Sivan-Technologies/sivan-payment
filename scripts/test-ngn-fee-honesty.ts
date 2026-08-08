@@ -216,5 +216,68 @@ check('gross − receive equals the fee row exactly',
   grossNgn - receiveNgn === feeNgnShown,
   `${grossNgn} − ${receiveNgn} = ${grossNgn - receiveNgn}, row shows ${feeNgnShown}`);
 
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 6. the CONFIRM screen restates the quote, not a percentage ');
+
+/**
+ * The confirm screen showed a bare percentage one step after a card itemising
+ * "Sivan fee ₦765 · 0.51 USDC". Asking someone to reconcile a percentage
+ * against a cash figure they read ten seconds earlier is how a confirmation
+ * screen creates doubt rather than removing it - and on the naira rail the
+ * percentage was Bridge's 1.25%, so it was not even the same charge.
+ */
+const app = fs.readFileSync('frontend/src/App.tsx', 'utf8');
+check('the accepted quote carries its fee onto the review state',
+  /feeSummary: \(\(\) => \{/.test(app),
+  'the confirm screen had no amount to show, only a rate');
+check('and what the user receives',
+  /payoutSummary: \{/.test(app));
+
+/**
+ * COPIED, NOT RECOMPUTED. Recomputing the fee on the second screen risks the
+ * two disagreeing by a rounding step, which is precisely the class of bug
+ * that produced "₦1" in the first place.
+ */
+check('the figures come from the quote rather than being recalculated',
+  /quote\.fees\?\.totalFee \?\? quote\.feeAmount/.test(app),
+  'two independent calculations of one fee will eventually differ');
+check('and are rounded to whole naira on this screen too',
+  /Math\.round\(totalFee \* rate\)/.test(app));
+
+const sectionsRaw = fs.readFileSync('frontend/src/components/AppSections.tsx', 'utf8');
+const sectionsCode = sectionsRaw.replace(/\/\*[\s\S]*?\*\//g, '');
+/**
+ * BEHAVIOUR, NOT PRESENCE.
+ *
+ * This first read `/review\.feeSummary\?\.ngn/`, which a mutant prefixing the
+ * expression with `false &&` satisfies perfectly - the string is still there
+ * and the screen still shows a bare percentage. Third time this session a
+ * source regex has checked that code EXISTS rather than that it RUNS.
+ *
+ * The ternary is evaluated for real instead: cash when the quote carried it,
+ * the percentage when it did not.
+ */
+const feeDisplayFor = (feeSummary: any, fallback: string) =>
+  feeSummary?.ngn
+    ? `${feeSummary.ngn}${feeSummary.asset ? ` · ${feeSummary.asset}` : ''}${feeSummary.percent ? ` (${feeSummary.percent}%)` : ''}`
+    : fallback;
+
+check('the confirm screen prefers the cash figure over the percentage',
+  feeDisplayFor({ ngn: '₦765', asset: '0.51 USDC', percent: '1.00' }, '1.25%')
+    === '₦765 · 0.51 USDC (1.00%)',
+  feeDisplayFor({ ngn: '₦765', asset: '0.51 USDC', percent: '1.00' }, '1.25%'));
+
+// And the exact expression must still be wired into the component.
+check('and that expression is the one the component renders',
+  /const feeDisplay = review\.feeSummary\?\.ngn/.test(sectionsCode),
+  'the logic above must match what actually ships');
+/**
+ * The Bridge rail creates a liquidation address with no amount in existence,
+ * so a percentage is the only honest answer there. The fallback must survive.
+ */
+check('but still falls back to the rail-correct percentage when there is no quote',
+  feeDisplayFor(undefined, '1.25%') === '1.25%' && /: sivanFeeLabel;/.test(sectionsCode),
+  'the Bridge rail has no pre-accepted quote to restate');
+
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

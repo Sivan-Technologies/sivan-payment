@@ -122,6 +122,28 @@ export type WithdrawalReviewState = {
   quoteId?: string;
   bankId?: string;
   accountNumber?: string;
+  /**
+   * The fee the user was actually quoted, in cash.
+   *
+   * The confirm screen showed only a PERCENTAGE while the quote card behind it
+   * showed naira and USDC. A user who has just read "Sivan fee ₦765 · 0.51
+   * USDC" and then sees "SIVAN FEE 1.25%" has to work out whether those are
+   * the same charge - and on the naira rail they were not, because the
+   * percentage came from the Bridge policy.
+   *
+   * Carried from the accepted quote so the final screen restates the number
+   * the user agreed to rather than recomputing one.
+   */
+  feeSummary?: {
+    /** Naira equivalent, already rounded to whole naira. */
+    ngn?: string;
+    /** The same fee in the source asset. */
+    asset?: string;
+    /** Effective rate, for the label. */
+    percent?: string;
+  };
+  /** What the user receives, restated on the confirm screen. */
+  payoutSummary?: { send?: string; receive?: string };
   /** Shown before confirming, so the floor is visible rather than discovered. */
   minimumUsd?: number;
   estimatedGasUsd?: number;
@@ -487,6 +509,17 @@ function WithdrawalReviewCard({ review, feePercent, ngnFeePercent, loading, onCa
     ? (ngnFeePercent ? `${ngnFeePercent}%` : '—')
     : (feePercent ? `${feePercent}%` : '—');
 
+  /**
+   * Cash when we have it, the rail's percentage when we do not.
+   *
+   * The naira rail accepts a quote before this screen, so the exact fee is
+   * known and shown. The Bridge rail creates a liquidation address instead -
+   * there is no amount yet, so a percentage is the only honest answer there.
+   */
+  const feeDisplay = review.feeSummary?.ngn
+    ? `${review.feeSummary.ngn}${review.feeSummary.asset ? ` · ${review.feeSummary.asset}` : ''}${review.feeSummary.percent ? ` (${review.feeSummary.percent}%)` : ''}`
+    : sivanFeeLabel;
+
   return (
     <article className="deposit-card review-card">
       <p className="eyebrow">Review withdrawal</p>
@@ -529,19 +562,30 @@ function WithdrawalReviewCard({ review, feePercent, ngnFeePercent, loading, onCa
           <Kv label="Estimated network fee" value={formatGasUsd(review.estimatedGasUsd)} />
         )}
         {/*
-            THE NAIRA RAIL HAS ITS OWN RATE, AND THIS SHOWED BRIDGE'S.
- 
-            `feePercent` is feePolicy.percent - the BRIDGE off-ramp policy,
-            1.25%. A naira payout does not go through Bridge; it is priced by
-            ngnOfframpFeePercent, currently 1%. So this screen promised 1.25%
-            while the quote screen behind it charged 1%, and neither matched
-            the 1.5% intended once Breet's own 0.5% is counted.
- 
-            Three numbers for one withdrawal is how a user concludes they are
-            being overcharged. The naira rate is passed in explicitly rather
-            than reusing the Bridge one.
+            THE FEE, RESTATED AS THE CASH THE USER ALREADY AGREED TO.
+
+            Two problems, one row.
+
+            First, `feePercent` is feePolicy.percent - the BRIDGE off-ramp
+            policy, 1.25%. A naira payout does not go through Bridge; it is
+            priced by ngnOfframpFeePercent. So this screen promised 1.25%
+            while the quote screen behind it charged 1%.
+
+            Second, even with the right percentage it was still a BARE
+            PERCENTAGE on the last screen before money moves, one step after a
+            card that itemised "Sivan fee ₦765 · 0.51 USDC". Asking someone to
+            reconcile a percentage against a cash figure they read ten seconds
+            ago is how a confirmation screen creates doubt instead of removing
+            it - and the confirm screen is where doubt is most expensive.
+
+            Now it repeats the quote's own numbers verbatim when they were
+            carried, and falls back to the rail-correct percentage when they
+            were not (the Bridge rail has no pre-accepted quote).
         */}
-        <Kv label="Sivan fee" value={sivanFeeLabel} />
+        <Kv label="Sivan fee" value={feeDisplay} />
+        {review.payoutSummary?.receive && (
+          <Kv label="You receive" value={review.payoutSummary.receive} />
+        )}
       </div>
       {/* WHAT HAPPENS NEXT, SAID PLAINLY BEFORE THEY COMMIT.
  
