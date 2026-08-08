@@ -202,6 +202,24 @@ check('the KYC reason is NOT among them - KYC really is approved',
   !vaBlocked.reasons.some((r: string) => /KYC must be approved/i.test(r)),
   JSON.stringify(vaBlocked.reasons));
 
+/**
+ * ENABLE SUPPLIER PAYOUTS FOR THIS CASE.
+ *
+ * They now ship OFF - a capability control fails closed - so without this the
+ * createSupplier call is refused with "Supplier payments are currently
+ * disabled" and never reaches the terms gate this section is testing. The
+ * failure was honest: the test was relying on a default that has deliberately
+ * changed, not on the behaviour it claims to assert.
+ */
+const { updateSupplierPaymentControls, getSupplierPaymentControls } = await import('../src/suppliers/supplier.service.js');
+await updateSupplierPaymentControls({
+  ...(await getSupplierPaymentControls()),
+  supplierPaymentsEnabled: true,
+  thirdPartySupplierPayoutsEnabled: true,
+  updatedBy: 'terms-gate-test',
+  reason: 'Enable payouts so the TERMS gate is the thing under test here',
+} as any);
+
 const { createSupplier } = await import('../src/suppliers/supplier.service.js');
 const supplierErr = await createSupplier({
   userId: 'usr_t', name: 'Acme Ltd', accountType: 'us', currency: 'usd',

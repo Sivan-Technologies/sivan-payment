@@ -54,8 +54,9 @@ create index if not exists idx_payments_supplier_payments_bridge_transfer on pay
 
 create table if not exists payments_supplier_controls (
   id text primary key default 'global' check (id = 'global'),
-  supplier_payments_enabled boolean not null default true,
-  third_party_supplier_payouts_enabled boolean not null default true,
+  -- OFF by default: this column GRANTS a capability, so it fails closed.
+  supplier_payments_enabled boolean not null default false,
+  third_party_supplier_payouts_enabled boolean not null default false,
   auto_approve_approved_suppliers boolean not null default false,
   require_invoice_for_supplier_payouts boolean not null default true,
   manual_review_threshold numeric(24, 8) not null default 1000,
@@ -72,5 +73,5 @@ create table if not exists payments_supplier_controls (
 );
 
 insert into payments_supplier_controls (id, supplier_payments_enabled, third_party_supplier_payouts_enabled, auto_approve_approved_suppliers, require_invoice_for_supplier_payouts, manual_review_threshold, new_supplier_first_payment_review, new_customer_review_window_days, new_customer_review_threshold, daily_supplier_payout_limit, monthly_supplier_payout_limit, updated_by, reason)
-values ('global', true, true, false, true, 1000, true, 7, 250, 5000, 25000, 'migration', 'Initial beta supplier payout controls')
+values ('global', false, false, false, true, 1000, true, 7, 250, 5000, 25000, 'migration', 'Initial supplier payout controls. Payouts ship OFF and must be enabled deliberately.')
 on conflict (id) do nothing;

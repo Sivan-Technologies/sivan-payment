@@ -3,8 +3,24 @@ import type { CustomerRecord, SupplierControlsRecord, SupplierPaymentRecord, Sup
 import { nowIso } from '../shared/id.js';
 
 export const supplierControlsSchema = z.object({
-  supplierPaymentsEnabled: z.boolean().default(true),
-  thirdPartySupplierPayoutsEnabled: z.boolean().default(true),
+  /**
+   * OFF BY DEFAULT. Deliberately the opposite of every other control here.
+   *
+   * Cross-border supplier payouts are the highest-consequence flow in the
+   * product: money leaves to a third party, in another currency, to a foreign
+   * bank, through a compliance review that cannot be undone by the user. A
+   * flow like that should never be reachable because nobody remembered to
+   * switch it off.
+   *
+   * Default-on is the right shape for a control that RESTRICTS something
+   * (invoice required, review thresholds) - failing closed there is safe.
+   * This one GRANTS a capability, so the safe failure is off: a fresh
+   * deployment, a wiped controls row, or a schema parse that falls back to
+   * defaults now all produce a platform that refuses payouts rather than one
+   * that quietly opens them.
+   */
+  supplierPaymentsEnabled: z.boolean().default(false),
+  thirdPartySupplierPayoutsEnabled: z.boolean().default(false),
   autoApproveApprovedSuppliers: z.boolean().default(false),
   requireInvoiceForSupplierPayouts: z.boolean().default(true),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
@@ -38,8 +54,9 @@ export type SupplierRiskReview = {
 
 export const defaultSupplierControls = (): SupplierControlsRecord => ({
   id: 'global',
-  supplierPaymentsEnabled: true,
-  thirdPartySupplierPayoutsEnabled: true,
+  // See the schema above: this capability fails CLOSED.
+  supplierPaymentsEnabled: false,
+  thirdPartySupplierPayoutsEnabled: false,
   autoApproveApprovedSuppliers: false,
   requireInvoiceForSupplierPayouts: true,
   manualReviewThreshold: 1000,
@@ -51,7 +68,7 @@ export const defaultSupplierControls = (): SupplierControlsRecord => ({
   dailySupplierPayoutLimit: 5000,
   monthlySupplierPayoutLimit: 25000,
   updatedBy: 'system_default',
-  reason: 'Default beta supplier payout controls. Admin can update dynamically.',
+  reason: 'Default supplier payout controls. Payouts ship OFF and must be enabled deliberately in the admin hub.',
   updatedAt: nowIso()
 });
 
