@@ -17,7 +17,7 @@ import type { BridgeOnrampTransfer } from '../bridge/bridge-onramp.types.js';
 export async function createOnrampOrder(input: CreateOnrampOrderInput) {
   await requireOneTimeOnrampEnabled();
   const { customer } = await validateOnrampOrderInput(input);
-  const quote = await calculateOnrampQuote(input.amount);
+  const quote = await calculateOnrampQuote(input.amount, input.destinationCurrency);
   const orderId = id('or');
   const now = nowIso();
   const sourcePaymentRail = input.sourcePaymentRail || defaultOnrampRail(input.sourceCurrency as Currency);

@@ -131,7 +131,10 @@ export async function createWithdrawal(input: z.infer<typeof createWithdrawalSch
   const provider = getOfframpProvider(routingDecision.providerName);
   const customDeveloperFeePercent = await getLiquidationAddressFeePercent({
     destinationCurrency: input.destinationCurrency as Currency,
-    destinationPaymentRail
+    destinationPaymentRail,
+    // USDT costs Bridge +0.10%. The liquidation address fixes its percentage
+    // at creation, so this is the only moment the asset can influence it.
+    sourceCurrency: input.sourceCurrency
   });
 
   const providerAddress = await provider.createLiquidationAddress({ 

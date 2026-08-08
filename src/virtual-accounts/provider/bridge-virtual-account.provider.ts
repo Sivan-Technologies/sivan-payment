@@ -1,6 +1,6 @@
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { idempotencyKey } from '../../shared/id.js';
-import { ensureUserWallet } from '../../wallets/user-wallet.service.js';
+import { ensureSettlementWallet } from '../../wallets/user-wallet.service.js';
 import { assertVirtualAccountFeeConfigured, getVirtualAccountFeeSelection } from '../../offramp/service/fees.service.js';
 import { getVirtualAccountProviderSettings } from '../service/virtual-account-provider-settings.service.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountStatus } from '../types/virtual-account.types.js';
@@ -120,9 +120,20 @@ export class BridgeVirtualAccountProvider implements VirtualAccountProvider {
     }
 
     // Ensure this customer has their own wallet, then settle into it.
-    // ensureUserWallet is idempotent, so re-requesting a virtual account does
+    // ensureSettlementWallet is idempotent, so re-requesting a virtual account does
     // not create a second wallet.
-    const userWallet = await ensureUserWallet(input.userId);
+    /**
+     * ensureSettlementWallet, NOT ensureUserWallet.
+     *
+     * ensureUserWallet returns whatever the ACTIVE provider issues, which on a
+     * Privy deployment is a Privy wallet - and `bridge_wallet_id` only accepts
+     * Bridge's own ids. Every provisioning attempt failed, and the guard in
+     * destinationPayload() below existed only to turn Bridge's opaque
+     * rejection into a readable one. The guard was right; this caller was
+     * wrong. This asks for the wallet Bridge will actually accept and
+     * provisions one if the user does not have it yet.
+     */
+    const userWallet = await ensureSettlementWallet(input.userId);
 
     // Set the fee correctly on the first call. It IS changeable afterwards via
     // PUT /customers/{id}/virtual_accounts/{vaId} (UpdateVirtualAccount accepts

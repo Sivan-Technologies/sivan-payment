@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import type { Currency } from '../../database/types.js';
+import { usdtSurchargePercentFor } from '../../suppliers/supplier-fee-policy.js';
 
 export const feeEstimateSchema = z.object({
   amount: z.string().regex(/^\d+(\.\d{1,6})?$/),
@@ -202,13 +203,42 @@ export async function getVirtualAccountFeeSelection(): Promise<VirtualAccountFee
   };
 }
 
-export async function getLiquidationAddressFeePercent(_input: {
+export async function getLiquidationAddressFeePercent(input: {
   destinationCurrency: Currency;
   destinationPaymentRail: string;
+  /**
+   * The stablecoin being sold. Optional so existing callers keep compiling,
+   * but supplying it is what makes USDT priced correctly.
+   */
+  sourceCurrency?: string;
 }): Promise<string | undefined> {
   const policy = await getDefaultOfframpFeePolicy();
   if (!policy.enabled) return undefined;
-  return policy.percent;
+
+  /**
+   * USDT COSTS BRIDGE 0.10% MORE, AND THAT HAS TO REACH THE USER'S RATE.
+   *
+   * The parameter was `_input` - deliberately unused - because this fee is a
+   * flat percentage fixed when the liquidation address is created. That is
+   * true of the AMOUNT (no amount exists yet, so no floor or tier is possible)
+   * but NOT of the asset: the address is created for one specific source
+   * currency, so the asset is knowable at exactly the moment Bridge wants the
+   * number.
+   *
+   * Without this, a USDT withdrawal was quoted the USDC rate and earned 0.10%
+   * less than the fee table claimed, on every single withdrawal, invisibly.
+   *
+   * PASSED THROUGH TO THE USER rather than absorbed: a surcharge Sivan swallows
+   * is a margin leak that grows with USDT adoption, and the alternative -
+   * quietly making USDT less profitable than USDC - is the kind of thing
+   * nobody notices until the monthly reconciliation.
+   */
+  const surcharge = usdtSurchargePercentFor(input.sourceCurrency);
+  if (surcharge <= 0) return policy.percent;
+
+  const withSurcharge = Number(policy.percent) + surcharge;
+  // Bridge accepts at most 2 decimals on custom_developer_fee_percent.
+  return (Math.round(withSurcharge * 100) / 100).toFixed(2);
 }
 
 export async function estimateFee(input: z.infer<typeof feeEstimateSchema>) {

@@ -65,7 +65,28 @@ async function requireWalletEligibility(userId: string, providerName: string) {
 
   const customer = data.customers.find((item) => item.userId === userId);
 
-  if (providerName === 'bridge') {
+  /**
+   * THE CONDITION WAS MISSING, AND THIS REFUSED EVERYONE.
+   *
+   * This read `if (providerName === 'bridge') {` with no eligibility test at
+   * all, so EVERY Bridge wallet request threw - including for a customer
+   * Bridge had fully approved. The `reason` string below computes a careful
+   * distinction between "no Bridge customer" and "not approved (status: X)"
+   * that nothing ever branched on: the log line always fired and the throw
+   * always followed.
+   *
+   * Found while fixing virtual-account provisioning, which cannot work without
+   * a Bridge wallet: the error said "Bridge has not approved this customer
+   * (status: kyc_approved)" - a message that contradicts itself, and the
+   * clearest possible sign the check had been lost rather than intended.
+   *
+   * The refusal itself is right and stays: a user with no Bridge customer, or
+   * an unapproved one, genuinely cannot be issued a Bridge wallet, and
+   * silently falling back to another custodian is not a request handler's
+   * decision to make. It now only fires when one of those is actually true.
+   */
+  const bridgeCustomerUsable = Boolean(customer?.providerCustomerId) && isApprovedKycStatus(customer?.kycStatus);
+  if (providerName === 'bridge' && !bridgeCustomerUsable) {
     /**
      * A PROVIDER LIMIT THAT NO NIGERIAN-BANK USER CAN EVER CLEAR.
      *
@@ -248,7 +269,142 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
  * Called when provisioning a virtual account so the fiat a user wires converts
  * into THEIR wallet, not a pooled Sivan wallet.
  */
+/**
+ * THE WALLET A VIRTUAL ACCOUNT CAN ACTUALLY SETTLE INTO.
+ *
+ * This used to be `ensureUserWallet(...).providerWalletId`, which returns
+ * whatever the ACTIVE provider issues. On a Privy deployment that is a Privy
+ * wallet id - and Bridge's `bridge_wallet_id` field only accepts Bridge's own
+ * ids. So every virtual-account provisioning attempt on a Privy deployment was
+ * doomed: the request looked well-formed, Bridge rejected it, and
+ * bridge-virtual-account.provider.ts had to grow a guard just to turn the
+ * confusing provider error into a readable one.
+ *
+ * The guard was right and the caller was wrong. Refusing clearly is better
+ * than failing obscurely, but neither issues the wallet that would work.
+ *
+ * A USER MAY HOLD BOTH WALLETS, and that is the agreed custody model:
+ * deposits land in Privy, virtual-account settlement lands in Bridge, and the
+ * user can spend from either. `findUserWallet` matches on CHAIN ALONE, so a
+ * user with a Privy Solana wallet could never acquire a Bridge Solana one -
+ * the row already existed, so provisioning was skipped and the Privy id was
+ * handed to Bridge. This looks for a wallet from the RIGHT ISSUER and
+ * provisions one when it is missing.
+ *
+ * NOT GATED ON THE ACTIVE PROVIDER, deliberately. The active provider decides
+ * where NEW USER wallets come from; this is a settlement requirement of one
+ * specific rail, and tying it to a global toggle is what coupled these two
+ * unrelated decisions in the first place.
+ */
 export async function resolveSettlementWalletId(userId: string, chain: WalletChain = DEFAULT_CHAIN): Promise<string> {
-  const wallet = await ensureUserWallet(userId, chain);
+  const wallet = await ensureSettlementWallet(userId, chain);
   return wallet.providerWalletId;
+}
+
+/**
+ * Find or create this user's BRIDGE wallet on `chain`.
+ *
+ * Separate from ensureUserWallet() because the question is different: that one
+ * asks "does this user have a wallet", this one asks "does this user have a
+ * wallet BRIDGE WILL ACCEPT AS A SETTLEMENT DESTINATION".
+ */
+export async function ensureSettlementWallet(userId: string, chain: WalletChain = DEFAULT_CHAIN): Promise<UserWalletRecord> {
+  const existing = (await db.listUserWallets(userId)).find(
+    (w) => w.chain === chain
+      && String(w.provider ?? '').toLowerCase() === 'bridge'
+      && w.status !== 'closed'
+  );
+  if (existing) return existing;
+
+  /**
+   * FALL BACK TO WHATEVER EXISTS WHEN BRIDGE WALLETS ARE NOT AVAILABLE.
+   *
+   * On a mock or Privy-only deployment there is no Bridge wallet to issue, and
+   * throwing here would break the local test path and every mock journey. The
+   * downstream guard in bridge-virtual-account.provider.ts still refuses a
+   * non-Bridge wallet against the REAL provider, so this cannot leak a wrong
+   * id into a live Bridge request - it only avoids failing before we get
+   * there.
+   */
+  /**
+   * RESPECT MOCK MODE.
+   *
+   * getWalletProvider('bridge') builds a REAL Bridge client regardless of
+   * BRIDGE_MOCK_MODE, so asking for one by name inside a mock harness produced
+   * a genuine Bridge wallet id attached to a mock customer - and the next call
+   * that used it got a live 404 "Customer not found with id mock_cust_...".
+   * Caught by test:supplier-payments immediately after this function started
+   * naming the provider explicitly.
+   *
+   * When the deployment is mocked there is no meaningful Bridge/Privy
+   * distinction to preserve, so the ordinary wallet is the right answer.
+   */
+  if (String(process.env.BRIDGE_MOCK_MODE ?? '').toLowerCase() === 'true') {
+    return ensureUserWallet(userId, chain);
+  }
+
+  let provider;
+  let customer;
+  try {
+    provider = getWalletProvider('bridge');
+    // ELIGIBILITY IS PART OF AVAILABILITY.
+    //
+    // Bridge refuses to issue a wallet for a customer it has not approved for
+    // wallets - a real provider precondition, distinct from KYC approval. That
+    // is not an error in this path; it just means a Bridge settlement wallet
+    // cannot be had right now, which is exactly what the fallback below is
+    // for. Caught rather than propagated so a legitimate "not yet" does not
+    // surface to an operator as "Deposit addresses are temporarily
+    // unavailable".
+    ({ customer } = await requireWalletEligibility(userId, provider.name));
+    if (!provider.supportedChains.includes(chain)) {
+      throw badRequest(`${chain} settlement wallets are not supported by Bridge.`);
+    }
+  } catch {
+    /**
+     * FALL BACK TO THE USER'S ORDINARY WALLET.
+     *
+     * Three reasons this cannot leak a wrong id into a live Bridge request:
+     * the guard in bridge-virtual-account.provider.ts still refuses any
+     * non-Bridge wallet before the API call; a mock deployment never reaches
+     * Bridge at all; and on a real deployment where Bridge HAS approved the
+     * customer, this branch is not taken.
+     *
+     * The alternative - throwing - would make every mock and Privy-only
+     * environment unable to provision a virtual account, which is how the
+     * original bug went unnoticed for so long.
+     */
+    return ensureUserWallet(userId, chain);
+  }
+
+  const providerWallet = await provider.createWallet({
+    userId,
+    providerCustomerId: customer?.providerCustomerId,
+    chain,
+    // Deterministic and DISTINCT from the ensureUserWallet key, so a user who
+    // already has a Privy wallet on this chain does not have the retry
+    // collapse onto it. Same reason that key is deterministic: a retry must
+    // return the existing wallet rather than provision (and bill for) a
+    // second one.
+    idempotencyKey: `sivan-settlement-wallet-${userId}-${chain}`,
+  });
+
+  const now = nowIso();
+  const record: UserWalletRecord = {
+    id: id('uw'),
+    userId,
+    customerId: customer?.id,
+    provider: providerWallet.provider,
+    providerWalletId: providerWallet.providerWalletId,
+    chain: providerWallet.chain,
+    address: providerWallet.address,
+    status: providerWallet.status,
+    custodial: providerWallet.custodyModel === 'custodial',
+    delegatedSigningEnabled: providerWallet.delegatedSigningEnabled ?? false,
+    delegatedSignerId: providerWallet.delegatedSignerId,
+    raw: providerWallet.rawProviderPayload,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return db.insertUserWallet(record);
 }

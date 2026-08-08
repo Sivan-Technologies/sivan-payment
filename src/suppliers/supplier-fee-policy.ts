@@ -661,8 +661,21 @@ export const BRIDGE_USDT_SURCHARGE_PERCENT = 0.1;
  * and not a break-even.
  */
 export function providerCostPercentFor(sourceAsset: string): number {
-  const usdt = String(sourceAsset).toLowerCase() === 'usdt';
-  return BRIDGE_OFFRAMP_COST_PERCENT + (usdt ? BRIDGE_USDT_SURCHARGE_PERCENT : 0);
+  return BRIDGE_OFFRAMP_COST_PERCENT + usdtSurchargePercentFor(sourceAsset);
+}
+
+/**
+ * The USDT surcharge for one asset, or 0.
+ *
+ * Shared by every flow that moves a stablecoin through Bridge - supplier
+ * payouts, off-ramp withdrawals and on-ramp orders - because Bridge's +0.10%
+ * applies to the ASSET, not to the product feature. Off-ramp and on-ramp were
+ * charging the USDC rate for USDT, so every USDT transaction earned 0.10% less
+ * than the fee tables claimed. Thin margin rather than a loss, but a real and
+ * silent one: nothing in the system recorded that USDT cost more.
+ */
+export function usdtSurchargePercentFor(sourceAsset: string | undefined): number {
+  return String(sourceAsset ?? '').toLowerCase() === 'usdt' ? BRIDGE_USDT_SURCHARGE_PERCENT : 0;
 }
 
 /**

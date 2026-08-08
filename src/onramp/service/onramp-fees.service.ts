@@ -1,5 +1,6 @@
 import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import { calculateOnrampFee } from '../../admin/fee-policy.js';
+import { usdtSurchargePercentFor } from '../../suppliers/supplier-fee-policy.js';
 
 export function money(value: number, decimals = 2) {
   return value.toFixed(decimals);
@@ -33,12 +34,17 @@ export async function getOnrampFeePercent(): Promise<string> {
  * Bridge withholds exactly the amount sent, so there is no shortfall for Sivan
  * to absorb and no separate ledger to reconcile.
  */
-export async function calculateOnrampQuote(amount: number) {
+/**
+ * @param destinationCurrency the stablecoin the user is buying. USDT costs
+ * Bridge +0.10% and that has to reach the quote, or every USDT purchase earns
+ * 0.10% less than the fee table claims.
+ */
+export async function calculateOnrampQuote(amount: number, destinationCurrency?: string) {
   const settings = await getAdminFeeSettings();
 
   const result = calculateOnrampFee({
     amount,
-    basePercent: settings.onrampFeePercent,
+    basePercent: settings.onrampFeePercent + usdtSurchargePercentFor(destinationCurrency),
     minimumFeeUsd: settings.onrampMinimumFeeUsd ?? 0,
     tiers: settings.onrampFeeTiers ?? [],
     transactionMinimumUsd: USD_TRANSACTION_MINIMUM,

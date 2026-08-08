@@ -33,6 +33,36 @@ async function main() {
       });
     }
 
+    /**
+     * WALLET ENDPOINTS, so the test exercises the real settlement path.
+     *
+     * A Bridge virtual account settles into a Bridge WALLET, and this fake
+     * server did not implement wallets at all - so the test could only ever
+     * have passed by settling into a wallet from a different provider, which
+     * Bridge rejects. Adding these lets the assertion below ("approval
+     * provisions through Bridge provider") mean what it says.
+     */
+    if (req.method === 'GET' && req.url === `/v0/customers/${bridgeCustomerId}/wallets`) {
+      return json(res, 200, { data: [] });
+    }
+
+    if (req.method === 'POST' && req.url === `/v0/customers/${bridgeCustomerId}/wallets`) {
+      let walletBody = '';
+      req.on('data', (chunk) => walletBody += chunk);
+      req.on('end', () => {
+        const parsed = walletBody ? JSON.parse(walletBody) : {};
+        json(res, 201, {
+          id: 'bridge_wallet_import_test_001',
+          chain: parsed.chain ?? 'solana',
+          address: 'DxkrTSaQiqbM76CYtaBJ3fkJko5yKBm8nvwPgi9FkPQF',
+          status: 'active',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      });
+      return;
+    }
+
     if (req.method === 'POST' && req.url === `/v0/customers/${bridgeCustomerId}/virtual_accounts`) {
       let rawBody = '';
       req.on('data', (chunk) => rawBody += chunk);
@@ -73,6 +103,21 @@ async function main() {
   process.env.VIRTUAL_ACCOUNT_REQUESTS_ENABLED = 'true';
   process.env.VIRTUAL_ACCOUNT_PROVIDER = 'bridge';
   process.env.BRIDGE_VIRTUAL_ACCOUNTS_ENABLED = 'true';
+  /**
+   * WALLET_PROVIDER=bridge, and this was the missing line.
+   *
+   * The test set VIRTUAL_ACCOUNT_PROVIDER=bridge but left WALLET_PROVIDER
+   * unset, so it defaulted to mock/privy. It was therefore asking Bridge to
+   * settle a virtual account into a wallet Bridge did not issue -
+   * `bridge_wallet_id` only accepts Bridge's own ids - which is a genuinely
+   * impossible configuration, not a bug in the code under test.
+   *
+   * The failure was real and correctly reported; the FIXTURE was wrong. A
+   * virtual account that settles to Bridge needs a Bridge settlement wallet,
+   * and now the test says so.
+   */
+  process.env.WALLET_PROVIDER = 'bridge';
+  process.env.BRIDGE_WALLETS_APPROVED = 'true';
   process.env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_CURRENCY = 'usdc';
   process.env.BRIDGE_VIRTUAL_ACCOUNT_DESTINATION_PAYMENT_RAIL = 'base';
 
