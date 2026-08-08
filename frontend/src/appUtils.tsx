@@ -242,7 +242,8 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
       payoutCurrencies: data,
       virtualAccounts: fallbackVirtualAccounts,
       sourceAssets: fallbackSourceAssets,
-      sourceNetworks: fallbackSourceNetworks
+      sourceNetworks: fallbackSourceNetworks,
+      supplierPayoutsEnabled: true
     };
   }
   return {
@@ -250,7 +251,17 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
     payoutCurrencies: data?.payoutCurrencies ?? [],
     virtualAccounts: data?.virtualAccounts ?? fallbackVirtualAccounts,
     sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
-    sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks
+    sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks,
+    /**
+     * DEFAULTS TO TRUE, and the direction matters.
+     *
+     * `?? true` means a failed or stale controls fetch shows the route and
+     * lets the server refuse - annoying but honest. Defaulting to false would
+     * hide a live, working feature every time this endpoint hiccupped, which
+     * is a far worse failure: the user cannot tell "switched off" from
+     * "broken", and neither can support.
+     */
+    supplierPayoutsEnabled: data?.supplierPayoutsEnabled ?? true
   };
 }
 

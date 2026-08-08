@@ -4,6 +4,7 @@ import type { AssetControlRecord, Chain, Currency, CustomerTypeControlRecord, Ne
 import { badRequest } from '../shared/errors.js';
 import { nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
+import { getSupplierPaymentControls } from '../suppliers/supplier.service.js';
 
 export const DEFAULT_CUSTOMER_TYPE_CONTROLS: CustomerTypeControlRecord[] = [
   { customerType: 'individual', enabled: true, label: 'Individual', updatedBy: 'system', updatedAt: nowIso() },
@@ -89,6 +90,21 @@ export interface OfframpControlsResponse {
   virtualAccounts: VirtualAccountControlRecord[];
   sourceAssets: AssetControlRecord[];
   sourceNetworks: NetworkControlRecord[];
+  /**
+   * Whether cross-border supplier payouts are open for business.
+   *
+   * THE SERVER ALREADY REFUSED THESE WHEN DISABLED; THE UI JUST DID NOT KNOW.
+   * `supplierPaymentsEnabled` gated createSupplier and createSupplierPayment
+   * with a 403, but nothing in the customer app ever read it - so turning the
+   * flag off left the entire Pay-supplier route on screen, and a user could
+   * pick a currency, type a supplier's IBAN and their invoice details, and
+   * only then be told the feature is off.
+   *
+   * Exposed here rather than on a new endpoint because this payload is
+   * already fetched on load and already carries exactly this kind of "what is
+   * switched on" answer for assets, networks and payout currencies.
+   */
+  supplierPayoutsEnabled: boolean;
 }
 
 export async function listPaymentControls(): Promise<OfframpControlsResponse> {
@@ -103,6 +119,12 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
    * four callers to one got it to 9.7s; the read itself was the rest.
    */
   const data = await db.readControlTables();
+  /**
+   * Read defensively. Supplier controls live in their own table and a
+   * deployment that has never saved them has no row - which must read as
+   * "enabled", the shipped default, rather than silently hiding the feature.
+   */
+  const supplierControls = await getSupplierPaymentControls().catch(() => null);
   const existingCustomerTypes = data.customerTypeControls ?? [];
   const existingPayouts = data.paymentControls ?? [];
   const existingAssets = data.assetControls ?? [];
@@ -126,6 +148,7 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
       ...defaultControl,
       ...(existingAssets.find((item) => item.asset === defaultControl.asset) ?? {})
     })),
+    supplierPayoutsEnabled: supplierControls ? supplierControls.supplierPaymentsEnabled !== false : true,
     sourceNetworks: DEFAULT_NETWORK_CONTROLS.map((defaultControl) => ({
       ...defaultControl,
       ...(existingNetworks.find((item) => item.network === defaultControl.network) ?? {})

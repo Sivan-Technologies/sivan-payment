@@ -524,6 +524,15 @@ export interface OfframpControls {
   virtualAccounts: VirtualAccountControl[];
   sourceAssets: AssetControl[];
   sourceNetworks: NetworkControl[];
+  /**
+   * Whether cross-border supplier payouts are open.
+   *
+   * Server-owned, and read here so a launch can ship LEAN: an admin turns the
+   * flow off in the hub and the route disappears from the customer app,
+   * rather than staying on screen and failing with a 403 after the user has
+   * typed a supplier's bank details.
+   */
+  supplierPayoutsEnabled: boolean;
 }
 
 
