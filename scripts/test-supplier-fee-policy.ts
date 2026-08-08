@@ -334,11 +334,19 @@ check('a $20 repeat invoice costs 2.5%, not the old 10%',
  * A change that only lowered the floor would make small payouts unprofitable;
  * this asserts the onboarding charge still lands.
  */
-const first50 = quoteSupplierFee(50, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+/**
+ * $150 rather than $50, because the setup charge is now CAPPED at 1.5% of the
+ * payment - a $50 first payment pays only $0.75 of it. This case has to be
+ * above the point where the full charge applies, or it tests the ceiling
+ * instead of the recovery it is meant to assert. Section 12 covers the
+ * capped end.
+ */
+const first150 = quoteSupplierFee(150, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+const repeat150 = quoteSupplierFee(150, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: false });
 check('the FIRST payment to a supplier still recovers the review',
-  first50.fee === '2.25', `${first50.fee} = 0.75 tiered + 1.50 setup`);
+  first150.fee === '3.75', `${first150.fee} = 2.25 tiered + 1.50 setup`);
 check('and the setup charge is itemised, not buried in the fee',
-  first50.newSupplierFee === '1.50', first50.newSupplierFee);
+  first150.newSupplierFee === '1.50', first150.newSupplierFee);
 /**
  * AND IT IS EXCLUDED FROM THE ADVERTISED RATE.
  *
@@ -347,21 +355,21 @@ check('and the setup charge is itemised, not buried in the fee',
  * the user would never pay again. The rate must be the RECURRING one.
  */
 check('the quoted percentage is the recurring rate, excluding setup',
-  Number(first50.effectivePercent) === 1.5
-  && first50.effectivePercent === repeat50.effectivePercent,
-  `first=${first50.effectivePercent}% repeat=${repeat50.effectivePercent}%`);
+  Number(first150.effectivePercent) === 1.5
+  && first150.effectivePercent === repeat150.effectivePercent,
+  `first=${first150.effectivePercent}% repeat=${repeat150.effectivePercent}%`);
 check('the second payment to that supplier drops the charge',
-  Number(repeat50.fee) < Number(first50.fee) && repeat50.newSupplierFee === '0.00',
-  `${first50.fee} -> ${repeat50.fee}`);
+  Number(repeat150.fee) < Number(first150.fee) && repeat150.newSupplierFee === '0.00',
+  `${first150.fee} -> ${repeat150.fee}`);
 
 /**
  * A weekly supplier over a year: the onboarding cost is paid ONCE, not 52
  * times. This is the whole point of the change, stated as the number.
  */
-const yearOld = 52 * 2.00;
-const yearNew = 2.25 + 51 * 0.75;
-check('a weekly $50 supplier pays $40.50/yr instead of $104',
-  Math.abs(yearNew - 40.5) < 0.01 && yearOld === 104, `${yearNew.toFixed(2)} vs ${yearOld.toFixed(2)}`);
+const yearOld = 52 * 2.00;              // old flat $2 floor, every payment
+const yearNew = 1.50 + 51 * 0.75;       // capped setup once, then the real rate
+check('a weekly $50 supplier pays $39.75/yr instead of $104',
+  Math.abs(yearNew - 39.75) < 0.01 && yearOld === 104, `${yearNew.toFixed(2)} vs ${yearOld.toFixed(2)}`);
 
 /**
  * THE SETUP CHARGE IS NOT DISCOUNTED BY VOLUME. A high-volume user onboarding
@@ -559,6 +567,100 @@ const noReason = await grantSupplierVolume({
 } as any).then(() => null).catch((e: Error) => e);
 check('a grant with a throwaway reason is refused',
   noReason instanceof Error, String(noReason));
+
+// ─────────────────────────────────────────────────────────────────────
+console.log('\n── 12. a small FIRST payment is not punished either ─────────');
+
+/**
+ * THE REMAINING SHARP EDGE, and why the obvious fix was rejected.
+ *
+ * A flat $1.50 setup charge is identical for a $50 supplier and a $50,000 one,
+ * so a small first invoice paid 4.5% - a bad first impression at exactly the
+ * moment a new user is deciding whether to trust the product.
+ *
+ * The tempting fix was a threshold: waive setup under $200. It produces
+ *
+ *     $199.99 -> $3.00      $200.01 -> $4.50      +50% across two cents
+ *
+ * which is the SAME CLIFF this file already rejects for the fee bands and
+ * mutation-tests against. Rejecting it for the tiers and accepting it here
+ * would be inconsistency with extra steps, and it is a cliff a user can
+ * actually notice.
+ *
+ * Instead the setup charge is the LOWER of $1.50 and 1.5% of the payment:
+ * continuous everywhere, self-limiting at the small end.
+ */
+const first10 = quoteSupplierFee(10, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+const first50b = quoteSupplierFee(50, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+const first100 = quoteSupplierFee(100, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+
+check('a $50 first payment no longer pays 4.5%',
+  first50b.newSupplierFee === '0.75' && first50b.fee === '1.50',
+  `${first50b.fee} (setup ${first50b.newSupplierFee})`);
+check('and a $100 first payment pays the full setup charge',
+  first100.newSupplierFee === '1.50', first100.newSupplierFee);
+check('above ~$100 the charge is flat, never proportional forever',
+  quoteSupplierFee(5_000, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true }).newSupplierFee === '1.50');
+check('a tiny $10 first payment is capped at 15c of setup, not $1.50',
+  first10.newSupplierFee === '0.15', first10.newSupplierFee);
+
+/**
+ * NO CLIFF, ANYWHERE. Swept across the range a threshold would have broken,
+ * on the FIRST-payment path specifically - the earlier continuity sweep only
+ * covered repeat payments and would not have caught a threshold.
+ */
+let firstInversions = 0;
+let prevFirst = -1;
+for (let amt = 1; amt <= 1_000; amt += 0.37) {
+  const f = Number(quoteSupplierFee(amt, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true }).fee);
+  if (f < prevFirst - 0.001) firstInversions += 1;
+  prevFirst = f;
+}
+check('the FIRST-payment curve never inverts across 2,700 amounts',
+  firstInversions === 0, `${firstInversions} inversion(s)`);
+
+/** The specific boundary a threshold would have broken. */
+const below = quoteSupplierFee(199.99, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+const above = quoteSupplierFee(200.01, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+check('there is no jump at $200, where a threshold would have put one',
+  Number(above.fee) - Number(below.fee) < 0.02,
+  `${below.fee} -> ${above.fee}; a "waive under 200" rule jumped 3.00 -> 4.50`);
+
+/**
+ * THE PROMISE, stated as a test: a first payment never costs more than about
+ * double the ongoing rate. Without the ceiling a $10 first payment was 20%.
+ */
+/**
+ * MEASURED FROM $40, where the setup ceiling stops binding and the $0.50 floor
+ * has stopped dominating.
+ *
+ * Below that the rate is driven by the FLOOR, not by onboarding: a $5 payment
+ * is 11.6% because 50c is the least Sivan will charge for moving money at all,
+ * and it would be 10% on a repeat payment too. That is a property of the floor
+ * and a separate decision - conflating the two here would have hidden which
+ * lever was responsible. Asserted honestly below instead.
+ */
+let worstFirstRate = 0;
+for (let amt = 40; amt <= 2_000; amt += 5) {
+  const q = quoteSupplierFee(amt, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+  worstFirstRate = Math.max(worstFirstRate, (Number(q.fee) / amt) * 100);
+}
+check('no first payment of $40+ is charged more than 3.01% all-in',
+  worstFirstRate <= 3.01, `worst = ${worstFirstRate.toFixed(2)}%`);
+
+/**
+ * AND BELOW $40 THE SETUP CHARGE IS NOT THE CULPRIT. Stated explicitly so a
+ * future reader does not "fix" onboarding when the floor is what binds.
+ */
+const tinyFirst = quoteSupplierFee(5, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: true });
+const tinyRepeat = quoteSupplierFee(5, 0, DEFAULT_SUPPLIER_FEE, { isFirstPaymentToSupplier: false });
+check('at $5 the floor dominates, and onboarding adds under a dime',
+  Number(tinyFirst.fee) - Number(tinyRepeat.fee) < 0.10,
+  `first ${tinyFirst.fee} vs repeat ${tinyRepeat.fee}`);
+
+/** And the ongoing rate is untouched - this changes onboarding, not pricing. */
+check('the recurring rate is unchanged by the ceiling',
+  quoteSupplierFee(600, 0).fee === '8.70' && quoteSupplierFee(50_000, 0).fee === '337.50');
 
 console.log(`\n${fail === 0 ? 'PASS' : 'FAIL'}  ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

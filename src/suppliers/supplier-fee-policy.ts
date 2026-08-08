@@ -148,6 +148,40 @@ export interface SupplierFeeConfig {
    * 0 disables it.
    */
   newSupplierUsd: number;
+  /**
+   * Ceiling on the setup charge, as a percentage of the payment.
+   *
+   * WHY NOT A THRESHOLD ("waive it under $200"). That was the obvious fix and
+   * it is the wrong one: it puts a CLIFF at the boundary -
+   *
+   *     $199.99 -> $3.00      $200.01 -> $4.50      +50% across two cents
+   *
+   * which is precisely the failure this file already rejects for the fee
+   * bands, and mutation-tests against. A cliff in a fee cannot be defended to
+   * the user who lands on the wrong side of it, and rejecting it for the tiers
+   * while accepting it here would just be inconsistency with extra steps.
+   *
+   * Taking the LOWER of a flat charge and a percentage is continuous
+   * everywhere and self-limiting at the small end:
+   *
+   *     $50 first   -> $0.75 setup (of $1.50)   total 3.0%
+   *     $100 first  -> $1.50 setup (full)       total 3.0%
+   *     $1,000      -> $1.50 setup (full)       total 1.65%
+   *
+   * The promise it creates is one sentence: A FIRST PAYMENT TO A NEW SUPPLIER
+   * NEVER COSTS MORE THAN ABOUT DOUBLE THE NORMAL RATE. Set to the first
+   * tier's own percentage so that stays true if the curve is retuned.
+   *
+   * THE UNRECOVERED COST IS DEFERRED, NOT LOST. A $50 first payment recovers
+   * $0.75 of a ~$1.50 review - but onboarding a supplier is the start of a
+   * relationship, and every later invoice to them pays the full rate with no
+   * review cost behind it. Charging the whole review to whoever happens to
+   * send a small first invoice optimises a one-off at the expense of the
+   * relationship.
+   *
+   * 0 disables the ceiling, restoring a flat charge.
+   */
+  newSupplierMaxPercent: number;
 }
 
 export interface SupplierFeeQuote {
@@ -235,6 +269,11 @@ export const DEFAULT_SUPPLIER_FEE: SupplierFeeConfig = {
    * supplier, on the first payment to them.
    */
   newSupplierUsd: 1.5,
+  /**
+   * Matches the first tier's 1.5%, so the "never more than about double on
+   * your first payment" promise holds by construction.
+   */
+  newSupplierMaxPercent: 1.5,
 };
 
 /** The rolling window the volume discount is measured over. */
@@ -380,7 +419,18 @@ export function quoteSupplierFee(
    * one-off cost they have just caused.
    */
   const isFirstPaymentToSupplier = Boolean(options.isFirstPaymentToSupplier);
-  const newSupplierFee = isFirstPaymentToSupplier && net > 0 ? Math.max(0, config.newSupplierUsd) : 0;
+  /**
+   * THE LOWER OF THE FLAT CHARGE AND A PERCENTAGE.
+   *
+   * Continuous everywhere - there is no amount at which this jumps - and it
+   * stops a small first invoice being charged 4.5% for a review it barely
+   * benefits from. See newSupplierMaxPercent for why this is not a threshold.
+   */
+  const maxPercent = Math.max(0, config.newSupplierMaxPercent);
+  const setupCeiling = maxPercent > 0 ? net * (maxPercent / 100) : Infinity;
+  const newSupplierFee = isFirstPaymentToSupplier && net > 0
+    ? Math.min(Math.max(0, config.newSupplierUsd), setupCeiling)
+    : 0;
   fee += newSupplierFee;
 
   /**

@@ -236,6 +236,14 @@ export const feeSettingsSchema = z.object({
    * from $2.00 to $0.50, so a $50 repeat invoice costs 1.5% instead of 4%.
    */
   supplierNewSupplierFeeUsd: z.coerce.number().min(0).max(1_000).default(DEFAULT_SUPPLIER_FEE.newSupplierUsd),
+  /**
+   * Ceiling on the setup charge, as a percentage of the payment.
+   *
+   * Stops a small first invoice paying 4.5% for the review. NOT a threshold
+   * ("waive under $200"), which would put a +50% cliff across two cents at the
+   * boundary - the same failure this codebase rejects for the fee bands.
+   */
+  supplierNewSupplierMaxPercent: z.coerce.number().min(0).max(100).default(DEFAULT_SUPPLIER_FEE.newSupplierMaxPercent),
 
   /**
    * ───── GAS SPONSORSHIP CONTROLS ─────
@@ -323,6 +331,7 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     supplierFeeMinimumUsd: DEFAULT_SUPPLIER_FEE.minimumUsd,
     supplierFeeMaximumUsd: DEFAULT_SUPPLIER_FEE.maximumUsd,
     supplierNewSupplierFeeUsd: DEFAULT_SUPPLIER_FEE.newSupplierUsd,
+    supplierNewSupplierMaxPercent: DEFAULT_SUPPLIER_FEE.newSupplierMaxPercent,
     gasLimitsEnabled: DEFAULT_GAS_CONTROLS.limitsEnabled,
     gasLimitsWarnOnly: DEFAULT_GAS_CONTROLS.warnOnly,
     gasDailyBudgetUsd: DEFAULT_GAS_CONTROLS.dailyBudgetUsd,

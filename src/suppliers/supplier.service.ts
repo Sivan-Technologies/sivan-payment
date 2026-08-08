@@ -335,6 +335,7 @@ export async function getSupplierFeeConfig(): Promise<SupplierFeeConfig> {
       minimumUsd: settings.supplierFeeMinimumUsd ?? DEFAULT_SUPPLIER_FEE.minimumUsd,
       maximumUsd: settings.supplierFeeMaximumUsd ?? DEFAULT_SUPPLIER_FEE.maximumUsd,
       newSupplierUsd: settings.supplierNewSupplierFeeUsd ?? DEFAULT_SUPPLIER_FEE.newSupplierUsd,
+      newSupplierMaxPercent: settings.supplierNewSupplierMaxPercent ?? DEFAULT_SUPPLIER_FEE.newSupplierMaxPercent,
     };
   } catch {
     return DEFAULT_SUPPLIER_FEE;
