@@ -31,6 +31,33 @@
     <link rel="shortcut icon" href="/favicon.ico?v=5" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=5" />
     <title>Sivan</title>
+    <script>
+      /*
+       * Set the theme BEFORE first paint.
+       *
+       * Doing this in a React effect instead means every dark-mode user gets a
+       * white flash on load, because the effect runs after the browser has
+       * already painted the light stylesheet. This is deliberately inline and
+       * synchronous in <head> for that reason.
+       *
+       * Kept in sync with src/hooks/useTheme.ts (same key, same fallbacks).
+       */
+      (function () {
+        try {
+          var pref = localStorage.getItem('sivan.theme');
+          if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
+          var resolved = pref === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : pref;
+          document.documentElement.setAttribute('data-theme', resolved);
+          document.documentElement.style.colorScheme = resolved;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', resolved === 'dark' ? '#07090d' : '#f4f7fb');
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
