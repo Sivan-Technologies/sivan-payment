@@ -2342,7 +2342,21 @@ export default function App() {
           </div>
         </header>
 
-        {toast && <section className={`toast ${toast.type === 'error' ? 'error' : ''}`}>{toast.message}</section>}
+        {toast && (
+          <section
+            className={`toast ${toast.type === 'error' ? 'error' : ''}`}
+            /*
+             * role/aria-live differ by severity on purpose: an error
+             * interrupts ('alert'), a success is announced politely when the
+             * user is idle. Both were previously silent to screen readers.
+             */
+            role={toast.type === 'error' ? 'alert' : 'status'}
+            aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
+          >
+            <span className="toast-icon" aria-hidden="true">{toast.type === 'error' ? '!' : '\u2713'}</span>
+            <span className="toast-body">{toast.message}</span>
+          </section>
+        )}
 
         {(systemStatus.activeIncidents?.length || systemStatus.mode !== 'active') && <IncidentBanner systemStatus={systemStatus} />}
 

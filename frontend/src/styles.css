@@ -2679,3 +2679,289 @@ button.activity-row:focus-visible{outline:2px solid rgba(0, 122, 199, .55);outli
   .theme-toggle { transition: none; }
   .theme-toggle:hover { transform: none; }
 }
+
+/* ===========================================================================
+   INTERACTION POLISH
+   Presentation only. Every block is inside @media (prefers-reduced-motion:
+   no-preference) or neutralised in the reduce block at the end, so the whole
+   layer disappears for users who ask for that. Nothing here changes layout.
+   =========================================================================== */
+
+/* --- Toast -----------------------------------------------------------------
+   Was a static box that blinked in and out with no transition at all. It now
+   springs in from the corner, carries a status rail and an icon so the
+   success/error distinction survives without relying on colour, and shows a
+   countdown so the disappearance is expected rather than startling.
+   The timings match the 4200/4800ms dismiss timers in App.tsx.
+--------------------------------------------------------------------------- */
+.toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  overflow: hidden;
+  padding-left: 20px;
+  backdrop-filter: blur(14px);
+}
+
+/* Status rail: a second, non-colour channel for success vs error. */
+.toast::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--green);
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.toast.error::before { background: var(--danger); }
+
+/* Countdown rail so the dismiss is predictable, not abrupt. */
+.toast::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  transform-origin: 0 50%;
+  background: var(--green);
+  opacity: .45;
+}
+.toast.error::after { background: var(--danger); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .toast {
+    animation: toastIn .42s cubic-bezier(.16, 1, .3, 1) both;
+  }
+  .toast::after {
+    animation: toastCountdown 4.8s linear forwards;
+  }
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translate3d(24px, 12px, 0) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes toastCountdown {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+/* --- Press feedback --------------------------------------------------------
+   The app had four :active rules in 2,600 lines, so most controls felt inert
+   on click -- especially on touch, where there is no hover to confirm a hit.
+
+   NOTE the :hover:active pairs below. A pointer that is pressing is also
+   hovering, so a plain `.card:active` ties on specificity with `.card:hover`
+   and the hover transform wins on source order -- the press was invisible.
+   Matching both states outranks hover outright.
+--------------------------------------------------------------------------- */
+.dashboard-action-card:hover:active,
+.transfer-route-card:hover:active,
+.support-card:hover:active,
+.primary-btn:hover:active,
+.secondary-btn:hover:active,
+.ghost-btn:hover:active,
+.button:hover:active,
+.icon-btn:hover:active,
+.user-pill:hover:active,
+.theme-toggle:hover:active,
+.nav-item:hover:active {
+  transform: translateY(0) scale(.978);
+}
+
+.primary-btn:active,
+.secondary-btn:active,
+.ghost-btn:active,
+.button:active,
+.icon-btn:active,
+.user-pill:active,
+.theme-toggle:active,
+.dashboard-action-card:active,
+.nav-item:active {
+  transform: translateY(0) scale(.978);
+}
+
+/* Disabled controls must not pretend to respond. */
+.primary-btn:disabled:active,
+.secondary-btn:disabled:active,
+.ghost-btn:disabled:active,
+button:disabled:active {
+  transform: none;
+}
+
+/* --- Focus ring ------------------------------------------------------------
+   One consistent ring on every interactive surface, so keyboard users always
+   know where they are. :focus-visible only, so a mouse click never shows it.
+--------------------------------------------------------------------------- */
+.primary-btn:focus-visible,
+.secondary-btn:focus-visible,
+.ghost-btn:focus-visible,
+.icon-btn:focus-visible,
+.user-pill:focus-visible,
+.nav-item:focus-visible,
+.dashboard-action-card:focus-visible,
+.custom-select-trigger:focus-visible,
+a:focus-visible,
+/*
+ * Catch-all. The named list above missed two real stops -- the topbar search
+ * input (which sets outline:none for its own focus ring) and an unclassed
+ * <button>, which fell back to the browser's 1px default. Keyboard users get
+ * one consistent ring everywhere, so the list is no longer allowed to have
+ * holes in it.
+ */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--green-ink);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+/* --- Card lift -------------------------------------------------------------
+   A small, consistent rise on the surfaces that are actually clickable, so
+   "this is a target" is legible before the cursor arrives.
+--------------------------------------------------------------------------- */
+@media (hover: hover) and (pointer: fine) {
+  @media (prefers-reduced-motion: no-preference) {
+    .dashboard-action-card,
+    .transfer-route-card,
+    .support-card,
+    .kpi-card {
+      transition: transform .28s cubic-bezier(.22, 1, .36, 1),
+                  box-shadow .28s ease, border-color .22s ease;
+    }
+    .dashboard-action-card:hover,
+    .transfer-route-card:hover,
+    .support-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--green-ink);
+    }
+    /* The arrow on an action card leans toward the direction of travel. */
+    .dashboard-action-card > :last-child {
+      transition: transform .28s cubic-bezier(.22, 1, .36, 1);
+    }
+    .dashboard-action-card:hover > :last-child {
+      transform: translateX(4px);
+    }
+  }
+}
+
+/* --- Row hover -------------------------------------------------------------
+   Activity and transaction rows are scannable lists; a hover tint makes the
+   row you are reading unambiguous.
+--------------------------------------------------------------------------- */
+@media (hover: hover) and (pointer: fine) {
+  .activity-row,
+  .ops-row,
+  .list-item {
+    transition: background .2s ease, border-color .2s ease;
+  }
+  .activity-row:hover,
+  .list-item:hover {
+    background: rgba(0, 122, 199, .05);
+  }
+}
+
+/* --- Value transitions -----------------------------------------------------
+   Money and status figures change under the user. A brief highlight makes the
+   change noticeable without a layout shift.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .kpi-card strong,
+  .quote-value,
+  .balance-value {
+    transition: color .3s ease;
+  }
+}
+
+/* --- Loading skeletons -----------------------------------------------------
+   There were none: every load was a bare spinner or an empty panel. A
+   skeleton keeps the page's shape while data arrives, so nothing jumps when
+   it lands.
+--------------------------------------------------------------------------- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: rgba(24, 52, 94, .07);
+  color: transparent !important;
+}
+.skeleton > * { visibility: hidden; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg,
+      transparent, rgba(255, 255, 255, .55), transparent);
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+}
+@keyframes shimmer {
+  to { transform: translateX(100%); }
+}
+
+/* --- View transition -------------------------------------------------------
+   Switching sections used to be an instant swap. A short rise gives the
+   change a direction and makes the app feel continuous.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .view.active {
+    animation: viewIn .36s cubic-bezier(.22, 1, .36, 1) both;
+  }
+}
+@keyframes viewIn {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* --- Reduced motion --------------------------------------------------------
+   State without movement. Everything above still communicates, it just stops
+   moving.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .toast::after,
+  .view.active,
+  .skeleton::after { animation: none !important; }
+  .toast::after { transform: scaleX(0); }
+  .primary-btn:active,
+  .secondary-btn:active,
+  .ghost-btn:active,
+  .button:active,
+  .icon-btn:active,
+  .user-pill:active,
+  .theme-toggle:active,
+  .dashboard-action-card:active,
+  .nav-item:active { transform: none; }
+  .dashboard-action-card:hover,
+  .transfer-route-card:hover,
+  .support-card:hover { transform: none; }
+}
+
+/* Toast icon: a second non-colour channel for severity (tick vs bang). */
+.toast-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: rgba(0, 122, 199, .12);
+  color: var(--green-ink);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+.toast.error .toast-icon {
+  background: rgba(196, 55, 43, .12);
+  color: var(--danger);
+}
+.toast-body { line-height: 1.5; overflow-wrap: anywhere; }
