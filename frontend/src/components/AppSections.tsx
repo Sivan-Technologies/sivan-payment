@@ -713,6 +713,34 @@ export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAdd
     </article>;
   }
 
+  /**
+   * A FINISHED ACCOUNT GETS ITS DASHBOARD BACK.
+   *
+   * Once the path is complete and a payout bank exists, this banner repeats
+   * what the rest of the screen already says. Measured on the real dashboard
+   * at Level 2 with a bank attached:
+   *
+   *   "Level 2: Identity verified"  appears 2x  (here + the limit KPI)
+   *   the remaining-naira figure     appears 2x  (here + the limit KPI)
+   *   a "Withdraw" affordance        appears 7x  (here + an action card + nav)
+   *
+   * It cost 125px and pushed the action cards - the things a verified user
+   * actually came to press - down to y=355. A notice that tells you nothing
+   * new is just furniture.
+   *
+   * The nextStep route is NOT lost: the limit KPI already renders
+   * "Raise your limit" from the same summary.nextStep, so the way up stays
+   * one click away for the user who is near their ceiling.
+   *
+   * Deliberately NOT hidden for:
+   *   - verified but NO payout bank -> "Add bank account" is the only prompt
+   *     to attach one, and nothing else on the dashboard asks for it;
+   *   - pending review, unverified, loading -> all still need their say.
+   */
+  if (summary?.pathComplete && summary.hasPayoutAccount) {
+    return null;
+  }
+
   if (summary?.pathComplete) {
     const ngn = summary.allowances.find((item) => item.flow === 'offramp' && item.rail === 'ngn');
     // Headroom in the notice, because "verified" alone does not tell someone
