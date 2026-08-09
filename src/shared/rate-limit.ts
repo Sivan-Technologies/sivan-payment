@@ -62,6 +62,28 @@ export function getRateLimitPolicy(method: string, url: string): RateLimitPolicy
     return { name: 'identity_redeem', windowMs: 60_000, max: env.RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE };
   }
 
+  /**
+   * Withdrawal PIN verification.
+   *
+   * The service already locks an ACCOUNT after a few wrong PINs, which stops
+   * guessing many PINs against one person. It does not stop the opposite
+   * shape: one likely PIN tried against thousands of accounts. Each account
+   * sees a single failure and never locks, so without a limit here that costs
+   * an attacker nothing.
+   *
+   * Keyed on IP, deliberately tighter than the redeem policy above. A real bot
+   * sends one of these when a user is confirming a payment they are already
+   * looking at, so a low ceiling per minute is far above legitimate use and far
+   * below useful for spraying.
+   *
+   * NOT a substitute for the per-account lockout - it is the other half. An
+   * attacker with many IPs defeats this alone; an attacker with one IP defeats
+   * the lockout alone.
+   */
+  if (method === 'POST' && url === '/api/identity/verify-pin') {
+    return { name: 'withdrawal_pin_verify', windowMs: 60_000, max: 10 };
+  }
+
   // OTP endpoints are the most abuse-sensitive.
   if (method === 'POST' && url.startsWith('/api/auth/email/start')) {
     return { name: 'auth_start', windowMs: env.RATE_LIMIT_AUTH_WINDOW_MS, max: env.RATE_LIMIT_AUTH_START_MAX };

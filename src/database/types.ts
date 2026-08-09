@@ -301,6 +301,48 @@ export interface CustomerIdentityLinkRecord {
   updatedAt: string;
 }
 
+/**
+ * The withdrawal PIN, keyed by payment user and by NOTHING ELSE.
+ *
+ * There is deliberately no `channel` field. One person has one PIN and it works
+ * identically from WhatsApp, Telegram and any channel added later. A per-channel
+ * field is exactly the shape that lets a second PIN come into existence, so the
+ * type refuses to offer one.
+ */
+export interface WithdrawalPinRecord {
+  userId: string;
+  pinHash: string;
+  pinSalt: string;
+  algorithm: 'scrypt-sha256-v1';
+  setAt: string;
+  updatedAt: string;
+  /** Chat withdrawals are refused until this time, set when the PIN changes. */
+  withdrawalsHeldUntil?: string;
+  failedAttempts: number;
+  lockedUntil?: string;
+}
+
+/**
+ * Single-use proof that the account owner presented their PIN for ONE specific
+ * withdrawal. Required in addition to the bot's service secret, so that a
+ * leaked secret cannot move money by itself.
+ */
+export interface WithdrawalStepUpTokenRecord {
+  id: string;
+  userId: string;
+  /** Only the hash is stored; the plaintext is returned to the bot once. */
+  tokenHash: string;
+  /** sha256 over the canonical user/currency/amount/destination tuple. */
+  bindingHash: string;
+  channel: string;
+  amountText?: string;
+  currency?: string;
+  destinationRef?: string;
+  usedAt?: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 export interface IdentityPairingTokenRecord {
   id: string;
   paymentUserId: string;
@@ -993,6 +1035,8 @@ export interface DatabaseShape {
   users: UserRecord[];
   customerIdentityLinks: CustomerIdentityLinkRecord[];
   identityPairingTokens: IdentityPairingTokenRecord[];
+  withdrawalPins: WithdrawalPinRecord[];
+  withdrawalStepUpTokens: WithdrawalStepUpTokenRecord[];
   userPreferences: UserPreferencesRecord[];
   userTwoFactor: UserTwoFactorRecord[];
   userTwoFactorRecoveryQuestions: UserTwoFactorRecoveryQuestionRecord[];

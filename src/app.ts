@@ -21,7 +21,36 @@ function safeKeyEquals(provided: string, expected: string): boolean {
 }
 
 export async function buildApp() {
-  const app = Fastify({ logger: { level: env.LOG_LEVEL }, trustProxy: true });
+  const app = Fastify({
+    logger: {
+      level: env.LOG_LEVEL,
+      /**
+       * Fastify's default serializers do not log request bodies, so a
+       * withdrawal PIN is not written to the log as things stand. This exists
+       * so that it stays true.
+       *
+       * The moment anyone adds `log.info({ body })` while debugging a payout -
+       * which is exactly the code path someone debugs - the PIN and the
+       * step-up token would land in plain text in the log aggregator, where
+       * they are readable by anyone with log access and retained for as long
+       * as logs are kept. A second factor that is written down beside the
+       * request it authorises is not a second factor.
+       */
+      redact: {
+        paths: [
+          'pin',
+          'currentPin',
+          'stepUpToken',
+          'req.body.pin',
+          'req.body.currentPin',
+          'req.body.stepUpToken',
+        ],
+        censor: '[redacted]',
+      },
+    },
+    trustProxy: true,
+  });
+
 
   // Refuse to start a production deployment with admin auth disabled, so a
   // missing env var surfaces as a failed deploy rather than an open admin API.
@@ -531,6 +560,33 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/identity/link-whatsapp/redeem')) return false;
   if (url.startsWith('/api/identity/link-telegram/redeem')) return false;
   if (url.startsWith('/api/ace/whatsapp/support')) return false;
+
+  /**
+   * PIN verification for chat withdrawals. The bot holds a service secret and
+   * never a user JWT, so requiring user auth here would reject every call.
+   *
+   * Exempt from USER auth, NOT unauthenticated: the handler's first statement
+   * is requireIdentityServiceSecret, and the PIN itself is what proves the
+   * account owner agreed. Scoped to POST on the exact path - a startsWith over
+   * all methods would exempt anything later added beneath this prefix.
+   */
+  if (method === 'POST' && url === '/api/identity/verify-pin') return false;
+
+  /**
+   * "Does this chat identity have a PIN?" - read-only, and the bot's way of
+   * deciding whether to prompt or to send the user to the web app to create
+   * one.
+   *
+   * POST rather than GET because the identity is a phone number, and phone
+   * numbers do not belong in URLs: they land in access logs, proxy logs and
+   * error trackers. The body keeps them out of all three.
+   *
+   * Same exemption reasoning as verify-pin, and the same limit: it reads, it
+   * cannot move money, and the handler still demands the service secret.
+   */
+  if (method === 'POST' && url === '/api/identity/withdrawal-pin-status') return false;
+
+
   if (method === 'GET' && url.startsWith('/api/identity/telegram/')) return false;
 
   /**
@@ -562,6 +618,18 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/ngn/,
     /^\/api\/support\/tickets/,
     /^\/api\/users\/me\/identity/,
+    /**
+     * Setting or changing the withdrawal PIN. This is the route that
+     * establishes the secret every chat withdrawal is later checked against,
+     * so it demands a real user session and must never appear in the
+     * exemption list above - a service secret is the bot's identity, not the
+     * account owner's, and must not be able to define the owner's PIN.
+     *
+     * Omitting this pattern does not open the route (the handler reads
+     * request.authUser and refuses without it) but it does break it: the
+     * hook never populates authUser, so every set-PIN attempt 403s.
+     */
+    /^\/api\/users\/me\/withdrawal-pin/,
     /^\/api\/support\/attachments/,
     /^\/api\/users\/[^/]+\/onramp-orders/,
     /^\/api\/users\/[^/]+\/ngn-transfers/,

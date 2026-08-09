@@ -21,10 +21,46 @@ import {
   unlinkTelegramIdentity,
   unlinkWhatsappIdentity,
 } from './identity.service.js';
+import {
+  hasWithdrawalPin,
+  setWithdrawalPin,
+  setWithdrawalPinSchema,
+  verifyWithdrawalPin,
+  verifyWithdrawalPinSchema,
+} from './withdrawal-pin.service.js';
 
 function getAuthUserId(request: any) {
   return request.authUser?.sub as string | undefined;
 }
+
+/**
+ * Resolves a chat identity to the account whose PIN governs it.
+ *
+ * Shared deliberately by verify-pin and the status check below. If each route
+ * resolved identities its own way, the two could disagree about which account
+ * a number maps to - and the bot would prompt for one account's PIN while the
+ * server checked another's. Every such prompt would fail, and the failure would
+ * look like the user mistyping.
+ *
+ * Returns undefined rather than throwing for an unknown identity, so callers
+ * can answer "unknown" and "known but wrong" identically. See the note on
+ * account-existence oracles at each call site.
+ */
+async function resolveChatIdentity(channel: string, identity: string): Promise<string | undefined> {
+  if (channel === 'telegram') {
+    const result = await lookupTelegramIdentity(identity);
+    return result.linked ? result.paymentUserId : undefined;
+  }
+  if (channel === 'whatsapp') {
+    const user = await db.findUserByWhatsappNumber(identity.trim());
+    return user?.id;
+  }
+  // An unrecognised channel resolves to nobody. Falling through to a default
+  // lookup here would let a new channel authorise payouts before anyone had
+  // decided it should.
+  return undefined;
+}
+
 
 /**
  * A user may only read their own plan.
@@ -187,4 +223,95 @@ export async function identityRoutes(app: FastifyInstance) {
     const { telegramUserId } = request.params as { telegramUserId: string };
     return { data: await lookupTelegramIdentity(telegramUserId) };
   });
+
+  /**
+   * Set or change the withdrawal PIN. WEB ONLY - note there is no service
+   * secret here, only a user session.
+   *
+   * Deliberately unreachable by the bots. If a chat channel could set the PIN,
+   * an attacker holding that channel would simply set their own, and the PIN
+   * would protect nothing: a second factor that the first factor can mint is
+   * not a second factor.
+   */
+  app.post('/api/users/me/withdrawal-pin', async (request) => {
+    const userId = getAuthUserId(request);
+    if (!userId) throw forbidden('Sign in to set your withdrawal PIN.');
+    const body = parseBody(setWithdrawalPinSchema, request.body);
+    return {
+      data: await setWithdrawalPin(userId, body, {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      }),
+    };
+  });
+
+  /**
+   * Whether a PIN exists, so the UI can offer "set" rather than "change".
+   *
+   * Returns only the boolean - never the hash, salt, or attempt counters.
+   */
+  app.get('/api/users/me/withdrawal-pin', async (request) => {
+    const userId = getAuthUserId(request);
+    if (!userId) throw forbidden('Sign in to view your withdrawal PIN status.');
+    return { data: { hasPin: await hasWithdrawalPin(userId) } };
+  });
+
+  /**
+   * Exchange a PIN for a step-up token bound to one specific payout.
+   *
+   * The bot sends the PIN together with the amount, currency and destination
+   * it is about to execute, and receives a single-use token tied to exactly
+   * those details. The withdrawal endpoint then recomputes the binding from
+   * the request that actually arrives, so a token minted for a small transfer
+   * to a known account cannot be replayed against a larger one elsewhere.
+   *
+   * The service secret proves WHICH SERVICE is calling. It must never prove
+   * that the account owner agreed - that is what the PIN adds, and why a
+   * leaked bot secret alone cannot move money.
+   */
+  app.post('/api/identity/verify-pin', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(verifyWithdrawalPinSchema, request.body);
+    return {
+      data: await verifyWithdrawalPin(
+        body,
+        // Resolving to undefined rather than throwing lets the service answer
+        // an unknown identity and a wrong PIN identically, so this endpoint
+        // cannot be used to discover which numbers hold Sivan accounts.
+        resolveChatIdentity,
+        { ipAddress: request.ip }
+      ),
+    };
+  });
+
+  /**
+   * Does the account behind this chat identity have a PIN?
+   *
+   * The bots need this to choose between prompting for a PIN and sending the
+   * user to the web app to create one. They cannot use GET
+   * /api/users/me/withdrawal-pin: that route reads a user session, and there is
+   * no session in a WhatsApp or Telegram thread.
+   *
+   * An unknown identity returns `hasPin: false` - the SAME answer as a real
+   * account that has not set one. Distinguishing them would turn this into an
+   * account-existence oracle: anyone holding the bot secret could ask "is this
+   * phone number a Sivan user?" for every number they have. The cost of the
+   * merge is small and lands on a path users rarely hit - someone messaging
+   * from an unlinked account is told to set up a PIN, follows the link, and
+   * discovers there is no account to set one on.
+   *
+   * Deliberately returns only the boolean. Never the userId: that would leak
+   * the mapping this endpoint exists to avoid exposing.
+   */
+  app.post('/api/identity/withdrawal-pin-status', async (request) => {
+    requireIdentityServiceSecret(request);
+    // Picked from the verify schema rather than redeclared, so the two routes
+    // parse and normalise channel/identity identically. Declared separately,
+    // one could trim where the other does not, and the bot would be told a PIN
+    // exists for an identity that verify-pin then resolves to nobody.
+    const body = parseBody(verifyWithdrawalPinSchema.pick({ channel: true, identity: true }), request.body);
+    const userId = await resolveChatIdentity(body.channel, body.identity);
+    return { data: { hasPin: userId ? await hasWithdrawalPin(userId) : false } };
+  });
 }
+

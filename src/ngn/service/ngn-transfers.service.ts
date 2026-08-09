@@ -10,7 +10,22 @@ import { getSpendable } from '../../balances/unified-balance.service.js';
 import { getWalletProvider } from '../../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../../wallets/wallet-controls.service.js';
 
-export const acceptNgnQuoteSchema = z.object({ userId: z.string().min(1), quoteId: z.string().min(1) });
+export const acceptNgnQuoteSchema = z.object({
+  userId: z.string().min(1),
+  quoteId: z.string().min(1),
+  /**
+   * Withdrawal PIN authorisation, for the off-ramp direction. Declared here
+   * because parseBody runs this schema and zod DROPS undeclared keys - an
+   * omitted field would not weaken the check, it would break it, discarding a
+   * valid PIN before the guard could see it and refusing an honest withdrawal.
+   *
+   * Optional at the schema level and required by the guard, so an on-ramp is
+   * not forced to carry a field that means nothing to it.
+   */
+  pin: z.string().min(6).max(12).optional(),
+  stepUpToken: z.string().min(1).max(200).optional(),
+});
+
 
 /**
  * Exported so the RECONCILER can rebuild it too.
@@ -110,6 +125,46 @@ export async function acceptNgnQuote(input: z.infer<typeof acceptNgnQuoteSchema>
   if (quote.userId !== input.userId) throw notFound('NGN quote');
   if (quote.status !== 'quote_created') throw badRequest('NGN quote is not available to accept.');
   if (quote.expiresAt <= nowIso()) throw badRequest('NGN quote has expired. Request a new quote.');
+
+  /**
+   * THE SECOND MONEY-OUT RAIL, AND THE ONE EASY TO FORGET.
+   *
+   * Bridge withdrawals are the obvious payout path and the one a reviewer
+   * checks. This is the other: a naira off-ramp moves a user's funds out just
+   * as finally, and for Nigerian users it is the path they actually use. A PIN
+   * enforced only on /api/withdrawals would be bypassed by choosing NGN, so
+   * the control has to live on both or it is theatre.
+   *
+   * OFF-RAMP ONLY. An on-ramp brings money IN - the user is spending naira
+   * they already hold to receive crypto. Challenging that adds friction to a
+   * deposit while protecting nothing, since an attacker gains nothing by
+   * funding someone else's wallet. Direction, not endpoint, decides.
+   *
+   * AFTER the quote is loaded, because a step-up token is bound to a specific
+   * amount and destination and the request body carries only a quoteId. The
+   * quote is where the amount lives, so this is the earliest point the binding
+   * can honestly be checked - and it is still before any provider call.
+   */
+  if (quote.direction === 'offramp') {
+    const { assertWithdrawalAuthorised } = await import('../../identity/withdrawal-pin.guard.js');
+    await assertWithdrawalAuthorised({
+      userId: input.userId,
+      pin: input.pin,
+      stepUpToken: input.stepUpToken,
+      // The crypto leaving the wallet, in its own currency - the same pair the
+      // confirmation message shows the user, so what they approved and what is
+      // bound cannot differ.
+      amount: quote.sourceAmount,
+      currency: quote.sourceCurrency,
+      // The bank account the naira lands in. Falls back to the quote id rather
+      // than to a blank string: an empty destinationRef would make every NGN
+      // payout share one binding, so a token minted for a payout to the
+      // attacker's own account would be valid for a payout to anyone's.
+      destinationRef:
+        (quote.metadata as { accountNumber?: string; bankId?: string } | null)?.accountNumber ?? quote.id,
+    });
+  }
+
 
   /**
    * RE-CHECK THE LIMIT AT ACCEPT, NOT ONLY AT QUOTE.

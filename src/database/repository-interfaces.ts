@@ -10,6 +10,8 @@ import type {
   UserRecord,
   CustomerIdentityLinkRecord,
   IdentityPairingTokenRecord,
+  WithdrawalPinRecord,
+  WithdrawalStepUpTokenRecord,
   LegalAcceptanceRecord,
   WebhookEventRecord,
   WithdrawalRecord,
@@ -33,6 +35,20 @@ export interface UserRepository {
   upsertCustomerIdentityLinkRecord(record: CustomerIdentityLinkRecord): Promise<CustomerIdentityLinkRecord>;
   listIdentityPairingTokens(): Promise<IdentityPairingTokenRecord[]>;
   upsertIdentityPairingTokenRecord(record: IdentityPairingTokenRecord): Promise<IdentityPairingTokenRecord>;
+
+  listWithdrawalPins(): Promise<WithdrawalPinRecord[]>;
+  upsertWithdrawalPinRecord(record: WithdrawalPinRecord): Promise<WithdrawalPinRecord>;
+  listWithdrawalStepUpTokens(): Promise<WithdrawalStepUpTokenRecord[]>;
+  upsertWithdrawalStepUpTokenRecord(record: WithdrawalStepUpTokenRecord): Promise<WithdrawalStepUpTokenRecord>;
+  /**
+   * Marks a step-up token spent, returning false if it was ALREADY spent.
+   *
+   * Separate from the upsert because it must be atomic: two withdrawal requests
+   * carrying the same token must not both be told they may proceed. A
+   * read-then-write in the caller would let both pass between the read and the
+   * write.
+   */
+  consumeWithdrawalStepUpToken(id: string, usedAt: string): Promise<boolean>;
   listVirtualAccountRequests(): Promise<VirtualAccountRequestRecord[]>;
   upsertVirtualAccountRequestRecord(record: VirtualAccountRequestRecord): Promise<VirtualAccountRequestRecord>;
   listVirtualAccounts(): Promise<VirtualAccountRecord[]>;
