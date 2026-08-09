@@ -45,7 +45,9 @@
       (function () {
         try {
           var pref = localStorage.getItem('sivan.theme');
-          if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'system';
+          // Must match DEFAULT_PREFERENCE in src/hooks/useTheme.ts: light is
+          // the brand default; dark is opt-in.
+          if (pref !== 'light' && pref !== 'dark' && pref !== 'system') pref = 'light';
           var resolved = pref === 'system'
             ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
             : pref;

@@ -6,6 +6,18 @@ export type ResolvedTheme = 'light' | 'dark';
 const STORAGE_KEY = 'sivan.theme';
 
 /**
+ * Sivan is a LIGHT product. Light is the brand, so it is the default for a
+ * visitor who has never expressed a preference.
+ *
+ * This used to be 'system', which meant anyone whose laptop was set to dark
+ * -- most people, at night -- got the dark theme on first load and never saw
+ * the brand as designed. Dark is now strictly opt-in via the topbar switch;
+ * once chosen it is remembered and still follows the OS if the user
+ * explicitly picks "system".
+ */
+const DEFAULT_PREFERENCE: ThemePreference = 'light';
+
+/**
  * Read the stored preference.
  *
  * Anything unrecognised (a stale value, a hand-edited key, a half-written
@@ -17,9 +29,9 @@ export function readThemePreference(): ThemePreference {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === 'light' || raw === 'dark' || raw === 'system') return raw;
   } catch {
-    // Private mode / disabled storage. Fall through to the OS setting.
+    // Private mode / disabled storage. Fall through to the default.
   }
-  return 'system';
+  return DEFAULT_PREFERENCE;
 }
 
 export function systemTheme(): ResolvedTheme {

@@ -214,6 +214,46 @@ def emit_rule(sel, changed, indent=''):
 # The generator restores 26f3551 faithfully, including its bugs. These two
 # were measured as real failures and are patched on top rather than by editing
 # the recovered values, so it stays obvious what is restored vs corrected.
+# ---------------------------------------------------------------- rebrand
+# The recovered dark theme is the ORIGINAL teal-green identity. The brand has
+# since moved to the co-founder's blue spec, so every teal literal recovered
+# from 26f3551 is re-lit to blue on the way out.
+#
+# The spec is authored for a WHITE page, so its darker blues cannot be used
+# verbatim as ink here: #007AC7 measures 4.06 and #00639F only 2.90 against
+# the dark surface #0e141b. Brand blue #018EE8 measures 5.32 there, so it
+# becomes the dark-mode ink while the deeper tones stay for FILLS, where a
+# white label sits on top at 4.56+.
+#
+# Brand teal #23CDA9 is KEPT, but only where the original used green to mean
+# "money / success" -- it is 9.15 on the dark surface and is never used as an
+# accent for ordinary UI.
+REBRAND_RGB = {
+    (116, 221, 190): (1, 142, 232),    # teal accent      -> brand blue
+    (76, 216, 200):  (1, 142, 232),
+    (55, 201, 161):  (0, 122, 199),    # gradient partner -> primary blue
+    (52, 211, 153):  (35, 205, 169),   # success          -> brand teal
+}
+REBRAND_HEX = {
+    '#74ddbe': '#018ee8', '#4cd8c8': '#018ee8',
+    '#37c9a1': '#007ac7',
+    '#34d399': '#23cda9', '#3ddba3': '#23cda9',
+    '#2bbd8a': '#16856d', '#22b47f': '#16856d',
+    # Labels that sat ON the old bright-green fill. On a blue fill they invert.
+    '#06130f': '#ffffff',
+    '#06251a': '#07090d',
+}
+
+def rebrand(text):
+    for (r, g, b), (nr, ng, nb) in REBRAND_RGB.items():
+        text = re.sub(r'rgba\(\s*%d,\s*%d,\s*%d,\s*([0-9.]*[0-9])\s*\)' % (r, g, b),
+                      lambda m, t=(nr, ng, nb): 'rgba(%d, %d, %d, %s)' % (t[0], t[1], t[2], m.group(1)),
+                      text)
+    for a, b in REBRAND_HEX.items():
+        text = re.sub(a, b, text, flags=re.I)
+    return text
+
+
 DARK_FIXES = [
     ('.badge.danger',
      [('color', '#081018', False)],
@@ -253,7 +293,7 @@ for sel, decls, why in DARK_FIXES:
     lines.append('}')
 lines.append('')
 
-out = '\n'.join(lines) + '\n'
+out = rebrand('\n'.join(lines) + '\n')
 (pathlib.Path(__file__).resolve().parents[1] / 'src' / 'theme-dark.css').write_text(out)
 
 print('rules compared        :', len(light))

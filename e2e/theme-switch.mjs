@@ -25,10 +25,13 @@ const mk = async (opts = {}) => {
 };
 const theme = (p) => p.evaluate(() => document.documentElement.getAttribute('data-theme'));
 
-// 1. No stored preference -> follow the OS.
+// 1. No stored preference -> LIGHT, regardless of the OS.
+// Sivan is a light product; dark is opt-in. This deliberately does NOT follow
+// prefers-color-scheme, because a dark laptop was hiding the brand on first
+// load. Choosing "system" explicitly still follows the OS (asserted below).
 {
   const { ctx, p } = await mk({ ctx: { colorScheme: 'dark' } });
-  check('no preference + OS dark  -> dark', await theme(p), 'dark');
+  check('no preference + OS dark  -> light (brand default)', await theme(p), 'light');
   await ctx.close();
 }
 {
@@ -98,9 +101,21 @@ const theme = (p) => p.evaluate(() => document.documentElement.getAttribute('dat
   const p = await ctx.newPage();
   await p.goto('http://localhost:5173/dashboard', { waitUntil: 'networkidle' });
   await p.waitForTimeout(800);
-  check('corrupt preference falls back to system', await theme(p), 'light');
+  check('corrupt preference falls back to the default', await theme(p), 'light');
   await ctx.close();
 }
+// 7. Explicitly choosing "system" must still track the OS.
+{
+  const ctx = await b.newContext({ viewport: { width: 1440, height: 950 }, colorScheme: 'dark' });
+  await ctx.route('**/api/**', makeStub());
+  await ctx.addInitScript(() => localStorage.setItem('sivan.theme', 'system'));
+  const p = await ctx.newPage();
+  await p.goto('http://localhost:5173/dashboard', { waitUntil: 'networkidle' });
+  await p.waitForTimeout(800);
+  check('explicit "system" still follows OS dark', await theme(p), 'dark');
+  await ctx.close();
+}
+
 console.log('-'.repeat(68));
 console.log(fails ? fails + ' FAIL' : 'theme switch behaves correctly');
 await b.close();
