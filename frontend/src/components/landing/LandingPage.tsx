@@ -92,12 +92,12 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
         <section className="landing-section" id="business">
           <div className="section-head center"><p className="eyebrow center">Why Sivan</p><h2>Built for people who just want it to work.</h2><p>We've stripped out the complexity and built a regulated-grade ramp experience with everyday users in mind.</p></div>
           <div className="feature-grid-premium">
-            <FeatureCard icon="⚡" title="Fast payouts" body="Create a deposit address quickly and track payout status as provider updates arrive." />
-            <FeatureCard icon="🔒" title="Non-custodial by design" body="Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys." />
-            <FeatureCard icon="🌍" title="Global, multi-currency" body={`Cash out to ${payoutCurrencies}, or straight to a Nigerian bank account in NGN.`} />
-            <FeatureCard icon="▥" title="Transparent pricing" body={`The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.`} />
-            <FeatureCard icon="🛡" title="Built-in compliance" body="Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow." />
-            <FeatureCard icon="☷" title="Clear transaction tracking" body="Users can follow address creation, deposit detection, conversion, payout processing, and completion." />
+            <FeatureCard title="Fast payouts" body="Create a deposit address quickly and track payout status as provider updates arrive." />
+            <FeatureCard title="Non-custodial by design" body="Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys." />
+            <FeatureCard title="Global, multi-currency" body={`Cash out to ${payoutCurrencies}, or straight to a Nigerian bank account in NGN.`} />
+            <FeatureCard title="Transparent pricing" body={`The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.`} />
+            <FeatureCard title="Built-in compliance" body="Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow." />
+            <FeatureCard title="Clear transaction tracking" body="Users can follow address creation, deposit detection, conversion, payout processing, and completion." />
           </div>
         </section>
 
@@ -124,8 +124,8 @@ function StepCard({ n, icon, title, body }: { n: string; icon: string; title: st
   return <article className="step-card-premium"><i>{icon}</i><b>{n}</b><h3>{title}</h3><p>{body}</p></article>;
 }
 
-function FeatureCard({ icon, title, body }: { icon: string; title: string; body: string }) {
-  return <article className="feature-card-premium"><i>{icon}</i><h3>{title}</h3><p>{body}</p></article>;
+function FeatureCard({ title, body }: { title: string; body: string }) {
+  return <article className="feature-card-premium text-only"><h3>{title}</h3><p>{body}</p></article>;
 }
 
 function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () => void; onGetStarted: () => void; onBuy: () => void }) {

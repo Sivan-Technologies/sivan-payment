@@ -2965,3 +2965,13 @@ textarea:focus-visible,
   color: var(--danger);
 }
 .toast-body { line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Feature cards without an icon tile.
+   The 50x50 <i> used to sit at the top of the card. With it gone the title
+   moves to where the eye already expects content, and there is no fixed
+   min-height: the grid equalises row heights, so the tallest card in a row
+   sets the height and the rest follow. A hardcoded value left a band of dead
+   space under the shorter cards and would drift when the copy changes. */
+.feature-card-premium.text-only { min-height: 0; display: grid; align-content: start; gap: 10px; padding: 28px; }
+.feature-card-premium.text-only h3 { margin: 0; }
+.feature-card-premium.text-only p { margin: 0; }

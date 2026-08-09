@@ -810,7 +810,7 @@ export function KycOutcomeNotice({ customer, hasBank, onContinue, onSupport, onR
       : isFailed
         ? { icon: '!', title: customer.customerAction?.title || 'Verification could not be completed', body: customer.customerAction?.message || 'Your secure verification was not approved. This can happen if a document is unclear or details do not match. You can retry or contact support.', primary: verificationLink ? 'Try verification again' : 'Refresh status' }
         : isIncomplete
-          ? { icon: '🔔', title: customer.customerAction?.title || 'Verification needs one more step', body: customer.customerAction?.message || 'Your secure verification is not fully complete yet. Continue the secure verification flow to finish your identity check.', primary: verificationLink ? 'Continue verification' : 'Refresh status' }
+          ? { icon: '◑', title: customer.customerAction?.title || 'Verification needs one more step', body: customer.customerAction?.message || 'Your secure verification is not fully complete yet. Continue the secure verification flow to finish your identity check.', primary: verificationLink ? 'Continue verification' : 'Refresh status' }
           : { icon: '◈', title: customer.customerAction?.title || 'Verify your account', body: customer.customerAction?.message || 'Complete identity verification to unlock payments.', primary: 'Start verification' };
   const primaryAction = isApproved || (!isReview && !isIncomplete && !isFailed) ? onContinue : onRefresh;
   return <article className={`kyc-outcome-notice ${kind}`}>
