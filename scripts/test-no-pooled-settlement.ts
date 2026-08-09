@@ -134,7 +134,24 @@ async function main() {
 
   console.log('\n5. Settlement still resolves per user');
   const provider = read('src/virtual-accounts/provider/bridge-virtual-account.provider.ts');
-  check('the VA provider calls ensureUserWallet', /ensureUserWallet\(input\.userId\)/.test(provider));
+  /**
+   * ensureSettlementWallet, not ensureUserWallet.
+   *
+   * This suite's point is that settlement resolves PER USER and never to a
+   * pooled treasury, and that is unchanged - strengthened, in fact.
+   * ensureUserWallet returns whatever the ACTIVE provider issued, which on a
+   * Privy deployment is a Privy wallet id, and `bridge_wallet_id` only accepts
+   * Bridge's own - so every provisioning attempt failed. The VA path now asks
+   * for that user's BRIDGE wallet specifically and provisions one if absent.
+   *
+   * Still per user: the argument is input.userId either way. The assertion was
+   * pinned to the function NAME rather than to the property it guards.
+   */
+  check('the VA provider resolves that user\'s own settlement wallet',
+    /ensureSettlementWallet\(input\.userId\)/.test(provider),
+    'settlement must resolve per user, never to a shared wallet');
+  check('and it is a BRIDGE wallet, which is what bridge_wallet_id accepts',
+    /ensureSettlementWallet/.test(provider) && !/ensureUserWallet\(input\.userId\)/.test(provider));
   check('destination uses that wallet id', /bridge_wallet_id:\s*wallet\.providerWalletId/.test(provider));
   check('there is no pooled fallback',
     /no pooled fallback/i.test(provider),

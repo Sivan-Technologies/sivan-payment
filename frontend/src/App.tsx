@@ -17,6 +17,8 @@ import type { WithdrawalReviewState } from './components/AppSections';
 import { useNotifications } from './hooks/useNotifications';
 import { useSessionActivity } from './hooks/useAuth';
 import { usePaymentDataLoader } from './hooks/usePaymentData';
+import { useTheme } from './hooks/useTheme';
+import { ThemeToggle } from './components/ThemeToggle';
 
 /**
  * Server-enforced gap between OTP emails, mirrored here so the countdown tells
@@ -42,6 +44,7 @@ const POLL_INTERVAL_MS = 5_000;
 
 export default function App() {
   const [view, setView] = useState<ViewKey>(() => viewFromPath(window.location.pathname));
+  const { resolved: resolvedTheme, toggle: toggleTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -2333,6 +2336,7 @@ export default function App() {
           <button className="mobile-menu-button" aria-label="Open menu" onClick={() => setMobileMenuOpen(true)}><span></span><span></span><span></span></button>
           <h2>{pageTitle}</h2>
           <div className="top-actions app-top-actions">
+            <ThemeToggle resolved={resolvedTheme} onToggle={toggleTheme} />
             {hasUser && <><div className="search-wrap"><span>⌕</span><input placeholder="Search transactions, accounts..." aria-label="Search transactions and accounts" /></div><NotificationCenter open={notificationOpen} notifications={notifications} unreadCount={unreadNotifications.length} dotClass={notificationDotClass} readIds={readNotificationIds} timeNow={timeNow} onToggle={() => { setNotificationOpen((open) => !open); setUserMenuOpen(false); }} onClose={() => setNotificationOpen(false)} onMarkAllRead={markAllNotificationsRead} onOpen={(item) => { markNotificationRead(item.id); if (item.view === 'settings') goToSettingsSecurity(); else if (item.view) goToView(item.view); }} /></>}
             {hasUser ? <div className="user-menu-wrap"><button className="user-pill" onClick={() => setUserMenuOpen((open) => !open)}><UserAvatar user={user} className="avatar-button small-avatar" /><span><strong>{user?.fullName || 'Sivan user'}</strong><small>{user?.email}</small></span></button>{userMenuOpen && <div className="user-menu"><button onClick={() => goToView('settings')}>Settings</button><button onClick={() => logout('Signed out successfully.')}>Sign out</button></div>}</div> : <button className="primary-btn small topbar-signin" onClick={() => goToPublicView('signin')}>Sign in</button>}
           </div>

@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import App from './App';
 import './styles.css';
+// Must come AFTER styles.css: the dark rules are same-specificity overrides
+// scoped to [data-theme="dark"], so they win on source order.
+import './theme-dark.css';
 
 const sentryEnvironment = import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.VITE_APP_ENV || 'development';
 const sentryExplicitlyEnabled = import.meta.env.VITE_ENABLE_SENTRY === 'true';

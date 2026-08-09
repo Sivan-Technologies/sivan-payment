@@ -88,7 +88,12 @@ export function SupplierPaymentConfirm({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel, submitting]);
 
-  const amount = Number(details.amount || 0);
+  /*
+   * `amount` removed: it held the amount TYPED, and every figure on this
+   * dialog now derives from `gross` (typed + fee) because the supplier fee is
+   * added rather than deducted. Keeping it was a second, subtly different
+   * notion of "the amount" sitting one line above the correct one.
+   */
   /**
    * THE TOTAL DEBITED IS THE GROSS, not the amount typed.
    *
