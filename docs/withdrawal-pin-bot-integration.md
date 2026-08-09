@@ -1,11 +1,43 @@
 # Withdrawal PIN — bot integration spec
 
-Status: **backend done and verified. Bot PIN prompts are BLOCKED — and should stay blocked.
-Do not implement §2 yet. Read the blocker first.**
+Status: **backend done, and now proven against a live server. Bot PIN prompts are BLOCKED —
+and should stay blocked. Do not implement §2 yet. Read the blocker first.**
 
 The backend (migration 051, `withdrawal-pin.service.ts`, routes, `app.ts` auth wiring) is
 complete: 22/22 on JSON, 17/17 on Postgres. Nothing enforces the PIN yet, so production
 behaviour is unchanged today.
+
+Enforcement was additionally exercised end-to-end on 2026-08-09 against a running API with
+`WITHDRAWAL_PIN_ENFORCED=true` — both rails, real quote, real transfer, replay and binding
+attacks. Evidence: `docs/withdrawal-pin-validation-2026-08-09.md`.
+
+---
+
+## ⚠️ READ THIS BEFORE BRANCHING ON AN ERROR CODE
+
+The actionable code is at **`error.details.code`**, not `error.code`. `error.code` carries
+only the HTTP class:
+
+```json
+{"error":{"code":"bad_request",
+          "message":"Set a withdrawal PIN before you withdraw.",
+          "details":{"code":"PIN_NOT_SET"}}}
+```
+
+A client reading `error.code` gets `bad_request` for both `PIN_NOT_SET` and `PIN_REQUIRED`
+and cannot tell "send them to Settings" from "ask for the PIN" — the one distinction the
+two codes exist to draw. The bug is silent: both branches work, both do the wrong thing for
+half of users. It cost two full test runs and five false failures here before it was spotted,
+against backend code that was behaving correctly the whole time.
+
+| `details.code` | HTTP | What the user should be told |
+|---|---|---|
+| `PIN_NOT_SET` | 400 | No PIN exists — send them to Settings → Security |
+| `PIN_REQUIRED` | 400 | They have a PIN — prompt for it |
+| `PIN_INVALID` | 403 | Wrong PIN — let them retry |
+| `PIN_LOCKED` | 403/429 | Too many attempts — show the wait, do not invite a retry |
+| `PIN_BINDING_UNAVAILABLE` | 400 | A step-up token arrived without amount/currency/destination; the caller must send all three |
+
 
 ---
 
