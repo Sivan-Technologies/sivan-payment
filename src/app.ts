@@ -590,6 +590,27 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (method === 'GET' && url.startsWith('/api/identity/telegram/')) return false;
 
   /**
+   * Disconnecting a Telegram account from chat.
+   *
+   * A WRITE, so it does not belong with the read-only exemptions below and is
+   * matched narrowly - the path must both start with the Telegram namespace AND
+   * end in /unlink, so this can never widen to cover a future POST under the
+   * same prefix.
+   *
+   * Exempt for the same reason as the lookup: there is no user session in a
+   * Telegram thread. The handler demands the service secret, and the Telegram
+   * id in the path is the id the webhook signed, so the bot can only unlink the
+   * account that asked.
+   *
+   * Permitted despite the "reads only" rule below because it moves NO money and
+   * grants NO access: it REVOKES the chat channel's own reach into an account.
+   * The failure mode of getting it wrong is a user who must re-link, not a user
+   * whose funds moved.
+   */
+  if (method === 'POST' && url.startsWith('/api/identity/telegram/') && url.endsWith('/unlink')) return false;
+
+
+  /**
    * Read-only lookups for the chat bots, which hold a service secret and never
    * a user JWT.
    *

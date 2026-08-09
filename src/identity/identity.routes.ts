@@ -225,6 +225,45 @@ export async function identityRoutes(app: FastifyInstance) {
   });
 
   /**
+   * Disconnect this Telegram account from its Sivan identity, from chat.
+   *
+   * Unlinking already existed for the WEB session (unlink-telegram above, which
+   * reads the signed-in user). Chat had no equivalent, so the only way to undo
+   * a link made in Telegram was to open the dashboard and sign in - which a
+   * user who linked the WRONG account cannot necessarily do, because the point
+   * is they are holding the wrong credentials.
+   *
+   * The Telegram id comes from `message.from.id` on a signed webhook, so the
+   * bot knows WHICH account is asking; the service secret proves the caller is
+   * the bot. Together those are the same two facts the lookup route above
+   * already relies on. It resolves the id to its own user and unlinks only
+   * that - an id cannot name another account, so this cannot be turned into a
+   * way to unlink someone else.
+   *
+   * Idempotent by design: unlinking something already unlinked answers
+   * `{ linked: false }` rather than failing. A double tap on a Telegram button
+   * is normal and must not produce an error.
+   *
+   * Money is deliberately NOT touched. Unlinking ends the chat channel's access
+   * to the account; the funds, the wallets and the web login are untouched and
+   * the copy in the bot says so.
+   */
+  app.post('/api/identity/telegram/:telegramUserId/unlink', async (request) => {
+    requireIdentityServiceSecret(request);
+    const { telegramUserId } = request.params as { telegramUserId: string };
+
+    const identity = await lookupTelegramIdentity(telegramUserId);
+    if (!identity.linked) return { data: { linked: false as const } };
+
+    await unlinkTelegramIdentity(identity.paymentUserId, {
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+    return { data: { linked: false as const, unlinked: true as const } };
+  });
+
+
+  /**
    * Set or change the withdrawal PIN. WEB ONLY - note there is no service
    * secret here, only a user session.
    *

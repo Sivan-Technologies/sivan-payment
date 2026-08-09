@@ -43,6 +43,23 @@ export async function balanceRoutes(app: FastifyInstance) {
    * that list every asset. Returning only the flat shape made the Telegram
    * balance card render "Nothing held yet" for users who did hold funds,
    * because it reads `data.balances`.
+   *
+   * READS THE UNIFIED BALANCE, NOT THE LEDGER. This called getUserBalance,
+   * which is the LEDGER journal - and the ledger is credited from exactly two
+   * places (Bridge virtual-account settlements and admin adjustments). NOTHING
+   * credits it when crypto lands in a user's own wallet, so an on-chain deposit
+   * was money the chat channels believed did not exist.
+   *
+   * The symptom was reported from a live account: the web dashboard showed a
+   * funded balance and an NGN withdrawal it would happily quote, while Telegram
+   * said "Balance: 0.00 USDC" for the same user - and because the withdraw gate
+   * reads this same figure, cash out refused with "there is nothing to
+   * withdraw". Two screens disagreeing about someone's money is the worst
+   * possible bug in a payments product.
+   *
+   * unified-balance.service.ts is the single answer to "how much do I have",
+   * and the dashboard already reads it via /balance/unified. Pointing chat at
+   * it makes every surface agree by construction rather than by coincidence.
    */
   app.get('/api/users/whatsapp-balance', async (request, reply) => {
     requireIdentityServiceSecret(request as any);
@@ -50,23 +67,53 @@ export async function balanceRoutes(app: FastifyInstance) {
     if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
     const user = await findUserByChannelPhone(whatsapp);
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
-    const balance = await getUserBalance(user.id);
-    const usdcEntry = balance.balances.find((b: any) => b.asset === 'usdc') ?? balance.balances[0];
+
+    const unified = await getUnifiedBalance(user.id);
+
+    /**
+     * A FAILED CHAIN READ MUST NOT LEAVE AS A CONFIDENT ZERO.
+     *
+     * The bots have no field for "we could not check": they read a number and
+     * show it. So when the chain is unreadable and the ledger holds nothing,
+     * the honest figure is not 0 - it is unknown - and the only way to say so
+     * over this wire is to fail. 503 lands in the bots' existing "temporarily
+     * unreachable, nothing has changed" branch, which is true and actionable,
+     * instead of telling a funded user their balance is empty.
+     */
+    const unreadable = unified.balances.length
+      ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
+      : // NO ASSET ROWS AT ALL is the subtler half of the same problem. Rows are
+        // built from the chain read plus the ledger, so a wallet whose read
+        // failed contributes nothing; if the ledger is also empty, `balances` is
+        // `[]` and a length-guarded check would wave it through as zero. Here
+        // "empty" is only trustworthy when every wallet actually answered.
+        unified.wallets.some((w) => w.balancesUnavailable);
+    if (unreadable) {
+
+      return reply.code(503).send({
+        error: { message: 'Could not reach the network to read this balance. Nothing has changed.' },
+      });
+    }
+
+    const usdcEntry = unified.balances.find((b) => b.asset === 'usdc') ?? unified.balances[0];
     return {
       data: {
         userId: user.id,
         asset: usdcEntry?.asset ?? 'usdc',
-        available: Number(usdcEntry?.available ?? 0),
+        // `spendable` is chain + credited - held: what the user may actually
+        // move right now, which is the question both bots are really asking.
+        available: Number(usdcEntry?.spendable ?? 0),
         pending: Number(usdcEntry?.pending ?? 0),
-        balances: (balance.balances ?? []).map((b: any) => ({
+        balances: unified.balances.map((b) => ({
           asset: b.asset,
-          amount: Number(b.available ?? 0),
-          available: Number(b.available ?? 0),
-          pending: Number(b.pending ?? 0),
+          amount: Number(b.spendable),
+          available: Number(b.spendable),
+          pending: Number(b.pending),
         })),
       }
     };
   });
+
 
   /**
    * Does this chat user have somewhere to be paid out to?
