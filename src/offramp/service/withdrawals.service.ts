@@ -15,7 +15,26 @@ import { requireCustomerTermsFresh } from '../../customers/customer-terms.js';
 export const createWithdrawalSchema = z.object({
   userId: z.string().min(1),
   externalAccountId: z.string().min(1),
+
+  /**
+   * Withdrawal PIN authorisation. DECLARED HERE OR IT DOES NOT EXIST.
+   *
+   * parseBody runs this schema, and zod strips keys it does not know about.
+   * Leaving these undeclared would not merely fail to enforce the PIN - it
+   * would delete it from the request before the guard ever saw it, so a
+   * correctly-typed PIN from a correctly-built client would read as "no PIN
+   * supplied" and the withdrawal would be refused. Silent, and undebuggable
+   * from the client side.
+   *
+   * Exactly one is expected: `pin` from the web, where verification and
+   * execution are the same request; `stepUpToken` from a chat channel, where
+   * the PIN was verified moments earlier and must not cross the bot again.
+   */
+  pin: z.string().min(6).max(12).optional(),
+  stepUpToken: z.string().min(1).max(200).optional(),
+
   sourceCurrency: z.enum(['usdc', 'usdt']).default('usdc'),
+
   sourceChain: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'optimism', 'avalanche_c_chain']).default('ethereum'),
   destinationCurrency: z.enum(['usd', 'gbp', 'eur']),
   destinationPaymentRail: z.string().optional(),
@@ -52,7 +71,36 @@ export const createWithdrawalSchema = z.object({
 });
 
 export async function createWithdrawal(input: z.infer<typeof createWithdrawalSchema>) {
+  /**
+   * THE PIN IS CHECKED HERE, IN THE SERVICE, NOT IN THE ROUTE.
+   *
+   * A route-level check guards one door. This function is the only way a
+   * Bridge withdrawal comes into existence, so checking here means a second
+   * route added later - an admin tool, a batch job, a new bot endpoint -
+   * cannot reach the money-moving path without passing the same gate. The
+   * author of that future route does not have to know this control exists,
+   * which is the only kind of control that survives a codebase growing.
+   *
+   * FIRST, before any provider call. Everything below this line either costs
+   * money, creates state at Bridge, or tells the user something is under way.
+   *
+   * Currently a no-op unless WITHDRAWAL_PIN_ENFORCED is on - see the guard.
+   */
+  const { assertWithdrawalAuthorised } = await import('../../identity/withdrawal-pin.guard.js');
+  await assertWithdrawalAuthorised({
+    userId: input.userId,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+    amount: input.sourceAmount === undefined ? undefined : String(input.sourceAmount),
+    currency: input.destinationCurrency,
+    // The external account IS the destination: it is the bank account the
+    // money lands in, and it is what a token must be bound to so that a
+    // confirmation for one payee cannot be replayed against another.
+    destinationRef: input.externalAccountId,
+  });
+
   await requireCurrencyEnabled(input.destinationCurrency);
+
   await requireSourceAssetEnabled(input.sourceCurrency);
   await requireSourceNetworkEnabled(input.sourceChain as Chain);
   // Asset and network are enabled independently, so also confirm the token

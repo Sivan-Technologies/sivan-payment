@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord} from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord} from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -15,6 +15,8 @@ const emptyDb = (): DatabaseShape => ({
   users: [],
   customerIdentityLinks: [],
   identityPairingTokens: [],
+  withdrawalPins: [],
+  withdrawalStepUpTokens: [],
   userPreferences: [],
   userTwoFactor: [],
   userTwoFactorRecoveryQuestions: [],
@@ -510,6 +512,57 @@ export class JsonDatabase {
       if (index >= 0) data.identityPairingTokens[index] = record;
       else data.identityPairingTokens.push(record);
       return record;
+    });
+  }
+
+  async listWithdrawalPins(): Promise<WithdrawalPinRecord[]> {
+    const data = await this.read();
+    return data.withdrawalPins ?? [];
+  }
+
+  /** Keyed by userId, mirroring the primary key in Postgres: one PIN per
+   *  person, shared by every channel they have linked. */
+  async upsertWithdrawalPinRecord(record: WithdrawalPinRecord) {
+    return this.mutate((data) => {
+      data.withdrawalPins = data.withdrawalPins ?? [];
+      const index = data.withdrawalPins.findIndex((item) => item.userId === record.userId);
+      if (index >= 0) data.withdrawalPins[index] = record;
+      else data.withdrawalPins.push(record);
+      return record;
+    });
+  }
+
+  async listWithdrawalStepUpTokens(): Promise<WithdrawalStepUpTokenRecord[]> {
+    const data = await this.read();
+    return data.withdrawalStepUpTokens ?? [];
+  }
+
+  async upsertWithdrawalStepUpTokenRecord(record: WithdrawalStepUpTokenRecord) {
+    return this.mutate((data) => {
+      data.withdrawalStepUpTokens = data.withdrawalStepUpTokens ?? [];
+      const index = data.withdrawalStepUpTokens.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.withdrawalStepUpTokens[index] = record;
+      else data.withdrawalStepUpTokens.push(record);
+      return record;
+    });
+  }
+
+  /**
+   * Claims the token, returning false if it was already spent.
+   *
+   * The check and the write happen inside a single `mutate`, which serialises
+   * against other writers the same way the Postgres conditional update does.
+   * Reading the row first and writing it afterwards would leave a window in
+   * which two withdrawals both saw an unused token.
+   */
+  async consumeWithdrawalStepUpToken(id: string, usedAt: string) {
+    return this.mutate((data) => {
+      data.withdrawalStepUpTokens = data.withdrawalStepUpTokens ?? [];
+      const index = data.withdrawalStepUpTokens.findIndex((item) => item.id === id);
+      if (index < 0) return false;
+      if (data.withdrawalStepUpTokens[index].usedAt) return false;
+      data.withdrawalStepUpTokens[index] = { ...data.withdrawalStepUpTokens[index], usedAt };
+      return true;
     });
   }
 

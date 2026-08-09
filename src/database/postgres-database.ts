@@ -49,7 +49,9 @@ import type {
   LegalAcceptanceRecord,
   TransactionReferenceRecord,
   CustomerIdentityLinkRecord,
-  IdentityPairingTokenRecord
+  IdentityPairingTokenRecord,
+  WithdrawalPinRecord,
+  WithdrawalStepUpTokenRecord
 } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -236,6 +238,13 @@ export class PostgresDatabase {
       const aceSupportResolutions = await optionalQuery(client, 'select * from ace_support_resolutions order by created_at asc');
       const customerIdentityLinks = await optionalQuery(client, 'select * from customer_identity_links order by created_at asc');
       const identityPairingTokens = await optionalQuery(client, 'select * from identity_pairing_tokens order by created_at asc');
+      // Queried rather than stubbed to []. An empty list here would read as
+      // "this user has no PIN", and the verify path answers NO_PIN_SET to that
+      // - telling a user to go and set a PIN they already have, and skipping
+      // the check meant to stop a payout. See ngnIdentityVerifications below
+      // for the one place a stub is safe, because nothing authorises on it.
+      const withdrawalPins = await optionalQuery(client, 'select * from withdrawal_pins order by set_at asc');
+      const withdrawalStepUpTokens = await optionalQuery(client, 'select * from withdrawal_step_up_tokens order by created_at asc');
       const virtualAccountRequests = await optionalQuery(client, 'select * from payments_virtual_account_requests order by created_at asc');
       const virtualAccounts = await optionalQuery(client, 'select * from payments_virtual_accounts order by created_at asc');
       const virtualAccountEvents = await optionalQuery(client, 'select * from payments_virtual_account_events order by created_at asc');
@@ -265,6 +274,8 @@ export class PostgresDatabase {
         users: users.rows.map(mapUser),
         customerIdentityLinks: customerIdentityLinks.rows.map(mapCustomerIdentityLink),
         identityPairingTokens: identityPairingTokens.rows.map(mapIdentityPairingToken),
+        withdrawalPins: withdrawalPins.rows.map(mapWithdrawalPin),
+        withdrawalStepUpTokens: withdrawalStepUpTokens.rows.map(mapWithdrawalStepUpToken),
         virtualAccountRequests: virtualAccountRequests.rows.map(mapVirtualAccountRequest),
         virtualAccounts: virtualAccounts.rows.map(mapVirtualAccount),
         virtualAccountEvents: virtualAccountEvents.rows.map(mapVirtualAccountEvent),
@@ -1221,6 +1232,55 @@ export class PostgresDatabase {
   async upsertIdentityPairingTokenRecord(record: IdentityPairingTokenRecord) {
     const client = await this.pool.connect();
     try { await upsertIdentityPairingToken(client, record); return record; } finally { client.release(); }
+  }
+
+  async listWithdrawalPins(): Promise<WithdrawalPinRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, 'select * from withdrawal_pins order by set_at asc');
+      return result.rows.map(mapWithdrawalPin);
+    } finally { client.release(); }
+  }
+
+  async upsertWithdrawalPinRecord(record: WithdrawalPinRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWithdrawalPin(client, record); return record; } finally { client.release(); }
+  }
+
+  async listWithdrawalStepUpTokens(): Promise<WithdrawalStepUpTokenRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      // Expired tokens are excluded here rather than swept by a job: a token
+      // past its expiry can never authorise anything, so returning it would
+      // only grow the list the caller scans.
+      const result = await optionalQuery(client, 'select * from withdrawal_step_up_tokens where expires_at > now() order by created_at asc');
+      return result.rows.map(mapWithdrawalStepUpToken);
+    } finally { client.release(); }
+  }
+
+  async upsertWithdrawalStepUpTokenRecord(record: WithdrawalStepUpTokenRecord) {
+    const client = await this.pool.connect();
+    try { await upsertWithdrawalStepUpToken(client, record); return record; } finally { client.release(); }
+  }
+
+  /**
+   * Claims the token in ONE statement.
+   *
+   * `and used_at is null` is what makes this safe: the database decides who
+   * won, so two concurrent withdrawals carrying the same token cannot both be
+   * authorised. A select-then-update in the service would leave exactly that
+   * window open, and the request it lets through is a duplicate payout.
+   */
+  async consumeWithdrawalStepUpToken(id: string, usedAt: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(
+        client,
+        'update withdrawal_step_up_tokens set used_at=$2 where id=$1 and used_at is null returning id',
+        [id, usedAt]
+      );
+      return result.rows.length === 1;
+    } finally { client.release(); }
   }
 
   async listVirtualAccountRequests(): Promise<VirtualAccountRequestRecord[]> {
@@ -2935,6 +2995,71 @@ async function upsertIdentityPairingToken(client: pg.PoolClient, item: IdentityP
        escrow_user_id=excluded.escrow_user_id,
        updated_at=excluded.updated_at`,
     [item.id, item.paymentUserId, item.tokenHash, item.channel ?? 'whatsapp', item.status, item.expiresAt, item.redeemedAt ?? null, item.canceledAt ?? null, item.whatsappNumber ?? null, item.telegramUserId ?? null, item.escrowUserId ?? null, item.createdAt, item.updatedAt]
+  );
+}
+
+function mapWithdrawalPin(row: any): WithdrawalPinRecord {
+  return {
+    userId: row.user_id,
+    pinHash: row.pin_hash,
+    pinSalt: row.pin_salt,
+    algorithm: row.algorithm,
+    setAt: iso(row.set_at),
+    updatedAt: iso(row.updated_at),
+    withdrawalsHeldUntil: optionalIso(row.withdrawals_held_until),
+    failedAttempts: Number(row.failed_attempts ?? 0),
+    lockedUntil: optionalIso(row.locked_until)
+  };
+}
+
+function mapWithdrawalStepUpToken(row: any): WithdrawalStepUpTokenRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    tokenHash: row.token_hash,
+    bindingHash: row.binding_hash,
+    channel: row.channel,
+    amountText: str(row.amount_text),
+    currency: str(row.currency),
+    destinationRef: str(row.destination_ref),
+    usedAt: optionalIso(row.used_at),
+    expiresAt: iso(row.expires_at),
+    createdAt: iso(row.created_at)
+  };
+}
+
+/** Conflict target is user_id, not an id: one PIN per person, every channel. */
+async function upsertWithdrawalPin(client: pg.PoolClient, item: WithdrawalPinRecord) {
+  await client.query(
+    `insert into withdrawal_pins (user_id, pin_hash, pin_salt, algorithm, set_at, updated_at, withdrawals_held_until, failed_attempts, locked_until)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     on conflict (user_id) do update set
+       pin_hash=excluded.pin_hash,
+       pin_salt=excluded.pin_salt,
+       algorithm=excluded.algorithm,
+       updated_at=excluded.updated_at,
+       withdrawals_held_until=excluded.withdrawals_held_until,
+       failed_attempts=excluded.failed_attempts,
+       locked_until=excluded.locked_until`,
+    [item.userId, item.pinHash, item.pinSalt, item.algorithm, item.setAt, item.updatedAt, item.withdrawalsHeldUntil ?? null, item.failedAttempts, item.lockedUntil ?? null]
+  );
+}
+
+async function upsertWithdrawalStepUpToken(client: pg.PoolClient, item: WithdrawalStepUpTokenRecord) {
+  // used_at is deliberately NOT updatable here. Spending a token goes through
+  // consumeWithdrawalStepUpToken, which refuses an already-spent one; letting
+  // an upsert write the column would give callers a way around that check.
+  await client.query(
+    `insert into withdrawal_step_up_tokens (id, user_id, token_hash, binding_hash, channel, amount_text, currency, destination_ref, used_at, expires_at, created_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     on conflict (id) do update set
+       binding_hash=excluded.binding_hash,
+       channel=excluded.channel,
+       amount_text=excluded.amount_text,
+       currency=excluded.currency,
+       destination_ref=excluded.destination_ref,
+       expires_at=excluded.expires_at`,
+    [item.id, item.userId, item.tokenHash, item.bindingHash, item.channel, item.amountText ?? null, item.currency ?? null, item.destinationRef ?? null, item.usedAt ?? null, item.expiresAt, item.createdAt]
   );
 }
 

@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { UserRecord, UserPreferencesRecord, IdentityStatus, IdentityChannelStatus } from '../../types';
 import { SIGNUP_COUNTRIES } from '../../verificationPath';
+import { WithdrawalPinCard } from './WithdrawalPinCard';
 function initials(nameOrEmail?: string) { const value = (nameOrEmail || 'Sivan User').trim(); const parts = value.includes('@') ? value.split('@')[0].split(/[._-]+/) : value.split(/\s+/); return parts.slice(0, 2).map((p) => p[0]?.toUpperCase()).join('') || 'SU'; }
 function CustomSelect({ name, options, value, defaultValue, onChange, disabled = false }: { name: string; options: Array<{ value: string; label: string; helper?: string; disabled?: boolean }>; value?: string; defaultValue?: string; onChange?: (value: string) => void; disabled?: boolean }) { const firstEnabled = options.find((option) => !option.disabled)?.value || options[0]?.value || ''; const [internalValue,setInternalValue]=useState(defaultValue || value || firstEnabled); const [open,setOpen]=useState(false); const selectedValue=value ?? internalValue; const selected=options.find((option)=>option.value===selectedValue)||options.find((option)=>!option.disabled)||options[0]; const choose=(next:string)=>{setInternalValue(next); onChange?.(next); setOpen(false);}; return <div className="custom-select-wrap app-select-wrap"><input type="hidden" name={name} value={selected?.value || ''} /><button type="button" disabled={disabled} className={`custom-select-trigger ${open ? 'open' : ''}`} onClick={() => !disabled && setOpen((state)=>!state)}><span><strong>{selected?.label || 'Select'}</strong>{selected?.helper && <small>{selected.helper}</small>}</span><em>⌄</em></button>{open && <div className="custom-select-menu app-select-menu">{options.map((option)=><button type="button" disabled={option.disabled} className={option.value===selected?.value ? 'selected' : ''} key={option.value} onClick={()=>!option.disabled && choose(option.value)}><span>{option.label}</span>{option.helper && <small>{option.helper}</small>}</button>)}</div>}</div>; }
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
@@ -281,7 +282,14 @@ function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatus
   const score = enabled && recoveryQuestionsConfigured && emailConfirmations && securityAlerts ? 'Excellent' : enabled && recoveryQuestionsConfigured && securityAlerts ? 'Strong' : enabled && securityAlerts ? 'Strong' : emailConfirmations && securityAlerts ? 'Strong' : 'Good';
   const questionOptions = recoveryCatalog.length ? recoveryCatalog : [{ id: 'private_phrase', question: 'What is a private phrase only you would remember?' }, { id: 'childhood_friend_nickname', question: 'What was the nickname of your childhood best friend?' }];
   return <div className="security-settings-panel">
-    <div className="settings-section-head"><h3>Security</h3><p className="muted">Protect access to your Sivan account with passwordless email, authenticator 2FA, recovery questions, and high-value confirmations.</p></div>
+    <div className="settings-section-head"><h3>Security</h3><p className="muted">Protect access to your Sivan account with passwordless email, authenticator 2FA, recovery questions, a withdrawal PIN, and high-value confirmations.</p></div>
+    {/*
+      * Placed above the 2FA block deliberately. 2FA guards signing in; the
+      * withdrawal PIN guards money leaving, including from WhatsApp and
+      * Telegram where there is no sign-in step to guard at all. For a payments
+      * account the second is the one a user most needs to find.
+      */}
+    <WithdrawalPinCard api={api} />
     <div className="security-health-card"><span>Security score</span><strong>{score}</strong><small>{enabled ? `Authenticator 2FA is enabled${status?.lastVerifiedAt ? ` · last verified ${new Date(status.lastVerifiedAt).toLocaleDateString()}` : ''}. ${recoveryQuestionsConfigured ? 'Recovery questions are configured.' : 'Set recovery questions to strengthen support recovery.'}` : 'Enable authenticator 2FA for stronger account protection.'}</small></div>
     <div className="security-settings-list">
       <div className="security-setting-row connected"><span>▣</span><div><strong>Passwordless email access</strong><small>Sign in with a one-time code sent to {user?.email || 'your verified email'}. Sivan does not store a password for your account.</small><em>Active</em></div><button type="button" className="ghost-btn small" onClick={onLogout}>Sign out</button></div>

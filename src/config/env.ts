@@ -59,6 +59,24 @@ const envSchema = z.object({
    * (channel, redeeming identity), so one user's fumbling never blocks another.
    */
   IDENTITY_PAIRING_LOCKOUT_ENABLED: booleanFromEnv.default(true),
+
+  /**
+   * Require a withdrawal PIN on every money-out request.
+   *
+   * DEFAULTS TO FALSE, and that is the entire point of it existing.
+   *
+   * The server can demand a PIN the moment this code deploys. The clients
+   * cannot supply one yet: the WhatsApp and Telegram bots have no PIN prompt,
+   * and the web withdrawal flow does not collect it. Enforcing on deploy would
+   * therefore reject EVERY withdrawal on both rails - including from users who
+   * have dutifully set a PIN, because nothing would be asking them for it.
+   *
+   * So the enforcement ships dark. Turn it on only once every client can
+   * prompt, and turn it on for one deployment at a time, because the failure
+   * mode is total: no user can withdraw by any route.
+   */
+  WITHDRAWAL_PIN_ENFORCED: booleanFromEnv.default(false),
+
   IDENTITY_PAIRING_MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(6),
   IDENTITY_PAIRING_LOCKOUT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
   IDENTITY_PAIRING_LOCKOUT_MINUTES: z.coerce.number().int().positive().default(15),
