@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AssetControl, NetworkControl, PaymentControl } from '../../types';
 import { legalLinks } from '../../appUtils';
 
@@ -12,6 +12,16 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
   const receiveAmount = Math.max(0, quoteValue - feeAmount);
   const formattedReceiveAmount = receiveAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const updateQuoteAmount = (value: string) => setQuoteAmount(value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1'));
+  const featureCards = [
+    { title: 'Fast payouts', body: 'Create a deposit address quickly and track payout status as provider updates arrive.' },
+    { title: 'Non-custodial by design', body: 'Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys.' },
+    { title: 'Global, multi-currency', body: `Cash out to ${payoutCurrencies}, or straight to a Nigerian bank account in NGN.` },
+    { title: 'Transparent pricing', body: `The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.` },
+    { title: 'Built-in compliance', body: 'Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow.' },
+    { title: 'Clear transaction tracking', body: 'Users can follow address creation, deposit detection, conversion, payout processing, and completion.' },
+  ];
+  const featureRefs = useStaggeredReveal(featureCards.length);
+
   const faqItems = [
     { q: 'Do I need to complete KYC to use Sivan?', a: 'Yes. Verification is required before bank withdrawals or on-ramp actions. This protects users, reduces fraud, and keeps Sivan aligned with provider-supported payment rails.' },
     { q: 'Which countries and payment methods are supported?', a: `The current off-ramp supports enabled payout rails such as ${payoutCurrencies}. Available options are controlled by Sivan in Admin Controls. NGN payouts to Nigerian banks are supported through our local settlement partner.` },
@@ -92,12 +102,15 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
         <section className="landing-section" id="business">
           <div className="section-head center"><p className="eyebrow center">Why Sivan</p><h2>Built for people who just want it to work.</h2><p>We've stripped out the complexity and built a regulated-grade ramp experience with everyday users in mind.</p></div>
           <div className="feature-grid-premium">
-            <FeatureCard title="Fast payouts" body="Create a deposit address quickly and track payout status as provider updates arrive." />
-            <FeatureCard title="Non-custodial by design" body="Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys." />
-            <FeatureCard title="Global, multi-currency" body={`Cash out to ${payoutCurrencies}, or straight to a Nigerian bank account in NGN.`} />
-            <FeatureCard title="Transparent pricing" body={`The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.`} />
-            <FeatureCard title="Built-in compliance" body="Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow." />
-            <FeatureCard title="Clear transaction tracking" body="Users can follow address creation, deposit detection, conversion, payout processing, and completion." />
+            {featureCards.map((card, index) => (
+              <FeatureCard
+                key={card.title}
+                title={card.title}
+                body={card.body}
+                index={index}
+                cardRef={(el) => { featureRefs.current[index] = el; }}
+              />
+            ))}
           </div>
         </section>
 
@@ -124,8 +137,115 @@ function StepCard({ n, icon, title, body }: { n: string; icon: string; title: st
   return <article className="step-card-premium"><i>{icon}</i><b>{n}</b><h3>{title}</h3><p>{body}</p></article>;
 }
 
-function FeatureCard({ title, body }: { title: string; body: string }) {
-  return <article className="feature-card-premium text-only"><h3>{title}</h3><p>{body}</p></article>;
+/**
+ * Reveal a set of elements as they scroll into view, one after another.
+ *
+ * The landing page had NO scroll motion at all -- the feature grid was fully
+ * painted before it entered the viewport, so it read as a static poster.
+ *
+ * Uses IntersectionObserver rather than a scroll handler: the browser does
+ * the intersection maths off the main thread, and each card is unobserved the
+ * moment it fires, so nothing keeps running once the section has been seen.
+ *
+ * Honours prefers-reduced-motion by revealing everything immediately -- the
+ * content must never depend on an animation having run.
+ */
+function useStaggeredReveal(count: number) {
+  const refs = useRef<Array<HTMLElement | null>>([]);
+
+  useEffect(() => {
+    const nodes = refs.current.filter(Boolean) as HTMLElement[];
+    if (!nodes.length) return;
+
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) {
+      nodes.forEach((n) => n.classList.add('is-revealed'));
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-revealed');
+          observer.unobserve(entry.target);
+        });
+      },
+      // Fire a little BEFORE the card reaches the fold, so the movement is
+      // already finishing as it arrives rather than starting under the user's
+      // eye, which reads as lag.
+      { rootMargin: '0px 0px -12% 0px', threshold: 0.15 }
+    );
+
+    nodes.forEach((n) => observer.observe(n));
+    return () => observer.disconnect();
+  }, [count]);
+
+  return refs;
+}
+
+function FeatureCard({
+  title,
+  body,
+  index,
+  cardRef,
+}: {
+  title: string;
+  body: string;
+  index: number;
+  cardRef: (el: HTMLElement | null) => void;
+}) {
+  /**
+   * Cursor-tracking spotlight.
+   *
+   * --mx/--my are written as raw pixels on the element and consumed by a
+   * radial-gradient in CSS. Writing a custom property does not invalidate
+   * layout, so this stays cheap; the alternative (moving a positioned child)
+   * would thrash on every mousemove.
+   *
+   * rAF-throttled because pointermove fires far more often than the screen
+   * refreshes, and skipped entirely without a fine pointer -- on touch there
+   * is no hover to track and it would only cost battery.
+   */
+  const frame = useRef(0);
+
+  const onPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    if (frame.current) return;
+    const el = event.currentTarget;
+    const x = event.clientX;
+    const y = event.clientY;
+    frame.current = requestAnimationFrame(() => {
+      frame.current = 0;
+      const rect = el.getBoundingClientRect();
+      el.style.setProperty('--mx', `${x - rect.left}px`);
+      el.style.setProperty('--my', `${y - rect.top}px`);
+    });
+  };
+
+  const clearSpotlight = (event: React.PointerEvent<HTMLElement>) => {
+    if (frame.current) {
+      cancelAnimationFrame(frame.current);
+      frame.current = 0;
+    }
+    event.currentTarget.style.removeProperty('--mx');
+    event.currentTarget.style.removeProperty('--my');
+  };
+
+  return (
+    <article
+      ref={cardRef}
+      className="feature-card-premium text-only"
+      // Each card trails the one before it, so the row assembles left to right
+      // instead of all six snapping in at once.
+      style={{ ['--reveal-delay' as string]: `${index * 70}ms` }}
+      onPointerMove={onPointerMove}
+      onPointerLeave={clearSpotlight}
+    >
+      <span className="feature-card-glow" aria-hidden="true" />
+      <h3>{title}</h3>
+      <p>{body}</p>
+    </article>
+  );
 }
 
 function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () => void; onGetStarted: () => void; onBuy: () => void }) {

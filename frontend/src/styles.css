@@ -2975,3 +2975,127 @@ textarea:focus-visible,
 .feature-card-premium.text-only { min-height: 0; display: grid; align-content: start; gap: 10px; padding: 28px; }
 .feature-card-premium.text-only h3 { margin: 0; }
 .feature-card-premium.text-only p { margin: 0; }
+
+/* ===========================================================================
+   FEATURE CARDS — motion
+   The grid was completely static: no reveal, no hover, no transition. These
+   are the first thing a visitor reads about the product, so they now respond.
+   Every block is gated on prefers-reduced-motion and the card is fully
+   legible with all of it switched off.
+   =========================================================================== */
+
+.feature-card-premium.text-only {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  transition:
+    transform .42s cubic-bezier(.22, 1, .36, 1),
+    box-shadow .42s cubic-bezier(.22, 1, .36, 1),
+    border-color .3s ease;
+}
+
+/* Cursor spotlight. --mx/--my are written from JS as raw pixels; when they are
+   absent the gradient sits harmlessly off-card at 50%/-40% and stays at
+   opacity 0, so a touch device never sees a stuck highlight. */
+.feature-card-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    260px circle at var(--mx, 50%) var(--my, -40%),
+    rgba(0, 122, 199, .13),
+    transparent 70%);
+  transition: opacity .35s ease;
+}
+
+/* A hairline that brightens from the pointer outwards. Drawn with a masked
+   border so it cannot shift layout the way an actual border-width change
+   would. */
+.feature-card-premium.text-only::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+  padding: 1px;
+  opacity: 0;
+  background: radial-gradient(
+    320px circle at var(--mx, 50%) var(--my, -40%),
+    rgba(0, 122, 199, .55),
+    transparent 65%);
+  -webkit-mask: linear-gradient(#000, #000) content-box, linear-gradient(#000, #000);
+  mask: linear-gradient(#000, #000) content-box, linear-gradient(#000, #000);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  transition: opacity .35s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .feature-card-premium.text-only:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 18px 44px rgba(16, 42, 77, .10);
+  }
+  .feature-card-premium.text-only:hover .feature-card-glow,
+  .feature-card-premium.text-only:hover::after { opacity: 1; }
+
+  /* The title leads the movement by a hair, so the card reads as one object
+     lifting rather than a box and its text moving together. */
+  .feature-card-premium.text-only h3 {
+    transition: transform .42s cubic-bezier(.22, 1, .36, 1), color .3s ease;
+  }
+  .feature-card-premium.text-only:hover h3 {
+    transform: translateX(3px);
+    color: var(--green-ink);
+  }
+}
+
+/* Keyboard parity: a card is not interactive, but if focus ever lands inside
+   one the same affordance should appear. */
+.feature-card-premium.text-only:focus-within {
+  border-color: var(--green-ink);
+}
+
+/* --- Staggered scroll reveal --------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .feature-card-premium.text-only {
+    opacity: 0;
+    transform: translate3d(0, 22px, 0) scale(.985);
+    transition:
+      opacity .62s cubic-bezier(.22, 1, .36, 1) var(--reveal-delay, 0ms),
+      transform .62s cubic-bezier(.22, 1, .36, 1) var(--reveal-delay, 0ms),
+      box-shadow .42s cubic-bezier(.22, 1, .36, 1),
+      border-color .3s ease;
+  }
+  .feature-card-premium.text-only.is-revealed {
+    opacity: 1;
+    transform: none;
+  }
+  /* The hover lift has to be restated INSIDE this block.
+     `.is-revealed { transform: none }` and `:hover { transform: translateY }`
+     tie on specificity (0,2,0 vs 0,2,0) and .is-revealed is declared later,
+     so it won.  The shadow appeared on hover but the card never moved --
+     caught by asserting the composited matrix, not the stylesheet. */
+  .feature-card-premium.text-only.is-revealed:hover {
+    transform: translateY(-4px);
+  }
+  /* Once revealed the entry delay must not linger, or the first hover after
+     scrolling waits out the stagger before it responds. */
+  .feature-card-premium.text-only.is-revealed:hover {
+    transition-delay: 0ms;
+  }
+}
+
+/* --- Reduced motion: state without movement ------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .feature-card-premium.text-only {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .feature-card-premium.text-only:hover { transform: none; }
+  .feature-card-glow,
+  .feature-card-premium.text-only::after { display: none; }
+}
