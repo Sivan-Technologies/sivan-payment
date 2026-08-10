@@ -14,6 +14,25 @@ export const adminPlatformSettingsSchema = z.object({
   globalGeoBlock: z.boolean().default(true),
   onRampEnabled: z.boolean().default(true),
   offRampEnabled: z.boolean().default(true),
+  /**
+   * Bridge -> Privy auto-sweep, OFF until it has been exercised for real.
+   *
+   * The sweep moves a settled virtual-account deposit out of the Bridge
+   * custodial wallet into the user's own Privy wallet. It fires from a webhook
+   * and signs an on-chain transfer, so the failure mode is somebody's money in
+   * the wrong custody with no user-visible trace. It shipped with no switch at
+   * all: the only gate was BRIDGE_TO_PRIVY_MIN_SWEEP_USD, which decides HOW
+   * MUCH to sweep, never WHETHER to.
+   *
+   * Default false. Capability controls fail closed -- an operator turning this
+   * on is an explicit decision, and a fresh database or a failed settings read
+   * must not start moving funds on its own.
+   *
+   * Turning it off does NOT strand anyone: a user whose balance stays in the
+   * Bridge wallet can still send it, because transfers resolve the wallet's
+   * own provider rather than the deployment-wide active one.
+   */
+  bridgeToPrivySweepEnabled: z.boolean().default(false),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional()
 });
@@ -29,6 +48,8 @@ const defaultPlatformSettings = (): AdminPlatformSettings & { updatedAt: string 
   globalGeoBlock: true,
   onRampEnabled: true,
   offRampEnabled: true,
+  // OFF for launch. See the schema above for why this fails closed.
+  bridgeToPrivySweepEnabled: false,
   updatedBy: 'system',
   reason: 'Default platform settings',
   updatedAt: nowIso()
