@@ -15,7 +15,16 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
   const featureCards = [
     { title: 'Fast payouts', body: 'Create a deposit address quickly and track payout status as provider updates arrive.' },
     { title: 'Non-custodial by design', body: 'Provider-backed settlement flows handle deposits and payouts. Sivan never asks for private keys.' },
-    { title: 'Global, multi-currency', body: `Cash out to ${payoutCurrencies}, or straight to a Nigerian bank account in NGN.` },
+    /*
+     * The rail list is already LIVE -- payoutCurrencies comes from the enabled
+     * entries in /api/offramp/controls, so it tracks whatever Admin has turned
+     * on. The old tail hardcoded "or straight to a Nigerian bank account in
+     * NGN", which was a second, stale copy of the same claim: production
+     * currently returns usd/gbp/eur only, so the sentence promised a rail the
+     * API was not advertising. Naming the chosen payout instead keeps one
+     * source of truth and stays correct as rails are enabled or disabled.
+     */
+    { title: 'Global, multi-currency', body: `Cash out to ${payoutCurrencies}, or straight to any payout rail you select.` },
     { title: 'Transparent pricing', body: `The live Sivan fee is ${feePercent}%. It is displayed before users receive a deposit address.` },
     { title: 'Built-in compliance', body: 'Verification, sanctions screening, anti-fraud checks, and provider requirements are built into the guided flow.' },
     { title: 'Clear transaction tracking', body: 'Users can follow address creation, deposit detection, conversion, payout processing, and completion.' },
