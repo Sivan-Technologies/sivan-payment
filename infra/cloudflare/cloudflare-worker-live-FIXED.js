@@ -39,11 +39,11 @@
 // ========================================================
 // LIVE SERVICES
 // ========================================================
-const LIVE_ESCROW = "https://sivan-escrow-agent-live-peuf.onrender.com";
-const LIVE_BOT = "https://sivan-whatsapp-bot-live-v1p8.onrender.com";
-const LIVE_AUTH = "https://telegram-admin-auth-z3e8.onrender.com";
-const LIVE_PAYMENTS = "https://sivan-payments-api-live-cgqi.onrender.com";
-const LIVE_SIVAN_AI = "https://sivan-ai.onrender.com";
+const LIVE_ESCROW = "https://escrow.sivantech.online";
+const LIVE_BOT = "https://whatsapp.sivantech.online";
+const LIVE_AUTH = "https://auth.sivantech.online";
+const LIVE_PAYMENTS = "https://payment.sivantech.online";
+const LIVE_SIVAN_AI = "https://escrow.sivantech.online";
 
 // Prefer a Cloudflare Worker secret named PROXY_SECRET. This literal is a
 // deployment convenience only and SHOULD BE REMOVED once the secret is set;
@@ -363,7 +363,7 @@ async function fetchUpstream({
         requestId,
         serviceName,
         `unavailable: status=${response.status} render=${renderRouting || "none"} ` +
-          `(attempt ${attempt}/${maxAttempts})`
+        `(attempt ${attempt}/${maxAttempts})`
       );
 
       // A write that reached a failing upstream must NOT be repeated: the
@@ -392,8 +392,8 @@ async function fetchUpstream({
       error: "UPSTREAM_UNAVAILABLE",
       message: wasWrite
         ? `The ${serviceName} service did not respond. This was a ${method} request and it was ` +
-          `NOT retried, because repeating it could duplicate the action. Check whether it took ` +
-          `effect before trying again.`
+        `NOT retried, because repeating it could duplicate the action. Check whether it took ` +
+        `effect before trying again.`
         : `The ${serviceName} service is unavailable. Please try again shortly.`,
       service: serviceName,
       method,
