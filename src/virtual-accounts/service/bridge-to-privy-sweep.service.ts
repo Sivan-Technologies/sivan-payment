@@ -4,6 +4,7 @@ import { getWalletProvider } from '../../wallets/provider/provider-registry.js';
 import { ensureUserWallet } from '../../wallets/user-wallet.service.js';
 import { getVirtualAccountProviderSettings } from './virtual-account-provider-settings.service.js';
 import { env } from '../../config/env.js';
+import { getAdminPlatformSettings } from '../../admin/admin-settings.service.js';
 import { nowIso } from '../../shared/id.js';
 import type { VirtualAccountTransactionRecord } from '../types/virtual-account.types.js';
 
@@ -128,6 +129,23 @@ export async function sweepVirtualAccountDepositToPrivy(
   try {
     if (!transaction.userId) return skip(transaction, 'no_user');
     if (transaction.status !== 'completed') return skip(transaction, 'not_settled');
+
+    /**
+     * THE ADMIN SWITCH, CHECKED HERE AND NOT AT THE SCHEDULER.
+     *
+     * Gating scheduleBridgeToPrivySweep() instead would look equivalent and is
+     * not: this function is exported and called directly by the retry pass and
+     * by tests, so a caller that skips the scheduler would skip the switch
+     * with it. The check belongs immediately before the transfer, where every
+     * path must pass through it.
+     *
+     * Reads the setting per call rather than caching, because an operator
+     * disabling a misbehaving sweep needs it to stop NOW, not after a restart.
+     * A settled deposit that is not swept is not lost -- it stays in the
+     * Bridge wallet, is counted in the unified balance, and remains spendable.
+     */
+    const platformSettings = await getAdminPlatformSettings();
+    if (!platformSettings.bridgeToPrivySweepEnabled) return skip(transaction, 'sweep_disabled_by_admin');
 
     const amount = num(transaction.destinationAmount ?? transaction.sourceAmount);
     if (amount <= 0) return skip(transaction, 'zero_amount');

@@ -98,7 +98,39 @@ async function readChainBalances(userId: string) {
   const active = wallets.filter((wallet) => wallet.status !== 'closed');
   if (!active.length) return [];
 
-  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  /**
+   * EACH WALLET IS READ THROUGH ITS OWN CUSTODIAN.
+   *
+   * This resolved ONE provider -- resolveActiveWalletProvider() -- and used it
+   * for every wallet the user holds. That is the deployment-wide setting for
+   * issuing NEW wallets; it says nothing about who holds an EXISTING one.
+   *
+   * balance.service.ts already fixed exactly this bug on the SEND path
+   * (`wallet.provider ?? active`). The READ path kept the old shape, so the
+   * two disagreed: a user who on-ramped through a Bridge virtual account holds
+   * a Bridge wallet while the active provider is Privy, and their Bridge
+   * balance was requested from Privy, which has never heard of that wallet id.
+   * The call fails or returns nothing, so the dashboard shows zero -- while
+   * the send path, asking the right custodian, would happily have moved it.
+   *
+   * This matters more now the sweep ships OFF: funds legitimately STAY in the
+   * Bridge wallet, so reading only the active provider would hide the balance
+   * of every virtual-account user.
+   *
+   * Cached per provider name so a user with several wallets from the same
+   * custodian still resolves it once.
+   */
+  const providerCache = new Map<string, ReturnType<typeof getWalletProvider>>();
+  const activeProviderName = await resolveActiveWalletProvider();
+  const providerFor = (wallet: { provider?: string }) => {
+    const name = wallet.provider ?? activeProviderName;
+    let resolved = providerCache.get(name);
+    if (!resolved) {
+      resolved = getWalletProvider(name);
+      providerCache.set(name, resolved);
+    }
+    return resolved;
+  };
 
   /**
    * ONE EVM WALLET, SEVERAL EVM CHAINS - AND THE MONEY IS RARELY ON THE ONE
@@ -145,7 +177,7 @@ async function readChainBalances(userId: string) {
   return Promise.all(
     reads.map(async ({ wallet, chain }) => {
       try {
-        const balances = await provider.getBalances(
+        const balances = await providerFor(wallet).getBalances(
           wallet.providerWalletId,
           wallet.customerId,
           wallet.address,

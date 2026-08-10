@@ -5,7 +5,7 @@ import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { getSpendable } from './unified-balance.service.js';
-import { chainFamily } from '../wallets/chain-family.js';
+import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
@@ -719,6 +719,57 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
  * transfer runs the SAME code path. Two implementations of "send the money"
  * is how one of them silently rots.
  */
+/**
+ * Of several wallets that can sign for this network, which one holds the money?
+ *
+ * Asks each wallet's OWN custodian -- a Bridge wallet is read through Bridge,
+ * a Privy wallet through Privy -- because that is the whole point: the two
+ * live at different providers.
+ *
+ * Returns undefined rather than throwing when nothing reports a balance, so
+ * the caller keeps its existing choice. A provider outage must not turn a
+ * valid transfer into an error; it should fall back to today's behaviour.
+ */
+async function pickFundedWallet(
+  candidates: Awaited<ReturnType<typeof db.listUserWallets>>,
+  transfer: { network: string; asset: string; amount: number | string }
+) {
+  const activeProviderName = await resolveActiveWalletProvider();
+  const wanted = String(transfer.asset).toLowerCase();
+
+  const readings = await Promise.all(
+    candidates.map(async (row) => {
+      try {
+        const provider = getWalletProvider(row.provider ?? activeProviderName);
+        const balances = await provider.getBalances(
+          row.providerWalletId,
+          row.customerId,
+          row.address,
+          transfer.network as any
+        );
+        const match = (balances ?? []).find(
+          (entry: any) => String(entry?.asset ?? '').toLowerCase() === wanted
+        );
+        const amount = Number(match?.amount ?? 0);
+        return { row, amount: Number.isFinite(amount) ? amount : 0 };
+      } catch {
+        // An unreachable custodian is not evidence of an empty wallet.
+        return { row, amount: -1 };
+      }
+    })
+  );
+
+  const usable = readings.filter((entry) => entry.amount > 0);
+  if (!usable.length) return undefined;
+
+  // Prefer a wallet that alone covers the send; otherwise the fullest one.
+  // TransferMetadata carries amount as a string, so coerce once here.
+  const needed = Number(transfer.amount) || 0;
+  const covers = usable.filter((entry) => entry.amount >= needed);
+  const pool = covers.length ? covers : usable;
+  return pool.sort((a, b) => b.amount - a.amount)[0].row;
+}
+
 export async function executeBalanceTransfer(userId: string, transfer: TransferMetadata): Promise<TransferMetadata> {
   /**
    * Which wallet signs. base/ethereum and the other EVM chains share one
@@ -745,7 +796,35 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
    * artifact of a string comparison. Base and Ethereum are one secp256k1 key
    * at one 0x address; which name the row carries is provisioning trivia.
    */
-  const wallet = await db.findUserWalletForNetwork(userId, transfer.network);
+  /**
+   * AND WHEN THE USER HOLDS MORE THAN ONE WALLET ON THAT FAMILY, THE ONE WITH
+   * THE MONEY SIGNS.
+   *
+   * findUserWalletForNetwork returns the OLDEST matching row (`created_at asc`
+   * on postgres, insertion order on json). With a single custodian that was
+   * always the right row. It stops being right the moment a user holds two:
+   * someone who on-ramped through a Bridge virtual account has a Bridge wallet
+   * holding the funds AND an older Privy wallet holding nothing, so the send
+   * was signed against the empty one and fell into pooled-custody review while
+   * their money sat spendable in the other.
+   *
+   * That combination is now the DEFAULT, because the Bridge -> Privy sweep
+   * ships disabled: balances legitimately stay where they landed.
+   *
+   * Picks the funded wallet, falling back to the original choice when no
+   * wallet reports a balance -- a zero-balance send still needs a signer, and
+   * a provider that cannot answer must not block the transfer.
+   */
+  const candidates = (await db.listUserWallets(userId))
+    .filter((row) => row.status !== 'closed' && walletServesNetwork(row.chain, transfer.network));
+
+  let wallet = await db.findUserWalletForNetwork(userId, transfer.network);
+
+  if (candidates.length > 1) {
+    const funded = await pickFundedWallet(candidates, transfer);
+    if (funded) wallet = funded;
+  }
+
   const walletChain = chainFamily(transfer.network) === 'solana' ? 'solana' : 'ethereum';
   if (!wallet) {
     /**
