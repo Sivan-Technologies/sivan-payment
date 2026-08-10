@@ -43,7 +43,7 @@ const LIVE_ESCROW = "https://escrow.sivantech.online";
 const LIVE_BOT = "https://whatsapp.sivantech.online";
 const LIVE_AUTH = "https://auth.sivantech.online";
 const LIVE_PAYMENTS = "https://payment.sivantech.online";
-const LIVE_SIVAN_AI = "https://escrow.sivantech.online";
+const LIVE_SIVAN_AI = "https://ai.sivantech.online";
 
 // Prefer a Cloudflare Worker secret named PROXY_SECRET. This literal is a
 // deployment convenience only and SHOULD BE REMOVED once the secret is set;
@@ -243,6 +243,7 @@ function resolveRoute(request, url) {
     url.pathname.startsWith("/webhooks/palmpay") ||
     url.pathname.startsWith("/webhooks/flutterwave") ||
     url.pathname.startsWith("/webhooks/nomba") ||
+    url.pathname.startsWith("/webhooks/paystack") ||
     url.pathname.startsWith("/payment/callback")
   ) {
     host = LIVE_ESCROW;
