@@ -973,6 +973,7 @@ export interface UnifiedWebhookLogRecord {
 export interface WalletControlsRecord {
   id: string;
   activeProvider?: string;
+  autoSweepBridgeWallet?: boolean;
   reason?: string;
   updatedBy: string;
   updatedAt: string;

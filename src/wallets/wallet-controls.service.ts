@@ -36,6 +36,7 @@ export const updateWalletControlsSchema = z.object({
    * variable. Distinct from omitting the field, which leaves it unchanged.
    */
   activeProvider: z.enum(PROVIDERS).nullable().optional(),
+  autoSweepBridgeWallet: z.boolean().optional(),
   reason: z.string().trim().min(1).max(500).optional(),
   updatedBy: z.string().trim().min(1).optional(),
 });
@@ -47,6 +48,7 @@ export function defaultWalletControls(): WalletControlsRecord {
     // admin deliberately overrides it, so adding this table changes nothing on
     // its own.
     activeProvider: undefined,
+    autoSweepBridgeWallet: false,
     updatedBy: 'system',
     updatedAt: nowIso(),
   };
@@ -97,6 +99,8 @@ export async function updateWalletControls(input: z.infer<typeof updateWalletCon
     ...current,
     activeProvider:
       input.activeProvider === null ? undefined : input.activeProvider ?? current.activeProvider,
+    autoSweepBridgeWallet:
+      input.autoSweepBridgeWallet ?? current.autoSweepBridgeWallet ?? false,
     reason: input.reason ?? current.reason,
     updatedBy: input.updatedBy ?? 'admin_api_key',
     updatedAt: nowIso(),

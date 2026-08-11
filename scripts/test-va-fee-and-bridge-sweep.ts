@@ -183,8 +183,17 @@ const tx = (amount: string, id = 'vatx_1'): any => ({
 await db.mutate((d: any) => {
   d.users = [{ id: 'usr_s', email: 's@t.test', country: 'NG', fullName: 'S T', createdAt: now(), updatedAt: now() }];
   d.userWallets = [];
+  d.walletControls = [{ id: 'global', autoSweepBridgeWallet: true, updatedAt: now() }];
   return 1;
 });
+
+const disabledSweep = await (async () => {
+  await db.mutate((d: any) => { d.walletControls = [{ id: 'global', autoSweepBridgeWallet: false, updatedAt: now() }]; return 1; });
+  const res = await sweep.sweepVirtualAccountDepositToPrivy(tx('50.00', 'vatx_disabled'));
+  await db.mutate((d: any) => { d.walletControls = [{ id: 'global', autoSweepBridgeWallet: true, updatedAt: now() }]; return 1; });
+  return res;
+})();
+check('when auto-sweep is disabled, settlement is held', disabledSweep.swept === false && disabledSweep.reason === 'auto_sweep_disabled');
 
 const below = await sweep.sweepVirtualAccountDepositToPrivy(tx('3.00'));
 check('a $3 settlement is held, not swept', below.swept === false && below.reason === 'below_minimum',
