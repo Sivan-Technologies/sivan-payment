@@ -355,6 +355,14 @@ export async function buildApp() {
 
   app.addHook('preHandler', async (request, reply) => {
     if (!env.AUTH_REQUIRE_USER || !requiresUserAuth(request.method, request.url)) return;
+
+    // Service-to-service authentication (Telegram bot, WhatsApp bot, Escrow agent)
+    const identitySecret = (request.headers['x-sivan-identity-link-secret'] || request.headers['x-admin-api-key']) as string | undefined;
+    const configuredSecret = env.IDENTITY_LINK_SERVICE_SECRET || env.ADMIN_API_KEY;
+    if (identitySecret && configuredSecret && identitySecret === configuredSecret) {
+      return;
+    }
+
     const header = request.headers.authorization;
     const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
     if (!token) {
@@ -626,6 +634,7 @@ function requiresUserAuth(method: string, url: string): boolean {
    */
   if (method === 'GET' && url.startsWith('/api/users/whatsapp-balance')) return false;
   if (method === 'GET' && url.startsWith('/api/users/whatsapp-payout-account')) return false;
+  if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
   if (method === 'POST' && url === '/api/users') return false;
 
   if (url === '/api/customers') return true;
