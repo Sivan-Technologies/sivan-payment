@@ -7,6 +7,7 @@ import { registerRoutes } from './api/routes.js';
 import { AppError } from './shared/errors.js';
 import { safeUserMessage } from './shared/user-message.js';
 import { captureError } from './monitoring/sentry.js';
+import { notifyOpsTelegram } from './monitoring/telegram-ops-alert.js';
 import { verifyUserJwt } from './auth/jwt.js';
 import { checkRateLimit } from './shared/rate-limit.js';
 import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './system/system-status.service.js';
@@ -433,6 +434,7 @@ export async function buildApp() {
     if (error instanceof AppError) {
       if (error.statusCode >= 500) {
         captureError(error, { requestId: request.id, url: request.url, method: request.method, code: error.code, details: error.details });
+        notifyOpsTelegram(error, { requestId: request.id, url: request.url, method: request.method });
       }
       request.log.warn({ error: error.message, code: error.code, details: error.details });
       const safe = safeUserMessage(error.message, error.statusCode);
@@ -445,6 +447,9 @@ export async function buildApp() {
     const err = error as Error & { statusCode?: number; code?: string; detail?: string; constraint?: string; table?: string; column?: string };
     const statusCode = err.statusCode ?? 500;
     captureError(err, { requestId: request.id, url: request.url, method: request.method });
+    if (statusCode >= 500) {
+      notifyOpsTelegram(err, { requestId: request.id, url: request.url, method: request.method });
+    }
 
     /**
      * LOG THE 500 EXPLICITLY, WITH THE FIELDS THAT NAME THE CAUSE.
