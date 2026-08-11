@@ -144,6 +144,34 @@ export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<Ngn
 }
 
 /**
+ * Resolve a bank name (e.g. "opay", "gtbank", "kuda") to its official bankId.
+ */
+export async function resolveBankId(bankNameQuery: string): Promise<string> {
+  const query = bankNameQuery.trim().toLowerCase();
+  const banks = await listNgnBanks('ngn').catch(() => MOCK_BANKS);
+  
+  const match = banks.find((b) => 
+    b.id.toLowerCase() === query ||
+    b.name.toLowerCase().includes(query) ||
+    (b.slug && b.slug.toLowerCase().includes(query))
+  );
+
+  if (match) return match.id;
+  
+  if (/opay/i.test(query)) return '999992';
+  if (/palmpay/i.test(query)) return '999991';
+  if (/kuda/i.test(query)) return '50211';
+  if (/gtb|guaranty/i.test(query)) return '058';
+  if (/access/i.test(query)) return '044';
+  if (/zenith/i.test(query)) return '057';
+  if (/uba|united bank/i.test(query)) return '033';
+  if (/moniepoint/i.test(query)) return '50515';
+  if (/firstbank|first bank/i.test(query)) return '011';
+
+  return banks[0]?.id || '1';
+}
+
+/**
  * Resolve an account number to the account holder's name.
  *
  * Sivan's Level 1 identity evidence: since the CBN directive of 1 March 2024 a

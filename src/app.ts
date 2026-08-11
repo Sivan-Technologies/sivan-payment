@@ -638,7 +638,7 @@ function requiresUserAuth(method: string, url: string): boolean {
    * user's intent to withdraw. See docs/withdrawal-pin.md.
    */
   if (method === 'GET' && url.startsWith('/api/users/whatsapp-balance')) return false;
-  if (method === 'GET' && url.startsWith('/api/users/whatsapp-payout-account')) return false;
+  if (url.startsWith('/api/users/whatsapp-payout-account')) return false;
   if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
   if (method === 'POST' && url === '/api/users') return false;
 

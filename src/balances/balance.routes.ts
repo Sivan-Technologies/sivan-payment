@@ -147,6 +147,42 @@ export async function balanceRoutes(app: FastifyInstance) {
     };
   });
 
+  /**
+   * Auto-link a Nigerian bank payout account for a WhatsApp / Telegram user on the fly.
+   */
+  app.post('/api/users/whatsapp-payout-account/auto-link', async (request, reply) => {
+    requireIdentityServiceSecret(request as any);
+    const { whatsapp, bankName, accountNumber } = (request.body ?? {}) as { whatsapp?: string; bankName?: string; accountNumber?: string };
+    if (!whatsapp || !bankName || !accountNumber) {
+      return reply.code(400).send({ error: 'whatsapp, bankName and accountNumber required' });
+    }
+    const user = await findUserByChannelPhone(whatsapp);
+    if (!user) return reply.code(404).send({ error: 'Identity not linked to a Sivan Payment account' });
+
+    try {
+      const { resolveBankId } = await import('../ngn/service/ngn-banks.service.js');
+      const bankId = await resolveBankId(bankName);
+
+      const { saveNgnPayoutAccount } = await import('../ngn/service/ngn-payout-accounts.service.js');
+      const saved = await saveNgnPayoutAccount({ userId: user.id, bankId, accountNumber: accountNumber.trim() });
+
+      return {
+        data: {
+          userId: user.id,
+          hasVerifiedAccount: true,
+          account: {
+            id: saved.id,
+            bankName: saved.bankName || 'Bank',
+            currency: 'NGN',
+            accountOwnerName: saved.accountName,
+          }
+        }
+      };
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message || 'Unable to resolve or link bank account' });
+    }
+  });
+
   app.get('/api/users/:userId/balance', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await getUserBalance(userId) };
