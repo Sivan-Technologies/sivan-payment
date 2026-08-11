@@ -141,6 +141,7 @@ export async function balanceRoutes(app: FastifyInstance) {
           id: primaryAccount.id,
           bankName: primaryAccount.bankName,
           currency: primaryAccount.currency,
+          accountName: primaryAccount.accountName || primaryAccount.accountOwnerName,
           accountOwnerName: primaryAccount.accountOwnerName,
         } : null,
       }
@@ -174,7 +175,9 @@ export async function balanceRoutes(app: FastifyInstance) {
             id: saved.id,
             bankName: saved.bankName || 'Bank',
             currency: 'NGN',
+            accountName: saved.accountName,
             accountOwnerName: saved.accountName,
+            accountNumber: saved.accountNumber,
           }
         }
       };

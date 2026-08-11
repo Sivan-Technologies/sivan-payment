@@ -400,7 +400,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
    * Only `verified` accounts qualify. A pending_review NUBAN is one a human
    * was asked to look at; auto-paying it would defeat the review queue.
    */
-  let payoutBank: { bankId: string; accountNumber: string; bankName?: string } | undefined;
+  let payoutBank: { bankId: string; accountNumber: string; bankName?: string; accountName?: string } | undefined;
   if (input.direction === 'offramp' && input.destinationCurrency === 'ngn') {
     const accounts = await db.listNgnPayoutAccounts(input.userId);
     const verified = accounts.find((account) => account.status === 'verified');
@@ -409,6 +409,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
         bankId: verified.bankId,
         accountNumber: verified.accountNumber,
         bankName: verified.bankName,
+        accountName: verified.accountName,
       };
     }
   }
