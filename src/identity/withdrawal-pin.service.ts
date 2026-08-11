@@ -332,7 +332,10 @@ export async function verifyWithdrawalPin(
     throw forbidden('Too many incorrect PIN attempts. Try again later, or reset your PIN on the web.');
   }
   if (record.withdrawalsHeldUntil && Date.parse(record.withdrawalsHeldUntil) > now) {
-    throw forbidden('Withdrawals are paused because your PIN changed recently. This clears automatically.');
+    throw forbidden('Withdrawals are paused because your PIN changed recently. This clears automatically.', {
+      code: 'PIN_HELD',
+      clearsAt: record.withdrawalsHeldUntil,
+    });
   }
 
   const candidate = hashPin(userId, input.pin, record.pinSalt);
