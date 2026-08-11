@@ -7,6 +7,7 @@ import { requireIdentityServiceSecret } from '../shared/service-auth.js';
 import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
 import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
+import { getUnifiedBalance } from '../balances/unified-balance.service.js';
 import {
   cancelTelegramLink,
   cancelWhatsappLink,
@@ -387,5 +388,46 @@ export async function identityRoutes(app: FastifyInstance) {
     const userId = await resolveChatIdentity(body.channel, body.identity);
     return { data: { hasPin: userId ? await hasWithdrawalPin(userId) : false } };
   });
-}
 
+  /**
+   * Balance for a chat identity.
+   *
+   * Telegram should not have to go through a WhatsApp number to read the
+   * payment balance. A Telegram-only identity link is already authenticated by
+   * Telegram's signed webhook and our service secret; using a phone as the
+   * lookup key makes a real linked user look missing whenever the phone field
+   * is absent, stale, or from another environment.
+   */
+  app.post('/api/identity/balance-status', async (request, reply) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(verifyWithdrawalPinSchema.pick({ channel: true, identity: true }), request.body);
+    const userId = await resolveChatIdentity(body.channel, body.identity);
+    if (!userId) return reply.code(404).send({ error: { message: 'Chat identity is not linked to a Sivan Payment account.' } });
+
+    const unified = await getUnifiedBalance(userId);
+    const unreadable = unified.balances.length
+      ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
+      : unified.wallets.some((w) => w.balancesUnavailable);
+    if (unreadable) {
+      return reply.code(503).send({
+        error: { message: 'Could not reach the network to read this balance. Nothing has changed.' },
+      });
+    }
+
+    const usdcEntry = unified.balances.find((b) => b.asset === 'usdc') ?? unified.balances[0];
+    return {
+      data: {
+        userId,
+        asset: usdcEntry?.asset ?? 'usdc',
+        available: Number(usdcEntry?.spendable ?? 0),
+        pending: Number(usdcEntry?.pending ?? 0),
+        balances: unified.balances.map((b) => ({
+          asset: b.asset,
+          amount: Number(b.spendable),
+          available: Number(b.spendable),
+          pending: Number(b.pending),
+        })),
+      },
+    };
+  });
+}

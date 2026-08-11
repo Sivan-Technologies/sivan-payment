@@ -598,6 +598,7 @@ function requiresUserAuth(method: string, url: string): boolean {
    * cannot move money, and the handler still demands the service secret.
    */
   if (method === 'POST' && url === '/api/identity/withdrawal-pin-status') return false;
+  if (method === 'POST' && url === '/api/identity/balance-status') return false;
 
 
   if (method === 'GET' && url.startsWith('/api/identity/telegram/')) return false;
