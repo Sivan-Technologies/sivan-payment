@@ -157,11 +157,24 @@ export interface VirtualAccountControlRecord {
   updatedAt: string;
 }
 
+/**
+ * The currencies a user may be PAID OUT in.
+ *
+ * Deliberately a separate type from `Currency`. `Currency` means "a currency
+ * Bridge settles", and it is used by external accounts, virtual accounts and
+ * the on-ramp - none of which can carry naira. Naira is a payout rail
+ * (Breet/NIP), so widening `Currency` itself would have made 'ngn' assignable
+ * to every Bridge call site that cannot handle it, and TypeScript would have
+ * stopped complaining about exactly the mistakes it should catch.
+ */
+export type PayoutCurrency = Currency | 'ngn';
+
 export interface PaymentControlRecord {
-  currency: Currency;
+  currency: PayoutCurrency;
   enabled: boolean;
   label: string;
-  accountType: 'us' | 'gb' | 'iban';
+  /** 'nuban' is the naira shape and is NOT part of the Bridge external-account union. */
+  accountType: 'us' | 'gb' | 'iban' | 'nuban';
   defaultPaymentRail: string;
   updatedBy?: string;
   updatedAt: string;

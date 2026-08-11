@@ -7,6 +7,9 @@
  */
 type ActivityRow = { state: 'pending' | 'success' | 'failed'; status: string };
 
+import { formatFromNgn, isConverted, type DisplayCurrency } from './displayCurrency';
+import type { DisplayFx } from './types';
+
 /**
  * THE THREE NUMBERS A USER OPENS THE DASHBOARD FOR.
  *
@@ -130,7 +133,24 @@ export function showsNairaLimit(summary: Summary | null | undefined): boolean {
   return summary?.path === 'ngn_bank';
 }
 
-const ngn = (value: number) => `₦${Math.round(value).toLocaleString('en-NG')}`;
+/**
+ * WHETHER TO SHOW A LIMIT AT ALL - now separate from what currency to show it in.
+ *
+ * showsNairaLimit() conflated two questions: "does this user have a naira
+ * allowance to report" and "should this card be denominated in naira". They
+ * are not the same question, and treating them as one is why a user who set
+ * their currency to USD in Settings still read ₦ on the dashboard.
+ *
+ * This answers only the first. The second is answered by
+ * resolveDisplayCurrency(preference), which the caller passes in.
+ *
+ * showsNairaLimit is KEPT and still exported: AppSections has its own copy of
+ * the same path check, and deleting the shared one while a duplicate lives on
+ * would leave the duplicate as the only definition.
+ */
+export function hasReportableLimit(summary: Summary | null | undefined): boolean {
+  return summary?.path === 'ngn_bank';
+}
 
 /**
  * The third card. Returns a LIMIT card for naira users and a VERIFICATION card
@@ -142,7 +162,21 @@ const ngn = (value: number) => `₦${Math.round(value).toLocaleString('en-NG')}`
  * needs limits expressible in the user's own currency, which is backend work
  * and not something to fake with a hardcoded FX rate on a dashboard card.
  */
-export function limitKpi(summary: Summary | null | undefined, summaryLoaded: boolean): LimitKpi {
+export function limitKpi(
+  summary: Summary | null | undefined,
+  summaryLoaded: boolean,
+  /**
+   * The currency the USER chose, already resolved. Defaults to 'ngn' so every
+   * existing caller and test keeps the exact behaviour it had before the
+   * preference was wired up - this parameter can only change the screen for
+   * someone who went and changed the setting.
+   */
+  currency: DisplayCurrency = 'ngn',
+  fx?: DisplayFx | null,
+): LimitKpi {
+  // Formats a naira-denominated figure in the user's currency, with the '~'
+  // that a converted number is required to carry.
+  const money = (value: number) => formatFromNgn(value, currency, fx);
   // Never a confident number before the answer arrives. The dashboard has
   // shipped this bug twice already - a KPI that reads zero or "Incomplete"
   // while loading accuses a verified user of not being verified.
@@ -150,7 +184,7 @@ export function limitKpi(summary: Summary | null | undefined, summaryLoaded: boo
     return { label: 'Verification', value: '—', sub: 'Checking…', trend: 'Loading your status', tone: 'muted' };
   }
 
-  if (!showsNairaLimit(summary)) {
+  if (!hasReportableLimit(summary)) {
     return {
       label: 'Verification',
       value: summary.levelLabel.replace(/^Level \d+: /, ''),
@@ -184,6 +218,8 @@ export function limitKpi(summary: Summary | null | undefined, summaryLoaded: boo
     return {
       label: 'Your limit',
       value: 'No limit',
+      // Names the rail by what it settles in, not by the currency the user
+      // happens to READ it in - the money still lands in a Nigerian bank.
       sub: `${summary.levelLabel} · selling to naira`,
       trend: 'Uncapped at your level',
       tone: 'ok',
@@ -195,8 +231,12 @@ export function limitKpi(summary: Summary | null | undefined, summaryLoaded: boo
     label: 'Your limit',
     // REMAINING, not the ceiling. "₦100,000" reads as "you may sell 100k"
     // even after they have sold 90k of it.
-    value: `${ngn(offramp.remainingNgn)} left`,
-    sub: `${summary.levelLabel} · next ${summary.windowDays} days`,
+    value: `${money(offramp.remainingNgn)} left`,
+    // The '~' on the value says the number was converted; this says WHY, in
+    // the one place a user looks at the number. Naira users see neither.
+    sub: isConverted(currency)
+      ? `${summary.levelLabel} · approx · next ${summary.windowDays} days`
+      : `${summary.levelLabel} · next ${summary.windowDays} days`,
     trend: summary.nextStep?.description && summary.nextStep.available === false
       // The NIN/BVN step exists but has no provider wired, so it must not be
       // offered as something they can go and do right now.
@@ -204,7 +244,7 @@ export function limitKpi(summary: Summary | null | undefined, summaryLoaded: boo
       : summary.nextStep?.description
         ? 'Raise your limit'
         : spent
-          ? `${ngn(offramp.usedNgn)} used`
+          ? `${money(offramp.usedNgn)} used`
           : 'Ready',
     // Amber once the limit is actually spent: at ₦0 left the user cannot
     // transact and needs to know that is why, not read a calm green "Ready".

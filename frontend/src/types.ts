@@ -420,13 +420,23 @@ export interface CustomerTypeControl {
 }
 
 export interface PaymentControl {
-  currency: 'usd' | 'gbp' | 'eur';
+  /** 'ngn' is the Breet/NIP rail. It is NOT a Bridge currency - see PayoutCurrency server-side. */
+  currency: 'usd' | 'gbp' | 'eur' | 'ngn';
   enabled: boolean;
   label: string;
-  accountType: 'us' | 'gb' | 'iban';
+  /** 'nuban' cannot be POSTed to the Bridge external-account endpoint. */
+  accountType: 'us' | 'gb' | 'iban' | 'nuban';
   defaultPaymentRail: string;
   updatedBy?: string;
   updatedAt: string;
+}
+
+/** Mirrors DisplayFxRates in src/controls/display-fx.ts. Display only - never a quote. */
+export interface DisplayFx {
+  ngnPerUnit: Record<'usd' | 'gbp' | 'eur' | 'ngn', number>;
+  configured: Record<'usd' | 'gbp' | 'eur' | 'ngn', boolean>;
+  approximate: true;
+  enforcementCurrency: 'ngn';
 }
 
 export interface AssetControl {
@@ -535,6 +545,12 @@ export interface OfframpControls {
   supplierPayoutsEnabled: boolean;
   /** The naira rail's own Sivan margin. Bridge's rate does not apply to a bank payout. */
   ngnOfframpFeePercent?: string;
+  /**
+   * Optional because an older backend will not send it. Every consumer must
+   * survive its absence by falling back to naira - the unit the figures are
+   * already in - rather than rendering a converted number with no rate.
+   */
+  displayFx?: DisplayFx;
 }
 
 

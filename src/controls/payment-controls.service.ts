@@ -6,16 +6,43 @@ import { nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { getSupplierPaymentControls } from '../suppliers/supplier.service.js';
 import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
+import { displayFxRates, type DisplayFxRates } from './display-fx.js';
 
 export const DEFAULT_CUSTOMER_TYPE_CONTROLS: CustomerTypeControlRecord[] = [
   { customerType: 'individual', enabled: true, label: 'Individual', updatedBy: 'system', updatedAt: nowIso() },
   { customerType: 'business', enabled: false, label: 'Business', updatedBy: 'system', updatedAt: nowIso() }
 ];
 
+/**
+ * NGN IS IN THIS LIST NOW, AND IT IS NOT A BRIDGE CURRENCY.
+ *
+ * It was absent, so `GET /api/offramp/controls` returned usd/gbp/eur and the
+ * admin hub had three toggles for a product with four payout rails. Naira was
+ * reachable only through `ngnControls` - a separate switch, on a separate
+ * panel, that nothing in this payload mentioned. An operator reading the
+ * controls screen could not tell that NGN payouts existed at all.
+ *
+ * `accountType: 'nuban'` is the honest value and it is deliberately NOT one of
+ * 'us' | 'gb' | 'iban'. Those three are BRIDGE external-account shapes, and
+ * createExternalAccountSchema is a discriminated union over exactly them - a
+ * NUBAN cannot be expressed as any of the three, which is why NgnPayoutForm
+ * exists as a separate first step in the withdrawal wizard. Widening the
+ * existing union would have let a client POST a naira account into the Bridge
+ * path, where it would be accepted and then fail at the provider.
+ *
+ * `defaultPaymentRail: 'nip'` names the real rail (NIP - the Nigeria Inter-Bank
+ * Settlement System instant transfer), matching how 'ach' and 'sepa' name
+ * theirs.
+ *
+ * SHIPS ENABLED, because the naira rail is live in production today - Breet is
+ * the active NGN provider and users are withdrawing on it. Defaulting it off
+ * would have switched off a working rail on the next deploy.
+ */
 export const DEFAULT_PAYMENT_CONTROLS: PaymentControlRecord[] = [
   { currency: 'usd', enabled: true, label: 'USD — US bank account', accountType: 'us', defaultPaymentRail: 'ach', updatedBy: 'system', updatedAt: nowIso() },
   { currency: 'gbp', enabled: true, label: 'GBP — UK bank account', accountType: 'gb', defaultPaymentRail: 'faster_payments', updatedBy: 'system', updatedAt: nowIso() },
-  { currency: 'eur', enabled: true, label: 'EUR — SEPA / IBAN', accountType: 'iban', defaultPaymentRail: 'sepa', updatedBy: 'system', updatedAt: nowIso() }
+  { currency: 'eur', enabled: true, label: 'EUR — SEPA / IBAN', accountType: 'iban', defaultPaymentRail: 'sepa', updatedBy: 'system', updatedAt: nowIso() },
+  { currency: 'ngn', enabled: true, label: 'NGN — Nigerian bank account', accountType: 'nuban', defaultPaymentRail: 'nip', updatedBy: 'system', updatedAt: nowIso() }
 ];
 
 
@@ -62,8 +89,12 @@ export const updatePaymentControlsSchema = z.object({
     customerType: z.enum(['individual', 'business']),
     enabled: z.boolean()
   })).optional(),
+  // 'ngn' accepted here so the admin hub can toggle the naira payout rail.
+  // NOT added to virtualAccounts below: Bridge issues those and it has no
+  // naira virtual account, so accepting 'ngn' there would let an operator
+  // enable something that does not exist.
   payoutCurrencies: z.array(z.object({
-    currency: z.enum(['usd', 'gbp', 'eur']),
+    currency: z.enum(['usd', 'gbp', 'eur', 'ngn']),
     enabled: z.boolean()
   })).optional(),
   virtualAccounts: z.array(z.object({
@@ -80,7 +111,7 @@ export const updatePaymentControlsSchema = z.object({
   })).optional(),
   // Legacy support for older admin frontend payloads.
   controls: z.array(z.object({
-    currency: z.enum(['usd', 'gbp', 'eur']),
+    currency: z.enum(['usd', 'gbp', 'eur', 'ngn']),
     enabled: z.boolean()
   })).optional()
 });
@@ -116,6 +147,19 @@ export interface OfframpControlsResponse {
    * borrowing another rail's.
    */
   ngnOfframpFeePercent: string;
+  /**
+   * DISPLAY-ONLY FX, so the client can render a limit in the currency the user
+   * chose in Settings instead of always printing naira.
+   *
+   * Served on THIS payload rather than a new endpoint for the same reason
+   * supplierPayoutsEnabled is: the customer app already fetches it once on
+   * load, and adding a request to the dashboard's critical path to answer a
+   * formatting question is not a trade worth making.
+   *
+   * Read the contract in display-fx.ts before using these. They convert for
+   * DISPLAY; every limit is still enforced in naira.
+   */
+  displayFx: DisplayFxRates;
 }
 
 export async function listPaymentControls(): Promise<OfframpControlsResponse> {
@@ -172,7 +216,8 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
     sourceNetworks: DEFAULT_NETWORK_CONTROLS.map((defaultControl) => ({
       ...defaultControl,
       ...(existingNetworks.find((item) => item.network === defaultControl.network) ?? {})
-    })).sort((a, b) => a.sortOrder - b.sortOrder)
+    })).sort((a, b) => a.sortOrder - b.sortOrder),
+    displayFx: displayFxRates()
   };
 }
 

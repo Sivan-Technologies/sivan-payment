@@ -1,7 +1,9 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord, VerificationSummary, FlowAllowance } from '../types';
-import { BRIDGE_CURRENCIES, CURRENCY_LABELS, RAIL_LABELS, formatPayoutAmount, isNgnCurrency, payoutRailFor, type PayoutCurrency } from '../rails';
+import { BRIDGE_CURRENCIES, CURRENCY_LABELS, isBridgeCurrency, RAIL_LABELS, formatPayoutAmount, isNgnCurrency, payoutRailFor, type PayoutCurrency } from '../rails';
 import { networkLabel } from '../blockExplorer';
+import { approximateNote, formatFromNgn, isConverted, type DisplayCurrency } from '../displayCurrency';
+import type { DisplayFx } from '../types';
 import { NgnPayoutForm } from './sell/NgnPayoutForm';
 
 /**
@@ -668,12 +670,15 @@ function NeedHelpCard() {
  * It now reads the summary, which is path-aware, and only falls back to the
  * generic prompt when there genuinely is no verification.
  */
-export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAddBank, onSell }: {
+export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAddBank, onSell, displayCurrency = 'ngn', displayFx }: {
   summary: VerificationSummary | null;
   summaryLoaded: boolean;
   onVerify: () => void;
   onAddBank: () => void;
   onSell: () => void;
+  /** Resolved from the user's saved preference. Defaults to naira so an un-passed caller is unchanged. */
+  displayCurrency?: DisplayCurrency;
+  displayFx?: DisplayFx | null;
 }) {
   /**
    * BEFORE THE SERVER HAS ANSWERED, SAY NOTHING.
@@ -751,8 +756,17 @@ export function DashboardAccountNotice({ summary, summaryLoaded, onVerify, onAdd
     // "You can withdraw up to ₦0" - the same class of bug as the limit card,
     // from a second place that had its own copy of the rule.
     const showsNaira = summary.path === 'ngn_bank';
+    /**
+     * THE FIGURE IS STILL NAIRA; THE SYMBOL IS NOW THE USER'S CHOICE.
+     *
+     * This sentence hardcoded '₦' and was the second place - after
+     * dashboardKpis - that decided currency from the country path. A user who
+     * picked USD in Settings read a naira sentence here even once the KPI card
+     * above it had been converted, which is worse than either behaviour on its
+     * own: two figures for one limit, in two currencies, on one screen.
+     */
     const headroom = showsNaira && ngn && ngn.remainingNgn !== null
-      ? `You can withdraw up to ₦${ngn.remainingNgn.toLocaleString('en-NG')} in the next ${summary.windowDays} days.`
+      ? `You can withdraw up to ${formatFromNgn(ngn.remainingNgn, displayCurrency, displayFx)} in the next ${summary.windowDays} days.`
       : 'You can withdraw crypto to your bank.';
 
     /**
@@ -840,12 +854,16 @@ function VerificationLimitCard({
   windowDays,
   upliftApplies,
   nextStep,
+  displayCurrency = 'ngn',
+  displayFx,
 }: {
   allowance: FlowAllowance;
   windowDays: number;
   upliftApplies: boolean;
   /** The server's next rung. See the comment where it is rendered. */
   nextStep?: VerificationSummary['nextStep'];
+  displayCurrency?: DisplayCurrency;
+  displayFx?: DisplayFx | null;
 }) {
   /**
    * The naira formatter is now conditional, because this card is rendered for
@@ -859,8 +877,22 @@ function VerificationLimitCard({
    * one stops the screen lying in the meantime.
    */
   const isForeign = allowance.rail === 'foreign';
-  const naira = (value: number) => `₦${value.toLocaleString('en-NG')}`;
-  const amount = (value: number) => (isForeign ? value.toLocaleString('en-US') : naira(value));
+  /**
+   * THE BARE NUMBER IS GONE.
+   *
+   * This used to render a foreign allowance as `12,500 left` - no symbol at
+   * all - because the figure is naira-denominated and the author correctly
+   * refused to print '$' on a naira number with no rate to convert it. That
+   * was the honest option at the time. There is a rate now (displayFx, served
+   * on /api/offramp/controls), so the number can be stated in the currency the
+   * user actually chose, with a '~' saying it was converted.
+   *
+   * With no displayFx - an older backend - formatFromNgn falls back to naira
+   * and drops the '~', which is exact and correctly labelled. It never prints
+   * a foreign symbol against an unconverted naira figure.
+   */
+  const amount = (value: number) => formatFromNgn(value, displayCurrency, displayFx);
+  const approxNote = approximateNote(displayCurrency, displayFx);
 
   // null is genuinely uncapped - not zero, and not "unknown".
   if (allowance.limitNgn === null) {
@@ -917,6 +949,10 @@ function VerificationLimitCard({
         {amount(used)} of {amount(limit)} used.
         {upliftApplies ? ' Your identity check is complete.' : ''}
       </p>
+      {/* The disclosure that has to travel with a converted figure. Rendered
+          from the same helper that decides the '~', so the two cannot drift
+          apart, and null for naira users - whose number is exact. */}
+      {approxNote && <p className="muted small">{approxNote}</p>}
       {/* THE LADDER IS THE SERVER'S, NOT THIS FILE'S.
  
           This used to hold its own `{1: 'Confirm a bank account in your name',
@@ -943,7 +979,7 @@ function VerificationLimitCard({
   );
 }
 
-export function VerificationPage({ hasUser, userId, api, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, summaryLoaded, onSubmit, onStartVerification, onStartBridgeVerification, onRefresh, onSupport, onAddBank, onSell, hasBank }: { hasUser: boolean; userId?: string; api: <T>(path: string, options?: RequestInit) => Promise<T>; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; summaryLoaded: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; /** Opens the modal on the DOCUMENT path explicitly, whatever the country default is. */ onStartBridgeVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean }) {
+export function VerificationPage({ hasUser, userId, api, customer, customerTypes, kycFailed, canSubmitKyc, kycActionLabel, verificationRedirectUri, summary, summaryLoaded, onSubmit, onStartVerification, onStartBridgeVerification, onRefresh, onSupport, onAddBank, onSell, hasBank, displayCurrency = 'ngn', displayFx }: { hasUser: boolean; userId?: string; api: <T>(path: string, options?: RequestInit) => Promise<T>; customer: CustomerRecord | null; customerTypes: Array<{ customerType: 'individual' | 'business'; enabled: boolean; label: string }>; kycFailed: boolean; canSubmitKyc: boolean; kycActionLabel: string; verificationRedirectUri: string; summary: VerificationSummary | null; summaryLoaded: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onStartVerification: () => void; /** Opens the modal on the DOCUMENT path explicitly, whatever the country default is. */ onStartBridgeVerification: () => void; onRefresh: () => void; onSupport: () => void; onAddBank: () => void; onSell: () => void; hasBank: boolean; displayCurrency?: DisplayCurrency; displayFx?: DisplayFx | null }) {
   const emailDone = hasUser;
   // COUNTRY DECIDES THE PATH, so the page cannot describe one flow.
   //
@@ -1326,7 +1362,7 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
               starts a withdrawal finds out at the point of failure. Every
               figure comes from the admin-overridable limit table, so moving a
               ceiling in the hub changes this immediately with no deploy. */}
-          {primaryOfframp && <VerificationLimitCard allowance={primaryOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} nextStep={summary?.nextStep} />}
+          {primaryOfframp && <VerificationLimitCard allowance={primaryOfframp} windowDays={summary?.windowDays ?? 30} upliftApplies={summary?.upliftApplies ?? false} nextStep={summary?.nextStep} displayCurrency={displayCurrency} displayFx={displayFx} />}
           {/* CustomerDetails renders Bridge's KYC status, account type and
               terms state. For a Nigerian on the bank path there IS no Bridge
               customer, so it printed "Status: Not started / Terms: Pending"
@@ -1662,14 +1698,41 @@ function Kv({ label, value }: { label: string; value?: string | number | null })
 }
 
 function BankForm({ onSubmit, loading, isVerified, controls, canCreatePaymentActions, isLiveEnv }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; loading: boolean; isVerified: boolean; controls: PaymentControl[]; canCreatePaymentActions: boolean; isLiveEnv: boolean }) {
-  const [currency, setCurrency] = useState<'usd' | 'gbp' | 'eur'>((controls[0]?.currency ?? 'usd') as 'usd' | 'gbp' | 'eur');
+  /**
+   * THIS FORM IS BRIDGE-ONLY, SO NGN IS FILTERED OUT BEFORE IT IS OFFERED.
+   *
+   * Adding 'ngn' to the payout controls surfaced it here, and the compiler
+   * caught it: this component posts to the Bridge external-account endpoint,
+   * whose schema is a discriminated union over accountType 'us' | 'gb' |
+   * 'iban'. A NUBAN is none of the three. Had the state simply been widened to
+   * accept 'ngn', a Nigerian would have been shown a currency they could
+   * select and then a routing-number field they cannot fill, and the POST
+   * would have been rejected by the provider after they typed it all in.
+   *
+   * Naira has its own first step - NgnPayoutForm, reached from the Nigerian
+   * bank tab in the withdrawal wizard - because the account shape genuinely
+   * differs. Filtering here keeps the two rails apart at the only point where
+   * they could be confused.
+   */
+  // The predicate is typed so .filter() NARROWS the element type rather than
+  // just shortening the array. Without the annotation TS keeps the union
+  // including 'ngn' and setCurrency below stops type-checking - which is the
+  // error that caught this whole class of mistake in the first place, so it is
+  // worth keeping sharp rather than casting it away.
+  const bridgeControls = controls.filter(
+    (control): control is PaymentControl & { currency: 'usd' | 'gbp' | 'eur' } => isBridgeCurrency(control.currency),
+  );
+  const [currency, setCurrency] = useState<'usd' | 'gbp' | 'eur'>((bridgeControls[0]?.currency ?? 'usd') as 'usd' | 'gbp' | 'eur');
   useEffect(() => {
-    if (controls.length && !controls.some((control) => control.currency === currency)) {
-      setCurrency(controls[0].currency);
+    if (bridgeControls.length && !bridgeControls.some((control) => control.currency === currency)) {
+      setCurrency(bridgeControls[0].currency);
     }
-  }, [controls, currency]);
+  }, [bridgeControls, currency]);
   if (!isVerified) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Complete verification before adding a bank account.</Empty></article>;
-  if (!controls.length) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Bank payouts are temporarily unavailable.</Empty></article>;
+  // bridgeControls, not controls: with only NGN enabled this form has nothing
+  // it can offer, and saying "temporarily unavailable" is correct - the naira
+  // rail is reached from the withdrawal wizard, not from here.
+  if (!bridgeControls.length) return <article className="panel form-panel"><p className="eyebrow">Step 3</p><h3>Add your bank</h3><Empty>Bank payouts are temporarily unavailable.</Empty></article>;
   const isUsd = currency === 'usd';
   const isGbp = currency === 'gbp';
   return (
@@ -1679,7 +1742,7 @@ function BankForm({ onSubmit, loading, isVerified, controls, canCreatePaymentAct
       <p className="muted">Your payout must go to a bank account you own. Available payout currencies are controlled by Sivan.</p>
       <form className="form" onSubmit={onSubmit}>
         <label>Payout currency
-          <CustomSelect name="currency" value={currency} onChange={(value) => setCurrency(value as 'usd' | 'gbp' | 'eur')} options={controls.map((control) => ({ value: control.currency, label: control.label }))} />
+          <CustomSelect name="currency" value={currency} onChange={(value) => setCurrency(value as 'usd' | 'gbp' | 'eur')} options={bridgeControls.map((control) => ({ value: control.currency, label: control.label }))} />
         </label>
         <label>Bank name<input name="bankName" placeholder={isUsd ? 'Bank name' : isGbp ? 'Bank name' : 'SEPA bank name'} defaultValue={isLiveEnv ? '' : isUsd ? 'Lead Bank' : isGbp ? 'Example UK Bank' : 'Example SEPA Bank'} required /></label>
         <label>Account owner name<input name="accountOwnerName" placeholder="Account holder name" defaultValue={isLiveEnv ? '' : 'Ada Lovelace'} required /></label>

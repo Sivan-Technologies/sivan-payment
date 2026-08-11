@@ -4,6 +4,7 @@ import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { buildActivityFeed } from './activityFeed';
 import { inProgressKpi, limitKpi } from './dashboardKpis';
+import { resolveDisplayCurrency } from './displayCurrency';
 import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
 import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
@@ -421,9 +422,33 @@ export default function App() {
    * exactly how "Payout volume $0.00" ended up above six real transactions.
    */
   const inProgress = useMemo(() => inProgressKpi(activityFeed), [activityFeed]);
+
+  /**
+   * THE CURRENCY THE USER ASKED FOR, RESOLVED ONCE.
+   *
+   * Settings > Preferences has offered a "Default fiat currency" select for
+   * months and nothing read it back - the dashboard decided naira-or-not from
+   * `summary.path`, which is derived from COUNTRY. So a Nigerian who switched
+   * to USD saved the preference successfully and watched the screen not
+   * change.
+   *
+   * Resolved HERE, once, and passed down. Four components had their own copy
+   * of "is this a naira user" and they are exactly the four places the answer
+   * could disagree; one value threaded through them is the only arrangement
+   * where the KPI card and the sentence beneath it cannot contradict.
+   *
+   * Falls back to the old country behaviour when no preference is saved, so
+   * this cannot change the screen for someone who never touched the setting.
+   */
+  const displayCurrency = useMemo(
+    () => resolveDisplayCurrency(userPreferences?.defaultFiatCurrency, verificationSummary?.path),
+    [userPreferences?.defaultFiatCurrency, verificationSummary?.path]
+  );
+  const displayFx = paymentControls.displayFx;
+
   const limitCard = useMemo(
-    () => limitKpi(verificationSummary as any, verificationSummaryLoaded),
-    [verificationSummary, verificationSummaryLoaded]
+    () => limitKpi(verificationSummary as any, verificationSummaryLoaded, displayCurrency, displayFx),
+    [verificationSummary, verificationSummaryLoaded, displayCurrency, displayFx]
   );
 
   const setupPercent = Math.round(([hasUser, isVerified, hasBank].filter(Boolean).length / 3) * 100);
@@ -2391,7 +2416,7 @@ export default function App() {
                  Sivan asks of them must never be told they are unverified. */}
             {bridgeNeedsAttention
               ? <KycOutcomeNotice customer={customer!} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />
-              : <DashboardAccountNotice summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} />}
+              : <DashboardAccountNotice summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} displayCurrency={displayCurrency} displayFx={displayFx} />}
 
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Withdraw</strong><small>Cash out to your bank account</small></div><em>→</em></button>
@@ -2561,7 +2586,7 @@ export default function App() {
           </section>
         )}
 
-        {view === 'kyc' && <VerificationPage hasUser={hasUser} userId={user?.id} api={api} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onSubmit={handleKyc} onStartVerification={() => openVerification()} onStartBridgeVerification={openBridgeVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} />}
+        {view === 'kyc' && <VerificationPage hasUser={hasUser} userId={user?.id} api={api} customer={customer} customerTypes={paymentControls.customerTypes ?? fallbackCustomerTypes} kycFailed={kycFailed} canSubmitKyc={canSubmitKyc} kycActionLabel={kycActionLabel} verificationRedirectUri={verificationRedirectUri} summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onSubmit={handleKyc} onStartVerification={() => openVerification()} onStartBridgeVerification={openBridgeVerification} onRefresh={refreshKyc} onSupport={() => goToView('help')} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} hasBank={hasBank} displayCurrency={displayCurrency} displayFx={displayFx} />}
 
         {view === 'banks' && <PaymentMethodsView accounts={accounts} onSubmit={handleBank} loading={loading} isVerified={isVerified} controls={enabledControls} canCreatePaymentActions={canCreatePaymentActions} isLiveEnv={isLiveEnv} onRefresh={loadUserData} />}
 

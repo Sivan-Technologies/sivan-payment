@@ -95,7 +95,30 @@ async function main() {
     assert(businessControls.customerTypes.find((x: any) => x.customerType === 'business')?.enabled === true, 'business verification can be enabled by admin');
     await updateControls({ customerTypes: [{ customerType: 'business', enabled: false }] });
 
-    assert(initial.payoutCurrencies.length === 3, 'payout controls include USD, GBP, EUR');
+    /**
+     * ASSERTS WHICH CURRENCIES, NOT HOW MANY.
+     *
+     * This was `length === 3` under the message "payout controls include USD,
+     * GBP, EUR" - a count standing in for an identity check. The two are not
+     * the same claim, and the gap showed the moment NGN was added: the message
+     * stayed true (usd, gbp and eur are all still there) while the assertion
+     * failed, so the failure text actively misdescribed the change. A count
+     * also cannot catch the failure it exists to catch - swap 'eur' for 'chf'
+     * and it still passes.
+     */
+    for (const currency of ['usd', 'gbp', 'eur', 'ngn']) {
+      assert(
+        initial.payoutCurrencies.some((x: any) => x.currency === currency),
+        `payout controls include ${currency.toUpperCase()}`,
+      );
+    }
+    // Naira is a Breet/NIP rail and must never claim a Bridge account shape -
+    // createExternalAccountSchema is a discriminated union over us|gb|iban and
+    // a NUBAN is none of them.
+    assert(
+      initial.payoutCurrencies.find((x: any) => x.currency === 'ngn')?.accountType === 'nuban',
+      'the naira payout control uses the NUBAN shape, not a Bridge one',
+    );
     assert(initial.sourceAssets.some((x: any) => x.asset === 'usdc'), 'asset controls include USDC');
     assert(initial.sourceAssets.some((x: any) => x.asset === 'usdt'), 'asset controls include USDT');
     assert(initial.sourceNetworks.length === 6, 'network controls include all six supported networks');
@@ -154,8 +177,23 @@ async function main() {
 
     await updateControls({ customerTypes: [{ customerType: 'individual', enabled: false }, { customerType: 'business', enabled: false }] }, 400);
     assert(true, 'cannot disable all customer types');
-    await updateControls({ payoutCurrencies: [{ currency: 'usd', enabled: false }, { currency: 'gbp', enabled: false }, { currency: 'eur', enabled: false }] }, 400);
+    /**
+     * ALL FOUR, because there are now four.
+     *
+     * With NGN added and left enabled, switching off usd/gbp/eur correctly
+     * returned 200 - one payout rail was still open, so the guard had nothing
+     * to refuse. The test failed while the SYSTEM was right, which is the
+     * useful direction for a test to fail in: it noticed that "all" had
+     * changed meaning. Enumerating the list rather than counting it is the
+     * same fix applied above.
+     */
+    await updateControls({ payoutCurrencies: [{ currency: 'usd', enabled: false }, { currency: 'gbp', enabled: false }, { currency: 'eur', enabled: false }, { currency: 'ngn', enabled: false }] }, 400);
     assert(true, 'cannot disable all payout currencies');
+    // And the naira rail alone is enough to keep the gate open - proves the
+    // guard counts NGN as a real payout rail rather than ignoring it.
+    await updateControls({ payoutCurrencies: [{ currency: 'usd', enabled: false }, { currency: 'gbp', enabled: false }, { currency: 'eur', enabled: false }, { currency: 'ngn', enabled: true }] }, 200);
+    assert(true, 'naira alone keeps payouts open');
+    await updateControls({ payoutCurrencies: [{ currency: 'usd', enabled: true }, { currency: 'gbp', enabled: true }, { currency: 'eur', enabled: true }] });
     await updateControls({ sourceAssets: [{ asset: 'usdc', enabled: false }, { asset: 'usdt', enabled: false }] }, 400);
     assert(true, 'cannot disable all deposit assets');
     await updateControls({ sourceNetworks: ['base', 'polygon', 'ethereum', 'solana', 'arbitrum', 'avalanche_c_chain'].map((network) => ({ network, enabled: false })) }, 400);

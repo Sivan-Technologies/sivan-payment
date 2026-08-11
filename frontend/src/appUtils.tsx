@@ -244,6 +244,9 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
       sourceAssets: fallbackSourceAssets,
       sourceNetworks: fallbackSourceNetworks,
       supplierPayoutsEnabled: true
+      // No displayFx on the legacy array shape - there is nowhere for it to
+      // have come from. Consumers fall back to naira, which is what the
+      // figures already are.
     };
   }
   return {
@@ -261,7 +264,21 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
      * is a far worse failure: the user cannot tell "switched off" from
      * "broken", and neither can support.
      */
-    supplierPayoutsEnabled: data?.supplierPayoutsEnabled ?? true
+    supplierPayoutsEnabled: data?.supplierPayoutsEnabled ?? true,
+    /**
+     * PASSED THROUGH, NOT DEFAULTED.
+     *
+     * This normaliser is an allowlist - it rebuilds the object field by field
+     * and anything not named here is dropped. Adding displayFx to the API
+     * without adding it here would have shipped a correct endpoint, a correct
+     * formatter, and a dashboard that still printed naira, with nothing
+     * obviously wrong in either half.
+     *
+     * Deliberately NOT given a fallback rate. `undefined` makes every consumer
+     * render the exact naira figure; a made-up rate would make them all render
+     * a wrong converted one. An absent rate must degrade to the truth.
+     */
+    displayFx: data?.displayFx
   };
 }
 
