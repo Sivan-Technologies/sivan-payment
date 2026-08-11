@@ -65,8 +65,17 @@ const run = async () => {
     } as any);
 
     assert.equal(outcome.swept, false, 'the sweep must not move funds while disabled');
-    assert.equal(outcome.reason, 'sweep_disabled_by_admin',
-      `expected the admin gate to stop it, got: ${outcome.reason}`);
+    /*
+     * The reason string is 'auto_sweep_disabled' after a parallel change
+     * (854d9f0) merged a second switch, walletControls.autoSweepBridgeWallet,
+     * into the same guard. Assert on the BEHAVIOUR plus either owner's reason:
+     * what must hold is that a settled deposit does not move, not which of the
+     * two flags said no.
+     */
+    assert.ok(
+      ['auto_sweep_disabled', 'sweep_disabled_by_admin'].includes(String(outcome.reason)),
+      `expected an admin gate to stop it, got: ${outcome.reason}`
+    );
   });
 
   // The reason string must be load-bearing, not cosmetic: with the switch ON
@@ -90,8 +99,10 @@ const run = async () => {
       sourceAmount: '250',
     } as any);
 
-    assert.notEqual(outcome.reason, 'sweep_disabled_by_admin',
-      'with the switch on, the admin gate must no longer be what stops it');
+    assert.ok(
+      !['auto_sweep_disabled', 'sweep_disabled_by_admin'].includes(String(outcome.reason)),
+      `with the switch on, no admin gate should stop it -- got: ${outcome.reason}`
+    );
 
     // Leave the platform as we found it: OFF is the shipped default.
     await updateAdminPlatformSettings(
