@@ -54,6 +54,26 @@ export interface FlowAllowance {
   remainingNgn: number | null;
   /** The level that would raise this ceiling, when one exists. */
   nextLevel?: VerificationLevel;
+  /**
+   * A REASON THIS RAIL CANNOT BE USED THAT IS NOT THE CEILING.
+   *
+   * Introduced because the two can now disagree. A Bridge-approved Nigerian
+   * with no NUBAN reaches IDENTITY, so their naira off-ramp ceiling is a
+   * genuine NGN 5,000,000 - but they have nowhere for naira to land, and
+   * acceptNgnQuote() will refuse until a name-matched payout account exists.
+   *
+   * Reporting only the ceiling would put "₦5,000,000 left" on the screen of
+   * someone who cannot move one naira. Reporting a ceiling of ZERO instead
+   * would be the other lie - it would read as "your limit is spent" or "you
+   * are not verified", which is the exact misreading the limit card's own
+   * `limit === 0` branch was written to avoid.
+   *
+   * So the ceiling stays truthful and this states the separate blocker. The
+   * UI shows the requirement rather than a number.
+   *
+   * Absent when the rail is usable.
+   */
+  blockedBy?: 'payout_account_required';
 }
 
 export interface VerificationSummary {
@@ -326,7 +346,25 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
         : lowestSufficientLevel(flow, rail, limitNgn + 1, overrides);
     }
 
-    return { flow, rail, limitNgn, usedNgn, remainingNgn, nextLevel };
+    /**
+     * A CEILING IS NOT THE SAME AS A USABLE RAIL.
+     *
+     * The naira rails settle into a Nigerian bank account, so they need a
+     * name-matched NUBAN regardless of how high the ceiling is. A
+     * Bridge-approved user now reaches IDENTITY without one, which is correct
+     * for identity and useless for naira - acceptNgnQuote() refuses without a
+     * verified payout account.
+     *
+     * Only the NGN rails are gated this way. The foreign rails settle through
+     * Bridge, whose external account is a separate thing entirely, and
+     * blocking those on a Nigerian account number would invent a requirement
+     * that does not exist.
+     */
+    const blockedBy = rail === 'ngn' && !hasVerifiedNgnAccount
+      ? ('payout_account_required' as const)
+      : undefined;
+
+    return { flow, rail, limitNgn, usedNgn, remainingNgn, nextLevel, blockedBy };
   });
 
   return {
@@ -375,8 +413,26 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
      * customer owes nothing, so an unaccepted-but-not-required terms status
      * must not hold them at 99% forever. Same distinction the gate makes.
      */
-    identityComplete: path === 'ngn_bank' ? hasVerifiedNgnAccount : state.level >= VerificationLevel.IDENTITY,
-    pathComplete: (path === 'ngn_bank' ? hasVerifiedNgnAccount : state.level >= VerificationLevel.IDENTITY)
+    /**
+     * EITHER ROUTE FINISHES THE NIGERIAN PATH, NOT ONLY THE NUBAN.
+     *
+     * `path` comes from verificationPathFor(user.country), so for a Nigerian
+     * it is ALWAYS 'ngn_bank' - it describes the route their country is
+     * steered down, not the route they actually took. Keying completion off
+     * it alone meant a Nigerian who went and completed Bridge's document check
+     * (offered by a button on that very page) was still told they had not
+     * finished, because they had no NUBAN.
+     *
+     * That is what produced the contradiction on screen: "Verification
+     * complete" in the banner, "Level 0: Starter" and "50% complete" directly
+     * beneath it, from two fields that disagreed about what finished means.
+     *
+     * A Nigerian is done when EITHER their NUBAN name-matched OR they reached
+     * IDENTITY by another route - Bridge, or a matched BVN. Both are real
+     * completions of the same question.
+     */
+    identityComplete: hasVerifiedNgnAccount || state.level >= VerificationLevel.IDENTITY,
+    pathComplete: (hasVerifiedNgnAccount || state.level >= VerificationLevel.IDENTITY)
       && !customerTermsOutstanding(customer),
     /**
      * IS THERE A HIGHER LEVEL, AND WHAT WOULD IT TAKE?

@@ -31,6 +31,47 @@ import {
  * Computed, never read from a stored field: a stored level can drift from the
  * evidence underneath it, and when those two disagree the evidence is right.
  */
+/**
+ * IDENTITY NO LONGER REQUIRES A PAYOUT ACCOUNT.
+ *
+ * THE BUG THIS FIXES. The ladder used to AND every rung with `bankVerified`,
+ * so identity could not count for anything until a payout destination existed:
+ *
+ *   bankVerified && identityVerified -> IDENTITY
+ *   bankVerified                     -> BANK
+ *   else                             -> NONE
+ *
+ * A Nigerian who completed Bridge's document KYC - passport, selfie, the whole
+ * $2 check - but had not yet added a NUBAN therefore sat at LEVEL 0. Their
+ * screen said "Verification complete / You're verified" and "Level 0: Starter"
+ * at the same time, the wallet refused to provision, Receive said "verify your
+ * identity first", and every ceiling read zero. All of it from one AND.
+ *
+ * Those are two independent facts and the ladder was multiplying them:
+ *
+ *   "do we know who you are"          <- Bridge KYC, or a matched BVN
+ *   "where do we send your naira"     <- a name-matched NUBAN
+ *
+ * Knowing someone is not conditional on having somewhere to pay them. So
+ * identity now stands on its own, and the bank rung is what it always said it
+ * was - a payout destination - rather than a prerequisite for being known.
+ *
+ * WHY BANK STILL BEATS NONE ON ITS OWN. A matched NUBAN is real evidence in
+ * its own right: since the CBN directive of 1 March 2024 a Nigerian account
+ * cannot transact without BVN/NIN linkage, so an account that resolves has
+ * already been verified by a licensed bank. That is worth Level 1 without any
+ * identity check, exactly as before.
+ *
+ * ENHANCED STILL REQUIRES ALL THREE. Proof of address is a statement about
+ * where someone lives, and it is only meaningful on top of both an identity
+ * and a settled payout relationship - so that rung keeps its AND deliberately.
+ *
+ * The NAIRA RAIL IS NOT WEAKENED BY THIS. Withdrawing to a Nigerian bank still
+ * requires a name-matched NUBAN, and that is enforced structurally rather than
+ * by level: acceptNgnQuote() needs a payout account that
+ * payoutAccountStatusFor() marked 'verified', and there is no code path to a
+ * naira payout without one.
+ */
 function deriveLevel(input: {
   bankVerified: boolean;
   identityVerified: boolean;
@@ -39,7 +80,7 @@ function deriveLevel(input: {
   if (input.bankVerified && input.identityVerified && input.addressVerified) {
     return VerificationLevel.ENHANCED;
   }
-  if (input.bankVerified && input.identityVerified) return VerificationLevel.IDENTITY;
+  if (input.identityVerified) return VerificationLevel.IDENTITY;
   if (input.bankVerified) return VerificationLevel.BANK;
   return VerificationLevel.NONE;
 }
@@ -151,7 +192,35 @@ export async function getVerificationState(userId: string): Promise<Verification
    * that toggle set, `bridgeApproved` alone would ignore a real BVN match and
    * tell a verified user to go and verify.
    */
-  const identityVerified = bvnVerified || (identityRequired ? bridgeApproved : bridgeAccountVerified);
+  /**
+   * BRIDGE APPROVAL COUNTS ON BOTH SIDES OF THE TOGGLE.
+   *
+   * This read `identityRequired ? bridgeApproved : bridgeAccountVerified`, and
+   * the false branch is the deeper half of the reported bug. With
+   * identityVerificationEnabled OFF - the shipped MVP default - a user's actual
+   * Bridge KYC APPROVAL was never consulted at all. The only thing that could
+   * grant identity was `bridgeAccountVerified`, which is the existence of a
+   * verified EXTERNAL ACCOUNT ROW - a bank account - not an identity check.
+   *
+   * So the person who had completed Bridge's document check, passed, and
+   * accepted the terms scored identityVerified = false, purely because they
+   * had not also added a bank. Fixing deriveLevel() alone did not move them:
+   * the input it was ANDing was already false. Caught only by driving
+   * getVerificationState() against a real seeded customer - sixteen unit tests
+   * over hand-built state objects all passed while this returned Level 0.
+   *
+   * `bridgeApproved` is now an independent source on both branches. It is a
+   * genuine document-and-selfie check that Sivan pays for; there is no reading
+   * of "has this person been identified" where it should count when a toggle
+   * is on and not when it is off. The toggle governs whether a NIN/BVN is
+   * REQUIRED, never whether a completed check is worth anything.
+   *
+   * `bridgeAccountVerified` is kept on the false branch. That is the historic
+   * MVP behaviour for users who predate this and hold a Bridge external
+   * account; removing it would demote them.
+   */
+  const identityVerified =
+    bvnVerified || bridgeApproved || (!identityRequired && bridgeAccountVerified);
 
   // When the toggle is OFF, the level is granted without a NIN/BVN check - so
   // the per-check statuses must say so too, or levelIsIntact() sees a Level 2

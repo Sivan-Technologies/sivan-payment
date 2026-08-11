@@ -144,7 +144,28 @@ export function lowestSufficientLevel(
 export function levelIsIntact(state: VerificationState): boolean {
   const ok = (s: CheckStatus) => s === CheckStatus.VERIFIED;
 
-  if (state.level >= VerificationLevel.BANK && !ok(state.bankStatus)) return false;
+  /**
+   * THE BANK CHECK IS NO LONGER IMPLIED BY THE LEVEL.
+   *
+   * This read `level >= BANK && !ok(bankStatus) -> stale`, which was sound
+   * while every rung above NONE required a payout account. deriveLevel() no
+   * longer works that way: a Bridge-approved user with no NUBAN is now
+   * IDENTITY (2) with bankStatus NOT_STARTED, which is a correct and expected
+   * state, not a stale one.
+   *
+   * Left as it was, this function would have returned false for exactly the
+   * users the ladder change was meant to unblock - and decide() turns that
+   * into "one of your verification checks needs attention" on EVERY
+   * transaction. The user would have moved from "Level 0, nothing works" to
+   * "Level 2, nothing works", which is worse: the screen would finally agree
+   * they were verified while the rails still refused them.
+   *
+   * So this asks the honest question instead. A bank check that has FAILED or
+   * EXPIRED is stale evidence and must invalidate the level; a bank check that
+   * was never started is simply absent, and absence is now a legitimate state
+   * at IDENTITY. NOT_STARTED and PENDING are therefore not staleness.
+   */
+  if (state.bankStatus === CheckStatus.FAILED || state.bankStatus === CheckStatus.EXPIRED) return false;
 
   if (state.level >= VerificationLevel.IDENTITY) {
     // NIN or BVN is sufficient - Bridge accepts either for Nigeria, and

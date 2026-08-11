@@ -894,6 +894,31 @@ function VerificationLimitCard({
   const amount = (value: number) => formatFromNgn(value, displayCurrency, displayFx);
   const approxNote = approximateNote(displayCurrency, displayFx);
 
+  /**
+   * A CEILING THE USER CANNOT REACH YET IS NOT A NUMBER TO SHOW THEM.
+   *
+   * A Bridge-approved Nigerian now reaches Level 2 without a payout account,
+   * so this card would otherwise read "5,000,000 left" to somebody who cannot
+   * move one naira - acceptNgnQuote() refuses until a NUBAN is name-matched.
+   *
+   * Rendering zero instead would be the opposite lie: the `limit === 0` branch
+   * below exists precisely because "0 left" reads as "you have spent your
+   * allowance" to someone who has done nothing wrong. The honest answer is
+   * neither number - it is the missing step.
+   */
+  if (allowance.blockedBy === 'payout_account_required') {
+    return (
+      <article className="panel verification-limit-card">
+        <p className="eyebrow">Withdrawal limit</p>
+        <h3>Add a payout account</h3>
+        <p className="muted">
+          You are verified. To withdraw to a Nigerian bank, add an account in your name -
+          we confirm it with your bank in under a minute.
+        </p>
+      </article>
+    );
+  }
+
   // null is genuinely uncapped - not zero, and not "unknown".
   if (allowance.limitNgn === null) {
     return (
@@ -999,6 +1024,26 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
    * badge beside an un-ticked "2". Caught in a screenshot, not in the code.
    */
   const identityDone = summary ? summary.identityComplete : customer?.kycStatus === 'kyc_approved';
+  /**
+   * WHICH ROUTE ACTUALLY COMPLETED IDENTITY - not which one the country
+   * defaults to.
+   *
+   * `isNgnPath` is verificationPathFor(country), so for every Nigerian it is
+   * true regardless of what they did. The steps below were labelled from it
+   * alone, which produced two false statements on the screen of a
+   * Bridge-verified Nigerian with no payout account:
+   *
+   *   Step 2  "Bank verification ... Completed"      - they have no bank
+   *   Step 3  "Confirmed with your bank verification" - nothing confirmed it
+   *
+   * Both were caught by LOOKING at the rendered page; every boolean assertion
+   * in the journey passed while these two lines were plainly wrong.
+   *
+   * A Nigerian who is identity-complete WITHOUT a payout account can only have
+   * got there through documents (Bridge) or a matched BVN, so the steps are
+   * labelled for that route instead.
+   */
+  const identityViaDocuments = identityDone && !hasBank;
   const verificationLink = customer?.hostedKycLink || customer?.kycLink;
   // Only meaningful on the Bridge path; a Nigerian has no hosted link to resume.
   const canOpenExistingVerification = Boolean(!isNgnPath && verificationLink && customer?.id && !identityDone && !kycFailed);
@@ -1257,7 +1302,7 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
                 identityDone comes from summary.pathComplete, which is the
                 server's answer for whichever path this user is on. When the
                 path is complete the step is finished, and it says so. */}
-            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>{isNgnPath ? 'Bank verification' : 'Identity verification'}</strong><small>{isNgnPath ? 'Confirm a Nigerian bank account in your name. No documents, usually under a minute.' : 'Government-issued ID and selfie. Usually takes about 3 minutes.'}</small>{summary?.hasPendingPayoutReview && !identityDone && <small className="verification-pending-note">Your bank account is being checked by our team.</small>}</div>{identityDone ? <button className="ghost-btn small" disabled>Completed</button> : !hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : /* Individual verification opens the modal, which asks for the country
+            <div className={`verification-step ${identityDone ? 'done' : ''}`}><span>{identityDone ? '✓' : '2'}</span><div><strong>{isNgnPath && !identityViaDocuments ? 'Bank verification' : 'Identity verification'}</strong><small>{isNgnPath && !identityViaDocuments ? 'Confirm a Nigerian bank account in your name. No documents, usually under a minute.' : 'Government-issued ID and selfie. Usually takes about 3 minutes.'}</small>{summary?.hasPendingPayoutReview && !identityDone && <small className="verification-pending-note">Your bank account is being checked by our team.</small>}</div>{identityDone ? <button className="ghost-btn small" disabled>Completed</button> : !hasUser ? <button className="primary-btn small" disabled>Create account</button> : canOpenExistingVerification ? <a className="primary-btn small" href={verificationLink} target="_blank" rel="noreferrer">{kycActionLabel}</a> : /* Individual verification opens the modal, which asks for the country
    first and then routes: Nigeria to the bank-name check, everywhere else to
    Bridge. Business verification still uses the form below, because the modal
    has no customer-type step and a business cannot be verified by a personal
@@ -1295,7 +1340,7 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
                 onRefresh={onRefresh}
               />
             )}
-            <VerificationStep done={hasBank} index={isNgnPath ? 3 : 4} title="Payout bank" sub={isNgnPath ? 'Confirmed with your bank verification' : 'Add a bank when you are ready to withdraw'} action={hasBank ? 'Completed' : 'Continue'} />
+            <VerificationStep done={hasBank} index={isNgnPath ? 3 : 4} title="Payout bank" sub={isNgnPath && !identityViaDocuments ? 'Confirmed with your bank verification' : 'Add a bank when you are ready to withdraw'} action={hasBank ? 'Completed' : 'Continue'} />
             {/* WHAT COMES AFTER "100% COMPLETE".
  
                 A Nigerian who finished Level 1 saw a page that said 100% and

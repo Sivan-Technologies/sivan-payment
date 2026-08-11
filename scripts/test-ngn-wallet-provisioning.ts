@@ -141,8 +141,21 @@ console.log('\n── the rest of the eligibility ladder still holds ───�
 
 check('no bank account is still refused',
   !canProvisionWallet(state({ level: VerificationLevel.NONE })).eligible);
-check('a stale bank check is still refused',
-  !canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.NOT_STARTED })).eligible);
+/**
+ * STALE MEANS BROKEN, NOT ABSENT.
+ *
+ * This used NOT_STARTED as its example of a "stale" check. That is not stale,
+ * it is missing - and a missing payout account is now a legitimate state for a
+ * user who verified their identity through Bridge instead. FAILED and EXPIRED
+ * are the statuses that actually mean the evidence under the level no longer
+ * holds, and those must still refuse a fresh deposit address.
+ */
+check('a FAILED bank check is still refused',
+  !canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.FAILED })).eligible);
+check('an EXPIRED bank check is still refused',
+  !canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.EXPIRED })).eligible);
+check('identity without a payout account is allowed a wallet',
+  canProvisionWallet(state({ level: VerificationLevel.IDENTITY, bankStatus: CheckStatus.NOT_STARTED })).eligible);
 check('a high-risk account is still refused',
   !canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.VERIFIED, riskLevel: 'high' })).eligible);
 check('high risk WITH enhanced due diligence is allowed',

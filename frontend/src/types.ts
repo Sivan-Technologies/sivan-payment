@@ -702,6 +702,15 @@ export interface FlowAllowance {
   usedNgn: number;
   remainingNgn: number | null;
   nextLevel?: number;
+  /**
+   * A reason this rail is unusable that is NOT the ceiling.
+   *
+   * A Bridge-approved Nigerian reaches Level 2, so the naira ceiling is a
+   * genuine 5,000,000 - but with no name-matched NUBAN there is nowhere for
+   * naira to land and the withdrawal will refuse. Showing only the ceiling
+   * would advertise five million to someone who cannot move one.
+   */
+  blockedBy?: 'payout_account_required';
 }
 
 export interface VerificationSummary {

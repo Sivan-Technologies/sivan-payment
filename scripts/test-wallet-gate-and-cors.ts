@@ -72,11 +72,21 @@ const state = (over: Partial<any> = {}) => ({
 console.log('\n── what the SERVER actually requires for a wallet ─────────────');
 
 const noBank = canProvisionWallet(state({ level: VerificationLevel.NONE }));
-check('no bank account -> refused', !noBank.eligible);
-check('and the reason names the bank, not "verification"',
-  /payout bank account/i.test(noBank.reason), noBank.reason);
-check('that is the exact 400 seen in production',
-  noBank.reason === 'Add and confirm your payout bank account to create your wallet.', noBank.reason);
+check('nothing verified at all -> refused', !noBank.eligible);
+/**
+ * THE REASON NOW NAMES BOTH ROUTES.
+ *
+ * It used to be pinned to the exact string "Add and confirm your payout bank
+ * account to create your wallet." That was the only way to clear this gate at
+ * the time. It no longer is - identity alone clears it - so a message naming
+ * only the bank sends a user who needs a document check to the wrong screen,
+ * and names a step a non-Nigerian's path never asks for.
+ *
+ * Asserting on MEANING rather than the exact sentence, so rewording the copy
+ * does not fail the test while changing which routes it offers does.
+ */
+check('and the reason offers identity as a route', /identity/i.test(noBank.reason), noBank.reason);
+check('and still offers the payout-account route', /payout bank account/i.test(noBank.reason), noBank.reason);
 
 const bankOk = canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.VERIFIED }));
 check('a verified payout account -> allowed', bankOk.eligible, bankOk.reason);
@@ -85,34 +95,81 @@ check('a verified payout account -> allowed', bankOk.eligible, bankOk.reason);
  * The case that produced the report: level says BANK but the bank check is
  * stale. A cached level must never outrank the evidence under it.
  */
-const staleBank = canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.NOT_STARTED }));
-check('level BANK with an unverified bank check -> still refused', !staleBank.eligible);
+/**
+ * WHAT "STALE" MEANS HAS BEEN NARROWED, DELIBERATELY.
+ *
+ * This asserted that level BANK with bankStatus NOT_STARTED must be refused.
+ * That conflated "your payout account has a problem" with "you have not added
+ * one yet", and the second is now a legitimate state - a Bridge-approved user
+ * reaches IDENTITY with no payout account at all and must be able to hold a
+ * wallet.
+ *
+ * A FAILED or EXPIRED check is still stale evidence and must still refuse: a
+ * deposit address, unlike a transaction, cannot be withdrawn once issued.
+ */
+const failedBank = canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.FAILED }));
+check('a FAILED bank check -> still refused', !failedBank.eligible, failedBank.reason);
+const expiredBank = canProvisionWallet(state({ level: VerificationLevel.BANK, bankStatus: CheckStatus.EXPIRED }));
+check('an EXPIRED bank check -> still refused', !expiredBank.eligible, expiredBank.reason);
 
 /**
  * AND THE CASE THE UI GOT WRONG. A Bridge-approved user (kyc_approved, which
  * is what the frontend fallback tests) with NO payout account. The old screen
  * showed them the button.
  */
+/**
+ * THE POLICY REVERSED HERE, ON PURPOSE.
+ *
+ * This previously asserted that a Bridge-approved user with no payout account
+ * must be REFUSED, and called the UI wrong for offering them a button. On
+ * review that was the wrong way round: the person had completed a document
+ * check Sivan paid for, and a wallet is where their crypto LANDS - it has
+ * nothing to do with where naira would later be sent. Refusing them produced
+ * an account reading "Verification complete" and "Level 0: Starter" at once.
+ *
+ * Withdrawing to a Nigerian bank still requires a name-matched NUBAN. That is
+ * a separate gate, enforced at the withdrawal, and it is untouched.
+ */
 const bridgeNoBank = canProvisionWallet(state({ level: VerificationLevel.IDENTITY, bankStatus: CheckStatus.NOT_STARTED }));
-check('Bridge-approved but no payout account -> refused by the server', !bridgeNoBank.eligible,
-  'this is the user the UI offered a button to');
+check('Bridge-approved with no payout account -> ALLOWED a wallet', bridgeNoBank.eligible,
+  bridgeNoBank.reason);
 
 console.log('\n── the screen now asks the SAME question ──────────────────────');
 
 const receive = read('frontend/src/components/ReceiveView.tsx');
 const app = read('frontend/src/App.tsx');
 
-check('ReceiveView gates on a payout account, not identity alone',
-  /if \(!isVerified \|\| !hasPayoutAccount\)/.test(receive));
-check('it takes hasPayoutAccount as a required prop', /hasPayoutAccount: boolean;/.test(receive));
+/**
+ * THESE WERE SOURCE-REGEX ASSERTIONS AND TWO OF THEM PINNED THE OLD RULE.
+ *
+ * `/if \(!isVerified \|\| !hasPayoutAccount\)/` matched the literal text of a
+ * condition, so it failed the moment the condition changed - which is the
+ * point - but it could equally have passed against that line sitting inside a
+ * comment or a dead branch. It asserts that code EXISTS, not that it RUNS,
+ * which is a failure mode already recorded twice in this repo.
+ *
+ * The real behaviour - does a Bridge-approved user with no NUBAN get a deposit
+ * address - is asserted in the browser by e2e/receive-gate.mjs, against the
+ * rendered page. What is worth checking HERE, cheaply, is that the screen has
+ * not drifted back to demanding a payout account for identity, and that the
+ * server-side answer it mirrors is the one above.
+ *
+ * Comments are stripped first so a paragraph explaining the old rule cannot
+ * satisfy a check about the new one.
+ */
+const receiveCode = receive.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+check('ReceiveView no longer blocks a verified user for lacking a payout account',
+  !/if \(!isVerified \|\| !hasPayoutAccount\)/.test(receiveCode),
+  'the payout-account gate is back on the receive screen');
+check('ReceiveView still gates on verification',
+  /if \(!isVerified\)/.test(receiveCode));
 check('App passes the same hasBank the rest of the app uses',
   app.includes('hasPayoutAccount={hasBank}'),
   'a second source of truth here would drift from the server');
-check('the copy names the missing step instead of saying "verify"',
-  receive.includes('Add your payout bank account first'));
-check('and offers a route to fix it', receive.includes('Add payout account'));
 check('the identity message is still shown when identity IS the gap',
   receive.includes('Verify your identity first'));
+check('and adding a payout account is still offered as a route',
+  receive.includes('Add payout account'));
 
 console.log('\n── the Cloudflare gateway must allow the Render frontends ─────');
 

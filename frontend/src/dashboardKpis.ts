@@ -96,6 +96,8 @@ interface Allowance {
   limitNgn: number | null;
   usedNgn: number;
   remainingNgn: number | null;
+  /** Set when the rail needs something the ceiling does not describe. */
+  blockedBy?: 'payout_account_required';
 }
 interface Summary {
   level: number;
@@ -209,6 +211,28 @@ export function limitKpi(
       sub: `Level ${summary.level}`,
       trend: 'Ready',
       tone: 'ok',
+    };
+  }
+
+  /**
+   * VERIFIED, BUT NOWHERE TO BE PAID.
+   *
+   * Same reasoning as the limit card on the verification page: this user's
+   * ceiling is real and high, and it is also unreachable until a NUBAN is
+   * name-matched. Printing the figure would advertise headroom they cannot
+   * use; printing zero would accuse them of having spent it.
+   */
+  if (offramp.blockedBy === 'payout_account_required') {
+    return {
+      label: 'Your limit',
+      value: 'Add a bank',
+      // NOT `${levelLabel} · verified` - that rendered as
+      // "Level 2: Identity verified · verified", saying the word twice. The
+      // level label already carries the status; this line should say what is
+      // MISSING, which is the whole point of the card in this state.
+      sub: `${summary.levelLabel} · no payout account`,
+      trend: 'Needed to withdraw',
+      tone: 'action',
     };
   }
 

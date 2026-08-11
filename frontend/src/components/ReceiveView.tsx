@@ -229,20 +229,38 @@ export function ReceiveView({
    * and the copy names the missing step instead of saying "verify" to someone
    * who already has.
    */
-  if (!isVerified || !hasPayoutAccount) {
+  /**
+   * A DEPOSIT ADDRESS NEEDS IDENTITY, NOT A PAYOUT DESTINATION.
+   *
+   * This required hasPayoutAccount, and the reasoning in the comment above -
+   * "the bank check is what verifies your identity, so it has to come first" -
+   * was true only for the Nigerian NUBAN route. It was never true for someone
+   * who completed Bridge's document check, and for them this screen said
+   * "Verify your identity first" to an account whose own verification page
+   * read "Verification complete".
+   *
+   * Receiving crypto is money coming IN to an address the user controls. Where
+   * naira would later be sent is a different question and is asked at
+   * withdrawal, where it actually applies.
+   *
+   * hasPayoutAccount is still accepted as an ALTERNATIVE: a Nigerian who
+   * name-matched a NUBAN is verified by that route and must keep working
+   * exactly as before.
+   */
+  if (!isVerified) {
     return (
       <section className="app-page receive-page">
         <PageHead onRefresh={onRefresh} />
         <article className="receive-panel">
           <div className="receive-empty">
-            <h3>{!isVerified ? 'Verify your identity first' : 'Add your payout bank account first'}</h3>
+            <h3>Verify your identity first</h3>
             <p className="muted">
-              {!isVerified
-                ? 'Deposit addresses are issued after verification. This protects your funds and is required by our regulated partners.'
-                : 'Your deposit address is created once a bank account in your name is confirmed. The bank check is what verifies your identity, so it has to come first.'}
+              Deposit addresses are issued after verification. This protects your funds and is required by our regulated partners.
             </p>
-            {isVerified && !hasPayoutAccount && onAddBank && (
-              <button className="primary-btn" onClick={onAddBank}>Add payout account →</button>
+            {/* Adding a name-matched payout account is one of the two ways to
+                clear this, so the route stays offered here. */}
+            {!hasPayoutAccount && onAddBank && (
+              <button className="secondary-btn" onClick={onAddBank}>Add payout account →</button>
             )}
           </div>
         </article>
