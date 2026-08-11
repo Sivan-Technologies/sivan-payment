@@ -22,6 +22,8 @@ const envSchema = z.object({
   SENTRY_DSN: z.string().optional().default(''),
   SENTRY_ENVIRONMENT: z.string().optional().default(''),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
+  TELEGRAM_OPS_BOT_TOKEN: z.string().optional().default(''),
+  TELEGRAM_OPS_CHAT_ID: z.string().optional().default(''),
   RATE_LIMIT_ENABLED: booleanFromEnv.default(true),
   RATE_LIMIT_DEFAULT_MAX_PER_MINUTE: z.coerce.number().int().positive().default(120),
   RATE_LIMIT_ADMIN_MAX_PER_MINUTE: z.coerce.number().int().positive().default(300),
