@@ -237,6 +237,11 @@ export class JsonDatabase {
     return data.users.find((user) => user.whatsappNumber === whatsappNumber);
   }
 
+  async findUserByTelegramUserId(telegramUserId: string) {
+    const data = await this.read();
+    return data.users.find((user) => user.telegramUserId === telegramUserId);
+  }
+
   /**
    * Every user id and email, and nothing else.
    *

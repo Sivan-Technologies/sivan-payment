@@ -456,17 +456,35 @@ export async function redeemTelegramLink(input: z.infer<typeof redeemTelegramLin
  * un-link everyone.
  */
 export async function lookupTelegramIdentity(telegramUserId: string) {
-  const link = await activeLinkForTelegram(telegramUserId.trim());
-  if (!link) return { linked: false as const };
-  const user = await db.findUserById(link.paymentUserId);
-  if (!user) return { linked: false as const };
-  return {
-    linked: true as const,
-    paymentUserId: user.id,
-    escrowUserId: link.escrowUserId,
-    email: user.email,
-    fullName: user.fullName,
-    whatsappNumber: user.whatsappNumber,
-    canTransact: Boolean(user.whatsappNumber),
-  };
+  const cleanId = telegramUserId.trim();
+  const link = await activeLinkForTelegram(cleanId);
+  if (link) {
+    const user = await db.findUserById(link.paymentUserId);
+    if (user) {
+      return {
+        linked: true as const,
+        paymentUserId: user.id,
+        escrowUserId: link.escrowUserId,
+        email: user.email,
+        fullName: user.fullName,
+        whatsappNumber: user.whatsappNumber,
+        canTransact: true,
+      };
+    }
+  }
+
+  const user = await db.findUserByTelegramUserId(cleanId);
+  if (user) {
+    return {
+      linked: true as const,
+      paymentUserId: user.id,
+      escrowUserId: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      whatsappNumber: user.whatsappNumber,
+      canTransact: true,
+    };
+  }
+
+  return { linked: false as const };
 }

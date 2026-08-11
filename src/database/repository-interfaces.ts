@@ -29,6 +29,7 @@ export interface UserRepository {
   findUserById(userId: string): Promise<UserRecord | undefined>;
   findUserByEmail(email: string): Promise<UserRecord | undefined>;
   findUserByWhatsappNumber(whatsappNumber: string): Promise<UserRecord | undefined>;
+  findUserByTelegramUserId(telegramUserId: string): Promise<UserRecord | undefined>;
   insertUserRecord(record: UserRecord): Promise<UserRecord>;
   updateUserRecord(record: UserRecord): Promise<UserRecord>;
   listCustomerIdentityLinks(): Promise<CustomerIdentityLinkRecord[]>;

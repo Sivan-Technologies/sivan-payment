@@ -538,6 +538,14 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  async findUserByTelegramUserId(telegramUserId: string) {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('select * from users where telegram_user_id=$1 limit 1', [telegramUserId]);
+      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
   /**
    * Every user id and email, and nothing else.
    *
