@@ -300,6 +300,11 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
   const linkForUser = await activeLinkForPaymentUser(user.id, 'whatsapp');
   if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) rejectPairing('whatsapp', whatsappNumber, 'This Sivan payment account is already linked to another WhatsApp number.');
 
+  const existingUserWithWhatsapp = await db.findUserByWhatsappNumber(whatsappNumber);
+  if (existingUserWithWhatsapp && existingUserWithWhatsapp.id !== user.id) {
+    rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
+  }
+
 
   const updatedUser: UserRecord = {
     ...user,

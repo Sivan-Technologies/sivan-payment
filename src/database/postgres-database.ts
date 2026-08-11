@@ -127,9 +127,15 @@ export class PostgresDatabase {
 
   constructor(connectionString = env.DATABASE_URL) {
     if (!connectionString) throw new Error('DATABASE_URL is required when DATABASE_PROVIDER=postgres');
-    this.pool = new Pool({ connectionString });
+    this.pool = new Pool({
+      connectionString,
+      max: Number(process.env.POSTGRES_MAX_CONNECTIONS ?? 20),
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+      keepAlive: true,
+    });
     this.pool.on('error', (error) => {
-      console.error('[postgres.pool.error]', error);
+      console.error('[postgres.pool.error]', error?.message || error);
     });
     this.instrumentPoolQueries();
   }
