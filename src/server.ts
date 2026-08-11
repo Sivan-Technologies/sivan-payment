@@ -6,6 +6,7 @@ import { confirmBalanceTransfers } from './balances/transfer-confirmation.servic
 import { scanForDeposits } from './deposits/deposit-detection.service.js';
 import { notifyPendingDeposits } from './deposits/deposit-notification.service.js';
 import { confirmDeposits } from './deposits/deposit-confirmation.service.js';
+import { isTransientPostgresError } from './database/postgres-database.js';
 
 initMonitoring();
 
@@ -102,6 +103,13 @@ if (env.NGN_SETTLEMENT_POLL_SECONDS > 0) {
         );
       }
     } catch (error) {
+      if (isTransientPostgresError(error)) {
+        app.log.warn(
+          { err: error },
+          'ngn settlement reconciler skipped this tick because Postgres temporarily reset the connection'
+        );
+        return;
+      }
       app.log.error({ err: error }, 'ngn settlement reconciler failed');
       captureError(error as Error, { source: 'ngn_settlement_reconciler' });
     }

@@ -58,6 +58,41 @@ import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountReq
 
 const { Pool } = pg;
 
+const TRANSIENT_POSTGRES_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'ENETDOWN',
+  'ENETRESET',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENOTFOUND',
+  '57P01', // admin_shutdown
+  '57P02', // crash_shutdown
+  '57P03', // cannot_connect_now
+  '08000', // connection_exception
+  '08003', // connection_does_not_exist
+  '08006', // connection_failure
+]);
+
+export function isTransientPostgresError(error: unknown): boolean {
+  const candidate = error as { code?: string; errno?: string; message?: string; name?: string };
+  const code = String(candidate?.code || candidate?.errno || '').toUpperCase();
+  if (TRANSIENT_POSTGRES_ERROR_CODES.has(code)) return true;
+
+  const message = String(candidate?.message || '').toLowerCase();
+  return (
+    message.includes('econnreset') ||
+    message.includes('connection terminated unexpectedly') ||
+    message.includes('connection timeout') ||
+    message.includes('terminating connection') ||
+    message.includes('server closed the connection')
+  );
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 
 async function optionalQuery(client: pg.PoolClient, sql: string, params: unknown[] = []): Promise<{ rows: any[] }> {
   try {
@@ -142,9 +177,29 @@ export class PostgresDatabase {
 
   private instrumentPoolQueries() {
     const slowQueryMs = Number(process.env.POSTGRES_SLOW_QUERY_MS ?? 750);
+    const connectRetries = Math.max(0, Number(process.env.POSTGRES_CONNECT_RETRIES ?? 2));
+    const retryDelayMs = Math.max(50, Number(process.env.POSTGRES_CONNECT_RETRY_DELAY_MS ?? 250));
     const originalConnect = this.pool.connect.bind(this.pool);
     this.pool.connect = (async (...args: any[]) => {
-      const client = await (originalConnect as any)(...args);
+      let client: pg.PoolClient | undefined;
+      for (let attempt = 0; attempt <= connectRetries; attempt += 1) {
+        try {
+          client = await (originalConnect as any)(...args);
+          break;
+        } catch (error) {
+          if (!isTransientPostgresError(error) || attempt >= connectRetries) throw error;
+          const waitMs = retryDelayMs * (attempt + 1);
+          console.warn('[postgres.connect.retry]', {
+            attempt: attempt + 1,
+            nextAttempt: attempt + 2,
+            waitMs,
+            error: (error as Error)?.message || String(error),
+            pool: this.getPoolStats(),
+          });
+          await sleep(waitMs);
+        }
+      }
+      if (!client) throw new Error('Postgres connection could not be acquired');
       if ((client as any).__sivanInstrumented) return client;
       const originalQuery = client.query.bind(client);
       client.query = (async (...queryArgs: any[]) => {

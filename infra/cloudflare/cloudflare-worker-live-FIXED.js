@@ -41,7 +41,7 @@
 // ========================================================
 const LIVE_ESCROW = "https://escrow.sivantech.online";
 const LIVE_BOT = "https://whatsapp.sivantech.online";
-const LIVE_AUTH = "https://payment.sivantech.online/api/admin/auth-service";
+const LIVE_AUTH = "https://auth.sivantech.online";
 const LIVE_PAYMENTS = "https://payment.sivantech.online";
 const LIVE_SIVAN_AI = "https://ai.sivantech.online";
 
