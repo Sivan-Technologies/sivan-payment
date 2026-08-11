@@ -129,6 +129,41 @@ export async function identityRoutes(app: FastifyInstance) {
     return { data: await getIdentityStatus(userId) };
   });
 
+  app.get('/api/users/me/service-agreements', async (request) => {
+    const userId = getAuthUserId(request);
+    if (!userId) throw forbidden('Authentication required.');
+    const status = await getIdentityStatus(userId);
+    const whatsappNumber = status?.link?.whatsappNumber;
+    const isLinked = Boolean(whatsappNumber || status?.channels?.telegram?.linked);
+
+    if (!isLinked) {
+      return { data: { linked: false, deals: [] } };
+    }
+
+    const escrowAgentUrl = env.ESCROW_AGENT_URL || 'http://127.0.0.1:4000';
+    const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
+
+    let url = `${escrowAgentUrl}/api/users/escrows?limit=50`;
+    if (whatsappNumber) {
+      url += `&actorWhatsapp=${encodeURIComponent(whatsappNumber)}`;
+    }
+
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'x-core-api-key': coreSecret,
+        },
+      });
+      if (!res.ok) {
+        return { data: { linked: true, deals: [] } };
+      }
+      const json: any = await res.json();
+      return { data: { linked: true, deals: json.deals || [] } };
+    } catch (err: any) {
+      return { data: { linked: true, deals: [] } };
+    }
+  });
+
   app.post('/api/users/me/identity/link-whatsapp/start', async (request) => {
     const userId = getAuthUserId(request);
     if (!userId) throw forbidden('Authentication required.');

@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord, WalletDepositRecord } from '../../types';
+import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord, WalletDepositRecord, ServiceAgreementsSummary } from '../../types';
 import { buildActivityFeed, filterActivity, searchActivity, type ActivityRow } from '../../activityFeed';
 import { ActivityRowItem } from '../activity/ActivityRowItem';
 import { explorerLink, networkLabel, shortHash } from '../../blockExplorer';
@@ -8,30 +8,41 @@ import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
 type CustomerTransactionRow = { id: string; kind: 'withdrawal' | 'onramp_order' | 'ngn_transfer'; label: string; direction: 'sell' | 'buy'; asset: string; amount: string; currency: string; status: string; createdAt: string; providerReference?: string; timeline?: TransactionTimeline; depositAddress?: string; network?: string; expiresAt?: string; cancellable?: boolean; raw: WithdrawalRecord | OnrampOrderRecord | NgnTransferRecord; };
-function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
-function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment', payment_received:'Payment received', processing:'Processing', awaiting_crypto_deposit:'Waiting for your crypto', crypto_received:'Crypto received', settling:'Paying your bank', settled:'Paid to your bank', quote_created:'Quote created', flagged:'Being reviewed', expired:'Expired' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
+function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active','RELEASED','RELEASED_TO_SELLER'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected','CANCELLED','FAILED'].includes(status)) return 'danger'; return 'pending'; }
+function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment', payment_received:'Payment received', processing:'Processing', awaiting_crypto_deposit:'Waiting for your crypto', crypto_received:'Crypto received', settling:'Paying your bank', settled:'Paid to your bank', quote_created:'Quote created', flagged:'Being reviewed', expired:'Expired', PENDING_ACCEPTANCE:'Pending acceptance', PENDING_PAYMENT:'Pending payment', FUNDED:'Funded', IN_PROGRESS:'In progress', RELEASED:'Released', RELEASED_TO_SELLER:'Released' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
 function Badge({ children, status }: { children: string; status?: string }) { return <span className={`badge ${statusClass(status)}`}>{children}</span>; }
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0,8)}…${value.slice(-6)}`; }
 
-export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], balanceTransfers = [], supplierPayments = [], virtualAccountTransactions = [], walletDeposits = [], networkMode, initialSelectedId, onStart, onBuy, onRefresh }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; /** Crypto sends, supplier payouts and virtual-account deposits appeared on NEITHER screen before this - not even under View all. */ balanceTransfers?: BalanceTransferRecord[]; supplierPayments?: SupplierPaymentRecord[]; virtualAccountTransactions?: VirtualAccountTransactionRecord[]; /** Inbound deposits. Were on the DASHBOARD feed but not here - the same divergence this file's own comment warns about, reintroduced when deposits shipped. */ walletDeposits?: WalletDepositRecord[]; /** Testnet badging on explorer links. Server-stated, never guessed. */ networkMode?: 'mainnet' | 'testnet'; /** Row to open on arrival, set when a dashboard row was clicked. */ initialSelectedId?: string; onStart: () => void; onBuy: () => void; /** Re-reads transfers after a cancel, so the row reflects what the SERVER decided rather than what we hoped. */ onRefresh?: () => Promise<void> }) {
+export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTransfers = [], balanceTransfers = [], supplierPayments = [], virtualAccountTransactions = [], walletDeposits = [], serviceAgreements, networkMode, initialSelectedId, onStart, onBuy, onRefresh }: { user: UserRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; ngnTransfers?: NgnTransferRecord[]; /** Crypto sends, supplier payouts and virtual-account deposits appeared on NEITHER screen before this - not even under View all. */ balanceTransfers?: BalanceTransferRecord[]; supplierPayments?: SupplierPaymentRecord[]; virtualAccountTransactions?: VirtualAccountTransactionRecord[]; /** Inbound deposits. Were on the DASHBOARD feed but not here - the same divergence this file's own comment warns about, reintroduced when deposits shipped. */ walletDeposits?: WalletDepositRecord[]; serviceAgreements?: ServiceAgreementsSummary; /** Testnet badging on explorer links. Server-stated, never guessed. */ networkMode?: 'mainnet' | 'testnet'; /** Row to open on arrival, set when a dashboard row was clicked. */ initialSelectedId?: string; onStart: () => void; onBuy: () => void; /** Re-reads transfers after a cancel, so the row reflects what the SERVER decided rather than what we hoped. */ onRefresh?: () => Promise<void> }) {
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<'all' | 'in' | 'out' | 'pending'>('all');
-  /**
-   * ONE MERGE, SHARED WITH THE DASHBOARD.
-   *
-   * This function used to build its own rows from three sources. The dashboard
-   * built its own from two. That divergence IS the reported bug: a naira
-   * mapper was added here and never there, and crypto sends, supplier payouts
-   * and virtual-account deposits were in neither.
-   *
-   * buildActivityFeed owns the merge, the direction rules and the status
-   * vocabulary now, so the two screens cannot drift apart again.
-   */
+  const [filter, setFilter] = useState<'all' | 'in' | 'out' | 'pending' | 'agreements'>('all');
   const feed = useMemo(
     () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits }),
     [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits]
   );
+
+  const combinedFeed = useMemo(() => {
+    if (!serviceAgreements?.deals || serviceAgreements.deals.length === 0) return feed;
+    const dealRows: ActivityRow[] = serviceAgreements.deals.map((d) => ({
+      id: d.escrowId,
+      kind: 'withdrawal',
+      label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
+      direction: d.role === 'buyer' ? 'out' : 'in',
+      amount: d.amount || '—',
+      currency: (d.currency || 'USDC').toUpperCase(),
+      status: d.status || 'PENDING',
+      statusLabel: friendlyStatus(d.status),
+      state: statusClass(d.status) as any,
+      createdAt: d.createdAt || new Date().toISOString(),
+      raw: d as any
+    }));
+    const map = new Map<string, ActivityRow>();
+    for (const r of [...dealRows, ...feed]) {
+      map.set(r.id, r);
+    }
+    return Array.from(map.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }, [feed, serviceAgreements]);
 
   /**
    * The detail panel still needs the richer per-source shape (timeline,
@@ -104,31 +115,21 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
    * predicate here that the dashboard had no equivalent of, so "Processing" on
    * one screen and "in progress" on another could mean different sets.
    */
-  const filtered = useMemo(() => searchActivity(filterActivity(feed, filter), query), [feed, filter, query]);
+  const filtered = useMemo(() => {
+    if (filter === 'agreements') {
+      const dealIds = new Set(serviceAgreements?.deals?.map((d) => d.escrowId) || []);
+      const matched = combinedFeed.filter((row) => dealIds.has(row.id));
+      return searchActivity(matched, query);
+    }
+    return searchActivity(filterActivity(combinedFeed, filter as any), query);
+  }, [combinedFeed, filter, query, serviceAgreements]);
   const [selectedId, setSelectedId] = useState<string>(initialSelectedId ?? '');
-  /**
-   * Follow the dashboard's choice when it changes, but never fight the user:
-   * once they click a different row here, their selection stands until the
-   * dashboard sends a NEW id.
-   */
   useEffect(() => { if (initialSelectedId) setSelectedId(initialSelectedId); }, [initialSelectedId]);
   const [assistantAnswer, setAssistantAnswer] = useState<any>(null);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const selectedRow: ActivityRow | null = filtered.find((row) => row.id === selectedId) || filtered[0] || null;
-  /**
-   * The panel wants the richer shape where one exists. A crypto send, supplier
-   * payout or VA deposit has no detail row yet - it falls back to the feed row,
-   * which the panel renders as a summary rather than pretending to a timeline.
-   */
   const selected = selectedRow ? detailById.get(selectedRow.id) ?? null : null;
-  /**
-   * Close an unfunded off-ramp at the user's request.
-   *
-   * Refreshes from the server afterwards rather than mutating local state: the
-   * server decides whether a cancel was permitted (crypto already on the way
-   * is refused), so optimistically flipping the row here could show
-   * "Cancelled" for an order that is still live.
-   */
+
   async function cancelTransfer(id: string) {
     if (!user) return;
     await api(`/api/users/${user.id}/ngn-transfers/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason: 'Cancelled from the transactions page.' }) });
@@ -146,15 +147,9 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     }
   }
 
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}</div></div>{!feed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout">{/* A LIST, NOT A TABLE.
+  const showAgreementsTab = Boolean(serviceAgreements?.linked || (serviceAgreements?.deals && serviceAgreements.deals.length > 0));
 
-              The old table had 7 columns and a min-width of 760px, so on a
-              phone it scrolled sideways - the single worst pattern for a
-              transaction history, because the amount and the status are in
-              different horizontal positions and you cannot see both at once.
-              The shared row shows label, amount and status in one line that
-              reflows instead. */}
-        <div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}{showAgreementsTab && <button className={filter === 'agreements' ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter('agreements')}>Service Agreements ({serviceAgreements?.deals?.length || 0})</button>}</div></div>{!combinedFeed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
 }
 
 /**

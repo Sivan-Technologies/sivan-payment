@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { UnifiedBalance, BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord, NgnTransferRecord, WalletDepositRecord } from '../types';
+import type { UnifiedBalance, BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord, NgnTransferRecord, WalletDepositRecord, ServiceAgreementsSummary } from '../types';
 
 export function usePaymentDataLoader(input: {
   userId?: string;
@@ -20,6 +20,7 @@ export function usePaymentDataLoader(input: {
   setSupportTickets: (value: SupportTicketRecord[]) => void;
   setUserPreferences: (value: UserPreferencesRecord | null) => void;
   setIdentityStatus: (value: IdentityStatus | null) => void;
+  setServiceAgreements?: (value: ServiceAgreementsSummary) => void;
   setTwoFactorStatus: (value: { userId: string; enabled: boolean; enabledAt?: string; lastVerifiedAt?: string; recoveryCodesRemaining?: number } | null) => void;
   /** Level, checks and CURRENT ceilings. The UI derives none of this itself. */
   setVerificationSummary: (value: VerificationSummary | null) => void;
@@ -39,39 +40,22 @@ export function usePaymentDataLoader(input: {
   setNgnTransfers: (value: NgnTransferRecord[]) => void;
   setWalletDeposits: (value: WalletDepositRecord[]) => void;
 }) {
-  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers, setWalletDeposits } = input;
+  const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setServiceAgreements, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers, setWalletDeposits } = input;
   return useCallback(async () => {
     if (!userId || !authToken) return;
 
-    /**
-     * THE SUMMARY IS AWAITED SEPARATELY, ON PURPOSE.
-     *
-     * It used to be the 14th entry in the Promise.allSettled below, and the
-     * "have we got an answer yet" flag was set only after ALL FOURTEEN had
-     * settled. So the verification page waited on /suppliers, /withdrawals
-     * and /virtual-accounts - none of which it renders.
-     *
-     * Measured in a browser against the deployed test API: the summary's own
-     * response landed at 10.1s and the skeleton was still up at 30.1s. Twenty
-     * seconds of a user staring at a placeholder for data that had already
-     * arrived.
-     *
-     * Caught by the race test, which requires the pending card within 12s.
-     * Blocking a page on data it does not render is the same mistake as
-     * rendering data that has not arrived, in the other direction.
-     *
-     * So it is issued FIRST and gated on ITSELF. The remaining calls proceed
-     * concurrently and the verification page never waits for any of them.
-     */
-    const summaryPromise = api<VerificationSummary>(`/api/users/${userId}/verification-summary`)
-      .then((value) => { setVerificationSummary(value); })
-      // Settled, not fulfilled: a rejection is an answer too. Gating on
-      // success alone would leave a user whose call failed on a skeleton
-      // forever, which is worse than the degraded fallback view.
-      .catch(() => undefined)
-      .finally(() => setVerificationSummaryLoaded(true));
+    void (async () => {
+      try {
+        const summary = await api<VerificationSummary>(`/api/users/${userId}/verification-summary`);
+        setVerificationSummary(summary);
+      } catch {
+        setVerificationSummary(null);
+      } finally {
+        setVerificationSummaryLoaded(true);
+      }
+    })();
 
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, unifiedBalanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult, ngnTransfersResult, walletDepositsResult] = await Promise.allSettled([
+    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, unifiedBalanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult, ngnTransfersResult, walletDepositsResult, serviceAgreementsResult] = await Promise.allSettled([
       api<CustomerRecord>(`/api/customers/${userId}`),
       api<ExternalAccountRecord[]>(`/api/users/${userId}/external-accounts`),
       api<WithdrawalRecord[]>(`/api/users/${userId}/withdrawals`),
@@ -92,7 +76,8 @@ export function usePaymentDataLoader(input: {
       // Inbound deposits - the seventh activity source. allSettled, like every
       // sibling here, so a 404 from a backend that predates migration 042
       // costs this one list and not the whole dashboard.
-      api<WalletDepositRecord[]>(`/api/users/${userId}/balance/deposits`)
+      api<WalletDepositRecord[]>(`/api/users/${userId}/balance/deposits`),
+      api<{ data: ServiceAgreementsSummary }>('/api/users/me/service-agreements')
     ]);
     if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
     if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
@@ -110,10 +95,10 @@ export function usePaymentDataLoader(input: {
     if (twoFactorResult.status === 'fulfilled') setTwoFactorStatus(twoFactorResult.value);
     if (ngnTransfersResult.status === 'fulfilled') setNgnTransfers(Array.isArray(ngnTransfersResult.value) ? ngnTransfersResult.value : []);
     if (walletDepositsResult.status === 'fulfilled') setWalletDeposits(Array.isArray(walletDepositsResult.value) ? walletDepositsResult.value : []);
-    // Awaited last so that callers which `await loadUserData()` - the
-    // post-verification refresh does - still observe the applied summary,
-    // without the PAGE having waited on the other thirteen calls.
-    await summaryPromise;
-  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers, setWalletDeposits]);
+    if (serviceAgreementsResult.status === 'fulfilled' && setServiceAgreements) {
+      const resVal: any = serviceAgreementsResult.value;
+      const dataVal = resVal?.data || resVal;
+      setServiceAgreements(dataVal || { linked: false, deals: [] });
+    }
+  }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setServiceAgreements, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers, setWalletDeposits]);
 }
-

@@ -67,6 +67,28 @@ export interface IdentityChannelStatus {
   pendingPairing: IdentityPendingPairing | null;
 }
 
+export interface ServiceAgreementDeal {
+  escrowId: string;
+  title: string;
+  amount: string;
+  currency: string;
+  role: 'buyer' | 'seller' | 'actor';
+  status: string;
+  statusLabel?: string;
+  buyerWhatsapp?: string;
+  sellerWhatsapp?: string;
+  counterparty?: string;
+  createdAt: string;
+  updatedAt?: string;
+  terms?: string;
+  notes?: string;
+}
+
+export interface ServiceAgreementsSummary {
+  linked: boolean;
+  deals: ServiceAgreementDeal[];
+}
+
 export interface IdentityStatus {
   /** True when ANY channel is linked. */
   linked: boolean;
