@@ -2,23 +2,16 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../../shared/validation.js';
 import { env } from '../../config/env.js';
-import { AppError, forbidden } from '../../shared/errors.js';
+import { AppError } from '../../shared/errors.js';
 import { db } from '../../database/json-database.js';
 import { answerAceSupport } from '../service/ace-support.service.js';
 import { warmRemoteAce } from '../service/ace-remote.service.js';
 import { answerWhatsappAceSupport } from '../service/ace-whatsapp.service.js';
 import { aceSupportRequestSchema } from '../types/ace.types.js';
+import { requireIdentityServiceSecret } from '../../shared/service-auth.js';
 
 const adminAceSupportRequestSchema = aceSupportRequestSchema.extend({ userId: z.string().optional() });
 const whatsappAceSupportRequestSchema = aceSupportRequestSchema.extend({ whatsappNumber: z.string().min(8).max(32) });
-
-function requireAceServiceSecret(request: any) {
-  const configured = env.IDENTITY_LINK_SERVICE_SECRET || env.ADMIN_API_KEY;
-  if (!configured) throw forbidden('Ace WhatsApp service secret is not configured.');
-  const provided = request.headers['x-sivan-identity-link-secret'] || request.headers['x-admin-api-key'];
-  const value = Array.isArray(provided) ? provided[0] : provided;
-  if (value !== configured) throw forbidden('Invalid Ace WhatsApp service secret.');
-}
 
 const userMinuteBuckets = new Map<string, { count: number; resetAt: number }>();
 const maxUserAcePerMinute = 5;
@@ -69,7 +62,13 @@ export async function aceSupportRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/ace/whatsapp/support', async (request) => {
-    requireAceServiceSecret(request);
+    requireIdentityServiceSecret(request);
+    const body = parseBody(whatsappAceSupportRequestSchema, request.body);
+    return { data: await answerWhatsappAceSupport({ whatsappNumber: body.whatsappNumber, message: body.message, resourceType: body.resourceType, resourceId: body.resourceId }) };
+  });
+
+  app.post('/api/identity/ace/support', async (request) => {
+    requireIdentityServiceSecret(request);
     const body = parseBody(whatsappAceSupportRequestSchema, request.body);
     return { data: await answerWhatsappAceSupport({ whatsappNumber: body.whatsappNumber, message: body.message, resourceType: body.resourceType, resourceId: body.resourceId }) };
   });
