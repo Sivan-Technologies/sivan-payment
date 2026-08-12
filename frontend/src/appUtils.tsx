@@ -208,38 +208,32 @@ export const fallbackVirtualAccounts: VirtualAccountControl[] = [
 ];
 
 export function normalizeFrontendApiBase(value: string) {
-  let clean = value.trim().replace(/\/$/, '');
-  if (clean.endsWith('/api/payment')) {
-    clean = clean.slice(0, -'/api/payment'.length);
-  }
+  const clean = (value || '').trim().replace(/\/$/, '');
   try {
     const parsed = new URL(clean);
     const host = parsed.hostname.toLowerCase();
-    if (host === 'api.sivantech.online' || host === 'payment.sivantech.online') {
-      return parsed.origin;
+    if (host === 'api.sivantech.online' || host === 'test-sivan.sivantech.online') {
+      return `${parsed.origin}/api/payment`;
     }
-    if (host === 'test-sivan.sivantech.online') {
+    if (host === 'payment.sivantech.online') {
       return parsed.origin;
     }
     if (host.includes('sivan-payments-api-live')) {
-      return 'https://payment.sivantech.online';
+      return 'https://api.sivantech.online/api/payment';
     }
     if (host.includes('sivan-payments-api-test')) {
-      return 'https://test-sivan.sivantech.online';
+      return 'https://test-sivan.sivantech.online/api/payment';
     }
   } catch {
     // Keep local/relative values unchanged.
   }
-  return clean;
+  return clean || 'http://localhost:3000';
 }
 
 export function buildApiUrl(apiBase: string, path: string): string {
   const baseClean = (apiBase || '').trim().replace(/\/$/, '');
   const pathClean = path.startsWith('/') ? path : `/${path}`;
-  if (baseClean.endsWith('/api/payment') && pathClean.startsWith('/api/')) {
-    return `${baseClean}${pathClean.slice(4)}`;
-  }
-  if (baseClean.endsWith('/api') && pathClean.startsWith('/api/')) {
+  if (baseClean.endsWith('/api') && !baseClean.endsWith('/api/payment') && pathClean.startsWith('/api/')) {
     return `${baseClean}${pathClean.slice(4)}`;
   }
   return `${baseClean}${pathClean}`;
