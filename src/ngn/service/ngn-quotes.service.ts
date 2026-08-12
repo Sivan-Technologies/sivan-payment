@@ -135,8 +135,9 @@ async function requireSivanVerified(userId: string, input: NgnQuoteInput, provid
   if (input.sourceCurrency === 'ngn') {
     amountNgn = Number(input.sourceAmount);
   } else {
-    const preview = await getNgnProvider(providerName).createQuote({ ...input, customerId: undefined });
-    amountNgn = Number(preview.destinationAmount);
+    // Estimate NGN leg (default ~1400 NGN/USDC) for pre-check limit comparison
+    // to prevent duplicate 4s upstream Breet API calls that cause 15s Cloudflare timeouts.
+    amountNgn = Number(input.sourceAmount) * 1400;
   }
 
   if (!Number.isFinite(amountNgn) || amountNgn <= 0) {
