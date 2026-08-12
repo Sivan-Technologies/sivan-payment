@@ -621,10 +621,10 @@ export default function App() {
            * sliding refresh renews it once the backend is awake again.
            */
           const authCode = json?.error?.code;
-          const authMsg = json?.error?.message || json?.message;
-          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required' || authCode === 'forbidden' || authMsg === 'Authentication required.';
+          const authMsg = json?.error?.message || json?.message || '';
+          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required' || authCode === 'forbidden' || authMsg === 'Authentication required.' || (typeof authMsg === 'string' && authMsg.includes('another user account'));
           if ((response.status === 401 || response.status === 403) && authToken && tokenIsRejected) {
-            logout('Session expired. Please sign in again.');
+            logout('Session expired or user mismatch. Please sign in again.');
           }
           const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
           throw new Error(json?.error?.message || detailMessage || json?.message || 'Something went wrong. Please try again.');
