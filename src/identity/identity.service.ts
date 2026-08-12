@@ -469,13 +469,20 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
   if (link) {
     const user = await db.findUserById(link.paymentUserId);
     if (user) {
+      const whatsappLink = await activeLinkForPaymentUser(user.id, 'whatsapp');
+      const whatsappNumber = user.whatsappNumber || whatsappLink?.whatsappNumber || undefined;
+
+      if (whatsappNumber && !user.whatsappNumber) {
+        await db.updateUserRecord({ ...user, whatsappNumber, updatedAt: nowIso() }).catch(() => undefined);
+      }
+
       return {
         linked: true as const,
         paymentUserId: user.id,
         escrowUserId: link.escrowUserId,
         email: user.email,
         fullName: user.fullName,
-        whatsappNumber: user.whatsappNumber,
+        whatsappNumber,
         canTransact: true,
       };
     }
@@ -483,13 +490,20 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
 
   const user = await db.findUserByTelegramUserId(cleanId);
   if (user) {
+    const whatsappLink = await activeLinkForPaymentUser(user.id, 'whatsapp');
+    const whatsappNumber = user.whatsappNumber || whatsappLink?.whatsappNumber || undefined;
+
+    if (whatsappNumber && !user.whatsappNumber) {
+      await db.updateUserRecord({ ...user, whatsappNumber, updatedAt: nowIso() }).catch(() => undefined);
+    }
+
     return {
       linked: true as const,
       paymentUserId: user.id,
       escrowUserId: user.id,
       email: user.email,
       fullName: user.fullName,
-      whatsappNumber: user.whatsappNumber,
+      whatsappNumber,
       canTransact: true,
     };
   }
