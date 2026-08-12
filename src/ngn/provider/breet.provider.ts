@@ -90,8 +90,10 @@ function headers() {
 }
 
 async function breetRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const signal = init.signal ?? AbortSignal.timeout(8000);
   const response = await fetch(`${BREET_BASE}${path}`, {
     ...init,
+    signal,
     headers: { ...headers(), ...(init.headers ?? {}) },
   });
 
