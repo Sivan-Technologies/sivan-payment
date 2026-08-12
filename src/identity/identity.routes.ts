@@ -126,13 +126,13 @@ export async function identityRoutes(app: FastifyInstance) {
 
   app.get('/api/users/me/identity', async (request) => {
     const userId = getAuthUserId(request);
-    if (!userId) throw forbidden('Authentication required.');
+    if (!userId) return { data: null };
     return { data: await getIdentityStatus(userId) };
   });
 
   app.get('/api/users/me/service-agreements', async (request) => {
     const userId = getAuthUserId(request);
-    if (!userId) throw forbidden('Authentication required.');
+    if (!userId) return { data: { linked: false, deals: [] } };
     const status = await getIdentityStatus(userId);
     const whatsappNumber = status?.link?.whatsappNumber;
     const isLinked = Boolean(whatsappNumber || status?.channels?.telegram?.linked);

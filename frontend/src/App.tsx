@@ -621,8 +621,9 @@ export default function App() {
            * sliding refresh renews it once the backend is awake again.
            */
           const authCode = json?.error?.code;
-          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required';
-          if (response.status === 401 && authToken && tokenIsRejected) {
+          const authMsg = json?.error?.message || json?.message;
+          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required' || authCode === 'forbidden' || authMsg === 'Authentication required.';
+          if ((response.status === 401 || response.status === 403) && authToken && tokenIsRejected) {
             logout('Session expired. Please sign in again.');
           }
           const detailMessage = json?.error?.details?.message || json?.error?.details?.code || json?.details?.message || json?.details?.code;
