@@ -7,20 +7,25 @@ import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { listUserDeposits } from '../deposits/deposit.service.js';
 import { db } from '../database/json-database.js';
-import { normalizeWhatsappNumber } from '../identity/identity.service.js';
+import { normalizeWhatsappNumber, activeLinkForTelegram } from '../identity/identity.service.js';
 import { requireIdentityServiceSecret } from '../shared/service-auth.js';
 
 /**
  * Resolve a chat-channel caller to a payment user.
- *
- * The stored `whatsappNumber` carries the `whatsapp:` prefix, so the incoming
- * bare phone is normalized before comparison - the bots deliberately send a
- * bare E.164 number and must not be made to know this service's storage format.
  */
 async function findUserByChannelPhone(phone: string) {
   const normalized = normalizeWhatsappNumber(phone);
-  const data = await db.read();
-  return (data.users ?? []).find((u: any) => u.whatsappNumber === normalized);
+  let user = await db.findUserByWhatsappNumber(normalized);
+  if (!user && phone) {
+    user = await db.findUserByTelegramUserId(phone.trim());
+  }
+  if (!user && phone) {
+    const link = await activeLinkForTelegram(phone.trim());
+    if (link) {
+      user = await db.findUserById(link.paymentUserId);
+    }
+  }
+  return user;
 }
 
 function actor(request: any) {
@@ -125,14 +130,32 @@ export async function balanceRoutes(app: FastifyInstance) {
     requireIdentityServiceSecret(request as any);
     const { whatsapp } = request.query as { whatsapp?: string };
     if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
-    const data = await db.read();
     const user = await findUserByChannelPhone(whatsapp);
-    if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
+    if (!user) return reply.code(404).send({ error: 'Identity not linked to a Sivan Payment account' });
 
-    const userAccounts = (data.externalAccounts ?? []).filter(
-      (acc: any) => acc.userId === user.id && ['active', 'verified', 'created'].includes(acc.status)
-    );
-    const primaryAccount = userAccounts[0] || null;
+    const ngnAccounts = await db.listNgnPayoutAccounts(user.id);
+    const activeNgn = ngnAccounts.find((acc: any) => ['approved', 'verified', 'active'].includes(acc.status)) || ngnAccounts[0];
+
+    if (activeNgn) {
+      return {
+        data: {
+          userId: user.id,
+          hasVerifiedAccount: true,
+          account: {
+            id: activeNgn.id,
+            bankName: activeNgn.bankName || 'Bank',
+            currency: 'NGN',
+            accountName: activeNgn.accountName,
+            accountOwnerName: activeNgn.accountName,
+            accountNumber: activeNgn.accountNumber,
+          }
+        }
+      };
+    }
+
+    const externalAccounts = await db.listExternalAccountsByUser(user.id);
+    const primaryAccount = externalAccounts.find((acc: any) => ['active', 'verified', 'created'].includes(acc.status)) || null;
+
     return {
       data: {
         userId: user.id,
@@ -143,6 +166,7 @@ export async function balanceRoutes(app: FastifyInstance) {
           currency: primaryAccount.currency,
           accountName: primaryAccount.accountName || primaryAccount.accountOwnerName,
           accountOwnerName: primaryAccount.accountOwnerName,
+          accountNumber: primaryAccount.accountLast4,
         } : null,
       }
     };

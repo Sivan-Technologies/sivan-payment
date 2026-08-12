@@ -78,6 +78,7 @@ export interface PaymentsWriteRepository {
   updateWithdrawalRecord(record: WithdrawalRecord): Promise<WithdrawalRecord>;
   /** One user's limit-consuming withdrawals since an ISO timestamp. */
   listWithdrawalsByUserSince(userId: string, sinceIso: string): Promise<WithdrawalRecord[]>;
+  listExternalAccountsByUser(userId: string): Promise<ExternalAccountRecord[]>;
   insertOnrampOrderRecord(record: OnrampOrderRecord): Promise<OnrampOrderRecord>;
   updateOnrampOrderRecord(record: OnrampOrderRecord): Promise<OnrampOrderRecord>;
 }

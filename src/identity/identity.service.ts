@@ -130,7 +130,7 @@ async function activeLinkForWhatsapp(whatsappNumber: string) {
   return links.find((item) => item.whatsappNumber === whatsappNumber && item.status === 'linked' && linkChannel(item) === 'whatsapp');
 }
 
-async function activeLinkForTelegram(telegramUserId: string) {
+export async function activeLinkForTelegram(telegramUserId: string) {
   const links = await db.listCustomerIdentityLinks();
   return links.find((item) => item.telegramUserId === telegramUserId && item.status === 'linked' && linkChannel(item) === 'telegram');
 }
