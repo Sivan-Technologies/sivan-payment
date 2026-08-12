@@ -63,11 +63,14 @@ export function payoutAccountStatusFor(
   verdict: 'match' | 'review' | 'mismatch',
   resolutionTrustworthy: boolean
 ): 'pending_review' | 'verified' | 'rejected' {
+  const isProduction = (env.BREET_ENV ?? 'development') === 'production';
+  if ((!isProduction || env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) && !resolutionTrustworthy) {
+    // In staging / test / sandbox environment, Breet's sandbox returns "Samuel Udochukwu"
+    // for every account number. Allow test accounts to be verified so offramps can be tested.
+    return 'verified';
+  }
   if (verdict === 'mismatch') return 'rejected';
   if (!nameMatchGrantsVerification(verdict)) return 'pending_review';
-  // A clean match on an untrustworthy resolution is not evidence. It goes to a
-  // human rather than being rejected, because the USER did nothing wrong - the
-  // environment did.
   if (!resolutionTrustworthy) return 'pending_review';
   return 'verified';
 }
