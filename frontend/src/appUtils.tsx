@@ -215,22 +215,34 @@ export function normalizeFrontendApiBase(value: string) {
   try {
     const parsed = new URL(clean);
     const host = parsed.hostname.toLowerCase();
-    if (host === 'api.sivantech.online') {
-      return `${parsed.origin}/api/payment`;
+    if (host === 'api.sivantech.online' || host === 'payment.sivantech.online') {
+      return parsed.origin;
     }
     if (host === 'test-sivan.sivantech.online') {
-      return `${parsed.origin}/api/payment`;
+      return parsed.origin;
     }
     if (host.includes('sivan-payments-api-live')) {
-      return 'https://api.sivantech.online/api/payment';
+      return 'https://payment.sivantech.online';
     }
     if (host.includes('sivan-payments-api-test')) {
-      return 'https://test-sivan.sivantech.online/api/payment';
+      return 'https://test-sivan.sivantech.online';
     }
   } catch {
     // Keep local/relative values unchanged.
   }
   return clean;
+}
+
+export function buildApiUrl(apiBase: string, path: string): string {
+  const baseClean = (apiBase || '').trim().replace(/\/$/, '');
+  const pathClean = path.startsWith('/') ? path : `/${path}`;
+  if (baseClean.endsWith('/api/payment') && pathClean.startsWith('/api/')) {
+    return `${baseClean}${pathClean.slice(4)}`;
+  }
+  if (baseClean.endsWith('/api') && pathClean.startsWith('/api/')) {
+    return `${baseClean}${pathClean.slice(4)}`;
+  }
+  return `${baseClean}${pathClean}`;
 }
 
 

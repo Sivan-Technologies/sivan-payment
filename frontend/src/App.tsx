@@ -5,7 +5,7 @@ import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTr
 import { buildActivityFeed } from './activityFeed';
 import { inProgressKpi, limitKpi } from './dashboardKpis';
 import { resolveDisplayCurrency } from './displayCurrency';
-import { fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
+import { buildApiUrl, fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
 import { isNgnCurrency, payoutRailFor, withdrawalEndpointFor, type PayoutCurrency } from './rails';
 import { VerificationModal } from './components/verification/VerificationModal';
@@ -588,7 +588,7 @@ export default function App() {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(`${apiBase}${path}`, {
+        const response = await fetch(buildApiUrl(apiBase, path), {
           ...options,
           signal: controller.signal,
           headers: {

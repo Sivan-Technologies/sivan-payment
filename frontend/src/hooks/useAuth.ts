@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { buildApiUrl } from '../appUtils';
 
 /**
  * How long a session may sit untouched before it is ended.
@@ -79,7 +80,7 @@ export function useSessionActivity(
       if (Date.now() - lastActivity() > IDLE_TIMEOUT_MS) return;
       if (document.visibilityState === 'hidden') return;
       try {
-        const response = await fetch(`${apiBase}/api/auth/session/refresh`, {
+        const response = await fetch(buildApiUrl(apiBase, '/api/auth/session/refresh'), {
           method: 'POST',
           headers: { Authorization: `Bearer ${authToken}` },
         });
