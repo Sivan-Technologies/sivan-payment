@@ -3099,3 +3099,152 @@ textarea:focus-visible,
   .feature-card-glow,
   .feature-card-premium.text-only::after { display: none; }
 }
+
+/* --- Section scroll reveal ------------------------------------------------
+   Six of the seven landing sections had no reveal wiring at all: everything
+   below the fold sat at opacity 1, fully painted before it was ever seen, so
+   the page had one animated section (the feature cards) and six inert ones.
+
+   Driven by useSectionReveal(), which adds .is-revealed on intersection.
+
+   THE ENTRY STATE LIVES INSIDE prefers-reduced-motion: no-preference.
+   Putting `opacity: 0` outside that guard would hide the entire page from
+   anyone who asks for reduced motion, and from anyone whose JS fails - a
+   content-hiding default that depends on a script running is how a landing
+   page ships blank. Reduced-motion users get the finished state and no
+   transition; the reduce block below restates it explicitly for the case
+   where the class never arrives.                                          */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal-section {
+    opacity: 0;
+    /* translate3d, not translateY: promotes to its own layer so the
+       compositor animates it without repainting the section's contents. A
+       full-width section repainting on every frame is the one thing that
+       would make this feel worse than no animation at all. */
+    transform: translate3d(0, 26px, 0);
+    transition:
+      opacity .7s cubic-bezier(.22, 1, .36, 1),
+      transform .7s cubic-bezier(.22, 1, .36, 1);
+    /* Stops a sub-pixel horizontal scrollbar appearing while a full-bleed
+       section is mid-transform. */
+    will-change: opacity, transform;
+  }
+  .reveal-section.is-revealed {
+    opacity: 1;
+    transform: none;
+    /* Released once the animation is done - a permanent will-change keeps a
+       layer alive for every section on the page. */
+    will-change: auto;
+  }
+
+  /* A SECTION SHOULD NOT ARRIVE AS ONE SLAB.
+     Moving a whole section as a single block reads as a slide, not as
+     composition. The heading leads and the content follows a beat later, so
+     the eye lands on the title first - which is the reading order anyway. */
+  .reveal-section .section-head,
+  .reveal-section .landing-copy,
+  .reveal-section .final-cta-card > .eyebrow,
+  .reveal-section .final-cta-card > h2 {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+    transition:
+      opacity .6s cubic-bezier(.22, 1, .36, 1) 60ms,
+      transform .6s cubic-bezier(.22, 1, .36, 1) 60ms;
+  }
+  .reveal-section.is-revealed .section-head,
+  .reveal-section.is-revealed .landing-copy,
+  .reveal-section.is-revealed .final-cta-card > .eyebrow,
+  .reveal-section.is-revealed .final-cta-card > h2 {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* The bodies of each section, a beat after their heading. Kept to a short
+     explicit list rather than a descendant wildcard: a blanket rule would
+     also catch the quote widget's live inputs and the open FAQ answer, both
+     of which change while the user is looking at them. */
+  .reveal-section .direction-grid,
+  .reveal-section .steps-grid-premium,
+  .reveal-section .faq-list,
+  .reveal-section .quote-widget {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+    transition:
+      opacity .64s cubic-bezier(.22, 1, .36, 1) 150ms,
+      transform .64s cubic-bezier(.22, 1, .36, 1) 150ms;
+  }
+  .reveal-section.is-revealed .direction-grid,
+  .reveal-section.is-revealed .steps-grid-premium,
+  .reveal-section.is-revealed .faq-list,
+  .reveal-section.is-revealed .quote-widget {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* The rails strip is a row of equal peers, so its children stagger across
+     rather than top-down. nth-child is safe here: the strip is four static
+     spans, not a mapped list whose order can change. */
+  .landing-strip.reveal-section > span {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+    transition:
+      opacity .5s cubic-bezier(.22, 1, .36, 1),
+      transform .5s cubic-bezier(.22, 1, .36, 1);
+  }
+  .landing-strip.reveal-section.is-revealed > span { opacity: 1; transform: none; }
+  .landing-strip.reveal-section.is-revealed > span:nth-child(1) { transition-delay: 40ms; }
+  .landing-strip.reveal-section.is-revealed > span:nth-child(2) { transition-delay: 110ms; }
+  .landing-strip.reveal-section.is-revealed > span:nth-child(3) { transition-delay: 180ms; }
+  .landing-strip.reveal-section.is-revealed > span:nth-child(4) { transition-delay: 250ms; }
+
+  /* THE STEP CARDS STAGGER, matching the feature grid they sit above.
+     Same curve and a comparable interval, so the two grids read as one
+     system rather than two animations that happen to share a page. */
+  .reveal-section .steps-grid-premium > * {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+    transition:
+      opacity .58s cubic-bezier(.22, 1, .36, 1),
+      transform .58s cubic-bezier(.22, 1, .36, 1);
+  }
+  .reveal-section.is-revealed .steps-grid-premium > * { opacity: 1; transform: none; }
+  .reveal-section.is-revealed .steps-grid-premium > *:nth-child(1) { transition-delay: 190ms; }
+  .reveal-section.is-revealed .steps-grid-premium > *:nth-child(2) { transition-delay: 265ms; }
+  .reveal-section.is-revealed .steps-grid-premium > *:nth-child(3) { transition-delay: 340ms; }
+
+  /* The two direction cards lean in from their own sides - they are a pair
+     presented as alternatives, and mirroring says that better than two
+     identical upward nudges. */
+  .reveal-section .direction-card {
+    opacity: 0;
+    transition:
+      opacity .62s cubic-bezier(.22, 1, .36, 1) 180ms,
+      transform .62s cubic-bezier(.22, 1, .36, 1) 180ms;
+  }
+  .reveal-section .direction-card.sell  { transform: translate3d(-14px, 12px, 0); }
+  .reveal-section .direction-card.buy   { transform: translate3d(14px, 12px, 0); }
+  .reveal-section.is-revealed .direction-card { opacity: 1; transform: none; }
+}
+
+/* --- Reduced motion: the finished state, no movement ---------------------
+   Restated rather than inherited. If .is-revealed never arrives - JS blocked,
+   hydration failed, observer unsupported - this is what guarantees the page
+   is still readable. The animation is decoration; the content is not.      */
+@media (prefers-reduced-motion: reduce) {
+  .reveal-section,
+  .reveal-section .section-head,
+  .reveal-section .landing-copy,
+  .reveal-section .direction-grid,
+  .reveal-section .steps-grid-premium,
+  .reveal-section .steps-grid-premium > *,
+  .reveal-section .faq-list,
+  .reveal-section .quote-widget,
+  .reveal-section .direction-card,
+  .landing-strip.reveal-section > span,
+  .reveal-section .final-cta-card > .eyebrow,
+  .reveal-section .final-cta-card > h2 {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

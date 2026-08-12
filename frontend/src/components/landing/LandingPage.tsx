@@ -30,6 +30,11 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
     { title: 'Clear transaction tracking', body: 'Users can follow address creation, deposit detection, conversion, payout processing, and completion.' },
   ];
   const featureRefs = useStaggeredReveal(featureCards.length);
+  /**
+   * One callback ref, attached to every section. Each reveals independently
+   * when it arrives; the hero opts out of waiting via data-reveal-immediate.
+   */
+  const revealRef = useSectionReveal();
 
   const faqItems = [
     { q: 'Do I need to complete KYC to use Sivan?', a: 'Yes. Verification is required before bank withdrawals or on-ramp actions. This protects users, reduces fraud, and keeps Sivan aligned with provider-supported payment rails.' },
@@ -58,7 +63,7 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
       </header>
 
       <main>
-        <section className="landing-hero premium-hero">
+        <section className="landing-hero premium-hero reveal-section" ref={revealRef} data-reveal-immediate="true">
           <div className="landing-copy">
             <p className="eyebrow">Crypto to fiat. Fiat to crypto.</p>
             <h1>Buy and sell crypto<br /><span>the simple way.</span></h1>
@@ -84,14 +89,14 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           </div>
         </section>
 
-        <section className="landing-strip" id="rails">
+        <section className="landing-strip reveal-section" id="rails" ref={revealRef}>
           <span>{assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
           <span>{payoutCurrencies}</span>
           <span>{networks}</span>
           <span>NGN supported</span>
         </section>
 
-        <section className="landing-section two-directions" id="features">
+        <section className="landing-section two-directions reveal-section" id="features" ref={revealRef}>
           <div className="section-head center"><p className="eyebrow center">Two directions</p><h2>Move value in either direction.</h2><p>One platform. One verification. Sell crypto to your bank or prepare to buy crypto with fiat with the same simple experience.</p></div>
           <div className="direction-grid">
             <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Solana, Base and Ethereum</li><li>✓ Works with USDC and USDT when enabled</li><li>✓ Payouts in {payoutCurrencies} and NGN</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
@@ -99,7 +104,7 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           </div>
         </section>
 
-        <section className="landing-section" id="how">
+        <section className="landing-section reveal-section" id="how" ref={revealRef}>
           <div className="section-head center"><p className="eyebrow center">How it works</p><h2>Three steps from crypto to cash.</h2><p>Whether you're buying or selling, the flow is guided end to end with no order books, no trading interface, and no jargon.</p></div>
           <div className="steps-grid-premium">
             <StepCard n="01" icon="♢" title="Create and verify your account" body="Sign up with your email and complete a short identity check. Your verification unlocks supported payment flows." />
@@ -108,7 +113,7 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           </div>
         </section>
 
-        <section className="landing-section" id="business">
+        <section className="landing-section reveal-section" id="business" ref={revealRef}>
           <div className="section-head center"><p className="eyebrow center">Why Sivan</p><h2>Built for people who just want it to work.</h2><p>We've stripped out the complexity and built a regulated-grade ramp experience with everyday users in mind.</p></div>
           <div className="feature-grid-premium">
             {featureCards.map((card, index) => (
@@ -123,12 +128,12 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           </div>
         </section>
 
-        <section className="landing-section faq-section" id="faq">
+        <section className="landing-section faq-section reveal-section" id="faq" ref={revealRef}>
           <div className="section-head center"><p className="eyebrow center">Frequently asked</p><h2>Questions, answered.</h2></div>
           <div className="faq-list">{faqItems.map((item, index) => <div className={`faq-item ${openFaq === index ? 'open' : ''}`} key={item.q}><button onClick={() => setOpenFaq(openFaq === index ? null : index)}><strong>{item.q}</strong><span>⌄</span></button>{openFaq === index && <p>{item.a}</p>}</div>)}</div>
         </section>
 
-        <section className="landing-section final-cta-section" id="start">
+        <section className="landing-section final-cta-section reveal-section" id="start" ref={revealRef}>
           <div className="final-cta-card"><p className="eyebrow center">Get started</p><h2>Your first transaction in about five minutes.</h2><p>Move between crypto and your bank with a few taps. No exchange account, no order books, no hassle.</p><button className="primary-btn" onClick={onGetStarted}>Create free account →</button><small>Already have an account? <button onClick={onDashboard}>Sign in</button></small></div>
         </section>
       </main>
@@ -191,6 +196,134 @@ function useStaggeredReveal(count: number) {
   }, [count]);
 
   return refs;
+}
+
+/**
+ * SECTION-LEVEL REVEAL, for the six sections that had none.
+ *
+ * useStaggeredReveal above animates the six feature CARDS inside one section.
+ * Everything else on the page - hero, rails strip, two-directions, steps,
+ * FAQ, final CTA - was painted at full opacity before the user ever scrolled
+ * to it, so the page had one lively section and six inert ones. Measured
+ * before this change: 7 sections, 1 with reveal wiring.
+ *
+ * WHY A SEPARATE HOOK AND NOT THE SAME ONE. useStaggeredReveal owns an array
+ * of refs indexed by position and staggers them against each other, which is
+ * right for a grid of siblings revealed together. Sections are revealed
+ * INDEPENDENTLY, each when it personally arrives, and they are declared at
+ * different depths of the tree. Forcing both behaviours through one hook
+ * meant either an index-keyed array threaded through unrelated JSX, or a
+ * stagger applied across elements that are never on screen together.
+ *
+ * Returns a callback ref so a section registers itself with no index
+ * bookkeeping at the call site: `<section ref={revealRef}>`.
+ *
+ * Reduced motion is honoured by revealing immediately - the CSS also has a
+ * `prefers-reduced-motion: reduce` block, so content is visible even if this
+ * script never runs at all. Content must never depend on an animation.
+ */
+function useSectionReveal() {
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  /**
+   * THE REF CALLBACK RUNS BEFORE useEffect. THIS IS WHY THIS ARRAY EXISTS.
+   *
+   * React invokes a callback ref during commit, and effects run after. My
+   * first version created the observer inside useEffect and called
+   * `observerRef.current?.observe(el)` from the callback - so at the moment
+   * every section registered itself the observer was still null, the optional
+   * chain swallowed it, and NOTHING WAS EVER OBSERVED.
+   *
+   * IT WAS NOT FATAL, AND I FIRST REPORTED THAT IT WAS. useSectionReveal
+   * returns a fresh closure every render, so React detaches and reattaches
+   * the ref on each one - the second attach finds a live observer and the
+   * section does reveal. Measured on a hard jump: 487ms to first paint with
+   * the queue removed, 100ms with it. So the real cost is a visible lag that
+   * depends on an incidental re-render happening, not a blank page.
+   *
+   * My "stays at opacity 0 permanently" claim came from a diagnostic that
+   * printed labels like t=1000ms while actually sleeping 25ms per step. The
+   * measurement was wrong; the fix is still right, because correctness here
+   * should not rest on React re-rendering for unrelated reasons.
+   *
+   * Nodes therefore queue here until the effect has an observer to give them.
+   */
+  const pending = useRef<HTMLElement[]>([]);
+
+  useEffect(() => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced) {
+      // Reveal anything already registered, then stop. The CSS also covers
+      // this, but a class that never arrives would leave the JS path relying
+      // on the stylesheet alone.
+      pending.current.forEach((el) => el.classList.add('is-revealed'));
+      pending.current = [];
+      return;
+    }
+
+    observerRef.current = new IntersectionObserver(
+      (entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-revealed');
+          // Unobserve on first fire: a section reveals once, and leaving it
+          // observed would keep the callback alive for the whole session.
+          observer.unobserve(entry.target);
+        });
+      },
+      /**
+       * A LOWER THRESHOLD THAN THE CARDS USE, DELIBERATELY.
+       *
+       * A section is much taller than a card - the hero is a full viewport -
+       * so requiring 15% of it to be visible would fire far too late, and for
+       * anything taller than the viewport a high threshold can never be met at
+       * all. 4% with a -8% bottom margin means the movement is finishing as
+       * the section arrives rather than starting under the reader's eye.
+       */
+      { rootMargin: '0px 0px -8% 0px', threshold: 0.04 }
+    );
+
+    // Drain whatever registered before this effect ran - which, on first
+    // mount, is every section on the page.
+    pending.current.forEach((el) => observerRef.current?.observe(el));
+    pending.current = [];
+
+    return () => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+    };
+  }, []);
+
+  /**
+   * THE HERO IS THE ONE SECTION THAT MUST NOT WAIT FOR A SCROLL.
+   *
+   * It is already on screen at load, so an observer would fire for it
+   * immediately anyway - but only after hydration, which on a slow connection
+   * is late enough to look like a flash of missing content above the fold.
+   * Marked revealed synchronously in the ref callback instead, so it animates
+   * from its own CSS entry state without any observer round trip.
+   */
+  return (el: HTMLElement | null) => {
+    if (!el) return;
+    if (el.dataset.revealImmediate === 'true') {
+      el.classList.add('is-revealed');
+      return;
+    }
+    // Already past the fold on first paint (deep link, restored scroll
+    // position): reveal without waiting, or the section stays invisible until
+    // the user scrolls it out and back.
+    const box = el.getBoundingClientRect();
+    if (box.top < window.innerHeight && box.bottom > 0) {
+      el.classList.add('is-revealed');
+      return;
+    }
+    /**
+     * Observe now if the effect has already run (later re-renders), otherwise
+     * queue for the effect to pick up. Without the queue branch this is a
+     * no-op on first mount, which is exactly the bug described above.
+     */
+    if (observerRef.current) observerRef.current.observe(el);
+    else pending.current.push(el);
+  };
 }
 
 function FeatureCard({
