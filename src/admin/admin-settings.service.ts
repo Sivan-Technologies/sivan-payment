@@ -31,6 +31,24 @@ export const adminPlatformSettingsSchema = z.object({
    * Turning it off does NOT strand anyone: a user whose balance stays in the
    * Bridge wallet can still send it, because transfers resolve the wallet's
    * own provider rather than the deployment-wide active one.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * @deprecated NOT THE SWITCH ANY MORE. Use `autoSweepBridgeWallet` on
+   * wallet-controls.service.ts (Admin hub -> Wallets tab).
+   *
+   * This setting and that one were both created for the same capability, by
+   * two people, and the sweep guard OR'd them together - so either alone
+   * opened a gate that moves customer funds, and turning EITHER one off did
+   * not stop it. An operator cannot trust a kill-switch that behaves that way.
+   *
+   * The field is retained rather than deleted so that:
+   *   - a stored `true` in an existing database does not fail schema parsing,
+   *   - the value can still be READ and reported when it disagrees with the
+   *     real switch (bridge-to-privy-sweep.service.ts does exactly that),
+   *   - and no migration is needed during launch week.
+   *
+   * It no longer enables anything on its own. Do not add new readers.
+   * ─────────────────────────────────────────────────────────────────────────
    */
   bridgeToPrivySweepEnabled: z.boolean().default(false),
   updatedBy: z.string().min(2).default('admin_api_key'),

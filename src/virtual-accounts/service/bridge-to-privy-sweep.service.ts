@@ -132,11 +132,51 @@ export async function sweepVirtualAccountDepositToPrivy(
     if (!transaction.userId) return skip(transaction, 'no_user');
     if (transaction.status !== 'completed') return skip(transaction, 'not_settled');
 
+    /**
+     * ONE SWITCH DECIDES. IT IS autoSweepBridgeWallet.
+     *
+     * This was an OR across two independently-owned settings:
+     *
+     *   walletControls.autoSweepBridgeWallet     (Admin hub -> Wallets tab)
+     *   platformSettings.bridgeToPrivySweepEnabled (Admin hub -> Settings tab)
+     *
+     * Two switches for one capability is bad in general and dangerous here,
+     * because OR means EITHER one alone opens a gate that moves customer
+     * funds. An operator who found the Settings toggle, turned it off, and
+     * watched sweeps continue would have no way to tell a broken kill-switch
+     * from a stuck queue - during an incident, that is the worst possible
+     * ambiguity to hand someone. A kill-switch nobody can trust is not a
+     * kill-switch.
+     *
+     * The survivor is the Wallets-tab control, because that is where the
+     * capability lives: it sits beside the wallet provider setting that
+     * decides who custodies the funds this sweep moves.
+     *
+     * bridgeToPrivySweepEnabled is now a DEPRECATED ALIAS. It is still read,
+     * so a deployment that has it on does not silently change behaviour on
+     * this deploy, but it is no longer an independent opener - see below.
+     */
     const walletControls = await getWalletControls().catch(() => null);
     const platformSettings = await getAdminPlatformSettings().catch(() => null);
-    const isEnabled = Boolean(walletControls?.autoSweepBridgeWallet || platformSettings?.bridgeToPrivySweepEnabled);
+
+    const isEnabled = walletControls?.autoSweepBridgeWallet === true;
+    /**
+     * A LEGACY SWITCH LEFT ON IS REPORTED, NOT OBEYED, AND NOT IGNORED.
+     *
+     * If the deprecated setting is on while the real one is off, the operator
+     * believes sweeping is enabled and it is not. Silently dropping that would
+     * turn a visible contradiction into an invisible one. The skip reason
+     * carries both values so the audit trail says exactly which switch was
+     * consulted and which was stale.
+     */
+    const legacyWantsSweep = platformSettings?.bridgeToPrivySweepEnabled === true;
+
     if (!isEnabled) {
-      return skip(transaction, 'auto_sweep_disabled', { autoSweepBridgeWallet: false });
+      return skip(transaction, 'auto_sweep_disabled', {
+        autoSweepBridgeWallet: false,
+        // Only present when the two disagree, so a normal skip stays quiet.
+        ...(legacyWantsSweep ? { deprecatedBridgeToPrivySweepEnabled: true } : {}),
+      });
     }
 
     const amount = num(transaction.destinationAmount ?? transaction.sourceAmount);

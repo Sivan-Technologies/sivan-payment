@@ -78,9 +78,18 @@ const run = async () => {
     );
   });
 
-  // The reason string must be load-bearing, not cosmetic: with the switch ON
-  // the same transaction has to get PAST the gate and stop for a later reason.
-  await check('with the switch ON the gate is no longer the blocker', async () => {
+  /**
+   * THE DEPRECATED SWITCH NO LONGER OPENS THE GATE.
+   *
+   * This test used to assert the opposite - that turning
+   * bridgeToPrivySweepEnabled ON let a settled deposit past. That was the OR,
+   * and the OR was the bug: two switches for one capability meant EITHER alone
+   * moved customer funds, and turning either OFF did not stop it.
+   *
+   * Now the platform setting is an alias that is read and reported but never
+   * obeyed. A deployment that still has it on must NOT start sweeping.
+   */
+  await check('the deprecated platform switch alone does NOT enable the sweep', async () => {
     const { updateAdminPlatformSettings, adminPlatformSettingsSchema: schema } =
       await import('../src/admin/admin-settings.service.js');
 
@@ -99,15 +108,85 @@ const run = async () => {
       sourceAmount: '250',
     } as any);
 
-    assert.ok(
-      !['auto_sweep_disabled', 'sweep_disabled_by_admin'].includes(String(outcome.reason)),
-      `with the switch on, no admin gate should stop it -- got: ${outcome.reason}`
-    );
+    assert.equal(outcome.swept, false, 'the legacy switch moved funds on its own');
+    assert.equal(String(outcome.reason), 'auto_sweep_disabled',
+      `the real switch is off, so this must be the gate -- got: ${outcome.reason}`);
 
-    // Leave the platform as we found it: OFF is the shipped default.
     await updateAdminPlatformSettings(
       schema.parse({ bridgeToPrivySweepEnabled: false, updatedBy: 'test_sweep_control' })
     );
+  });
+
+  /**
+   * THE SURVIVING SWITCH IS LOAD-BEARING.
+   *
+   * The mirror of the test above: assert that autoSweepBridgeWallet actually
+   * DOES open the gate. Without this, deleting the whole guard and hardcoding
+   * `false` would pass every other assertion in this file - the same class of
+   * mistake as testing only the refusal.
+   */
+  await check('the Wallets-tab switch ON gets the deposit past the gate', async () => {
+    const { updateWalletControls, updateWalletControlsSchema } = await import(
+      '../src/wallets/wallet-controls.service.js'
+    );
+
+    await updateWalletControls(
+      updateWalletControlsSchema.parse({ autoSweepBridgeWallet: true, updatedBy: 'test_sweep_control' })
+    );
+
+    const { sweepVirtualAccountDepositToPrivy } = await import(
+      '../src/virtual-accounts/service/bridge-to-privy-sweep.service.js'
+    );
+    const outcome = await sweepVirtualAccountDepositToPrivy({
+      id: 'vatx_test_3',
+      userId: 'user_test_3',
+      status: 'completed',
+      destinationAmount: '250',
+      sourceAmount: '250',
+    } as any);
+
+    // It stops later (no bridge wallet for a fabricated user), which is the
+    // point: the ADMIN GATE is no longer what stopped it.
+    assert.notEqual(String(outcome.reason), 'auto_sweep_disabled',
+      'the surviving switch did not open the gate');
+
+    // Leave it OFF. This is a money-moving capability and the shipped default
+    // is closed; a test that leaves it on would arm the next run.
+    await updateWalletControls(
+      updateWalletControlsSchema.parse({ autoSweepBridgeWallet: false, updatedBy: 'test_sweep_control' })
+    );
+  });
+
+  /**
+   * THE OPERATOR CAN SEE THE SWITCH'S TRUE STATE.
+   *
+   * getWalletControlsView() is what GET /api/admin/wallets/controls returns
+   * and what the hub's Wallets tab renders. It did not include
+   * autoSweepBridgeWallet at all, so the toggle wrote the value and then read
+   * back OFF forever - the field was simply absent from the payload.
+   *
+   * That was survivable while two switches were OR'd together. Now this is the
+   * only thing between a webhook and moving customer funds, and a kill-switch
+   * that always displays OFF cannot be told apart from one that is off.
+   *
+   * Asserted on the VIEW, not on the record: the record was always correct.
+   */
+  await check('the admin view reports the switch it is actually using', async () => {
+    const { getWalletControlsView, updateWalletControls, updateWalletControlsSchema } =
+      await import('../src/wallets/wallet-controls.service.js');
+
+    await updateWalletControls(
+      updateWalletControlsSchema.parse({ autoSweepBridgeWallet: true, updatedBy: 'test_sweep_control' })
+    );
+    const on: any = await getWalletControlsView();
+    assert.equal(on.autoSweepBridgeWallet, true,
+      'the hub cannot see that the sweep is ON');
+
+    await updateWalletControls(
+      updateWalletControlsSchema.parse({ autoSweepBridgeWallet: false, updatedBy: 'test_sweep_control' })
+    );
+    const off: any = await getWalletControlsView();
+    assert.equal(off.autoSweepBridgeWallet, false);
   });
 
   // ----------------------------------------------- money is not stranded

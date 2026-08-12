@@ -144,6 +144,27 @@ export async function getWalletControlsView() {
     overrideProvider: controls.activeProvider,
     environmentProvider: envProvider,
     isOverridden: Boolean(controls.activeProvider),
+    /**
+     * THE SWEEP SWITCH WAS WRITEABLE BUT NOT READABLE.
+     *
+     * This view is what GET /api/admin/wallets/controls returns and what the
+     * hub's Wallets tab renders from. It omitted autoSweepBridgeWallet
+     * entirely, so `controls?.autoSweepBridgeWallet` was ALWAYS undefined on
+     * the client: the toggle wrote the value correctly, then read back OFF on
+     * the next load no matter what was stored.
+     *
+     * Harmless-looking while the setting was one of two OR'd switches. Now
+     * that it is the ONLY thing standing between a webhook and moving customer
+     * funds, an operator has to be able to see its true state - a kill-switch
+     * that always displays OFF is indistinguishable from one that is off.
+     *
+     * Found by curling the endpoint after the collapse rather than by reading
+     * the code; the field's absence is invisible in the source.
+     *
+     * `?? false` so a record predating the column reads as OFF, matching the
+     * default everywhere else.
+     */
+    autoSweepBridgeWallet: controls.autoSweepBridgeWallet ?? false,
     availableProviders: PROVIDERS.filter(
       (name) => !(name === 'mock' && env.APP_ENV === 'production')
     ),
