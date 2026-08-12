@@ -401,11 +401,15 @@ export async function redeemTelegramLink(input: z.infer<typeof redeemTelegramLin
   if (linkForUser && linkForUser.telegramUserId !== telegramUserId) rejectPairing('telegram', telegramUserId, 'This Sivan payment account is already linked to another Telegram account.');
 
 
+  const whatsappLink = await activeLinkForPaymentUser(user.id, 'whatsapp');
+  const whatsappNumber = user.whatsappNumber || whatsappLink?.whatsappNumber || undefined;
+
   const updatedUser: UserRecord = {
     ...user,
     telegramUserId,
     telegramUsername: parsed.telegramUsername ?? user.telegramUsername,
     telegramVerifiedAt: now,
+    ...(whatsappNumber ? { whatsappNumber } : {}),
     updatedAt: now,
   };
   await db.updateUserRecord({ ...updatedUser, primaryChannel: inferChannel(updatedUser) });
@@ -447,10 +451,7 @@ export async function redeemTelegramLink(input: z.infer<typeof redeemTelegramLin
       id: updatedUser.id,
       email: updatedUser.email,
       fullName: updatedUser.fullName,
-      // The phone from the WhatsApp link, if there is one. The Telegram layer
-      // needs it because the escrow API is addressed by phone; absent means
-      // this user can pair and see balances but cannot yet create agreements.
-      whatsappNumber: updatedUser.whatsappNumber,
+      whatsappNumber: updatedUser.whatsappNumber || whatsappNumber,
       telegramUserId: updatedUser.telegramUserId,
     },
   };
