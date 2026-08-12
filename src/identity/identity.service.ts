@@ -69,6 +69,10 @@ export const normalizeWhatsappNumber = (value: string) => {
 };
 
 function tokenHash(token: string) {
+  return crypto.createHash('sha256').update(token.toUpperCase().trim()).digest('hex');
+}
+
+function legacyTokenHash(token: string) {
   return crypto.createHash('sha256').update(`${token.toUpperCase().trim()}:${env.USER_JWT_SECRET}`).digest('hex');
 }
 
@@ -277,7 +281,9 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
   assertPairingAttemptAllowed('whatsapp', whatsappNumber);
 
   const tokens = await db.listIdentityPairingTokens();
-  const token = tokens.find((item) => item.tokenHash === tokenHash(tokenClean));
+  const cleanHash = tokenHash(tokenClean);
+  const legacyHash = legacyTokenHash(tokenClean);
+  const token = tokens.find((item) => item.tokenHash === cleanHash || item.tokenHash === legacyHash);
   if (!token || token.status !== 'pending') rejectPairing('whatsapp', whatsappNumber, 'Invalid or expired pairing code.');
 
   // The token must have been ISSUED for WhatsApp. This mirrors the identical
@@ -376,7 +382,9 @@ export async function redeemTelegramLink(input: z.infer<typeof redeemTelegramLin
   assertPairingAttemptAllowed('telegram', telegramUserId);
 
   const tokens = await db.listIdentityPairingTokens();
-  const token = tokens.find((item) => item.tokenHash === tokenHash(tokenClean));
+  const cleanHash = tokenHash(tokenClean);
+  const legacyHash = legacyTokenHash(tokenClean);
+  const token = tokens.find((item) => item.tokenHash === cleanHash || item.tokenHash === legacyHash);
   if (!token || token.status !== 'pending') rejectPairing('telegram', telegramUserId, 'Invalid or expired pairing code.');
   if (tokenChannel(token) !== 'telegram') rejectPairing('telegram', telegramUserId, 'That code was not issued for Telegram. Generate a Telegram code from your Sivan dashboard.');
   if (token.expiresAt <= now) {
