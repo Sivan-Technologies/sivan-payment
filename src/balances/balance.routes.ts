@@ -14,13 +14,14 @@ import { requireIdentityServiceSecret } from '../shared/service-auth.js';
  * Resolve a chat-channel caller to a payment user.
  */
 async function findUserByChannelPhone(phone: string) {
+  const rawClean = phone.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
   const normalized = normalizeWhatsappNumber(phone);
   let user = await db.findUserByWhatsappNumber(normalized);
-  if (!user && phone) {
-    user = await db.findUserByTelegramUserId(phone.trim());
+  if (!user && rawClean) {
+    user = await db.findUserByTelegramUserId(rawClean);
   }
-  if (!user && phone) {
-    const link = await activeLinkForTelegram(phone.trim());
+  if (!user && rawClean) {
+    const link = await activeLinkForTelegram(rawClean);
     if (link) {
       user = await db.findUserById(link.paymentUserId);
     }
