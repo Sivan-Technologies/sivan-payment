@@ -258,6 +258,16 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
       note: String(data.get('note') ?? '').trim() || undefined,
       available,
       networkMode,
+      /**
+       * OPENS AS 'loading', SO THE DIALOG CAN REFUSE TO BE CONFIRMED YET.
+       *
+       * The quote below is a network round trip. Without this the dialog opens
+       * fully interactive with no fee on it, and a user can tick the
+       * acknowledgement and press Send before the price has ever been shown to
+       * them - which is the one screen in the product where that must not be
+       * possible.
+       */
+      feeStatus: 'loading' as const,
     };
 
     /**
@@ -283,7 +293,19 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
      * answer.
      */
     setPendingTransfer(base);
-    if (!api) return;
+    /**
+     * NO api PROP MEANS NO QUOTE IS COMING - SAY SO RATHER THAN HANGING.
+     *
+     * This was a bare `return`. Harmless when the dialog ignored the status,
+     * but now that 'loading' disables the checkbox and the Send button, an
+     * early return here would leave the user on a dialog that can never be
+     * confirmed. Failing open is the only safe direction for a gate whose
+     * input may never arrive.
+     */
+    if (!api) {
+      setPendingTransfer((current) => (current ? { ...current, feeStatus: 'unavailable' as const } : current));
+      return;
+    }
     try {
       const query = new URLSearchParams({ amount, network, asset, destinationAddress });
       const quote = await api<TransferFeeQuoteResponse>(`/api/balance/transfers/quote?${query.toString()}`);
@@ -302,18 +324,30 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
               feePercent: quote.effectivePercent,
               newRecipientFee: quote.newRecipientFee,
               createsRecipientAccount: quote.createsRecipientAccount,
+              feeStatus: 'ready' as const,
             }
           : current
       );
     } catch {
       /**
-       * Deliberately silent, and deliberately NOT a guessed fee.
+       * Deliberately NOT a guessed fee - but no longer silent either.
        *
        * The dialog renders no fee line when `fee` is undefined, which is
        * honest: we could not price it. The transfer path prices it again
        * server-side regardless, so a failed quote cannot change what is
        * actually charged - only what we were able to show.
+       *
+       * What changed: the dialog now BLOCKS on 'loading', so leaving the
+       * status there after a failure would strand the user on a dialog that
+       * can never be confirmed, waiting for a number that is never coming.
+       * Marking it 'unavailable' releases the gate and shows a short warning
+       * instead of a permanent spinner.
        */
+      setPendingTransfer((current) =>
+        current && current.amount === amount && current.destinationAddress === destinationAddress
+          ? { ...current, feeStatus: 'unavailable' as const }
+          : current
+      );
     }
   }
 

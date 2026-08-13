@@ -55,6 +55,22 @@ export interface TransferConfirmDetails {
    */
   fee?: string;
   netAmount?: string;
+  /**
+   * WHERE THE QUOTE HAS GOT TO. `fee === undefined` cannot answer this.
+   *
+   * An absent fee means two completely different things - "the quote is still
+   * in flight" and "the quote failed" - and they need opposite treatment. The
+   * first must block confirmation, because a user who ticks and sends in the
+   * ~300ms before the fee lands never sees the price at all, and the dialog
+   * visibly reflows underneath them. The second must NOT block, or a failed
+   * pricing call would strand them on a screen with no way forward, for a
+   * charge the server computes again on its own anyway.
+   *
+   * Optional, defaulting to 'ready', so every existing caller and test keeps
+   * its current behaviour and this can only tighten the flow where a caller
+   * opts in by saying it is loading.
+   */
+  feeStatus?: 'loading' | 'ready' | 'unavailable';
   /** Effective rate, e.g. "0.50". Server-stated for the same reason. */
   feePercent?: string;
   /**
@@ -85,6 +101,24 @@ export function TransferConfirm({
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * NOTHING IS CONFIRMABLE UNTIL THE PRICE IS KNOWN.
+   *
+   * Reported from a screenshot: the dialog opens with Amount and "Balance
+   * after" only, then the fee, "Recipient gets" and a corrected balance drop
+   * in a moment later. For that moment the checkbox and Send button are both
+   * live, so a fast user can agree to and dispatch a transfer whose price they
+   * have never been shown - and a careful one watches the panel jump and reads
+   * it as the app glitching.
+   *
+   * 'unavailable' deliberately does NOT block. If the quote endpoint fails we
+   * still cannot show a fee, but refusing to let them send would be a worse
+   * outcome than sending without a preview: the transfer path prices it again
+   * server-side, so the amount charged is correct either way. They get a plain
+   * warning instead of a locked screen.
+   */
+  const pricePending = details.feeStatus === 'loading';
 
   /**
    * Escape closes, and focus moves into the dialog on open.
@@ -173,6 +207,49 @@ export function TransferConfirm({
               <span>Amount</span>
               <strong>{details.amount} {asset}</strong>
             </div>
+            {/*
+              THE ROWS EXIST BEFORE THE NUMBERS DO.
+              Rendering nothing while the quote is in flight and then inserting
+              two rows makes the panel grow under the user's cursor - which is
+              the "friction" in the report: the layout visibly jumps and the
+              Send button moves. Reserving the rows keeps the dialog the same
+              height from open to priced, so only the values change.
+            */}
+            {pricePending && (
+              <>
+                <div className="confirm-row confirm-row-pending">
+                  <span>Transfer fee</span>
+                  <strong className="confirm-fee-skeleton" aria-hidden="true" />
+                </div>
+                <div className="confirm-row confirm-row-pending">
+                  <span>Recipient gets</span>
+                  <strong className="confirm-fee-skeleton" aria-hidden="true" />
+                </div>
+                {/*
+                  ANNOUNCED, NOT LAID OUT.
+                  This was a normal <p> in the flow, so it occupied a row that
+                  vanished when the fee landed - reintroducing a ~19px shift,
+                  the very jump the reserved rows exist to prevent. Caught by
+                  comparing the two screenshots, not by the height assertion,
+                  which had 40px of slack and passed.
+
+                  Visually hidden instead: screen readers still announce it,
+                  and it takes no space, so the panel is now genuinely the same
+                  height before and after.
+                */}
+                <p className="confirm-fee-status sr-only" role="status">Calculating transfer fee…</p>
+              </>
+            )}
+            {details.feeStatus === 'unavailable' && details.fee === undefined && (
+              /*
+                Honest about the gap rather than silent. We could not price it
+                here; the send is still allowed because the server prices it
+                again on the transfer itself.
+              */
+              <p className="confirm-fee-status warn" role="status">
+                We could not load the fee preview. Your transfer is still priced and charged normally.
+              </p>
+            )}
             {details.fee !== undefined && (
               <>
                 <div className="confirm-row">
@@ -251,7 +328,7 @@ export function TransferConfirm({
             <input
               type="checkbox"
               checked={acknowledged}
-              disabled={submitting}
+              disabled={submitting || pricePending}
               onChange={(event) => setAcknowledged(event.target.checked)}
             />
             <span>
@@ -275,10 +352,10 @@ export function TransferConfirm({
             className="primary-btn"
             // Gated on the acknowledgement, so the confirm cannot be reached by
             // muscle memory from the previous screen's button position.
-            disabled={!acknowledged || submitting}
+            disabled={!acknowledged || submitting || pricePending}
             onClick={onConfirm}
           >
-            {submitting ? 'Sending…' : `Send ${details.amount} ${asset}`}
+            {submitting ? 'Sending…' : pricePending ? 'Calculating fee…' : `Send ${details.amount} ${asset}`}
           </button>
         </div>
       </div>
