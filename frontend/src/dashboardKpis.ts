@@ -66,6 +66,64 @@ export interface InProgressKpi {
   tone: 'ok' | 'action';
 }
 
+const STABLE_USD_ASSETS = new Set(['usdc', 'usdt']);
+
+interface UnifiedBalanceLike {
+  balances: Array<{
+    asset: string;
+    spendable: string;
+    held: string;
+    chainUnavailable: boolean;
+  }>;
+}
+
+export interface StableUsdBalanceKpi {
+  value: string;
+  sub: string;
+  trend: string;
+  tone: 'ok' | 'action' | 'muted';
+}
+
+function amount(value: unknown) {
+  const num = Number(value ?? 0);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function usd(value: number) {
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} USD`;
+}
+
+export function stableUsdBalanceKpi(unifiedBalance: UnifiedBalanceLike | null | undefined): StableUsdBalanceKpi {
+  if (!unifiedBalance) {
+    return { value: '—', sub: 'Loading…', trend: 'Checking your wallet', tone: 'muted' };
+  }
+
+  const stableRows = unifiedBalance.balances.filter((item) => STABLE_USD_ASSETS.has(String(item.asset).toLowerCase()));
+  const unavailable = stableRows.filter((item) => item.chainUnavailable);
+  const spendable = stableRows.reduce((sum, item) => sum + amount(item.spendable), 0);
+  const held = stableRows.reduce((sum, item) => sum + amount(item.held), 0);
+
+  if (stableRows.length > 0 && unavailable.length === stableRows.length) {
+    return { value: '—', sub: 'Could not reach the network', trend: 'Retrying shortly', tone: 'muted' };
+  }
+
+  if (unavailable.length > 0) {
+    return {
+      value: usd(spendable),
+      sub: 'Partial stablecoin balance loaded',
+      trend: 'Some network balances are retrying',
+      tone: 'muted',
+    };
+  }
+
+  return {
+    value: usd(spendable),
+    sub: 'Available stablecoin balance',
+    trend: held > 0 ? `${usd(held)} held for review` : 'Ready',
+    tone: held > 0 ? 'action' : 'ok',
+  };
+}
+
 export function inProgressKpi(rows: ActivityRow[]): InProgressKpi {
   const pending = rows.filter((row) => row.state === 'pending');
   const needsYou = pending.filter((row) => WAITING_ON_USER.has(String(row.status).toLowerCase())).length;

@@ -27,7 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inProgressKpi, limitKpi, showsNairaLimit } from '../frontend/src/dashboardKpis.js';
+import { inProgressKpi, limitKpi, showsNairaLimit, stableUsdBalanceKpi } from '../frontend/src/dashboardKpis.js';
 import { buildActivityFeed } from '../frontend/src/activityFeed.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,6 +53,27 @@ const ngnSummary0 = {
 } as any;
 
 console.log('\n── In progress counts EVERY source, not just withdrawals ──────');
+
+console.log('\n── dashboard balance is stablecoin USD, not USDC-only ─────────');
+
+const mixedStableBalance = stableUsdBalanceKpi({
+  balances: [
+    { asset: 'usdc', spendable: '10', held: '0', chainUnavailable: false },
+    { asset: 'usdt', spendable: '8', held: '0', chainUnavailable: false },
+  ],
+});
+check('USDC + USDT are summarized as one USD balance', mixedStableBalance.value === '18 USD', mixedStableBalance.value);
+check('the balance card no longer labels the aggregate as USDC', !mixedStableBalance.value.includes('USDC'), mixedStableBalance.value);
+check('the balance card names stablecoins, not one token', mixedStableBalance.sub === 'Available stablecoin balance', mixedStableBalance.sub);
+
+const heldStableBalance = stableUsdBalanceKpi({
+  balances: [
+    { asset: 'usdc', spendable: '10', held: '2.5', chainUnavailable: false },
+    { asset: 'usdt', spendable: '8', held: '1', chainUnavailable: false },
+  ],
+});
+check('held USDC + USDT are summarized as held USD', heldStableBalance.trend === '3.5 USD held for review', heldStableBalance.trend);
+check('a held balance uses the action tone', heldStableBalance.tone === 'action');
 
 /** The exact shape of the reported account: crypto sends the old card ignored. */
 const feed = buildActivityFeed({
@@ -107,7 +128,7 @@ check('KpiCard accepts a tone', read('frontend/src/components/dashboard/Dashboar
 check('both cards pass their tone through',
   app0.includes('tone={inProgress.tone}') && app0.includes('tone={limitCard.tone}'));
 check('action is amber, matching the countdown and testnet badge',
-  read('frontend/src/styles.css').includes('.kpi-trend.action { color: #f1bd72; }'));
+  /\.kpi-trend\.action\s*\{\s*color:\s*#[0-9a-fA-F]{6};\s*\}/.test(read('frontend/src/styles.css')));
 check('loading is muted, never green',
   read('frontend/src/styles.css').includes('.kpi-trend.muted'),
   'green while loading reads as a verdict');

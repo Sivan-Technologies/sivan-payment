@@ -3,7 +3,7 @@ import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResp
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
 import { buildActivityFeed } from './activityFeed';
-import { inProgressKpi, limitKpi } from './dashboardKpis';
+import { inProgressKpi, limitKpi, stableUsdBalanceKpi } from './dashboardKpis';
 import { resolveDisplayCurrency } from './displayCurrency';
 import { buildApiUrl, fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
 import type { UserTwoFactorStatus } from './appUtils';
@@ -456,12 +456,18 @@ export default function App() {
   /**
    * ONE SOURCE FOR EVERY BALANCE ON EVERY SCREEN.
    *
-   * Read here rather than recomputed per screen so the dashboard KPI and the
-   * "USDC available to send" figure on the transfer page can never disagree -
-   * they are now literally the same object. The point of the unified balance
-   * was defeated the moment a second screen did its own sum.
+   * Read here rather than recomputed per screen.
+   *
+   * The dashboard balance is a DISPLAY aggregate: USDC + USDT read as USD,
+   * because a user asks "how many stable dollars can I spend?" before they ask
+   * which token carried them. Spending paths still stay asset-specific below:
+   * a USDT deposit is never silently treated as USDC for an on-chain transfer.
    */
   const usdcUnified = unifiedBalance?.balances.find((item) => item.asset === 'usdc');
+  const stableBalanceCard = useMemo(
+    () => stableUsdBalanceKpi(unifiedBalance),
+    [unifiedBalance]
+  );
   const firstName = user?.fullName?.split(/\s+/)[0] || user?.email?.split('@')[0] || 'there';
   const completedWithdrawals = withdrawals.filter((withdrawal) => withdrawal.status === 'completed');
   const completedWithdrawalCount = completedWithdrawals.length;
@@ -2465,9 +2471,10 @@ export default function App() {
                    actually measures. */}
               <KpiCard
                 label="Your balance"
-                value={!unifiedBalance ? '—' : usdcUnified?.chainUnavailable ? '—' : `${Number(usdcUnified?.spendable ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC`}
-                sub={!unifiedBalance ? 'Loading…' : usdcUnified?.chainUnavailable ? 'Could not reach the network' : 'Available to send or sell'}
-                trend={!unifiedBalance ? 'Checking your wallet' : usdcUnified?.chainUnavailable ? 'Retrying shortly' : Number(usdcUnified?.held ?? 0) > 0 ? `${Number(usdcUnified?.held ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })} held for review` : 'Ready'}
+                value={stableBalanceCard.value}
+                sub={stableBalanceCard.sub}
+                trend={stableBalanceCard.trend}
+                tone={stableBalanceCard.tone}
               />
               {/* PAYOUT VOLUME AND TRANSACTIONS ARE GONE.
 
