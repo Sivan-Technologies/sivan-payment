@@ -427,6 +427,36 @@ export async function listUserBalanceTransfers(userId: string) {
  */
 const BROADCAST_RESPONSE_DEADLINE_MS = Number(process.env.BALANCE_TRANSFER_RESPONSE_DEADLINE_MS || 9000);
 
+/**
+ * THE DEADLINE HAS TO COVER THE WHOLE REQUEST, NOT JUST THE BROADCAST.
+ *
+ * Reported again after the race above shipped: a transfer 503'd and still went
+ * through. The race was working; it was simply measuring from the wrong
+ * moment. Its 9s clock starts when the broadcast starts, and by then the
+ * request has already spent an unbudgeted amount of time on:
+ *
+ *   getBalanceTransferControls()   audit-log scan
+ *   getSpendable()                 -> getUnifiedBalance(), which reads chain
+ *                                     balances for EVERY wallet on EVERY
+ *                                     network the user has
+ *   recipientNeedsTokenAccount()   a Solana RPC round trip
+ *   evaluateGasLimits(), quoteTransfer()
+ *
+ * On a slow RPC that pre-flight alone can approach the gateway's 12s, so the
+ * worker aborts before the broadcast deadline ever fires - and because a POST
+ * is deliberately not retryable, the user gets 503 UPSTREAM_UNAVAILABLE while
+ * the send continues happily on Render.
+ *
+ * So the clock now starts when the REQUEST does. The broadcast gets whatever
+ * is left of the budget rather than a fresh 9s, which is the only way the
+ * total stays under the gateway's ceiling.
+ *
+ * A floor of 1s is kept: if the pre-flight has already eaten everything, we
+ * still want the broadcast to start and the user to be told it is submitted,
+ * rather than skipping straight to a timeout answer.
+ */
+const MIN_BROADCAST_WAIT_MS = 1000;
+
 /** Marker so the caller can tell "still going" apart from "it failed". */
 const BROADCAST_PENDING = Symbol('broadcast_pending');
 
@@ -442,10 +472,22 @@ const BROADCAST_PENDING = Symbol('broadcast_pending');
  * responded becomes an unhandled rejection and, on some Node versions, takes
  * the process down - killing every other in-flight request.
  */
-async function raceBroadcastDeadline(userId: string, transfer: TransferMetadata): Promise<TransferMetadata> {
+async function raceBroadcastDeadline(
+  userId: string,
+  transfer: TransferMetadata,
+  /**
+   * When the REQUEST started, not when the broadcast did. Optional so existing
+   * callers and tests keep the old whole-9s behaviour; the transfer route
+   * passes it so the pre-flight comes out of the same budget.
+   */
+  requestStartedAt?: number,
+): Promise<TransferMetadata> {
+  const spent = requestStartedAt ? Date.now() - requestStartedAt : 0;
+  const remaining = Math.max(BROADCAST_RESPONSE_DEADLINE_MS - spent, MIN_BROADCAST_WAIT_MS);
+
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<typeof BROADCAST_PENDING>((resolve) => {
-    timer = setTimeout(() => resolve(BROADCAST_PENDING), BROADCAST_RESPONSE_DEADLINE_MS);
+    timer = setTimeout(() => resolve(BROADCAST_PENDING), remaining);
     // unref so a pending timer can never hold the process open at shutdown.
     timer.unref?.();
   });
@@ -495,7 +537,12 @@ async function raceBroadcastDeadline(userId: string, transfer: TransferMetadata)
     resourceType: 'balance_transfer', resourceId: transfer.transferId, severity: 'warning',
     metadata: {
       ...transfer,
-      deadlineMs: BROADCAST_RESPONSE_DEADLINE_MS,
+      // The budget this send ACTUALLY got, not the constant. With the
+      // whole-request clock these differ whenever the pre-flight was slow,
+      // and the difference is the number worth having when diagnosing.
+      deadlineMs: remaining,
+      budgetMs: BROADCAST_RESPONSE_DEADLINE_MS,
+      preflightMs: spent,
       reason: 'The provider had not answered within the response deadline. The broadcast was NOT cancelled.',
     },
   });
@@ -504,6 +551,13 @@ async function raceBroadcastDeadline(userId: string, transfer: TransferMetadata)
 }
 
 export async function requestBalanceTransfer(userId: string, input: z.infer<typeof createBalanceTransferSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+  /**
+   * The gateway's 12s clock starts HERE, so ours does too. Everything between
+   * this line and the broadcast - chain balance reads, a Solana RPC for the
+   * recipient's token account, the gas and fee lookups - spends the same
+   * budget. See BROADCAST_RESPONSE_DEADLINE_MS.
+   */
+  const requestStartedAt = Date.now();
   const controls = await getBalanceTransferControls();
   if (!controls.transfersEnabled) throw forbidden('Transfers from settled USDC balance are currently disabled.');
   if (!controls.supportedNetworks.includes(input.network)) throw forbidden(`${input.network} transfers are currently disabled.`);
@@ -691,7 +745,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
        * left the wallet - the ledger and the chain disagreeing is far worse
        * than a slow response.
        */
-      const executed = await raceBroadcastDeadline(userId, transfer);
+      const executed = await raceBroadcastDeadline(userId, transfer, requestStartedAt);
       return executed;
     } catch (error) {
       await createBalanceLedgerEntry({
