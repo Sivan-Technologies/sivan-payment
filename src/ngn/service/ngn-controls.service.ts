@@ -51,7 +51,15 @@ export function defaultNgnControls(): NgnControlsRecord {
 
 export async function getNgnControls() {
   const existing = (await db.listNgnControls?.()) ?? [];
-  return existing.find((item) => item.id === 'global') ?? defaultNgnControls();
+  const found = existing.find((item) => item.id === 'global');
+  const defaults = defaultNgnControls();
+  if (!found) return defaults;
+  return {
+    ...defaults,
+    ...found,
+    onrampEnabled: found.onrampEnabled ?? true,
+    offrampEnabled: found.offrampEnabled ?? true,
+  };
 }
 
 export async function updateNgnControls(input: z.infer<typeof updateNgnControlsSchema>) {
