@@ -213,9 +213,70 @@ test('the new-recipient case still works, with the fee alongside', async () => {
 
 // ──────────────────────────────── the switches, and that they default off
 
-test('the capability is OFF by default', async () => {
+test('the capability is ON by default', async () => {
+  /*
+    DELIBERATELY THE EXCEPTION to the fail-closed rule beside it.
+
+    autoSweepBridgeWallet moves a USER'S OWN BALANCE between custodians and
+    must never switch itself on. This collects a fee the user was quoted,
+    agreed to on the confirm screen, and that the ledger already debited.
+
+    Off is not the safe choice here, it is the lossy one: Sivan sponsors gas on
+    every Solana send, so a transfer with collection off costs gas and returns
+    nothing. Defaulting off would make every transaction a small silent loss.
+  */
   const { defaultWalletControls } = await import('../src/wallets/wallet-controls.service.js');
-  assert.equal(defaultWalletControls().collectTransferFeeOnChain, false);
+  assert.equal(defaultWalletControls().collectTransferFeeOnChain, true);
+});
+
+test('an admin who turns it OFF is still obeyed', async () => {
+  // A default is not a lock. Explicit false must survive the merge.
+  const { updateWalletControls, updateWalletControlsSchema, getWalletControls } =
+    await import('../src/wallets/wallet-controls.service.js');
+  await updateWalletControls(
+    updateWalletControlsSchema.parse({ collectTransferFeeOnChain: false, updatedBy: 'test_fee_collection' }),
+  );
+  const off: any = await getWalletControls();
+  assert.equal(off.collectTransferFeeOnChain, false, 'the default overrode an explicit off');
+
+  await updateWalletControls(
+    updateWalletControlsSchema.parse({ collectTransferFeeOnChain: true, updatedBy: 'test_fee_collection' }),
+  );
+  const on: any = await getWalletControls();
+  assert.equal(on.collectTransferFeeOnChain, true);
+});
+
+test('a controls row predating the field reads as ON', async () => {
+  /*
+    THE FALLBACK THAT MAKES THE DEFAULT REAL, ASSERTED THROUGH THE REAL MERGE.
+
+    A deployment that has ever saved a wallet control has a stored row with no
+    collectTransferFeeOnChain key. If that resolves to false the new default
+    applies to nobody: enabled in the schema, disabled everywhere that matters.
+
+    My first version of this test re-implemented `?? true` on a literal object
+    and asserted against its own arithmetic - so mutating the production
+    fallback to `?? false` left it passing. Caught by mutation, not by reading.
+    It now writes a legacy-shaped row and reads it back through
+    updateWalletControls/getWalletControls, which is the code that actually
+    decides.
+  */
+  const { db } = await import('../src/database/json-database.js');
+  const { updateWalletControls, updateWalletControlsSchema, getWalletControls } =
+    await import('../src/wallets/wallet-controls.service.js');
+
+  // A row as it existed before this field was added.
+  await db.upsertWalletControlsRecord({
+    id: 'global', autoSweepBridgeWallet: false, updatedBy: 'legacy', updatedAt: new Date().toISOString(),
+  } as any);
+
+  // Touching an UNRELATED field must not silently switch fee collection off.
+  await updateWalletControls(
+    updateWalletControlsSchema.parse({ autoSweepBridgeWallet: false, updatedBy: 'test_fee_collection' }),
+  );
+  const merged: any = await getWalletControls();
+  assert.equal(merged.collectTransferFeeOnChain, true,
+    'a legacy row resolved to OFF - the default applies to nobody');
 });
 
 test('the admin view reports the switch AND whether a destination exists', async () => {

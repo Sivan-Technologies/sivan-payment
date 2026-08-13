@@ -40,13 +40,25 @@ export const updateWalletControlsSchema = z.object({
   /**
    * Move Sivan's transfer fee to the fee wallet as part of the send.
    *
-   * OFF by default, like every capability that moves customer funds. Turning
-   * it on adds a second instruction to each Solana transfer, so it must be an
-   * explicit decision - and a fresh database or a failed settings read must
-   * never start redirecting money on its own.
+   * ON BY DEFAULT, and deliberately the exception to the fail-closed rule that
+   * governs autoSweepBridgeWallet beside it.
    *
-   * Turning it off strands nothing: the fee simply stays in the user's wallet
-   * and the ledger records it exactly as it does today.
+   * Those two look alike and are not. The sweep MOVES A USER'S OWN BALANCE
+   * between custodians - a capability that must never switch itself on. This
+   * collects a fee the user has already been quoted, already agreed to on the
+   * confirm screen, and that the ledger has already debited. Leaving it off
+   * does not protect anyone: it just means the money sits in the customer's
+   * wallet while Sivan's books call it revenue.
+   *
+   * And the cost is real and one-directional. Sivan sponsors gas on every
+   * Solana send. Off, that gas is paid and nothing comes back - every transfer
+   * is a small loss. Defaulting to off would make the safe-looking choice the
+   * one that quietly loses money on each transaction.
+   *
+   * Failing closed still applies where it matters. Collection needs
+   * SIVAN_FEE_WALLET_SOLANA set AND the fee wallet's token account to exist on
+   * chain; either missing and the fee stays put. So this default cannot
+   * misdirect funds - it can only stop leaving them behind.
    */
   collectTransferFeeOnChain: z.boolean().optional(),
   reason: z.string().trim().min(1).max(500).optional(),
@@ -61,7 +73,8 @@ export function defaultWalletControls(): WalletControlsRecord {
     // its own.
     activeProvider: undefined,
     autoSweepBridgeWallet: false,
-    collectTransferFeeOnChain: false,
+    // ON. See the schema above for why this one differs from the sweep.
+    collectTransferFeeOnChain: true,
     updatedBy: 'system',
     updatedAt: nowIso(),
   };
@@ -114,8 +127,20 @@ export async function updateWalletControls(input: z.infer<typeof updateWalletCon
       input.activeProvider === null ? undefined : input.activeProvider ?? current.activeProvider,
     autoSweepBridgeWallet:
       input.autoSweepBridgeWallet ?? current.autoSweepBridgeWallet ?? false,
+    /**
+     * `?? true` LAST, not `?? false`.
+     *
+     * The final fallback is what a record written before this field existed
+     * resolves to. With `?? false` every pre-existing controls row would read
+     * as OFF, so the new default would never actually apply to any deployment
+     * that had ever saved a wallet control - the feature would look enabled in
+     * code and be disabled everywhere real.
+     *
+     * An admin's explicit false is still honoured: it is stored on `current`
+     * and wins over this fallback.
+     */
     collectTransferFeeOnChain:
-      input.collectTransferFeeOnChain ?? current.collectTransferFeeOnChain ?? false,
+      input.collectTransferFeeOnChain ?? current.collectTransferFeeOnChain ?? true,
     reason: input.reason ?? current.reason,
     updatedBy: input.updatedBy ?? 'admin_api_key',
     updatedAt: nowIso(),
@@ -186,7 +211,7 @@ export async function getWalletControlsView() {
      * is on with no SIVAN_FEE_WALLET_SOLANA set collects nothing, and that
      * should be visible in the hub rather than discovered from a ledger.
      */
-    collectTransferFeeOnChain: controls.collectTransferFeeOnChain ?? false,
+    collectTransferFeeOnChain: controls.collectTransferFeeOnChain ?? true,
     feeWalletConfigured: Boolean(env.SIVAN_FEE_WALLET_SOLANA?.trim()),
     availableProviders: PROVIDERS.filter(
       (name) => !(name === 'mock' && env.APP_ENV === 'production')

@@ -1071,7 +1071,23 @@ export class PrivyWalletProvider implements WalletProvider {
     const collectionOn = feeWallet
       ? await import('../wallet-controls.service.js')
           .then((mod) => mod.getWalletControls())
-          .then((controls) => controls?.collectTransferFeeOnChain === true)
+          /**
+           * `!== false`, NOT `=== true`.
+           *
+           * The control now defaults ON, so an absent field means "collect".
+           * `=== true` would read a controls row written before this field
+           * existed as OFF and silently keep leaving fees behind - the default
+           * would be right in the schema and wrong in production, which is the
+           * hardest kind of wrong to notice.
+           *
+           * Only an explicit `false` - an admin who turned it off - stops it.
+           */
+          .then((controls) => controls?.collectTransferFeeOnChain !== false)
+          /**
+           * A controls-read failure still falls back to NOT collecting. The
+           * user is waiting on this transfer; an uncollected fee is Sivan's
+           * problem, a failed send is theirs.
+           */
           .catch(() => false)
       : false;
 
