@@ -108,7 +108,7 @@ export function generateAuthorizationKeyPair(): { publicKeySpki: string; private
  * every withdrawal into `pending_user_signature`.
  */
 export function loadAuthorizationPrivateKey(raw: string | undefined): string | undefined {
-  const value = (raw ?? '').trim();
+  const value = (raw ?? '').trim().replace(/^wallet-auth:/i, '').trim();
   if (!value) return undefined;
 
   if (value.includes('BEGIN')) return value.replace(/\\n/g, '\n');
