@@ -15,6 +15,7 @@ export type VirtualAccountStatus =
 export interface VirtualAccountRequestRecord {
   id: string;
   userId: string;
+  userEmail?: string;
   customerId?: string;
   currency: VirtualAccountCurrency;
   country?: string;

@@ -1355,7 +1355,13 @@ export class PostgresDatabase {
   async listVirtualAccountRequests(): Promise<VirtualAccountRequestRecord[]> {
     const client = await this.pool.connect();
     try {
-      const result = await optionalQuery(client, 'select * from payments_virtual_account_requests order by created_at asc');
+      const result = await optionalQuery(
+        client,
+        `select r.*, u.email as user_email
+         from payments_virtual_account_requests r
+         left join users u on u.user_id = r.user_id
+         order by case when r.status in ('requested', 'under_review') then 0 else 1 end, r.created_at desc`
+      );
       return result.rows.map(mapVirtualAccountRequest);
     } finally { client.release(); }
   }
@@ -2907,6 +2913,7 @@ function mapVirtualAccountRequest(row: any): VirtualAccountRequestRecord {
   return {
     id: row.id,
     userId: row.user_id,
+    userEmail: str(row.user_email),
     customerId: str(row.payments_customer_id),
     currency: row.currency,
     country: str(row.country),
