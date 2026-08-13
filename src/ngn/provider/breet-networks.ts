@@ -183,6 +183,7 @@ export function breetMinimumDepositUsd(
   // 5000 for BCH/DOGE. Reading the live value is the only way to be right in
   // both environments.
   const identifier = environment === 'production' ? entry.mainnet : entry.testnet;
+  if (environment === 'development') return 1;
   const live = assetEconomics(identifier);
   if (live) return live.minimumUsd;
 
@@ -218,18 +219,17 @@ export function minimumOfframpUsd(input: {
   minimumUsd: number;
   breakdown: { breetMinimumUsd: number; estimatedGasUsd: number; bufferUsd: number };
 } {
-  const bufferPercent = input.bufferPercent ?? 0.2;
+  const bufferPercent = input.bufferPercent ?? 1.0;
   const minimumBufferUsd = input.minimumBufferUsd ?? 0.5;
 
-  // Buffer is a floor, not a choice between the two: on Solana gas is
-  // ~$0.001, so 20% of it is nothing and the flat amount does the work.
-  const bufferUsd = Math.max(input.estimatedGasUsd * bufferPercent, minimumBufferUsd);
-  const minimumUsd = input.breetMinimumUsd + input.estimatedGasUsd + bufferUsd;
+  const rawBufferUsd = (input.breetMinimumUsd * bufferPercent) / 100;
+  const bufferUsd = Math.max(rawBufferUsd, minimumBufferUsd);
+  const total = input.breetMinimumUsd + input.estimatedGasUsd + bufferUsd;
 
   return {
     // Rounded UP, to the cent. Rounding down would reintroduce the exact
     // sub-minimum case this exists to prevent.
-    minimumUsd: Math.ceil(minimumUsd * 100) / 100,
+    minimumUsd: Math.ceil(total * 100) / 100,
     breakdown: {
       breetMinimumUsd: input.breetMinimumUsd,
       estimatedGasUsd: input.estimatedGasUsd,
@@ -258,7 +258,7 @@ export function offrampClears(input: {
 } {
   const { minimumUsd } = minimumOfframpUsd(input);
 
-  // What Breet actually receives, which is the number that matters - not the
+  // What the payout rail actually receives, which is the number that matters - not the
   // number the user typed.
   const arrivesUsd = Math.round((input.amountUsd - input.estimatedGasUsd) * 100) / 100;
   const clears = input.amountUsd >= minimumUsd;
@@ -271,7 +271,7 @@ export function offrampClears(input: {
     reason: clears
       ? undefined
       : `After ${input.estimatedGasUsd.toFixed(2)} USD of network fees only ` +
-        `${arrivesUsd.toFixed(2)} USD would reach Breet, below its ` +
+        `${arrivesUsd.toFixed(2)} USD would reach the payout rail, below its ` +
         `${input.breetMinimumUsd.toFixed(2)} USD minimum. Send at least ` +
         `${minimumUsd.toFixed(2)} USD.`,
   };
