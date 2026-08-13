@@ -1108,8 +1108,37 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
   const primaryOfframp = summary?.allowances.find((item) => item.flow === 'offramp' && item.rail === railForPath);
   const [showNgnLevel2Form, setShowNgnLevel2Form] = useState(false);
   const [ngnLevel2Busy, setNgnLevel2Busy] = useState(false);
-  const [ngnLevel2Result, setNgnLevel2Result] = useState<null | { status: string; message: string; bvnLast4?: string }>(null);
+  const [ngnLevel2Result, setNgnLevel2Result] = useState<null | { status: string; message: string; bvnLast4?: string; consentUrl?: string; awaitingUserConsent?: boolean }>(null);
   const [ngnLevel2Error, setNgnLevel2Error] = useState('');
+  const [ngnConsentBusy, setNgnConsentBusy] = useState(false);
+
+  /**
+   * COLLECT THE RESULT AFTER THE CUSTOMER HAS APPROVED.
+   *
+   * Flutterwave's BVN check is consent-based by regulation: the CBN requires
+   * the BVN owner to approve on a NIBSS page, so the submit above can only
+   * ever come back 'review' with a URL. Something has to ask for the answer
+   * afterwards, and until now nothing did - the provider method existed with
+   * no caller and no route, so a user could start a check and never finish
+   * one.
+   */
+  async function completeNgnConsent() {
+    if (!userId) return;
+    setNgnConsentBusy(true);
+    setNgnLevel2Error('');
+    try {
+      const result = await api<{ status: string; message: string; bvnLast4?: string; consentUrl?: string; awaitingUserConsent?: boolean }>(
+        `/api/users/${userId}/kyc/ngn-bvn/complete`,
+        { method: 'POST' }
+      );
+      setNgnLevel2Result(result);
+      if (result?.status === 'matched') onRefresh();
+    } catch (error: any) {
+      setNgnLevel2Error(error?.message || 'Could not confirm your approval yet. Try again in a moment.');
+    } finally {
+      setNgnConsentBusy(false);
+    }
+  }
 
   async function submitNgnLevel2(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1372,7 +1401,7 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
                     : <button className="primary-btn small" onClick={onStartVerification} disabled={!summary.nextStep.available || !canSubmitKyc}>{summary.nextStep.available ? 'Continue' : 'Coming soon'}</button>}
               </div>
             )}
-            {showNgnLevel2Form && <NgnLevel2VerificationForm busy={ngnLevel2Busy} result={ngnLevel2Result} error={ngnLevel2Error} onSubmit={submitNgnLevel2} />}
+            {showNgnLevel2Form && <NgnLevel2VerificationForm busy={ngnLevel2Busy} result={ngnLevel2Result} error={ngnLevel2Error} onSubmit={submitNgnLevel2} consentBusy={ngnConsentBusy} onCompleteConsent={completeNgnConsent} />}
           </div>
           {/* A NIGERIAN MAY WANT THE DOCUMENT PATH TOO.
  
@@ -1661,7 +1690,21 @@ function LegalResources({ compact = false }: { compact?: boolean }) {
 
 
 
-function NgnLevel2VerificationForm({ busy, result, error, onSubmit }: { busy: boolean; result: null | { status: string; message: string; bvnLast4?: string }; error: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function NgnLevel2VerificationForm({ busy, result, error, onSubmit, consentBusy = false, onCompleteConsent }: { busy: boolean; result: null | { status: string; message: string; bvnLast4?: string; consentUrl?: string; awaitingUserConsent?: boolean }; error: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; consentBusy?: boolean; onCompleteConsent?: () => void }) {
+  /**
+   * THE CONSENT HAND-OFF, WHICH USED TO BE A DEAD END.
+   *
+   * On Flutterwave the submit below cannot return 'matched' - the CBN requires
+   * the BVN owner to approve on a NIBSS page first. The server returned that
+   * URL all along, inside matchedFields, and this form rendered only the
+   * message. So the user read "Your verification needs manual review", had no
+   * link to approve with, and waited for a human who was never coming.
+   *
+   * Two steps now, in the order the user performs them: open the approval
+   * page, then come back and press the button that collects the result.
+   */
+  const awaitingConsent = Boolean(result?.awaitingUserConsent && result?.consentUrl);
+
   return <form className="ngn-level2-card" onSubmit={onSubmit}>
     <div><p className="eyebrow">Level 2 · Nigerian identity</p><h3>Verify your BVN identity</h3><p className="muted">This checks your BVN identity details. We never show your full BVN after submission and this does not run automatically.</p></div>
     <div className="split"><label>First name<input name="firstName" placeholder="John" autoComplete="given-name" required /></label><label>Last name<input name="lastName" placeholder="Doe" autoComplete="family-name" required /></label></div>
@@ -1669,8 +1712,27 @@ function NgnLevel2VerificationForm({ busy, result, error, onSubmit }: { busy: bo
     <label>BVN<input name="bvn" placeholder="11-digit BVN" inputMode="numeric" autoComplete="off" required minLength={11} maxLength={11} /></label>
     <div className="warning-box compact">BVN is sensitive. Sivan uses it only for this Level 2 check. It is not sent to Sivan Assistant and should not be shared in support chat.</div>
     {result && <div className={result.status === 'matched' ? 'success-note' : 'verification-note'}><strong>{result.message}</strong>{result.bvnLast4 && <span> BVN ending {result.bvnLast4}</span>}</div>}
+    {awaitingConsent && (
+      <div className="ngn-consent-steps">
+        <ol className="ordered-steps">
+          <li className="active">Open the approval page and confirm with the OTP sent by your bank.</li>
+          <li>Come back here and select “I have approved” to finish.</li>
+        </ol>
+        <div className="consent-actions">
+          {/* rel="noreferrer" matters: this is a third-party page being handed
+              a BVN consent session, and it has no business reading our URL. */}
+          <a className="primary-btn small" href={result?.consentUrl} target="_blank" rel="noreferrer">Open approval page ↗</a>
+          <button type="button" className="secondary-btn small" disabled={consentBusy} onClick={onCompleteConsent}>
+            {consentBusy ? 'Checking…' : 'I have approved'}
+          </button>
+        </div>
+        <small className="muted">Approval happens on your provider’s secure page. Sivan never sees your OTP.</small>
+      </div>
+    )}
     {error && <div className="form-error">{error}</div>}
-    <button className="primary-btn" disabled={busy}>{busy ? 'Checking…' : 'Submit Level 2 check'}</button>
+    {/* Hidden once the check is waiting on the user: re-submitting would start
+        a SECOND consent request and burn one of their three daily attempts. */}
+    {!awaitingConsent && <button className="primary-btn" disabled={busy}>{busy ? 'Checking…' : 'Submit Level 2 check'}</button>}
   </form>;
 }
 

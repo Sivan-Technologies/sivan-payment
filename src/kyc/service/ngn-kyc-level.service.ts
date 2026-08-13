@@ -43,6 +43,27 @@ function enforceAttemptLimit(key: string) {
 }
 
 function toCustomerSafe(result: KycLevelMatchResult, level: 'ngn_level_2' | 'ngn_bank_ownership') {
+  /**
+   * "WAITING FOR YOU" IS NOT "WAITING FOR US".
+   *
+   * Both arrive as status 'review', and collapsing them into one message -
+   * "Your verification needs manual review" - is wrong in the way that costs
+   * a conversion. Flutterwave's BVN flow is consent-based: the CBN requires
+   * the BVN owner to approve, so the first call returns a NIBSS URL the
+   * customer has to open and enter an OTP on. Nobody at Sivan is reviewing
+   * anything; the user simply has not finished, and telling them to wait for
+   * a human means they never will.
+   *
+   * The consent URL was also being dropped here entirely. The provider set it
+   * on matchedFields.consentUrl, this function returned matchedFields, and
+   * the frontend rendered only `message` - so the one link that could finish
+   * the check never reached the screen. The flow could start and could never
+   * complete.
+   */
+  const consentUrl = typeof result.matchedFields?.consentUrl === 'string'
+    ? result.matchedFields.consentUrl
+    : undefined;
+
   return {
     status: result.status,
     level,
@@ -51,10 +72,20 @@ function toCustomerSafe(result: KycLevelMatchResult, level: 'ngn_level_2' | 'ngn
     message: result.status === 'matched'
       ? level === 'ngn_level_2' ? 'Your Nigerian identity check was successful.' : 'Your bank account was matched successfully.'
       : result.status === 'review'
-        ? 'Your verification needs manual review.'
+        ? consentUrl
+          ? 'Approve the request with your BVN provider to finish. This opens a secure page from our partner.'
+          : 'Your verification needs manual review.'
         : 'Your verification could not be matched. Check your details or contact Sivan Support.',
     matchedFields: result.matchedFields,
-    providerReference: result.providerReference
+    providerReference: result.providerReference,
+    /**
+     * Lifted out of matchedFields to the top level deliberately. A client
+     * should not have to know that a URL is hiding inside a bag of match
+     * booleans in order to render the button that completes the flow.
+     */
+    consentUrl,
+    /** True when the next move belongs to the USER, not to a Sivan reviewer. */
+    awaitingUserConsent: Boolean(consentUrl)
   };
 }
 
@@ -158,6 +189,118 @@ export async function verifyNgnBvnIdentity(userId: string, input: z.infer<typeof
   return toCustomerSafe(result, 'ngn_level_2');
 }
 
+/**
+ * FINISH A CONSENT-BASED BVN CHECK AFTER THE CUSTOMER HAS APPROVED.
+ *
+ * THE MISSING HALF. FlutterwaveKycLevelProvider.completeBvnConsent() was
+ * written, correct, and had NO CALLER anywhere in the codebase - grep found it
+ * only in its own file. It is not on the KycLevelProvider interface either, so
+ * nothing could reach it generically.
+ *
+ * The consequence: on Flutterwave a user could START a BVN check and never
+ * finish one. The first call stores a 'review' row with the provider's
+ * reference, the customer approves on the NIBSS page, and then nothing ever
+ * asked Flutterwave for the result. The row sat at 'review' forever and the
+ * user stayed at Level 1.
+ *
+ * NO BVN IS RE-SUBMITTED HERE, and that is the point of storing
+ * providerReference. Asking the user to type their BVN again after they have
+ * already approved would be a second chance to typo the thing that is now
+ * settled, and a second copy of it crossing the wire for no reason. The
+ * reference is read from THEIR OWN pending row, so a caller cannot complete
+ * someone else's consent by guessing a reference.
+ *
+ * Idempotent by construction: it re-reads the provider's current answer and
+ * upserts the same (userId, checkType) row, so polling it twice cannot create
+ * two verifications or grant Level 2 twice.
+ */
+export async function completeNgnBvnConsent(userId: string) {
+  const rows = await db.listNgnIdentityVerifications(userId);
+  const pending = rows.find((row) => row.checkType === 'bvn_info');
+
+  if (!pending) {
+    throw forbidden('Start a BVN check before trying to finish one.');
+  }
+  /**
+   * Already done - return the stored outcome rather than calling the provider
+   * again. A user who refreshes the return page must not burn an attempt or
+   * pay for a second lookup.
+   */
+  if (pending.verifiedAt) {
+    return {
+      status: 'matched' as const,
+      level: 'ngn_level_2' as const,
+      provider: pending.provider,
+      bvnLast4: pending.bvnLast4,
+      message: 'Your Nigerian identity check was successful.',
+      matchedFields: pending.matchedFields,
+      providerReference: pending.providerReference,
+      consentUrl: undefined,
+      awaitingUserConsent: false
+    };
+  }
+  if (!pending.providerReference) {
+    throw forbidden('This verification has no provider reference to complete. Start a new check.');
+  }
+
+  const provider: any = providerOverrideForTests ?? getKycLevelProvider();
+  if (typeof provider.completeBvnConsent !== 'function') {
+    // Monnify and the mock answer synchronously and have nothing to complete.
+    throw forbidden('This verification provider does not use a separate approval step.');
+  }
+
+  const result: KycLevelMatchResult = await provider.completeBvnConsent(pending.providerReference);
+
+  const at = nowIso();
+  const record = await db.upsertNgnIdentityVerification({
+    ...pending,
+    status: result.status,
+    provider: result.provider,
+    providerReference: result.providerReference ?? pending.providerReference,
+    bvnLast4: result.bvnLast4 ?? pending.bvnLast4,
+    // The hash is carried from the ORIGINAL submission. completeBvnConsent
+    // never sees the BVN, so recomputing here would blank the one column the
+    // cross-account fraud check reads.
+    bvnHash: pending.bvnHash,
+    matchedFields: result.matchedFields ?? pending.matchedFields,
+    verifiedAt: result.status === 'matched' ? at : undefined,
+    updatedAt: at
+  });
+
+  // Same fraud signal the initial path records, because this is now the path
+  // on which a Flutterwave user actually becomes verified.
+  if (result.status === 'matched' && record.bvnHash) {
+    const others = await db.countUsersWithBvnHash(record.bvnHash, userId).catch(() => 0);
+    if (others > 0) {
+      await createAuditLog({
+        actorType: 'system',
+        action: 'kyc.bvn_reused_across_accounts',
+        resourceType: 'ngn_identity_verification',
+        resourceId: record.id,
+        severity: 'warning',
+        metadata: { userId, bvnLast4: record.bvnLast4, otherAccounts: others }
+      }).catch(() => undefined);
+    }
+  }
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: userId,
+    action: 'kyc.ngn_bvn_consent_completed',
+    resourceType: 'ngn_identity_verification',
+    resourceId: record.id,
+    severity: result.status === 'matched' ? 'info' : 'warning',
+    metadata: {
+      status: result.status,
+      provider: result.provider,
+      bvnLast4: result.bvnLast4,
+      providerReference: record.providerReference ?? null
+    }
+  }).catch(() => undefined);
+
+  return toCustomerSafe(result, 'ngn_level_2');
+}
+
 export async function verifyNgnBvnBankAccount(userId: string, input: z.infer<typeof bvnAccountMatchSchema>) {
   enforceAttemptLimit(attemptKey(userId, 'bvn_bank', `${input.bankCode}:${input.accountNumber}`));
   const provider = getKycLevelProvider();
@@ -168,3 +311,20 @@ export async function verifyNgnBvnBankAccount(userId: string, input: z.infer<typ
 export async function getNgnKycProviderHealth() {
   return getKycLevelProvider().health();
 }
+
+/**
+ * TEST SEAMS. Not used by any production path.
+ *
+ * The consent flow cannot be exercised against the real vendor - it needs a
+ * human on a NIBSS page with an OTP - so the only way to prove the completion
+ * path is to substitute the provider. Kept to two narrow exports rather than
+ * loosening getKycLevelProvider() itself, so nothing in the running system can
+ * reach them by accident.
+ */
+let providerOverrideForTests: any = null;
+
+export function __setKycProviderForTests(provider: any) {
+  providerOverrideForTests = provider;
+}
+
+export const __toCustomerSafeForTests = toCustomerSafe;
