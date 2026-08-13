@@ -211,6 +211,87 @@ export async function checkVirtualAccountProviderByEmail(email: string) {
   };
 }
 
+export async function importExistingBridgeVirtualAccountsByEmail(email: string, importedBy = 'admin_api_key') {
+  const targetEmail = email.trim().toLowerCase();
+  if (!targetEmail || !targetEmail.includes('@')) throw badRequest('A valid customer email is required.');
+
+  const user = await db.findUserByEmail(targetEmail);
+  if (!user) throw notFound('No Sivan payment user exists for this email.');
+
+  const [customers, existingAccounts] = await Promise.all([
+    db.listCustomers(),
+    db.listVirtualAccounts(),
+  ]);
+  const userCustomers = customers.filter((customer) => customer.userId === user.id && customer.provider === 'bridge' && customer.providerCustomerId);
+  if (!userCustomers.length) throw notFound('No Bridge customer is linked to this Sivan user.');
+
+  const bridgeClient = new BridgeClient();
+  const importedAccounts: VirtualAccountRecord[] = [];
+
+  for (const customer of userCustomers) {
+    const providerCustomerId = customer.providerCustomerId;
+    if (!providerCustomerId) continue;
+
+    const bridgeAccountsResponse = await bridgeClient.request<any>(`/customers/${providerCustomerId}/virtual_accounts`);
+    const bridgeAccounts = Array.isArray(bridgeAccountsResponse?.data) ? bridgeAccountsResponse.data : [];
+
+    for (const rawAccount of bridgeAccounts) {
+      const mapped = mapBridgeVirtualAccount(rawAccount, (rawAccount?.source_deposit_instructions?.currency || 'usd') as VirtualAccountCurrency);
+      const existing = existingAccounts.find((account) =>
+        account.provider === 'bridge' &&
+        account.providerAccountId === mapped.providerAccountId
+      );
+      const now = nowIso();
+      const record: VirtualAccountRecord = {
+        id: existing?.id ?? id('va'),
+        requestId: existing?.requestId,
+        userId: user.id,
+        customerId: customer.id,
+        provider: 'bridge',
+        providerAccountId: mapped.providerAccountId,
+        currency: mapped.currency,
+        country: mapped.country,
+        bankName: mapped.bankName,
+        accountName: mapped.accountName,
+        accountNumberMasked: mapped.accountNumberMasked,
+        routingNumberMasked: mapped.routingNumberMasked,
+        ibanMasked: mapped.ibanMasked,
+        status: mapped.status,
+        rawProviderPayload: mapped.rawProviderPayload,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+
+      await db.upsertVirtualAccountRecord(record);
+      importedAccounts.push(record);
+    }
+  }
+
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: importedBy,
+    action: 'virtual_account.provider_imported',
+    resourceType: 'virtual_account',
+    resourceId: user.id,
+    metadata: {
+      email: targetEmail,
+      provider: 'bridge',
+      importedAccountIds: importedAccounts.map((account) => account.id),
+      providerAccountIds: importedAccounts.map((account) => account.providerAccountId),
+    },
+  });
+
+  return {
+    email: targetEmail,
+    imported: importedAccounts.length,
+    accounts: importedAccounts,
+    providerCreation: false,
+    message: importedAccounts.length
+      ? `Imported ${importedAccounts.length} existing Bridge virtual account(s) into Sivan.`
+      : 'Bridge returned no virtual accounts to import.',
+  };
+}
+
 export async function provisionVirtualAccount(input: CreateVirtualAccountInput): Promise<ProviderVirtualAccount> {
   // Runtime Admin Controls are the source of truth for enabling/disabling
   // USD/GBP/EUR virtual account requests and approvals. Do not require a Render

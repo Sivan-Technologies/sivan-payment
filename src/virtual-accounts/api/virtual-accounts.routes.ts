@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../../shared/validation.js';
 import { forbidden } from '../../shared/errors.js';
-import { approveVirtualAccountRequest, checkVirtualAccountProviderByEmail, cleanupLegacyMockVirtualAccountData, listUserVirtualAccounts, listVirtualAccountEvents, listVirtualAccountRequests, listVirtualAccounts, listVirtualAccountTransactions, rejectVirtualAccountRequest, requestVirtualAccountReprovision, requestVirtualAccount } from '../service/virtual-account.service.js';
+import { approveVirtualAccountRequest, checkVirtualAccountProviderByEmail, cleanupLegacyMockVirtualAccountData, importExistingBridgeVirtualAccountsByEmail, listUserVirtualAccounts, listVirtualAccountEvents, listVirtualAccountRequests, listVirtualAccounts, listVirtualAccountTransactions, rejectVirtualAccountRequest, requestVirtualAccountReprovision, requestVirtualAccount } from '../service/virtual-account.service.js';
 import { getVirtualAccountProviderSettings, updateVirtualAccountProviderSettings, virtualAccountProviderSettingsSchema } from '../service/virtual-account-provider-settings.service.js';
 
 const requestSchema = z.object({
@@ -21,6 +21,10 @@ const cleanupMockSchema = z.object({
 });
 
 const providerCheckQuerySchema = z.object({
+  email: z.string().email(),
+});
+
+const providerImportSchema = z.object({
   email: z.string().email(),
 });
 
@@ -60,6 +64,11 @@ export async function virtualAccountsRoutes(app: FastifyInstance) {
   app.get('/api/admin/virtual-accounts/provider-check', async (request) => {
     const query = providerCheckQuerySchema.parse(request.query);
     return { data: await checkVirtualAccountProviderByEmail(query.email) };
+  });
+
+  app.post('/api/admin/virtual-accounts/provider-check/import', async (request) => {
+    const body = parseBody(providerImportSchema, request.body ?? {});
+    return { data: await importExistingBridgeVirtualAccountsByEmail(body.email, actor(request)) };
   });
 
   app.post('/api/admin/virtual-accounts/cleanup-mock', async (request) => {
