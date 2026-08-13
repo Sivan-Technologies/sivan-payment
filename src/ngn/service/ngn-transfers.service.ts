@@ -299,11 +299,26 @@ function scheduleSweep(transfer: NgnTransferRecord): void {
           const current = (await db.listNgnTransfers())
             .find((row) => row.id === transfer.id) ?? transfer;
 
-          current.status = 'settlement_processing';
+          const submitted = isRailSweepSubmitted(swept);
+          if (submitted) {
+            current.status = 'settlement_processing';
+          }
           current.metadata = { ...(current.metadata as Record<string, unknown>), sweep: swept };
           current.timeline = buildTimeline(current);
           current.updatedAt = nowIso();
           await db.upsertNgnTransferRecord(current);
+
+          if (!submitted) {
+            await createAuditLog({
+              actorType: 'system', actorId: 'ngn_sweep', action: 'ngn.sweep_requires_user_signature',
+              resourceType: 'payments_ngn_transfer', resourceId: transfer.id, severity: 'warning',
+              metadata: {
+                depositAddress: transfer.depositAddress,
+                providerTransferId: swept.providerTransferId,
+                status: swept.status,
+              },
+            });
+          }
         }
       } catch (error) {
         await createAuditLog({
@@ -314,6 +329,14 @@ function scheduleSweep(transfer: NgnTransferRecord): void {
       }
     })();
   });
+}
+
+function isRailSweepSubmitted(sweep: Record<string, unknown>): boolean {
+  const status = String(sweep.status ?? '').toLowerCase();
+  return status === 'submitted'
+    || status === 'confirmed'
+    || Boolean(sweep.txHash)
+    || Boolean(sweep.userOperationHash);
 }
 
 /**
@@ -420,15 +443,27 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
   });
 
   await createAuditLog({
-    actorType: 'system', actorId: 'ngn_sweep', action: 'ngn.sweep_submitted',
-    resourceType: 'payments_ngn_transfer', resourceId: transfer.id, severity: 'info',
-    metadata: { depositAddress: transfer.depositAddress, amount: transfer.sourceAmount, asset, network, providerTransferId: result.providerTransferId, sponsored: result.sponsored },
+    actorType: 'system', actorId: 'ngn_sweep',
+    action: result.status === 'pending_user_signature' ? 'ngn.sweep_requires_user_signature' : 'ngn.sweep_submitted',
+    resourceType: 'payments_ngn_transfer', resourceId: transfer.id,
+    severity: result.status === 'pending_user_signature' ? 'warning' : 'info',
+    metadata: {
+      depositAddress: transfer.depositAddress,
+      amount: transfer.sourceAmount,
+      asset,
+      network,
+      providerTransferId: result.providerTransferId,
+      status: result.status,
+      sponsored: result.sponsored,
+    },
   });
 
   return {
     providerTransferId: result.providerTransferId,
+    status: result.status,
     txHash: result.txHash,
     userOperationHash: result.userOperationHash,
+    userSignaturePayload: result.userSignaturePayload,
     sponsored: result.sponsored,
     sweptAt: nowIso(),
   };
