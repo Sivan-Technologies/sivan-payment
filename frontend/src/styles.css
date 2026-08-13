@@ -1108,6 +1108,24 @@ input:focus, select:focus { border-color: rgba(0, 122, 199, .68); box-shadow: 0 
   color: #ffffff;
   border-color: transparent;
 }
+.seg-radio.disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+.seg-radio.disabled:hover {
+  border-color: var(--border);
+  background: transparent;
+}
+.seg-radio span {
+  display: grid;
+  gap: 3px;
+  line-height: 1.15;
+}
+.seg-radio small {
+  font-size: 10.5px;
+  font-weight: 800;
+  opacity: .78;
+}
 /* Focus has to show on the LABEL, because the input that actually holds focus
    is invisible. Without this a keyboard user arrowing through the group gets
    no indication of where they are. */

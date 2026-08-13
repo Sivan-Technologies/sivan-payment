@@ -155,6 +155,8 @@ export default function App() {
    * the bug. Nothing that consumes a network renders until this is filled.
    */
   const [ngnNetwork, setNgnNetwork] = useState('');
+  const [ngnAsset, setNgnAsset] = useState<'usdc' | 'usdt'>('usdc');
+  const ngnAssetUserChosen = useRef(false);
 
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
@@ -463,7 +465,29 @@ export default function App() {
    * which token carried them. Spending paths still stay asset-specific below:
    * a USDT deposit is never silently treated as USDC for an on-chain transfer.
    */
-  const usdcUnified = unifiedBalance?.balances.find((item) => item.asset === 'usdc');
+  const withdrawAssetOptions = useMemo(() => {
+    const enabledStableAssets = enabledAssets.filter((asset) => asset.asset === 'usdc' || asset.asset === 'usdt');
+    return enabledStableAssets.map((asset) => {
+      const balance = unifiedBalance?.balances.find((item) => item.asset.toLowerCase() === asset.asset);
+      const spendable = !unifiedBalance
+        ? undefined
+        : balance?.chainUnavailable
+          ? null
+          : Number(balance?.spendable ?? 0);
+      return {
+        asset: asset.asset,
+        label: asset.label || asset.asset.toUpperCase(),
+        spendable,
+        chainUnavailable: Boolean(balance?.chainUnavailable),
+      };
+    }).sort((a, b) => Number(b.spendable ?? -1) - Number(a.spendable ?? -1));
+  }, [enabledAssets, unifiedBalance]);
+  const selectedNgnBalance = withdrawAssetOptions.find((option) => option.asset === ngnAsset);
+  const selectedNgnSpendable = !unifiedBalance
+    ? undefined
+    : selectedNgnBalance?.chainUnavailable
+      ? null
+      : Number(selectedNgnBalance?.spendable ?? 0);
   const stableBalanceCard = useMemo(
     () => stableUsdBalanceKpi(unifiedBalance),
     [unifiedBalance]
@@ -943,8 +967,31 @@ export default function App() {
    */
   useEffect(() => {
     if (!authToken) return;
-    void loadNgnNetworks();
-  }, [authToken, loadNgnNetworks]);
+    setNgnNetworks(null);
+    void loadNgnNetworks(ngnAsset);
+  }, [authToken, loadNgnNetworks, ngnAsset]);
+
+  /**
+   * DEFAULT THE SELL ASSET TO WHAT THE USER CAN ACTUALLY WITHDRAW.
+   *
+   * The dashboard can honestly say "18 USD" across USDC + USDT, but a
+   * withdrawal cannot spend an aggregate. It must choose a token. The first
+   * choice is therefore the enabled asset with the highest known spendable
+   * balance. Once the user changes it we do not keep switching under their
+   * hands; we only repair the selection if Admin disables the current asset.
+   */
+  useEffect(() => {
+    if (!withdrawAssetOptions.length) return;
+
+    const current = withdrawAssetOptions.find((option) => option.asset === ngnAsset);
+    const best = withdrawAssetOptions
+      .slice()
+      .sort((a, b) => Number(b.spendable ?? -1) - Number(a.spendable ?? -1))[0];
+
+    if (!current || !ngnAssetUserChosen.current) {
+      setNgnAsset(best.asset);
+    }
+  }, [ngnAsset, withdrawAssetOptions]);
 
   /**
    * THE SELECTED CHAIN IS ALWAYS ONE THE ADMIN CURRENTLY ALLOWS.
@@ -1791,6 +1838,7 @@ export default function App() {
        */
       const fundingSource = data.fundingSource === 'external' ? 'external' : 'balance';
       const amountEntered = String(data.sourceAmount ?? '').trim();
+      const selectedBalance = unifiedBalance?.balances.find((item) => item.asset.toLowerCase() === data.sourceCurrency);
 
       // Validated HERE rather than at confirm, so the user finds out while
       // they are still looking at the field they need to change.
@@ -1803,11 +1851,11 @@ export default function App() {
         // was shown and the number they are checked against are one value.
         // `chainUnavailable` means the balance could not be read, which is not
         // zero and must not be used to refuse a withdrawal.
-        const spendableUsdc = !unifiedBalance || usdcUnified?.chainUnavailable
+        const spendableSelectedAsset = !unifiedBalance || selectedBalance?.chainUnavailable
           ? undefined
-          : Number(usdcUnified?.spendable ?? 0);
-        if (typeof spendableUsdc === 'number' && Number(amountEntered) > spendableUsdc) {
-          throw new Error(`You have ${spendableUsdc.toFixed(2)} available to withdraw.`);
+          : Number(selectedBalance?.spendable ?? 0);
+        if (typeof spendableSelectedAsset === 'number' && Number(amountEntered) > spendableSelectedAsset) {
+          throw new Error(`You have ${spendableSelectedAsset.toFixed(2)} ${data.sourceCurrency.toUpperCase()} available to withdraw.`);
         }
       }
 
@@ -2649,7 +2697,12 @@ export default function App() {
              */
             ngnNetworkOptions={ngnNetworks?.offramp ?? []}
             onNgnNetworkChange={setNgnNetwork}
-            ngnAsset="usdc"
+            ngnAsset={ngnAsset}
+            onNgnAssetChange={(asset) => {
+              ngnAssetUserChosen.current = true;
+              setNgnAsset(asset);
+            }}
+            withdrawAssetOptions={withdrawAssetOptions}
 
             ngnMinimumUsd={ngnNetworks?.offramp.find((option) => option.network === ngnNetwork)?.minimumDepositUsd}
             ngnRemainingNgn={ngnOfframpAllowance?.remainingNgn}
@@ -2658,7 +2711,7 @@ export default function App() {
              * could not be reached. The form distinguishes all three states,
              * because "we could not check" is not "you have nothing".
              */
-            ngnSpendable={!unifiedBalance ? undefined : usdcUnified?.chainUnavailable ? null : Number(usdcUnified?.spendable ?? 0)}
+            ngnSpendable={selectedNgnSpendable}
             ngnWindowDays={verificationSummary?.windowDays}
             /* From GET /api/ngn/networks, which this screen already awaits.
                Undefined until it answers, which reads as OFF - the withdraw
