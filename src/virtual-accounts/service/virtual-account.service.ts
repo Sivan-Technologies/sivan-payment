@@ -151,15 +151,13 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   const existingLiveAccount = existingAccounts.find((item) => item.requestId === requestId && item.provider !== 'mock' && item.status !== 'closed');
   if (request.status === 'approved' && existingLiveAccount) throw badRequest('Virtual account request is already approved and has a live provider account.');
 
-  const approved: VirtualAccountRequestRecord = { ...request, status: 'approved', reviewedBy: reviewer, reviewedAt: request.reviewedAt || now, updatedAt: now };
-  await db.upsertVirtualAccountRequestRecord(approved);
-
   const customer = data.customers.find((item) => item.id === request.customerId || item.userId === request.userId);
   if (!customer?.providerCustomerId) throw badRequest('Cannot provision without a provider customer ID. Complete Bridge KYC first.');
   if (activeProvider === 'bridge' && customer.provider !== 'bridge') {
     throw badRequest('This request belongs to a legacy/mock customer. Import or complete a real Bridge customer before approving virtual account provisioning.');
   }
   const providerAccount = await provisionVirtualAccountOrExplain({ requestId, userId: request.userId, customerId: request.customerId, providerCustomerId: customer.providerCustomerId, email: user.email, fullName: user.fullName, currency: request.currency, country: request.country, useCase: request.useCase, metadata: request.metadata }, { requestId, reviewer, activeProvider });
+  const approved: VirtualAccountRequestRecord = { ...request, status: 'approved', reviewedBy: reviewer, reviewedAt: request.reviewedAt || now, updatedAt: now };
   const account: VirtualAccountRecord = {
     id: id('va'),
     requestId,
@@ -179,6 +177,7 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
     createdAt: now,
     updatedAt: now,
   };
+  await db.upsertVirtualAccountRequestRecord(approved);
   await db.upsertVirtualAccountRecord(account);
   await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.approved', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
   return { request: approved, account };
