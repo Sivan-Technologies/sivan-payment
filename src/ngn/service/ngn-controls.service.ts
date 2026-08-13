@@ -46,7 +46,7 @@ export const updateNgnControlsSchema = z.object({
 });
 
 export function defaultNgnControls(): NgnControlsRecord {
-  return { id: 'global', onrampEnabled: false, offrampEnabled: false, mockProviderEnabled: true, bankSettlementEnabled: false, virtualAccountEnabled: false, activeProvider: 'mock', backupProvider: undefined, identityVerificationEnabled: false, externalFundingEnabled: false, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
+  return { id: 'global', onrampEnabled: true, offrampEnabled: true, mockProviderEnabled: true, bankSettlementEnabled: true, virtualAccountEnabled: true, activeProvider: 'breet', backupProvider: undefined, identityVerificationEnabled: true, externalFundingEnabled: true, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
 }
 
 export async function getNgnControls() {

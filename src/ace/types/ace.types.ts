@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export type AceSupportChannel = 'web_dashboard' | 'admin_hub' | 'whatsapp' | 'api';
+export type AceSupportChannel = 'web_dashboard' | 'admin_hub' | 'whatsapp' | 'api' | 'telegram';
 export type AceResourceType = 'withdrawal' | 'onramp_order' | 'virtual_account_transaction' | 'general';
 export type AceConfidence = 'high' | 'medium' | 'low';
 
@@ -8,7 +8,7 @@ export const aceSupportRequestSchema = z.object({
   message: z.string().min(1).max(2000),
   resourceType: z.enum(['withdrawal', 'onramp_order', 'virtual_account_transaction', 'general']).optional().default('general'),
   resourceId: z.string().optional(),
-  channel: z.enum(['web_dashboard', 'admin_hub', 'whatsapp', 'api']).optional().default('web_dashboard')
+  channel: z.enum(['web_dashboard', 'admin_hub', 'whatsapp', 'api', 'telegram']).optional().default('web_dashboard')
 });
 
 export interface AceEvidenceItem {

@@ -6,9 +6,9 @@ import { inferAceResourceType } from './ace-intent.service.js';
 import { composeAceSupportAnswer } from './ace-response.service.js';
 import { requestRemoteAceSupport } from './ace-remote.service.js';
 import { env } from '../../config/env.js';
-import type { AceResourceType } from '../types/ace.types.js';
+import type { AceResourceType, AceSupportChannel } from '../types/ace.types.js';
 
-export async function answerAceSupport(input: { userId?: string; message: string; resourceType?: AceResourceType; resourceId?: string; channel?: 'web_dashboard' | 'admin_hub' | 'whatsapp' | 'api'; admin?: boolean }) {
+export async function answerAceSupport(input: { userId?: string; message: string; resourceType?: AceResourceType; resourceId?: string; channel?: AceSupportChannel; admin?: boolean }) {
   const resourceType = inferAceResourceType(input.message, input.resourceType);
   const sessionId = id('ace');
   const now = nowIso();
@@ -51,7 +51,7 @@ export async function answerAceSupport(input: { userId?: string; message: string
   return answer;
 }
 
-async function resolveAceAnswer({ input, evidence, localAnswer }: { input: { userId?: string; message: string; resourceType?: AceResourceType; resourceId?: string; channel?: 'web_dashboard' | 'admin_hub' | 'whatsapp' | 'api'; admin?: boolean }; evidence: Awaited<ReturnType<typeof buildAceEvidence>>; localAnswer: ReturnType<typeof composeAceSupportAnswer> }) {
+async function resolveAceAnswer({ input, evidence, localAnswer }: { input: { userId?: string; message: string; resourceType?: AceResourceType; resourceId?: string; channel?: AceSupportChannel; admin?: boolean }; evidence: Awaited<ReturnType<typeof buildAceEvidence>>; localAnswer: ReturnType<typeof composeAceSupportAnswer> }) {
   if (env.ACE_PROVIDER !== 'remote') return { answer: localAnswer, providerMode: 'local' as const, fallbackReason: undefined };
   try {
     const remote = await requestRemoteAceSupport({
