@@ -90,6 +90,33 @@ test('it reports the SAME value the enforcement path reads', async () => {
   assert.equal(controls.transfersEnabled, balance.transfersEnabled);
 });
 
+test('an admin toggle moves BOTH the screen and the enforcement path', async () => {
+  /*
+    THE DRIFT THIS FIELD EXISTS TO PREVENT, IN THE OTHER DIRECTION.
+
+    getBalanceTransferControls treats BALANCE_TRANSFERS_ENABLED as a fallback
+    and lets a saved admin value override it. My first version of the controls
+    payload read the env var directly, so an operator enabling transfers in the
+    hub would have unblocked the 403 while the send form still said "paused".
+
+    Exercised through the real update function, so this fails if either side is
+    ever re-pointed at the raw variable.
+  */
+  const { updateBalanceTransferControls, getBalanceTransferControls } =
+    await import('../src/balances/balance.service.js');
+  const { listPaymentControls } = await import('../src/controls/payment-controls.service.js');
+
+  await updateBalanceTransferControls({ transfersEnabled: true, updatedBy: 'test_transfer_gate' } as any);
+  const [afterOn, enforcementOn]: [any, any] =
+    await Promise.all([listPaymentControls(), getBalanceTransferControls()]);
+  assert.equal(enforcementOn.transfersEnabled, true, 'setup: the admin value did not save');
+  assert.equal(afterOn.transfersEnabled, true, 'the screen still says paused after an admin enabled it');
+
+  await updateBalanceTransferControls({ transfersEnabled: false, updatedBy: 'test_transfer_gate' } as any);
+  const afterOff: any = await listPaymentControls();
+  assert.equal(afterOff.transfersEnabled, false, 'the screen did not follow the admin switching it off');
+});
+
 test('it fails CLOSED on the server', async () => {
   // Absent config must not read as "transfers are open".
   const prev = process.env.BALANCE_TRANSFERS_ENABLED;

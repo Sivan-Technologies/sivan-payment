@@ -198,6 +198,15 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
    */
   const supplierControls = await getSupplierPaymentControls().catch(() => null);
   const feeSettings: any = await getAdminFeeSettings().catch(() => null);
+  /**
+   * Read once here rather than inlined below, so a controls-read failure
+   * cannot take down the whole payload. Imported lazily to avoid an import
+   * cycle - balance.service already imports the fee settings this module
+   * reads.
+   */
+  const balanceControls: any = await import('../balances/balance.service.js')
+    .then((mod) => mod.getBalanceTransferControls())
+    .catch(() => null);
   const existingCustomerTypes = data.customerTypeControls ?? [];
   const existingPayouts = data.paymentControls ?? [];
   const existingAssets = data.assetControls ?? [];
@@ -223,13 +232,26 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
     })),
     supplierPayoutsEnabled: supplierControls ? supplierControls.supplierPaymentsEnabled !== false : true,
     /**
-     * Read from the SAME source the enforcement path reads
-     * (getBalanceControls -> BALANCE_TRANSFERS_ENABLED), so the screen and the
-     * 403 can never disagree. Defaults to false to match that function - and
-     * failing closed is right here: showing a disabled feature as available is
-     * what produced the report.
+     * THE ADMIN TOGGLE WINS, NOT THE ENVIRONMENT VARIABLE.
+     *
+     * My first version read process.env.BALANCE_TRANSFERS_ENABLED directly,
+     * under a comment claiming it was "the same source the enforcement path
+     * reads". It was not, and I only found that by reading
+     * getBalanceTransferControls() to the end.
+     *
+     * That function treats env as a FALLBACK and then spreads
+     * `...(saved ?? {})` over it, so whatever an operator last saved in
+     * Admin -> Controls -> "Transfers from settled USDC" overrides the
+     * variable entirely. Reading env here would have reproduced the very bug
+     * this field exists to fix, inverted: an admin enables transfers, the
+     * enforcement path allows them, and the send form still says "temporarily
+     * paused" because it consulted a variable nobody had touched.
+     *
+     * Delegating to the real function is the only arrangement where the two
+     * cannot drift. false on failure, because showing a disabled feature as
+     * available is what produced the original report.
      */
-    transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED === 'true',
+    transfersEnabled: Boolean(balanceControls?.transfersEnabled),
     // Zero means "not set", in which case the NGN rail falls back to the
     // Bridge percentage - mirroring applySivanMargin exactly, so the number
     // shown is the number charged.
