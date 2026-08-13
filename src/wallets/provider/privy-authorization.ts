@@ -101,6 +101,11 @@ export function generateAuthorizationKeyPair(): { publicKeySpki: string; private
  * A PEM pasted into a dashboard usually arrives with literal "\n" rather than
  * real newlines, and Node's crypto rejects that with an opaque parse error. A
  * base64-wrapped PEM is also accepted because it survives every transport.
+ *
+ * Privy's own UI/API examples can also leave operators with raw PKCS#8 DER
+ * base64 (`MIGH...`) rather than base64-of-PEM. Accept that shape too and
+ * normalize it back to PEM, so a valid quorum key does not silently degrade
+ * every withdrawal into `pending_user_signature`.
  */
 export function loadAuthorizationPrivateKey(raw: string | undefined): string | undefined {
   const value = (raw ?? '').trim();
@@ -111,6 +116,19 @@ export function loadAuthorizationPrivateKey(raw: string | undefined): string | u
   try {
     const decoded = Buffer.from(value, 'base64').toString('utf8');
     if (decoded.includes('BEGIN')) return decoded;
+  } catch {
+    // Try DER below.
+  }
+
+  try {
+    return crypto
+      .createPrivateKey({
+        key: Buffer.from(value, 'base64'),
+        format: 'der',
+        type: 'pkcs8',
+      })
+      .export({ type: 'pkcs8', format: 'pem' })
+      .toString();
   } catch {
     // Fall through - an unreadable key is reported by the caller, which can
     // name the variable that is wrong.
