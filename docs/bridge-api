@@ -1,0 +1,9 @@
+
+Bridge Support- Ivanna Silva
+Aug 12, 6:13:41 PM
+You can retrieve an indicative rate before the offramp using Bridge’s exchange-rate endpoint:
+
+GET /v0/exchange_rates?from=usd&to=gbp
+GET /v0/exchange_rates?from=usd&to=eur
+
+For a USDC offramp, use the buy_rate as the estimated conversion rate because it includes Bridge’s FX fee. Please note that this is an estimate only: Bridge does not currently provide a locked FX quote or quote-expiry window. The final amount and fee breakdown are available in the transfer receipt after the transfer is created and processed.

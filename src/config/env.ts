@@ -12,6 +12,20 @@ const booleanFromEnv = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
+const positiveIntFromEnv = z.preprocess((value) => {
+  if (value === '' || value === undefined || value === null) return undefined;
+  const num = Number(value);
+  if (Number.isNaN(num)) return undefined;
+  return num;
+}, z.number().int().positive());
+
+const numberFromEnv = z.preprocess((value) => {
+  if (value === '' || value === undefined || value === null) return undefined;
+  const num = Number(value);
+  if (Number.isNaN(num)) return undefined;
+  return num;
+}, z.number());
+
 const envSchema = z.object({
   APP_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -152,7 +166,7 @@ const envSchema = z.object({
   BASE_RPC_FALLBACK_URL: z.string().url().optional(),
   ETHEREUM_RPC_URL: z.string().url().optional(),
   ETHEREUM_RPC_FALLBACK_URL: z.string().url().optional(),
-  WEBHOOK_MAX_AGE_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
+  WEBHOOK_MAX_AGE_MS: positiveIntFromEnv.default(10 * 60 * 1000),
   /**
    * 1.25%, not 0.
    *
