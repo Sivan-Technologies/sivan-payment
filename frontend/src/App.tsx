@@ -622,7 +622,25 @@ export default function App() {
            */
           const authCode = json?.error?.code;
           const authMsg = json?.error?.message || json?.message || '';
-          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required' || authCode === 'forbidden' || authMsg === 'Authentication required.' || (typeof authMsg === 'string' && authMsg.includes('another user account'));
+          /**
+           * 'forbidden' IS NOT AN AUTH FAILURE, AND TREATING IT AS ONE LOGGED
+           * PEOPLE OUT MID-TRANSFER.
+           *
+           * shared/errors.ts gives EVERY business refusal the code
+           * 'forbidden' - transfers disabled, PIN attempts exceeded, email not
+           * verified. Listing it here meant any of those signed the user out.
+           *
+           * Reported: pressing Send on the transfer screen returned
+           * 403 forbidden ("Transfers from settled USDC balance are currently
+           * disabled") and the session was destroyed. Nothing was wrong with
+           * the token; the feature was switched off.
+           *
+           * The genuine mismatch now has its own code, 'user_mismatch'
+           * (app.ts). The message check stays as a belt-and-braces fallback
+           * for an older backend that still sends the generic code with that
+           * wording.
+           */
+          const tokenIsRejected = authCode === 'invalid_token' || authCode === 'auth_required' || authCode === 'user_mismatch' || authMsg === 'Authentication required.' || (typeof authMsg === 'string' && authMsg.includes('another user account'));
           if ((response.status === 401 || response.status === 403) && authToken && tokenIsRejected) {
             logout('Session expired or user mismatch. Please sign in again.');
           }
@@ -2648,7 +2666,7 @@ export default function App() {
 
         {view === 'receive' && <ReceiveView wallets={userWallets} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={loadUserWallets} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
-        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
+        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} balanceTransfers={balanceTransfers} supplierPayments={supplierPayments} virtualAccountTransactions={virtualAccountTransactions} walletDeposits={walletDeposits} serviceAgreements={serviceAgreements} networkMode={userPreferences?.networkMode} initialSelectedId={selectedActivityId} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onRefresh={loadUserData} />}
 

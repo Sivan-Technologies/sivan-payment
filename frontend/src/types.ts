@@ -565,6 +565,8 @@ export interface OfframpControls {
    * typed a supplier's bank details.
    */
   supplierPayoutsEnabled: boolean;
+  /** Whether wallet-to-wallet USDC transfers are open. Server-owned; the send form reads it. */
+  transfersEnabled?: boolean;
   /** The naira rail's own Sivan margin. Bridge's rate does not apply to a bank payout. */
   ngnOfframpFeePercent?: string;
   /**

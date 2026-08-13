@@ -373,7 +373,25 @@ export async function buildApp() {
       const payload = verifyUserJwt(token);
       const targetUserId = getTargetUserId(request);
       if (targetUserId && targetUserId !== payload.sub) {
-        return reply.code(403).send({ error: { code: 'forbidden', message: 'You cannot access another user account' } });
+        /**
+         * 'user_mismatch', NOT the generic 'forbidden'.
+         *
+         * The client logs a user out when it sees code 'forbidden' on a 403,
+         * which is correct for THIS case - the token genuinely does not own
+         * the account being addressed. But `forbidden()` in shared/errors.ts
+         * hardcodes that same code for every business refusal in the app:
+         * "Transfers are currently disabled", "Too many incorrect PIN
+         * attempts", "Verify your email before linking WhatsApp".
+         *
+         * So a user who pressed Send while balance transfers were switched off
+         * was signed out, on a refusal that had nothing to do with their
+         * session. Reported exactly that way: a 403 on
+         * /balance/transfers followed by an immediate logout.
+         *
+         * Naming this case distinctly lets the client end the session only
+         * when the TOKEN is the problem.
+         */
+        return reply.code(403).send({ error: { code: 'user_mismatch', message: 'You cannot access another user account' } });
       }
       (request as any).authUser = payload;
     } catch {

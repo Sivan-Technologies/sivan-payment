@@ -138,6 +138,23 @@ export interface OfframpControlsResponse {
    */
   supplierPayoutsEnabled: boolean;
   /**
+   * Whether wallet-to-wallet USDC transfers are open.
+   *
+   * SAME OMISSION AS supplierPayoutsEnabled, WITH A WORSE ENDING. The server
+   * has always refused these with a 403 when BALANCE_TRANSFERS_ENABLED is not
+   * 'true', but nothing told the client - so the Send & transfer form stayed
+   * fully interactive, priced the transfer, took an address and an amount, and
+   * only refused after the user pressed the final confirm.
+   *
+   * That refusal then logged them out, because every business refusal shares
+   * the error code the client treated as a rejected token. Two bugs stacked
+   * into "I get signed out whenever I try to send".
+   *
+   * Exposed here rather than on a new endpoint because this payload is already
+   * fetched on load and already answers exactly this class of question.
+   */
+  transfersEnabled: boolean;
+  /**
    * The Sivan margin on a NAIRA payout, as a percentage string.
    *
    * The withdrawal confirmation screen was showing `feePolicy.percent` - the
@@ -205,6 +222,14 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
       ...(existingAssets.find((item) => item.asset === defaultControl.asset) ?? {})
     })),
     supplierPayoutsEnabled: supplierControls ? supplierControls.supplierPaymentsEnabled !== false : true,
+    /**
+     * Read from the SAME source the enforcement path reads
+     * (getBalanceControls -> BALANCE_TRANSFERS_ENABLED), so the screen and the
+     * 403 can never disagree. Defaults to false to match that function - and
+     * failing closed is right here: showing a disabled feature as available is
+     * what produced the report.
+     */
+    transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED === 'true',
     // Zero means "not set", in which case the NGN rail falls back to the
     // Bridge percentage - mirroring applySivanMargin exactly, so the number
     // shown is the number charged.

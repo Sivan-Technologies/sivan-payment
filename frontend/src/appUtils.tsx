@@ -272,6 +272,19 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
      */
     supplierPayoutsEnabled: data?.supplierPayoutsEnabled ?? true,
     /**
+     * `?? true` DELIBERATELY, and the opposite direction to the server.
+     *
+     * This normaliser is an allowlist - a field not named here is dropped, so
+     * omitting it would have shipped a correct API and a UI that never saw it.
+     *
+     * The server defaults transfersEnabled to FALSE (fail closed on the money
+     * path). Here it defaults to TRUE, because an older backend that does not
+     * send the field at all must not have its send form disabled: that would
+     * hide a working feature on every deployment predating this change. When
+     * the field IS present it is obeyed exactly.
+     */
+    transfersEnabled: data?.transfersEnabled ?? true,
+    /**
      * PASSED THROUGH, NOT DEFAULTED.
      *
      * This normaliser is an allowlist - it rebuilds the object field by field
