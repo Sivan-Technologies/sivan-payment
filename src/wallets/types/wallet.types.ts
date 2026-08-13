@@ -126,6 +126,15 @@ export interface WalletTransferInput {
   idempotencyKey: string;
   reference?: string;
   /**
+   * Sivan's fee on this transfer, collected in the SAME on-chain transaction.
+   *
+   * `amount` above is already the NET the recipient receives; this is the
+   * portion Sivan keeps. Optional, and ignored by every provider except the
+   * Solana path - EVM cannot batch two ERC-20 transfers as cheaply, so those
+   * chains still leave the fee in the user's wallet.
+   */
+  feeAmount?: string;
+  /**
    * Which network to sign against, already resolved by the server.
    *
    * Optional so existing callers keep their previous APP_ENV-derived behaviour

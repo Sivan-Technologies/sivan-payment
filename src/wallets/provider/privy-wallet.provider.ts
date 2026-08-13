@@ -1055,6 +1055,26 @@ export class PrivyWalletProvider implements WalletProvider {
       throw forbidden('Could not resolve the sending wallet address for this Solana transfer.');
     }
 
+    /**
+     * COLLECT THE FEE IN THIS TRANSACTION, WHEN IT IS SWITCHED ON.
+     *
+     * Read here rather than in the builder so the builder stays pure and
+     * testable without an admin lookup. Both switches must agree: an address
+     * to send to, and an operator who has turned collection on. Either missing
+     * means the fee stays where it is today - in the user's wallet.
+     *
+     * `.catch` on the controls read matters: a controls outage must not fail a
+     * transfer the user is waiting on. Failing to the uncollected behaviour is
+     * the safe direction.
+     */
+    const feeWallet = env.SIVAN_FEE_WALLET_SOLANA?.trim();
+    const collectionOn = feeWallet
+      ? await import('../wallet-controls.service.js')
+          .then((mod) => mod.getWalletControls())
+          .then((controls) => controls?.collectTransferFeeOnChain === true)
+          .catch(() => false)
+      : false;
+
     const built = await buildSplTransfer({
       fromOwner: wallet.address,
       toOwner: input.toAddress,
@@ -1062,6 +1082,9 @@ export class PrivyWalletProvider implements WalletProvider {
       amount: input.amount,
       decimals: 6,
       production,
+      ...(collectionOn && feeWallet && Number(input.feeAmount ?? 0) > 0
+        ? { feeCollection: { owner: feeWallet, amount: String(input.feeAmount) } }
+        : {}),
     });
 
     const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;

@@ -37,6 +37,18 @@ export const updateWalletControlsSchema = z.object({
    */
   activeProvider: z.enum(PROVIDERS).nullable().optional(),
   autoSweepBridgeWallet: z.boolean().optional(),
+  /**
+   * Move Sivan's transfer fee to the fee wallet as part of the send.
+   *
+   * OFF by default, like every capability that moves customer funds. Turning
+   * it on adds a second instruction to each Solana transfer, so it must be an
+   * explicit decision - and a fresh database or a failed settings read must
+   * never start redirecting money on its own.
+   *
+   * Turning it off strands nothing: the fee simply stays in the user's wallet
+   * and the ledger records it exactly as it does today.
+   */
+  collectTransferFeeOnChain: z.boolean().optional(),
   reason: z.string().trim().min(1).max(500).optional(),
   updatedBy: z.string().trim().min(1).optional(),
 });
@@ -49,6 +61,7 @@ export function defaultWalletControls(): WalletControlsRecord {
     // its own.
     activeProvider: undefined,
     autoSweepBridgeWallet: false,
+    collectTransferFeeOnChain: false,
     updatedBy: 'system',
     updatedAt: nowIso(),
   };
@@ -101,6 +114,8 @@ export async function updateWalletControls(input: z.infer<typeof updateWalletCon
       input.activeProvider === null ? undefined : input.activeProvider ?? current.activeProvider,
     autoSweepBridgeWallet:
       input.autoSweepBridgeWallet ?? current.autoSweepBridgeWallet ?? false,
+    collectTransferFeeOnChain:
+      input.collectTransferFeeOnChain ?? current.collectTransferFeeOnChain ?? false,
     reason: input.reason ?? current.reason,
     updatedBy: input.updatedBy ?? 'admin_api_key',
     updatedAt: nowIso(),
@@ -165,6 +180,14 @@ export async function getWalletControlsView() {
      * default everywhere else.
      */
     autoSweepBridgeWallet: controls.autoSweepBridgeWallet ?? false,
+    /**
+     * Reported alongside the switch so an operator can see BOTH halves: the
+     * toggle, and whether a destination is actually configured. A switch that
+     * is on with no SIVAN_FEE_WALLET_SOLANA set collects nothing, and that
+     * should be visible in the hub rather than discovered from a ledger.
+     */
+    collectTransferFeeOnChain: controls.collectTransferFeeOnChain ?? false,
+    feeWalletConfigured: Boolean(env.SIVAN_FEE_WALLET_SOLANA?.trim()),
     availableProviders: PROVIDERS.filter(
       (name) => !(name === 'mock' && env.APP_ENV === 'production')
     ),

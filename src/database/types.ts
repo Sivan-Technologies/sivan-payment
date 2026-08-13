@@ -987,6 +987,8 @@ export interface WalletControlsRecord {
   id: string;
   activeProvider?: string;
   autoSweepBridgeWallet?: boolean;
+  /** Collect the Sivan transfer fee on chain, in the same transaction as the send. */
+  collectTransferFeeOnChain?: boolean;
   reason?: string;
   updatedBy: string;
   updatedAt: string;

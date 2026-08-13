@@ -115,6 +115,28 @@ const envSchema = z.object({
    * The public endpoint works but is rate-limited and explicitly not for
    * production, so it is the last resort rather than the default.
    */
+  /**
+   * Where the Sivan transfer fee is collected, on Solana.
+   *
+   * WHY THIS EXISTS. The fee was being deducted in the LEDGER only: the chain
+   * moved `amount - fee` to the recipient and the fee simply stayed in the
+   * sending user's own wallet. Sivan's books recorded revenue that had never
+   * left the customer's custody, scattered a few cents at a time across every
+   * user - real accounting, unrealised money, and nothing to reconcile against.
+   *
+   * WHY NOT A SWEEP JOB. Collecting later means a whole extra transaction per
+   * user, so Sivan would pay gas twice to recover a $0.25 fee - worse
+   * economics than not collecting at all. Solana bills per SIGNATURE, not per
+   * instruction, so the fee transfer rides along as a second instruction in
+   * the transaction that was already being paid for. One signature, one gas
+   * cost, and the fee lands atomically with the send: if the transfer fails,
+   * no fee moves and there is nothing to reconcile.
+   *
+   * Empty by default. Absent or malformed means the previous behaviour - the
+   * fee stays in the user's wallet - which is the safe direction: the worst
+   * outcome is uncollected revenue, never a misdirected transfer.
+   */
+  SIVAN_FEE_WALLET_SOLANA: z.string().optional().default(''),
   SOLANA_RPC_URL: z.string().url().optional(),
   SOLANA_RPC_FALLBACK_URL: z.string().url().optional(),
   /**

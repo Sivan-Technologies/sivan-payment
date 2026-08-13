@@ -938,6 +938,24 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
      * have no netAmount and must still send their full amount.
      */
     amount: transfer.netAmount ?? transfer.amount,
+    /**
+     * THE FEE TRAVELS WITH THE SEND.
+     *
+     * The ledger has always recorded this fee; nothing ever moved it, so it
+     * stayed in the sending user's own wallet - revenue on Sivan's books that
+     * had never left the customer's custody.
+     *
+     * Passed to the provider so the Solana path can collect it as a second
+     * instruction in the SAME transaction. Solana charges per signature, not
+     * per instruction, so this costs no extra gas and lands atomically: if the
+     * send fails, no fee moves and there is nothing to reconcile.
+     *
+     * Ignored by every other provider. Ignored by Solana too unless an
+     * operator has switched collection on AND a fee wallet is configured -
+     * both default off, so this line changes nothing until someone decides
+     * otherwise.
+     */
+    feeAmount: transfer.fee,
     toAddress: transfer.destinationAddress,
     // Derived from the transfer id, so a retry of the SAME transfer cannot
     // double-spend even if this function is called twice.

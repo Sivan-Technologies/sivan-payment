@@ -77,6 +77,15 @@ export interface BuildSplTransferInput {
   decimals?: number;
   production?: boolean;
   rpcOptions?: SolanaRpcOptions;
+  /**
+   * Collect the Sivan fee in the SAME transaction, as a second instruction.
+   *
+   * Omitted or zero means the previous behaviour: only the net moves, and the
+   * fee stays in the sender's wallet. `owner` is Sivan's fee wallet, not its
+   * token account - the ATA is derived here so a caller cannot pass the wrong
+   * one.
+   */
+  feeCollection?: { owner: string; amount: string };
 }
 
 export interface BuiltSplTransfer {
@@ -86,6 +95,10 @@ export interface BuiltSplTransfer {
   toTokenAccount: string;
   /** True when the recipient had no token account and one is being created. */
   createsRecipientAccount: boolean;
+  /** True when the fee instruction was actually added to this transaction. */
+  collectsFee?: boolean;
+  /** Why the fee was NOT collected, when it was requested but skipped. */
+  feeSkippedReason?: 'no_fee_wallet' | 'zero_amount' | 'fee_ata_missing' | 'invalid_fee_wallet';
   /**
    * Rent the SENDER pays to create the recipient's token account, in SOL.
    *
@@ -146,9 +159,50 @@ export async function buildSplTransfer(input: BuildSplTransferInput): Promise<Bu
     ...(input.rpcOptions ?? {}),
   };
 
-  const [fromExists, toExists] = await Promise.all([
+  /**
+   * THE FEE WALLET'S TOKEN ACCOUNT IS CHECKED, NEVER CREATED.
+   *
+   * An SPL token account costs ~0.00204 SOL of rent, and on Solana the payer
+   * is the TRANSACTION's fee payer - here, the sending user's wallet. So
+   * adding a createAssociatedTokenAccount instruction for Sivan's own fee
+   * wallet would silently bill a customer ~$0.31 to set up Sivan's revenue
+   * account, on a transfer where they were quoted $0.25.
+   *
+   * That is never acceptable, so the account is checked and the fee
+   * instruction is simply omitted when it is absent. The fee then stays in the
+   * user's wallet exactly as it does today - uncollected, which is a Sivan
+   * problem, not a customer one.
+   *
+   * Fixed by sending any small amount of USDC to the fee wallet once; the ATA
+   * then exists permanently and every later collection is a plain transfer.
+   *
+   * Derived here rather than accepted from the caller: passing a token account
+   * in would let a misconfiguration send every fee somewhere unspendable.
+   */
+  let feeTokenAccount: PublicKey | undefined;
+  let feeSkippedReason: BuiltSplTransfer['feeSkippedReason'];
+  const feeAmountRaw = input.feeCollection?.amount;
+  const feeAmount = feeAmountRaw ? toBaseUnits(feeAmountRaw, decimals) : 0n;
+
+  if (!input.feeCollection?.owner) {
+    feeSkippedReason = input.feeCollection ? 'no_fee_wallet' : undefined;
+  } else if (feeAmount <= 0n) {
+    feeSkippedReason = 'zero_amount';
+  } else {
+    try {
+      feeTokenAccount = getAssociatedTokenAddressSync(mint, new PublicKey(input.feeCollection.owner), true);
+    } catch {
+      // A malformed address must not take the whole transfer down - the send
+      // itself is still valid and the user is waiting on it.
+      feeSkippedReason = 'invalid_fee_wallet';
+      feeTokenAccount = undefined;
+    }
+  }
+
+  const [fromExists, toExists, feeExists] = await Promise.all([
     accountExists(fromTokenAccount.toBase58(), rpcOptions),
     accountExists(toTokenAccount.toBase58(), rpcOptions),
+    feeTokenAccount ? accountExists(feeTokenAccount.toBase58(), rpcOptions) : Promise.resolve(false),
   ]);
 
   if (!fromExists) {
@@ -184,6 +238,37 @@ export async function buildSplTransfer(input: BuildSplTransferInput): Promise<Bu
     )
   );
 
+  /**
+   * THE FEE, AS A SECOND INSTRUCTION IN THE SAME TRANSACTION.
+   *
+   * Added AFTER the recipient transfer deliberately. Solana applies
+   * instructions in order and the whole transaction is atomic, so ordering
+   * cannot change whether both succeed - but if a future change ever makes
+   * this non-atomic, the customer's money must be the part that already moved.
+   *
+   * transferChecked again, not transfer: the mint and decimals are verified on
+   * chain, so a decimals mistake fails loudly rather than moving a thousand
+   * times the fee.
+   */
+  const collectsFee = Boolean(feeTokenAccount && feeAmount > 0n && feeExists);
+  if (feeTokenAccount && feeAmount > 0n && !feeExists) {
+    feeSkippedReason = 'fee_ata_missing';
+  }
+  if (collectsFee && feeTokenAccount) {
+    instructions.push(
+      createTransferCheckedInstruction(
+        fromTokenAccount,
+        mint,
+        feeTokenAccount,
+        owner,
+        feeAmount,
+        decimals,
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
+  }
+
   const message = new TransactionMessage({
     payerKey: owner,
     recentBlockhash: PRIVY_DUMMY_BLOCKHASH,
@@ -197,6 +282,8 @@ export async function buildSplTransfer(input: BuildSplTransferInput): Promise<Bu
     fromTokenAccount: fromTokenAccount.toBase58(),
     toTokenAccount: toTokenAccount.toBase58(),
     createsRecipientAccount: !toExists,
+    collectsFee,
+    feeSkippedReason,
     estimatedRentSol: toExists ? 0 : TOKEN_ACCOUNT_RENT_SOL,
     instructionCount: instructions.length,
   };
