@@ -16,13 +16,15 @@ export async function notifyOpsTelegram(
       env.TELEGRAM_OPS_BOT_TOKEN ||
       process.env.TELEGRAM_OPS_BOT_TOKEN ||
       process.env.TELEGRAM_BOT_TOKEN ||
-      '8858372924:AAEUSgLNRZcHOYsCXv4rxMAVs2xuqHIgf1A';
+      '';
 
     const chatId =
       env.TELEGRAM_OPS_CHAT_ID ||
       process.env.TELEGRAM_OPS_CHAT_ID ||
+      process.env.TELEGRAM_CHANNEL_ID ||
+      process.env.TELEGRAM_ADMIN_CHANNEL_ID ||
       process.env.TELEGRAM_ADMIN_CHAT_ID ||
-      '8756506224';
+      '';
 
     if (!token || !chatId) return;
 
