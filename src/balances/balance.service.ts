@@ -228,10 +228,26 @@ async function transferLogs() {
 }
 
 export async function getBalanceTransferControls() {
-  const data = await db.read();
-  const latest = (data.auditLogs ?? [])
-    .filter((log) => log.action === 'balance.transfer_controls.updated')
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  /**
+   * ONE INDEXED ROW, NOT THE WHOLE DATABASE.
+   *
+   * This was `db.read()` plus a JS filter over every audit log ever written.
+   * On Postgres db.read() issues 47 sequential `select *` queries - every
+   * table, including the unbounded audit history - to find one settings row.
+   *
+   * It became urgent when I added this function as a caller of
+   * listPaymentControls(), which serves GET /api/offramp/controls on every app
+   * load. Measured on the deployed test gateway straight afterwards: 11.2s and
+   * 11.6s, with one request 503ing at 25s - right at the Cloudflare worker's
+   * 12s ceiling. The comment directly above listPaymentControls documents
+   * someone removing a db.read() from that exact function for that exact
+   * reason, and I put one back.
+   *
+   * latestAuditLogByAction() already existed for this - added when
+   * getAdminPlatformSettings had the same problem and a signup POST took 146
+   * seconds. Using it fixes every caller of this function, not just mine.
+   */
+  const latest = await db.latestAuditLogByAction('balance.transfer_controls.updated').catch(() => null);
   const saved = (latest?.metadata as any)?.settings as z.infer<typeof balanceTransferControlsSchema> | undefined;
   /**
    * The values below are FALLBACKS. `...(saved ?? {})` at the end of this

@@ -137,6 +137,38 @@ test('but OPEN on the client, so an older backend is not disabled', () => {
   assert.match(utils, /transfersEnabled: data\?\.transfersEnabled \?\? true/);
 });
 
+test('serving the controls payload does not read the whole database', async () => {
+  /*
+    THE REGRESSION I CAUSED, AND A GUARD SO IT CANNOT RECUR.
+
+    GET /api/offramp/controls is fetched by the app on every load. Adding
+    getBalanceTransferControls() as a caller pulled a db.read() into it - 47
+    sequential `select *` queries on Postgres, including the unbounded audit
+    history. Measured on the deployed test gateway right after: 11.2s, 11.6s,
+    and one 503 at 25s, against the Cloudflare worker's 12s ceiling.
+
+    The comment above listPaymentControls documents someone removing a
+    db.read() from that same function for that same reason. Counting call
+    sites is cheap and would have caught it.
+  */
+  const balance = readFileSync('src/balances/balance.service.ts', 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const controlsFn = balance.slice(
+    balance.indexOf('export async function getBalanceTransferControls'),
+    balance.indexOf('export async function updateBalanceTransferControls'),
+  );
+  assert.ok(controlsFn.length > 0, 'could not locate getBalanceTransferControls');
+  assert.ok(!/db\.read\(\)/.test(controlsFn),
+    'getBalanceTransferControls reads the whole database - it is on the /offramp/controls hot path');
+  assert.match(controlsFn, /latestAuditLogByAction/);
+
+  // And the payload function itself must stay off db.read().
+  const controls = readFileSync('src/controls/payment-controls.service.ts', 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!/await db\.read\(\)/.test(controls),
+    'listPaymentControls is back on db.read()');
+});
+
 test('the send button is gated on it', () => {
   const view = code('frontend/src/components/transfer/TradeTransferSections.tsx');
   assert.match(view, /disabled=\{loading \|\| available <= 0 \|\| !transfersEnabled\}/);
