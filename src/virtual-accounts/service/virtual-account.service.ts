@@ -2,9 +2,11 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { env } from '../../config/env.js';
 import { listPaymentControls } from '../../controls/payment-controls.service.js';
 import { db } from '../../database/json-database.js';
+import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { badRequest, forbidden, notFound } from '../../shared/errors.js';
 import { id, nowIso } from '../../shared/id.js';
 import { getVirtualAccountCurrencyConfig } from '../config/currency-config.js';
+import { mapBridgeVirtualAccount } from '../provider/bridge-virtual-account.provider.js';
 import { getVirtualAccountProvider } from '../provider/provider-registry.js';
 import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountRecord, VirtualAccountRequestRecord } from '../types/virtual-account.types.js';
 import { checkVirtualAccountEligibility } from './virtual-account-eligibility.service.js';
@@ -86,6 +88,127 @@ export async function listVirtualAccountEvents() {
 
 export async function listVirtualAccountTransactions() {
   return (await db.listVirtualAccountTransactions()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function checkVirtualAccountProviderByEmail(email: string) {
+  const targetEmail = email.trim().toLowerCase();
+  if (!targetEmail || !targetEmail.includes('@')) throw badRequest('A valid customer email is required.');
+
+  const user = await db.findUserByEmail(targetEmail);
+  if (!user) {
+    return {
+      email: targetEmail,
+      userFound: false,
+      summary: 'No Sivan payment user exists for this email.',
+      sivan: { user: null, customers: [], requests: [], accounts: [] },
+      bridge: { checked: false, customers: [] },
+    };
+  }
+
+  const [customers, requests, accounts] = await Promise.all([
+    db.listCustomers(),
+    db.listVirtualAccountRequests(),
+    db.listVirtualAccounts(),
+  ]);
+
+  const userCustomers = customers.filter((customer) => customer.userId === user.id);
+  const customerIds = new Set(userCustomers.map((customer) => customer.id));
+  const userRequests = requests.filter((request) => request.userId === user.id || Boolean(request.customerId && customerIds.has(request.customerId)));
+  const requestIds = new Set(userRequests.map((request) => request.id));
+  const userAccounts = accounts.filter((account) =>
+    account.userId === user.id ||
+    Boolean(account.customerId && customerIds.has(account.customerId)) ||
+    Boolean(account.requestId && requestIds.has(account.requestId))
+  );
+
+  const bridgeCustomers = [];
+  const bridgeClient = new BridgeClient();
+
+  for (const customer of userCustomers.filter((item) => item.provider === 'bridge' && item.providerCustomerId)) {
+    const providerCustomerId = customer.providerCustomerId;
+    try {
+      const [bridgeCustomer, bridgeAccountsResponse] = await Promise.all([
+        bridgeClient.request<any>(`/customers/${providerCustomerId}`),
+        bridgeClient.request<any>(`/customers/${providerCustomerId}/virtual_accounts`),
+      ]);
+      const bridgeAccounts = Array.isArray(bridgeAccountsResponse?.data) ? bridgeAccountsResponse.data : [];
+      const mappedAccounts = bridgeAccounts.map((account: any) =>
+        mapBridgeVirtualAccount(account, (account?.source_deposit_instructions?.currency || 'usd') as VirtualAccountCurrency)
+      );
+      const localProviderIds = new Set(userAccounts.map((account) => account.providerAccountId).filter(Boolean));
+
+      bridgeCustomers.push({
+        providerCustomerId,
+        email: bridgeCustomer?.email,
+        status: bridgeCustomer?.status,
+        capabilities: bridgeCustomer?.capabilities,
+        endorsements: (bridgeCustomer?.endorsements || []).map((endorsement: any) => ({
+          name: endorsement.name,
+          status: endorsement.status,
+          missing: endorsement.requirements?.missing ?? null,
+        })),
+        virtualAccounts: mappedAccounts.map((account: ProviderVirtualAccount) => ({
+          providerAccountId: account.providerAccountId,
+          currency: account.currency,
+          country: account.country,
+          bankName: account.bankName,
+          accountName: account.accountName,
+          accountNumberMasked: account.accountNumberMasked,
+          routingNumberMasked: account.routingNumberMasked,
+          ibanMasked: account.ibanMasked,
+          status: account.status,
+          existsInSivan: localProviderIds.has(account.providerAccountId),
+        })),
+      });
+    } catch (error: any) {
+      bridgeCustomers.push({
+        providerCustomerId,
+        error: error?.message || String(error),
+        details: error?.details,
+        virtualAccounts: [],
+      });
+    }
+  }
+
+  const bridgeAccountCount = bridgeCustomers.reduce((sum, customer: any) => sum + (customer.virtualAccounts?.length || 0), 0);
+  const localAccountCount = userAccounts.length;
+  const approvedWithoutLocalAccount = userRequests.filter((request) =>
+    request.status === 'approved' && !userAccounts.some((account) => account.requestId === request.id)
+  );
+
+  return {
+    email: targetEmail,
+    checkedAt: nowIso(),
+    userFound: true,
+    summary:
+      bridgeAccountCount > 0
+        ? `Bridge reports ${bridgeAccountCount} virtual account(s) for this customer.`
+        : localAccountCount > 0
+          ? 'Sivan has local virtual account row(s), but Bridge returned no provider account for this customer.'
+          : approvedWithoutLocalAccount.length
+            ? 'Sivan has approved request(s), but no local or Bridge virtual account was found.'
+            : 'No provisioned virtual account was found in Sivan or Bridge.',
+    sivan: {
+      user: { id: user.id, email: user.email, emailVerifiedAt: user.emailVerifiedAt },
+      customers: userCustomers.map((customer) => ({
+        id: customer.id,
+        provider: customer.provider,
+        providerCustomerId: customer.providerCustomerId,
+        kycStatus: customer.kycStatus,
+        tosStatus: customer.tosStatus,
+        createdAt: customer.createdAt,
+        updatedAt: customer.updatedAt,
+      })),
+      requests: userRequests,
+      accounts: userAccounts,
+      approvedWithoutLocalAccount,
+    },
+    bridge: {
+      checked: true,
+      customers: bridgeCustomers,
+      totalVirtualAccounts: bridgeAccountCount,
+    },
+  };
 }
 
 export async function provisionVirtualAccount(input: CreateVirtualAccountInput): Promise<ProviderVirtualAccount> {

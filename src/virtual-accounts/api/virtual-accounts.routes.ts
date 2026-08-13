@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../../shared/validation.js';
 import { forbidden } from '../../shared/errors.js';
-import { approveVirtualAccountRequest, cleanupLegacyMockVirtualAccountData, listUserVirtualAccounts, listVirtualAccountEvents, listVirtualAccountRequests, listVirtualAccounts, listVirtualAccountTransactions, rejectVirtualAccountRequest, requestVirtualAccountReprovision, requestVirtualAccount } from '../service/virtual-account.service.js';
+import { approveVirtualAccountRequest, checkVirtualAccountProviderByEmail, cleanupLegacyMockVirtualAccountData, listUserVirtualAccounts, listVirtualAccountEvents, listVirtualAccountRequests, listVirtualAccounts, listVirtualAccountTransactions, rejectVirtualAccountRequest, requestVirtualAccountReprovision, requestVirtualAccount } from '../service/virtual-account.service.js';
 import { getVirtualAccountProviderSettings, updateVirtualAccountProviderSettings, virtualAccountProviderSettingsSchema } from '../service/virtual-account-provider-settings.service.js';
 
 const requestSchema = z.object({
@@ -18,6 +18,10 @@ const rejectSchema = z.object({
 const cleanupMockSchema = z.object({
   dryRun: z.boolean().default(true),
   reason: z.string().min(5).max(500).optional(),
+});
+
+const providerCheckQuerySchema = z.object({
+  email: z.string().email(),
 });
 
 function actor(request: any) {
@@ -52,6 +56,11 @@ export async function virtualAccountsRoutes(app: FastifyInstance) {
   app.get('/api/admin/virtual-account-events', async () => ({ data: await listVirtualAccountEvents() }));
 
   app.get('/api/admin/virtual-account-transactions', async () => ({ data: await listVirtualAccountTransactions() }));
+
+  app.get('/api/admin/virtual-accounts/provider-check', async (request) => {
+    const query = providerCheckQuerySchema.parse(request.query);
+    return { data: await checkVirtualAccountProviderByEmail(query.email) };
+  });
 
   app.post('/api/admin/virtual-accounts/cleanup-mock', async (request) => {
     const body = parseBody(cleanupMockSchema, request.body ?? {});
