@@ -48,4 +48,3 @@ e2e/shots/
 # Live/sandbox credential files - never commit
 .env-*
 !.env-*.example
-# workspace size note 1786587877
