@@ -21,6 +21,17 @@
  *   BASE=https://api.sivantech.online/api/payment npx tsx scripts/smoke-test-live.ts
  */
 
+/**
+ * Makes this file a MODULE rather than a global script.
+ *
+ * Without an import or export, tsc treats it as a script sharing the global
+ * scope - so `pass`/`fail` collided with identifiers in other scripts under
+ * tsconfig.scripts.json, and top-level await was rejected. It runs fine under
+ * tsx either way, which is exactly why the typecheck caught what the run did
+ * not.
+ */
+export {};
+
 const BASE = process.env.SMOKE_BASE || 'https://test-sivan.sivantech.online/api/payment';
 const ALLOW_TRANSFER = process.env.SMOKE_ALLOW_TRANSFER === 'true';
 
