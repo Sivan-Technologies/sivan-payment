@@ -2,6 +2,7 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { env } from '../../config/env.js';
 import { listPaymentControls } from '../../controls/payment-controls.service.js';
 import { db } from '../../database/json-database.js';
+import { buildVirtualAccountAssignedEmail, sendEmail } from '../../notifications/email.service.js';
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { badRequest, forbidden, notFound } from '../../shared/errors.js';
 import { id, nowIso } from '../../shared/id.js';
@@ -166,6 +167,37 @@ async function buildBridgeVirtualAccountAction(input: {
 async function activeVirtualAccountProviderName() {
   const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
   return settings.enabled ? settings.provider : env.VIRTUAL_ACCOUNT_PROVIDER;
+}
+
+async function notifyVirtualAccountAssigned(user: { email?: string }, account: VirtualAccountRecord) {
+  if (!user.email || account.status !== 'active') return;
+  try {
+    const message = buildVirtualAccountAssignedEmail(account);
+    const delivery = await sendEmail({
+      to: user.email,
+      subject: message.subject,
+      text: message.text,
+      html: message.html,
+    });
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'virtual_account_email',
+      action: 'virtual_account.assigned_email_sent',
+      resourceType: 'virtual_account',
+      resourceId: account.id,
+      metadata: { provider: delivery.provider, deliveryId: delivery.id, currency: account.currency },
+    });
+  } catch (error: any) {
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'virtual_account_email',
+      action: 'virtual_account.assigned_email_failed',
+      resourceType: 'virtual_account',
+      resourceId: account.id,
+      severity: 'warning',
+      metadata: { message: error?.message || String(error), currency: account.currency },
+    }).catch(() => undefined);
+  }
 }
 
 export async function listUserVirtualAccounts(userId: string) {
@@ -542,6 +574,7 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
     updatedAt: now,
   };
   await db.upsertVirtualAccountRecord(account);
+  await notifyVirtualAccountAssigned(user, account);
   await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.approved', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
   return { request: approved, account };
 }
@@ -667,6 +700,7 @@ export async function executeVirtualAccountReprovision(requestId: string, review
   };
 
   await db.upsertVirtualAccountRecord(account);
+  await notifyVirtualAccountAssigned(user, account);
   await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.reprovisioned', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
   return { request, account };
 }
