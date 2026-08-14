@@ -1668,11 +1668,11 @@ function VirtualAccountCurrencyCard({ currency, request, account, control, loadi
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
   };
-  const pendingTitle = customerAction?.title || (request?.status === 'approved' ? 'Provider account pending' : request?.status === 'under_review' ? 'Provider review in progress' : request?.status === 'requested' ? 'Request received' : friendlyStatus(request?.status));
+  const pendingTitle = customerAction?.title || (request?.status === 'approved' ? 'Account pending' : request?.status === 'under_review' ? 'Review in progress' : request?.status === 'requested' ? 'Request received' : friendlyStatus(request?.status));
   const pendingMessage = customerAction?.message || (request?.status === 'approved'
-    ? 'Sivan has approved this request, but provider bank details are not available yet. If Bridge needs more information, it will appear here after refresh.'
+    ? 'Sivan has approved this request, but account details are not available yet. If more information is needed, it will appear here after refresh.'
     : request?.status === 'under_review'
-      ? 'Bridge or Sivan operations is reviewing this request. If additional information is required, a secure action link will appear here.'
+      ? 'Sivan is reviewing this request. If additional information is required, a secure action link will appear here.'
       : `Submitted ${request ? new Date(request.createdAt).toLocaleString() : 'recently'}. Sivan operations will review and approve before account details appear here.`);
   const iframeUrl = bridgeKycIframeUrl(customerAction?.kycUrl);
   const closeKycModal = () => {

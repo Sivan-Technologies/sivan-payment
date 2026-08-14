@@ -62,6 +62,12 @@ function bridgeRequirementsDue(bridgeCustomer: any, endorsement?: string) {
   return uniqueStrings([...direct, ...endorsementRequirements]);
 }
 
+function bridgeEndorsementRequirements(bridgeCustomer: any, endorsement?: string) {
+  if (!endorsement) return undefined;
+  const endorsements = Array.isArray(bridgeCustomer?.endorsements) ? bridgeCustomer.endorsements : [];
+  return endorsements.find((item: any) => item?.name === endorsement)?.requirements;
+}
+
 function bridgeEndorsementStatus(bridgeCustomer: any, endorsement?: string) {
   if (!endorsement) return undefined;
   const endorsements = Array.isArray(bridgeCustomer?.endorsements) ? bridgeCustomer.endorsements : [];
@@ -105,8 +111,16 @@ async function buildBridgeVirtualAccountAction(input: {
 
   const providerStatus = bridgeCustomer?.status;
   const endorsementStatus = bridgeEndorsementStatus(bridgeCustomer, endorsement);
+  const endorsementRequirements = bridgeEndorsementRequirements(bridgeCustomer, endorsement);
   const requirements = bridgeRequirementsDue(bridgeCustomer, endorsement);
-  const providerInReview = providerStatus === 'under_review' || endorsementStatus === 'under_review';
+  const pendingRequirements = uniqueStrings([endorsementRequirements?.pending, bridgeCustomer?.requirements?.pending]);
+  const missingRequirements = uniqueStrings([endorsementRequirements?.missing, bridgeCustomer?.requirements?.missing]);
+  const hasManualReviewPending = pendingRequirements.some((item) => /manual.*review|review/i.test(item));
+  const hasMissingUserRequirements = requirements.length > 0 || missingRequirements.length > 0;
+  const providerInReview =
+    providerStatus === 'under_review' ||
+    endorsementStatus === 'under_review' ||
+    (hasManualReviewPending && !hasMissingUserRequirements);
   const actionRequired =
     !providerInReview &&
     (
@@ -136,10 +150,10 @@ async function buildBridgeVirtualAccountAction(input: {
 
   return {
     level: actionRequired ? 'action_required' : 'review',
-    title: actionRequired ? 'Additional information required' : 'Provider review in progress',
+    title: actionRequired ? 'Additional information required' : 'Review in progress',
     message: actionRequired
       ? `Sivan needs one more verification step before this ${railLabel} account can be issued.`
-      : `Sivan has received the additional information for this ${railLabel} account. The provider is reviewing it, and Sivan will update the account when it is approved.`,
+      : `Sivan has received your ${input.currency.toUpperCase()} verification details. No action is needed right now.`,
     requirements: actionRequired ? requirements : [],
     kycUrl,
     providerCustomerId: input.providerCustomerId,
