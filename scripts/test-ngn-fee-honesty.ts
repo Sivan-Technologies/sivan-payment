@@ -211,7 +211,7 @@ console.log('\n── 5. the fee is ITEMISED on the quote card ─────�
  */
 const quoteSrc = fs.readFileSync('src/ngn/service/ngn-quotes.service.ts', 'utf8');
 check('the quote returns the breakdown as a top-level field',
-  /fees: \{[\s\S]{0,200}sivanMargin/.test(quoteSrc),
+  /return \{[\s\S]{0,120}\.\.\.record,[\s\S]{0,120}fees: \{[\s\S]{0,260}sivanMargin/.test(quoteSrc),
   'it existed only on metadata, where the client never looked');
 
 /**
@@ -224,7 +224,7 @@ check('the quote returns the breakdown as a top-level field',
  * about it. Three numbers to reconcile where one answers their only question.
  */
 check('the card shows a single combined fee row',
-  /return \[\{ label: 'Sivan fee', value: both\(fees\.totalFee\) \}\]/.test(form),
+  /return \[\{ label: 'Sivan fee', value: explicitBoth\(fees\.totalFeeNgn, fees\.totalFeeAsset \?\? fees\.totalFee\) \}\]/.test(form),
   'the provider split belongs on an admin screen, not a withdrawal');
 /**
  * NO PERCENTAGE IN THE LABEL.
@@ -244,11 +244,11 @@ check('and no separate provider row is rendered',
  * the provider's cut - so removing the row did not remove the charge.
  */
 check('the one row is the TOTAL, so the provider cut is still charged',
-  /value: both\(fees\.totalFee\)/.test(form),
+  /value: explicitBoth\(fees\.totalFeeNgn, fees\.totalFeeAsset \?\? fees\.totalFee\)/.test(form),
   'showing only sivanMargin would understate the fee by the provider cut');
 /** The split is still available where the cost/revenue distinction matters. */
 check('but the breakdown is still returned for admins',
-  /providerFee: String\(margin\.providerFee\)/.test(quoteSrc));
+  /providerFee: input\.direction === 'offramp' \? fixedMoney\(providerFeeAsset, 6\) : fixedMoney\(margin\.providerFee, 2\)/.test(quoteSrc));
 
 check('naira comes first, the asset second',
   /\$\{naira\} · \$\{inAsset\}/.test(form),
@@ -302,7 +302,7 @@ check('the figures come from the quote rather than being recalculated',
   /quote\.fees\?\.totalFee \?\? quote\.feeAmount/.test(app),
   'two independent calculations of one fee will eventually differ');
 check('and are rounded to whole naira on this screen too',
-  /Math\.round\(totalFee \* rate\)/.test(app));
+  /Math\.round\(totalFeeNgn\)/.test(app));
 
 const sectionsRaw = fs.readFileSync('frontend/src/components/AppSections.tsx', 'utf8');
 const sectionsCode = sectionsRaw.replace(/\/\*[\s\S]*?\*\//g, '');

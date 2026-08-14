@@ -390,11 +390,11 @@ export function NgnPayoutForm({
    * deal is fair. The asset amount follows in the same cell because that is
    * the unit actually deducted.
    *
-   * ITEMISED WHEN THE SERVER SENDS THE BREAKDOWN. "Sivan fee" and "Provider
-   * fee" as separate lines is the difference between a number a user accepts
-   * and a number they can check. Falls back to one "Fee" row when `fees` is
-   * absent, so an older server response still renders correctly rather than
-   * showing nothing.
+   * ONE USER FEE ROW WHEN THE SERVER SENDS THE BREAKDOWN. The provider/Sivan
+   * split is still returned for admin reconciliation, but the withdrawal card
+   * shows the single total a user actually pays. Falls back to one "Fee" row
+   * when `fees` is absent, so an older server response still renders
+   * correctly rather than showing nothing.
    */
   const feeRows = (() => {
     if (!quote) return [];

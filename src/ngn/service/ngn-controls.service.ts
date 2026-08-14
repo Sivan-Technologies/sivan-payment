@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { db } from '../../database/json-database.js';
 import { nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
+import { env } from '../../config/env.js';
 import type { NgnControlsRecord } from '../types/ngn.types.js';
 
 export const updateNgnControlsSchema = z.object({
@@ -36,6 +37,7 @@ export const updateNgnControlsSchema = z.object({
   backupProvider: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj', 'breet']).optional().nullable(),
   identityVerificationEnabled: z.boolean().optional(),
   externalFundingEnabled: z.boolean().optional(),
+  offrampRevenueMode: z.enum(['sivan_fee_wallet', 'breet_markup', 'disabled']).optional(),
   /**
    * Paying a naira account that is not the user's own. Off by default and
    * enforced in createNgnQuote(); see NgnControlsRecord for why the rail
@@ -52,7 +54,7 @@ export const updateNgnControlsSchema = z.object({
 });
 
 export function defaultNgnControls(): NgnControlsRecord {
-  return { id: 'global', onrampEnabled: true, offrampEnabled: true, mockProviderEnabled: true, bankSettlementEnabled: true, virtualAccountEnabled: true, activeProvider: 'breet', backupProvider: undefined, identityVerificationEnabled: true, externalFundingEnabled: true, thirdPartyPayoutsEnabled: false, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
+  return { id: 'global', onrampEnabled: true, offrampEnabled: true, mockProviderEnabled: true, bankSettlementEnabled: true, virtualAccountEnabled: true, activeProvider: 'breet', backupProvider: undefined, identityVerificationEnabled: true, externalFundingEnabled: true, offrampRevenueMode: env.NGN_OFFRAMP_REVENUE_MODE, thirdPartyPayoutsEnabled: false, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
 }
 
 export async function getNgnControls() {
@@ -65,6 +67,7 @@ export async function getNgnControls() {
     ...found,
     onrampEnabled: found.onrampEnabled ?? true,
     offrampEnabled: found.offrampEnabled ?? true,
+    offrampRevenueMode: found.offrampRevenueMode ?? defaults.offrampRevenueMode,
     /**
      * FAILS CLOSED, and pinned here rather than left to the spread.
      *

@@ -279,6 +279,16 @@ const envSchema = z.object({
   SIVAN_NGN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_NGN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_NGN_MINIMUM_FEE_NGN: z.coerce.number().min(0).default(0),
+  /**
+   * How Sivan earns revenue on NGN off-ramp.
+   *
+   * sivan_fee_wallet: visible Sivan margin, collected on-chain into Sivan's
+   * fee wallet during the Privy sweep.
+   * breet_markup: Breet applies markup inside its rate/settlement; Sivan must
+   * not also collect an on-chain fee.
+   * disabled: no Sivan revenue, only provider cost.
+   */
+  NGN_OFFRAMP_REVENUE_MODE: z.enum(['sivan_fee_wallet', 'breet_markup', 'disabled']).default('sivan_fee_wallet'),
   // Privy - embedded wallet layer. https://docs.privy.io
   // Wallets are USER-OWNED: Sivan holds neither funds nor keys, so a transfer
   // needs the user's signature. See privy-wallet.provider.ts for why.

@@ -31,19 +31,19 @@ import { db } from '../src/database/json-database.js';
 
 const now = new Date().toISOString();
 const app = await buildApp();
-await app.listen({ port: 0, host: '127.0.0.1' });
-const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
 
 async function req(path: string, options: any = {}, expected = 200) {
-  const response = await fetch(`${base}${path}`, {
-    ...options,
+  const response = await app.inject({
+    method: options.method || 'GET',
+    url: path,
+    payload: options.body,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
-  const json = await response.json().catch(() => ({}));
+  const json = JSON.parse(response.payload || '{}');
   assert.equal(
-    response.status,
+    response.statusCode,
     expected,
-    `${path} expected ${expected}, got ${response.status}: ${JSON.stringify(json)}`
+    `${path} expected ${expected}, got ${response.statusCode}: ${JSON.stringify(json)}`
   );
   return json.data ?? json;
 }
@@ -94,6 +94,7 @@ const fees = quote.metadata.fees;
 const grossNgn = source * rate;
 
 assert.ok(rate > 0, `quote must carry a rate, got ${quote.rate}`);
+assert.equal(fees.revenueMode, 'sivan_fee_wallet', `expected wallet-fee revenue mode, got ${fees.revenueMode}`);
 
 /**
  * 1. THE MARGIN HAS EXPLICIT UNITS.
@@ -103,8 +104,7 @@ assert.ok(rate > 0, `quote must carry a rate, got ${quote.rate}`);
  * fix the API had one opaque `totalFee` and the UI treated a mixed number as
  * USDC, multiplying a naira-scale figure by the rate and showing a giant fee.
  */
-const appliedPercent = Number(fees.effectivePercent) - (Number(fees.providerFeeNgn) / grossNgn) * 100;
-const expectedMarginNgn = (grossNgn * appliedPercent) / 100;
+const expectedMarginNgn = grossNgn * 0.01;
 assert.ok(
   Math.abs(Number(fees.sivanMarginNgn) - expectedMarginNgn) < 1,
   `sivanMarginNgn should be naira (~${expectedMarginNgn.toFixed(2)}), got ${fees.sivanMarginNgn}.`
@@ -158,6 +158,10 @@ assert.ok(
   `totalFeeAsset ${fees.totalFeeAsset} should be providerFeeAsset + sivanMarginAsset`
 );
 assert.ok(
+  Math.abs(Number(fees.effectivePercent) - ((Number(fees.totalFeeNgn) / grossNgn) * 100)) < 0.0001,
+  `effectivePercent ${fees.effectivePercent} should equal totalFeeNgn / grossNgn`
+);
+assert.ok(
   Math.abs(Number(quote.feeAmount) - Number(fees.totalFeeAsset)) < 0.000001,
   `quote.feeAmount ${quote.feeAmount} should be the source-asset total ${fees.totalFeeAsset}`
 );
@@ -166,6 +170,17 @@ assert.ok(
   `effectivePercent ${fees.effectivePercent} is not a believable fee percentage`
 );
 
+await db.mutate((data) => {
+  data.ngnControls[0].offrampRevenueMode = 'disabled';
+});
+const noRevenueQuote = await req(
+  '/api/ngn/quote?userId=usr_margin&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=51.20&network=solana',
+  { headers: authHeaders }
+);
+assert.equal(noRevenueQuote.metadata.fees.revenueMode, 'disabled');
+assert.equal(Number(noRevenueQuote.metadata.fees.sivanMarginAsset), 0);
+assert.equal(Number(noRevenueQuote.metadata.fees.sivanMarginNgn), 0);
+
 console.log('ngn off-ramp margin:');
 console.log(`  gross            ${grossNgn.toFixed(2)} NGN  (${source} @ ${rate})`);
 console.log(`  provider fee     ${Number(fees.providerFeeNgn).toFixed(2)} NGN / ${Number(fees.providerFeeAsset).toFixed(6)} asset`);
@@ -173,6 +188,6 @@ console.log(`  sivan margin     ${Number(fees.sivanMarginNgn).toFixed(2)} NGN / 
 console.log(`  total fee        ${Number(fees.totalFeeNgn).toFixed(2)} NGN / ${Number(fees.totalFeeAsset).toFixed(6)} asset`);
 console.log(`  user receives    ${Number(quote.destinationAmount).toFixed(2)} NGN`);
 console.log(`  effective        ${fees.effectivePercent}%`);
-console.log('PASS test:ngn-offramp-margin (5 assertions)');
+console.log('PASS test:ngn-offramp-margin (9 assertions)');
 
 await app.close();

@@ -411,6 +411,24 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     }
   }
 
+  async updateBreetMarkupPercent(percent: number): Promise<{ markupPercent: number; raw?: unknown }> {
+    if (!Number.isFinite(percent) || percent < 0 || percent > 10) {
+      throw forbidden('Breet markup must be between 0 and 10%.');
+    }
+    const result = await breetRequest<any>('/account/update-markup-percentage', {
+      method: 'POST',
+      body: JSON.stringify({
+        markupPercentage: percent,
+        // Some Breet responses/docs call this markupPercent; sending both is
+        // harmless for tolerant JSON APIs and keeps this admin action resilient
+        // if their request field follows the response name.
+        markupPercent: percent,
+      }),
+    });
+    const markup = Number(result?.markupPercent ?? result?.markupPercentage ?? result?.markup ?? percent);
+    return { markupPercent: Number.isFinite(markup) ? markup : percent, raw: result };
+  }
+
   /**
    * On-ramp: stablecoin out to the user's wallet.
    *

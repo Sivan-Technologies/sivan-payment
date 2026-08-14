@@ -1189,6 +1189,7 @@ export class PrivyWalletProvider implements WalletProvider {
         // sender pays rent when the recipient had no token account.
         createdRecipientTokenAccount: built.createsRecipientAccount,
         estimatedRentSol: built.estimatedRentSol,
+        feeSkippedReason: built.feeSkippedReason,
       },
     };
   }

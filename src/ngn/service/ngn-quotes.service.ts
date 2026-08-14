@@ -189,6 +189,21 @@ function validateCurrencyPair(input: NgnQuoteInput) {
 export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>) {
   validateCurrencyPair(input);
   const controls = await getNgnControls();
+  const revenueMode = input.direction === 'offramp'
+    ? (controls.offrampRevenueMode ?? env.NGN_OFFRAMP_REVENUE_MODE)
+    : 'sivan_fee_wallet';
+  const requestedNetwork = String((input as any).network ?? '').toLowerCase();
+  if (
+    input.direction === 'offramp' &&
+    revenueMode === 'sivan_fee_wallet' &&
+    requestedNetwork &&
+    requestedNetwork !== 'solana'
+  ) {
+    throw forbidden(
+      'Sivan wallet-fee NGN off-ramp is currently enabled on Solana only. ' +
+      'Switch revenue mode to breet_markup/disabled or select Solana.'
+    );
+  }
   if (input.direction === 'onramp' && !controls.onrampEnabled) throw forbidden('NGN on-ramp is currently disabled.');
   if (input.direction === 'offramp' && !controls.offrampEnabled) throw forbidden('NGN off-ramp is currently disabled.');
   if (Number(input.sourceAmount) > Number(controls.maxTransactionNgn) && input.sourceCurrency === 'ngn') throw forbidden('NGN amount exceeds current transaction limit.');
@@ -254,6 +269,20 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   }
 
   const provider = getNgnProvider(controls.activeProvider);
+  if (
+    input.direction === 'offramp' &&
+    controls.activeProvider === 'breet' &&
+    revenueMode === 'sivan_fee_wallet' &&
+    provider.getBreetMarkupPercent
+  ) {
+    const breetMarkupPercent = await provider.getBreetMarkupPercent();
+    if (breetMarkupPercent > 0) {
+      throw forbidden(
+        `Breet markup is currently ${breetMarkupPercent}%, but Sivan wallet-fee mode is active. ` +
+        'Set Breet markup to 0% or switch NGN revenue mode to breet_markup before quoting.'
+      );
+    }
+  }
   // input.network is forwarded so the provider prices - and stamps the assetId
   // for - the chain the user actually picked.
   const quote = await provider.createQuote({ ...input, customerId: customer?.id });
@@ -308,13 +337,24 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       ? Number(quote.sourceAmount)
       : Number(quote.sourceAmount) * rate;
 
-  const providerFeeAsset = Number(quote.feeAmount ?? 0) || 0;
-  const providerFeeNgn =
+  let providerFeeAsset = Number(quote.feeAmount ?? 0) || 0;
+  let providerFeeNgn =
     input.direction === 'offramp'
       ? providerFeeAsset * rate
       : providerFeeAsset;
 
-  const margin = await applySivanMargin({
+  const margin = revenueMode === 'disabled' || revenueMode === 'breet_markup'
+    ? {
+      providerFee: providerFeeNgn,
+      sivanMargin: 0,
+      totalFee: providerFeeNgn,
+      effectivePercent: grossForMargin > 0 ? (providerFeeNgn / grossForMargin) * 100 : 0,
+      appliedRule: revenueMode,
+      explanation: revenueMode === 'breet_markup'
+        ? 'Sivan revenue is handled by Breet markup; no on-chain Sivan fee is added.'
+        : 'Sivan NGN off-ramp revenue is disabled; only provider cost is included.',
+    }
+    : await applySivanMargin({
     direction: input.direction,
     grossAmount: grossForMargin,
     providerFeeAmount: providerFeeNgn,
@@ -332,6 +372,15 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     input.direction === 'offramp' && rate > 0
       ? margin.sivanMargin / rate
       : margin.sivanMargin;
+
+  if (input.direction === 'offramp' && revenueMode === 'sivan_fee_wallet') {
+    const source = Number(quote.sourceAmount) || 0;
+    const providerFeePercent = source > 0 ? providerFeeAsset / source : 0;
+    const amountSentToBreet = Math.max(source - sivanMarginAsset, 0);
+    providerFeeAsset = amountSentToBreet * providerFeePercent;
+    providerFeeNgn = providerFeeAsset * rate;
+  }
+
   const totalFeeNgn =
     input.direction === 'offramp'
       ? providerFeeNgn + sivanMarginNgn
@@ -340,6 +389,10 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     input.direction === 'offramp'
       ? providerFeeAsset + sivanMarginAsset
       : margin.totalFee;
+  const effectivePercent =
+    grossForMargin > 0
+      ? (totalFeeNgn / grossForMargin) * 100
+      : margin.effectivePercent;
   const feeAmountForRecord =
     input.direction === 'offramp'
       ? fixedMoney(totalFeeAsset, 6)
@@ -594,7 +647,8 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       totalFeeNgn: fixedMoney(totalFeeNgn, 2),
       assetCurrency: input.sourceCurrency,
       ngnCurrency: 'ngn',
-      effectivePercent: margin.effectivePercent,
+      revenueMode,
+      effectivePercent,
       appliedRule: margin.appliedRule,
       explanation: margin.explanation,
     },
@@ -627,7 +681,8 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       totalFeeNgn: fixedMoney(totalFeeNgn, 2),
       assetCurrency: input.sourceCurrency,
       ngnCurrency: 'ngn',
-      effectivePercent: String(margin.effectivePercent),
+      revenueMode,
+      effectivePercent: String(effectivePercent),
     },
   };
 }
