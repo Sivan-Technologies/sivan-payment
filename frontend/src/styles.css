@@ -1776,38 +1776,40 @@ overflow-wrap:break-word}.page-hero p,.trade-head .muted{max-width:860px;color:#
 .sv-modal-body { margin-top: 22px; display: flex; flex-direction: column; gap: 14px }
 
 .bridge-kyc-modal {
-  max-width: min(980px, calc(100vw - 28px));
+  max-width: min(560px, calc(100vw - 28px));
   width: 100%;
   padding: 22px;
 }
-.bridge-kyc-frame-wrap {
+.bridge-kyc-handoff {
   margin-top: 18px;
-  overflow: hidden;
   border: 1px solid rgba(0, 122, 199, .18);
   border-radius: 18px;
-  background: #fff;
-  min-height: min(680px, calc(100vh - 240px));
+  background: linear-gradient(135deg, rgba(0, 122, 199, .08), rgba(22, 133, 109, .08));
+  padding: 18px;
+  display: grid;
+  gap: 8px;
 }
-.bridge-kyc-frame-wrap iframe {
-  display: block;
-  width: 100%;
-  height: min(680px, calc(100vh - 240px));
-  min-height: 520px;
-  border: 0;
-  background: #fff;
+.bridge-kyc-handoff strong {
+  color: var(--text);
+  font-size: 15px;
+}
+.bridge-kyc-handoff span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 .bridge-kyc-actions {
-  margin-top: 14px;
+  margin-top: 16px;
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
 }
 @media(max-width:760px) {
-  .bridge-kyc-modal { padding: 16px; max-height: calc(100vh - 20px) }
-  .bridge-kyc-frame-wrap { min-height: calc(100vh - 250px) }
-  .bridge-kyc-frame-wrap iframe { height: calc(100vh - 250px); min-height: 420px }
-  .bridge-kyc-actions { display: grid }
+  .bridge-kyc-modal { padding: 16px; max-height: calc(100vh - 20px); }
+  .bridge-kyc-actions { display: grid; }
+  .bridge-kyc-actions .primary-btn,
+  .bridge-kyc-actions .ghost-btn { width: 100%; justify-content: center; min-height: 44px; }
 }
 
 .sv-steps { display: flex; gap: 8px; margin-bottom: 4px }

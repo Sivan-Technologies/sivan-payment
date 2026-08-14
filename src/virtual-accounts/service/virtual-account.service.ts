@@ -106,34 +106,41 @@ async function buildBridgeVirtualAccountAction(input: {
   const providerStatus = bridgeCustomer?.status;
   const endorsementStatus = bridgeEndorsementStatus(bridgeCustomer, endorsement);
   const requirements = bridgeRequirementsDue(bridgeCustomer, endorsement);
-  const needsAction =
-    providerStatus === 'under_review' ||
-    endorsementStatus === 'incomplete' ||
-    endorsementStatus === 'under_review' ||
-    requirements.length > 0;
+  const providerInReview = providerStatus === 'under_review' || endorsementStatus === 'under_review';
+  const actionRequired =
+    !providerInReview &&
+    (
+      providerStatus === 'incomplete' ||
+      providerStatus === 'requires_action' ||
+      endorsementStatus === 'incomplete' ||
+      endorsementStatus === 'requires_action' ||
+      requirements.length > 0
+    );
+  const needsAction = providerInReview || actionRequired;
 
   if (!needsAction) return undefined;
 
   let kycUrl: string | undefined;
-  try {
-    const raw: any = await bridgeClient.request(`/customers/${input.providerCustomerId}/kyc_link`, {
-      query: { endorsement, redirect_uri: firstCorsOrigin() },
-    });
-    kycUrl = raw?.url || raw?.kyc_link;
-  } catch {
-    // Keep the state visible even if Bridge temporarily refuses to issue a
-    // fresh hosted link. The link is convenience; the requirements are the
-    // source of truth.
+  if (actionRequired) {
+    try {
+      const raw: any = await bridgeClient.request(`/customers/${input.providerCustomerId}/kyc_link`, {
+        query: { endorsement, redirect_uri: firstCorsOrigin() },
+      });
+      kycUrl = raw?.url || raw?.kyc_link;
+    } catch {
+      // Keep the state visible even if Bridge temporarily refuses to issue a
+      // fresh hosted link. The link is convenience; the requirements are the
+      // source of truth.
+    }
   }
 
-  const actionRequired = Boolean(kycUrl || requirements.length > 0 || endorsementStatus === 'incomplete');
   return {
     level: actionRequired ? 'action_required' : 'review',
     title: actionRequired ? 'Additional information required' : 'Provider review in progress',
     message: actionRequired
-      ? `Bridge needs one more verification step before this ${railLabel} account can be issued.`
-      : `Bridge is reviewing this customer for ${railLabel}. Sivan will update the account when the provider approves it.`,
-    requirements,
+      ? `Sivan needs one more verification step before this ${railLabel} account can be issued.`
+      : `Sivan has received the additional information for this ${railLabel} account. The provider is reviewing it, and Sivan will update the account when it is approved.`,
+    requirements: actionRequired ? requirements : [],
     kycUrl,
     providerCustomerId: input.providerCustomerId,
     endorsement,
