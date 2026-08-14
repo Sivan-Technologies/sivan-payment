@@ -91,6 +91,30 @@ check('which is ₦1,148 on a ₦76,500 gross',
   Math.abs(ngnTaken - 1147.5) < 1, `₦${ngnTaken.toFixed(0)}`);
 
 /**
+ * BREET MARKUP MODE IS NOT "NO FEE".
+ *
+ * When Sivan revenue mode is `breet_markup`, Sivan must NOT collect a second
+ * on-chain fee through Privy - but the quote still has to show the markup
+ * that Breet will apply inside settlement. The reported live symptom was an
+ * 18 USDT quote showing only Breet's fixed 0.5% provider fee (0.09 USDT),
+ * while the Breet dashboard markup was set to 1%. Correct display is 1.5%.
+ */
+const quoteSrcForMarkup = fs.readFileSync('src/ngn/service/ngn-quotes.service.ts', 'utf8');
+const transfersSrcForMarkup = fs.readFileSync('src/ngn/service/ngn-transfers.service.ts', 'utf8');
+check('breet_markup mode reads Breet markup into the quote',
+  /let breetMarkupPercentForQuote = 0/.test(quoteSrcForMarkup)
+  && /breetMarkupNgn[\s\S]{0,180}grossForMargin \* \(breetMarkupPercentForQuote \/ 100\)/.test(quoteSrcForMarkup),
+  'otherwise the screen shows only Breet fixed provider fee');
+check('breet_markup mode includes provider fee + markup in total fee',
+  /revenueMode === 'breet_markup'[\s\S]{0,300}totalFee: providerFeeNgn \+ breetMarkupNgn/.test(quoteSrcForMarkup)
+  && /effectivePercent:[\s\S]{0,120}\(providerFeeNgn \+ breetMarkupNgn\) \/ grossForMargin/.test(quoteSrcForMarkup),
+  '18 USDT should show 1.5%, not only the fixed 0.5% provider fee');
+check('but breet_markup still does not collect a Privy wallet fee',
+  /const sivanFeeAmount = revenueMode === 'sivan_fee_wallet'/.test(transfersSrcForMarkup)
+  && /\.\.\.\(sivanFeeAmount > 0 \? \{ feeAmount: String\(sivanFeeAmount\) \} : \{\}\)/.test(transfersSrcForMarkup),
+  'Breet markup and Sivan wallet fee together would double-charge users');
+
+/**
  * THE SCREENSHOT STATE, asserted so the regression is named: with no provider
  * fee the user was charged only Sivan's 1%.
  */
@@ -209,7 +233,7 @@ console.log('\n── 5. the fee is ITEMISED on the quote card ─────�
  * on metadata.fees, and NOTHING read them - the card had only `feeAmount`,
  * which is how a USDC value came to be printed with a naira sign.
  */
-const quoteSrc = fs.readFileSync('src/ngn/service/ngn-quotes.service.ts', 'utf8');
+const quoteSrc = quoteSrcForMarkup;
 check('the quote returns the breakdown as a top-level field',
   /return \{[\s\S]{0,120}\.\.\.record,[\s\S]{0,120}fees: \{[\s\S]{0,260}sivanMargin/.test(quoteSrc),
   'it existed only on metadata, where the client never looked');

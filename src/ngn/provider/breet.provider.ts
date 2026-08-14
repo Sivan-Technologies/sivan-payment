@@ -390,16 +390,11 @@ export class BreetNgnProvider implements NgnProviderAdapter {
   /**
    * Breet's own markup, set per integration (dashboard: Business → Markup).
    *
-   * Sivan does NOT use it, deliberately. Breet's markup is applied inside their
-   * conversion, so it arrives blended into the rate: Sivan could not then tell
-   * a provider price change from its own revenue, and a support agent could not
-   * break a fee down for a user. Sivan's margin is added in ngn-margin.ts
-   * instead, where cost and revenue stay separate line items on the quote.
-   *
-   * Exposed read-only so an operator can SEE it. If it is ever set to a
-   * non-zero value in the dashboard, users are being charged twice - once by
-   * Breet's markup and once by Sivan's margin - and nothing in Sivan's numbers
-   * would reveal it.
+   * In `breet_markup` revenue mode Sivan reads this into the quote so the user
+   * sees the full commercial fee: Breet's fixed provider fee plus Sivan's Breet
+   * markup. In `sivan_fee_wallet` mode a non-zero Breet markup blocks quoting,
+   * because that would charge the user both through Breet and through Sivan's
+   * on-chain fee wallet.
    */
   async getBreetMarkupPercent(): Promise<number> {
     try {

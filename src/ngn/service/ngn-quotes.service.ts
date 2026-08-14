@@ -269,16 +269,16 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   }
 
   const provider = getNgnProvider(controls.activeProvider);
+  let breetMarkupPercentForQuote = 0;
   if (
     input.direction === 'offramp' &&
     controls.activeProvider === 'breet' &&
-    revenueMode === 'sivan_fee_wallet' &&
     provider.getBreetMarkupPercent
   ) {
-    const breetMarkupPercent = await provider.getBreetMarkupPercent();
-    if (breetMarkupPercent > 0) {
+    breetMarkupPercentForQuote = await provider.getBreetMarkupPercent();
+    if (revenueMode === 'sivan_fee_wallet' && breetMarkupPercentForQuote > 0) {
       throw forbidden(
-        `Breet markup is currently ${breetMarkupPercent}%, but Sivan wallet-fee mode is active. ` +
+        `Breet markup is currently ${breetMarkupPercentForQuote}%, but Sivan wallet-fee mode is active. ` +
         'Set Breet markup to 0% or switch NGN revenue mode to breet_markup before quoting.'
       );
     }
@@ -343,16 +343,30 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       ? providerFeeAsset * rate
       : providerFeeAsset;
 
-  const margin = revenueMode === 'disabled' || revenueMode === 'breet_markup'
+  const breetMarkupNgn =
+    input.direction === 'offramp' && revenueMode === 'breet_markup' && breetMarkupPercentForQuote > 0
+      ? grossForMargin * (breetMarkupPercentForQuote / 100)
+      : 0;
+
+  const margin = revenueMode === 'disabled'
     ? {
       providerFee: providerFeeNgn,
       sivanMargin: 0,
       totalFee: providerFeeNgn,
       effectivePercent: grossForMargin > 0 ? (providerFeeNgn / grossForMargin) * 100 : 0,
       appliedRule: revenueMode,
-      explanation: revenueMode === 'breet_markup'
-        ? 'Sivan revenue is handled by Breet markup; no on-chain Sivan fee is added.'
-        : 'Sivan NGN off-ramp revenue is disabled; only provider cost is included.',
+      explanation: 'Sivan NGN off-ramp revenue is disabled; only provider cost is included.',
+    }
+    : revenueMode === 'breet_markup'
+    ? {
+      providerFee: providerFeeNgn,
+      sivanMargin: breetMarkupNgn,
+      totalFee: providerFeeNgn + breetMarkupNgn,
+      effectivePercent: grossForMargin > 0 ? ((providerFeeNgn + breetMarkupNgn) / grossForMargin) * 100 : 0,
+      appliedRule: revenueMode,
+      explanation: breetMarkupPercentForQuote > 0
+        ? `Sivan revenue is handled by Breet markup (${breetMarkupPercentForQuote}%); no on-chain Sivan fee is added.`
+        : 'Sivan revenue mode is Breet markup, but no Breet markup is currently configured.',
     }
     : await applySivanMargin({
     direction: input.direction,
@@ -648,6 +662,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       assetCurrency: input.sourceCurrency,
       ngnCurrency: 'ngn',
       revenueMode,
+      breetMarkupPercent: fixedMoney(breetMarkupPercentForQuote, 4),
       effectivePercent,
       appliedRule: margin.appliedRule,
       explanation: margin.explanation,
@@ -682,6 +697,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       assetCurrency: input.sourceCurrency,
       ngnCurrency: 'ngn',
       revenueMode,
+      breetMarkupPercent: fixedMoney(breetMarkupPercentForQuote, 4),
       effectivePercent: String(effectivePercent),
     },
   };
