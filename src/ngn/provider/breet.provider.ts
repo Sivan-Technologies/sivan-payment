@@ -102,7 +102,14 @@ async function breetRequest<T>(path: string, init: RequestInit = {}): Promise<T>
   // Breet signals failure in the envelope as well as the status, so both are
   // checked. A 200 carrying success:false is still a failure.
   if (!response.ok || body?.success === false) {
-    const message = body?.message || `Breet API error ${response.status}`;
+    const details =
+      body?.errors ??
+      body?.error ??
+      body?.summary ??
+      body?.data?.errors ??
+      body?.data?.error;
+    const detailText = details ? `: ${JSON.stringify(details)}` : '';
+    const message = `${body?.message || `Breet API error ${response.status}`}${detailText}`;
     throw new Error(`Breet: ${message}`);
   }
 
@@ -751,7 +758,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/bank`, {
       method: 'PUT',
       body: JSON.stringify({
-        bankId: input.bankId,
+        id: input.bankId,
         accountNumber: input.accountNumber,
         autoSettlement: true,
         narration: input.narration,

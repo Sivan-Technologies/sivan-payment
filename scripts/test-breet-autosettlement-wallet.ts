@@ -68,7 +68,10 @@ function installBreetStub(mode: 'new-wallet' | 'existing-wallet' | 'auto-settlem
     }
 
     if (method === 'PUT' && parsed.pathname === '/v1/trades/wallets/wallet_123/bank') {
-      return json(200, { success: true, data: { ...wallet, bankId: body?.bankId, accountNumber: body?.accountNumber } });
+      if (body?.bankId !== undefined) {
+        return json(422, { success: false, message: 'validation errors', errors: { bankId: ['unknown fields detected'], id: ['required'] } });
+      }
+      return json(200, { success: true, data: { ...wallet, bankId: body?.id, accountNumber: body?.accountNumber } });
     }
 
     if (method === 'PUT' && parsed.pathname === '/v1/trades/wallets/wallet_123/auto-settlement') {
@@ -129,7 +132,11 @@ console.log('\nNEW BREET WALLET IS EXPLICITLY MADE AUTO-SETTLEMENT SAFE');
       && item.body?.autoSettlement === true),
     JSON.stringify(seen));
   check('the wallet bank is explicitly updated after creation',
-    seen.some((item) => item.method === 'PUT' && item.path === '/v1/trades/wallets/wallet_123/bank'),
+    seen.some((item) => item.method === 'PUT'
+      && item.path === '/v1/trades/wallets/wallet_123/bank'
+      && item.body?.id === '25'
+      && item.body?.bankId === undefined
+      && item.body?.accountNumber === '8102524846'),
     JSON.stringify(seen));
   check('auto-settlement is explicitly enabled after creation',
     seen.some((item) => item.method === 'PUT'
@@ -149,7 +156,11 @@ console.log('\nEXISTING BREET WALLET IS RE-LINKED BEFORE REUSE');
 
   check('the existing wallet is reused', created.providerTransferId === 'wallet_123', String(created.providerTransferId));
   check('the existing wallet bank is updated',
-    seen.some((item) => item.method === 'PUT' && item.path === '/v1/trades/wallets/wallet_123/bank'),
+    seen.some((item) => item.method === 'PUT'
+      && item.path === '/v1/trades/wallets/wallet_123/bank'
+      && item.body?.id === '25'
+      && item.body?.bankId === undefined
+      && item.body?.accountNumber === '8102524846'),
     JSON.stringify(seen));
   check('the existing wallet auto-settlement is enabled',
     seen.some((item) => item.method === 'PUT' && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'),
