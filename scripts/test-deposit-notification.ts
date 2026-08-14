@@ -117,7 +117,7 @@ const confirmedMsg = depositMessage(deposit('y', { status: 'confirmed' }) as any
 check('a CONFIRMED message may say it is usable',
   /send or convert|balance/i.test(confirmedMsg.text));
 check('the two messages differ', confirmedMsg.subject !== pendingMsg.subject);
-check('a confirmed message includes branded HTML', confirmedMsg.html.includes('Deposit confirmed') && confirmedMsg.html.includes('#23CDA9'));
+check('a confirmed message includes branded HTML', confirmedMsg.html.includes('Deposit confirmed') && confirmedMsg.html.includes('#018EE8'));
 
 console.log('\n── network names are for humans ──────────────────────────────');
 

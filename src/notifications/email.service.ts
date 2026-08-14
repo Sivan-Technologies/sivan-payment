@@ -90,13 +90,6 @@ function brandShell(input: {
 <html>
   <body style="margin:0;background:#F7FAFD;padding:28px 14px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#10182B;">
     <div style="max-width:620px;margin:0 auto;">
-      <div style="padding:20px 2px 18px;display:flex;align-items:center;gap:10px;">
-        <div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#018EE8,#23CDA9);color:#FFFFFF;font-size:20px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;">S</div>
-        <div>
-          <div style="font-size:17px;font-weight:900;letter-spacing:-.02em;color:#10182B;">Sivan</div>
-          <div style="font-size:12px;font-weight:800;color:#5A6678;">Payments, stablecoins, and virtual accounts</div>
-        </div>
-      </div>
       <div style="background:#FFFFFF;border:1px solid #E6EDF5;border-radius:18px;box-shadow:0 24px 60px rgba(16,24,43,.08);overflow:hidden;">
         <div style="background:linear-gradient(135deg,#E9F4FD,#E6FBF6);padding:24px 24px 18px;border-bottom:1px solid #E6EDF5;">
           <div style="color:#018EE8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.11em;margin-bottom:10px;">${escapeHtml(input.eyebrow)}</div>
