@@ -183,6 +183,25 @@ export interface NgnControlsRecord {
    */
   externalFundingEnabled: boolean;
   /**
+   * May a user send naira to an account that is NOT their own?
+   *
+   * OFF, and enforced server side in createNgnQuote() - not merely hidden in
+   * the UI, because a hidden button is not a control.
+   *
+   * UNLIKE bankSettlementEnabled ABOVE, THIS ONE IS LOAD-BEARING. That flag is
+   * documented in ngn-controls.service.ts as inert: forcing it false left 179
+   * assertions green, which is how you can tell nothing reads it. This flag is
+   * read in exactly one place and has a test that fails when that read is
+   * removed, so it cannot decay into decoration without someone noticing.
+   *
+   * It is off because the rail genuinely cannot do it safely. Breet binds the
+   * destination bank to the user's PERMANENT deposit address, not to a
+   * transfer, so paying a third party means re-linking that wallet - and since
+   * the address is reusable, a late deposit then settles to whoever was linked
+   * last. See migration 052 for the full reasoning.
+   */
+  thirdPartyPayoutsEnabled: boolean;
+  /**
    * PER-FLOW ENFORCEMENT OF VERIFICATION-TIER CEILINGS.
    *
    * Deliberately three switches and NOT one master "limits off".

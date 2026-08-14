@@ -2717,6 +2717,7 @@ export default function App() {
                Undefined until it answers, which reads as OFF - the withdraw
                form tests `=== true`. */
             ngnExternalFundingEnabled={ngnNetworks?.externalFundingEnabled}
+            ngnThirdPartyPayoutsEnabled={ngnNetworks?.thirdPartyPayoutsEnabled}
             onNgnReady={handleNgnReady}
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
