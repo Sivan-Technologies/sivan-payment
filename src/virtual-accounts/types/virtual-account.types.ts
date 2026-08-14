@@ -29,6 +29,17 @@ export interface VirtualAccountRequestRecord {
   updatedAt: string;
 }
 
+export interface VirtualAccountCustomerAction {
+  level: 'action_required' | 'review' | 'failed' | 'neutral';
+  title: string;
+  message: string;
+  requirements?: string[];
+  kycUrl?: string;
+  providerCustomerId?: string;
+  endorsement?: string;
+  providerStatus?: string;
+}
+
 export interface VirtualAccountRecord {
   id: string;
   requestId?: string;
