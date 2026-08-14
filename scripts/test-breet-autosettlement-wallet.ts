@@ -8,6 +8,10 @@
  * Run: npm run test:breet-autosettlement-wallet
  */
 
+// No imports of its own, so TypeScript would treat this file as a global
+// script and collide with every other script that declares `pass`/`fail`.
+export {};
+
 process.env.BREET_APP_ID = 'test_app_id';
 process.env.BREET_APP_SECRET = 'test_app_secret';
 process.env.BREET_ENV = 'development';

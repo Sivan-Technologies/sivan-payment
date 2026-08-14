@@ -146,11 +146,30 @@ check('its deposit address is Solana-shaped',
 await new Promise((r) => setTimeout(r, 3000));
 
 const settled: any = (await db.listNgnTransfers()).find((t: any) => t.id === order.id);
-check('the sweep moves it OFF awaiting_crypto_deposit',
-  settled.status === 'settlement_processing',
-  `${settled.status} - stuck here is the reported symptom`);
-check('and records what it swept',
+
+/**
+ * THIS ASSERTION USED TO READ `status === 'settlement_processing'` AND IS NOW
+ * WRONG TO WRITE THAT WAY.
+ *
+ * `22d9468` deliberately stopped the sweep from advancing the status on a
+ * `pending_user_signature` result, because saying "settling" while the
+ * transaction is still unsigned tells the user Breet is paying them when
+ * nothing has moved. MockWalletProvider declares
+ * `custodyModel = 'non_custodial'`, so it ALWAYS returns
+ * `pending_user_signature` - which means the old line asserted precisely the
+ * behaviour that commit removed, and this suite has been red ever since.
+ *
+ * The reported bug was never "the status did not change". It was that the
+ * sweep DIED before reaching the wallet provider, on `new PublicKey()`, so
+ * nothing was ever attempted. So assert THAT: the sweep got as far as the
+ * provider and came back with an id. It is the same evidence, taken one step
+ * earlier, and it does not depend on a custody model this mock does not have.
+ */
+check('the sweep reaches the wallet provider instead of dying on the address',
   Boolean((settled.metadata as any)?.sweep?.providerTransferId),
+  JSON.stringify((settled.metadata as any)?.sweep ?? null));
+check('and the sweep is not recorded as skipped',
+  !String((settled.metadata as any)?.sweep?.status ?? '').startsWith('skipped'),
   JSON.stringify((settled.metadata as any)?.sweep ?? null));
 
 const failures = await db.listAuditLogsByActions(['ngn.sweep_failed']);
