@@ -8,6 +8,7 @@ import {
   type NgnBank,
   type NgnQuote,
   type ResolvedNgnBankAccount,
+  type SavedNgnPayoutAccount,
 } from '../../ngnBank';
 import { formatPayoutAmount } from '../../rails';
 import { exceedsRemaining, offrampClears, typicalGasUsd } from '../../ngnMinimum';
@@ -209,6 +210,26 @@ export function NgnPayoutForm({
   const [fundingSource, setFundingSource] = useState<NgnFundingSource>('balance');
 
   /**
+   * THE ACCOUNTS THIS USER HAS ALREADY PROVED ARE THEIRS.
+   *
+   * A naira withdrawal used to mean retyping a 10-digit NUBAN and waiting on a
+   * bank lookup every single time, even though the account had been saved and
+   * name-matched on a previous withdrawal. Worse, the account typed here never
+   * reached the server at all: the quote picked the first verified row on file.
+   *
+   * `null` means "not loaded yet" and is deliberately distinct from `[]`,
+   * which means "loaded, and this user has none". Rendering the manual form
+   * during the fetch would make the saved list appear a moment later and move
+   * everything under the user's thumb.
+   */
+  const [savedAccounts, setSavedAccounts] = useState<SavedNgnPayoutAccount[] | null>(null);
+  const [payoutAccountId, setPayoutAccountId] = useState('');
+  /** Set when the user explicitly asks to pay an account that is not on file. */
+  const [addingNewAccount, setAddingNewAccount] = useState(false);
+  /** Shown after a manual account is saved, so the user knows it is now reusable. */
+  const [justSaved, setJustSaved] = useState('');
+
+  /**
    * MAY THE USER FUND THIS BY SENDING CRYPTO THEMSELVES?
    *
    * `=== true`, not truthiness: an older API build omits the field entirely,
@@ -274,6 +295,36 @@ export function NgnPayoutForm({
     api<NgnBank[]>(`/api/ngn/banks?userId=${encodeURIComponent(userId)}`)
       .then((list) => { if (!cancelled) setBanks(list ?? []); })
       .catch(() => { if (!cancelled) setError('Could not load the bank list. Try again shortly.'); });
+    return () => { cancelled = true; };
+  }, [api, userId]);
+
+  /**
+   * Load the accounts already on file, and preselect one if that is unambiguous.
+   *
+   * ONLY `verified` ROWS ARE SELECTABLE. `pending_review` is an account a human
+   * was asked to look at, and the server refuses to pay it - offering it here
+   * would produce a withdrawal that fails at the quote for a reason the screen
+   * had just implied was fine.
+   *
+   * Preselected ONLY when there is exactly one. With several, the server now
+   * refuses an unspecified destination rather than guessing, and the UI must
+   * not paper over that by choosing for the user: picking the wrong bank by
+   * default is the failure this whole change exists to remove.
+   *
+   * A failure here is not surfaced as an error. The manual form below is a
+   * complete way to withdraw, so a user whose saved list would not load is
+   * inconvenienced, not blocked.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    api<SavedNgnPayoutAccount[]>(`/api/ngn/payout-accounts?userId=${encodeURIComponent(userId)}`)
+      .then((list) => {
+        if (cancelled) return;
+        const usable = (list ?? []).filter((account) => account.status === 'verified');
+        setSavedAccounts(usable);
+        if (usable.length === 1) setPayoutAccountId(usable[0].id);
+      })
+      .catch(() => { if (!cancelled) setSavedAccounts([]); });
     return () => { cancelled = true; };
   }, [api, userId]);
 
@@ -459,7 +510,7 @@ export function NgnPayoutForm({
 
   async function getQuote() {
     setError('');
-    if (!resolved) return setError('Verify your bank account first.');
+    if (!destinationAccount) return setError('Choose or add the bank account to withdraw to.');
     if (!(amountUsd > 0)) return setError('Enter an amount.');
     /**
      * No chain, no quote.
@@ -512,10 +563,70 @@ export function NgnPayoutForm({
 
     setQuoting(true);
     try {
+      /**
+       * SAVE A MANUALLY ENTERED ACCOUNT BEFORE QUOTING IT.
+       *
+       * The server will only pay an account it has verified, so a hand-typed
+       * NUBAN has to become a saved row first. This is also the moment the
+       * name match happens: POST re-resolves the account server side and
+       * compares the bank's name to the profile name - the client's `resolved`
+       * copy is display only and proves nothing about who is asking.
+       *
+       * NOT gated on a client-side name comparison. Deciding here whether the
+       * names match would put the security decision in the browser, where it
+       * can be edited. The server returns `status`, and only `verified` is
+       * usable; anything else is reported and the withdrawal stops.
+       */
+      let activePayoutAccountId = payoutAccountId;
+      if (!activePayoutAccountId) {
+        const saved = await api<SavedNgnPayoutAccount>('/api/ngn/payout-accounts', {
+          method: 'POST',
+          body: JSON.stringify({ userId, bankId, accountNumber }),
+        });
+        if (saved.status !== 'verified') {
+          setQuoting(false);
+          /**
+           * Named plainly, because "pending review" invites the user to wait
+           * for something that is not coming on this rail: naira payouts go to
+           * an account in the user's own name, and a mismatch is not a queue
+           * position. Telling them to wait would be a lie of omission.
+           */
+          return setError(
+            saved.matchVerdict === 'mismatch'
+              ? `That account belongs to ${saved.accountName}. Naira withdrawals can only go to an account in your own name.`
+              : 'We could not confirm that account is yours. Our team is checking it - try another account meanwhile.'
+          );
+        }
+        activePayoutAccountId = saved.id;
+        setPayoutAccountId(saved.id);
+        // Fold it into the list so the next withdrawal offers it without a reload.
+        setSavedAccounts((current) => {
+          const rest = (current ?? []).filter((account) => account.id !== saved.id);
+          return [saved, ...rest];
+        });
+        setAddingNewAccount(false);
+        setJustSaved(saved.id);
+      }
+
+      /**
+       * THE DESTINATION HAS TO TRAVEL WITH THE QUOTE.
+       *
+       * Without payoutAccountId the server falls back to the only verified
+       * account on file, and refuses outright when there is more than one. It
+       * used to silently pay the first - so this screen could show one bank
+       * while the naira went to another.
+       *
+       * `activePayoutAccountId` is empty during a manual entry; the account is
+       * saved first (below) and its new id used, so the quote still names an
+       * account the server has verified rather than a raw NUBAN.
+       */
+      const destination = activePayoutAccountId
+        ? `&payoutAccountId=${encodeURIComponent(activePayoutAccountId)}`
+        : '';
       const result = await api<NgnQuote>(
         // network is what lets the server price gas for the RIGHT chain -
         // without it the estimate silently falls back to the default network's.
-        `/api/ngn/quote?userId=${encodeURIComponent(userId)}&direction=offramp&sourceCurrency=${asset}&destinationCurrency=ngn&sourceAmount=${encodeURIComponent(amount)}&network=${encodeURIComponent(network)}`
+        `/api/ngn/quote?userId=${encodeURIComponent(userId)}&direction=offramp&sourceCurrency=${asset}&destinationCurrency=ngn&sourceAmount=${encodeURIComponent(amount)}&network=${encodeURIComponent(network)}${destination}`
       );
       setQuote(result);
     } catch (err) {
@@ -526,6 +637,35 @@ export function NgnPayoutForm({
   }
 
   const selectedBank = banks.find((bank) => bank.id === bankId);
+
+  /**
+   * THE DESTINATION, WHICHEVER WAY IT WAS CHOSEN.
+   *
+   * Amount, quoting and Continue were all gated on `resolved`, which is only
+   * ever set by the manual bank lookup. Selecting a saved account therefore
+   * left the form with no amount field and a dead Continue button - the saved
+   * list would have looked like it worked and then gone nowhere.
+   *
+   * A saved account is the STRONGER evidence of the two: it was re-resolved
+   * and name-matched server side when it was saved, whereas `resolved` is a
+   * read-only client lookup that proves nothing about who is asking. So it is
+   * shaped into the same type here rather than the gates being loosened.
+   */
+  const chosenSavedAccount = savedAccounts?.find((account) => account.id === payoutAccountId);
+  const destinationAccount: ResolvedNgnBankAccount | null = chosenSavedAccount
+    ? {
+        // bankId carried through: the confirmation screen and the order both
+        // need to name the bank, and a payout with an account number but no
+        // bank is not routable.
+        bankId: chosenSavedAccount.bankId,
+        accountNumber: chosenSavedAccount.accountNumber,
+        accountName: chosenSavedAccount.accountName,
+        bankName: chosenSavedAccount.bankName,
+        // Saved rows only reach `verified` when the resolution WAS trustworthy,
+        // so this is a fact about the row, not an optimistic default.
+        trustworthy: true,
+      }
+    : resolved;
 
   return (
     <article className="panel form-panel trade-card">
@@ -689,6 +829,85 @@ export function NgnPayoutForm({
         )}
 
 
+        {/* THE ACCOUNTS ALREADY PROVED TO BE THIS USER'S.
+ 
+            A returning user's most common action by far is "the same account
+            as last time", and that is now one tap with no bank search and no
+            NUBAN retyped. The manual form is not removed, only deferred behind
+            an explicit choice - a user with a second account of their own must
+            still be able to use it.
+ 
+            Rendered only once the fetch has settled (`savedAccounts !== null`),
+            so the manual form never appears and is then displaced by a list
+            arriving a moment later under the user's thumb. */}
+        {savedAccounts !== null && savedAccounts.length > 0 && !addingNewAccount && (
+          <div className="saved-payout-accounts">
+            <p className="bank-list-label">Withdraw to</p>
+            {savedAccounts.map((account) => (
+              <button
+                type="button"
+                key={account.id}
+                className={`bank-option${payoutAccountId === account.id ? ' selected' : ''}`}
+                aria-pressed={payoutAccountId === account.id}
+                onClick={() => {
+                  setPayoutAccountId(account.id);
+                  // A quote is bound to a destination. Changing the destination
+                  // invalidates the price the user was shown against the old one.
+                  setQuote(null);
+                  setError('');
+                }}
+              >
+                <span>
+                  <strong>{account.accountName}</strong>
+                  <span className="muted"> {account.bankName} · {maskAccountNumber(account.accountNumber)}</span>
+                </span>
+                {justSaved === account.id && <span className="field-hint">Saved for next time</span>}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="bank-list-more"
+              onClick={() => {
+                setAddingNewAccount(true);
+                // Clearing the selection is what makes the quote send no
+                // payoutAccountId, so the newly typed account is saved first.
+                setPayoutAccountId('');
+                setQuote(null);
+                setError('');
+              }}
+            >
+              Use a different account
+            </button>
+          </div>
+        )}
+
+        {/* The manual path: a first-time user, or someone adding another of
+            their own accounts. Hidden while a saved account is selected so the
+            two cannot both be filled in and disagree about where money goes. */}
+        {(savedAccounts !== null && (savedAccounts.length === 0 || addingNewAccount)) && (
+          <>
+        {savedAccounts.length > 0 && (
+          <div className="details-box compact">
+            <span>New account</span>
+            <button
+              type="button"
+              className="ghost-btn small"
+              onClick={() => {
+                setAddingNewAccount(false);
+                setBankId('');
+                setBankQuery('');
+                setAccountNumber('');
+                setResolved(null);
+                setQuote(null);
+                setError('');
+                if (savedAccounts.length === 1) setPayoutAccountId(savedAccounts[0].id);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
         <label>Bank
           <input
             placeholder="Search your bank, e.g. GTB or Access"
@@ -786,10 +1005,16 @@ export function NgnPayoutForm({
               // presenting this as confirmation would be a lie.
               <span className="field-hint">Test environment. This name is simulated and does not confirm a real account.</span>
             )}
+            {/* Stated BEFORE the withdrawal, not after. The account is saved
+                as a side effect of withdrawing to it, and a user should know
+                that at the moment they can still back out. */}
+            <span className="field-hint">We'll save this account so you don't have to type it next time.</span>
           </div>
         )}
+          </>
+        )}
 
-        {resolved && (
+        {destinationAccount && (
           <label>Amount to withdraw ({asset.toUpperCase()})
             <div className="amount-with-max">
               <input
@@ -903,7 +1128,7 @@ export function NgnPayoutForm({
             <button
               type="button"
               className="primary-btn"
-              disabled={quoting || !resolved || !network || !(amountUsd > 0) || overBalance || Boolean(floorVerdict && !floorVerdict.clears)}
+              disabled={quoting || !destinationAccount || !network || !(amountUsd > 0) || overBalance || Boolean(floorVerdict && !floorVerdict.clears)}
               onClick={() => void getQuote()}
             >
               {quoting ? 'Pricing…' : quoteExpired ? 'Refresh quote' : 'Get quote →'}
@@ -916,7 +1141,7 @@ export function NgnPayoutForm({
               // letting the user reach the review screen only to be rejected
               // there wastes the quote they are racing the expiry on.
               disabled={overLimit}
-              onClick={() => onReady({ quote, account: resolved!, fundingSource })}
+              onClick={() => onReady({ quote, account: destinationAccount!, fundingSource })}
             >
               Continue →
             </button>
