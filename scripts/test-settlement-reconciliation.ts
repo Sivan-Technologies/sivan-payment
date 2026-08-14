@@ -532,6 +532,62 @@ async function main() {
     );
   }
 
+  console.log('\nREUSABLE BREET ADDRESSES MATCH THE RIGHT OPEN ORDER');
+  {
+    const address = freshAddress();
+    const older = await seedTransfer(address, {
+      id: `ngnt_old_${seq}`,
+      sourceCurrency: 'usdc',
+      sourceAmount: '12',
+      createdAt: new Date('2026-08-13T10:00:00.000Z').toISOString(),
+      updatedAt: new Date('2026-08-13T10:00:00.000Z').toISOString(),
+    });
+    const newer = await seedTransfer(address, {
+      id: `ngnt_new_${seq}`,
+      sourceCurrency: 'usdt',
+      sourceAmount: '18.2',
+      createdAt: new Date('2026-08-13T18:20:00.000Z').toISOString(),
+      updatedAt: new Date('2026-08-13T18:20:00.000Z').toISOString(),
+    });
+
+    const proto = Object.getPrototypeOf(getNgnProvider('breet') as any);
+    const savedVerify = proto.verifyWebhook;
+    proto.verifyWebhook = async (payload: any) => ({
+      id: `ngnwh_reuse_${payload.event}`, provider: 'breet',
+      providerEventId: `${payload.id}:${payload.event}`,
+      eventType: payload.event, transferId: payload.id, payload,
+      createdAt: new Date().toISOString(),
+    });
+
+    const tradeId = freshTradeId();
+    await recordNgnWebhook('breet', {
+      event: 'trade.completed',
+      id: tradeId,
+      asset: 'SOL_USDT_EWAY',
+      status: 'completed',
+      destinationAddress: address,
+      cryptoAmount: 18.2,
+      amountInUSD: 18.2,
+      amountSettled: 0,
+      txHash: '3GQqC4xrFQywxKN99TJSTagujHUUJVfrKmZyWV3LHK1Qwv1yPWRvmKyCT7dX6UwhWEVsSdN2sxgk8D1oxwM1Utmf',
+      createdAt: '2026-08-13T18:31:26.904Z',
+    }, {});
+    proto.verifyWebhook = savedVerify;
+
+    const oldAfter = await reload(older.id);
+    const newAfter = await reload(newer.id);
+    check('the older same-address order is not advanced by the newer USDT trade',
+      oldAfter?.status === 'awaiting_crypto_deposit', String(oldAfter?.status));
+    check('the matching amount/asset order is advanced',
+      newAfter?.status === 'settlement_processing', String(newAfter?.status));
+    check('the unique Breet trade id is stored on that order',
+      (newAfter?.metadata as any)?.breetTradeId === tradeId,
+      String((newAfter?.metadata as any)?.breetTradeId));
+    check('trade.completed with amountSettled 0 stores a non-final settlement proof',
+      (newAfter?.metadata as any)?.settlementProof?.kind === 'trade_converted_no_bank_payout_yet',
+      JSON.stringify((newAfter?.metadata as any)?.settlementProof));
+  }
+
   console.log('\nOUT-OF-ORDER DELIVERY CANNOT REWIND A FINISHED PAYOUT');
   {
     // Real observation: Breet generated withdrawal.completed BEFORE

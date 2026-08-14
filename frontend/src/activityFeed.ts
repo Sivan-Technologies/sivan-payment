@@ -127,9 +127,10 @@ const STATUS_LABELS: Record<string, string> = {
   awaiting_deposit: 'Waiting for your crypto',
   requires_action: 'Needs your attention',
 
-  // Waiting on us or a provider. Deliberately all the same two words: the
-  // difference between "settling" and "bank_processing" is our plumbing, not
-  // something the user can act on.
+  // Waiting on us or a provider. A Breet trade completion is NOT a completed
+  // bank payout: it only proves the crypto was converted inside Breet. Keep
+  // that wording separate so "Paying out" means the bank leg is actually in
+  // flight, not merely that Breet holds the naira.
   created: 'In progress',
   quote_created: 'In progress',
   quote_accepted: 'In progress',
@@ -141,7 +142,7 @@ const STATUS_LABELS: Record<string, string> = {
   deposit_received: 'In progress',
   crypto_received: 'In progress',
   blockchain_confirmed: 'In progress',
-  settlement_processing: 'Paying out',
+  settlement_processing: 'Bank payout pending',
   bank_processing: 'Paying out',
   settling: 'Paying out',
   payout_processing: 'Paying out',

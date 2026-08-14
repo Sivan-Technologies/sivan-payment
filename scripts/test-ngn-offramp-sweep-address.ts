@@ -146,16 +146,78 @@ check('its deposit address is Solana-shaped',
 await new Promise((r) => setTimeout(r, 3000));
 
 const settled: any = (await db.listNgnTransfers()).find((t: any) => t.id === order.id);
-check('the sweep moves it OFF awaiting_crypto_deposit',
-  settled.status === 'settlement_processing',
-  `${settled.status} - stuck here is the reported symptom`);
-check('and records what it swept',
+
+/**
+ * THIS ASSERTION USED TO READ `status === 'settlement_processing'` AND IS NOW
+ * WRONG TO WRITE THAT WAY.
+ *
+ * `22d9468` deliberately stopped the sweep from advancing the status on a
+ * `pending_user_signature` result, because saying "settling" while the
+ * transaction is still unsigned tells the user Breet is paying them when
+ * nothing has moved. MockWalletProvider declares
+ * `custodyModel = 'non_custodial'`, so it ALWAYS returns
+ * `pending_user_signature` - which means the old line asserted precisely the
+ * behaviour that commit removed, and this suite has been red ever since.
+ *
+ * The reported bug was never "the status did not change". It was that the
+ * sweep DIED before reaching the wallet provider, on `new PublicKey()`, so
+ * nothing was ever attempted. So assert THAT: the sweep got as far as the
+ * provider and came back with an id. It is the same evidence, taken one step
+ * earlier, and it does not depend on a custody model this mock does not have.
+ */
+check('the sweep reaches the wallet provider instead of dying on the address',
   Boolean((settled.metadata as any)?.sweep?.providerTransferId),
+  JSON.stringify((settled.metadata as any)?.sweep ?? null));
+check('and the sweep is not recorded as skipped',
+  !String((settled.metadata as any)?.sweep?.status ?? '').startsWith('skipped'),
   JSON.stringify((settled.metadata as any)?.sweep ?? null));
 
 const failures = await db.listAuditLogsByActions(['ngn.sweep_failed']);
 check('with no sweep failure logged', failures.length === 0,
   JSON.stringify(failures[0]?.metadata ?? null).slice(0, 160));
+
+console.log('\n── regression: pending signature is NOT settlement ───────────');
+
+const pendingWallet: any = await getWalletProvider('mock').createWallet({ chain: 'solana', customerId: 'c2' } as any);
+await (getWalletProvider('mock') as any).__seedBalance(pendingWallet.providerWalletId, {
+  asset: 'usdc', chain: 'solana', amount: '40',
+});
+
+await db.mutate((d: any) => {
+  d.users.push({ id: 'usr_pending', email: 'pending@t.test', emailVerifiedAt: now(), country: 'NG', fullName: 'PENDING SIGNATURE', createdAt: now(), updatedAt: now() });
+  d.ngnPayoutAccounts.push({ id: 'a_pending', userId: 'usr_pending', provider: 'mock', bankId: '1', bankName: 'Access Bank',
+    accountNumber: '2222222222', accountName: 'PENDING SIGNATURE', declaredName: 'PENDING SIGNATURE',
+    matchVerdict: 'match', status: 'verified', createdAt: now(), updatedAt: now() });
+  d.userWallets.push({ id: 'wal_pending', userId: 'usr_pending', provider: 'mock', providerWalletId: pendingWallet.providerWalletId,
+    chain: 'solana', address: pendingWallet.address, status: 'active', custodial: true, createdAt: now(), updatedAt: now() });
+  return 1;
+});
+
+const mockWalletProvider: any = getWalletProvider('mock');
+const originalCreateTransfer = mockWalletProvider.createTransfer.bind(mockWalletProvider);
+mockWalletProvider.createTransfer = async (input: any) => ({
+  provider: 'mock',
+  providerTransferId: `privy_pending_${input.idempotencyKey}`,
+  status: 'pending_user_signature',
+  userSignaturePayload: { reference: input.reference, toAddress: input.toAddress },
+});
+
+const pendingQuote: any = await createNgnQuote({
+  userId: 'usr_pending', direction: 'offramp', sourceCurrency: 'usdc',
+  destinationCurrency: 'ngn', sourceAmount: '10', network: 'solana',
+} as any);
+const pendingOrder: any = await acceptNgnQuote({ userId: 'usr_pending', quoteId: pendingQuote.id } as any);
+await new Promise((r) => setTimeout(r, 3000));
+
+const stillWaiting: any = (await db.listNgnTransfers()).find((t: any) => t.id === pendingOrder.id);
+check('a pending user signature does NOT become settlement_processing',
+  stillWaiting.status === 'awaiting_crypto_deposit',
+  `${stillWaiting.status} would falsely tell the user Breet is settling`);
+check('the pending sweep status is stored for support',
+  (stillWaiting.metadata as any)?.sweep?.status === 'pending_user_signature',
+  JSON.stringify((stillWaiting.metadata as any)?.sweep ?? null));
+
+mockWalletProvider.createTransfer = originalCreateTransfer;
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

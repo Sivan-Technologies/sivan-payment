@@ -176,6 +176,8 @@
     "test:wallet-error-honesty": "PRIVY_APP_ID= PRIVY_APP_SECRET= tsx scripts/test-wallet-error-honesty.ts",
     "test:wallet-quorum-misconfiguration": "tsx scripts/test-wallet-quorum-misconfiguration.ts",
     "test:transaction-detail-panel": "tsx scripts/test-transaction-detail-panel.ts",
+    "test:breet-autosettlement-wallet": "tsx scripts/test-breet-autosettlement-wallet.ts",
+    "test:ngn-sweep-autosettlement-guard": "tsx scripts/test-ngn-sweep-autosettlement-guard.ts",
     "diagnose:privy": "tsx scripts/diagnose-privy.ts",
     "test:gas-limits": "tsx scripts/test-gas-limits.ts",
     "test:ngn-kyc-levels": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-ngn-kyc-levels.json EMAIL_PROVIDER=console SUPPORT_UPLOAD_PROVIDER=mock BRIDGE_MOCK_MODE=true ADMIN_API_KEY=kyc-admin-key KYC_LEVEL_PROVIDER=mock MONNIFY_API_KEY= MONNIFY_SECRET_KEY= FLUTTERWAVE_SECRET_KEY= tsx scripts/test-ngn-kyc-levels.ts",

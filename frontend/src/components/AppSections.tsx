@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import type { CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, BalanceTransferRecord, VerificationSummary, FlowAllowance } from '../types';
 import { BRIDGE_CURRENCIES, CURRENCY_LABELS, isBridgeCurrency, RAIL_LABELS, formatPayoutAmount, isNgnCurrency, payoutRailFor, type PayoutCurrency } from '../rails';
 import { networkLabel } from '../blockExplorer';
@@ -160,7 +160,14 @@ export type WithdrawalReviewState = {
   amount?: string;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export type WithdrawAssetOption = {
+  asset: 'usdc' | 'usdt';
+  label: string;
+  spendable?: number | null;
+  chainUnavailable?: boolean;
+};
+
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
 
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
@@ -182,6 +189,8 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   ngnNetworkOptions?: Array<{ network: string; minimumDepositUsd?: number }>;
   onNgnNetworkChange?: (network: string) => void;
   ngnAsset?: 'usdc' | 'usdt';
+  onNgnAssetChange?: (asset: 'usdc' | 'usdt') => void;
+  withdrawAssetOptions?: WithdrawAssetOption[];
 
   ngnMinimumUsd?: number;
   /** Remaining NGN headroom from the server. Never computed in the UI. */
@@ -257,13 +266,13 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // network falls back to '' - NOT to a chain. '' means "not
             // resolved yet" and NgnPayoutForm refuses to quote on it; any real
             // default here would be a guess at where someone's money lives.
-            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
+            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} assetOptions={withdrawAssetOptions} onAssetChange={onNgnAssetChange} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
 
             // The balance and the external-funding toggle are the SAME values
             // the naira form already receives. Reusing them rather than adding
             // parallel props keeps one source of truth for "how much can this
             // user spend" across both rails.
-            : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} spendable={ngnSpendable} externalFundingEnabled={ngnExternalFundingEnabled} fundingSource={bridgeFunding} onFundingSourceChange={setBridgeFunding} />}
+            : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} assetOptions={withdrawAssetOptions} externalFundingEnabled={ngnExternalFundingEnabled} fundingSource={bridgeFunding} onFundingSourceChange={setBridgeFunding} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} ngnFeePercent={ngnFeePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} />}
         </div>
@@ -277,7 +286,7 @@ function StepDot({ active, done, label }: { active: boolean; done: boolean; labe
   return <div className={`step-node ${active ? 'active' : ''} ${done ? 'done' : ''}`}><span>{done ? '✓' : active ? '•' : ''}</span>{label}</div>;
 }
 
-function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, hasEnabledBank, loading, canCreatePaymentActions, onSubmit, spendable, externalFundingEnabled, fundingSource, onFundingSourceChange }: {
+function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, hasEnabledBank, loading, canCreatePaymentActions, onSubmit, assetOptions = [], externalFundingEnabled, fundingSource, onFundingSourceChange }: {
   accounts: ExternalAccountRecord[];
   enabledControls: PaymentControl[];
   enabledAssets: AssetControl[];
@@ -293,7 +302,7 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
    * for either would tell the user they have no money when we simply do not
    * know yet.
    */
-  spendable?: number | null;
+  assetOptions?: WithdrawAssetOption[];
   /** Admin toggle, shared with the naira rail: may we offer manual send? */
   externalFundingEnabled?: boolean;
   /** Owned by the wizard, so the side panel can describe the same flow. */
@@ -316,15 +325,31 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
   const canFundExternally = externalFundingEnabled !== false;
   const setFundingSource = onFundingSourceChange;
   const [amount, setAmount] = useState('');
+  const firstAsset = assetOptions[0]?.asset ?? enabledAssets[0]?.asset ?? 'usdc';
+  const [selectedAsset, setSelectedAsset] = useState<'usdc' | 'usdt'>(firstAsset);
+  const assetUserChosen = useRef(false);
 
   const effectiveFunding = canFundExternally ? fundingSource : 'balance';
+  const selectableAssets: WithdrawAssetOption[] = (assetOptions.length ? assetOptions : enabledAssets.map((asset) => ({ asset: asset.asset, label: asset.label })))
+    .filter((asset) => asset.asset === 'usdc' || asset.asset === 'usdt');
+  const selectedAssetBalance = assetOptions.find((option) => option.asset === selectedAsset);
+  const selectedSpendable = selectedAssetBalance?.spendable;
+  const selectedAssetLabel = selectedAssetBalance?.label || enabledAssets.find((asset) => asset.asset === selectedAsset)?.label || selectedAsset.toUpperCase();
   const amountUsd = Number(amount);
-  const balanceKnown = effectiveFunding === 'balance' && typeof spendable === 'number';
+  const balanceKnown = effectiveFunding === 'balance' && typeof selectedSpendable === 'number';
   // Only a REAL overdraft, not an empty box. Number('') is 0, which would
   // otherwise light the warning up before the user has typed anything.
-  const shortfall = balanceKnown && amount !== '' && Number.isFinite(amountUsd) && amountUsd > spendable!
-    ? amountUsd - spendable!
+  const shortfall = balanceKnown && amount !== '' && Number.isFinite(amountUsd) && amountUsd > selectedSpendable!
+    ? amountUsd - selectedSpendable!
     : 0;
+
+  useEffect(() => {
+    if (!selectableAssets.length) return;
+    const current = selectableAssets.find((asset) => asset.asset === selectedAsset);
+    if (current && assetUserChosen.current) return;
+    if (current && selectedAsset === selectableAssets[0].asset) return;
+    setSelectedAsset(selectableAssets[0].asset);
+  }, [selectableAssets, selectedAsset]);
 
   if (!hasEnabledBank) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Add a bank first</h3><Empty>Add an enabled bank account before creating a withdrawal.</Empty></article>;
   if (!enabledAssets.length || !enabledNetworks.length) return <article className="panel form-panel trade-card"><p className="eyebrow">Step 1</p><h3>Deposits unavailable</h3><Empty>Deposits are temporarily unavailable.</Empty></article>;
@@ -342,7 +367,19 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
           <CustomSelect name="externalAccountId" defaultValue={primaryAccount?.id} options={accounts.filter((account) => enabledControls.some((control) => control.currency === account.currency)).map((account) => ({ value: account.id, label: account.bankName || 'Bank account', helper: `${account.currency.toUpperCase()} · ****${account.accountLast4 || '----'}` }))} />
         </label>
         <div className="split">
-          <label>Deposit asset<CustomSelect name="sourceCurrency" defaultValue={enabledAssets[0]?.asset || 'usdc'} options={enabledAssets.map((asset) => ({ value: asset.asset, label: asset.label }))} /></label>
+          <label>Deposit asset<CustomSelect name="sourceCurrency" value={selectedAsset} onChange={(value) => { assetUserChosen.current = true; setSelectedAsset(value as 'usdc' | 'usdt'); setAmount(''); }} options={selectableAssets.map((asset) => {
+            const disabled = effectiveFunding === 'balance' && typeof asset.spendable === 'number' && asset.spendable <= 0;
+            return {
+              value: asset.asset,
+              label: asset.label,
+              helper: asset.spendable === undefined
+                ? 'Checking balance'
+                : asset.spendable === null
+                  ? 'Balance unavailable'
+                  : `${asset.spendable.toFixed(2)} ${asset.asset.toUpperCase()} available`,
+              disabled,
+            };
+          })} /></label>
           <label>Deposit network<CustomSelect name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label>
         </div>
 
@@ -374,7 +411,7 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
         <input type="hidden" name="fundingSource" value={effectiveFunding} />
 
         {effectiveFunding === 'balance' && (
-          <label>Amount
+          <label>Amount to withdraw ({selectedAsset.toUpperCase()})
             <input
               name="sourceAmount"
               inputMode="decimal"
@@ -383,11 +420,11 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
               onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ''))}
             />
             <span className="field-hint">
-              {spendable === undefined
+              {selectedSpendable === undefined
                 ? 'Checking your balance…'
-                : spendable === null
-                  ? "We couldn't read your balance just now. You can still enter an amount."
-                  : `${spendable.toFixed(2)} available to withdraw.`}
+                : selectedSpendable === null
+                  ? `We couldn't read your ${selectedAsset.toUpperCase()} balance just now. You can still enter an amount.`
+                  : `${selectedSpendable.toFixed(2)} ${selectedAsset.toUpperCase()} available to withdraw.`}
             </span>
           </label>
         )}
@@ -407,7 +444,7 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
             applied on the review card. */}
         {effectiveFunding === 'external'
           ? <div className="warning-box compact">You will review these details before a deposit address is created. Send only the selected token on the selected network.</div>
-          : <div className="details-box compact"><span>We'll move the crypto from your Sivan balance automatically. You don't need to send anything.</span></div>}
+          : <div className="details-box compact"><span>We'll move {selectedAssetLabel} from your Sivan balance automatically. You don't need to send anything.</span></div>}
         <button className="primary-btn" disabled={loading || !canCreatePaymentActions}>{loading ? 'Preparing review...' : canCreatePaymentActions ? 'Review withdrawal' : 'Withdrawals paused'}</button>
       </form>
     </article>

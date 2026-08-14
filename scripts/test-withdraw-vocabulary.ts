@@ -97,6 +97,23 @@ check('the dashboard card names the BANK explicitly',
   /Withdraw<\/strong><small>Cash out to your bank account<\/small>/.test(app),
   'without this, a crypto user reads "Withdraw" as an on-chain send');
 
+console.log('\n── withdrawals choose the exact stablecoin ───────────────────');
+
+check('the NGN flow has an explicit asset selector',
+  payout.includes('<legend>Asset to withdraw</legend>'));
+check('the NGN quote uses the selected asset, not a hardcoded USDC',
+  payout.includes('sourceCurrency=${asset}'));
+check('switching asset invalidates the old quote',
+  payout.includes('setQuote(null);') && payout.includes('useEffect(() => {'));
+check('the app no longer hardcodes ngnAsset="usdc"',
+  !app.includes('ngnAsset="usdc"'));
+check('the app passes the selected asset into the withdraw wizard',
+  app.includes('ngnAsset={ngnAsset}') && app.includes('onNgnAssetChange'));
+check('withdraw validation checks the selected asset balance',
+  app.includes('spendableSelectedAsset') && !app.includes('spendableUsdc'));
+check('zero-balance asset choices are disabled on balance-funded withdrawals',
+  sections.includes('asset.spendable <= 0') && payout.includes('option.spendable <= 0'));
+
 console.log('\n── no user-facing "sell" language left ───────────────────────');
 
 for (const [name, src] of [

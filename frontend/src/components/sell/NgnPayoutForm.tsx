@@ -115,6 +115,12 @@ function networkLabel(network: string): string {
  * destination the user asked for.
  */
 export type NgnFundingSource = 'balance' | 'external';
+type NgnWithdrawAssetOption = {
+  asset: 'usdc' | 'usdt';
+  label: string;
+  spendable?: number | null;
+  chainUnavailable?: boolean;
+};
 
 export function NgnPayoutForm({
   userId,
@@ -123,6 +129,8 @@ export function NgnPayoutForm({
   networkOptions,
   onNetworkChange,
   asset,
+  assetOptions = [],
+  onAssetChange,
   breetMinimumUsd,
   remainingNgn,
   spendable,
@@ -150,6 +158,8 @@ export function NgnPayoutForm({
 
   onNetworkChange?: (network: string) => void;
   asset: 'usdc' | 'usdt';
+  assetOptions?: NgnWithdrawAssetOption[];
+  onAssetChange?: (asset: 'usdc' | 'usdt') => void;
 
   breetMinimumUsd?: number;
   /**
@@ -212,6 +222,14 @@ export function NgnPayoutForm({
    * 'external' selection could survive the flag being turned off mid-session.
    */
   const canFundExternally = externalFundingEnabled === true;
+  const selectableAssets = assetOptions.length ? assetOptions : [{ asset, label: asset.toUpperCase(), spendable }];
+
+  useEffect(() => {
+    // A quote is denominated in one source asset. If the user switches from
+    // USDC to USDT, the old quote is no longer the thing they are accepting.
+    setQuote(null);
+    setError('');
+  }, [asset]);
 
   /**
    * The network fee, taken from the SERVER's own table.
@@ -556,6 +574,43 @@ export function NgnPayoutForm({
             We'll show you an address to send {asset.toUpperCase()} to on {networkLabel(network)}. The naira is paid out once it arrives.
           </p>
         )}
+
+        <fieldset className="seg-fieldset">
+          <legend>Asset to withdraw</legend>
+          <div className="seg network-seg">
+            {selectableAssets.map((option) => {
+              const disabled = fundingSource === 'balance' && typeof option.spendable === 'number' && option.spendable <= 0;
+              return (
+                <label
+                  key={option.asset}
+                  className={`seg-radio ${option.asset === asset ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="sell-asset"
+                    value={option.asset}
+                    checked={option.asset === asset}
+                    disabled={disabled}
+                    onChange={() => {
+                      if (disabled || option.asset === asset) return;
+                      onAssetChange?.(option.asset);
+                    }}
+                  />
+                  <span>
+                    {option.label}
+                    <small>
+                      {option.spendable === undefined
+                        ? 'Checking balance'
+                        : option.spendable === null
+                          ? 'Balance unavailable'
+                          : `${usd(option.spendable)} ${option.asset.toUpperCase()} available`}
+                    </small>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
 
         {/* THE CHAIN, CHOSEN BY THE PERSON WHOSE COINS THEY ARE.
  

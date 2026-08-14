@@ -628,16 +628,20 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     }
 
     const label = `sivan_${quote.userId}_${assetId}`;
-    const bankId = (quote.metadata as any)?.bankId ?? env.BREET_DEFAULT_BANK_ID;
-    const accountNumber = (quote.metadata as any)?.accountNumber ?? env.BREET_DEFAULT_ACCOUNT_NUMBER;
+    const bankId = String((quote.metadata as any)?.bankId ?? '').trim();
+    const accountNumber = String((quote.metadata as any)?.accountNumber ?? '').trim();
+
+    if (!bankId || !accountNumber) {
+      throw forbidden(
+        'A verified NGN payout account is required before creating a Breet off-ramp.'
+      );
+    }
 
     const body: Record<string, unknown> = { label };
-    if (bankId && accountNumber) {
-      body.bankId = String(bankId);
-      body.accountNumber = String(accountNumber);
-      body.autoSettlement = true;
-      body.narration = 'Sivan payout';
-    }
+    body.bankId = bankId;
+    body.accountNumber = accountNumber;
+    body.autoSettlement = true;
+    body.narration = 'Sivan payout';
 
     let address: string | undefined;
     let addressId: string | undefined;
@@ -671,10 +675,17 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       addressId = existing?.id;
     }
 
-    if (!address) throw new Error('Breet: could not obtain a deposit address.');
+    if (!address || !addressId) throw new Error('Breet: could not obtain a deposit address.');
+
+    const autoSettlementProof = await this.ensureWalletAutoSettlement({
+      walletId: addressId,
+      bankId,
+      accountNumber,
+      narration: 'Sivan payout',
+    });
 
     return {
-      providerTransferId: addressId ?? `breet_addr_${crypto.randomUUID()}`,
+      providerTransferId: addressId,
       status: 'awaiting_crypto_deposit' as const,
       depositAddress: address,
       metadata: {
@@ -687,12 +698,71 @@ export class BreetNgnProvider implements NgnProviderAdapter {
         // flags the deposit and holds the funds without crediting.
         minimumDepositUsd: minimumUsd,
         label,
-        autoSettlement: Boolean(bankId && accountNumber),
+        bankId,
+        accountNumber,
+        autoSettlement: autoSettlementProof.autoSettlementEnabled,
+        autoSettlementProof,
         // Stated plainly because it changes how callers must reconcile: this
         // address is permanent, so a later deposit is a NEW transaction, not a
         // duplicate. Key on the trade id, never on the address.
         addressIsReusable: true,
       },
+    };
+  }
+
+  private async ensureWalletAutoSettlement(input: {
+    walletId: string;
+    bankId: string;
+    accountNumber: string;
+    narration: string;
+  }): Promise<{
+    walletId: string;
+    bankLinked: true;
+    autoSettlementEnabled: true;
+    bankId: string;
+    accountNumberLast4: string;
+    checkedAt: string;
+    updateBankResult: 'ok';
+    enableAutoSettlementResult: 'ok';
+  }> {
+    /**
+     * Breet addresses are permanent and reusable. A returning user's wallet may
+     * have been created before we started passing bank details, or it may have
+     * been linked to a previous payout account. Reusing the address without
+     * explicitly re-linking the bank is how crypto converts into Sivan's Breet
+     * balance while the customer never receives naira.
+     *
+     * Per Breet's docs, per-address auto-settlement is two facts:
+     *   1. the wallet has the destination bank linked;
+     *   2. auto-settlement is enabled for that wallet.
+     *
+     * Both calls must succeed before Sivan is allowed to sweep user funds into
+     * that address.
+     */
+    await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/bank`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        bankId: input.bankId,
+        accountNumber: input.accountNumber,
+        autoSettlement: true,
+        narration: input.narration,
+      }),
+    });
+
+    await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/auto-settlement`, {
+      method: 'PUT',
+      body: JSON.stringify({ autoSettlement: true }),
+    });
+
+    return {
+      walletId: input.walletId,
+      bankLinked: true,
+      autoSettlementEnabled: true,
+      bankId: input.bankId,
+      accountNumberLast4: input.accountNumber.slice(-4),
+      checkedAt: new Date().toISOString(),
+      updateBankResult: 'ok',
+      enableAutoSettlementResult: 'ok',
     };
   }
 
