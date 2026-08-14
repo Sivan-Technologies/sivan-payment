@@ -156,7 +156,7 @@ async function offramp(userId: string) {
 console.log('\n── an order with no auto-settlement proof is NOT swept ───────');
 
 proofToReturn = undefined;
-await seedUser('usr_noproof', '8102524846', '80');
+await seedUser('usr_noproof', '1111111111', '80');
 const before = transfersBroadcast;
 const blocked = await offramp('usr_noproof');
 
@@ -190,7 +190,7 @@ check('it is NOT filed as a missing user signature',
 console.log('\n── half a proof is not a proof ───────────────────────────────');
 
 proofToReturn = { walletId: 'wallet_123', bankLinked: true, autoSettlementEnabled: false };
-await seedUser('usr_halfproof', '8102524847', '80');
+await seedUser('usr_halfproof', '2222222222', '80');
 const beforeHalf = transfersBroadcast;
 const half = await offramp('usr_halfproof');
 
@@ -206,7 +206,7 @@ check('each refusal is logged once, not once per rung',
 console.log('\n── a proven wallet sweeps normally ───────────────────────────');
 
 proofToReturn = { walletId: 'wallet_123', bankLinked: true, autoSettlementEnabled: true, checkedAt: now() };
-await seedUser('usr_proven', '8102524848', '80');
+await seedUser('usr_proven', '3333333333', '80');
 const beforeOk = transfersBroadcast;
 const swept = await offramp('usr_proven');
 

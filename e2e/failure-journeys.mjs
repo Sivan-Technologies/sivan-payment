@@ -166,7 +166,7 @@ async function main() {
     {
       const acct = page.locator('input[inputmode="numeric"]').first();
       await acct.fill('');
-      await acct.fill('8102524846');
+      await acct.fill('1111111111');
       await page.waitForTimeout(9000);
       await shot('03-resolved');
 
@@ -291,7 +291,7 @@ async function main() {
         if (await bank.isVisible().catch(() => false)) {
           await bank.click();
           await page.waitForTimeout(1500);
-          await page.locator('input[inputmode="numeric"]').first().fill('8102524846');
+          await page.locator('input[inputmode="numeric"]').first().fill('1111111111');
           await page.waitForTimeout(9000);
           await shot('07-network-drop');
 

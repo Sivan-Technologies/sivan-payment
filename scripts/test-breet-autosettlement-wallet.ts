@@ -108,7 +108,7 @@ function quote() {
       network: 'solana',
       estimatedGasUsd: 0.01,
       bankId: '25',
-      accountNumber: '8102524846',
+      accountNumber: '1111111111',
       bankName: 'OPay - Paycom',
       accountName: 'Samuel',
     },
@@ -131,7 +131,7 @@ console.log('\nNEW BREET WALLET IS EXPLICITLY MADE AUTO-SETTLEMENT SAFE');
     seen.some((item) => item.method === 'POST'
       && item.path.endsWith('/generate-address')
       && item.body?.bankId === '25'
-      && item.body?.accountNumber === '8102524846'
+      && item.body?.accountNumber === '1111111111'
       && item.body?.autoSettlement === true),
     JSON.stringify(seen));
   check('the wallet bank is explicitly updated after creation',
@@ -139,7 +139,7 @@ console.log('\nNEW BREET WALLET IS EXPLICITLY MADE AUTO-SETTLEMENT SAFE');
       && item.path === '/v1/trades/wallets/wallet_123/bank'
       && item.body?.id === '25'
       && item.body?.bankId === undefined
-      && item.body?.accountNumber === '8102524846'),
+      && item.body?.accountNumber === '1111111111'),
     JSON.stringify(seen));
   check('auto-settlement is explicitly enabled in the bank update',
     seen.some((item) => item.method === 'PUT'
@@ -167,7 +167,7 @@ console.log('\nEXISTING BREET WALLET IS RE-LINKED BEFORE REUSE');
       && item.path === '/v1/trades/wallets/wallet_123/bank'
       && item.body?.id === '25'
       && item.body?.bankId === undefined
-      && item.body?.accountNumber === '8102524846'),
+      && item.body?.accountNumber === '1111111111'),
     JSON.stringify(seen));
   check('the existing wallet auto-settlement is enabled in the bank update',
     seen.some((item) => item.method === 'PUT'

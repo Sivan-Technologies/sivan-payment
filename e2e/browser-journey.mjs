@@ -230,7 +230,7 @@ async function main() {
         await bank.click();
         await page.waitForTimeout(2000);
         const acct = page.locator('input[inputmode="numeric"]').first();
-        await acct.fill('8102524846');
+        await acct.fill('1111111111');
         // Resolution is a paid provider call; it fires on the 10th digit.
         await page.waitForTimeout(9000);
         await shot('08-resolved');

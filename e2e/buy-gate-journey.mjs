@@ -94,7 +94,7 @@ async function main() {
     const ng = await makeUser('Samuel Udochukwu', 'NG');
     const saved = await api('/api/ngn/payout-accounts', {
       method: 'POST', headers: { Authorization: `Bearer ${ng.token}` },
-      body: JSON.stringify({ userId: ng.user.id, bankId: '26', accountNumber: '8102524846' }),
+      body: JSON.stringify({ userId: ng.user.id, bankId: '26', accountNumber: '1111111111' }),
     });
     check('the bank account verifies', saved.body?.status === 'verified', String(saved.body?.status));
 

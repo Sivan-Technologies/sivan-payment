@@ -340,11 +340,11 @@ const envSchema = z.object({
    *
    * The receipts, taken live against Breet's sandbox:
    *
-   *   PalmPay 8102524846 -> Samuel Udochukwu
+   *   PalmPay 1111111111 -> Samuel Udochukwu
    *   PalmPay 0000000000 -> Samuel Udochukwu
    *   PalmPay 1234567890 -> Samuel Udochukwu
    *   PalmPay 9999999999 -> Samuel Udochukwu
-   *   Access  8102524846 -> Samuel Udochukwu   (any BANK id, too)
+   *   Access  1111111111 -> Samuel Udochukwu   (any BANK id, too)
    *
    * Always the API key owner, whatever you ask for. That is why the gate
    * exists and why this override must never reach anywhere real.
