@@ -304,7 +304,11 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
       <div className="transaction-explanation-box">
         {waiting
           ? `Send ${transaction.asset} to the address below. Your bank is paid automatically once it arrives.`
-          : `We are processing this ${transaction.direction === 'sell' ? 'withdrawal' : 'buy'}. No action is needed from you.`}
+          : transaction.status === 'settlement_processing'
+            ? 'Your crypto has been received and converted. We are still waiting for bank payout confirmation from the provider.'
+            : transaction.status === 'bank_processing'
+              ? 'Your bank payout is processing. We will mark this complete after the provider confirms settlement.'
+              : `We are processing this ${transaction.direction === 'sell' ? 'withdrawal' : 'buy'}. No action is needed from you.`}
       </div>
       <div className="timeline-meta-grid">
         <Kv label="Request ID" value={transaction.id} />
@@ -447,11 +451,15 @@ function transactionExplanation(type: string, status: string) {
   const withdrawal: Record<string, string> = {
     pending_deposit: 'We are waiting for your USDC/USDT to arrive on the selected network.',
     deposit_received: 'Your crypto has arrived. We are preparing your bank payout.',
+    blockchain_confirmed: 'Your crypto has arrived on-chain. We are waiting for the provider to confirm conversion.',
     converting: 'Your crypto is being converted into your selected payout currency.',
+    settlement_processing: 'Your crypto has been converted. Bank payout confirmation is still pending.',
+    bank_processing: 'Your bank payout is processing. We will mark this complete after provider settlement proof arrives.',
     payout_processing: 'We are waiting for the banking partner to confirm your transfer.',
     completed: 'Your bank payout is complete.',
     failed: 'This withdrawal could not be completed. Contact support with your Request ID.',
-    requires_action: 'This withdrawal needs additional review. Support may contact you for next steps.'
+    requires_action: 'This withdrawal needs additional review. Support may contact you for next steps.',
+    requires_review: 'This withdrawal needs support review before it can be marked complete.'
   };
   const onramp: Record<string, string> = {
     awaiting_payment: 'We are waiting for your bank payment using the exact reference shown.',

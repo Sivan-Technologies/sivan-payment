@@ -50,8 +50,8 @@ export function buildTimeline(transfer: NgnTransferRecord): NgnTimelineStep[] {
       ['awaiting_crypto_deposit', 'Waiting for crypto deposit', 'Send supported USDC/USDT to the generated address.'],
       ['blockchain_confirmed', 'Blockchain confirmed', 'The crypto deposit has been confirmed.'],
       ['quote_accepted', 'Quote accepted', 'The NGN payout quote has been accepted.'],
-      ['settlement_processing', 'Settlement processing', 'The provider is settling NGN.'],
-      ['bank_processing', 'Bank transfer', 'The bank payout is processing.'],
+      ['settlement_processing', 'Crypto converted', 'Breet has converted the crypto. Bank payout proof is still pending.'],
+      ['bank_processing', 'Bank payout processing', 'The bank payout is processing.'],
       ['completed', 'Completed', 'The NGN off-ramp is complete.']
     ];
   const order = keys.map(([key]) => key);
@@ -302,13 +302,15 @@ function scheduleSweep(transfer: NgnTransferRecord): void {
           const submitted = isRailSweepSubmitted(swept);
           if (submitted) {
             current.status = 'settlement_processing';
+          } else if (isRailSweepBlocked(swept)) {
+            current.status = 'requires_review';
           }
           current.metadata = { ...(current.metadata as Record<string, unknown>), sweep: swept };
           current.timeline = buildTimeline(current);
           current.updatedAt = nowIso();
           await db.upsertNgnTransferRecord(current);
 
-          if (!submitted) {
+          if (!submitted && !isRailSweepBlocked(swept)) {
             await createAuditLog({
               actorType: 'system', actorId: 'ngn_sweep', action: 'ngn.sweep_requires_user_signature',
               resourceType: 'payments_ngn_transfer', resourceId: transfer.id, severity: 'warning',
@@ -337,6 +339,10 @@ function isRailSweepSubmitted(sweep: Record<string, unknown>): boolean {
     || status === 'confirmed'
     || Boolean(sweep.txHash)
     || Boolean(sweep.userOperationHash);
+}
+
+function isRailSweepBlocked(sweep: Record<string, unknown>): boolean {
+  return String(sweep.status ?? '').toLowerCase() === 'blocked_auto_settlement_unverified';
 }
 
 /**
@@ -385,6 +391,34 @@ async function recordSweepSkipped(
 async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, unknown> | undefined> {
   const network = String((transfer.metadata as any)?.quoteMetadata?.network ?? '').toLowerCase();
   if (!network) return recordSweepSkipped(transfer, 'no_network');
+
+  if (transfer.provider === 'breet' && transfer.direction === 'offramp') {
+    const proof = (transfer.metadata as any)?.transferMetadata?.autoSettlementProof;
+    if (!proof?.bankLinked || !proof?.autoSettlementEnabled) {
+      await createAuditLog({
+        actorType: 'system',
+        actorId: 'ngn_sweep',
+        action: 'ngn.sweep_blocked',
+        resourceType: 'payments_ngn_transfer',
+        resourceId: transfer.id,
+        severity: 'error',
+        metadata: {
+          reason: 'auto_settlement_unverified',
+          provider: transfer.provider,
+          depositAddress: transfer.depositAddress,
+          providerTransferId: transfer.providerTransferId,
+          autoSettlementProof: proof ?? null,
+        },
+      });
+      return {
+        status: 'blocked_auto_settlement_unverified',
+        reason: 'Breet bank auto-settlement was not proven, so Sivan did not sweep user funds.',
+        providerTransferId: transfer.providerTransferId,
+        depositAddress: transfer.depositAddress,
+        checkedAt: nowIso(),
+      };
+    }
+  }
 
   /**
    * Same wallet-selection rule as everywhere else - but asked by FAMILY.

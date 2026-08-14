@@ -144,6 +144,17 @@ function findTransferForEvent(
   );
   if (byId) return byId;
 
+  const txHash = String(payload?.txHash ?? payload?.hash ?? '').toLowerCase();
+  if (txHash) {
+    const byTxHash = transfers.find((item) => {
+      const m = meta(item);
+      return String(item.destinationTxHash ?? '').toLowerCase() === txHash
+        || String(m.depositTxHash ?? '').toLowerCase() === txHash
+        || String(m.breetDepositTxHash ?? '').toLowerCase() === txHash;
+    });
+    if (byTxHash) return byTxHash;
+  }
+
   // A withdrawal points at its trade; the trade was recorded when its own
   // event arrived.
   const tradeRef = payload?.trade ? String(payload.trade) : '';
@@ -161,11 +172,11 @@ function findTransferForEvent(
     payload?.destinationAddress ?? payload?.address ?? payload?.walletAddress ?? ''
   ).toLowerCase();
   if (address) {
-    const byAddress = transfers.find(
+    const byAddress = bestBreetAddressMatch(transfers.filter(
       (item) =>
         String(item.depositAddress ?? '').toLowerCase() === address ||
         String(transferMeta(item).depositAddress ?? '').toLowerCase() === address
-    );
+    ), payload);
     if (byAddress) return byAddress;
   }
 
@@ -178,6 +189,43 @@ function findTransferForEvent(
   }
 
   return undefined;
+}
+
+function bestBreetAddressMatch(
+  candidates: NgnTransferRecord[],
+  payload: any
+): NgnTransferRecord | undefined {
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0];
+
+  const eventTime = Date.parse(String(payload?.createdAt ?? payload?.updatedAt ?? ''));
+  const eventAmount = Number(payload?.cryptoAmount ?? payload?.amountReceived ?? payload?.amountInUSD ?? payload?.amount);
+  const eventAsset = String(payload?.asset ?? '').toLowerCase();
+
+  const open = candidates.filter((item) => !['completed', 'failed', 'expired', 'cancelled'].includes(item.status));
+  const pool = open.length ? open : candidates;
+
+  /**
+   * Breet deposit addresses are reusable. Address match alone is therefore
+   * not a transaction id; it is a user+asset funding rail. Pick the transfer
+   * that best fits this specific trade, otherwise a second withdrawal to the
+   * same address can be advanced by an old trade webhook.
+   */
+  const scored = pool.map((item) => {
+    const created = Date.parse(item.createdAt);
+    const amount = Number(item.sourceAmount);
+    const transferAsset = String(item.sourceCurrency ?? '').toLowerCase();
+    let score = 0;
+    if (eventAsset && transferAsset && eventAsset.includes(transferAsset)) score += 4;
+    if (Number.isFinite(eventAmount) && Number.isFinite(amount) && Math.abs(eventAmount - amount) < 0.000001) score += 8;
+    if (Number.isFinite(eventTime) && Number.isFinite(created) && created <= eventTime) score += 2;
+    return { item, score, created };
+  }).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.created - a.created;
+  });
+
+  return scored[0]?.item;
 }
 
 /**
@@ -235,6 +283,10 @@ async function applySettlementToTransfer(
     ...transfer,
     status: next,
     completedAt: next === 'completed' ? new Date().toISOString() : transfer.completedAt,
+    destinationTxHash: payload?.txHash ? String(payload.txHash) : transfer.destinationTxHash,
+    settlementReference: next === 'completed'
+      ? String(payload?.reference ?? payload?.settlementReference ?? payload?.id ?? transfer.settlementReference ?? '')
+      : transfer.settlementReference,
     metadata: {
       ...(typeof transfer.metadata === 'object' && transfer.metadata ? transfer.metadata : {}),
       ...eventIds,
@@ -256,12 +308,43 @@ async function applySettlementToTransfer(
        * was blind to it.
        */
       ...keepKnown(settledFigures(event.eventType, payload)),
+      settlementProof: settlementProof(event.eventType, payload, next),
     },
     updatedAt: new Date().toISOString(),
   };
 
   await db.upsertNgnTransferRecord(updated);
   return updated;
+}
+
+function settlementProof(
+  eventType: string,
+  payload: any,
+  next: NgnTransferRecord['status']
+): Record<string, unknown> {
+  const event = String(eventType ?? '').toLowerCase();
+  if (event.startsWith('withdrawal') && next === 'completed') {
+    return {
+      kind: 'bank_payout_completed',
+      withdrawalId: payload?.id,
+      tradeId: payload?.trade,
+      reference: payload?.reference ?? payload?.settlementReference,
+      amount: payload?.payoutAmount ?? payload?.amount ?? payload?.amountInNGN,
+      completedAt: payload?.updatedAt ?? new Date().toISOString(),
+    };
+  }
+
+  if (event.startsWith('trade') && next === 'settlement_processing') {
+    return {
+      kind: Number(payload?.amountSettled ?? 0) > 0 ? 'trade_converted_settlement_reported' : 'trade_converted_no_bank_payout_yet',
+      tradeId: payload?.id,
+      txHash: payload?.txHash,
+      amountSettled: payload?.amountSettled,
+      completedAt: payload?.updatedAt ?? new Date().toISOString(),
+    };
+  }
+
+  return {};
 }
 
 /**
@@ -391,6 +474,7 @@ function learnBreetIds(eventType: string, payload: any): Record<string, unknown>
   if (payload?.id && event.startsWith('withdrawal')) learned.breetWithdrawalId = String(payload.id);
   if (payload?.trade) learned.breetTradeId = String(payload.trade);
   if (payload?.txHash) learned.depositTxHash = String(payload.txHash);
+  if (payload?.destinationAddress) learned.breetDepositAddress = String(payload.destinationAddress);
   return learned;
 }
 
