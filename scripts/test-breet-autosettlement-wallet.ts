@@ -71,6 +71,9 @@ function installBreetStub(mode: 'new-wallet' | 'existing-wallet' | 'auto-settlem
       if (body?.bankId !== undefined) {
         return json(422, { success: false, message: 'validation errors', errors: { bankId: ['unknown fields detected'], id: ['required'] } });
       }
+      if (mode === 'auto-settlement-fails') {
+        return json(422, { success: false, message: 'wallet does not have a valid bank', errors: { id: ['bank cannot be linked'] } });
+      }
       return json(200, { success: true, data: { ...wallet, bankId: body?.id, accountNumber: body?.accountNumber } });
     }
 
@@ -138,10 +141,14 @@ console.log('\nNEW BREET WALLET IS EXPLICITLY MADE AUTO-SETTLEMENT SAFE');
       && item.body?.bankId === undefined
       && item.body?.accountNumber === '8102524846'),
     JSON.stringify(seen));
-  check('auto-settlement is explicitly enabled after creation',
+  check('auto-settlement is explicitly enabled in the bank update',
     seen.some((item) => item.method === 'PUT'
-      && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'
+      && item.path === '/v1/trades/wallets/wallet_123/bank'
       && item.body?.autoSettlement === true),
+    JSON.stringify(seen));
+  check('no redundant auto-settlement call is made after bank update',
+    !seen.some((item) => item.method === 'PUT'
+      && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'),
     JSON.stringify(seen));
   check('the metadata stores positive proof for the sweep guard',
     meta.autoSettlementProof?.bankLinked === true && meta.autoSettlementProof?.autoSettlementEnabled === true,
@@ -162,8 +169,14 @@ console.log('\nEXISTING BREET WALLET IS RE-LINKED BEFORE REUSE');
       && item.body?.bankId === undefined
       && item.body?.accountNumber === '8102524846'),
     JSON.stringify(seen));
-  check('the existing wallet auto-settlement is enabled',
-    seen.some((item) => item.method === 'PUT' && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'),
+  check('the existing wallet auto-settlement is enabled in the bank update',
+    seen.some((item) => item.method === 'PUT'
+      && item.path === '/v1/trades/wallets/wallet_123/bank'
+      && item.body?.autoSettlement === true),
+    JSON.stringify(seen));
+  check('the existing wallet does not need a second auto-settlement call',
+    !seen.some((item) => item.method === 'PUT'
+      && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'),
     JSON.stringify(seen));
   check('the reused wallet still carries sweep proof',
     meta.autoSettlementProof?.bankLinked === true && meta.autoSettlementProof?.autoSettlementEnabled === true,

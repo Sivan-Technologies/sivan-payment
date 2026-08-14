@@ -739,7 +739,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     accountNumberLast4: string;
     checkedAt: string;
     updateBankResult: 'ok';
-    enableAutoSettlementResult: 'ok';
+    enableAutoSettlementResult: 'included_in_bank_update';
   }> {
     /**
      * Breet addresses are permanent and reusable. A returning user's wallet may
@@ -748,26 +748,26 @@ export class BreetNgnProvider implements NgnProviderAdapter {
      * explicitly re-linking the bank is how crypto converts into Sivan's Breet
      * balance while the customer never receives naira.
      *
-     * Per Breet's docs, per-address auto-settlement is two facts:
-     *   1. the wallet has the destination bank linked;
-     *   2. auto-settlement is enabled for that wallet.
+     * Per Breet's docs, PUT /trades/wallets/{id}/bank accepts both the bank
+     * details and `autoSettlement: true`. That one successful provider write
+     * proves both facts we need: the wallet is linked to this bank, and
+     * incoming crypto will be auto-settled to it.
      *
-     * Both calls must succeed before Sivan is allowed to sweep user funds into
-     * that address.
+     * We used to make a second PUT /auto-settlement call immediately after
+     * this. Live Breet sometimes takes >8s on the bank-link write; doing two
+     * sequential provider writes pushed order creation into a timeout even
+     * though the first call is sufficient. Fewer provider writes is also safer:
+     * less time spent between the user's confirmation and the stored order.
      */
     await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/bank`, {
       method: 'PUT',
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         id: input.bankId,
         accountNumber: input.accountNumber,
         autoSettlement: true,
         narration: input.narration,
       }),
-    });
-
-    await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/auto-settlement`, {
-      method: 'PUT',
-      body: JSON.stringify({ autoSettlement: true }),
     });
 
     return {
@@ -778,7 +778,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       accountNumberLast4: input.accountNumber.slice(-4),
       checkedAt: new Date().toISOString(),
       updateBankResult: 'ok',
-      enableAutoSettlementResult: 'ok',
+      enableAutoSettlementResult: 'included_in_bank_update',
     };
   }
 
