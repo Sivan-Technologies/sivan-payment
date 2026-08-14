@@ -171,6 +171,16 @@ check('the sweep reaches the wallet provider instead of dying on the address',
 check('and the sweep is not recorded as skipped',
   !String((settled.metadata as any)?.sweep?.status ?? '').startsWith('skipped'),
   JSON.stringify((settled.metadata as any)?.sweep ?? null));
+check('the sweep records Sivan wallet-fee mode',
+  (settled.metadata as any)?.sweep?.revenueMode === 'sivan_fee_wallet',
+  JSON.stringify((settled.metadata as any)?.sweep ?? null));
+check('the sweep sends Breet the net amount after Sivan fee',
+  Number((settled.metadata as any)?.sweep?.amountSentToRail) > 0 &&
+  Number((settled.metadata as any)?.sweep?.amountSentToRail) < Number(settled.sourceAmount),
+  JSON.stringify((settled.metadata as any)?.sweep ?? null));
+check('the sweep carries the Sivan fee amount separately',
+  Number((settled.metadata as any)?.sweep?.sivanFeeAmount) > 0,
+  JSON.stringify((settled.metadata as any)?.sweep ?? null));
 
 const failures = await db.listAuditLogsByActions(['ngn.sweep_failed']);
 check('with no sweep failure logged', failures.length === 0,

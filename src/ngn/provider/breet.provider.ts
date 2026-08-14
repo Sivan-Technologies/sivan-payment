@@ -102,7 +102,14 @@ async function breetRequest<T>(path: string, init: RequestInit = {}): Promise<T>
   // Breet signals failure in the envelope as well as the status, so both are
   // checked. A 200 carrying success:false is still a failure.
   if (!response.ok || body?.success === false) {
-    const message = body?.message || `Breet API error ${response.status}`;
+    const details =
+      body?.errors ??
+      body?.error ??
+      body?.summary ??
+      body?.data?.errors ??
+      body?.data?.error;
+    const detailText = details ? `: ${JSON.stringify(details)}` : '';
+    const message = `${body?.message || `Breet API error ${response.status}`}${detailText}`;
     throw new Error(`Breet: ${message}`);
   }
 
@@ -390,16 +397,11 @@ export class BreetNgnProvider implements NgnProviderAdapter {
   /**
    * Breet's own markup, set per integration (dashboard: Business → Markup).
    *
-   * Sivan does NOT use it, deliberately. Breet's markup is applied inside their
-   * conversion, so it arrives blended into the rate: Sivan could not then tell
-   * a provider price change from its own revenue, and a support agent could not
-   * break a fee down for a user. Sivan's margin is added in ngn-margin.ts
-   * instead, where cost and revenue stay separate line items on the quote.
-   *
-   * Exposed read-only so an operator can SEE it. If it is ever set to a
-   * non-zero value in the dashboard, users are being charged twice - once by
-   * Breet's markup and once by Sivan's margin - and nothing in Sivan's numbers
-   * would reveal it.
+   * In `breet_markup` revenue mode Sivan reads this into the quote so the user
+   * sees the full commercial fee: Breet's fixed provider fee plus Sivan's Breet
+   * markup. In `sivan_fee_wallet` mode a non-zero Breet markup blocks quoting,
+   * because that would charge the user both through Breet and through Sivan's
+   * on-chain fee wallet.
    */
   async getBreetMarkupPercent(): Promise<number> {
     try {
@@ -409,6 +411,20 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     } catch {
       return 0;
     }
+  }
+
+  async updateBreetMarkupPercent(percent: number): Promise<{ markupPercent: number; raw?: unknown }> {
+    if (!Number.isFinite(percent) || percent < 0 || percent > 10) {
+      throw forbidden('Breet markup must be between 0 and 10%.');
+    }
+    const result = await breetRequest<any>('/users/markup-percent', {
+      method: 'PUT',
+      body: JSON.stringify({
+        markupPercent: percent,
+      }),
+    });
+    const markup = Number(result?.data?.markupPercent ?? result?.markupPercent ?? result?.markup ?? percent);
+    return { markupPercent: Number.isFinite(markup) ? markup : percent, raw: result };
   }
 
   /**
@@ -723,7 +739,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     accountNumberLast4: string;
     checkedAt: string;
     updateBankResult: 'ok';
-    enableAutoSettlementResult: 'ok';
+    enableAutoSettlementResult: 'included_in_bank_update';
   }> {
     /**
      * Breet addresses are permanent and reusable. A returning user's wallet may
@@ -732,26 +748,26 @@ export class BreetNgnProvider implements NgnProviderAdapter {
      * explicitly re-linking the bank is how crypto converts into Sivan's Breet
      * balance while the customer never receives naira.
      *
-     * Per Breet's docs, per-address auto-settlement is two facts:
-     *   1. the wallet has the destination bank linked;
-     *   2. auto-settlement is enabled for that wallet.
+     * Per Breet's docs, PUT /trades/wallets/{id}/bank accepts both the bank
+     * details and `autoSettlement: true`. That one successful provider write
+     * proves both facts we need: the wallet is linked to this bank, and
+     * incoming crypto will be auto-settled to it.
      *
-     * Both calls must succeed before Sivan is allowed to sweep user funds into
-     * that address.
+     * We used to make a second PUT /auto-settlement call immediately after
+     * this. Live Breet sometimes takes >8s on the bank-link write; doing two
+     * sequential provider writes pushed order creation into a timeout even
+     * though the first call is sufficient. Fewer provider writes is also safer:
+     * less time spent between the user's confirmation and the stored order.
      */
     await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/bank`, {
       method: 'PUT',
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
-        bankId: input.bankId,
+        id: input.bankId,
         accountNumber: input.accountNumber,
         autoSettlement: true,
         narration: input.narration,
       }),
-    });
-
-    await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/auto-settlement`, {
-      method: 'PUT',
-      body: JSON.stringify({ autoSettlement: true }),
     });
 
     return {
@@ -762,7 +778,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       accountNumberLast4: input.accountNumber.slice(-4),
       checkedAt: new Date().toISOString(),
       updateBankResult: 'ok',
-      enableAutoSettlementResult: 'ok',
+      enableAutoSettlementResult: 'included_in_bank_update',
     };
   }
 

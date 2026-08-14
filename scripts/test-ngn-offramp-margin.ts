@@ -31,19 +31,19 @@ import { db } from '../src/database/json-database.js';
 
 const now = new Date().toISOString();
 const app = await buildApp();
-await app.listen({ port: 0, host: '127.0.0.1' });
-const base = `http://127.0.0.1:${(app.server.address() as any).port}`;
 
 async function req(path: string, options: any = {}, expected = 200) {
-  const response = await fetch(`${base}${path}`, {
-    ...options,
+  const response = await app.inject({
+    method: options.method || 'GET',
+    url: path,
+    payload: options.body,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
-  const json = await response.json().catch(() => ({}));
+  const json = JSON.parse(response.payload || '{}');
   assert.equal(
-    response.status,
+    response.statusCode,
     expected,
-    `${path} expected ${expected}, got ${response.status}: ${JSON.stringify(json)}`
+    `${path} expected ${expected}, got ${response.statusCode}: ${JSON.stringify(json)}`
   );
   return json.data ?? json;
 }
@@ -94,20 +94,24 @@ const fees = quote.metadata.fees;
 const grossNgn = source * rate;
 
 assert.ok(rate > 0, `quote must carry a rate, got ${quote.rate}`);
+assert.equal(fees.revenueMode, 'sivan_fee_wallet', `expected wallet-fee revenue mode, got ${fees.revenueMode}`);
 
 /**
- * 1. THE MARGIN IS NAIRA.
+ * 1. THE MARGIN HAS EXPLICIT UNITS.
  *
  * Derived from the percentage the quote says it applied rather than hardcoded,
  * so the test still holds when an admin changes the off-ramp rate. Before the
- * fix sivanMargin was the dollar figure - 1895x smaller - and this failed.
+ * fix the API had one opaque `totalFee` and the UI treated a mixed number as
+ * USDC, multiplying a naira-scale figure by the rate and showing a giant fee.
  */
-const appliedPercent = Number(fees.effectivePercent) - (Number(fees.providerFee) / grossNgn) * 100;
-const expectedMarginNgn = (grossNgn * appliedPercent) / 100;
+const expectedMarginNgn = grossNgn * 0.01;
 assert.ok(
-  Math.abs(Number(fees.sivanMargin) - expectedMarginNgn) < 1,
-  `sivanMargin should be naira (~${expectedMarginNgn.toFixed(2)}), got ${fees.sivanMargin}. ` +
-  `A value near ${(expectedMarginNgn / rate).toFixed(2)} means it is still denominated in USD.`
+  Math.abs(Number(fees.sivanMarginNgn) - expectedMarginNgn) < 1,
+  `sivanMarginNgn should be naira (~${expectedMarginNgn.toFixed(2)}), got ${fees.sivanMarginNgn}.`
+);
+assert.ok(
+  Math.abs(Number(fees.sivanMarginAsset) - (Number(fees.sivanMarginNgn) / rate)) < 0.000001,
+  `sivanMarginAsset ${fees.sivanMarginAsset} should equal sivanMarginNgn / rate`
 );
 
 /**
@@ -124,9 +128,9 @@ assert.ok(
  */
 const shortfall = grossNgn - Number(quote.destinationAmount);
 assert.ok(
-  shortfall >= Number(fees.sivanMargin) - 1,
+  shortfall >= Number(fees.sivanMarginNgn) - 1,
   `payout is short of gross by only ${shortfall.toFixed(2)} NGN, which is less than the ` +
-  `${fees.sivanMargin} NGN margin - the margin is not reaching the destination`
+  `${fees.sivanMarginNgn} NGN margin - the margin is not reaching the destination`
 );
 assert.ok(
   shortfall > 1,
@@ -135,29 +139,7 @@ assert.ok(
 );
 
 /**
- * THE MOCK AND BREET DO NOT AGREE ON WHAT feeAmount MEANS.
- *
- * Breet returns the off-ramp fee in NAIRA - the live sandbox quote came back
- * 485.12, which is 0.5% of the 97,024 naira gross. The mock returns it in
- * CRYPTO: `source * 0.005`, or 0.256 USDC.
- *
- * The mock also contradicts itself. It reports a 0.5% fee while its
- * destinationAmount deducts 1%:
- *
- *     feeAmount        = source * 0.005          // 0.256 USDC
- *     destinationAmount = (source * rate) - (source * rate * 0.01)
- *
- * So under the mock, totalFee still adds naira to dollars, and a quote's stated
- * fee does not match the payout it produces. That is not what this test is
- * guarding and it is not a production path, but it is worth stating plainly:
- * the double whose job is to stand in for Breet models the fee differently from
- * Breet in both CURRENCY and RATE, which is precisely what let a currency bug
- * live in the naira path without a single test going red.
- */
-
-
-/**
- * 3. totalFee AND effectivePercent ARE COHERENT.
+ * 3. totalFee AND effectivePercent ARE COHERENT IN BOTH UNITS.
  *
  * totalFee summed a naira provider fee with a dollar margin, and
  * effectivePercent divided that mixed total by a DOLLAR gross - which is how it
@@ -165,21 +147,47 @@ assert.ok(
  */
 assert.ok(
   Math.abs(Number(fees.totalFee) - (Number(fees.providerFee) + Number(fees.sivanMargin))) < 0.02,
-  `totalFee ${fees.totalFee} should be providerFee + sivanMargin in one currency`
+  `totalFee ${fees.totalFee} should be providerFee + sivanMargin in the source asset`
+);
+assert.ok(
+  Math.abs(Number(fees.totalFeeNgn) - (Number(fees.providerFeeNgn) + Number(fees.sivanMarginNgn))) < 0.02,
+  `totalFeeNgn ${fees.totalFeeNgn} should be providerFeeNgn + sivanMarginNgn`
+);
+assert.ok(
+  Math.abs(Number(fees.totalFeeAsset) - (Number(fees.providerFeeAsset) + Number(fees.sivanMarginAsset))) < 0.000001,
+  `totalFeeAsset ${fees.totalFeeAsset} should be providerFeeAsset + sivanMarginAsset`
+);
+assert.ok(
+  Math.abs(Number(fees.effectivePercent) - ((Number(fees.totalFeeNgn) / grossNgn) * 100)) < 0.0001,
+  `effectivePercent ${fees.effectivePercent} should equal totalFeeNgn / grossNgn`
+);
+assert.ok(
+  Math.abs(Number(quote.feeAmount) - Number(fees.totalFeeAsset)) < 0.000001,
+  `quote.feeAmount ${quote.feeAmount} should be the source-asset total ${fees.totalFeeAsset}`
 );
 assert.ok(
   Number(fees.effectivePercent) > 0 && Number(fees.effectivePercent) < 20,
   `effectivePercent ${fees.effectivePercent} is not a believable fee percentage`
 );
 
+await db.mutate((data) => {
+  data.ngnControls[0].offrampRevenueMode = 'disabled';
+});
+const noRevenueQuote = await req(
+  '/api/ngn/quote?userId=usr_margin&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=51.20&network=solana',
+  { headers: authHeaders }
+);
+assert.equal(noRevenueQuote.metadata.fees.revenueMode, 'disabled');
+assert.equal(Number(noRevenueQuote.metadata.fees.sivanMarginAsset), 0);
+assert.equal(Number(noRevenueQuote.metadata.fees.sivanMarginNgn), 0);
+
 console.log('ngn off-ramp margin:');
 console.log(`  gross            ${grossNgn.toFixed(2)} NGN  (${source} @ ${rate})`);
-// No unit on the provider fee on purpose - the mock reports it in crypto and
-// Breet in naira, so labelling it here would print something untrue.
-console.log(`  provider fee     ${Number(fees.providerFee).toFixed(2)} (provider's own units)`);
-console.log(`  sivan margin     ${Number(fees.sivanMargin).toFixed(2)} NGN  (was ${(Number(fees.sivanMargin) / rate).toFixed(4)} before the fix)`);
+console.log(`  provider fee     ${Number(fees.providerFeeNgn).toFixed(2)} NGN / ${Number(fees.providerFeeAsset).toFixed(6)} asset`);
+console.log(`  sivan margin     ${Number(fees.sivanMarginNgn).toFixed(2)} NGN / ${Number(fees.sivanMarginAsset).toFixed(6)} asset`);
+console.log(`  total fee        ${Number(fees.totalFeeNgn).toFixed(2)} NGN / ${Number(fees.totalFeeAsset).toFixed(6)} asset`);
 console.log(`  user receives    ${Number(quote.destinationAmount).toFixed(2)} NGN`);
 console.log(`  effective        ${fees.effectivePercent}%`);
-console.log('PASS test:ngn-offramp-margin (5 assertions)');
+console.log('PASS test:ngn-offramp-margin (9 assertions)');
 
 await app.close();

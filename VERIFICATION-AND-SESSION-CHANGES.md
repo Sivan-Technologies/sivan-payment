@@ -46,14 +46,14 @@ production.
 
 **This flag is genuinely dangerous** and is fenced accordingly. Breet's sandbox
 resolves *any* ten digits to the API key owner — re-verified live: PalmPay
-`0000000000`, `1234567890`, `9999999999` and Access `8102524846` all return
+`0000000000`, `1234567890`, `9999999999` and Access `1111111111` all return
 "Samuel Udochukwu". So the service **refuses to boot** if it is ever set against
 a live bank resolver or a production deployment.
 
 ### Verified live
 
 ```
-resolve PalmPay 8102524846        -> trustworthy: true
+resolve PalmPay 1111111111        -> trustworthy: true
 "Samuel Udochukwu" exact match    -> status: verified, level 1   ← no admin wait
 "Samuel Benjamin Udochukwu"       -> status: verified            ← extra middle name
 "Chinedu Okafor" vs that account  -> status: rejected, level 0   ← still refused

@@ -279,6 +279,16 @@ const envSchema = z.object({
   SIVAN_NGN_ONRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_NGN_OFFRAMP_FEE_PERCENT: z.coerce.number().min(0).max(100).default(0),
   SIVAN_NGN_MINIMUM_FEE_NGN: z.coerce.number().min(0).default(0),
+  /**
+   * How Sivan earns revenue on NGN off-ramp.
+   *
+   * sivan_fee_wallet: visible Sivan margin, collected on-chain into Sivan's
+   * fee wallet during the Privy sweep.
+   * breet_markup: Breet applies markup inside its rate/settlement; Sivan must
+   * not also collect an on-chain fee.
+   * disabled: no Sivan revenue, only provider cost.
+   */
+  NGN_OFFRAMP_REVENUE_MODE: z.enum(['sivan_fee_wallet', 'breet_markup', 'disabled']).default('sivan_fee_wallet'),
   // Privy - embedded wallet layer. https://docs.privy.io
   // Wallets are USER-OWNED: Sivan holds neither funds nor keys, so a transfer
   // needs the user's signature. See privy-wallet.provider.ts for why.
@@ -330,11 +340,11 @@ const envSchema = z.object({
    *
    * The receipts, taken live against Breet's sandbox:
    *
-   *   PalmPay 8102524846 -> Samuel Udochukwu
+   *   PalmPay 1111111111 -> Samuel Udochukwu
    *   PalmPay 0000000000 -> Samuel Udochukwu
    *   PalmPay 1234567890 -> Samuel Udochukwu
    *   PalmPay 9999999999 -> Samuel Udochukwu
-   *   Access  8102524846 -> Samuel Udochukwu   (any BANK id, too)
+   *   Access  1111111111 -> Samuel Udochukwu   (any BANK id, too)
    *
    * Always the API key owner, whatever you ask for. That is why the gate
    * exists and why this override must never reach anywhere real.

@@ -1,5 +1,6 @@
 export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' | 'breet';
 export type NgnDirection = 'onramp' | 'offramp';
+export type NgnOfframpRevenueMode = 'sivan_fee_wallet' | 'breet_markup' | 'disabled';
 export type NgnQuoteStatus = 'quote_created' | 'quote_accepted' | 'expired' | 'failed';
 export type NgnTransferStatus =
   | 'created'
@@ -182,6 +183,14 @@ export interface NgnControlsRecord {
    * hub without a deploy.
    */
   externalFundingEnabled: boolean;
+  /**
+   * Exactly one NGN off-ramp revenue path.
+   *
+   * sivan_fee_wallet collects Sivan's visible margin into SIVAN_FEE_WALLET_SOLANA
+   * during the Privy sweep. breet_markup assumes Breet applies markup inside
+   * the provider rate/settlement. disabled charges no Sivan margin.
+   */
+  offrampRevenueMode: NgnOfframpRevenueMode;
   /**
    * May a user send naira to an account that is NOT their own?
    *

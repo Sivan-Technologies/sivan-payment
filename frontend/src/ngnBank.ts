@@ -63,6 +63,14 @@ export interface NgnQuote {
     /** Sivan's own margin. */
     sivanMargin: string;
     totalFee: string;
+    providerFeeAsset?: string;
+    providerFeeNgn?: string;
+    sivanMarginAsset?: string;
+    sivanMarginNgn?: string;
+    totalFeeAsset?: string;
+    totalFeeNgn?: string;
+    assetCurrency?: string;
+    ngnCurrency?: string;
     /** Total as a percentage of the amount sent. */
     effectivePercent: string;
   };

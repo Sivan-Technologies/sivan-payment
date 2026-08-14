@@ -58,6 +58,12 @@ function trimTrailingZeros(amount: string | number): string {
   return text.replace(/\.?0+$/, '');
 }
 
+function roundedAssetFee(amount: string | number): string {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return trimTrailingZeros(amount);
+  return trimTrailingZeros(value.toFixed(3));
+}
+
 /**
  * Seconds as a countdown someone can read at a glance.
  *
@@ -384,11 +390,11 @@ export function NgnPayoutForm({
    * deal is fair. The asset amount follows in the same cell because that is
    * the unit actually deducted.
    *
-   * ITEMISED WHEN THE SERVER SENDS THE BREAKDOWN. "Sivan fee" and "Provider
-   * fee" as separate lines is the difference between a number a user accepts
-   * and a number they can check. Falls back to one "Fee" row when `fees` is
-   * absent, so an older server response still renders correctly rather than
-   * showing nothing.
+   * ONE USER FEE ROW WHEN THE SERVER SENDS THE BREAKDOWN. The provider/Sivan
+   * split is still returned for admin reconciliation, but the withdrawal card
+   * shows the single total a user actually pays. Falls back to one "Fee" row
+   * when `fees` is absent, so an older server response still renders
+   * correctly rather than showing nothing.
    */
   const feeRows = (() => {
     if (!quote) return [];
@@ -411,8 +417,19 @@ export function NgnPayoutForm({
        * gross minus fee disagree with the receive line by a naira.
        */
       const naira = rate > 0 ? formatPayoutAmount(String(Math.round(amount * rate)), 'ngn') : null;
-      const inAsset = `${trimTrailingZeros(String(amount))} ${assetUnit}`;
+      const inAsset = `${roundedAssetFee(amount)} ${assetUnit}`;
       return naira ? `${naira} · ${inAsset}` : inAsset;
+    };
+
+    const explicitBoth = (ngnAmount: string | number | undefined, assetAmount: string | number | undefined) => {
+      const assetValue = Number(assetAmount ?? 0) || 0;
+      const ngnValue = Number(ngnAmount ?? 0) || 0;
+      if (ngnValue > 0 && assetValue > 0) {
+        return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${roundedAssetFee(assetValue)} ${assetUnit}`;
+      }
+      if (assetValue > 0) return both(assetValue);
+      if (ngnValue > 0 && rate > 0) return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${trimTrailingZeros(String(ngnValue / rate))} ${assetUnit}`;
+      return `${formatPayoutAmount('0', 'ngn')} · 0 ${assetUnit}`;
     };
 
     const fees = quote.fees;
@@ -446,7 +463,7 @@ export function NgnPayoutForm({
      * Same reasoning that removed the network-fee row and collapsed the
      * three-row breakdown: one number, the one they are paying.
      */
-    return [{ label: 'Sivan fee', value: both(fees.totalFee) }];
+    return [{ label: 'Sivan fee', value: explicitBoth(fees.totalFeeNgn, fees.totalFeeAsset ?? fees.totalFee) }];
   })();
 
   /**

@@ -464,13 +464,20 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
   }
 
   const provider = getWalletProvider(await resolveActiveWalletProvider());
+  const fees = (transfer.metadata as any)?.quoteMetadata?.fees ?? {};
+  const revenueMode = String(fees?.revenueMode ?? 'sivan_fee_wallet');
+  const sivanFeeAmount = revenueMode === 'sivan_fee_wallet'
+    ? Math.max(0, Number(fees?.sivanMarginAsset ?? fees?.sivanMargin ?? 0))
+    : 0;
+  const amountToRail = Math.max(0, amount - sivanFeeAmount);
   const result = await provider.createTransfer({
     providerWalletId: wallet.providerWalletId,
     providerCustomerId: wallet.customerId,
     asset: asset as any,
     chain: network as any,
-    amount: String(transfer.sourceAmount),
+    amount: String(amountToRail),
     toAddress: transfer.depositAddress!,
+    ...(sivanFeeAmount > 0 ? { feeAmount: String(sivanFeeAmount) } : {}),
     // Keyed on the transfer, so a retry cannot sweep twice.
     idempotencyKey: `ngnsweep_${transfer.id}`,
     reference: transfer.id,
@@ -483,12 +490,16 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
     severity: result.status === 'pending_user_signature' ? 'warning' : 'info',
     metadata: {
       depositAddress: transfer.depositAddress,
-      amount: transfer.sourceAmount,
+      amount: amountToRail,
+      grossAmount: transfer.sourceAmount,
+      sivanFeeAmount,
+      revenueMode,
       asset,
       network,
       providerTransferId: result.providerTransferId,
       status: result.status,
       sponsored: result.sponsored,
+      feeSkippedReason: (result.rawProviderPayload as any)?.feeSkippedReason,
     },
   });
 
@@ -499,6 +510,10 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
     userOperationHash: result.userOperationHash,
     userSignaturePayload: result.userSignaturePayload,
     sponsored: result.sponsored,
+    revenueMode,
+    amountSentToRail: String(amountToRail),
+    sivanFeeAmount: String(sivanFeeAmount),
+    feeSkippedReason: (result.rawProviderPayload as any)?.feeSkippedReason,
     sweptAt: nowIso(),
   };
 }

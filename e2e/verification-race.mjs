@@ -54,7 +54,7 @@ async function seedPendingNigerian() {
   const list = Array.isArray(banks.data) ? banks.data : [];
   const palm = list.find((b) => /palmpay/i.test(b.name)) ?? list[0];
   await fetch(`${API}/api/ngn/payout-accounts`, { method: 'POST', headers: H,
-    body: JSON.stringify({ userId: user.id, bankId: String(palm.id), accountNumber: '8102524846' }) });
+    body: JSON.stringify({ userId: user.id, bankId: String(palm.id), accountNumber: '1111111111' }) });
   const summary = await j(await fetch(`${API}/api/users/${user.id}/verification-summary`, { headers: H }));
   return { token, user, summary: summary.data ?? summary };
 }

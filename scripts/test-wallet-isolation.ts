@@ -53,7 +53,7 @@ async function seed() {
           bankId: '26', bankName: 'PalmPay',
           // A distinct NUBAN per user: a shared number would let a genuine
           // cross-user leak look like correct behaviour.
-          accountNumber: `81025248${USERS.indexOf(u)}${USERS.indexOf(u)}`,
+          accountNumber: `11111111${USERS.indexOf(u)}${USERS.indexOf(u)}`,
           accountName: `${u} test`, declaredName: `${u} test`,
           matchVerdict: 'match', matchScore: 1, resolutionTrustworthy: true,
           status: 'verified', createdAt: nowIso(), updatedAt: nowIso(),

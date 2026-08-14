@@ -84,7 +84,7 @@ async function main() {
         status: 'pending_review', createdAt: now, updatedAt: now
       } as any);
 
-      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=60&network=base`);
+      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=60&network=solana`);
       // A pending_review NUBAN leaves the user at Level 0, whose NGN off-ramp
       // ceiling is 0, so the quote is refused before metadata is ever built.
       //
@@ -101,17 +101,17 @@ async function main() {
     {
       await db.upsertNgnPayoutAccountRecord({
         id: 'ngnacct_verified', userId, provider: 'mock', bankId: '26', bankName: 'PalmPay',
-        accountNumber: '8102524846', accountName: 'Samuel Udochukwu', declaredName: 'Samuel Udochukwu',
+        accountNumber: '1111111111', accountName: 'Samuel Udochukwu', declaredName: 'Samuel Udochukwu',
         matchVerdict: 'match', matchScore: 1, resolutionTrustworthy: true,
         status: 'verified', createdAt: now, updatedAt: now
       } as any);
 
-      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=60&network=base`);
+      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=60&network=solana`);
       check('the quote is created', quote.status === 200, `${quote.status} ${JSON.stringify(quote.body).slice(0, 140)}`);
       const meta = quote.body?.metadata ?? {};
       check('the bank id reaches the quote metadata', meta.bankId === '26', String(meta.bankId));
       check('the account number reaches the quote metadata',
-        meta.accountNumber === '8102524846', String(meta.accountNumber));
+        meta.accountNumber === '1111111111', String(meta.accountNumber));
       check('and the bank name is carried for support', meta.bankName === 'PalmPay', String(meta.bankName));
       // accountName is deliberately NOT carried by the implementation on main -
       // the bank id and number are what Breet needs, and the name is already on
@@ -152,11 +152,11 @@ async function main() {
       // nothing to do with account selection. The amount is irrelevant to what
       // is being proven here: only that the quote succeeds and carries the
       // VERIFIED account rather than the pending one inserted first.
-      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=5&network=base`);
+      const quote = await call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc&destinationCurrency=ngn&sourceAmount=5&network=solana`);
       check('the quote is created', quote.status === 200, `${quote.status} ${JSON.stringify(quote.body).slice(0, 140)}`);
       const meta = quote.body?.metadata ?? {};
       check('but the VERIFIED account number is the one attached',
-        meta.accountNumber === '8102524846',
+        meta.accountNumber === '1111111111',
         JSON.stringify({ attached: meta.accountNumber, unchecked: '9999999999' }));
       check('and the unchecked account is NOT used',
         meta.accountNumber !== '9999999999',

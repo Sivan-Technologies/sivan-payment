@@ -1,5 +1,5 @@
 import { db } from '../database/json-database.js';
-import { sendEmail } from '../notifications/email.service.js';
+import { buildSivanBrandedEmail, sendEmail } from '../notifications/email.service.js';
 import { nowIso } from '../shared/id.js';
 import type { WalletDepositRecord } from '../database/types.js';
 
@@ -41,28 +41,60 @@ import type { WalletDepositRecord } from '../database/types.js';
  * Guarded by test:deposit-notification, which fails on the words "available",
  * "spendable" and "ready to spend" appearing in a pending message.
  */
-export function depositMessage(deposit: WalletDepositRecord): { subject: string; text: string } {
+export function depositMessage(deposit: WalletDepositRecord): { subject: string; text: string; html: string } {
   const amount = `${deposit.amount} ${deposit.asset}`;
   const network = humanNetwork(deposit.chain);
 
   if (deposit.status === 'confirmed') {
+    const subject = `Deposit confirmed: ${amount}`;
+    const text =
+      `Your deposit of ${amount} on ${network} is confirmed.\n\n` +
+      `It is now part of your Sivan balance and you can send or convert it.\n\n` +
+      `Sivan`;
     return {
-      subject: `Deposit confirmed: ${amount}`,
-      text:
-        `Your deposit of ${amount} on ${network} is confirmed.\n\n` +
-        `It is now part of your Sivan balance and you can send or convert it.\n\n` +
-        `Sivan`
+      subject,
+      text,
+      html: buildSivanBrandedEmail({
+        eyebrow: 'Deposit confirmed',
+        title: `${amount} confirmed`,
+        intro: `Your deposit on ${network} has completed and is now reflected in your Sivan balance.`,
+        badge: 'Ready to use',
+        rows: [
+          { label: 'Amount', value: amount },
+          { label: 'Network', value: network },
+          { label: 'Status', value: 'Confirmed' },
+        ],
+        ctaLabel: 'Open Sivan',
+        ctaUrl: '/dashboard',
+        note: 'You can now send, convert, or manage this balance from your Sivan dashboard.'
+      })
     };
   }
 
+  const subject = `Deposit received: ${amount}`;
+  const text =
+    `We have seen your deposit of ${amount} on ${network}.\n\n` +
+    `It is still being confirmed on the network. We will let you know the ` +
+    `moment it completes - this usually takes a few minutes.\n\n` +
+    `You do not need to do anything.\n\n` +
+    `Sivan`;
   return {
-    subject: `Deposit received: ${amount}`,
-    text:
-      `We have seen your deposit of ${amount} on ${network}.\n\n` +
-      `It is still being confirmed on the network. We will let you know the ` +
-      `moment it completes - this usually takes a few minutes.\n\n` +
-      `You do not need to do anything.\n\n` +
-      `Sivan`
+    subject,
+    text,
+    html: buildSivanBrandedEmail({
+      eyebrow: 'Deposit received',
+      title: `${amount} received`,
+      intro: `We have seen your deposit on ${network}. It is still confirming on the network and we will update you once it completes.`,
+      badge: 'Confirming now',
+      rows: [
+        { label: 'Amount', value: amount },
+        { label: 'Network', value: network },
+        { label: 'Status', value: 'Confirming' },
+      ],
+      ctaLabel: 'View activity',
+      ctaUrl: '/transactions',
+      note: 'No action is needed. A received deposit is visible in Sivan, but it is not final until it is confirmed.'
+    })
   };
 }
 
@@ -129,7 +161,7 @@ export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> 
 
     try {
       const message = depositMessage(deposit);
-      await sendEmail({ to: user.email, subject: message.subject, text: message.text });
+      await sendEmail({ to: user.email, subject: message.subject, text: message.text, html: message.html });
       outcome.sent += 1;
     } catch {
       /**

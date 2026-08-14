@@ -2,13 +2,14 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { env } from '../../config/env.js';
 import { listPaymentControls } from '../../controls/payment-controls.service.js';
 import { db } from '../../database/json-database.js';
+import { buildVirtualAccountAssignedEmail, sendEmail } from '../../notifications/email.service.js';
 import { BridgeClient } from '../../providers/bridge/bridge.client.js';
 import { badRequest, forbidden, notFound } from '../../shared/errors.js';
 import { id, nowIso } from '../../shared/id.js';
 import { getVirtualAccountCurrencyConfig } from '../config/currency-config.js';
 import { mapBridgeVirtualAccount } from '../provider/bridge-virtual-account.provider.js';
 import { getVirtualAccountProvider } from '../provider/provider-registry.js';
-import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountRecord, VirtualAccountRequestRecord } from '../types/virtual-account.types.js';
+import type { CreateVirtualAccountInput, ProviderVirtualAccount, VirtualAccountCurrency, VirtualAccountCustomerAction, VirtualAccountRecord, VirtualAccountRequestRecord } from '../types/virtual-account.types.js';
 import { checkVirtualAccountEligibility } from './virtual-account-eligibility.service.js';
 import { getVirtualAccountProviderSettings } from './virtual-account-provider-settings.service.js';
 
@@ -20,13 +21,187 @@ export function virtualAccountRequestsEnabled() {
   return env.VIRTUAL_ACCOUNT_REQUESTS_ENABLED;
 }
 
+const ENDORSEMENT_BY_CURRENCY: Partial<Record<VirtualAccountCurrency, string>> = {
+  gbp: 'faster_payments',
+  eur: 'sepa',
+};
+
+const VIRTUAL_ACCOUNT_RAIL_LABEL_BY_CURRENCY: Partial<Record<VirtualAccountCurrency, string>> = {
+  gbp: 'GBP Faster Payments',
+  eur: 'EUR SEPA',
+};
+
+function firstCorsOrigin() {
+  return env.CORS_ORIGIN.split(',').map((item) => item.trim()).find((item) => item && item !== '*');
+}
+
+function flattenRequirementStrings(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(flattenRequirementStrings);
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  if (value && typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(flattenRequirementStrings);
+  return [];
+}
+
+function uniqueStrings(items: unknown[]): string[] {
+  return [...new Set(items.flatMap(flattenRequirementStrings))];
+}
+
+function bridgeRequirementsDue(bridgeCustomer: any, endorsement?: string) {
+  const direct = uniqueStrings([
+    bridgeCustomer?.requirements_due,
+    bridgeCustomer?.requirements?.due,
+    bridgeCustomer?.requirements?.missing,
+  ]);
+  const endorsements = Array.isArray(bridgeCustomer?.endorsements) ? bridgeCustomer.endorsements : [];
+  const scoped = endorsements.filter((item: any) => !endorsement || item?.name === endorsement);
+  const endorsementRequirements = uniqueStrings(scoped.flatMap((item: any) => [
+    item?.requirements_due,
+    item?.requirements?.due,
+    item?.requirements?.missing,
+    item?.requirements?.currently_due,
+  ]));
+  return uniqueStrings([...direct, ...endorsementRequirements]);
+}
+
+function bridgeEndorsementRequirements(bridgeCustomer: any, endorsement?: string) {
+  if (!endorsement) return undefined;
+  const endorsements = Array.isArray(bridgeCustomer?.endorsements) ? bridgeCustomer.endorsements : [];
+  return endorsements.find((item: any) => item?.name === endorsement)?.requirements;
+}
+
+function bridgeEndorsementStatus(bridgeCustomer: any, endorsement?: string) {
+  if (!endorsement) return undefined;
+  const endorsements = Array.isArray(bridgeCustomer?.endorsements) ? bridgeCustomer.endorsements : [];
+  return endorsements.find((item: any) => item?.name === endorsement)?.status;
+}
+
+function bridgeCustomerForVirtualAccountRequest(customers: Awaited<ReturnType<typeof db.listCustomers>>, request: VirtualAccountRequestRecord) {
+  const exact = request.customerId
+    ? customers.find((item) => item.id === request.customerId && item.provider === 'bridge' && item.providerCustomerId)
+    : undefined;
+  if (exact) return exact;
+
+  return customers
+    .filter((item) => item.userId === request.userId && item.provider === 'bridge' && item.providerCustomerId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+}
+
+async function buildBridgeVirtualAccountAction(input: {
+  providerCustomerId?: string;
+  currency: VirtualAccountCurrency;
+  bridgeCustomer?: any;
+}): Promise<VirtualAccountCustomerAction | undefined> {
+  const endorsement = ENDORSEMENT_BY_CURRENCY[input.currency];
+  if (!input.providerCustomerId || !endorsement) return undefined;
+  const railLabel = VIRTUAL_ACCOUNT_RAIL_LABEL_BY_CURRENCY[input.currency] || `${input.currency.toUpperCase()} virtual account`;
+
+  const bridgeClient = new BridgeClient();
+  let bridgeCustomer = input.bridgeCustomer;
+  try {
+    bridgeCustomer = bridgeCustomer ?? await bridgeClient.request<any>(`/customers/${input.providerCustomerId}`);
+  } catch (error: any) {
+    return {
+      level: 'review',
+      title: 'Provider review status unavailable',
+      message: 'Sivan could not refresh the provider review status. Please refresh again later or contact support.',
+      providerCustomerId: input.providerCustomerId,
+      endorsement,
+      providerStatus: error?.statusCode ? `bridge_error_${error.statusCode}` : 'bridge_error',
+    };
+  }
+
+  const providerStatus = bridgeCustomer?.status;
+  const endorsementStatus = bridgeEndorsementStatus(bridgeCustomer, endorsement);
+  const endorsementRequirements = bridgeEndorsementRequirements(bridgeCustomer, endorsement);
+  const requirements = bridgeRequirementsDue(bridgeCustomer, endorsement);
+  const pendingRequirements = uniqueStrings([endorsementRequirements?.pending, bridgeCustomer?.requirements?.pending]);
+  const missingRequirements = uniqueStrings([endorsementRequirements?.missing, bridgeCustomer?.requirements?.missing]);
+  const endorsementMissingRequirements = uniqueStrings([endorsementRequirements?.missing]);
+  const hasManualReviewPending = pendingRequirements.some((item) => /manual.*review|review/i.test(item));
+  const hasMissingUserRequirements = requirements.length > 0 || missingRequirements.length > 0;
+  const providerInReview =
+    providerStatus === 'under_review' ||
+    endorsementStatus === 'under_review' ||
+    (hasManualReviewPending && endorsementMissingRequirements.length === 0);
+  const actionRequired =
+    !providerInReview &&
+    (
+      providerStatus === 'incomplete' ||
+      providerStatus === 'requires_action' ||
+      endorsementStatus === 'incomplete' ||
+      endorsementStatus === 'requires_action' ||
+      requirements.length > 0
+    );
+  const needsAction = providerInReview || actionRequired;
+
+  if (!needsAction) return undefined;
+
+  let kycUrl: string | undefined;
+  if (actionRequired) {
+    try {
+      const raw: any = await bridgeClient.request(`/customers/${input.providerCustomerId}/kyc_link`, {
+        query: { endorsement, redirect_uri: firstCorsOrigin() },
+      });
+      kycUrl = raw?.url || raw?.kyc_link;
+    } catch {
+      // Keep the state visible even if Bridge temporarily refuses to issue a
+      // fresh hosted link. The link is convenience; the requirements are the
+      // source of truth.
+    }
+  }
+
+  return {
+    level: actionRequired ? 'action_required' : 'review',
+    title: actionRequired ? 'Additional information required' : 'Review in progress',
+    message: actionRequired
+      ? `Sivan needs one more verification step before this ${railLabel} account can be issued.`
+      : `Sivan has received your ${input.currency.toUpperCase()} verification details. No action is needed right now.`,
+    requirements: actionRequired ? requirements : [],
+    kycUrl,
+    providerCustomerId: input.providerCustomerId,
+    endorsement,
+    providerStatus,
+  };
+}
+
 async function activeVirtualAccountProviderName() {
   const settings = await getVirtualAccountProviderSettings({ includeSecrets: true });
   return settings.enabled ? settings.provider : env.VIRTUAL_ACCOUNT_PROVIDER;
 }
 
+async function notifyVirtualAccountAssigned(user: { email?: string }, account: VirtualAccountRecord) {
+  if (!user.email || account.status !== 'active') return;
+  try {
+    const message = buildVirtualAccountAssignedEmail(account);
+    const delivery = await sendEmail({
+      to: user.email,
+      subject: message.subject,
+      text: message.text,
+      html: message.html,
+    });
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'virtual_account_email',
+      action: 'virtual_account.assigned_email_sent',
+      resourceType: 'virtual_account',
+      resourceId: account.id,
+      metadata: { provider: delivery.provider, deliveryId: delivery.id, currency: account.currency },
+    });
+  } catch (error: any) {
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'virtual_account_email',
+      action: 'virtual_account.assigned_email_failed',
+      resourceType: 'virtual_account',
+      resourceId: account.id,
+      severity: 'warning',
+      metadata: { message: error?.message || String(error), currency: account.currency },
+    }).catch(() => undefined);
+  }
+}
+
 export async function listUserVirtualAccounts(userId: string) {
-  const [requests, accounts, events, transactions] = await Promise.all([db.listVirtualAccountRequests(), db.listVirtualAccounts(), db.listVirtualAccountEvents(), db.listVirtualAccountTransactions()]);
+  const [requests, accounts, events, transactions, customers] = await Promise.all([db.listVirtualAccountRequests(), db.listVirtualAccounts(), db.listVirtualAccountEvents(), db.listVirtualAccountTransactions(), db.listCustomers()]);
   const activeProvider = await activeVirtualAccountProviderName();
   const hideLegacyMockAccounts = activeProvider === 'bridge';
   const userAccounts = accounts
@@ -36,8 +211,17 @@ export async function listUserVirtualAccounts(userId: string) {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const providerIds = new Set(userAccounts.map((account) => account.providerAccountId));
   const accountIds = new Set(userAccounts.map((account) => account.id));
+  const userRequests = requests.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const enrichedRequests = await Promise.all(userRequests.map(async (request) => {
+    const customer = bridgeCustomerForVirtualAccountRequest(customers, request);
+    const action = await buildBridgeVirtualAccountAction({
+      providerCustomerId: customer?.providerCustomerId,
+      currency: request.currency,
+    });
+    return action ? { ...request, customerAction: action } : request;
+  }));
   return {
-    requests: requests.filter((item) => item.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    requests: enrichedRequests,
     accounts: userAccounts,
     events: events.filter((item) => item.virtualAccountId && accountIds.has(item.virtualAccountId) || item.providerAccountId && providerIds.has(item.providerAccountId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     transactions: transactions.filter((item) => item.userId === userId || item.virtualAccountId && accountIds.has(item.virtualAccountId) || item.providerAccountId && providerIds.has(item.providerAccountId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -131,6 +315,10 @@ export async function checkVirtualAccountProviderByEmail(email: string) {
         bridgeClient.request<any>(`/customers/${providerCustomerId}`),
         bridgeClient.request<any>(`/customers/${providerCustomerId}/virtual_accounts`),
       ]);
+      const providerActions = await Promise.all((['gbp', 'eur'] as VirtualAccountCurrency[]).map((currency) =>
+        buildBridgeVirtualAccountAction({ providerCustomerId, currency, bridgeCustomer })
+      ));
+      const customerActions = providerActions.filter(Boolean) as VirtualAccountCustomerAction[];
       const bridgeAccounts = Array.isArray(bridgeAccountsResponse?.data) ? bridgeAccountsResponse.data : [];
       const mappedAccounts = bridgeAccounts.map((account: any) =>
         mapBridgeVirtualAccount(account, (account?.source_deposit_instructions?.currency || 'usd') as VirtualAccountCurrency)
@@ -147,6 +335,8 @@ export async function checkVirtualAccountProviderByEmail(email: string) {
           status: endorsement.status,
           missing: endorsement.requirements?.missing ?? null,
         })),
+        requirementsDue: bridgeRequirementsDue(bridgeCustomer),
+        customerActions,
         virtualAccounts: mappedAccounts.map((account: ProviderVirtualAccount) => ({
           providerAccountId: account.providerAccountId,
           currency: account.currency,
@@ -383,6 +573,7 @@ export async function approveVirtualAccountRequest(requestId: string, reviewer: 
   };
   await db.upsertVirtualAccountRequestRecord(approved);
   await db.upsertVirtualAccountRecord(account);
+  await notifyVirtualAccountAssigned(user, account);
   await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.approved', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
   return { request: approved, account };
 }
@@ -508,6 +699,7 @@ export async function executeVirtualAccountReprovision(requestId: string, review
   };
 
   await db.upsertVirtualAccountRecord(account);
+  await notifyVirtualAccountAssigned(user, account);
   await createAuditLog({ actorType: 'admin', actorId: reviewer, action: 'virtual_account.reprovisioned', resourceType: 'virtual_account_request', resourceId: requestId, metadata: { accountId: account.id, provider: account.provider, currency: account.currency } });
   return { request, account };
 }

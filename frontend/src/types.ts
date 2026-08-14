@@ -504,6 +504,16 @@ export interface VirtualAccountRequestRecord {
   reviewedAt?: string;
   rejectionReason?: string;
   metadata?: unknown;
+  customerAction?: {
+    level: 'action_required' | 'review' | 'failed' | 'neutral';
+    title: string;
+    message: string;
+    requirements?: string[];
+    kycUrl?: string;
+    providerCustomerId?: string;
+    endorsement?: string;
+    providerStatus?: string;
+  };
   createdAt: string;
   updatedAt: string;
 }

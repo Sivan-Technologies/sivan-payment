@@ -65,7 +65,7 @@ async function main() {
 
   async function quoteFor(userId: string) {
     return call('GET', `/api/ngn/quote?userId=${userId}&direction=offramp&sourceCurrency=usdc`
-      + `&destinationCurrency=ngn&sourceAmount=60&network=base`);
+      + `&destinationCurrency=ngn&sourceAmount=60&network=solana`);
   }
 
   try {
@@ -78,7 +78,7 @@ async function main() {
       const now = new Date().toISOString();
       await db.upsertNgnPayoutAccountRecord({
         id: 'ngnacct_verified', userId: user.user.id, provider: 'mock',
-        bankId: '26', bankName: 'PalmPay', accountNumber: '8102524846',
+        bankId: '26', bankName: 'PalmPay', accountNumber: '1111111111',
         accountName: 'Samuel Udochukwu', declaredName: 'Samuel Udochukwu',
         matchVerdict: 'match', matchScore: 1, resolutionTrustworthy: true,
         status: 'verified', createdAt: now, updatedAt: now,
@@ -88,7 +88,7 @@ async function main() {
       check('the quote is created', quote.status === 200, JSON.stringify(quote.body).slice(0, 140));
       const meta = quote.body?.metadata ?? {};
       check('the user\'s bankId is carried into the quote', meta.bankId === '26', String(meta.bankId));
-      check('and their account number', meta.accountNumber === '8102524846', String(meta.accountNumber));
+      check('and their account number', meta.accountNumber === '1111111111', String(meta.accountNumber));
       check('and the bank name, for the payout narration', meta.bankName === 'PalmPay', String(meta.bankName));
     }
 
@@ -121,7 +121,7 @@ async function main() {
       // they check for undefined. Naming the specific account makes the
       // failure message say what actually went wrong.
       check('and specifically NOT the operator\'s own account',
-        meta.accountNumber !== '8102524846', String(meta.accountNumber));
+        meta.accountNumber !== '1111111111', String(meta.accountNumber));
     }
 
     console.log('\nA PENDING ACCOUNT DOES NOT QUALIFY');

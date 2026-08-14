@@ -5,6 +5,7 @@ import { parseBody } from '../../shared/validation.js';
 import { createNgnQuote, createNgnQuoteSchema, listNgnQuotes } from '../service/ngn-quotes.service.js';
 import { acceptNgnQuote, acceptNgnQuoteSchema, buildTimeline, cancelNgnTransfer, listNgnTransfers, retryNgnTransfer } from '../service/ngn-transfers.service.js';
 import { getNgnControls, updateNgnControls, updateNgnControlsSchema } from '../service/ngn-controls.service.js';
+import { createAuditLog } from '../../audit/audit.service.js';
 import { listNgnBanks, resolveNgnBankAccount } from '../service/ngn-banks.service.js';
 import { db } from '../../database/json-database.js';
 import { env } from '../../config/env.js';
@@ -612,6 +613,58 @@ export async function ngnRoutes(app: FastifyInstance) {
 
   app.get('/api/admin/ngn/controls', async () => ({ data: await getNgnControls() }));
   app.put('/api/admin/ngn/controls', async (request) => ({ data: await updateNgnControls(parseBody(updateNgnControlsSchema, request.body)) }));
+  app.get('/api/admin/ngn/breet/markup', async () => {
+    const provider = getNgnProvider('breet');
+    if (!provider.getBreetMarkupPercent) throw badRequest('Breet markup is not supported by this provider.');
+    return { data: { markupPercent: await provider.getBreetMarkupPercent() } };
+  });
+  app.get('/api/admin/ngn/revenue-status', async () => {
+    const [controls, walletControls] = await Promise.all([
+      getNgnControls(),
+      getWalletControlsView(),
+    ]);
+    const provider = getNgnProvider('breet');
+    const breetMarkupPercent = provider.getBreetMarkupPercent
+      ? await provider.getBreetMarkupPercent()
+      : 0;
+    const walletFeeModeActive = controls.offrampRevenueMode === 'sivan_fee_wallet';
+    const doubleChargeRisk = walletFeeModeActive && breetMarkupPercent > 0;
+
+    return {
+      data: {
+        revenueMode: controls.offrampRevenueMode,
+        breetMarkupPercent,
+        feeWalletConfigured: walletControls.feeWalletConfigured,
+        onChainFeeCollectionEnabled: walletControls.collectTransferFeeOnChain,
+        walletProvider: walletControls.activeProvider,
+        doubleChargeRisk,
+        status: doubleChargeRisk ? 'blocked' : 'ok',
+        message: doubleChargeRisk
+          ? 'Breet markup is non-zero while Sivan wallet-fee mode is active. Disable one revenue path before accepting new NGN off-ramp quotes.'
+          : 'Exactly one NGN off-ramp revenue path is active.',
+      },
+    };
+  });
+  app.put('/api/admin/ngn/breet/markup', async (request) => {
+    const body = parseBody(z.object({
+      markupPercent: z.coerce.number().min(0).max(10),
+      updatedBy: z.string().optional().default('admin_api_key'),
+      reason: z.string().optional(),
+    }), request.body);
+    const provider = getNgnProvider('breet');
+    if (!provider.updateBreetMarkupPercent) throw badRequest('Breet markup is not supported by this provider.');
+    const result = await provider.updateBreetMarkupPercent(body.markupPercent);
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: body.updatedBy,
+      action: 'ngn.breet_markup_updated',
+      resourceType: 'payments_ngn_provider',
+      resourceId: 'breet',
+      severity: 'warning',
+      metadata: { markupPercent: result.markupPercent, reason: body.reason },
+    });
+    return { data: result };
+  });
 
   /**
    * Verification ceilings, admin-controlled.
