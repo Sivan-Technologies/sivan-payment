@@ -115,12 +115,13 @@ async function buildBridgeVirtualAccountAction(input: {
   const requirements = bridgeRequirementsDue(bridgeCustomer, endorsement);
   const pendingRequirements = uniqueStrings([endorsementRequirements?.pending, bridgeCustomer?.requirements?.pending]);
   const missingRequirements = uniqueStrings([endorsementRequirements?.missing, bridgeCustomer?.requirements?.missing]);
+  const endorsementMissingRequirements = uniqueStrings([endorsementRequirements?.missing]);
   const hasManualReviewPending = pendingRequirements.some((item) => /manual.*review|review/i.test(item));
   const hasMissingUserRequirements = requirements.length > 0 || missingRequirements.length > 0;
   const providerInReview =
     providerStatus === 'under_review' ||
     endorsementStatus === 'under_review' ||
-    (hasManualReviewPending && !hasMissingUserRequirements);
+    (hasManualReviewPending && endorsementMissingRequirements.length === 0);
   const actionRequired =
     !providerInReview &&
     (
