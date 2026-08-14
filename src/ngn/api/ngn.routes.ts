@@ -397,6 +397,16 @@ export async function ngnRoutes(app: FastifyInstance) {
          * accidental.
          */
         externalFundingEnabled: ngnControls?.externalFundingEnabled ?? false,
+        /**
+         * Fails closed for the same reason and by the same rule.
+         *
+         * This one only decides whether the withdraw screen OFFERS the choice.
+         * The refusal itself lives in createNgnQuote(), so a client that
+         * ignores this field, or an older bundle that never reads it, still
+         * cannot pay a third party. Two independent barriers, and this is the
+         * cosmetic one.
+         */
+        thirdPartyPayoutsEnabled: ngnControls?.thirdPartyPayoutsEnabled ?? false,
       },
     };
   });

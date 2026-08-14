@@ -167,7 +167,7 @@ export type WithdrawAssetOption = {
   chainUnavailable?: boolean;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, ngnThirdPartyPayoutsEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
 
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
@@ -204,6 +204,8 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   onNgnReady?: (payload: { quote: any; account: any; fundingSource: 'balance' | 'external' }) => void;
   /** Admin toggle: may the withdraw screen offer "I'll send crypto myself"? */
   ngnExternalFundingEnabled?: boolean;
+  /** Admin toggle: may the withdraw screen offer "Pay someone else"? */
+  ngnThirdPartyPayoutsEnabled?: boolean;
   onExitNgn?: () => void;
   onEnterNgn?: () => void;
   /** Whether the NGN rail has any usable off-ramp network right now. */
@@ -266,7 +268,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // network falls back to '' - NOT to a chain. '' means "not
             // resolved yet" and NgnPayoutForm refuses to quote on it; any real
             // default here would be a guess at where someone's money lives.
-            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} assetOptions={withdrawAssetOptions} onAssetChange={onNgnAssetChange} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
+            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} assetOptions={withdrawAssetOptions} onAssetChange={onNgnAssetChange} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} thirdPartyPayoutsEnabled={ngnThirdPartyPayoutsEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
 
             // The balance and the external-funding toggle are the SAME values
             // the naira form already receives. Reusing them rather than adding

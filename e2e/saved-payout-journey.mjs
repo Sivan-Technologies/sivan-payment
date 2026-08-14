@@ -190,6 +190,27 @@ async function main() {
     [...document.querySelectorAll('button')].some((b) => /^Cancel$/i.test(b.innerText.trim())));
   check('and there is a way back to the saved list', cancelPresent);
 
+  console.log('\n── the third-party tab is HIDDEN while the toggle is off ─────');
+
+  /**
+   * The admin control is off by default, so the choice must not be on screen
+   * at all. Hidden rather than disabled: a greyed-out "Pay someone else" asks
+   * why it cannot be clicked about a path that needs a different provider, not
+   * a flag flip.
+   *
+   * Asserted in the browser because this is a rendering decision. The server
+   * refuses the destination regardless - proven in
+   * test:ngn-third-party-payouts - so what is left to check is only whether
+   * the UI honours the switch.
+   */
+  const tabs = await page.evaluate(() =>
+    [...document.querySelectorAll('button')].map((b) => b.innerText.trim()));
+  check('"Pay someone else" is not offered', !tabs.some((t) => /Pay someone else/i.test(t)),
+    JSON.stringify(tabs.filter((t) => /pay/i.test(t))));
+  check('and neither is "Pay myself", since one option is not a choice',
+    !tabs.some((t) => /^Pay myself$/i.test(t)),
+    JSON.stringify(tabs.filter((t) => /pay/i.test(t))));
+
   console.log('\n── console ──────────────────────────────────────────────────');
   // React key/state warnings surface here and nowhere else.
   const relevant = consoleErrors.filter((e) => !/favicon|manifest|404/i.test(e));

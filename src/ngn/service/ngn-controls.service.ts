@@ -36,6 +36,12 @@ export const updateNgnControlsSchema = z.object({
   backupProvider: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj', 'breet']).optional().nullable(),
   identityVerificationEnabled: z.boolean().optional(),
   externalFundingEnabled: z.boolean().optional(),
+  /**
+   * Paying a naira account that is not the user's own. Off by default and
+   * enforced in createNgnQuote(); see NgnControlsRecord for why the rail
+   * cannot do this safely today.
+   */
+  thirdPartyPayoutsEnabled: z.boolean().optional(),
   limitEnforcementOfframp: z.boolean().optional(),
   limitEnforcementOnramp: z.boolean().optional(),
   limitEnforcementEscrow: z.boolean().optional(),
@@ -46,7 +52,7 @@ export const updateNgnControlsSchema = z.object({
 });
 
 export function defaultNgnControls(): NgnControlsRecord {
-  return { id: 'global', onrampEnabled: true, offrampEnabled: true, mockProviderEnabled: true, bankSettlementEnabled: true, virtualAccountEnabled: true, activeProvider: 'breet', backupProvider: undefined, identityVerificationEnabled: true, externalFundingEnabled: true, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
+  return { id: 'global', onrampEnabled: true, offrampEnabled: true, mockProviderEnabled: true, bankSettlementEnabled: true, virtualAccountEnabled: true, activeProvider: 'breet', backupProvider: undefined, identityVerificationEnabled: true, externalFundingEnabled: true, thirdPartyPayoutsEnabled: false, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
 }
 
 export async function getNgnControls() {
@@ -59,6 +65,16 @@ export async function getNgnControls() {
     ...found,
     onrampEnabled: found.onrampEnabled ?? true,
     offrampEnabled: found.offrampEnabled ?? true,
+    /**
+     * FAILS CLOSED, and pinned here rather than left to the spread.
+     *
+     * `...defaults` would supply false already, but a saved row predating
+     * migration 052 has the key ABSENT rather than false, and a later edit
+     * that flipped the default to true would silently open third-party
+     * payouts on every one of those rows. `?? false` makes the closed
+     * outcome a property of this line instead of a property of the default.
+     */
+    thirdPartyPayoutsEnabled: found.thirdPartyPayoutsEnabled ?? false,
   };
 }
 
