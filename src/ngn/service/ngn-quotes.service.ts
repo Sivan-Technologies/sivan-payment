@@ -35,7 +35,26 @@ export const createNgnQuoteSchema = z.object({
    * Optional with a default so existing callers keep working; the default
    * matches BREET_DEFAULT_NETWORK.
    */
-  network: z.string().optional()
+  network: z.string().optional(),
+  /**
+   * WHICH OF THE USER'S SAVED BANK ACCOUNTS THE NAIRA GOES TO.
+   *
+   * There was no such field, and the destination was decided server side with
+   * `accounts.find((a) => a.status === 'verified')` - the first verified row in
+   * raw insertion order. The account number typed into NgnPayoutForm was never
+   * sent anywhere. A user with two verified accounts was therefore always paid
+   * into whichever they saved first, while the withdrawal screen showed them
+   * the other one.
+   *
+   * AN ID, NOT A BANK. Deliberately not `{ bankId, accountNumber }`: a client
+   * that could name an arbitrary NUBAN could send naira to a stranger, and the
+   * name-match evidence this rail depends on would never have been collected
+   * for it. An id can only ever point at a row the user already saved, and it
+   * is still checked for ownership and status below before a naira moves.
+   *
+   * Optional so on-ramps and single-account users are unaffected.
+   */
+  payoutAccountId: z.string().min(1).optional()
 });
 
 /**
@@ -404,13 +423,49 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   let payoutBank: { bankId: string; accountNumber: string; bankName?: string; accountName?: string } | undefined;
   if (input.direction === 'offramp' && input.destinationCurrency === 'ngn') {
     const accounts = await db.listNgnPayoutAccounts(input.userId);
-    const verified = accounts.find((account) => account.status === 'verified');
-    if (verified) {
+    const verified = accounts.filter((account) => account.status === 'verified');
+
+    let chosen = verified[0];
+
+    if (input.payoutAccountId) {
+      /**
+       * THE ID IS A CLAIM, NOT A LOOKUP KEY.
+       *
+       * Matched inside THIS USER'S verified accounts rather than fetched by id
+       * and checked afterwards. Fetching first is how an ownership check comes
+       * to be forgotten in a later edit, and here that mistake pays a stranger.
+       */
+      chosen = verified.find((account) => account.id === input.payoutAccountId)!;
+      if (!chosen) {
+        /**
+         * ONE MESSAGE FOR "NOT YOURS", "NOT VERIFIED" AND "DOES NOT EXIST".
+         *
+         * Distinguishing them would confirm whether an id is real and whose it
+         * is, turning this into an enumeration oracle over other people's bank
+         * accounts. The user who owns the account sees their own list on screen
+         * and does not need the distinction; an attacker guessing ids learns
+         * nothing from a uniform refusal.
+         */
+        throw badRequest('That payout account is not available. Choose one of your verified accounts.');
+      }
+    } else if (verified.length > 1) {
+      /**
+       * REFUSE RATHER THAN GUESS.
+       *
+       * This used to be `.find()`, which silently returned the first verified
+       * row in insertion order. For a bank transfer that cannot be undone,
+       * "we picked one for you" is not an acceptable default - and it is the
+       * exact behaviour that made the withdrawal screen a lie.
+       */
+      throw badRequest('You have more than one payout account. Choose which one to withdraw to.');
+    }
+
+    if (chosen) {
       payoutBank = {
-        bankId: verified.bankId,
-        accountNumber: verified.accountNumber,
-        bankName: verified.bankName,
-        accountName: verified.accountName,
+        bankId: chosen.bankId,
+        accountNumber: chosen.accountNumber,
+        bankName: chosen.bankName,
+        accountName: chosen.accountName,
       };
     }
   }
