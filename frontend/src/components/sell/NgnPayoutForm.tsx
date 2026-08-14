@@ -415,6 +415,17 @@ export function NgnPayoutForm({
       return naira ? `${naira} · ${inAsset}` : inAsset;
     };
 
+    const explicitBoth = (ngnAmount: string | number | undefined, assetAmount: string | number | undefined) => {
+      const assetValue = Number(assetAmount ?? 0) || 0;
+      const ngnValue = Number(ngnAmount ?? 0) || 0;
+      if (ngnValue > 0 && assetValue > 0) {
+        return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${trimTrailingZeros(String(assetAmount))} ${assetUnit}`;
+      }
+      if (assetValue > 0) return both(assetValue);
+      if (ngnValue > 0 && rate > 0) return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${trimTrailingZeros(String(ngnValue / rate))} ${assetUnit}`;
+      return `${formatPayoutAmount('0', 'ngn')} · 0 ${assetUnit}`;
+    };
+
     const fees = quote.fees;
     if (!fees) return [{ label: 'Fee', value: both(quote.feeAmount ?? '0') }];
 
@@ -446,7 +457,7 @@ export function NgnPayoutForm({
      * Same reasoning that removed the network-fee row and collapsed the
      * three-row breakdown: one number, the one they are paying.
      */
-    return [{ label: 'Sivan fee', value: both(fees.totalFee) }];
+    return [{ label: 'Sivan fee', value: explicitBoth(fees.totalFeeNgn, fees.totalFeeAsset ?? fees.totalFee) }];
   })();
 
   /**

@@ -65,6 +65,11 @@ export const createNgnQuoteSchema = z.object({
  */
 export { gasEstimateUsd, NETWORK_GAS_USD } from '../network-costs.js';
 
+function fixedMoney(value: number, dp: number): string {
+  if (!Number.isFinite(value)) return (0).toFixed(dp);
+  return value.toFixed(dp);
+}
+
 
 
 /**
@@ -303,13 +308,42 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       ? Number(quote.sourceAmount)
       : Number(quote.sourceAmount) * rate;
 
+  const providerFeeAsset = Number(quote.feeAmount ?? 0) || 0;
+  const providerFeeNgn =
+    input.direction === 'offramp'
+      ? providerFeeAsset * rate
+      : providerFeeAsset;
+
   const margin = await applySivanMargin({
     direction: input.direction,
     grossAmount: grossForMargin,
-    providerFeeAmount: Number(quote.feeAmount ?? 0),
-    // Off-ramp provider fees come back in naira; the gross here is USDC.
+    providerFeeAmount: providerFeeNgn,
+    // Off-ramp margin is computed in naira so the payout reconciles against
+    // the naira destination. The source-asset equivalents are derived below
+    // for wallet fee collection and display.
     rate: input.direction === 'offramp' ? Number(quote.rate ?? 0) : undefined,
   });
+
+  const sivanMarginNgn =
+    input.direction === 'offramp'
+      ? margin.sivanMargin
+      : margin.sivanMargin;
+  const sivanMarginAsset =
+    input.direction === 'offramp' && rate > 0
+      ? margin.sivanMargin / rate
+      : margin.sivanMargin;
+  const totalFeeNgn =
+    input.direction === 'offramp'
+      ? providerFeeNgn + sivanMarginNgn
+      : margin.totalFee;
+  const totalFeeAsset =
+    input.direction === 'offramp'
+      ? providerFeeAsset + sivanMarginAsset
+      : margin.totalFee;
+  const feeAmountForRecord =
+    input.direction === 'offramp'
+      ? fixedMoney(totalFeeAsset, 6)
+      : fixedMoney(totalFeeNgn, 2);
 
   // The user receives less by exactly Sivan's margin. Recomputed rather than
   // re-quoted so the number shown is the number charged.
@@ -533,7 +567,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   }
 
   const now = nowIso();
-  const record: NgnQuoteRecord = { id: id('ngnq'), userId: input.userId, customerId: customer?.id, direction: input.direction, provider: quote.provider, sourceCurrency: input.sourceCurrency, destinationCurrency: input.destinationCurrency, sourceAmount: quote.sourceAmount, destinationAmount: destinationAfterMargin.toFixed(input.destinationCurrency === 'ngn' ? 2 : 6), rate: quote.rate, feeAmount: String(margin.totalFee), status: 'quote_created', providerQuoteId: quote.providerQuoteId, expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), metadata: {
+  const record: NgnQuoteRecord = { id: id('ngnq'), userId: input.userId, customerId: customer?.id, direction: input.direction, provider: quote.provider, sourceCurrency: input.sourceCurrency, destinationCurrency: input.destinationCurrency, sourceAmount: quote.sourceAmount, destinationAmount: destinationAfterMargin.toFixed(input.destinationCurrency === 'ngn' ? 2 : 6), rate: quote.rate, feeAmount: feeAmountForRecord, status: 'quote_created', providerQuoteId: quote.providerQuoteId, expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(), metadata: {
     ...(typeof quote.metadata === 'object' && quote.metadata ? quote.metadata : {}),
     // Kept separate on purpose. One blended number makes it impossible to tell
     // a provider price rise from Sivan earning more, and a support agent cannot
@@ -548,10 +582,18 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     // payout account. This is what turns autoSettlement on.
     ...(payoutBank ?? {}),
     fees: {
-      providerFee: margin.providerFee,
+      providerFee: input.direction === 'offramp' ? providerFeeAsset : margin.providerFee,
       providerName: quote.provider,
-      sivanMargin: margin.sivanMargin,
-      totalFee: margin.totalFee,
+      sivanMargin: input.direction === 'offramp' ? sivanMarginAsset : margin.sivanMargin,
+      totalFee: totalFeeAsset,
+      providerFeeAsset,
+      providerFeeNgn,
+      sivanMarginAsset,
+      sivanMarginNgn,
+      totalFeeAsset,
+      totalFeeNgn,
+      assetCurrency: input.sourceCurrency,
+      ngnCurrency: 'ngn',
       effectivePercent: margin.effectivePercent,
       appliedRule: margin.appliedRule,
       explanation: margin.explanation,
@@ -573,10 +615,18 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   return {
     ...record,
     fees: {
-      providerFee: String(margin.providerFee),
+      providerFee: String(input.direction === 'offramp' ? providerFeeAsset : margin.providerFee),
       providerName: quote.provider,
-      sivanMargin: String(margin.sivanMargin),
-      totalFee: String(margin.totalFee),
+      sivanMargin: String(input.direction === 'offramp' ? sivanMarginAsset : margin.sivanMargin),
+      totalFee: String(totalFeeAsset),
+      providerFeeAsset: String(providerFeeAsset),
+      providerFeeNgn: String(providerFeeNgn),
+      sivanMarginAsset: String(sivanMarginAsset),
+      sivanMarginNgn: String(sivanMarginNgn),
+      totalFeeAsset: String(totalFeeAsset),
+      totalFeeNgn: String(totalFeeNgn),
+      assetCurrency: input.sourceCurrency,
+      ngnCurrency: 'ngn',
       effectivePercent: String(margin.effectivePercent),
     },
   };
