@@ -58,6 +58,12 @@ function trimTrailingZeros(amount: string | number): string {
   return text.replace(/\.?0+$/, '');
 }
 
+function roundedAssetFee(amount: string | number): string {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return trimTrailingZeros(amount);
+  return trimTrailingZeros(value.toFixed(3));
+}
+
 /**
  * Seconds as a countdown someone can read at a glance.
  *
@@ -411,7 +417,7 @@ export function NgnPayoutForm({
        * gross minus fee disagree with the receive line by a naira.
        */
       const naira = rate > 0 ? formatPayoutAmount(String(Math.round(amount * rate)), 'ngn') : null;
-      const inAsset = `${trimTrailingZeros(String(amount))} ${assetUnit}`;
+      const inAsset = `${roundedAssetFee(amount)} ${assetUnit}`;
       return naira ? `${naira} · ${inAsset}` : inAsset;
     };
 
@@ -419,7 +425,7 @@ export function NgnPayoutForm({
       const assetValue = Number(assetAmount ?? 0) || 0;
       const ngnValue = Number(ngnAmount ?? 0) || 0;
       if (ngnValue > 0 && assetValue > 0) {
-        return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${trimTrailingZeros(String(assetAmount))} ${assetUnit}`;
+        return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${roundedAssetFee(assetValue)} ${assetUnit}`;
       }
       if (assetValue > 0) return both(assetValue);
       if (ngnValue > 0 && rate > 0) return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${trimTrailingZeros(String(ngnValue / rate))} ${assetUnit}`;

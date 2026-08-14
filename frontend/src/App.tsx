@@ -1934,9 +1934,12 @@ export default function App() {
         const totalFeeAsset = Number(quote.fees?.totalFeeAsset ?? quote.fees?.totalFee ?? quote.feeAmount ?? 0);
         const totalFeeNgn = Number(quote.fees?.totalFeeNgn ?? (rate > 0 ? totalFeeAsset * rate : 0));
         if (!totalFeeAsset && !totalFeeNgn) return undefined;
+        const assetFee = Number.isFinite(totalFeeAsset)
+          ? totalFeeAsset.toFixed(3).replace(/\.?0+$/, '')
+          : String(totalFeeAsset);
         return {
           ngn: totalFeeNgn > 0 ? `₦${Math.round(totalFeeNgn).toLocaleString()}` : undefined,
-          asset: `${Number(totalFeeAsset)} ${String(quote.sourceCurrency ?? 'usdc').toUpperCase()}`,
+          asset: `${assetFee} ${String(quote.sourceCurrency ?? 'usdc').toUpperCase()}`,
           percent: quote.fees?.effectivePercent ? Number(quote.fees.effectivePercent).toFixed(2) : undefined,
         };
       })(),
