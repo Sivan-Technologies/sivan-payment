@@ -92,7 +92,10 @@ test('the fee is a second instruction in the SAME transaction', async () => {
     fromOwner: USER, toOwner: RECIPIENT, mint: MINT, amount: '9.75', production: true,
     feeCollection: { owner: FEE_WALLET, amount: '0.25' },
   });
-  assert.equal(built.collectsFee, true, built.feeSkippedReason);
+  // Coerced: feeSkippedReason is optional, and assert's message parameter is
+  // typed string | Error. Undefined here means the fee was collected, so an
+  // empty reason is the honest message.
+  assert.equal(built.collectsFee, true, built.feeSkippedReason ?? '');
   assert.equal(built.instructionCount, 2, 'expected recipient + fee in one transaction');
 });
 

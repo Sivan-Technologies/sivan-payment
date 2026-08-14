@@ -85,6 +85,22 @@ async function seed() {
     bankSettlementEnabled: false,
     virtualAccountEnabled: false,
     activeProvider: 'mock',
+    /**
+     * PINNED, because this suite is about the CEILING LADDER, not the launch
+     * configuration.
+     *
+     * The seed omitted this and inherited whatever defaultNgnControls() said.
+     * cf3540f flipped that default from false to true as part of going live,
+     * which turned a bank-only user from Level 2 into Level 1 - correct
+     * behaviour - and six assertions here failed because their amounts are
+     * sized for the Level 2 ceilings.
+     *
+     * A test that changes verdict when an operator flips a launch switch is
+     * testing the switch, not the thing it claims to. The transition itself is
+     * covered by test:breet-identity; this one pins the toggle off so its
+     * cumulative-limit arithmetic stays about limits.
+     */
+    identityVerificationEnabled: false,
     maxTransactionNgn: '100000000',
     dailyLimitNgn: '100000000',
     highValueReviewThresholdNgn: '100000000',
@@ -106,11 +122,32 @@ async function main() {
       none.bridgeKycStatus === undefined);
 
     const bank = await getVerificationState('usr_bank');
-    // identityVerificationEnabled defaults to false for MVP, so a verified
-    // payout account alone reaches Level 2. With the toggle on this is Level 1;
-    // that transition is covered in test:breet-identity.
-    check('a verified payout account reaches Level 2 while identity is toggled off',
-      bank.level === VerificationLevel.IDENTITY, `level ${bank.level}`);
+    /**
+     * A NUBAN MATCH IS LEVEL 1 NOW, NOT LEVEL 2.
+     *
+     * This asserted Level 2 because identityVerificationEnabled defaulted to
+     * false for MVP, which let a bare bank match stand in for an identity
+     * check. cf3540f flipped that default to true as part of the launch
+     * configuration, alongside enabling the on/off ramps and switching the
+     * active provider to breet.
+     *
+     * That is a PRODUCT DECISION and the right one - verification-state.ts
+     * already argues it at length: a NUBAN match is a name check, and treating
+     * it as identity would grant a NGN 5,000,000 ceiling and open the foreign
+     * rails for ten digits and no documents. The test was encoding the old
+     * default, so the test is what is stale.
+     *
+     * Read from the controls rather than hardcoded, so this stays honest if an
+     * operator flips the toggle back rather than failing six assertions again.
+     */
+    const { getNgnControls } = await import('../src/ngn/service/ngn-controls.service.js');
+    const identityRequired = (await getNgnControls()).identityVerificationEnabled === true;
+    const expected = identityRequired ? VerificationLevel.BANK : VerificationLevel.IDENTITY;
+    check(
+      `a verified payout account reaches Level ${expected} with identity ${identityRequired ? 'required' : 'toggled off'}`,
+      bank.level === expected,
+      `level ${bank.level}`,
+    );
   }
 
   console.log('\nthe old blocker is gone: no Bridge customer, naira still moves');
