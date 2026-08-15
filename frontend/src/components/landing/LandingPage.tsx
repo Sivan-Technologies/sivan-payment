@@ -309,7 +309,27 @@ function useSectionReveal() {
   return (el: HTMLElement | null) => {
     if (!el) return;
     if (el.dataset.revealImmediate === 'true') {
-      el.classList.add('is-revealed');
+      /**
+       * ON THE NEXT FRAME, NOT THIS ONE - OR IT DOES NOT ANIMATE AT ALL.
+       *
+       * Adding .is-revealed here synchronously puts the entry state and the
+       * end state in the SAME style recalculation. The browser never paints
+       * the `opacity: 0` start, so there is nothing to transition from and the
+       * hero simply appears. Measured: sampling composited opacity every frame
+       * for 700ms after load, every hero child read exactly 1 on the first
+       * sample - the stagger existed in the stylesheet and never ran.
+       *
+       * Two frames, deliberately. One rAF still lands inside the same paint on
+       * some engines; the second guarantees the initial state has been
+       * rendered before the class flips it.
+       *
+       * If either frame never arrives (tab backgrounded before paint), the
+       * reduced-motion CSS block and the observer path below both still leave
+       * the content visible - nothing here can strand the hero at opacity 0.
+       */
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.classList.add('is-revealed');
+      }));
       return;
     }
     // Already past the fold on first paint (deep link, restored scroll

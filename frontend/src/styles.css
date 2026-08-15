@@ -3277,7 +3277,11 @@ textarea:focus-visible,
   .landing-strip.reveal-section.is-revealed > span:nth-child(1) { transition-delay: 40ms; }
   .landing-strip.reveal-section.is-revealed > span:nth-child(2) { transition-delay: 110ms; }
   .landing-strip.reveal-section.is-revealed > span:nth-child(3) { transition-delay: 180ms; }
-  .landing-strip.reveal-section.is-revealed > span:nth-child(4) { transition-delay: 250ms; }
+  /* No nth-child(4). The strip carried a fourth "NGN supported" span until
+     naira joined the live payoutCurrencies list and it became a duplicate of
+     its neighbour. The delay is dropped with it so the last visible chip is
+     the last one timed - a stagger whose final step lands on nothing reads as
+     the row finishing early. */
 
   /* THE STEP CARDS STAGGER, matching the feature grid they sit above.
      Same curve and a comparable interval, so the two grids read as one
@@ -3306,6 +3310,73 @@ textarea:focus-visible,
   .reveal-section .direction-card.sell  { transform: translate3d(-14px, 12px, 0); }
   .reveal-section .direction-card.buy   { transform: translate3d(14px, 12px, 0); }
   .reveal-section.is-revealed .direction-card { opacity: 1; transform: none; }
+
+  /* THE HERO ARRIVED AS ONE SLAB, and it is the only section nobody scrolls
+     to - it is what the page opens on.
+
+     Measured before changing anything: every child of .premium-hero sat at
+     opacity 1 / transform none with `transition: all`, while every section
+     BELOW the fold had a two-beat reveal. So the page's most-seen moment was
+     its least composed one, and the sections a visitor might never reach were
+     the ones doing the work.
+
+     The hero carries data-reveal-immediate, so .is-revealed lands on the first
+     frame rather than on intersection. That makes this a load animation, not a
+     scroll one - which is why the delays start near zero and total under half
+     a second. A slow hero is a slow SITE to anyone measuring first impression.
+
+     Reading order drives the order: eyebrow, headline, lead, buttons, trust
+     row. The quote widget is the last beat because it is the destination -
+     letting it settle after the copy makes it the thing the eye stops on. */
+  .premium-hero.reveal-section .landing-copy > .eyebrow,
+  .premium-hero.reveal-section .landing-copy > h1,
+  .premium-hero.reveal-section .landing-copy > .lead,
+  .premium-hero.reveal-section .landing-copy > .landing-actions,
+  .premium-hero.reveal-section .landing-copy > .landing-trust {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+    transition:
+      opacity .44s cubic-bezier(.22, 1, .36, 1),
+      transform .44s cubic-bezier(.22, 1, .36, 1);
+  }
+  .premium-hero.reveal-section.is-revealed .landing-copy > .eyebrow,
+  .premium-hero.reveal-section.is-revealed .landing-copy > h1,
+  .premium-hero.reveal-section.is-revealed .landing-copy > .lead,
+  .premium-hero.reveal-section.is-revealed .landing-copy > .landing-actions,
+  .premium-hero.reveal-section.is-revealed .landing-copy > .landing-trust {
+    opacity: 1;
+    transform: none;
+  }
+  /* TIGHTENED AFTER LOOKING AT A MID-FLIGHT SCREENSHOT.
+     The first pass ran 40/100/175/245/305ms against a .58s transition, and a
+     capture at 260ms showed an essentially EMPTY viewport - the headline was
+     still near zero opacity a quarter-second in. Numbers that read as a
+     gentle stagger on paper read as a slow page in a screenshot, which is the
+     only place a first impression is actually formed.
+     Halved the intervals and shortened the transition; the sequence is still
+     legible as a sequence but the headline is committed almost immediately. */
+  .premium-hero.reveal-section.is-revealed .landing-copy > .eyebrow         { transition-delay: 20ms; }
+  .premium-hero.reveal-section.is-revealed .landing-copy > h1               { transition-delay: 55ms; }
+  .premium-hero.reveal-section.is-revealed .landing-copy > .lead            { transition-delay: 100ms; }
+  .premium-hero.reveal-section.is-revealed .landing-copy > .landing-actions { transition-delay: 145ms; }
+  .premium-hero.reveal-section.is-revealed .landing-copy > .landing-trust   { transition-delay: 185ms; }
+
+  /* The widget comes from its own side, the way the direction cards do, so the
+     hero and the section below it read as one system. It is NOT given a
+     transform on the Y axis as well: it is the tallest element on the page and
+     a vertical shift on something that size is felt as the layout settling
+     late, which is the exact impression a payments product cannot afford. */
+  .premium-hero.reveal-section .quote-widget {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0);
+    transition:
+      opacity .5s cubic-bezier(.22, 1, .36, 1) 120ms,
+      transform .5s cubic-bezier(.22, 1, .36, 1) 120ms;
+  }
+  .premium-hero.reveal-section.is-revealed .quote-widget {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* --- Reduced motion: the finished state, no movement ---------------------
@@ -3324,7 +3395,18 @@ textarea:focus-visible,
   .reveal-section .direction-card,
   .landing-strip.reveal-section > span,
   .reveal-section .final-cta-card > .eyebrow,
-  .reveal-section .final-cta-card > h2 {
+  .reveal-section .final-cta-card > h2,
+  /* The hero's children, added with its stagger. Omitting them here would
+     leave the FIRST thing on the page invisible to anyone who asks for
+     reduced motion - the worst possible place for that mistake, and one the
+     entry state above cannot cause on its own because it is scoped to
+     no-preference. Listed explicitly so the two blocks stay in step. */
+  .premium-hero.reveal-section .landing-copy > .eyebrow,
+  .premium-hero.reveal-section .landing-copy > h1,
+  .premium-hero.reveal-section .landing-copy > .lead,
+  .premium-hero.reveal-section .landing-copy > .landing-actions,
+  .premium-hero.reveal-section .landing-copy > .landing-trust,
+  .premium-hero.reveal-section .quote-widget {
     opacity: 1;
     transform: none;
     transition: none;
