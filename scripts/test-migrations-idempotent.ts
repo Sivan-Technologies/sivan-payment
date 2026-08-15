@@ -174,8 +174,30 @@ async function main() {
       // Strip comments so a mention in prose is not a false positive.
       const code = sql.replace(/--[^\n]*/g, '');
       if (!/add\s+constraint/.test(code)) continue;
-      // Guarded either by a pg_constraint existence check or a DO block.
-      if (!/pg_constraint/.test(code)) offenders.push(file);
+      /**
+       * Two guards are valid, not one.
+       *
+       * This accepted only a pg_constraint existence check, and reported 053
+       * as an offender for using the other correct form:
+       *
+       *     alter table t drop constraint if exists c;
+       *     alter table t add  constraint c check (...);
+       *
+       * That IS idempotent - the drop makes the add safe on every later run -
+       * and the behavioural half of this same suite proves it, migrating a
+       * clean database three times in a row without error. So the failure was
+       * this heuristic being too narrow, not the migration being unsafe.
+       *
+       * The `drop if exists` must target the SAME constraint name being added,
+       * otherwise it guards nothing; that is what the name capture below
+       * checks, so this stays strict rather than merely permissive.
+       */
+      if (/pg_constraint/.test(code)) continue;
+      const added = [...code.matchAll(/add\s+constraint\s+([a-z0-9_]+)/g)].map((m) => m[1]);
+      const dropped = new Set(
+        [...code.matchAll(/drop\s+constraint\s+if\s+exists\s+([a-z0-9_]+)/g)].map((m) => m[1])
+      );
+      if (!added.every((name) => dropped.has(name))) offenders.push(file);
     }
     check('every add constraint is wrapped in an existence check',
       offenders.length === 0, offenders.join(', '));

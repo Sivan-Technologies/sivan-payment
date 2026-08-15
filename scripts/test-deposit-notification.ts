@@ -110,11 +110,14 @@ check('a pending message states the amount', pendingMsg.text.includes('50.000000
 check('a pending message states the asset', pendingMsg.text.includes('USDC'));
 check('a pending message tells them to do nothing',
   lower.includes('do not need to do anything'));
+check('a pending message includes branded HTML', pendingMsg.html.includes('#018EE8') && pendingMsg.html.includes('Sivan'));
+check('a pending message has a dashboard CTA', pendingMsg.html.includes('View activity'));
 
 const confirmedMsg = depositMessage(deposit('y', { status: 'confirmed' }) as any);
 check('a CONFIRMED message may say it is usable',
   /send or convert|balance/i.test(confirmedMsg.text));
 check('the two messages differ', confirmedMsg.subject !== pendingMsg.subject);
+check('a confirmed message includes branded HTML', confirmedMsg.html.includes('Deposit confirmed') && confirmedMsg.html.includes('#018EE8'));
 
 console.log('\n── network names are for humans ──────────────────────────────');
 

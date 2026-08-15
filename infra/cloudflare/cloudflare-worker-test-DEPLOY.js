@@ -8,7 +8,7 @@
 //   which Render has SUSPENDED. When the worker fell through to it, Render
 //   returned an HTML page reading "This service has been suspended", which the
 //   browser surfaced as a 503 after ~12s. The AI itself was never called:
-//   sivan-ai.onrender.com answers in 0.1s, and the payments primary
+//   the Sivan AI upstream answers directly, and the payments primary
 //   (-x9xq) answers correctly when called directly.
 //
 //   Verified 2026-07-30, every fallback host is suspended:
@@ -32,7 +32,7 @@ const TEST_ESCROW   = "https://sivan-escrow-agent-test-gb84.onrender.com";
 const TEST_PAYMENTS = "https://sivan-payments-api-test-x9xq.onrender.com";
 const TEST_AUTH     = "https://telegram-admin-auth-z3e8.onrender.com";
 const TEST_BOT      = "https://sivan-whatsapp-bot-test-du5x.onrender.com";
-const TEST_SIVAN_AI = "https://sivan-ai.onrender.com";
+const TEST_SIVAN_AI = "https://ai.sivantech.online";
 
 // Only these origins may send credentialed requests. This list is the only
 // thing standing between a hostile page and an authenticated request to the

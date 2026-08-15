@@ -8,6 +8,8 @@ export interface NgnProviderAdapter {
   getTransfer(providerTransferId: string): Promise<Partial<NgnTransferRecord>>;
   verifyWebhook(payload: unknown, headers: unknown): Promise<NgnWebhookRecord>;
   health(): Promise<NgnProviderHealth>;
+  getBreetMarkupPercent?(): Promise<number>;
+  updateBreetMarkupPercent?(percent: number): Promise<{ markupPercent: number; raw?: unknown }>;
   /**
    * Ask the provider what it believes about settlements, without waiting to be
    * told.

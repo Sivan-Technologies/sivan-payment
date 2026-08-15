@@ -57,7 +57,7 @@ async function seedVerifiedNigerian() {
   const palm = (banks.data ?? []).find((b) => /palmpay/i.test(b.name));
   const saved = await j(await fetch(`${API}/api/ngn/payout-accounts`, {
     method: 'POST', headers: H,
-    body: JSON.stringify({ userId: user.id, bankId: String(palm.id), accountNumber: '8102524846' }) }));
+    body: JSON.stringify({ userId: user.id, bankId: String(palm.id), accountNumber: '1111111111' }) }));
 
   // THE SANDBOX CANNOT GRANT LEVEL 1 BY ITSELF, AND THAT IS CORRECT.
   // Breet's sandbox returns the same fabricated name for every account

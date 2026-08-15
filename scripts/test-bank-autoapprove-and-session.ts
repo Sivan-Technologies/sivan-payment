@@ -16,10 +16,10 @@
  * And it is false for a real reason. Verified live against Breet's sandbox
  * during this session:
  *
- *   PalmPay 8102524846 -> Samuel Udochukwu
+ *   PalmPay 1111111111 -> Samuel Udochukwu
  *   PalmPay 0000000000 -> Samuel Udochukwu
  *   PalmPay 1234567890 -> Samuel Udochukwu
- *   Access  8102524846 -> Samuel Udochukwu
+ *   Access  1111111111 -> Samuel Udochukwu
  *
  * Any ten digits, any bank, always the API key owner. Auto-approving on that
  * grants Level 1 - and a 100,000 NGN ceiling - to anyone who can type. So the

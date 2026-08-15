@@ -15,7 +15,7 @@ landed:
 |---|---|
 | Trade `6a70adbe0b4ad380586424a1` | `completed`, 59 USDC @ 1605 |
 | Withdrawal `6a70adbea4f8526669d89013` | `completed`, **94,171 NGN** |
-| Bank | PalmPay **8102524846**, Samuel Udochukwu |
+| Bank | PalmPay **1111111111**, Samuel Udochukwu |
 | Fee | 50 NGN |
 | On-chain | `0x5a4a1b8f...a846a192` |
 

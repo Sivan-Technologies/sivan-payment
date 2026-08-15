@@ -58,6 +58,12 @@ function trimTrailingZeros(amount: string | number): string {
   return text.replace(/\.?0+$/, '');
 }
 
+function roundedAssetFee(amount: string | number): string {
+  const value = Number(amount);
+  if (!Number.isFinite(value)) return trimTrailingZeros(amount);
+  return trimTrailingZeros(value.toFixed(3));
+}
+
 /**
  * Seconds as a countdown someone can read at a glance.
  *
@@ -137,6 +143,7 @@ export function NgnPayoutForm({
   spendable,
   windowDays = 30,
   externalFundingEnabled,
+  thirdPartyPayoutsEnabled,
   onReady,
   onCancel,
 }: {
@@ -181,6 +188,15 @@ export function NgnPayoutForm({
    * to be watched.
    */
   externalFundingEnabled?: boolean;
+  /**
+   * Whether the "Pay someone else" choice is offered at all.
+   *
+   * `=== true` below, not truthiness: an older API build omits the field and
+   * `undefined` must read as OFF. This only governs what is SHOWN - the server
+   * refuses a third-party destination in createNgnQuote() regardless, so a
+   * stale bundle cannot open the path.
+   */
+  thirdPartyPayoutsEnabled?: boolean;
   onReady: (payload: { quote: NgnQuote; account: ResolvedNgnBankAccount; fundingSource: NgnFundingSource }) => void;
   /**
    * The user's remaining NGN off-ramp headroom, from the server.
@@ -228,6 +244,13 @@ export function NgnPayoutForm({
   const [addingNewAccount, setAddingNewAccount] = useState(false);
   /** Shown after a manual account is saved, so the user knows it is now reusable. */
   const [justSaved, setJustSaved] = useState('');
+  /**
+   * Paying a third party rather than yourself.
+   *
+   * Only reachable when the admin toggle is on; the tab that sets it is not
+   * rendered otherwise, and the server refuses regardless.
+   */
+  const [payingSomeoneElse, setPayingSomeoneElse] = useState(false);
 
   /**
    * MAY THE USER FUND THIS BY SENDING CRYPTO THEMSELVES?
@@ -243,6 +266,7 @@ export function NgnPayoutForm({
    * 'external' selection could survive the flag being turned off mid-session.
    */
   const canFundExternally = externalFundingEnabled === true;
+  const canPayThirdParty = thirdPartyPayoutsEnabled === true;
   const selectableAssets = assetOptions.length ? assetOptions : [{ asset, label: asset.toUpperCase(), spendable }];
 
   useEffect(() => {
@@ -366,11 +390,11 @@ export function NgnPayoutForm({
    * deal is fair. The asset amount follows in the same cell because that is
    * the unit actually deducted.
    *
-   * ITEMISED WHEN THE SERVER SENDS THE BREAKDOWN. "Sivan fee" and "Provider
-   * fee" as separate lines is the difference between a number a user accepts
-   * and a number they can check. Falls back to one "Fee" row when `fees` is
-   * absent, so an older server response still renders correctly rather than
-   * showing nothing.
+   * ONE USER FEE ROW WHEN THE SERVER SENDS THE BREAKDOWN. The provider/Sivan
+   * split is still returned for admin reconciliation, but the withdrawal card
+   * shows the single total a user actually pays. Falls back to one "Fee" row
+   * when `fees` is absent, so an older server response still renders
+   * correctly rather than showing nothing.
    */
   const feeRows = (() => {
     if (!quote) return [];
@@ -393,8 +417,19 @@ export function NgnPayoutForm({
        * gross minus fee disagree with the receive line by a naira.
        */
       const naira = rate > 0 ? formatPayoutAmount(String(Math.round(amount * rate)), 'ngn') : null;
-      const inAsset = `${trimTrailingZeros(String(amount))} ${assetUnit}`;
+      const inAsset = `${roundedAssetFee(amount)} ${assetUnit}`;
       return naira ? `${naira} · ${inAsset}` : inAsset;
+    };
+
+    const explicitBoth = (ngnAmount: string | number | undefined, assetAmount: string | number | undefined) => {
+      const assetValue = Number(assetAmount ?? 0) || 0;
+      const ngnValue = Number(ngnAmount ?? 0) || 0;
+      if (ngnValue > 0 && assetValue > 0) {
+        return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${roundedAssetFee(assetValue)} ${assetUnit}`;
+      }
+      if (assetValue > 0) return both(assetValue);
+      if (ngnValue > 0 && rate > 0) return `${formatPayoutAmount(String(Math.round(ngnValue)), 'ngn')} · ${trimTrailingZeros(String(ngnValue / rate))} ${assetUnit}`;
+      return `${formatPayoutAmount('0', 'ngn')} · 0 ${assetUnit}`;
     };
 
     const fees = quote.fees;
@@ -428,7 +463,7 @@ export function NgnPayoutForm({
      * Same reasoning that removed the network-fee row and collapsed the
      * three-row breakdown: one number, the one they are paying.
      */
-    return [{ label: 'Sivan fee', value: both(fees.totalFee) }];
+    return [{ label: 'Sivan fee', value: explicitBoth(fees.totalFeeNgn, fees.totalFeeAsset ?? fees.totalFee) }];
   })();
 
   /**
@@ -583,7 +618,28 @@ export function NgnPayoutForm({
           method: 'POST',
           body: JSON.stringify({ userId, bankId, accountNumber }),
         });
-        if (saved.status !== 'verified') {
+        /**
+         * WHAT COUNTS AS USABLE DEPENDS ON WHO IS BEING PAID.
+         *
+         * Paying yourself requires `verified`, which means the bank's name
+         * matched the profile name. Paying someone else CANNOT clear that bar
+         * by definition - a third party's account is in a different name, so
+         * the save comes back `rejected` with verdict 'mismatch'. Treating
+         * that as a failure would make the tab unusable the moment an operator
+         * switched it on, and the error would tell a user paying their
+         * supplier that the account "must be in your own name" - advice that
+         * contradicts the button they just pressed.
+         *
+         * The account still had to RESOLVE: a NUBAN that names nobody never
+         * reaches here, because saveNgnPayoutAccount() re-resolves server side
+         * and throws when the bank cannot find it. So the row is real and the
+         * name shown below is the bank's, not the user's guess.
+         */
+        const usable = payingSomeoneElse
+          ? saved.matchVerdict === 'mismatch' || saved.status === 'verified'
+          : saved.status === 'verified';
+
+        if (!usable) {
           setQuoting(false);
           /**
            * Named plainly, because "pending review" invites the user to wait
@@ -599,11 +655,22 @@ export function NgnPayoutForm({
         }
         activePayoutAccountId = saved.id;
         setPayoutAccountId(saved.id);
-        // Fold it into the list so the next withdrawal offers it without a reload.
-        setSavedAccounts((current) => {
-          const rest = (current ?? []).filter((account) => account.id !== saved.id);
-          return [saved, ...rest];
-        });
+        /**
+         * Only the user's OWN accounts join the saved list.
+         *
+         * The list is headed "Withdraw to" and every row in it is offered as a
+         * one-tap self-payout. A third party's account in there would be one
+         * tap away from being paid on a later withdrawal, by a user who had
+         * since switched back to "Pay myself" - and the server would refuse
+         * it, so the row would be an option that always fails. Recipients need
+         * their own list with its own screening, not a seat in this one.
+         */
+        if (saved.status === 'verified') {
+          setSavedAccounts((current) => {
+            const rest = (current ?? []).filter((account) => account.id !== saved.id);
+            return [saved, ...rest];
+          });
+        }
         setAddingNewAccount(false);
         setJustSaved(saved.id);
       }
@@ -674,6 +741,57 @@ export function NgnPayoutForm({
       <p className="muted">Choose your bank and enter your account number. We confirm the account name before anything is sent.</p>
 
       <div className="form premium-form">
+        {/* WHO IS BEING PAID.
+ 
+            Shown ONLY when third-party payouts are switched on, following the
+            same rule as the funding-source group below: hidden, not disabled.
+            A greyed-out "Pay someone else" asks "why can't I click this?"
+            about a path that is not coming soon on this rail - Breet binds the
+            payout bank to the user's permanent deposit address, so it needs a
+            different provider product, not a flag flip. A disabled control
+            would promise otherwise.
+ 
+            With the toggle off there is also no CHOICE to render: a segmented
+            control with one option is just a label. The heading and the saved
+            list below already say the naira goes to the user's own account.
+ 
+            This is presentation only. createNgnQuote() refuses a destination
+            whose matchVerdict is not 'match' whenever the toggle is off, so
+            hiding the tab is the second barrier, never the only one. */}
+        {canPayThirdParty && (
+          <div className="seg" role="group" aria-label="Who is being paid">
+            <button
+              type="button"
+              className={payingSomeoneElse ? '' : 'active'}
+              aria-pressed={!payingSomeoneElse}
+              onClick={() => {
+                setPayingSomeoneElse(false);
+                // The destination decides the price and the recipient. Neither
+                // survives a change of who is being paid.
+                setQuote(null);
+                setError('');
+              }}
+            >
+              Pay myself
+            </button>
+            <button
+              type="button"
+              className={payingSomeoneElse ? 'active' : ''}
+              aria-pressed={payingSomeoneElse}
+              onClick={() => {
+                setPayingSomeoneElse(true);
+                // A saved account is by definition the user's own, so it
+                // cannot stay selected once they are paying someone else.
+                setPayoutAccountId('');
+                setAddingNewAccount(true);
+                setQuote(null);
+                setError('');
+              }}
+            >
+              Pay someone else
+            </button>
+          </div>
+        )}
         {/* ASKED FIRST, because it changes what every later step means.
  
             Placed above the bank picker deliberately: choosing "I'll send
@@ -884,9 +1002,17 @@ export function NgnPayoutForm({
         {/* The manual path: a first-time user, or someone adding another of
             their own accounts. Hidden while a saved account is selected so the
             two cannot both be filled in and disagree about where money goes. */}
-        {(savedAccounts !== null && (savedAccounts.length === 0 || addingNewAccount)) && (
+        {(savedAccounts !== null && (savedAccounts.length === 0 || addingNewAccount || payingSomeoneElse)) && (
           <>
-        {savedAccounts.length > 0 && (
+        {/* The "New account" strip belongs to the self-payout flow only.
+ 
+            While paying someone else there is nothing to cancel BACK to: the
+            saved list holds the user's own accounts, and Cancel would silently
+            reselect one while the tab still read "Pay someone else" - the
+            screen and the destination disagreeing, which is the class of bug
+            this whole change set exists to remove. The tab itself is the way
+            back. */}
+        {savedAccounts.length > 0 && !payingSomeoneElse && (
           <div className="details-box compact">
             <span>New account</span>
             <button
@@ -1005,10 +1131,30 @@ export function NgnPayoutForm({
               // presenting this as confirmation would be a lie.
               <span className="field-hint">Test environment. This name is simulated and does not confirm a real account.</span>
             )}
-            {/* Stated BEFORE the withdrawal, not after. The account is saved
-                as a side effect of withdrawing to it, and a user should know
-                that at the moment they can still back out. */}
-            <span className="field-hint">We'll save this account so you don't have to type it next time.</span>
+            {/* THE NAME IS THE CONFIRMATION, SO SAY WHAT TO DO WITH IT.
+ 
+                The bank's own answer for this NUBAN is already rendered above,
+                but as a bare name it reads as decoration. A wrong digit
+                resolves to a real stranger, and a naira transfer cannot be
+                recalled - so when the money is going to someone else, the name
+                is the last check that exists and the copy has to ask for it
+                explicitly rather than hope the user reads carefully.
+ 
+                Only when trustworthy: on sandbox any number resolves to a
+                plausible name, and telling someone to verify a simulated name
+                would train them to trust a check that proves nothing. */}
+            {payingSomeoneElse
+              ? resolved.trustworthy && (
+                  <span className="field-hint">
+                    Check this is the right person. Naira transfers cannot be reversed.
+                  </span>
+                )
+              : (
+                /* Stated BEFORE the withdrawal, not after. The account is saved
+                   as a side effect of withdrawing to it, and a user should know
+                   that at the moment they can still back out. */
+                <span className="field-hint">We'll save this account so you don't have to type it next time.</span>
+              )}
           </div>
         )}
           </>

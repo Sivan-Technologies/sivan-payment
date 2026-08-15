@@ -149,6 +149,15 @@ export interface NgnNetworkLists {
    * default is false: launch runs balance-funded withdrawals only.
    */
   externalFundingEnabled?: boolean;
+  /**
+   * Whether the withdraw screen may offer "Pay someone else".
+   *
+   * Optional for the same reason and read with the same `=== true` test: an
+   * older API build omits it and `undefined` must not open the choice. The
+   * server refuses a third-party destination in createNgnQuote() either way,
+   * so this only decides whether the tab is rendered.
+   */
+  thirdPartyPayoutsEnabled?: boolean;
 }
 
 /**

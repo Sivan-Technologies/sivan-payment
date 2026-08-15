@@ -1931,11 +1931,15 @@ export default function App() {
        */
       feeSummary: (() => {
         const rate = Number(quote.rate) || 0;
-        const totalFee = Number(quote.fees?.totalFee ?? quote.feeAmount ?? 0);
-        if (!totalFee) return undefined;
+        const totalFeeAsset = Number(quote.fees?.totalFeeAsset ?? quote.fees?.totalFee ?? quote.feeAmount ?? 0);
+        const totalFeeNgn = Number(quote.fees?.totalFeeNgn ?? (rate > 0 ? totalFeeAsset * rate : 0));
+        if (!totalFeeAsset && !totalFeeNgn) return undefined;
+        const assetFee = Number.isFinite(totalFeeAsset)
+          ? totalFeeAsset.toFixed(3).replace(/\.?0+$/, '')
+          : String(totalFeeAsset);
         return {
-          ngn: rate > 0 ? `₦${Math.round(totalFee * rate).toLocaleString()}` : undefined,
-          asset: `${Number(totalFee)} ${String(quote.sourceCurrency ?? 'usdc').toUpperCase()}`,
+          ngn: totalFeeNgn > 0 ? `₦${Math.round(totalFeeNgn).toLocaleString()}` : undefined,
+          asset: `${assetFee} ${String(quote.sourceCurrency ?? 'usdc').toUpperCase()}`,
           percent: quote.fees?.effectivePercent ? Number(quote.fees.effectivePercent).toFixed(2) : undefined,
         };
       })(),
@@ -2717,6 +2721,7 @@ export default function App() {
                Undefined until it answers, which reads as OFF - the withdraw
                form tests `=== true`. */
             ngnExternalFundingEnabled={ngnNetworks?.externalFundingEnabled}
+            ngnThirdPartyPayoutsEnabled={ngnNetworks?.thirdPartyPayoutsEnabled}
             onNgnReady={handleNgnReady}
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
