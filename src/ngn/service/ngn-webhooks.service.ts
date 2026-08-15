@@ -188,6 +188,63 @@ function findTransferForEvent(
     if (byLabel) return byLabel;
   }
 
+  /**
+   * A WITHDRAWAL THAT NAMES NEITHER AN ADDRESS NOR A KNOWN TRADE.
+   *
+   * Every strategy above needs one of: a provider id we stored, a txHash, a
+   * known trade id, a destinationAddress, or a label. A real
+   * `withdrawal.completed` from Breet carries NONE of them:
+   *
+   *   { id, trade, amount, originalAmount, payoutAmount, currency,
+   *     status, reference, meta:{ bankId, accountNumber, ... }, event }
+   *
+   * `trade` is only useful once some earlier `trade.*` event taught us that
+   * id, and `providerTransferId` holds the WALLET id, not the trade id. So if
+   * the trade event is missed, delayed, or never fires in the shape we expect,
+   * the payout that actually moved the user's money matched nothing and the
+   * order sat at `settlement_processing` while the naira was in their bank.
+   * Observed in production: Breet delivered on attempt 1, we 200'd it, and
+   * the screen stayed wrong.
+   *
+   * The payout amount is the join key of last resort. It is denominated in
+   * NGN - the DESTINATION - so it is compared against destinationAmount, not
+   * sourceAmount. Note `amount` and `payoutAmount` differ (24699 vs 24649:
+   * Breet's ₦50 transfer fee), so both are tried.
+   *
+   * DELIBERATELY THE LAST STRATEGY, AND DELIBERATELY EXACT-OR-NOTHING. It runs
+   * only on withdrawal events, only over open offramps, and refuses when two
+   * orders could equally claim the payout - completing an arbitrary order on a
+   * fuzzy amount match would be worse than leaving one pending, because the
+   * user whose money is still in flight would be told it had arrived.
+   */
+  if (String(payload?.event ?? '').toLowerCase().startsWith('withdrawal')) {
+    const payoutAmounts = [payload?.amount, payload?.originalAmount, payload?.payoutAmount]
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (payoutAmounts.length) {
+      const openOfframps = transfers.filter(
+        (item) =>
+          item.direction === 'offramp' &&
+          item.destinationCurrency === 'ngn' &&
+          item.status !== 'completed' &&
+          item.status !== 'failed'
+      );
+
+      // Within one naira: Breet rounds, and a kobo of drift must not orphan a
+      // real payout. Wide enough to absorb rounding, far tighter than the
+      // gap between two genuinely different orders.
+      const byAmount = openOfframps.filter((item) => {
+        const destination = Number(item.destinationAmount);
+        if (!Number.isFinite(destination)) return false;
+        return payoutAmounts.some((value) => Math.abs(value - destination) <= 1);
+      });
+
+      // Exactly one, or nothing. Ambiguity here is a refusal, not a guess.
+      if (byAmount.length === 1) return byAmount[0];
+    }
+  }
+
   return undefined;
 }
 
