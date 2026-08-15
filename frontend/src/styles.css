@@ -3412,3 +3412,97 @@ textarea:focus-visible,
     transition: none;
   }
 }
+
+
+/* --- Landing: small-screen fixes, measured at real device widths ------------
+   Audited at 360 / 390 / 430 / 768 / 1024 / 1280 / 1920. No horizontal
+   overflow at any of them - the layout itself is sound. These are the three
+   defects that measurement found and a desktop browser hides.
+
+   1. THE HEADER WAS 133px TALL AT 360px, and 67px at 390px.
+
+   .premium-nav declares `height: 62px` and its children are `flex-wrap`
+   inherited from a nowrap parent - but the inner <nav> is its own flex line.
+   At 360 the brand, "Sign in" and "Get started" no longer fit on one line, so
+   the nav wrapped INSIDE a fixed-height header and overflowed it: a 133px
+   band of mostly empty white above the fold, on the narrowest and most common
+   Android width in this market.
+
+   Fixed by letting the header size itself (min-height, not height) and
+   shrinking the gap and button padding below 400px, so the row fits on one
+   line instead of wrapping out of its own container.                        */
+@media (max-width: 400px) {
+  .premium-landing .premium-nav {
+    /* min-height, NOT height: a fixed height cannot contain a wrapped row,
+       it just lets the content escape it. */
+    height: auto;
+    min-height: 58px;
+    padding-inline: 14px;
+    gap: 10px;
+  }
+  .premium-landing .premium-nav nav { gap: 8px; }
+  .premium-landing .premium-nav .primary-btn { padding: 9px 12px; font-size: 14px; }
+  .premium-landing .premium-nav .ghost-btn { padding: 9px 8px; font-size: 14px; }
+  .premium-landing .landing-brand strong { font-size: 18px; }
+}
+
+/* 2. TAP TARGETS. The nav buttons measured 38px and the footer links 15px.
+      44px is the Apple guideline and 48 the Material one; 38 is a miss on a
+      thumb, and these two buttons are the entire top-of-funnel. Applied on
+      pointer:coarse rather than by width, because the input device is what
+      actually decides - a touch laptop needs this and a narrow desktop window
+      does not. */
+@media (pointer: coarse) {
+  .premium-landing .premium-nav .primary-btn,
+  .premium-landing .premium-nav .ghost-btn,
+  .premium-landing .landing-actions .primary-btn,
+  .premium-landing .landing-actions .secondary-btn,
+  .premium-landing .quote-btn,
+  .premium-landing .widget-tabs button {
+    min-height: 44px;
+  }
+  /* Footer links: padding rather than height, so the column keeps its rhythm
+     while the hit area grows past the text box.
+
+     `.landing-footer a` alone did NOT match - the links live inside
+     .footer-col, and my first selector assumed they were direct children.
+     Measured after the change and they were still 15px, which is how the
+     mistake surfaced. Descendant selector, and display:block so the padding
+     actually applies to an inline <a>. */
+  .premium-landing .landing-footer .footer-col a,
+  .premium-landing .landing-footer .footer-col button {
+    display: block;
+    width: fit-content;
+    /* 14px, not 10. At 10 the links measured 36px - still under the 44px
+       guideline, because the text box itself is only ~16px. Measured rather
+       than assumed: 16 + 14 + 14 = 44. */
+    padding-block: 14px;
+    line-height: 1.15;
+  }
+  /* The signed-in pill and any bare nav button in the header. */
+  .premium-landing .premium-nav button { min-height: 44px; }
+}
+
+/* 3. TEXT UNDER 12px. The eyebrow and the quote widget's labels rendered at
+      10-11px. iOS Safari zooms the page when a control under 16px takes
+      focus, and 10px is unreadable at arm's length regardless. Raised to 12
+      on touch only - the desktop scale is deliberate and is not a defect at
+      a 60cm viewing distance. */
+@media (pointer: coarse) {
+  .premium-landing .eyebrow { font-size: 12px; }
+  /* The FAQ eyebrow is set to 11px by a more specific rule
+     (.faq-section .section-head .eyebrow), so the line above lost to it.
+     Matched at the same specificity rather than reached for !important. */
+  .premium-landing .faq-section .section-head .eyebrow { font-size: 12px; }
+  /* The inline "Already have an account? Sign in" button - a bare <button>
+     in a <small>, 17px tall. It is a real navigation choice at the bottom of
+     the page, so it gets a thumb-sized hit area like every other one. */
+  .premium-landing .final-cta-card small button {
+    min-height: 44px;
+    padding-inline: 6px;
+  }
+  .premium-landing .quote-box label,
+  .premium-landing .quote-box small,
+  .premium-landing .quote-fees span,
+  .premium-landing .quote-widget small { font-size: 12px; }
+}
