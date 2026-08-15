@@ -601,7 +601,37 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
      * So: refuse only when a verdict is PRESENT and is not a match. That is
      * the third party, stated positively.
      */
-    if (chosen && chosen.matchVerdict && chosen.matchVerdict !== 'match') {
+    /**
+     * A VERDICT DERIVED FROM A FABRICATED NAME IS NOT EVIDENCE.
+     *
+     * Breet's sandbox resolves ANY ten digits to a plausible name, which is
+     * why payoutAccountStatusFor() force-verifies untrustworthy resolutions
+     * rather than trusting the comparison. Refusing on the verdict here would
+     * re-make, one layer down, the judgement that function deliberately
+     * declined to make - and it made naira withdrawals impossible on
+     * test-sivan while looking correct in review.
+     *
+     * Found by driving the whole withdrawal over HTTP: account 2222222222
+     * saved as status 'verified' with verdict 'review' (the mock returns a
+     * longer name than the profile), and the quote then returned 403 "can only
+     * go to an account in your own name" for the user's OWN account.
+     *
+     * Narrow by construction. In production BREET_ENV is 'production', a real
+     * NIBSS resolution is trustworthy, resolutionTrustworthy is true, and the
+     * verdict governs exactly as intended.
+     *
+     * DELIBERATELY NOT KEYED ON reviewedAt. I tried that first - treating "an
+     * admin approved it" as proof of ownership - and it was wrong: the review
+     * queue exists to clear accounts a machine could not match, INCLUDING ones
+     * in another person's name, and test:ngn-third-party-payouts seeds exactly
+     * that row. Four of its assertions failed and were right to. An approval
+     * clears an account for review, not for ownership.
+     */
+    const verdictIsMeaningless = chosen?.resolutionTrustworthy === false;
+    if (
+      chosen && chosen.matchVerdict && chosen.matchVerdict !== 'match'
+      && !verdictIsMeaningless
+    ) {
       const controls = await getNgnControls();
       if (!controls.thirdPartyPayoutsEnabled) {
         /**
