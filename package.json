@@ -179,6 +179,7 @@
     "test:breet-autosettlement-wallet": "tsx scripts/test-breet-autosettlement-wallet.ts",
     "test:ngn-sweep-autosettlement-guard": "tsx scripts/test-ngn-sweep-autosettlement-guard.ts",
     "test:ngn-payout-destination": "tsx scripts/test-ngn-payout-destination.ts",
+    "e2e:withdrawal": "node e2e/withdrawal-e2e.mjs",
     "test:ngn-third-party-payouts": "tsx scripts/test-ngn-third-party-payouts.ts",
     "diagnose:privy": "tsx scripts/diagnose-privy.ts",
     "test:gas-limits": "tsx scripts/test-gas-limits.ts",
