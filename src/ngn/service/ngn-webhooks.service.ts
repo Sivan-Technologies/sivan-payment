@@ -1,5 +1,6 @@
 import { db } from '../../database/json-database.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
+import { createAuditLog } from '../../audit/audit.service.js';
 import type { NgnProviderName, NgnTransferRecord } from '../types/ngn.types.js';
 
 /**
@@ -61,8 +62,80 @@ async function applyWebhookToTransfer(event: {
   if (!providerRef) return undefined;
 
   const transfers = await db.listNgnTransfers();
-  const transfer = findTransferForEvent(transfers, String(providerRef), payload);
-  if (!transfer) return undefined;
+  let transfer = findTransferForEvent(transfers, String(providerRef), payload);
+
+  /**
+   * A WITHDRAWAL WEBHOOK CARRIES NO ADDRESS, SO IT MUST BE RESOLVED THROUGH
+   * ITS TRADE.
+   *
+   * This is the bug that left a real payout reading "settlement processing"
+   * after the naira had reached the customer's bank. Breet delivered
+   * `withdrawal.completed` on the first attempt, to the right URL, and Sivan
+   * dropped it - because the payload is only:
+   *
+   *     { id: <withdrawal id>, trade: <trade id>, amount, status, meta }
+   *
+   * No destinationAddress, no txHash, no label. findTransferForEvent has six
+   * keys and five of them need one of those fields. The sixth compares
+   * `payload.id` against providerTransferId, which holds a WALLET id - a
+   * different namespace, never equal. And `breetTradeId` is only ever learned
+   * from a `trade.*` event, so if that one was missed or arrived later there
+   * was nothing on the transfer to match against at all.
+   *
+   * One extra provider read closes it: GET /trades/sell/{tradeId} returns the
+   * trade, and the trade knows its deposit address. That address is the
+   * durable link to a Sivan transfer.
+   *
+   * Only for withdrawal events, only when nothing else matched, and failures
+   * are swallowed - this is a recovery path, and it must never turn a
+   * deliverable webhook into a 500 that makes Breet retry for 24 hours.
+   */
+  /**
+   * ORDERED AHEAD OF THE AMOUNT HEURISTIC ON PURPOSE.
+   *
+   * findTransferForEvent ends with an exact-amount match over open offramps -
+   * a good last resort, and its own comment calls it that. But it lives inside
+   * that function, so it ran BEFORE this and won every time, which left this
+   * path dead and its tests failing.
+   *
+   * The trade lookup is strictly better evidence: it asks Breet which address
+   * the trade actually paid, rather than inferring identity from a number that
+   * two orders can share. Two withdrawals of the same amount by the same user
+   * are ordinary; the amount match correctly refuses that case, and this one
+   * resolves it. So: exact first, heuristic second.
+   *
+   * Skipped entirely when findTransferForEvent already matched on a real key.
+   */
+  if (!transfer && String(event.eventType ?? '').toLowerCase().startsWith('withdrawal')) {
+    transfer = await resolveWithdrawalViaTrade(transfers, payload);
+    // Amount is the join key of last resort, and only when the exact one missed.
+    if (!transfer) transfer = matchWithdrawalByAmount(transfers, payload);
+  }
+
+  if (!transfer) {
+    /**
+     * AN UNMATCHED WEBHOOK USED TO BE INVISIBLE, which is precisely how the
+     * above ran unnoticed for a day: the delivery succeeded, Breet showed 200,
+     * and nothing on our side said the event had been discarded. Logged at
+     * error severity so it surfaces in the same place a failed payout would.
+     */
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'ngn_webhook',
+      action: 'ngn.webhook_unmatched',
+      resourceType: 'payments_ngn_transfer',
+      resourceId: String(providerRef),
+      severity: 'error',
+      metadata: {
+        event: event.eventType,
+        providerRef: String(providerRef),
+        tradeRef: payload?.trade ? String(payload.trade) : undefined,
+        status: payload?.status,
+        amount: payload?.amount ?? payload?.payoutAmount,
+      },
+    }).catch(() => undefined);
+    return undefined;
+  }
 
   if (!isFlaggedEvent(event.eventType, payload)) {
     return applySettlementToTransfer(transfer, event, payload);
@@ -217,7 +290,25 @@ function findTransferForEvent(
    * fuzzy amount match would be worse than leaving one pending, because the
    * user whose money is still in flight would be told it had arrived.
    */
-  if (String(payload?.event ?? '').toLowerCase().startsWith('withdrawal')) {
+
+  return undefined;
+}
+
+/**
+ * Resolve a withdrawal to a transfer by asking Breet what its trade was.
+ *
+ * The withdrawal payload names a trade id; the trade names the deposit
+ * address; the deposit address is what a Sivan transfer stores. Two hops, one
+ * network call, and it makes the withdrawal event self-sufficient instead of
+ * dependent on a trade webhook having arrived first.
+ *
+ * Returns undefined on any failure. The caller logs the miss.
+ */
+  function matchWithdrawalByAmount(
+  transfers: NgnTransferRecord[],
+  payload: any
+): NgnTransferRecord | undefined {
+  {
     const payoutAmounts = [payload?.amount, payload?.originalAmount, payload?.payoutAmount]
       .map((value) => Number(value))
       .filter((value) => Number.isFinite(value) && value > 0);
@@ -244,8 +335,44 @@ function findTransferForEvent(
       if (byAmount.length === 1) return byAmount[0];
     }
   }
-
   return undefined;
+}
+
+async function resolveWithdrawalViaTrade(
+  transfers: NgnTransferRecord[],
+  payload: any
+): Promise<NgnTransferRecord | undefined> {
+  const tradeId = payload?.trade ? String(payload.trade) : '';
+  if (!tradeId) return undefined;
+
+  let trade: any;
+  try {
+    const provider: any = getNgnProvider('breet');
+    if (typeof provider?.getTradeById !== 'function') return undefined;
+    trade = await provider.getTradeById(tradeId);
+  } catch {
+    return undefined;
+  }
+
+  const address = String(trade?.address ?? trade?.destinationAddress ?? '').toLowerCase();
+  if (!address) return undefined;
+
+  const meta = (t: NgnTransferRecord) =>
+    (typeof t.metadata === 'object' && t.metadata ? t.metadata : {}) as any;
+
+  const candidates = transfers.filter(
+    (item) =>
+      String(item.depositAddress ?? '').toLowerCase() === address ||
+      String(meta(item).transferMetadata?.depositAddress ?? '').toLowerCase() === address
+  );
+  // Reuse the same scoring the address path uses, so a user with several
+  // orders on one permanent address resolves to the right one rather than to
+  // whichever happens to be first.
+  return bestBreetAddressMatch(candidates, {
+    ...payload,
+    createdAt: payload?.createdAt,
+    amount: trade?.amountInUSD ?? payload?.amount,
+  });
 }
 
 function bestBreetAddressMatch(
