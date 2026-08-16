@@ -186,7 +186,17 @@ console.log('\n── an unmatchable webhook is logged, not silently dropped ─
 
 await seed();
 tradeLookups = 0;
-await deliver(withdrawalPayload({ id: 'unknown_w', trade: 'unknown_trade' }));
+/**
+ * The amount must differ too. `matchWithdrawalByAmount` - the last-resort
+ * strategy - legitimately claims any open NGN offramp whose destinationAmount
+ * is within ₦1 of the payout, and the seeded transfer is 24699. Reusing the
+ * production amount here therefore matched by design and made this case assert
+ * nothing. Changed to an amount no seeded order can claim, so "unmatchable"
+ * genuinely means unmatchable.
+ */
+await deliver(withdrawalPayload({
+  id: 'unknown_w', trade: 'unknown_trade', amount: 99999, originalAmount: 99999, payoutAmount: 99949,
+}));
 
 const unmatched = await db.listAuditLogsByActions(['ngn.webhook_unmatched']);
 check('an unmatched delivery raises an error-severity audit log',

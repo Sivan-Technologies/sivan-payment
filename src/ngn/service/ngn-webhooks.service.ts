@@ -90,8 +90,26 @@ async function applyWebhookToTransfer(event: {
    * are swallowed - this is a recovery path, and it must never turn a
    * deliverable webhook into a 500 that makes Breet retry for 24 hours.
    */
+  /**
+   * ORDERED AHEAD OF THE AMOUNT HEURISTIC ON PURPOSE.
+   *
+   * findTransferForEvent ends with an exact-amount match over open offramps -
+   * a good last resort, and its own comment calls it that. But it lives inside
+   * that function, so it ran BEFORE this and won every time, which left this
+   * path dead and its tests failing.
+   *
+   * The trade lookup is strictly better evidence: it asks Breet which address
+   * the trade actually paid, rather than inferring identity from a number that
+   * two orders can share. Two withdrawals of the same amount by the same user
+   * are ordinary; the amount match correctly refuses that case, and this one
+   * resolves it. So: exact first, heuristic second.
+   *
+   * Skipped entirely when findTransferForEvent already matched on a real key.
+   */
   if (!transfer && String(event.eventType ?? '').toLowerCase().startsWith('withdrawal')) {
     transfer = await resolveWithdrawalViaTrade(transfers, payload);
+    // Amount is the join key of last resort, and only when the exact one missed.
+    if (!transfer) transfer = matchWithdrawalByAmount(transfers, payload);
   }
 
   if (!transfer) {
@@ -272,7 +290,25 @@ function findTransferForEvent(
    * fuzzy amount match would be worse than leaving one pending, because the
    * user whose money is still in flight would be told it had arrived.
    */
-  if (String(payload?.event ?? '').toLowerCase().startsWith('withdrawal')) {
+
+  return undefined;
+}
+
+/**
+ * Resolve a withdrawal to a transfer by asking Breet what its trade was.
+ *
+ * The withdrawal payload names a trade id; the trade names the deposit
+ * address; the deposit address is what a Sivan transfer stores. Two hops, one
+ * network call, and it makes the withdrawal event self-sufficient instead of
+ * dependent on a trade webhook having arrived first.
+ *
+ * Returns undefined on any failure. The caller logs the miss.
+ */
+  function matchWithdrawalByAmount(
+  transfers: NgnTransferRecord[],
+  payload: any
+): NgnTransferRecord | undefined {
+  {
     const payoutAmounts = [payload?.amount, payload?.originalAmount, payload?.payoutAmount]
       .map((value) => Number(value))
       .filter((value) => Number.isFinite(value) && value > 0);
@@ -299,20 +335,9 @@ function findTransferForEvent(
       if (byAmount.length === 1) return byAmount[0];
     }
   }
-
   return undefined;
 }
 
-/**
- * Resolve a withdrawal to a transfer by asking Breet what its trade was.
- *
- * The withdrawal payload names a trade id; the trade names the deposit
- * address; the deposit address is what a Sivan transfer stores. Two hops, one
- * network call, and it makes the withdrawal event self-sufficient instead of
- * dependent on a trade webhook having arrived first.
- *
- * Returns undefined on any failure. The caller logs the miss.
- */
 async function resolveWithdrawalViaTrade(
   transfers: NgnTransferRecord[],
   payload: any
