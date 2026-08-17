@@ -179,6 +179,7 @@
     "test:breet-autosettlement-wallet": "tsx scripts/test-breet-autosettlement-wallet.ts",
     "test:breet-withdrawal-completion": "tsx scripts/test-breet-withdrawal-completion.ts",
     "test:reconciler-address-reuse": "tsx scripts/test-reconciler-address-reuse.ts",
+    "test:breet-markup-honesty": "tsx scripts/test-breet-markup-honesty.ts",
     "test:ngn-sweep-autosettlement-guard": "tsx scripts/test-ngn-sweep-autosettlement-guard.ts",
     "test:ngn-payout-destination": "tsx scripts/test-ngn-payout-destination.ts",
     "e2e:withdrawal": "node e2e/withdrawal-e2e.mjs",
