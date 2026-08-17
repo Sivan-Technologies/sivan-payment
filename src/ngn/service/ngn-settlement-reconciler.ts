@@ -132,6 +132,40 @@ function matchTransfer(
   const open = candidates
     .filter((item) => item.status !== 'completed' && item.status !== 'failed')
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  /**
+   * THE PAYOUT AMOUNT DISAMBIGUATES WHAT THE ADDRESS CANNOT.
+   *
+   * "Oldest open wins" was the whole strategy, and it is wrong the moment a
+   * user stacks orders on one permanent address - which is the normal case,
+   * because Breet addresses are reusable by design. Observed in production:
+   * three withdrawals on 4JStqvP44RT6z..., one completed and two left reading
+   * "settlement processing" while the customer already had the naira. Every
+   * settlement resolved to the same oldest row; the others were unreachable.
+   *
+   * listSettlements() already returns fiatAmount - the NGN actually paid - and
+   * it was simply never used for matching. It is compared against
+   * destinationAmount because both are the NAIRA side; comparing it to
+   * sourceAmount would be crypto against fiat.
+   *
+   * A ±1 tolerance, not equality: Breet's own webhook shows `amount` 24699 and
+   * `payoutAmount` 24649, a fifty-naira transfer fee, and rounding differs
+   * between the quote and the payout.
+   *
+   * EXACT-OR-NOTHING. If two open orders could equally claim the payout the
+   * amount is not evidence, and this falls back to oldest-open rather than
+   * guessing - telling a user their money arrived when a different order was
+   * paid is worse than leaving one pending.
+   */
+  const paid = Number(settlement.fiatAmount);
+  if (Number.isFinite(paid) && paid > 0 && open.length > 1) {
+    const byAmount = open.filter((item) => {
+      const destination = Number(item.destinationAmount);
+      return Number.isFinite(destination) && Math.abs(destination - paid) <= 1;
+    });
+    if (byAmount.length === 1) return byAmount[0];
+  }
+
   return open[0] ?? candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
