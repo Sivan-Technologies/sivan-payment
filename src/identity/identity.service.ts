@@ -484,7 +484,7 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
         email: user.email,
         fullName: user.fullName,
         whatsappNumber,
-        canTransact: true,
+        canTransact: Boolean(whatsappNumber),
       };
     }
   }
@@ -505,7 +505,7 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
       email: user.email,
       fullName: user.fullName,
       whatsappNumber,
-      canTransact: true,
+      canTransact: Boolean(whatsappNumber),
     };
   }
 
