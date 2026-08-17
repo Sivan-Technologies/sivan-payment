@@ -403,14 +403,63 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * because that would charge the user both through Breet and through Sivan's
    * on-chain fee wallet.
    */
-  async getBreetMarkupPercent(): Promise<number> {
+  /**
+   * The markup, and WHETHER WE ACTUALLY KNOW IT.
+   *
+   * `getBreetMarkupPercent()` returned 0 on any failure. In `breet_markup`
+   * revenue mode that is not a neutral default - it is Sivan silently earning
+   * nothing, on a quote that looks completely normal. A Breet timeout, an auth
+   * error and a genuine 0% markup all produced the same number, so an outage
+   * was indistinguishable from a deliberate setting. Exactly the shape of the
+   * reconciler bug that reported `checked: 0` while it was blind.
+   *
+   * This returns the value AND its provenance so a caller can tell the
+   * difference. `known: false` means the read failed and the number is a
+   * fallback, not a fact.
+   *
+   * LAST-KNOWN-GOOD, NOT ZERO. A markup that was 1% a minute ago is far more
+   * likely to still be 1% than to have become 0%, so a transient failure keeps
+   * pricing correct instead of giving the money away. The cache is only ever
+   * written from a SUCCESSFUL read.
+   */
+  async getBreetMarkupDetailed(): Promise<{
+    markupPercent: number;
+    known: boolean;
+    source: 'provider' | 'last_known' | 'unavailable';
+    reason?: string;
+  }> {
     try {
       const integration: any = await this.getIntegration();
-      const markup = Number(integration?.markupPercent ?? integration?.markup ?? 0);
-      return Number.isFinite(markup) ? markup : 0;
-    } catch {
-      return 0;
+      const raw = Number(integration?.markupPercent ?? integration?.markup ?? 0);
+      const markupPercent = Number.isFinite(raw) ? raw : 0;
+      BreetNgnProvider.lastKnownMarkupPercent = markupPercent;
+      return { markupPercent, known: true, source: 'provider' };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const cached = BreetNgnProvider.lastKnownMarkupPercent;
+      if (typeof cached === 'number') {
+        return { markupPercent: cached, known: false, source: 'last_known', reason };
+      }
+      return { markupPercent: 0, known: false, source: 'unavailable', reason };
     }
+  }
+
+  /**
+   * Process-local, and deliberately not persisted.
+   *
+   * A stale markup read from a database after a week-long outage would be
+   * worse than no cache at all. This survives the seconds-to-minutes blips it
+   * exists for and is empty again after a deploy, at which point the first
+   * successful read refills it.
+   */
+  private static lastKnownMarkupPercent: number | undefined;
+
+  /**
+   * Back-compat: the number alone. Callers that cannot act on provenance -
+   * the admin read endpoint, for instance - keep working unchanged.
+   */
+  async getBreetMarkupPercent(): Promise<number> {
+    return (await this.getBreetMarkupDetailed()).markupPercent;
   }
 
   async updateBreetMarkupPercent(percent: number): Promise<{ markupPercent: number; raw?: unknown }> {
