@@ -27,7 +27,7 @@ function check(name: string, ok: unknown, detail = '') {
 
 type SeenRequest = { method: string; path: string; body: any };
 
-function installBreetStub(mode: 'new-wallet' | 'existing-wallet' | 'auto-settlement-fails') {
+function installBreetStub(mode: 'new-wallet' | 'existing-wallet' | 'auto-settlement-fails' | 'auto-settlement-reports-off') {
   const seen: SeenRequest[] = [];
   const wallet = {
     id: 'wallet_123',
@@ -64,7 +64,12 @@ function installBreetStub(mode: 'new-wallet' | 'existing-wallet' | 'auto-settlem
     }
 
     if (method === 'GET' && parsed.pathname === '/v1/trades/wallets') {
-      return json(200, { success: true, data: [wallet] });
+      // The read-back. In 'auto-settlement-reports-off' both writes succeed
+      // and Breet still reports the flag off - the production case.
+      return json(200, {
+        success: true,
+        data: [{ ...wallet, autoSettlement: mode !== 'auto-settlement-reports-off' }],
+      });
     }
 
     if (method === 'PUT' && parsed.pathname === '/v1/trades/wallets/wallet_123/bank') {
@@ -146,10 +151,27 @@ console.log('\nNEW BREET WALLET IS EXPLICITLY MADE AUTO-SETTLEMENT SAFE');
       && item.path === '/v1/trades/wallets/wallet_123/bank'
       && item.body?.autoSettlement === true),
     JSON.stringify(seen));
-  check('no redundant auto-settlement call is made after bank update',
-    !seen.some((item) => item.method === 'PUT'
-      && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'),
+  /**
+   * THIS ASSERTION WAS INVERTED, AND PRODUCTION PROVED IT WRONG.
+   *
+   * It demanded that NO second call be made, on the reasoning that passing
+   * `autoSettlement: true` to PUT /bank was sufficient and the extra round
+   * trip risked a timeout. A real payout webhook came back carrying
+   * `meta.autoSettlement: false` - the flag was never on. Breet's docs are
+   * explicit that enabling it is a separate endpoint, and /bank returns an
+   * empty `data: {}` that confirms nothing.
+   *
+   * So the call is required, and the state is read back from
+   * GET /trades/wallets rather than assumed from a 200.
+   */
+  check('auto-settlement is enabled with its own call',
+    seen.some((item) => item.method === 'PUT'
+      && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'
+      && item.body?.autoSettlement === true),
     JSON.stringify(seen));
+  check('and the resulting state is read back from the provider',
+    seen.some((item) => item.method === 'GET' && item.path === '/v1/trades/wallets'),
+    'a 200 on a write is not proof the flag is on - that assumption is the bug');
   check('the metadata stores positive proof for the sweep guard',
     meta.autoSettlementProof?.bankLinked === true && meta.autoSettlementProof?.autoSettlementEnabled === true,
     JSON.stringify(meta.autoSettlementProof));
@@ -174,13 +196,41 @@ console.log('\nEXISTING BREET WALLET IS RE-LINKED BEFORE REUSE');
       && item.path === '/v1/trades/wallets/wallet_123/bank'
       && item.body?.autoSettlement === true),
     JSON.stringify(seen));
-  check('the existing wallet does not need a second auto-settlement call',
-    !seen.some((item) => item.method === 'PUT'
-      && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'),
+  // A REUSED wallet needs this most: it may have been created before we sent
+  // bank details at all, or linked to a payout account the user has since
+  // replaced.
+  check('a reused wallet also gets an explicit auto-settlement call',
+    seen.some((item) => item.method === 'PUT'
+      && item.path === '/v1/trades/wallets/wallet_123/auto-settlement'
+      && item.body?.autoSettlement === true),
     JSON.stringify(seen));
   check('the reused wallet still carries sweep proof',
     meta.autoSettlementProof?.bankLinked === true && meta.autoSettlementProof?.autoSettlementEnabled === true,
     JSON.stringify(meta.autoSettlementProof));
+}
+
+console.log('\nA PROVIDER THAT REPORTS THE FLAG STILL OFF IS BELIEVED');
+{
+  /**
+   * THE EXACT PRODUCTION FAILURE, REPRODUCED.
+   *
+   * Both writes return 200 and GET /trades/wallets then reports
+   * `autoSettlement: false` - which is what a real payout webhook revealed
+   * (`meta.autoSettlement: false`) after this code had recorded the proof as
+   * true. The read-back is the only thing that can catch this, so it gets its
+   * own case: the provider must be believed over our own optimism, and order
+   * creation must refuse rather than hand out an address that cannot pay out.
+   */
+  installBreetStub('auto-settlement-reports-off');
+  let message = '';
+  try {
+    await new BreetNgnProvider().createOfframpTransfer(quote() as any);
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  check('a wallet the provider says is NOT auto-settling is refused',
+    /auto-settlement/i.test(message),
+    message || 'order was created against a wallet that will never pay the customer');
 }
 
 console.log('\nAUTO-SETTLEMENT FAILURE STOPS ORDER CREATION');

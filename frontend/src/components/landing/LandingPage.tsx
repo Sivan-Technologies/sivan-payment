@@ -93,13 +93,17 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
           <span>{assets}{assets.toLowerCase().includes('usdt') ? '' : ' · USDT ready when enabled'}</span>
           <span>{payoutCurrencies}</span>
           <span>{networks}</span>
-          <span>NGN supported</span>
+          {/* "NGN supported" was a separate badge from when naira was NOT in
+              payoutCurrencies. It is now - the live API returns
+              usd, gbp, eur, ngn - so the badge beside it repeated a currency
+              the neighbouring span already lists. Removed rather than reworded:
+              a rail strip that names one currency twice reads as padding. */}
         </section>
 
         <section className="landing-section two-directions reveal-section" id="features" ref={revealRef}>
           <div className="section-head center"><p className="eyebrow center">Two directions</p><h2>Move value in either direction.</h2><p>One platform. One verification. Sell crypto to your bank or prepare to buy crypto with fiat with the same simple experience.</p></div>
           <div className="direction-grid">
-            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Solana, Base and Ethereum</li><li>✓ Works with USDC and USDT when enabled</li><li>✓ Payouts in {payoutCurrencies} and NGN</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
+            <article className="direction-card sell"><span className="chip-pill">↗ Sell</span><h3>Crypto to your bank account.</h3><p>Send stablecoins from any wallet. We convert and pay out through enabled provider-supported bank rails.</p><ul><li>✓ Solana, Base and Ethereum</li><li>✓ Works with USDC and USDT when enabled</li><li>✓ Payouts in {payoutCurrencies} and GHS coming soon</li><li>✓ Unique deposit address per withdrawal</li><li>✓ Track confirmations and payout status</li></ul><div><strong>From {feePercent}%</strong><button className="primary-btn" onClick={onGetStarted}>Start selling →</button></div></article>
             <article className="direction-card buy"><span className="chip-pill purple">↙ Buy</span><em>Rollout ready</em><h3>Buy crypto directly with fiat.</h3><p>Pay by supported bank rails and receive stablecoins in a wallet you control once on-ramp backend rails are live.</p><ul><li>✓ Bank transfer flow planned</li><li>✓ Delivered after payment clears</li><li>✓ Self-custody wallet destination</li><li>✓ Same verification covers both directions</li></ul><div><strong>Provider rollout</strong><button className="secondary-btn" onClick={onBuy}>Start buying →</button></div></article>
           </div>
         </section>
@@ -138,7 +142,7 @@ export function LandingPage({ isLiveEnv, appEnv, hasUser, assets, networks, payo
         </section>
       </main>
 
-      <LandingFooter onDashboard={onDashboard} onGetStarted={onGetStarted} onBuy={onBuy} />
+      <LandingFooter payoutCurrencies={payoutCurrencies} onDashboard={onDashboard} onGetStarted={onGetStarted} onBuy={onBuy} />
     </div>
   );
 }
@@ -305,7 +309,27 @@ function useSectionReveal() {
   return (el: HTMLElement | null) => {
     if (!el) return;
     if (el.dataset.revealImmediate === 'true') {
-      el.classList.add('is-revealed');
+      /**
+       * ON THE NEXT FRAME, NOT THIS ONE - OR IT DOES NOT ANIMATE AT ALL.
+       *
+       * Adding .is-revealed here synchronously puts the entry state and the
+       * end state in the SAME style recalculation. The browser never paints
+       * the `opacity: 0` start, so there is nothing to transition from and the
+       * hero simply appears. Measured: sampling composited opacity every frame
+       * for 700ms after load, every hero child read exactly 1 on the first
+       * sample - the stagger existed in the stylesheet and never ran.
+       *
+       * Two frames, deliberately. One rAF still lands inside the same paint on
+       * some engines; the second guarantees the initial state has been
+       * rendered before the class flips it.
+       *
+       * If either frame never arrives (tab backgrounded before paint), the
+       * reduced-motion CSS block and the observer path below both still leave
+       * the content visible - nothing here can strand the hero at opacity 0.
+       */
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.classList.add('is-revealed');
+      }));
       return;
     }
     // Already past the fold on first paint (deep link, restored scroll
@@ -390,14 +414,19 @@ function FeatureCard({
   );
 }
 
-function LandingFooter({ onDashboard, onGetStarted, onBuy }: { onDashboard: () => void; onGetStarted: () => void; onBuy: () => void }) {
+function LandingFooter({ payoutCurrencies, onDashboard, onGetStarted, onBuy }: { payoutCurrencies: string; onDashboard: () => void; onGetStarted: () => void; onBuy: () => void }) {
   return (
     <footer className="landing-footer">
       <div className="footer-grid">
         <div className="footer-brand-col">
           <div className="footer-brand"><img src="/asset/sivan-logo.png" alt="Sivan" /><strong>Sivan</strong></div>
           <p>Stablecoin-to-bank payment rails for verified users. Sivan helps users move supported stablecoins into bank payouts through provider-backed settlement flows.</p>
-          <div className="footer-badges"><span>Solana · Base · Ethereum</span><span>USDC / USDT ready</span><span>USD · GBP · EUR</span><span>NGN supported</span></div>
+          {/* The currency badge is LIVE, not a hardcoded list. It read
+              "USD · GBP · EUR" beside a separate "NGN supported" - two badges
+              for one fact, and both stale the moment an admin enables or
+              disables a rail in Admin Controls. payoutCurrencies already
+              reflects what is actually switched on. */}
+          <div className="footer-badges"><span>Solana · Base · Ethereum</span><span>USDC / USDT ready</span><span>{payoutCurrencies}</span></div>
         </div>
         <FooterCol title="Product" links={[{ label: 'Sell crypto', action: onGetStarted }, { label: 'Buy crypto', action: onBuy }, { label: 'Open dashboard', action: onDashboard }, { label: 'Supported rails', href: '#rails' }]} />
         <FooterCol title="Business" links={[{ label: 'Payment operations', href: '#business' }, { label: 'On-ramp rollout', action: onBuy }, { label: 'Talk to support', href: 'mailto:support@sivantech.online' }]} />
@@ -424,7 +453,12 @@ function RailsCard({ enabledControls, enabledAssets, enabledNetworks }: { enable
     <article className="panel rails-card">
       <div className="panel-head"><div><p className="eyebrow">Available rails</p><h3>Configured by Sivan Controls</h3></div></div>
       <div className="rail-chips">{enabledControls.length ? enabledControls.map((control) => <span key={control.currency}>{control.currency.toUpperCase()}</span>) : <span>No payout rails</span>}</div>
-      <div className="rail-chips muted-chips">{enabledAssets.length ? enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>) : <span>No assets</span>}<span>{enabledNetworks.length} networks</span><span>NGN supported</span></div>
+      {/* No "NGN supported" chip here. The row directly above renders every
+          ENABLED payout currency from Admin Controls, and naira is one of
+          them - so this repeated it, in a card whose whole claim is that it
+          mirrors the live configuration. A hardcoded chip in that card is
+          also the one that goes stale silently if NGN is ever switched off. */}
+      <div className="rail-chips muted-chips">{enabledAssets.length ? enabledAssets.map((asset) => <span key={asset.asset}>{asset.label}</span>) : <span>No assets</span>}<span>{enabledNetworks.length} networks</span></div>
       <p className="muted">Only enabled assets, networks, and payout currencies appear in the withdrawal flow.</p>
     </article>
   );

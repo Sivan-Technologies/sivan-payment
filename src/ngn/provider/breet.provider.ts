@@ -403,14 +403,63 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * because that would charge the user both through Breet and through Sivan's
    * on-chain fee wallet.
    */
-  async getBreetMarkupPercent(): Promise<number> {
+  /**
+   * The markup, and WHETHER WE ACTUALLY KNOW IT.
+   *
+   * `getBreetMarkupPercent()` returned 0 on any failure. In `breet_markup`
+   * revenue mode that is not a neutral default - it is Sivan silently earning
+   * nothing, on a quote that looks completely normal. A Breet timeout, an auth
+   * error and a genuine 0% markup all produced the same number, so an outage
+   * was indistinguishable from a deliberate setting. Exactly the shape of the
+   * reconciler bug that reported `checked: 0` while it was blind.
+   *
+   * This returns the value AND its provenance so a caller can tell the
+   * difference. `known: false` means the read failed and the number is a
+   * fallback, not a fact.
+   *
+   * LAST-KNOWN-GOOD, NOT ZERO. A markup that was 1% a minute ago is far more
+   * likely to still be 1% than to have become 0%, so a transient failure keeps
+   * pricing correct instead of giving the money away. The cache is only ever
+   * written from a SUCCESSFUL read.
+   */
+  async getBreetMarkupDetailed(): Promise<{
+    markupPercent: number;
+    known: boolean;
+    source: 'provider' | 'last_known' | 'unavailable';
+    reason?: string;
+  }> {
     try {
       const integration: any = await this.getIntegration();
-      const markup = Number(integration?.markupPercent ?? integration?.markup ?? 0);
-      return Number.isFinite(markup) ? markup : 0;
-    } catch {
-      return 0;
+      const raw = Number(integration?.markupPercent ?? integration?.markup ?? 0);
+      const markupPercent = Number.isFinite(raw) ? raw : 0;
+      BreetNgnProvider.lastKnownMarkupPercent = markupPercent;
+      return { markupPercent, known: true, source: 'provider' };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const cached = BreetNgnProvider.lastKnownMarkupPercent;
+      if (typeof cached === 'number') {
+        return { markupPercent: cached, known: false, source: 'last_known', reason };
+      }
+      return { markupPercent: 0, known: false, source: 'unavailable', reason };
     }
+  }
+
+  /**
+   * Process-local, and deliberately not persisted.
+   *
+   * A stale markup read from a database after a week-long outage would be
+   * worse than no cache at all. This survives the seconds-to-minutes blips it
+   * exists for and is empty again after a deploy, at which point the first
+   * successful read refills it.
+   */
+  private static lastKnownMarkupPercent: number | undefined;
+
+  /**
+   * Back-compat: the number alone. Callers that cannot act on provenance -
+   * the admin read endpoint, for instance - keep working unchanged.
+   */
+  async getBreetMarkupPercent(): Promise<number> {
+    return (await this.getBreetMarkupDetailed()).markupPercent;
   }
 
   async updateBreetMarkupPercent(percent: number): Promise<{ markupPercent: number; raw?: unknown }> {
@@ -700,6 +749,28 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       narration: 'Sivan payout',
     });
 
+    /**
+     * REFUSE RATHER THAN HAND OUT AN ADDRESS THAT CANNOT PAY OUT.
+     *
+     * ensureWalletAutoSettlement now reports honestly instead of asserting
+     * success, so this is where that honesty has to bite. Without it the user
+     * gets a deposit address, sends real crypto, and the funds convert into
+     * Sivan's Breet balance with nothing routed to their bank - recoverable
+     * only by hand.
+     *
+     * The sweep guard in ngn-transfers.service.ts would still refuse to move
+     * balance-funded orders, but it cannot help a user who sends crypto
+     * themselves to an address we already gave them. Failing at creation is
+     * the only point where nobody has lost anything yet.
+     */
+    if (!autoSettlementProof.bankLinked || !autoSettlementProof.autoSettlementEnabled) {
+      throw new Error(
+        `Breet: could not enable auto-settlement on this payout wallet${
+          autoSettlementProof.reason ? ` (${autoSettlementProof.reason})` : ''
+        }`
+      );
+    }
+
     return {
       providerTransferId: addressId,
       status: 'awaiting_crypto_deposit' as const,
@@ -718,6 +789,18 @@ export class BreetNgnProvider implements NgnProviderAdapter {
         accountNumber,
         autoSettlement: autoSettlementProof.autoSettlementEnabled,
         autoSettlementProof,
+        /**
+         * THE BREET WALLET ID, STORED AS ITS OWN KEY.
+         *
+         * providerTransferId already holds it, but that field is the generic
+         * "provider's id for this transfer" and a reader cannot tell which of
+         * Breet's three id namespaces - wallet, trade, withdrawal - it belongs
+         * to. Naming it removes the ambiguity that made a delivered
+         * `withdrawal.completed` unmatchable: findTransferForEvent compared a
+         * WITHDRAWAL id against providerTransferId, which is a WALLET id, and
+         * they can never be equal.
+         */
+        breetAddressId: addressId,
         // Stated plainly because it changes how callers must reconcile: this
         // address is permanent, so a later deposit is a NEW transaction, not a
         // duplicate. Key on the trade id, never on the address.
@@ -733,53 +816,157 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     narration: string;
   }): Promise<{
     walletId: string;
-    bankLinked: true;
-    autoSettlementEnabled: true;
+    bankLinked: boolean;
+    autoSettlementEnabled: boolean;
     bankId: string;
     accountNumberLast4: string;
     checkedAt: string;
-    updateBankResult: 'ok';
-    enableAutoSettlementResult: 'included_in_bank_update';
+    updateBankResult: 'ok' | 'failed';
+    enableAutoSettlementResult: 'ok' | 'failed' | 'skipped_bank_failed';
+    verifiedFromProvider: boolean;
+    reason?: string;
   }> {
     /**
-     * Breet addresses are permanent and reusable. A returning user's wallet may
-     * have been created before we started passing bank details, or it may have
-     * been linked to a previous payout account. Reusing the address without
-     * explicitly re-linking the bank is how crypto converts into Sivan's Breet
-     * balance while the customer never receives naira.
+     * PER-ADDRESS AUTO-SETTLEMENT: EACH CUSTOMER'S NAIRA GOES TO THEIR OWN BANK.
      *
-     * Per Breet's docs, PUT /trades/wallets/{id}/bank accepts both the bank
-     * details and `autoSettlement: true`. That one successful provider write
-     * proves both facts we need: the wallet is linked to this bank, and
-     * incoming crypto will be auto-settled to it.
+     * This function returned `autoSettlementEnabled: true` as a HARDCODED
+     * literal, no matter what Breet actually did. A real production payout
+     * proved it false - the delivered `withdrawal.completed` webhook carried:
      *
-     * We used to make a second PUT /auto-settlement call immediately after
-     * this. Live Breet sometimes takes >8s on the bank-link write; doing two
-     * sequential provider writes pushed order creation into a timeout even
-     * though the first call is sufficient. Fewer provider writes is also safer:
-     * less time spent between the user's confirmation and the stored order.
+     *     "meta": { "autoSettlement": false, ... }
+     *
+     * The money still arrived, but through BUSINESS-WIDE auto-settlement (the
+     * dashboard toggle), which pays every address into ONE destination. That is
+     * survivable for a single-operator test and completely wrong with real
+     * customers: every user's naira would land in the same account.
+     *
+     * TWO CALLS, NOT ONE. `275211c` removed the dedicated /auto-settlement PUT
+     * to save a slow provider round trip, on the reasoning that passing
+     * `autoSettlement: true` to /bank was sufficient. Breet's own docs say
+     * otherwise - enabling it is a separate endpoint, and /bank returns
+     * `{ "message": "bank added to wallet successfully", "data": {} }`, an
+     * empty body that confirms nothing about settlement. The saved round trip
+     * bought a silent misconfiguration.
+     *
+     * The timeout concern was real, so it is handled by BUDGET rather than by
+     * dropping the call: both writes are bounded, and a failure downgrades the
+     * proof instead of throwing. The sweep guard in ngn-transfers.service.ts
+     * already refuses to move user funds when the proof is not positive, so an
+     * honest `false` is safe - a hardcoded `true` is what was dangerous.
      */
-    await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/bank`, {
-      method: 'PUT',
-      signal: AbortSignal.timeout(15000),
-      body: JSON.stringify({
-        id: input.bankId,
-        accountNumber: input.accountNumber,
-        autoSettlement: true,
-        narration: input.narration,
-      }),
-    });
+    const checkedAt = () => new Date().toISOString();
+    const last4 = input.accountNumber.slice(-4);
+
+    let bankLinked = false;
+    let bankReason: string | undefined;
+    try {
+      await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/bank`, {
+        method: 'PUT',
+        signal: AbortSignal.timeout(15000),
+        body: JSON.stringify({
+          id: input.bankId,
+          accountNumber: input.accountNumber,
+          autoSettlement: true,
+          narration: input.narration,
+        }),
+      });
+      bankLinked = true;
+    } catch (error) {
+      bankReason = error instanceof Error ? error.message : String(error);
+    }
+
+    if (!bankLinked) {
+      /**
+       * Breet refuses /auto-settlement with 422 when no bank is linked, so
+       * calling it after a failed bank write only burns time to earn a second
+       * error. Reported rather than retried.
+       */
+      return {
+        walletId: input.walletId,
+        bankLinked: false,
+        autoSettlementEnabled: false,
+        bankId: input.bankId,
+        accountNumberLast4: last4,
+        checkedAt: checkedAt(),
+        updateBankResult: 'failed',
+        enableAutoSettlementResult: 'skipped_bank_failed',
+        verifiedFromProvider: false,
+        reason: bankReason,
+      };
+    }
+
+    let enabled = false;
+    let enableReason: string | undefined;
+    try {
+      await breetRequest(`/trades/wallets/${encodeURIComponent(input.walletId)}/auto-settlement`, {
+        method: 'PUT',
+        signal: AbortSignal.timeout(12000),
+        body: JSON.stringify({ autoSettlement: true }),
+      });
+      enabled = true;
+    } catch (error) {
+      enableReason = error instanceof Error ? error.message : String(error);
+    }
+
+    /**
+     * READ IT BACK, because a 200 on a write is not the same as the flag being
+     * on - that assumption is the whole reason this shipped broken. GET
+     * /trades/wallets returns every address with its own settlement state, so
+     * the proof can name what Breet REPORTS rather than what we asked for.
+     *
+     * Best effort: if the read fails the proof stays at whatever the write
+     * said, marked `verifiedFromProvider: false` so a reader can tell the
+     * difference between "Breet confirmed this" and "we believe this".
+     */
+    let verified = false;
+    try {
+      const wallets = await breetRequest<Array<{ id: string; autoSettlement?: boolean }>>(
+        '/trades/wallets',
+        { signal: AbortSignal.timeout(10000) }
+      );
+      const wallet = Array.isArray(wallets)
+        ? wallets.find((w) => String(w?.id) === String(input.walletId))
+        : undefined;
+      if (wallet && typeof wallet.autoSettlement === 'boolean') {
+        enabled = wallet.autoSettlement;
+        verified = true;
+        if (!enabled) enableReason = 'provider reports autoSettlement false after enable';
+      }
+    } catch {
+      /* keep the write result; verified stays false */
+    }
 
     return {
       walletId: input.walletId,
       bankLinked: true,
-      autoSettlementEnabled: true,
+      autoSettlementEnabled: enabled,
       bankId: input.bankId,
-      accountNumberLast4: input.accountNumber.slice(-4),
-      checkedAt: new Date().toISOString(),
+      accountNumberLast4: last4,
+      checkedAt: checkedAt(),
       updateBankResult: 'ok',
-      enableAutoSettlementResult: 'included_in_bank_update',
+      enableAutoSettlementResult: enabled ? 'ok' : 'failed',
+      verifiedFromProvider: verified,
+      reason: enableReason,
     };
+  }
+
+  /**
+   * Fetch one trade by id.
+   *
+   * Exists so a `withdrawal.*` webhook can be resolved to a transfer: that
+   * payload names a trade but carries no deposit address, and the trade is
+   * where the address lives. GET /trades/sell/{id} is the same endpoint
+   * listSettlements() already uses, so it is known to work against live Breet
+   * - unlike GET /transactions, which returns an empty list.
+   */
+  async getTradeById(tradeId: string): Promise<any | undefined> {
+    try {
+      return await breetRequest<any>(`/trades/sell/${encodeURIComponent(tradeId)}`, {
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch {
+      return undefined;
+    }
   }
 
   async getTransfer(providerTransferId: string) {
@@ -924,8 +1111,58 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * a Sivan transfer.
    */
   async listSettlements(): Promise<NgnProviderSettlement[]> {
-    const withdrawals = await breetRequest<any[]>('/payments/withdrawals').catch(() => []);
-    const list = Array.isArray(withdrawals) ? withdrawals : [];
+    /**
+     * PAGINATED, AND THE FAILURE WAS INVISIBLE.
+     *
+     * `POST /api/admin/ngn/reconcile-settlements` returned `checked: 0` on live
+     * while two payouts were sitting unreconciled. Zero is what this method
+     * reports when the call THROWS - `.catch(() => [])` collapsed an auth
+     * error, a timeout and "genuinely no withdrawals" into the same answer, so
+     * the reconciler looked healthy while it was blind.
+     *
+     * Two faults, both fixed here:
+     *
+     *   1. The error is no longer swallowed. It is logged with the reason and
+     *      rethrown, so the reconciler reports a real failure instead of a
+     *      clean empty pass. `checked: 0` now means what it says.
+     *
+     *   2. `GET /payments/withdrawals` is PAGINATED - the documented response
+     *      carries `meta: { totalDocs: 12, hasNextPage: true }` and defaults to
+     *      page 1. Reading only the first page means an older unreconciled
+     *      payout drops off the end as newer ones arrive and can never be
+     *      found again. Pages are walked until Breet says there are no more.
+     *
+     * Bounded at 10 pages. This runs on a timer against a partner API; an
+     * unbounded loop against a paginated endpoint is how an integration gets
+     * rate limited, and 10 pages of payouts is far more than one poll interval
+     * can produce.
+     */
+    const list: any[] = [];
+    const MAX_PAGES = 10;
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      let body: any;
+      try {
+        body = await breetRequest<any>(
+          `/payments/withdrawals?page=${page}&size=50`,
+          { signal: AbortSignal.timeout(15000) }
+        );
+      } catch (error) {
+        // First page failing is a real outage - say so. A later page failing
+        // still leaves usable data, so keep what we have rather than losing
+        // the whole run.
+        if (page === 1) throw error;
+        break;
+      }
+
+      // breetRequest already unwraps `data`, which the docs show as a bare
+      // array. Tolerate an object wrapper too rather than silently reading
+      // zero if that ever changes.
+      const rows = Array.isArray(body) ? body : (Array.isArray(body?.data) ? body.data : []);
+      list.push(...rows);
+
+      const meta = Array.isArray(body) ? undefined : body?.meta;
+      if (!meta?.hasNextPage) break;
+    }
 
     const settlements: NgnProviderSettlement[] = [];
     // Sequential on purpose: this runs on a timer against a partner API, and

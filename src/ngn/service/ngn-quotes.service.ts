@@ -270,12 +270,66 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
 
   const provider = getNgnProvider(controls.activeProvider);
   let breetMarkupPercentForQuote = 0;
+  let breetMarkupKnown = true;
+  let breetMarkupSource: string = 'provider';
   if (
     input.direction === 'offramp' &&
     controls.activeProvider === 'breet' &&
     provider.getBreetMarkupPercent
   ) {
-    breetMarkupPercentForQuote = await provider.getBreetMarkupPercent();
+    /**
+     * A FAILED MARKUP READ MUST NOT PRICE AS 0%.
+     *
+     * getBreetMarkupPercent() collapsed every failure to 0. In breet_markup
+     * mode - which live has been in since 2026-08-14 - that means the quote is
+     * built with no Sivan revenue at all, and it looks completely normal: the
+     * user is charged, Breet is paid, Sivan earns nothing, and nothing anywhere
+     * says the read failed.
+     *
+     * getBreetMarkupDetailed() reports provenance, so the three cases are now
+     * distinguishable: a real 0%, a cached last-known value during a blip, and
+     * a total failure with nothing to fall back on.
+     */
+    const detailed = (provider as any).getBreetMarkupDetailed
+      ? await (provider as any).getBreetMarkupDetailed()
+      : { markupPercent: await provider.getBreetMarkupPercent(), known: true, source: 'provider' };
+
+    breetMarkupPercentForQuote = detailed.markupPercent;
+    breetMarkupKnown = detailed.known;
+    breetMarkupSource = detailed.source;
+
+    if (!detailed.known) {
+      await createAuditLog({
+        actorType: 'system',
+        actorId: 'ngn_quote',
+        action: 'ngn.breet_markup_unavailable',
+        resourceType: 'payments_ngn_provider',
+        resourceId: 'breet',
+        severity: 'error',
+        metadata: {
+          source: detailed.source,
+          fellBackTo: detailed.markupPercent,
+          revenueMode,
+          reason: detailed.reason,
+        },
+      }).catch(() => undefined);
+    }
+
+    /**
+     * REFUSE RATHER THAN QUOTE FOR FREE.
+     *
+     * Only when the mode depends on the markup AND there is no last-known
+     * value to stand in. A cached figure keeps pricing correct through a blip,
+     * which is the common case; having nothing at all means the very first
+     * quote after a deploy would be priced at zero, and that is worth an
+     * error the operator can see rather than revenue that quietly vanishes.
+     */
+    if (revenueMode === 'breet_markup' && detailed.source === 'unavailable') {
+      throw badRequest(
+        'We could not price that withdrawal right now. Please try again in a moment.'
+      );
+    }
+
     if (revenueMode === 'sivan_fee_wallet' && breetMarkupPercentForQuote > 0) {
       throw forbidden(
         `Breet markup is currently ${breetMarkupPercentForQuote}%, but Sivan wallet-fee mode is active. ` +
@@ -364,9 +418,19 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       totalFee: providerFeeNgn + breetMarkupNgn,
       effectivePercent: grossForMargin > 0 ? ((providerFeeNgn + breetMarkupNgn) / grossForMargin) * 100 : 0,
       appliedRule: revenueMode,
-      explanation: breetMarkupPercentForQuote > 0
+      /**
+       * The explanation now distinguishes "configured as 0%" from "we could
+       * not read it". Both used to render the same sentence, so a support
+       * agent reading a zero-revenue quote had no way to tell whether it was
+       * deliberate or a provider failure.
+       */
+      explanation: !breetMarkupKnown
+        ? `Breet markup could not be read; priced from the last known value (${breetMarkupPercentForQuote}%).`
+        : breetMarkupPercentForQuote > 0
         ? `Sivan revenue is handled by Breet markup (${breetMarkupPercentForQuote}%); no on-chain Sivan fee is added.`
         : 'Sivan revenue mode is Breet markup, but no Breet markup is currently configured.',
+      markupKnown: breetMarkupKnown,
+      markupSource: breetMarkupSource,
     }
     : await applySivanMargin({
     direction: input.direction,
@@ -601,7 +665,37 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
      * So: refuse only when a verdict is PRESENT and is not a match. That is
      * the third party, stated positively.
      */
-    if (chosen && chosen.matchVerdict && chosen.matchVerdict !== 'match') {
+    /**
+     * A VERDICT DERIVED FROM A FABRICATED NAME IS NOT EVIDENCE.
+     *
+     * Breet's sandbox resolves ANY ten digits to a plausible name, which is
+     * why payoutAccountStatusFor() force-verifies untrustworthy resolutions
+     * rather than trusting the comparison. Refusing on the verdict here would
+     * re-make, one layer down, the judgement that function deliberately
+     * declined to make - and it made naira withdrawals impossible on
+     * test-sivan while looking correct in review.
+     *
+     * Found by driving the whole withdrawal over HTTP: account 2222222222
+     * saved as status 'verified' with verdict 'review' (the mock returns a
+     * longer name than the profile), and the quote then returned 403 "can only
+     * go to an account in your own name" for the user's OWN account.
+     *
+     * Narrow by construction. In production BREET_ENV is 'production', a real
+     * NIBSS resolution is trustworthy, resolutionTrustworthy is true, and the
+     * verdict governs exactly as intended.
+     *
+     * DELIBERATELY NOT KEYED ON reviewedAt. I tried that first - treating "an
+     * admin approved it" as proof of ownership - and it was wrong: the review
+     * queue exists to clear accounts a machine could not match, INCLUDING ones
+     * in another person's name, and test:ngn-third-party-payouts seeds exactly
+     * that row. Four of its assertions failed and were right to. An approval
+     * clears an account for review, not for ownership.
+     */
+    const verdictIsMeaningless = chosen?.resolutionTrustworthy === false;
+    if (
+      chosen && chosen.matchVerdict && chosen.matchVerdict !== 'match'
+      && !verdictIsMeaningless
+    ) {
       const controls = await getNgnControls();
       if (!controls.thirdPartyPayoutsEnabled) {
         /**
@@ -663,6 +757,14 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       ngnCurrency: 'ngn',
       revenueMode,
       breetMarkupPercent: fixedMoney(breetMarkupPercentForQuote, 4),
+      /**
+       * PROVENANCE, not just the number. `markupKnown: false` means the read
+       * failed and this quote was priced from the last known value - the
+       * difference between a deliberate 0% and a silent revenue loss, which
+       * were previously indistinguishable to anyone reading a quote.
+       */
+      markupKnown: breetMarkupKnown,
+      markupSource: breetMarkupSource,
       effectivePercent,
       appliedRule: margin.appliedRule,
       explanation: margin.explanation,
@@ -698,6 +800,14 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       ngnCurrency: 'ngn',
       revenueMode,
       breetMarkupPercent: fixedMoney(breetMarkupPercentForQuote, 4),
+      /**
+       * PROVENANCE, not just the number. `markupKnown: false` means the read
+       * failed and this quote was priced from the last known value - the
+       * difference between a deliberate 0% and a silent revenue loss, which
+       * were previously indistinguishable to anyone reading a quote.
+       */
+      markupKnown: breetMarkupKnown,
+      markupSource: breetMarkupSource,
       effectivePercent: String(effectivePercent),
     },
   };
