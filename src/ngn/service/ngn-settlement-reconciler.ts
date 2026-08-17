@@ -275,7 +275,37 @@ export async function reconcileNgnSettlements(
     return outcome;
   }
 
-  const settlements = await provider.listSettlements();
+  /**
+   * A PROVIDER FAILURE MUST NOT LOOK LIKE A CLEAN RUN.
+   *
+   * listSettlements() used to swallow its own errors and return [], so this
+   * reported `checked: 0, matched: 0, advanced: []` - indistinguishable from
+   * "everything is already reconciled". That is exactly what live returned
+   * while two real payouts sat unreconciled, and it is why the problem was
+   * invisible from the outside.
+   *
+   * Recorded in `skipped` and logged at error severity, then returned rather
+   * than thrown: this runs on a timer, and an exception here would take out
+   * the whole tick including the unfunded-order expiry below.
+   */
+  let settlements;
+  try {
+    settlements = await provider.listSettlements();
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    outcome.skipped.push(`could not list settlements from ${controls.activeProvider}: ${reason}`);
+    await createAuditLog({
+      actorType: 'system',
+      actorId: 'ngn_settlement_reconciler',
+      action: 'ngn.reconcile_provider_unavailable',
+      resourceType: 'payments_ngn_provider',
+      resourceId: controls.activeProvider,
+      severity: 'error',
+      metadata: { reason },
+    }).catch(() => undefined);
+    return outcome;
+  }
+
   outcome.checked = settlements.length;
 
   const transfers = await db.listNgnTransfers();

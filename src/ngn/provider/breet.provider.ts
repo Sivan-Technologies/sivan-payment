@@ -1062,8 +1062,58 @@ export class BreetNgnProvider implements NgnProviderAdapter {
    * a Sivan transfer.
    */
   async listSettlements(): Promise<NgnProviderSettlement[]> {
-    const withdrawals = await breetRequest<any[]>('/payments/withdrawals').catch(() => []);
-    const list = Array.isArray(withdrawals) ? withdrawals : [];
+    /**
+     * PAGINATED, AND THE FAILURE WAS INVISIBLE.
+     *
+     * `POST /api/admin/ngn/reconcile-settlements` returned `checked: 0` on live
+     * while two payouts were sitting unreconciled. Zero is what this method
+     * reports when the call THROWS - `.catch(() => [])` collapsed an auth
+     * error, a timeout and "genuinely no withdrawals" into the same answer, so
+     * the reconciler looked healthy while it was blind.
+     *
+     * Two faults, both fixed here:
+     *
+     *   1. The error is no longer swallowed. It is logged with the reason and
+     *      rethrown, so the reconciler reports a real failure instead of a
+     *      clean empty pass. `checked: 0` now means what it says.
+     *
+     *   2. `GET /payments/withdrawals` is PAGINATED - the documented response
+     *      carries `meta: { totalDocs: 12, hasNextPage: true }` and defaults to
+     *      page 1. Reading only the first page means an older unreconciled
+     *      payout drops off the end as newer ones arrive and can never be
+     *      found again. Pages are walked until Breet says there are no more.
+     *
+     * Bounded at 10 pages. This runs on a timer against a partner API; an
+     * unbounded loop against a paginated endpoint is how an integration gets
+     * rate limited, and 10 pages of payouts is far more than one poll interval
+     * can produce.
+     */
+    const list: any[] = [];
+    const MAX_PAGES = 10;
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      let body: any;
+      try {
+        body = await breetRequest<any>(
+          `/payments/withdrawals?page=${page}&size=50`,
+          { signal: AbortSignal.timeout(15000) }
+        );
+      } catch (error) {
+        // First page failing is a real outage - say so. A later page failing
+        // still leaves usable data, so keep what we have rather than losing
+        // the whole run.
+        if (page === 1) throw error;
+        break;
+      }
+
+      // breetRequest already unwraps `data`, which the docs show as a bare
+      // array. Tolerate an object wrapper too rather than silently reading
+      // zero if that ever changes.
+      const rows = Array.isArray(body) ? body : (Array.isArray(body?.data) ? body.data : []);
+      list.push(...rows);
+
+      const meta = Array.isArray(body) ? undefined : body?.meta;
+      if (!meta?.hasNextPage) break;
+    }
 
     const settlements: NgnProviderSettlement[] = [];
     // Sequential on purpose: this runs on a timer against a partner API, and

@@ -176,5 +176,36 @@ check('and the amount-matching order is left alone',
   byId('ngnt_middle').status === 'settlement_processing',
   `${byId('ngnt_middle').status} - an exact id must outrank a matching number`);
 
+console.log('\n── a provider failure is NOT reported as a clean run ─────────');
+
+/**
+ * THE FAILURE THAT HID EVERYTHING ELSE.
+ *
+ * Live returned `{"checked":0,"matched":0,"advanced":[],"unmatched":[]}` while
+ * two real payouts were unreconciled. That is byte-identical to the response
+ * for "everything is already settled", because listSettlements() swallowed its
+ * own errors and returned []. An operator reading that output would reasonably
+ * conclude there was nothing to do.
+ */
+(BreetNgnProvider as any).prototype.listSettlements = async () => {
+  throw new Error('Breet: wrong app id and secret combination');
+};
+const failed: any = await reconcileNgnSettlements();
+
+check('the run reports the provider problem instead of an empty pass',
+  failed.skipped.some((s: string) => /could not list settlements/i.test(s)),
+  JSON.stringify(failed));
+check('and it names the underlying reason',
+  failed.skipped.some((s: string) => /app id and secret/i.test(s)),
+  JSON.stringify(failed.skipped));
+
+const providerLogs = await db.listAuditLogsByActions(['ngn.reconcile_provider_unavailable']);
+check('an error-severity audit log is raised',
+  providerLogs.length === 1 && providerLogs[0].severity === 'error',
+  JSON.stringify(providerLogs.map((l: any) => [l.action, l.severity])));
+
+// Restore for any later case.
+(BreetNgnProvider as any).prototype.listSettlements = async () => settlements;
+
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);
