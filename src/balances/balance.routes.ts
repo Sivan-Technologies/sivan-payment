@@ -130,6 +130,10 @@ export async function balanceRoutes(app: FastifyInstance) {
           available: Number(b.spendable),
           pending: Number(b.pending),
         })),
+        wallets: unified.wallets.map((w) => ({
+          chain: w.chain,
+          address: w.address,
+        })),
       }
     };
   });
