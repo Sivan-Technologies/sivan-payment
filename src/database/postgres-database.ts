@@ -166,7 +166,7 @@ export class PostgresDatabase {
       connectionString,
       max: Number(process.env.POSTGRES_MAX_CONNECTIONS ?? 20),
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS ?? 30000),
       keepAlive: true,
     });
     this.pool.on('error', (error) => {
