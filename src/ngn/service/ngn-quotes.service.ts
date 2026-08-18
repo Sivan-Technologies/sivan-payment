@@ -189,7 +189,7 @@ function validateCurrencyPair(input: NgnQuoteInput) {
 export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>) {
   validateCurrencyPair(input);
   const controls = await getNgnControls();
-  const revenueMode = input.direction === 'offramp'
+  let revenueMode = input.direction === 'offramp'
     ? (controls.offrampRevenueMode ?? env.NGN_OFFRAMP_REVENUE_MODE)
     : 'sivan_fee_wallet';
   const requestedNetwork = String((input as any).network ?? '').toLowerCase();
@@ -199,10 +199,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     requestedNetwork &&
     requestedNetwork !== 'solana'
   ) {
-    throw forbidden(
-      'Sivan wallet-fee NGN off-ramp is currently enabled on Solana only. ' +
-      'Switch revenue mode to breet_markup/disabled or select Solana.'
-    );
+    revenueMode = 'breet_markup';
   }
   if (input.direction === 'onramp' && !controls.onrampEnabled) throw forbidden('NGN on-ramp is currently disabled.');
   if (input.direction === 'offramp' && !controls.offrampEnabled) throw forbidden('NGN off-ramp is currently disabled.');
@@ -331,10 +328,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     }
 
     if (revenueMode === 'sivan_fee_wallet' && breetMarkupPercentForQuote > 0) {
-      throw forbidden(
-        `Breet markup is currently ${breetMarkupPercentForQuote}%, but Sivan wallet-fee mode is active. ` +
-        'Set Breet markup to 0% or switch NGN revenue mode to breet_markup before quoting.'
-      );
+      revenueMode = 'breet_markup';
     }
   }
   // input.network is forwarded so the provider prices - and stamps the assetId
