@@ -159,6 +159,9 @@ function splitName(fullName: string) {
 
 export class PostgresDatabase {
   private pool: pg.Pool;
+  private auditQueue: AuditLogRecord[] = [];
+  private auditFlushTimer: NodeJS.Timeout | null = null;
+  private isFlushingAuditLogs = false;
 
   constructor(connectionString = env.DATABASE_URL) {
     if (!connectionString) throw new Error('DATABASE_URL is required when DATABASE_PROVIDER=postgres');
@@ -279,7 +282,12 @@ export class PostgresDatabase {
       const supplierVolumeGrants = await optionalQuery(client, 'select * from payments_supplier_volume_grants order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
       const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
-      const auditLogs = await client.query('select * from payments_audit_logs order by created_at asc');
+      // Bound auditLogs to recent 100 entries so db.read() doesn't pull millions of historical rows.
+      // Targeted queries use listAuditLogs() and listBalanceLedgerLogs().
+      const auditLogs = await optionalQuery(client, 'select * from payments_audit_logs order by created_at desc limit 100');
+      if (auditLogs && auditLogs.rows) {
+        auditLogs.rows.reverse();
+      }
       const reconciliationRuns = await client.query('select * from payments_reconciliation_runs order by started_at asc');
       const reconciliationFindings = await client.query('select * from payments_reconciliation_findings order by created_at asc');
       const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
@@ -648,6 +656,10 @@ export class PostgresDatabase {
   async listAuditLogsView({ limit = 200, offset = 0 }: { limit?: number; offset?: number } = {}) {
     const client = await this.pool.connect();
     try { return (await client.query('select * from payments_audit_logs order by created_at desc limit $1 offset $2', [limit, offset])).rows.map(mapAuditLog); } finally { client.release(); }
+  }
+
+  async listAuditLogs(limit = 200, offset = 0) {
+    return this.listAuditLogsView({ limit, offset });
   }
 
   /**
@@ -1193,9 +1205,46 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  private scheduleAuditFlush() {
+    if (this.auditFlushTimer) return;
+    this.auditFlushTimer = setTimeout(() => {
+      this.auditFlushTimer = null;
+      void this.flushAuditLogs();
+    }, 50);
+  }
+
+  async flushAuditLogs(): Promise<void> {
+    if (this.auditQueue.length === 0 || this.isFlushingAuditLogs) return;
+    this.isFlushingAuditLogs = true;
+    const batch = this.auditQueue.splice(0, 100);
+    try {
+      const client = await this.pool.connect();
+      try {
+        for (const item of batch) {
+          await upsertAuditLog(client, item);
+        }
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      console.error('[audit.flush.error]', err);
+      this.auditQueue.unshift(...batch);
+    } finally {
+      this.isFlushingAuditLogs = false;
+      if (this.auditQueue.length > 0) {
+        this.scheduleAuditFlush();
+      }
+    }
+  }
+
   async insertAuditLogRecord(record: AuditLogRecord) {
-    const client = await this.pool.connect();
-    try { await upsertAuditLog(client, record); return record; } finally { client.release(); }
+    this.auditQueue.push(record);
+    if (this.auditQueue.length >= 20) {
+      void this.flushAuditLogs();
+    } else {
+      this.scheduleAuditFlush();
+    }
+    return record;
   }
 
   async insertAuthChallengeRecord(record: AuthChallengeRecord) {

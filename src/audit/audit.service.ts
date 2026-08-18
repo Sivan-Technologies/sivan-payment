@@ -35,6 +35,12 @@ export async function createAuditLog(input: CreateAuditLogInput) {
 }
 
 export async function listAuditLogs(limit = 200) {
+  if (typeof (db as any).listAuditLogsView === 'function') {
+    return (db as any).listAuditLogsView({ limit, offset: 0 });
+  }
+  if (typeof (db as any).listAuditLogs === 'function') {
+    return (db as any).listAuditLogs(limit, 0);
+  }
   const data = await db.read();
   return (data.auditLogs ?? [])
     .slice()
