@@ -342,7 +342,7 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     transferFeePercent: DEFAULT_TRANSFER_FEE.percent,
     transferFeeMinimumUsd: DEFAULT_TRANSFER_FEE.minimumUsd,
     transferFeeMaximumUsd: DEFAULT_TRANSFER_FEE.maximumUsd,
-    transferMinimumSendAmount: DEFAULT_TRANSFER_MIN_SEND,
+    transferMinimumSendAmount: Number(process.env.BALANCE_TRANSFER_MIN_AMOUNT || DEFAULT_TRANSFER_MIN_SEND),
     transferFeeNewRecipientUsd: DEFAULT_TRANSFER_FEE.newRecipientUsd,
     supplierFeeTiers: DEFAULT_SUPPLIER_FEE.tiers,
     supplierVolumeDiscounts: DEFAULT_SUPPLIER_FEE.volumeDiscounts,
