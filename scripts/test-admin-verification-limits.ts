@@ -87,40 +87,40 @@ async function main() {
 
     const second = decide(bankLevelUser(), {
       flow: 'offramp', rail: 'ngn',
-      amountNgn: ONE_BREET_WITHDRAWAL_NGN, priorVolumeNgn: ONE_BREET_WITHDRAWAL_NGN,
+      amountNgn: ONE_BREET_WITHDRAWAL_NGN, priorVolumeNgn: 450_000,
     });
-    check('but a SECOND one in the same window is refused',
+    check('but a cumulative volume exceeding 500k in the same window is refused',
       !second.allowed, 'cumulative ceiling did not bind');
     check('and the user is told to add NIN or BVN',
       second.requiredLevel === VerificationLevel.IDENTITY, String(second.requiredLevel));
 
     // An admin raises it. No deploy.
     const overrides: VerificationLimitOverride[] = [
-      { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 200_000 },
+      { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 600_000 },
     ];
     const allowed = decide(bankLevelUser(), {
       flow: 'offramp', rail: 'ngn',
-      amountNgn: ONE_BREET_WITHDRAWAL_NGN, priorVolumeNgn: 0,
+      amountNgn: ONE_BREET_WITHDRAWAL_NGN, priorVolumeNgn: 450_000,
     }, overrides);
     check('with an admin override the same withdrawal is ALLOWED', allowed.allowed, allowed.reason);
-    check('the decision reports the overridden ceiling', allowed.limitNgn === 200_000, String(allowed.limitNgn));
+    check('the decision reports the overridden ceiling', allowed.limitNgn === 600_000, String(allowed.limitNgn));
   }
 
   console.log('\nTHE OVERRIDE REACHES EVERY DECISION PATH');
   {
     const overrides: VerificationLimitOverride[] = [
-      { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 200_000 },
+      { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 700_000 },
     ];
 
-    check('limitFor honours it', limitFor('offramp', 'ngn', VerificationLevel.BANK, overrides) === 200_000);
+    check('limitFor honours it', limitFor('offramp', 'ngn', VerificationLevel.BANK, overrides) === 700_000);
 
     // Without this, a user would be told to complete IDENTITY when BANK had
     // already been raised high enough - asking for documents not needed.
-    const level = lowestSufficientLevel('offramp', 'ngn', 150_000, overrides);
+    const level = lowestSufficientLevel('offramp', 'ngn', 600_000, overrides);
     check('lowestSufficientLevel stops at BANK, not IDENTITY',
       level === VerificationLevel.BANK, String(level));
     check('without the override the same amount demands IDENTITY',
-      lowestSufficientLevel('offramp', 'ngn', 150_000) === VerificationLevel.IDENTITY);
+      lowestSufficientLevel('offramp', 'ngn', 600_000) === VerificationLevel.IDENTITY);
   }
 
   console.log('\nUNLIMITED AND CLOSED ARE NOT THE SAME NUMBER');
@@ -156,7 +156,7 @@ async function main() {
       { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 200_000 },
     ];
     check('an untouched combination keeps its default',
-      limitFor('escrow', 'ngn', VerificationLevel.BANK, overrides) === 100_000);
+      limitFor('escrow', 'ngn', VerificationLevel.BANK, overrides) === 500_000);
     check('an untouched rail keeps its default',
       limitFor('offramp', 'foreign', VerificationLevel.BANK, overrides) === 0);
   }
