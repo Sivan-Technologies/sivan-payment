@@ -191,7 +191,7 @@ function nextStepFor(
       level: VerificationLevel.ENHANCED,
       label: 'Level 3: Enhanced',
       description:
-        'Higher limits for regular, larger volumes. Our team reviews these individually - contact support to start.',
+        'Higher limits (₦20,000,000+ per 30 days) for regular, larger volumes. Our team reviews these individually - contact support to start.',
       action: 'contact_support',
       available: true,
     };
@@ -202,7 +202,7 @@ function nextStepFor(
       level: VerificationLevel.IDENTITY,
       label: 'Level 2: Identity verified',
       description:
-        'Add your BVN to raise your limit from ₦100,000 to ₦5,000,000 per 30 days.',
+        'Add your BVN to raise your limit from ₦500,000 to ₦5,000,000 per 30 days.',
       action: 'nin_bvn',
       /**
        * GATED ON A BVN PROVIDER EXISTING, NOT ON identityVerificationEnabled.

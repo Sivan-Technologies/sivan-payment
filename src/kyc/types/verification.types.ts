@@ -265,15 +265,10 @@ export const FLOW_LIMITS: readonly FlowLimit[] = [
   { flow: 'offramp', rail: 'ngn', level: VerificationLevel.NONE, cumulativeNgn: 0 },
   { flow: 'onramp',  rail: 'ngn', level: VerificationLevel.NONE, cumulativeNgn: 0 },
 
-  { flow: 'escrow',  rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 100_000 },
-  // Raised from 50,000 on the product's call. At Breet's documented mainnet
-  // minimum of $15 (~NGN 24,000) the old ceiling allowed roughly two
-  // withdrawals a month, which is tight enough that a normal user hits it.
-  // Off-ramp still sits at the escrow figure rather than above it: escrow is
-  // two Nigerian banks settling with each other, off-ramp is crypto of
-  // unknown origin becoming naira, and the second carries more risk.
-  { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 100_000 },
-  { flow: 'onramp',  rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 100_000 },
+  { flow: 'escrow',  rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 500_000 },
+  // Raised to 500,000 to provide smooth onboarding for regular daily deals & small payouts.
+  { flow: 'offramp', rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 500_000 },
+  { flow: 'onramp',  rail: 'ngn', level: VerificationLevel.BANK, cumulativeNgn: 500_000 },
 
   /**
    * LEVEL 2 CEILINGS, RAISED TO NGN 5,000,000 ON THE FOUNDERS' CALL.
