@@ -515,11 +515,68 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
    * USDC while the form was already set to USDT. Only runs while the current
    * choice is not in the list, so it never fights a user who has picked.
    */
+  /**
+   * OPEN ON THE ASSET THE USER ACTUALLY HOLDS.
+   *
+   * Reported with three screenshots: the dashboard showed a real balance, the
+   * send page showed "0 USDC available to send" and a disabled button, and
+   * switching the dropdown to USDT appeared to change nothing.
+   *
+   * The card was following the dropdown correctly. The DEFAULT was wrong.
+   * `sendableAssetOptions[0]` is whatever the ADMIN listed first - live that
+   * is usdc - so a user holding only USDT opened on USDC, saw four zeroes,
+   * and met a disabled button before touching anything. The asset order in an
+   * admin control has nothing to do with which coin this user owns.
+   *
+   * Now the seed prefers the largest spendable balance and falls back to the
+   * admin's first entry only when every balance is zero (a genuinely empty
+   * account, where any default is as good as another).
+   *
+   * `seededFromBalance` makes this run ONCE. Without it, a user who has USDC
+   * and USDT and deliberately switches to the smaller one would be yanked
+   * back to the larger on the next balance refresh - the effect would fight
+   * the user. It also must not re-seed while `unifiedBalance` is still
+   * loading, or it would lock in the admin default before the balances land.
+   */
+  const seededFromBalance = useRef(false);
   useEffect(() => {
     if (!sendableAssetOptions.length) return;
+
+    const spendableFor = (asset: string) => {
+      const key = String(asset).toLowerCase();
+      const row = unifiedBalance?.balances.find((item) => String(item.asset).toLowerCase() === key);
+      if (row) return Number(row.spendable || 0);
+      const ledger = balance?.balances.find((item) => String(item.asset).toLowerCase() === key);
+      return Number(ledger?.available || 0);
+    };
+
+    // An asset that is no longer offered must not stay selected, whatever else
+    // happens - that would leave the form pointing at something unsendable.
     const stillValid = sendableAssetOptions.some((item) => item.asset === sendAsset);
-    if (!stillValid) setSendAsset(sendableAssetOptions[0].asset);
-  }, [sendableAssetOptions.map((item) => item.asset).join(','), sendAsset]);
+
+    if (seededFromBalance.current) {
+      if (!stillValid) setSendAsset(sendableAssetOptions[0].asset);
+      return;
+    }
+
+    // Wait for balances before choosing, otherwise we seed from nothing and
+    // then never correct it.
+    if (!unifiedBalance && !balance) return;
+
+    const ranked = [...sendableAssetOptions]
+      .map((item) => ({ asset: item.asset, spendable: spendableFor(item.asset) }))
+      .sort((a, b) => b.spendable - a.spendable);
+
+    const best = ranked[0];
+    seededFromBalance.current = true;
+    if (best && best.spendable > 0) setSendAsset(best.asset);
+    else if (!stillValid) setSendAsset(sendableAssetOptions[0].asset);
+  }, [
+    sendableAssetOptions.map((item) => item.asset).join(','),
+    sendAsset,
+    unifiedBalance,
+    balance,
+  ]);
 
   /**
    * A USER PARKED ON A ROUTE THAT JUST CLOSED MUST NOT SEE A BLANK PAGE.
@@ -626,6 +683,31 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
    */
   const usdApprox = (value: number) =>
     `≈$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  /**
+   * THE OTHER ASSETS THE USER HOLDS, so this card agrees with the dashboard.
+   *
+   * Reported: "the dashboard shows a balance but Send & transfer shows
+   * nothing." Both were right. The dashboard KPI sums every stablecoin into
+   * one USD figure (dashboardKpis.stableUsdBalanceKpi over usdc + usdt); this
+   * card shows ONE asset, because a send moves one token on one chain - you
+   * cannot send "0.1 USD", you send 17.88 USDT.
+   *
+   * That is the correct model, but the card never said so, and a user looking
+   * at a healthy dashboard total then at four zeroes here has no way to tell
+   * "you have nothing" from "you are looking at the wrong coin". So when the
+   * selected asset is empty and another one is not, name the other one.
+   */
+  const otherFunded = sendableAssetOptions
+    .filter((item) => String(item.asset).toLowerCase() !== selectedAssetKey)
+    .map((item) => {
+      const key = String(item.asset).toLowerCase();
+      const row = unifiedBalance?.balances.find((b) => String(b.asset).toLowerCase() === key);
+      const ledger = balance?.balances.find((b) => String(b.asset).toLowerCase() === key);
+      const amount = row ? Number(row.spendable || 0) : Number(ledger?.available || 0);
+      return { asset: item.asset, amount };
+    })
+    .filter((item) => item.amount > 0);
   /** True when the chain read failed - NOT the same as a zero balance. */
   const chainUnavailable = Boolean(unified?.chainUnavailable);
   const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
@@ -684,7 +766,26 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
           the new, right one. */}
       {chainUnavailable
         ? <p className="sv-warn">We could not reach the network to read your wallet just now, so this figure may be incomplete. Your funds are safe.</p>
-        : <p className="muted">This is what you can send right now: the balance in your Sivan wallet, plus any settled virtual-account deposits, minus anything held for review.</p>}</article>
+        : <p className="muted">This is what you can send right now: the balance in your Sivan wallet, plus any settled virtual-account deposits, minus anything held for review.</p>}
+        {/* POINT AT THE MONEY THE USER CAN SEE ON THE DASHBOARD.
+            Only when THIS asset is empty and another is not - otherwise it is
+            noise on a card that is already working. Clicking switches the
+            form, so the fix is one tap rather than a hunt through a dropdown
+            the user has no reason to suspect. */}
+        {available <= 0 && otherFunded.length > 0 && (
+          <p className="muted">
+            You have no {assetLabelUpper} to send, but you do hold{' '}
+            {otherFunded.map((item, index) => (
+              <span key={item.asset}>
+                {index > 0 ? ' and ' : ''}
+                <button type="button" className="link-btn" onClick={() => setSendAsset(item.asset)}>
+                  {item.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {item.asset.toUpperCase()}
+                </button>
+              </span>
+            ))}
+            . Your dashboard total adds every stablecoin together; a send moves one at a time.
+          </p>
+        )}</article>
       {activeRoute === 'crypto' && <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Transfer history</p><h3>Crypto sends</h3></div></div>{!transfers.length ? <Empty>No crypto transfers from settled balance yet.</Empty> : <div className="list">{transfers.map((transfer) => <div className="list-item" key={transfer.transferId}><strong>{transfer.amount} {transfer.asset.toUpperCase()} → {transfer.network.replaceAll('_', ' ')}</strong><Badge status={transfer.status}>{friendlyStatus(transfer.status)}</Badge>{/* TWO DIFFERENT THINGS WERE BOTH BEING CALLED "the address".
 
                   This row printed shortRef(destinationAddress) with no label,
