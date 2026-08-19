@@ -135,8 +135,8 @@ export function bridgeRequiredMessage(
   // The Nigerian case, and the reason this function exists: acknowledge what
   // they HAVE done before naming what is missing.
   if (path === 'ngn_bank') {
-    return 'Buying stablecoins needs identity verification — a photo ID and a selfie. '
+    return 'Buying stablecoins needs identity verification - a photo ID and a selfie. '
       + 'Your bank verification covers naira payouts, but not this. Start it from the Verification page.';
   }
-  return 'Complete identity verification — a photo ID and a selfie — before buying stablecoins.';
+  return 'Complete identity verification - a photo ID and a selfie - before buying stablecoins.';
 }

@@ -325,7 +325,7 @@ function verificationAnswer(bundle: AceEvidenceBundle, options: { admin?: boolea
     lines.push('');
   } else if (outstanding.length && v.pathComplete) {
     lines.push('Not required for your level:');
-    lines.push(outstanding.map(([name]) => checkLabel(name)).join(', ') + ' — these only matter if you later need higher limits.');
+    lines.push(outstanding.map(([name]) => checkLabel(name)).join(', ') + ' - these only matter if you later need higher limits.');
     lines.push('');
   }
 
@@ -345,7 +345,7 @@ function verificationAnswer(bundle: AceEvidenceBundle, options: { admin?: boolea
     lines.push('Next step:');
     lines.push(v.nextStep.available
       ? `${v.nextStep.label}: ${v.nextStep.description}`
-      : `${v.nextStep.label}: ${v.nextStep.description} (not available yet — nothing for you to do about this one.)`);
+      : `${v.nextStep.label}: ${v.nextStep.description} (not available yet - nothing for you to do about this one.)`);
   } else if (v.pathComplete) {
     lines.push('Next step:');
     lines.push('Nothing. You are fully verified for your region.');

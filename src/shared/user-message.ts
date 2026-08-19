@@ -116,7 +116,7 @@ export function bankResolutionMessage(rawError: unknown): string {
 
   if (isOurFault) {
     return (
-      'We could not check that bank account right now. This is on our side, not yours — ' +
+      'We could not check that bank account right now. This is on our side, not yours - ' +
       'please try again in a few minutes, and contact support if it keeps happening.'
     );
   }

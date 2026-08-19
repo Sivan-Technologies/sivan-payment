@@ -94,7 +94,7 @@ export function verificationPlanFor(country: string | undefined | null): Verific
       isFallback: false,
       title: 'Verify with your bank account',
       description:
-        'Enter your Nigerian bank account. We confirm the account name matches your name — ' +
+        'Enter your Nigerian bank account. We confirm the account name matches your name - ' +
         'no documents, no selfie, usually under a minute.',
       unlocks: ['Sell crypto to naira', 'Withdraw to your Nigerian bank'],
       costsProviderFee: false,
