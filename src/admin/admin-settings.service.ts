@@ -14,7 +14,7 @@ export const adminPlatformSettingsSchema = z.object({
   globalGeoBlock: z.boolean().default(true),
   onRampEnabled: z.boolean().default(true),
   offRampEnabled: z.boolean().default(true),
-  usdtEnabled: z.boolean().default(true),
+  usdtEnabled: z.boolean().default(false),
   /**
    * Bridge -> Privy auto-sweep, OFF until it has been exercised for real.
    *
@@ -67,7 +67,7 @@ const defaultPlatformSettings = (): AdminPlatformSettings & { updatedAt: string 
   globalGeoBlock: true,
   onRampEnabled: true,
   offRampEnabled: true,
-  usdtEnabled: true,
+  usdtEnabled: false,
   // OFF for launch. See the schema above for why this fails closed.
   bridgeToPrivySweepEnabled: false,
   updatedBy: 'system',
