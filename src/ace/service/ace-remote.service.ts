@@ -106,9 +106,38 @@ export async function requestRemoteAceSupport(input: {
   }
 }
 
+/**
+ * TELL THE MODEL WHAT WAS ASKED, NOT JUST WHAT WE FOUND.
+ *
+ * This built the objective purely from the attached record, so a verification
+ * question with a stale buy order attached instructed the model to "Answer a
+ * Sivan Payment support question about onramp_order or_17f19d8b". The model
+ * then did exactly as told - correctly - and answered about the wrong thing.
+ * The objective was steering it off course.
+ *
+ * Measured against the live service: the SAME question with a KYC evidence row
+ * returned "Your verification status is approved", while with only transaction
+ * rows it returned a generic paragraph about identity checks. The model was
+ * never the weak part; its instructions and its evidence were.
+ */
 function buildObjective(input: { bundle: AceEvidenceBundle }) {
-  const tx = input.bundle.transaction;
-  if (!tx) return 'Answer a Sivan Payment support question from evidence';
+  const { intent, transaction: tx, unresolvedReference } = input.bundle;
+
+  if (intent === 'verification') {
+    return 'Answer the user\'s question about THEIR OWN verification status, using the verification.* evidence. Do not describe any transaction.';
+  }
+  if (intent === 'account_recovery') {
+    return 'Answer a Sivan Payment account access or 2FA recovery question. Sivan cannot perform the reset; explain that a human must verify identity first.';
+  }
+  if (unresolvedReference) {
+    return `The user gave reference ${unresolvedReference}, which matched no transaction. Tell them it could not be found and what to check. Do not substitute a different transaction.`;
+  }
+  if (intent === 'deposit' && !tx) {
+    return 'Answer a Sivan Payment question about a deposit that has not appeared. Do not invent a transaction.';
+  }
+  if (!tx) {
+    return 'Answer a Sivan Payment support question from evidence. If the evidence does not identify what the user is asking about, ASK them which transaction or topic they mean rather than guessing.';
+  }
   return `Answer a Sivan Payment support question about ${tx.type} ${tx.id}`;
 }
 

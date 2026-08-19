@@ -1,17 +1,54 @@
 import { db } from '../../database/json-database.js';
 import { buildPublicOnrampTimeline, buildPublicWithdrawalTimeline } from '../../timeline/transaction-timeline.service.js';
-import type { AceEvidenceBundle, AceEvidenceItem, AceResourceType } from '../types/ace.types.js';
+import { buildTimeline as buildNgnTimeline } from '../../ngn/service/ngn-transfers.service.js';
+import { getVerificationSummary } from '../../kyc/service/verification-summary.service.js';
+import type { AceEvidenceBundle, AceEvidenceItem, AceIntent, AceResourceType } from '../types/ace.types.js';
 
-export async function buildAceEvidence(input: { userId?: string; message: string; resourceType: AceResourceType; resourceId?: string; admin?: boolean }): Promise<AceEvidenceBundle> {
+export async function buildAceEvidence(input: { userId?: string; message: string; resourceType: AceResourceType; resourceId?: string; intent?: AceIntent; admin?: boolean }): Promise<AceEvidenceBundle> {
   const data = await db.read();
   const user = input.userId ? data.users.find((item) => item.id === input.userId) : undefined;
   const customer = user ? data.customers.find((item) => item.userId === user.id) : undefined;
   const transaction = findTransaction(data, input);
+  /**
+   * A NAMED REFERENCE THAT RESOLVED TO NOTHING IS ITS OWN ANSWER.
+   *
+   * Without this the assistant cannot tell "you gave me an id I cannot find"
+   * apart from "you gave me no id", and the second used to mean "report on
+   * their newest transaction". That is precisely how a user pasting
+   * ngnt_f17c5017 got told about buy order or_17f19d8b.
+   */
+  const unresolvedReference = input.resourceId && !transaction ? input.resourceId : undefined;
+
+  /**
+   * VERIFICATION EVIDENCE, fetched only when it is what was asked about.
+   *
+   * getVerificationSummary() is a real read against users, customers, accounts
+   * and the limit matrix, so it is not free - and attaching it to every
+   * "where is my payout" question would be waste. Gated on intent.
+   *
+   * Failure is swallowed to a warning rather than thrown: a support assistant
+   * that 500s because a secondary lookup failed is worse than one that answers
+   * from the evidence it does have.
+   */
+  const verification = input.intent === 'verification' && input.userId
+    ? await getVerificationSummary(input.userId).catch(() => undefined)
+    : undefined;
   const timeline = transaction?.kind === 'withdrawal'
     ? buildPublicWithdrawalTimeline(transaction.record, data)
     : transaction?.kind === 'onramp_order'
       ? buildPublicOnrampTimeline(transaction.record, data)
-      : undefined;
+      /**
+       * NGN transfers already carry a timeline builder - buildTimeline() in
+       * ngn-transfers.service - and it was simply never wired in here. Reused
+       * rather than reimplemented so the assistant and the transaction page
+       * describe the same stages in the same words.
+       *
+       * `explanation` is the CURRENT step's description, matching what the
+       * other two builders return, so downstream copy needs no special case.
+       */
+      : transaction?.kind === 'ngn_transfer'
+        ? ngnTimelineFor(transaction.record)
+        : undefined;
   const trace = transaction ? (data.transactionReferences ?? []).filter((item) => item.resourceType === transaction.kind && item.resourceId === transaction.record.id) : [];
   const activeIncidents = (data.systemIncidents ?? []).filter((incident) => incident.status !== 'resolved');
   const relevantIncidents = transaction ? activeIncidents.filter((incident) => incident.affectedService === 'all' || (transaction.kind === 'withdrawal' && incident.affectedService === 'withdrawals') || (transaction.kind === 'onramp_order' && incident.affectedService === 'onramp') || incident.provider.toLowerCase() === String(transaction.record.provider ?? '').toLowerCase()) : activeIncidents;
@@ -25,6 +62,36 @@ export async function buildAceEvidence(input: { userId?: string; message: string
   const evidenceItems: AceEvidenceItem[] = [
     ...(user ? [{ source: 'user.id', label: 'User ID', value: user.id, customerSafe: false }, { source: 'user.email', label: 'User email', value: user.email, customerSafe: false }] : []),
     ...(customer ? [{ source: 'customer.kycStatus', label: 'KYC status', value: customer.kycStatus, customerSafe: true }] : []),
+    /**
+     * The verification facts, as individual evidence lines.
+     *
+     * This list is what actually reaches Sivan AI - the bundle's typed fields
+     * are for local composition, but the remote call sends evidenceItems only.
+     * So verification data that is not itemised here is invisible to the model
+     * no matter how well-populated the bundle is. Proven by probe: given a KYC
+     * row the live model answered "Your verification status is approved";
+     * given only transaction rows it produced a generic sentence about
+     * identity checks.
+     */
+    ...(verification ? [
+      { source: 'verification.level', label: 'Verification level', value: `${verification.level} (${verification.levelLabel})`, customerSafe: true },
+      { source: 'verification.path', label: 'Verification path', value: verification.path, customerSafe: true },
+      { source: 'verification.identityComplete', label: 'Identity check complete', value: verification.identityComplete, customerSafe: true },
+      { source: 'verification.pathComplete', label: 'Verification complete', value: verification.pathComplete, customerSafe: true },
+      ...Object.entries(verification.checks ?? {}).map(([name, status]) => ({
+        source: `verification.check.${name}`, label: `Check: ${name}`, value: String(status), customerSafe: true,
+      })),
+      { source: 'verification.terms', label: 'Provider terms', value: verification.terms?.required ? (verification.terms.accepted ? 'accepted' : 'not accepted') : 'not required', customerSafe: true },
+      { source: 'verification.hasPayoutAccount', label: 'Payout account on file', value: verification.hasPayoutAccount, customerSafe: true },
+      ...(verification.hasPendingPayoutReview ? [{ source: 'verification.payoutReview', label: 'Payout account in review', value: true, customerSafe: true }] : []),
+      ...(verification.nextStep ? [{
+        source: 'verification.nextStep',
+        label: 'Next step',
+        value: `${verification.nextStep.label}: ${verification.nextStep.description}${verification.nextStep.available ? '' : ' (not available yet)'}`,
+        customerSafe: true,
+      }] : []),
+    ] : []),
+    ...(unresolvedReference ? [{ source: 'reference.unresolved', label: 'Reference not found', value: unresolvedReference, customerSafe: true }] : []),
     ...(transaction ? [
       { source: 'transaction.id', label: 'Request ID', value: transaction.record.id, customerSafe: true },
       { source: 'transaction.type', label: 'Transaction type', value: transaction.kind === 'withdrawal' ? 'withdrawal' : 'buy order', customerSafe: true },
@@ -44,6 +111,23 @@ export async function buildAceEvidence(input: { userId?: string; message: string
 
   return {
     user: user ? { id: user.id, email: input.admin ? user.email : undefined, kycStatus: customer?.kycStatus } : undefined,
+    intent: input.intent,
+    unresolvedReference,
+    verification: verification ? {
+      level: verification.level,
+      levelLabel: verification.levelLabel,
+      path: verification.path,
+      identityComplete: verification.identityComplete,
+      pathComplete: verification.pathComplete,
+      checks: verification.checks as unknown as Record<string, string>,
+      termsRequired: Boolean(verification.terms?.required),
+      termsAccepted: Boolean(verification.terms?.accepted),
+      hasPayoutAccount: verification.hasPayoutAccount,
+      hasPendingPayoutReview: verification.hasPendingPayoutReview,
+      nextStep: verification.nextStep
+        ? { label: verification.nextStep.label, description: verification.nextStep.description, available: verification.nextStep.available }
+        : undefined,
+    } : undefined,
     transaction: transaction ? { id: transaction.record.id, type: transaction.kind, status: transaction.record.status, explanation: timeline?.explanation, amount: amountFor(transaction.kind, transaction.record), currency: currencyFor(transaction.kind, transaction.record), provider: transaction.record.provider, providerReference } : undefined,
     timeline: timeline?.steps ?? [],
     trace: input.admin ? trace : trace.map(({ metadata, ...item }) => item),
@@ -57,7 +141,33 @@ export async function buildAceEvidence(input: { userId?: string; message: string
   };
 }
 
+/**
+ * Find the record the user is asking about - and DO NOT INVENT ONE.
+ *
+ * The old contract was: 'general' means "grab their newest transaction". That
+ * single line produced the worst class of bug this assistant had. Asking about
+ * verification, or pasting an NGN reference, or saying hello, all landed on
+ * 'general' and all got a confident status report about an unrelated buy
+ * order, complete with a Request ID the user had never seen.
+ *
+ * The rule now:
+ *   - a concrete type + id  -> look up exactly that, or nothing
+ *   - 'transaction_lookup'  -> the user IS asking about a transaction but did
+ *                              not say which; their latest is a fair answer
+ *   - 'general'             -> attach NOTHING
+ *
+ * "Which transaction do you mean?" is a better answer than a fluent
+ * description of the wrong one.
+ */
 function findTransaction(data: any, input: { userId?: string; resourceType: AceResourceType; resourceId?: string }) {
+  if (input.resourceType === 'general') return undefined;
+  if (input.resourceType === 'ngn_transfer') {
+    const rows = (data.ngnTransfers ?? []).filter((item: any) => !input.userId || item.userId === input.userId);
+    const record = input.resourceId
+      ? rows.find((item: any) => item.id === input.resourceId)
+      : rows.sort(descCreated)[0];
+    return record ? { kind: 'ngn_transfer' as const, record } : undefined;
+  }
   if (input.resourceType === 'withdrawal') {
     const record = input.resourceId ? data.withdrawals.find((item: any) => item.id === input.resourceId) : data.withdrawals.filter((item: any) => !input.userId || item.userId === input.userId).sort(descCreated)[0];
     return record ? { kind: 'withdrawal' as const, record } : undefined;
@@ -66,11 +176,34 @@ function findTransaction(data: any, input: { userId?: string; resourceType: AceR
     const record = input.resourceId ? (data.onrampOrders ?? []).find((item: any) => item.id === input.resourceId) : (data.onrampOrders ?? []).filter((item: any) => !input.userId || item.userId === input.userId).sort(descCreated)[0];
     return record ? { kind: 'onramp_order' as const, record } : undefined;
   }
-  const latestWithdrawal = data.withdrawals.filter((item: any) => !input.userId || item.userId === input.userId).sort(descCreated)[0];
-  const latestOrder = (data.onrampOrders ?? []).filter((item: any) => !input.userId || item.userId === input.userId).sort(descCreated)[0];
-  if (!latestOrder) return latestWithdrawal ? { kind: 'withdrawal' as const, record: latestWithdrawal } : undefined;
-  if (!latestWithdrawal) return { kind: 'onramp_order' as const, record: latestOrder };
-  return latestWithdrawal.createdAt > latestOrder.createdAt ? { kind: 'withdrawal' as const, record: latestWithdrawal } : { kind: 'onramp_order' as const, record: latestOrder };
+  /**
+   * Reached only for 'transaction_lookup' - someone who asked about a
+   * transaction without naming one. NGN transfers join the race here; they
+   * were absent before, so a user whose only recent activity was a naira
+   * payout got "no transaction found" or, worse, a stale buy order.
+   */
+  const mine = (rows: any[]) => (rows ?? []).filter((item: any) => !input.userId || item.userId === input.userId);
+  const candidates = [
+    { kind: 'withdrawal' as const, record: mine(data.withdrawals).sort(descCreated)[0] },
+    { kind: 'onramp_order' as const, record: mine(data.onrampOrders).sort(descCreated)[0] },
+    { kind: 'ngn_transfer' as const, record: mine(data.ngnTransfers).sort(descCreated)[0] },
+  ].filter((item) => Boolean(item.record));
+  if (!candidates.length) return undefined;
+  return candidates.sort((a, b) => descCreated(a.record, b.record))[0];
+}
+
+/**
+ * Shape an NGN transfer's steps like the other two builders' output.
+ *
+ * buildTimeline() returns NgnTimelineStep[]; the public builders return an
+ * object with `steps` and `explanation`. Normalised here so buildAceEvidence
+ * has one shape to consume.
+ */
+function ngnTimelineFor(record: any) {
+  const steps = buildNgnTimeline(record) ?? [];
+  const current = steps.find((step: any) => step.status === 'current')
+    ?? [...steps].reverse().find((step: any) => step.status === 'completed');
+  return { steps, explanation: current?.description };
 }
 
 function findWebhooks(webhooks: any[], record: any) {
@@ -99,9 +232,23 @@ function deriveProviderHealth(provider?: string, incidents: any[] = []) {
 }
 
 function providerReferenceFor(kind: string, record: any, trace: any[]) {
+  /** Breet's own ids, in the order a support agent would quote them. */
+  if (kind === 'ngn_transfer') return record.settlementReference ?? record.providerTransferId ?? record.bankReference;
   if (kind === 'withdrawal') return record.providerDrainId ?? record.destinationReference ?? trace.find((item) => ['bridge_drain_id', 'destination_reference'].includes(item.referenceType))?.referenceValue;
   return record.providerTransferId ?? record.providerReference ?? trace.find((item) => ['provider_transfer_id', 'provider_reference'].includes(item.referenceType))?.referenceValue;
 }
-function amountFor(kind: string, record: any) { return kind === 'withdrawal' ? record.destinationAmount ?? record.sourceAmount : record.amount; }
-function currencyFor(kind: string, record: any) { return kind === 'withdrawal' ? record.destinationCurrency?.toUpperCase?.() : record.sourceCurrency?.toUpperCase?.(); }
+/**
+ * NGN transfers carry destinationAmount/destinationCurrency like withdrawals,
+ * not `amount`/`sourceCurrency` like orders. Without this branch every naira
+ * payout reported an undefined amount - the record was found and then
+ * described as having no value.
+ */
+function amountFor(kind: string, record: any) {
+  if (kind === 'withdrawal' || kind === 'ngn_transfer') return record.destinationAmount ?? record.sourceAmount;
+  return record.amount;
+}
+function currencyFor(kind: string, record: any) {
+  if (kind === 'withdrawal' || kind === 'ngn_transfer') return record.destinationCurrency?.toUpperCase?.();
+  return record.sourceCurrency?.toUpperCase?.();
+}
 function descCreated(a: any, b: any) { return String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')); }
