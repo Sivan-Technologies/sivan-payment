@@ -46,6 +46,9 @@ const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: s
   ethereum: { mainnet: 'https://etherscan.io', testnet: 'https://sepolia.etherscan.io', label: 'Etherscan' },
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
+  avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
+  avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
+  celo: { mainnet: 'https://celoscan.io', testnet: 'https://celo-alfajores.blockscout.com', label: 'Celoscan' },
 };
 
 /** CAIP-ish chain ids jiffyscan uses for user operations. */
