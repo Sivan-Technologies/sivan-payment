@@ -446,7 +446,13 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
       destinationCurrency: supplier.currency,
       paymentPurpose,
       invoiceUrl: String(data.get('invoiceUrl') ?? '').trim() || undefined,
-      available,
+      /**
+       * The USDC figure, not the Asset dropdown's. SupplierPaymentConfirm
+       * renders "Balance after" from this and the whole dialog is denominated
+       * in USDC, so passing a USDT balance here would show a remaining figure
+       * in the wrong currency on the screen where the user commits.
+       */
+      available: supplierAvailable,
     });
 
     /**
@@ -575,6 +581,35 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
   const assetLabelUpper = (sendAsset || 'usdc').toUpperCase();
 
   /**
+   * SUPPLIER PAYMENTS ARE USDC-ONLY, AND THAT IS A SERVER RULE.
+   *
+   * createSupplierPaymentSchema declares `sourceAsset: z.literal('usdc')` -
+   * not an enum, a literal - so the API refuses any other asset outright, and
+   * supplier.service.ts checks the balance with
+   * `balances.find(item => item.asset === input.sourceAsset)`, always the USDC
+   * row. USDT is genuinely not a supported funding asset for this route.
+   *
+   * This card used to share `available` with the crypto send form, which was
+   * safe only while that variable was itself hardcoded to USDC. Once the send
+   * card started following the Asset dropdown, picking USDT in a form on the
+   * OTHER tab silently re-enabled or disabled this button against a balance
+   * the supplier route cannot spend - a USDT holder with no USDC would have
+   * been invited to submit a payment the server was always going to reject.
+   *
+   * So the supplier card reads its own USDC figure and ignores the dropdown.
+   * Two routes, two funding rules, two numbers.
+   */
+  const supplierUnified = unifiedBalance?.balances.find(
+    (item) => String(item.asset).toLowerCase() === 'usdc'
+  );
+  const supplierLedgerRow = balance?.balances.find(
+    (item) => String(item.asset).toLowerCase() === 'usdc'
+  );
+  const supplierAvailable = supplierUnified
+    ? Number(supplierUnified.spendable || 0)
+    : Number(supplierLedgerRow?.available || 0);
+
+  /**
    * USD IS A SECOND LINE, NEVER THE PRIMARY FIGURE.
    *
    * The amount box moves USDT or USDC, not dollars. If the headline said
@@ -636,7 +671,7 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
       {supplierPayoutsEnabled && activeRoute === 'supplier' && <><article className="panel supplier-directory-card"><div className="panel-head"><div><p className="eyebrow">Supplier directory</p><h3>Saved suppliers</h3></div><Badge status={suppliers.length ? 'active' : 'pending'}>{suppliers.length ? `${suppliers.length} saved` : 'None yet'}</Badge></div>{!suppliers.length ? <Empty>No suppliers added yet.</Empty> : <div className="list supplier-list">{suppliers.map((supplier) => <div className="list-item" key={supplier.id}><strong>{supplier.supplierName}</strong><Badge status={supplier.status}>{friendlyStatus(supplier.status)}</Badge><small>{supplier.currency.toUpperCase()} · {supplier.supplierCountry} · {supplier.bankName} · ****{supplier.accountLast4 || '----'}</small><small>{supplier.status === 'approved' ? 'Ready for supplier payment requests.' : supplier.reviewReason || 'Waiting for compliance review.'}</small></div>)}</div>}<div className="warning-box compact">Sivan chooses the execution provider in the background. Customers see a single Send & Transfer experience; provider diagnostics stay with operations.</div></article>
       {/* remaining lines unchanged */}
       <article className="panel form-panel supplier-form-card"><p className="eyebrow">Pay supplier / cross-border</p><h3>Add supplier bank</h3>{!hasUser || !isVerified ? <Empty>Complete verification before adding suppliers.</Empty> : <form className="form premium-form" onSubmit={onCreateSupplier}><label>Supplier business name<input name="supplierName" placeholder="ABC Trading Ltd" required /></label><div className="split"><label>Currency<input type="hidden" name="currency" value={supplierCurrency} /><div className="custom-select-wrap"><button type="button" className={`custom-select-trigger ${supplierCurrencyOpen ? 'open' : ''}`} onClick={() => setSupplierCurrencyOpen((open) => !open)}><span><strong>{selectedSupplierCurrency.label}</strong><small>{selectedSupplierCurrency.helper}</small></span><em>⌄</em></button>{supplierCurrencyOpen && <div className="custom-select-menu">{supplierCurrencyOptions.map((option) => <button type="button" className={option.value === supplierCurrency ? 'selected' : ''} key={option.value} onClick={() => { setSupplierCurrency(option.value); setSupplierCurrencyOpen(false); }}><span>{option.label}</span><small>{option.helper}</small></button>)}</div>}</div></label><label>Supplier country<input name="supplierCountry" defaultValue={supplierCurrency === 'gbp' ? 'GB' : supplierCurrency === 'usd' ? 'US' : supplierCurrency === 'mxn' ? 'MX' : supplierCurrency === 'brl' ? 'BR' : 'FR'} /></label></div><label>Bank name<input name="bankName" placeholder={supplierCurrency === 'gbp' ? 'Barclays' : supplierCurrency === 'usd' ? 'Lead Bank' : 'Supplier bank'} required /></label><label>Account owner name<input name="accountOwnerName" placeholder="ABC Trading Ltd" required /></label>{supplierCurrency === 'gbp' && <div className="split"><label>GBP account number<input name="gbAccountNumber" placeholder="12345678" required /></label><label>GBP sort code<input name="sortCode" placeholder="123456" required /></label></div>}{supplierCurrency === 'usd' && <div className="split"><label>USD account number<input name="accountNumber" placeholder="215268129123" required /></label><label>USD routing<input name="routingNumber" placeholder="101019644" required /></label></div>}{supplierCurrency === 'eur' && <><label>EUR IBAN<input name="ibanAccountNumber" placeholder="IE04MODR99035512826162" required /></label><label>BIC optional<input name="bic" placeholder="MODRIE22XXX" /></label></>}{supplierCurrency === 'mxn' && <label>CLABE<input name="clabeNumber" placeholder="18-digit CLABE" required /></label>}{supplierCurrency === 'brl' && <label>PIX key<input name="pixKey" placeholder="Supplier PIX key" required /></label>}<label>Supplier address<input name="street" placeholder="Supplier business address" /></label><div className="warning-box compact">{supplierCurrencyLabel} details are saved for compliance review. New suppliers stay pending until admin approval; AI can recommend, but never releases funds.</div><button className="primary-btn" disabled={loading}>{loading ? 'Adding supplier…' : 'Add supplier for review →'}</button></form>}</article>
-      <article className="panel form-panel supplier-form-card"><p className="eyebrow">Create supplier payment</p><h3>Pay from settled USDC</h3>{!approvedSuppliers.length ? <Empty>Add a supplier and wait for approval before creating a payment.</Empty> : <form className="form premium-form" onSubmit={handleSupplierReview}><label>Supplier<CustomSelect name="supplierId" options={approvedSuppliers.map((supplier) => ({ value: supplier.id, label: supplier.supplierName, helper: `${supplier.currency.toUpperCase()} · approved` }))} /></label><label>Amount USDC<input name="amount" inputMode="decimal" placeholder="300" required /></label><label>Payment purpose<textarea name="paymentPurpose" placeholder="Invoice INV-1001 for software services" required /></label><label>Invoice URL<input name="invoiceUrl" placeholder="https://... optional but recommended" /></label><div className="warning-box compact">Sivan places a hold on settled USDC. Admin/backend risk controls release or reject. AI never releases funds.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating payment…' : available <= 0 ? 'No settled USDC available' : 'Review payment →'}</button></form>}</article></>}
+      <article className="panel form-panel supplier-form-card"><p className="eyebrow">Create supplier payment</p><h3>Pay from settled USDC</h3>{!approvedSuppliers.length ? <Empty>Add a supplier and wait for approval before creating a payment.</Empty> : <form className="form premium-form" onSubmit={handleSupplierReview}><label>Supplier<CustomSelect name="supplierId" options={approvedSuppliers.map((supplier) => ({ value: supplier.id, label: supplier.supplierName, helper: `${supplier.currency.toUpperCase()} · approved` }))} /></label><label>Amount USDC<input name="amount" inputMode="decimal" placeholder="300" required /></label><label>Payment purpose<textarea name="paymentPurpose" placeholder="Invoice INV-1001 for software services" required /></label><label>Invoice URL<input name="invoiceUrl" placeholder="https://... optional but recommended" /></label><div className="warning-box compact">Sivan places a hold on settled USDC. Admin/backend risk controls release or reject. AI never releases funds.</div><button className="primary-btn" disabled={loading || supplierAvailable <= 0}>{loading ? 'Creating payment…' : supplierAvailable <= 0 ? 'No settled USDC available' : 'Review payment →'}</button></form>}</article></>}
       {activeRoute === 'user' && <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Coming soon</p><h3>Send to a Sivan user</h3></div><Badge status="pending">Roadmap</Badge></div><p className="muted">This future route will let approved Sivan customers send settled stablecoin value to another approved Sivan account without exposing provider internals.</p><div className="warning-box compact">For now, use Send crypto for wallet transfers or Pay supplier for cross-border bank payouts.</div></article>}
       <article className="panel transfer-balance-card"><p className="eyebrow">{assetLabelUpper} available to send</p><h2>{available.toLocaleString(undefined, { maximumFractionDigits: 6 })} {assetLabelUpper}</h2>{/* The dollar value, second and marked approximate. Stablecoins are
           counted 1:1 here, the same as the dashboard total - honest enough to
