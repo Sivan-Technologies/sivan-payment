@@ -1169,7 +1169,16 @@ export class PrivyWalletProvider implements WalletProvider {
      * adapter that only understands today's shape breaks silently the next
      * time a vendor renames a field, which is exactly what happened here.
      */
-    const signature = result?.data?.hash || result?.data?.signature || result?.signature || undefined;
+    const signature =
+      result?.data?.hash ||
+      result?.data?.signature ||
+      result?.signature ||
+      result?.data?.transaction_hash ||
+      result?.transaction_hash ||
+      result?.data?.txHash ||
+      result?.data?.result ||
+      (typeof result?.result === 'string' ? result.result : undefined) ||
+      undefined;
 
     return {
       provider: this.name,

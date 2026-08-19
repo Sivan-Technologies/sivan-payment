@@ -52,7 +52,7 @@ async function main() {
   console.log('Gross Amount: ', `${transferResult.amount} ${transferResult.asset.toUpperCase()}`);
   console.log('Fee:          ', `${transferResult.fee} ${transferResult.asset.toUpperCase()}`);
   console.log('Net Sent:     ', `${transferResult.netAmount} ${transferResult.asset.toUpperCase()}`);
-  console.log('Tx Hash:      ', transferResult.txHash || transferResult.destinationTxHash || '(pending on-chain)');
+  console.log('Tx Hash:      ', transferResult.txHash || (transferResult as any).destinationTxHash || '(pending on-chain)');
   if (transferResult.txHash) {
     console.log(`Solana Explorer: https://explorer.solana.com/tx/${transferResult.txHash}?cluster=devnet`);
   }
