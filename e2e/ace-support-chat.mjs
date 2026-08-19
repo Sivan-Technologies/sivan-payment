@@ -131,6 +131,21 @@ if (drawerOpen) {
     !/could not find any transaction matching/i.test(verification),
     verification.slice(0, 120));
 
+  /**
+   * The deposit chip used to send 'general', which now attaches nothing - so
+   * it could only ever return the generic "could not find a deposit" copy. It
+   * sends 'virtual_account_transaction' now. With no deposits seeded the
+   * generic copy is still CORRECT; what must never happen is a reference-not-
+   * found refusal or someone else's transaction.
+   */
+  const deposit = await clickChip('Virtual account deposit');
+  check('the deposit chip answers about a deposit',
+    /deposit/i.test(deposit), deposit.slice(0, 120) || '(empty)');
+  check('and it does not claim a reference could not be found',
+    !/could not find any transaction matching/i.test(deposit), deposit.slice(0, 120));
+  check('and it does not report an unrelated buy order',
+    !/buy order is currently/i.test(deposit), deposit.slice(0, 120));
+
   const recovery = await clickChip('2FA');
   check('the 2FA chip answers about account recovery',
     /2fa|recovery|account access/i.test(recovery), recovery.slice(0, 120) || '(empty)');

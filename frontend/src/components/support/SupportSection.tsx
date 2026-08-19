@@ -285,9 +285,20 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
         text: 'What is my verification status, and what is left to do?',
         context: { resourceType: 'general', ticketType: 'verification', subject: 'Verification help requested' },
       },
+      /**
+       * ASK ABOUT THE DEPOSIT, WHICH MEANS LOOKING ONE UP.
+       *
+       * This sent 'general', and 'general' now attaches nothing - correct for
+       * a question with no subject, but a deposit question DOES have one. The
+       * chip could therefore only ever return the generic "I could not find a
+       * deposit" copy, even for a user whose deposit had settled minutes ago.
+       *
+       * 'virtual_account_transaction' resolves their latest deposit, so the
+       * answer can state its real status instead of guessing at causes.
+       */
       virtual_account: {
         text: 'Why is my virtual account deposit not showing?',
-        context: { resourceType: 'general', ticketType: 'deposit_not_detected', subject: 'Virtual account deposit help requested' },
+        context: { resourceType: 'virtual_account_transaction', ticketType: 'deposit_not_detected', subject: 'Virtual account deposit help requested' },
       },
       recovery: {
         text: 'How do I recover 2FA or account access?',
