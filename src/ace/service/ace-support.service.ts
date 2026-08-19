@@ -2,17 +2,28 @@ import { db } from '../../database/json-database.js';
 import { id, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
 import { buildAceEvidence } from './ace-evidence.service.js';
-import { inferAceResourceType } from './ace-intent.service.js';
+import { classifyAceMessage } from './ace-intent.service.js';
 import { composeAceSupportAnswer } from './ace-response.service.js';
 import { requestRemoteAceSupport } from './ace-remote.service.js';
 import { env } from '../../config/env.js';
 import type { AceResourceType, AceSupportChannel } from '../types/ace.types.js';
 
 export async function answerAceSupport(input: { userId?: string; message: string; resourceType?: AceResourceType; resourceId?: string; channel?: AceSupportChannel; admin?: boolean }) {
-  const resourceType = inferAceResourceType(input.message, input.resourceType);
+  /**
+   * ONE classification, used for the lookup AND for the answer.
+   *
+   * Previously the resource type was inferred and the intent was never
+   * computed at all, so nothing downstream could tell "asking about
+   * verification" from "asking about a transaction". A reference pasted in the
+   * message is picked up here too, which is why `resourceId` prefers the
+   * detected one.
+   */
+  const classified = classifyAceMessage(input.message, input.resourceType, input.resourceId);
+  const resourceType = classified.resourceType;
+  const resourceId = classified.resourceId ?? input.resourceId;
   const sessionId = id('ace');
   const now = nowIso();
-  const evidence = await buildAceEvidence({ userId: input.userId, message: input.message, resourceType, resourceId: input.resourceId, admin: input.admin });
+  const evidence = await buildAceEvidence({ userId: input.userId, message: input.message, resourceType, resourceId, intent: classified.intent, admin: input.admin });
   const localAnswer = composeAceSupportAnswer(evidence, { admin: input.admin, sessionId });
   const { answer, providerMode, fallbackReason } = await resolveAceAnswer({ input, evidence, localAnswer });
   const toolsUsed = answer.evidenceChecked;
@@ -23,7 +34,7 @@ export async function answerAceSupport(input: { userId?: string; message: string
       userId: input.userId,
       channel: input.channel ?? (input.admin ? 'admin_hub' : 'web_dashboard'),
       resourceType,
-      resourceId: input.resourceId ?? evidence.transaction?.id,
+      resourceId: resourceId ?? evidence.transaction?.id,
       confidence: answer.confidence,
       needsHuman: answer.needsHuman,
       toolsUsed,
@@ -45,7 +56,7 @@ export async function answerAceSupport(input: { userId?: string; message: string
     resourceType: 'ace_support_session',
     resourceId: sessionId,
     severity: answer.needsHuman ? 'warning' : 'info',
-    metadata: { resourceType, resourceId: input.resourceId ?? evidence.transaction?.id, confidence: answer.confidence, needsHuman: answer.needsHuman, toolsUsed, aceProvider: providerMode, fallbackReason }
+    metadata: { resourceType, intent: classified.intent, referenceDetected: classified.referenceDetected, resourceId: resourceId ?? evidence.transaction?.id, confidence: answer.confidence, needsHuman: answer.needsHuman, toolsUsed, aceProvider: providerMode, fallbackReason }
   });
 
   return answer;

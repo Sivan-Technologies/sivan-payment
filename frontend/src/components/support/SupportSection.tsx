@@ -15,7 +15,7 @@ function PageHero({ title, subtitle, action }: { title: string; subtitle: string
 type ChatRole = 'assistant' | 'user' | 'system';
 type AssistantChatMessage = { id: string; role: ChatRole; text: string; createdAt: string; meta?: any };
 type AssistantAnswer = { answer: string; confidence: 'high' | 'medium' | 'low'; needsHuman: boolean; evidenceChecked?: string[]; suggestedActions?: any[]; sessionId?: string };
-type AssistantContext = { resourceType: 'withdrawal' | 'onramp_order' | 'virtual_account_transaction' | 'general'; resourceId?: string; ticketType: 'withdrawal' | 'onramp_payment' | 'deposit_not_detected' | 'account_access' | 'verification' | 'other'; subject: string };
+type AssistantContext = { resourceType: 'withdrawal' | 'onramp_order' | 'ngn_transfer' | 'virtual_account_transaction' | 'transaction_lookup' | 'general'; resourceId?: string; ticketType: 'withdrawal' | 'onramp_payment' | 'deposit_not_detected' | 'account_access' | 'verification' | 'other'; subject: string };
 
 const assistantIntro = 'Hi, I’m Sivan Assistant. I can help with payments, verification, transfers, virtual accounts, and account recovery. I can’t move funds or change your account, but I can explain what’s happening and help create a support ticket if needed.';
 /**
@@ -137,11 +137,30 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
 
   function resolveContext(message: string): AssistantContext {
     const lower = message.toLowerCase();
-    if (lower.includes('verification') || lower.includes('kyc')) return { resourceType: 'general', resourceId: customer?.id, ticketType: 'verification', subject: 'Verification help requested' };
+    /**
+     * NO resourceId ON A VERIFICATION QUESTION.
+     *
+     * This used to send `resourceId: customer?.id` - a CUSTOMER id in the slot
+     * the server reads as a TRANSACTION id. It was harmless only because the
+     * server ignored the field and attached the newest transaction anyway.
+     * Now that an unmatched id is reported honestly as "I could not find that
+     * reference", sending a customer id here would produce a confusing refusal
+     * on a question that has nothing to do with transactions.
+     */
+    if (lower.includes('verification') || lower.includes('kyc')) return { resourceType: 'general', ticketType: 'verification', subject: 'Verification help requested' };
     if (lower.includes('2fa') || lower.includes('authenticator') || lower.includes('account recovery') || lower.includes('login')) return { resourceType: 'general', ticketType: 'account_access', subject: 'Account access / 2FA recovery help requested' };
     if (lower.includes('virtual account') || lower.includes('deposit')) return { resourceType: 'general', ticketType: 'deposit_not_detected', subject: 'Virtual account deposit help requested' };
     if (lower.includes('buy') || lower.includes('on-ramp') || lower.includes('onramp')) return { resourceType: latestOrder ? 'onramp_order' : 'general', resourceId: latestOrder?.id, ticketType: 'onramp_payment', subject: 'Buy order support requested' };
-    if (lower.includes('withdraw') || lower.includes('sell') || lower.includes('transaction') || lower.includes('money') || lower.includes('payout')) return { resourceType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_order' : 'general', resourceId: latestWithdrawal?.id || latestOrder?.id, ticketType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_payment' : 'other', subject: 'Transaction support requested' };
+    /**
+     * 'transaction_lookup' rather than 'general' when we have nothing to pin.
+     *
+     * The two used to be the same value, and the server treated 'general' as
+     * "attach their newest transaction" - which is how a verification question
+     * got answered with a buy order. They are now distinct: this one means
+     * "they ARE asking about a transaction, just have not said which", which
+     * is the only case where picking the latest is reasonable.
+     */
+    if (lower.includes('withdraw') || lower.includes('sell') || lower.includes('transaction') || lower.includes('money') || lower.includes('payout')) return { resourceType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_order' : 'transaction_lookup', resourceId: latestWithdrawal?.id || latestOrder?.id, ticketType: latestWithdrawal ? 'withdrawal' : latestOrder ? 'onramp_payment' : 'other', subject: 'Transaction support requested' };
     return { resourceType: 'general', ticketType: 'other', subject: 'Sivan Assistant support handoff' };
   }
 
@@ -244,13 +263,39 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
       setChatContext({ resourceType: 'general', ticketType: 'other', subject: 'Customer requested human support' });
       return;
     }
-    const prompts = {
-      transaction: 'Where is my transaction?',
-      verification: 'I need help with verification.',
-      virtual_account: 'Why is my virtual account deposit not showing?',
-      recovery: 'How do I recover 2FA or account access?'
+    /**
+     * The chips are EXPLICIT context, not just canned text.
+     *
+     * "Verification help" used to send the sentence "I need help with
+     * verification." and let the server guess from keywords - and the server's
+     * classifier had no verification rule at all, so it fell through to
+     * "general", which attached the newest transaction. Clicking the chip
+     * returned a buy order status report. Reported as the chip doing nothing
+     * useful; it was in fact answering a different question.
+     *
+     * A clicked chip is the least ambiguous signal in the whole flow, so it
+     * now passes its own context rather than hoping the text round-trips.
+     */
+    const prompts: Record<string, { text: string; context: AssistantContext }> = {
+      transaction: {
+        text: 'Where is my transaction?',
+        context: { resourceType: 'transaction_lookup', ticketType: 'other', subject: 'Transaction support requested' },
+      },
+      verification: {
+        text: 'What is my verification status, and what is left to do?',
+        context: { resourceType: 'general', ticketType: 'verification', subject: 'Verification help requested' },
+      },
+      virtual_account: {
+        text: 'Why is my virtual account deposit not showing?',
+        context: { resourceType: 'general', ticketType: 'deposit_not_detected', subject: 'Virtual account deposit help requested' },
+      },
+      recovery: {
+        text: 'How do I recover 2FA or account access?',
+        context: { resourceType: 'general', ticketType: 'account_access', subject: 'Account access / 2FA recovery help requested' },
+      },
     };
-    void sendAssistantMessage(prompts[kind]);
+    const chosen = prompts[kind];
+    void sendAssistantMessage(chosen.text, chosen.context);
   }
 
   return <section className="app-page support-premium"><PageHero title="Support" subtitle="Ask Sivan for guided help, create a ticket, or find quick answers when something needs attention." /><div className="support-card-grid"><SupportCard icon="✦" title="Ask Sivan" body="Instant guided help · Escalates to support when needed" action="Start chat" onClick={openAssistant} /><SupportCard icon="✉" title="Email support" body="support@sivantech.online" action="Send email" href="mailto:support@sivantech.online" /><SupportCard icon="☷" title="Help center" body="Guides, FAQs, and troubleshooting" action="Browse docs" /><a className="support-card" href="#report-issue"><span>☎</span><h3>Report an issue</h3><p>Problem with a transaction? Open a ticket.</p><strong>Open ticket →</strong></a></div><div className="support-legal-grid support-workspace-grid"><article className="support-faq-card support-report-card" id="report-issue"><p className="eyebrow">Support workspace</p><h3>Report an issue</h3><p className="muted">Tell us what happened. Add a transaction, bank reference, wallet address, or screenshot if available.</p>{!hasUser ? <Empty>Create your account or sign in before opening a support ticket.</Empty> : <form className="form" onSubmit={onCreateTicket}><label>Issue type<CustomSelect name="type" defaultValue="withdrawal" options={[{ value: 'verification', label: 'Verification issue' }, { value: 'bank_account', label: 'Bank account issue' }, { value: 'withdrawal', label: 'Withdrawal issue' }, { value: 'deposit_not_detected', label: 'Deposit sent but not detected' }, { value: 'wrong_token_or_network', label: 'Wrong token or wrong network' }, { value: 'payout_delayed', label: 'Payout delayed' }, { value: 'onramp_payment', label: 'On-ramp payment issue' }, { value: 'onramp_delivery', label: 'On-ramp crypto not received' }, { value: 'account_access', label: 'Account access issue' }, { value: 'other', label: 'Other' }]} /></label><label>Related item<CustomSelect name="relatedItem" defaultValue="general:" options={[{ value: 'general:', label: 'General issue' }, ...(customer ? [{ value: `customer:${customer.id}`, label: 'Verification', helper: friendlyStatus(customer.kycStatus) }] : []), ...withdrawals.map((withdrawal) => ({ value: `withdrawal:${withdrawal.id}`, label: `Withdrawal ${shortRef(withdrawal.id)}`, helper: friendlyStatus(withdrawal.status) })), ...onrampOrders.map((order) => ({ value: `onramp_order:${order.id}`, label: `Buy order ${shortRef(order.id)}`, helper: friendlyStatus(order.status) })), ...accounts.map((account) => ({ value: `external_account:${account.id}`, label: `Bank account ${account.currency.toUpperCase()}`, helper: `****${account.accountLast4 || '----'}` }))]} /></label><div className="split"><label>Transaction hash<input name="transactionHash" placeholder="Optional" /></label><label>Bank reference<input name="bankReference" placeholder="Optional" /></label></div><label>Wallet address<input name="walletAddress" placeholder="Optional wallet involved" /></label><label>Upload screenshot or receipt<input name="attachment" type="file" accept="image/png,image/jpeg,image/webp,image/heic,application/pdf" /></label><label>Attachment URL<input name="attachmentUrl" placeholder="Optional screenshot/receipt URL" /></label><label>Subject<input name="subject" placeholder="Short summary" required /></label><label>Description<textarea name="description" placeholder="Tell us what happened. Include date, amount, wallet address, transaction hash, bank reference, or error message if available." required /></label><button className="primary-btn" disabled={loading}>{loading ? 'Creating ticket...' : 'Create ticket'}</button></form>}</article><article className="support-faq-card support-ticket-card"><p className="eyebrow">Ticket center</p><h3>Your recent tickets</h3>{!tickets.length ? <Empty>No tickets yet. When you create a ticket, updates will appear here.</Empty> : <div className="list">{tickets.slice(0, 6).map((ticket) => <button className="list-item ticket-list-button" key={ticket.id} onClick={() => openTicket(ticket)}><strong>{ticket.subject}</strong><Badge status={ticket.status}>{friendlyStatus(ticket.status)}</Badge><small>{ticket.type.replaceAll('_', ' ')} · {ticket.priority}</small><small>{new Date(ticket.createdAt).toLocaleString()}</small></button>)}</div>}</article></div><div className="support-legal-grid support-resources-grid"><article className="support-faq-card"><p className="eyebrow">Self-help</p><h3>Frequently asked</h3>{faqs.map((faq) => <button key={faq}>{faq}<span>+</span></button>)}</article><LegalResources /></div>{selectedTicket && <TicketConversation ticket={selectedTicket} onClose={() => setSelectedTicket(null)} onReply={reply} />}{chatOpen && <AskSivanDrawer messages={chatMessages} draft={chatDraft} busy={chatBusy} error={chatError} aiMessagesUsed={aiMessagesUsed} dailyCount={readDailyCount(user?.id)} onDraft={setChatDraft} onClose={() => setChatOpen(false)} onSubmit={(event) => { event.preventDefault(); void sendAssistantMessage(chatDraft); }} onQuick={quickPrompt} onCreateTicket={createTicketFromChat} />}</section>;
