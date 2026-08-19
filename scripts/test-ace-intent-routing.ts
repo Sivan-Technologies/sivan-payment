@@ -45,6 +45,9 @@ const check = (name: string, ok: boolean, detail = '') => {
 const NOW = new Date().toISOString();
 const ORDER_ID = 'or_17f19d8b-6385-4e14-a491-8f616c7a02df';
 const NGN_ID = 'ngnt_f17c5017-564e-4fc5-82cc-e29513ead925';
+const VA_ID = 'va_deposit-2222-3333';
+/** Deliberately older, so a fallthrough would NOT pick it - only a real lookup can. */
+const OLDER = new Date(Date.now() - 86_400_000).toISOString();
 
 /**
  * The seed reproduces the reporter's account: an NGN payout mid-settlement AND
@@ -58,6 +61,7 @@ function seed() {
     withdrawals: [],
     onrampOrders: [{ id: ORDER_ID, userId: 'usr_1', status: 'awaiting_payment', provider: 'bridge', amount: '100', sourceCurrency: 'usd', createdAt: NOW, updatedAt: NOW }],
     ngnTransfers: [{ id: NGN_ID, userId: 'usr_1', quoteId: 'q1', direction: 'offramp', status: 'settlement_processing', provider: 'breet', sourceCurrency: 'usdt', destinationCurrency: 'ngn', sourceAmount: '15', destinationAmount: '24697.89', rate: '1600', feeAmount: '50', createdAt: NOW, updatedAt: NOW }],
+    virtualAccountTransactions: [{ id: VA_ID, userId: 'usr_1', status: 'settled', amount: '500', currency: 'usd', createdAt: OLDER, updatedAt: OLDER }],
     supportTickets: [], systemIncidents: [], webhookEvents: [], transactionReferences: [],
     reconciliationFindings: [], externalAccounts: [], ngnPayoutAccounts: [],
     aceSupportSessions: [], aceSupportMessages: [], aceToolCalls: [], aceResolutions: [], auditLogs: [],
@@ -190,6 +194,36 @@ check('an unknown reference is named as not found',
 check('an unknown reference does not fall back to another transaction',
   !missing.answer.includes(ORDER_ID) && !missing.answer.includes(NGN_ID),
   'substituted a different transaction for one that was not found');
+
+console.log('\n4b. every declared resource type has a lookup');
+
+/**
+ * virtual_account_transaction was DECLARED in AceResourceType and routed to by
+ * detectReference, but findTransaction had no branch for it - so it fell into
+ * the transaction_lookup race and returned the newest record of any kind.
+ *
+ * Measured before the fix: pasting va_deposit-2222-3333 returned
+ * "Your buy order is currently awaiting payment with bridge."
+ *
+ * The VA row is seeded OLDER than the buy order on purpose. If the lookup were
+ * still falling through, the newest record wins and the assertion fails; a
+ * same-age fixture would pass either way.
+ */
+const vaAnswer = await ask(VA_ID);
+check('a va_ reference resolves to that deposit',
+  vaAnswer.answer.includes(VA_ID), vaAnswer.answer.slice(0, 100));
+check('and a va_ reference never returns the buy order',
+  !vaAnswer.answer.includes(ORDER_ID),
+  `leaked ${ORDER_ID} - virtual_account_transaction has no lookup branch`);
+check('a deposit is called a deposit, not a buy order',
+  !/buy order/i.test(vaAnswer.answer), vaAnswer.answer.slice(0, 100));
+
+const vaMissing = await ask('va_not-real-999999');
+check('an unknown va_ reference is reported as not found',
+  /could not find/i.test(vaMissing.answer), vaMissing.answer.slice(0, 100));
+check('and does not substitute another transaction',
+  !vaMissing.answer.includes(ORDER_ID) && !vaMissing.answer.includes(NGN_ID),
+  vaMissing.answer.slice(0, 100));
 
 console.log('\n5. transaction questions still work');
 

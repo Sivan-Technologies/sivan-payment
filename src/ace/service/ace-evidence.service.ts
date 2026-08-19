@@ -177,6 +177,26 @@ function findTransaction(data: any, input: { userId?: string; resourceType: AceR
     return record ? { kind: 'onramp_order' as const, record } : undefined;
   }
   /**
+   * virtual_account_transaction WAS DECLARED BUT NEVER HANDLED.
+   *
+   * It has been in AceResourceType since before this rewrite, and detectReference
+   * routes `va_` ids to it - but there was no branch, so it fell through to the
+   * transaction_lookup race at the bottom and picked the newest record of ANY
+   * kind. Measured: pasting `va_DEPOSIT-2222` returned "Your buy order is
+   * currently awaiting payment with bridge."
+   *
+   * That is the exact defect this whole change exists to remove, still alive on
+   * the one path I did not cover. Every declared type now has a branch, and the
+   * fallthrough is reachable only by transaction_lookup.
+   */
+  if (input.resourceType === 'virtual_account_transaction') {
+    const rows = (data.virtualAccountTransactions ?? []).filter((item: any) => !input.userId || item.userId === input.userId);
+    const record = input.resourceId
+      ? rows.find((item: any) => item.id === input.resourceId)
+      : rows.sort(descCreated)[0];
+    return record ? { kind: 'virtual_account_transaction' as const, record } : undefined;
+  }
+  /**
    * Reached only for 'transaction_lookup' - someone who asked about a
    * transaction without naming one. NGN transfers join the race here; they
    * were absent before, so a user whose only recent activity was a naira
@@ -249,6 +269,8 @@ function amountFor(kind: string, record: any) {
 }
 function currencyFor(kind: string, record: any) {
   if (kind === 'withdrawal' || kind === 'ngn_transfer') return record.destinationCurrency?.toUpperCase?.();
+  /** A virtual-account deposit carries plain `currency`, not sourceCurrency. */
+  if (kind === 'virtual_account_transaction') return record.currency?.toUpperCase?.();
   return record.sourceCurrency?.toUpperCase?.();
 }
 function descCreated(a: any, b: any) { return String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')); }
