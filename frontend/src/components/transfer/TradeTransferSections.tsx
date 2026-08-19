@@ -388,7 +388,17 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
   const assetLabel = (item: { asset: string; label?: string }) => {
     const short = (item.label || item.asset).toUpperCase();
     const full = ASSET_FULL_NAMES[item.asset];
-    return full ? `${short} (${full})` : short;
+    /**
+     * Do not append a name the admin label already carries.
+     *
+     * Rendered as "USDT (TETHER) (Tether)" in the browser, because the control
+     * record now ships `label: 'USDT (Tether)'` rather than the bare 'USDT'
+     * this expansion was written for. Checked case-insensitively against the
+     * label we are about to print, so the expansion still helps a plain
+     * 'USDT' and stays out of the way otherwise.
+     */
+    if (!full) return short;
+    return short.includes(full.toUpperCase()) ? short : `${short} (${full})`;
   };
 
   /**
@@ -481,6 +491,29 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
   }
 
   const [activeRoute, setActiveRoute] = useState<'crypto' | 'supplier' | 'user'>('crypto');
+  /**
+   * Which stablecoin the Send form is currently on.
+   *
+   * Held here rather than read off the form at submit, because the BALANCE
+   * CARD has to react the moment the dropdown changes - not when the user
+   * presses Review. Seeded below once the enabled asset list arrives.
+   */
+  const [sendAsset, setSendAsset] = useState('usdc');
+  /** The assets an admin has switched on, in this component's scope. */
+  const sendableAssetOptions = (enabledAssets ?? []).filter((item) => item.enabled);
+  /**
+   * Seed the selection from the enabled list once it arrives.
+   *
+   * The dropdown defaults to the first enabled asset, so the card has to start
+   * on the same one or the two disagree on first paint - the card would read
+   * USDC while the form was already set to USDT. Only runs while the current
+   * choice is not in the list, so it never fights a user who has picked.
+   */
+  useEffect(() => {
+    if (!sendableAssetOptions.length) return;
+    const stillValid = sendableAssetOptions.some((item) => item.asset === sendAsset);
+    if (!stillValid) setSendAsset(sendableAssetOptions[0].asset);
+  }, [sendableAssetOptions.map((item) => item.asset).join(','), sendAsset]);
 
   /**
    * A USER PARKED ON A ROUTE THAT JUST CLOSED MUST NOT SEE A BLANK PAGE.
@@ -514,19 +547,58 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
    * The ledger is kept as a fallback rather than removed: if the unified call
    * fails, showing the ledger figure is closer to the truth than showing zero.
    */
-  const unified = unifiedBalance?.balances.find((item) => item.asset === 'usdc');
-  const usdc = balance?.balances.find((item) => item.asset === 'usdc');
-  const available = unified ? Number(unified.spendable || 0) : Number(usdc?.available || 0);
-  const pending = unified ? Number(unified.pending || 0) : Number(usdc?.pending || 0);
-  const held = unified ? Number(unified.held || 0) : Number(usdc?.held || 0);
+  /**
+   * THE BALANCE CARD MUST FOLLOW THE ASSET THE USER PICKED.
+   *
+   * Every figure here was pinned to 'usdc' while the Asset dropdown offered
+   * USDT. Reported from production holding 17.88 USDT: the card read
+   * "0 USDC available to send", the button read "No settled USDC available"
+   * and was DISABLED. Not a labelling slip - the send was impossible for
+   * anyone whose balance was in the other stablecoin.
+   *
+   * The API was never the problem. /balance/unified already returns a row per
+   * asset; this component threw that away and looked up one hardcoded key.
+   */
+  const selectedAssetKey = String(sendAsset || '').toLowerCase();
+  const unified = unifiedBalance?.balances.find(
+    (item) => String(item.asset).toLowerCase() === selectedAssetKey
+  );
+  const ledgerRow = balance?.balances.find(
+    (item) => String(item.asset).toLowerCase() === selectedAssetKey
+  );
+  const available = unified ? Number(unified.spendable || 0) : Number(ledgerRow?.available || 0);
+  const pending = unified ? Number(unified.pending || 0) : Number(ledgerRow?.pending || 0);
+  const held = unified ? Number(unified.held || 0) : Number(ledgerRow?.held || 0);
+  const spent = Number(ledgerRow?.spent || 0);
+  const inWallet = unified ? Number(unified.chain || 0) : 0;
+  /** Upper-cased once. Used in the heading, every row and the button copy. */
+  const assetLabelUpper = (sendAsset || 'usdc').toUpperCase();
+
+  /**
+   * USD IS A SECOND LINE, NEVER THE PRIMARY FIGURE.
+   *
+   * The amount box moves USDT or USDC, not dollars. If the headline said
+   * "17.88 USD" and the user typed 17.88, a depegged stablecoin would either
+   * fail on insufficient balance or send the wrong quantity. So the asset
+   * amount leads and the dollar value sits underneath as context - the same
+   * split the app already uses for naira.
+   *
+   * 1:1 is an APPROXIMATION and is marked with `≈`, matching
+   * dashboardKpis.stableUsdBalanceKpi which totals these assets as USD. No
+   * live FX call is made for it: inventing precision for a figure that exists
+   * only to help someone eyeball two assets together would be worse than
+   * being openly approximate.
+   */
+  const usdApprox = (value: number) =>
+    `≈$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   /** True when the chain read failed - NOT the same as a zero balance. */
   const chainUnavailable = Boolean(unified?.chainUnavailable);
   const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
   const approvedSuppliers = suppliers.filter((supplier) => supplier.status === 'approved');
   const supplierCurrencyLabel = { gbp: 'GBP · Faster Payments', usd: 'USD · ACH/Wire', eur: 'EUR · SEPA', mxn: 'MXN · SPEI', brl: 'BRL · PIX' }[supplierCurrency];
-  return <section className="app-page transfer-premium"><PageHero title="Send & transfer" subtitle={supplierPayoutsEnabled ? 'Send settled USDC to wallets or pay suppliers through Sivan’s provider routing. Sivan does not hold a live USD fiat balance for you.' : 'Send settled USDC to wallets on a supported network. Sivan does not hold a live USD fiat balance for you.'} action={<button className="primary-btn small" onClick={() => void onRefresh()}>Refresh USDC balance</button>} />
+  return <section className="app-page transfer-premium"><PageHero title="Send & transfer" subtitle={supplierPayoutsEnabled ? 'Send settled stablecoins to wallets or pay suppliers through Sivan’s provider routing. Sivan does not hold a live USD fiat balance for you.' : 'Send settled stablecoins to wallets on a supported network. Sivan does not hold a live USD fiat balance for you.'} action={<button className="primary-btn small" onClick={() => void onRefresh()}>Refresh balance</button>} />
     <div className="transfer-route-grid route-tabs">
-      <button type="button" className={`transfer-route-card ${activeRoute === 'crypto' ? 'active' : ''}`} onClick={() => setActiveRoute('crypto')}><span>⇆</span><div><strong>Send crypto</strong><small>Transfer settled USDC to your own wallet on a supported network.</small></div><Badge status="active">Available</Badge></button>
+      <button type="button" className={`transfer-route-card ${activeRoute === 'crypto' ? 'active' : ''}`} onClick={() => setActiveRoute('crypto')}><span>⇆</span><div><strong>Send crypto</strong><small>Transfer settled stablecoins to your own wallet on a supported network.</small></div><Badge status="active">Available</Badge></button>
       {/* NOT RENDERED WHEN THE ADMIN SWITCH IS OFF.
  
           Hidden rather than disabled. A greyed-out tab invites a click and
@@ -554,19 +626,22 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
           before anything they could actually do. The thing you came here to
           do now leads, the balance it spends from sits under it, and history
           - the least urgent - comes last. */}
-      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer USDC to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" defaultValue={sendableAssets[0]?.asset || 'usdc'} options={sendableAssets.map((item) => ({ value: item.asset, label: assetLabel(item) }))} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label>{/* THE SECOND SENTENCE POINTS AT A ROUTE THAT MAY NOT EXIST.
+      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer {assetLabelUpper} to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" value={sendAsset} defaultValue={sendableAssetOptions[0]?.asset || 'usdc'} onChange={setSendAsset} options={sendableAssetOptions.map((item) => ({ value: item.asset, label: assetLabel(item) }))} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label>{/* THE SECOND SENTENCE POINTS AT A ROUTE THAT MAY NOT EXIST.
  
      Caught in a screenshot with supplier payouts switched off: the crypto
      form still told users to "use the Pay supplier route", which was no
      longer on the page. Directions to a tab that is not there read as a
      broken app, not a lean one. */}
-<div className="warning-box compact">Only send to a wallet on the selected network.{supplierPayoutsEnabled ? ' Supplier/cross-border payouts use the Pay supplier route with saved bank details, not a stored USD fiat balance.' : ' Sivan does not hold a stored USD fiat balance for you.'}</div><button className="primary-btn" disabled={loading || available <= 0 || !transfersEnabled}>{loading ? 'Creating transfer…' : !transfersEnabled ? 'Transfers are temporarily paused' : available <= 0 ? 'No settled USDC available' : 'Review transfer →'}</button>{/* SAY IT BEFORE THEY TYPE, NOT AFTER THEY CONFIRM. The server has always refused with a 403 when transfers are switched off, but nothing told the client - so the form took a wallet address, an amount and a fee quote, and only refused at the final confirm. Stated up front instead. */}{!transfersEnabled && <div className="warning-box compact">Wallet transfers are paused right now. Your balance is safe and you can still withdraw to your bank.</div>}</form>}</article>}
+<div className="warning-box compact">Only send to a wallet on the selected network.{supplierPayoutsEnabled ? ' Supplier/cross-border payouts use the Pay supplier route with saved bank details, not a stored USD fiat balance.' : ' Sivan does not hold a stored USD fiat balance for you.'}</div><button className="primary-btn" disabled={loading || available <= 0 || !transfersEnabled}>{loading ? 'Creating transfer…' : !transfersEnabled ? 'Transfers are temporarily paused' : available <= 0 ? `No settled ${assetLabelUpper} available` : 'Review transfer →'}</button>{/* SAY IT BEFORE THEY TYPE, NOT AFTER THEY CONFIRM. The server has always refused with a 403 when transfers are switched off, but nothing told the client - so the form took a wallet address, an amount and a fee quote, and only refused at the final confirm. Stated up front instead. */}{!transfersEnabled && <div className="warning-box compact">Wallet transfers are paused right now. Your balance is safe and you can still withdraw to your bank.</div>}</form>}</article>}
       {supplierPayoutsEnabled && activeRoute === 'supplier' && <><article className="panel supplier-directory-card"><div className="panel-head"><div><p className="eyebrow">Supplier directory</p><h3>Saved suppliers</h3></div><Badge status={suppliers.length ? 'active' : 'pending'}>{suppliers.length ? `${suppliers.length} saved` : 'None yet'}</Badge></div>{!suppliers.length ? <Empty>No suppliers added yet.</Empty> : <div className="list supplier-list">{suppliers.map((supplier) => <div className="list-item" key={supplier.id}><strong>{supplier.supplierName}</strong><Badge status={supplier.status}>{friendlyStatus(supplier.status)}</Badge><small>{supplier.currency.toUpperCase()} · {supplier.supplierCountry} · {supplier.bankName} · ****{supplier.accountLast4 || '----'}</small><small>{supplier.status === 'approved' ? 'Ready for supplier payment requests.' : supplier.reviewReason || 'Waiting for compliance review.'}</small></div>)}</div>}<div className="warning-box compact">Sivan chooses the execution provider in the background. Customers see a single Send & Transfer experience; provider diagnostics stay with operations.</div></article>
       {/* remaining lines unchanged */}
       <article className="panel form-panel supplier-form-card"><p className="eyebrow">Pay supplier / cross-border</p><h3>Add supplier bank</h3>{!hasUser || !isVerified ? <Empty>Complete verification before adding suppliers.</Empty> : <form className="form premium-form" onSubmit={onCreateSupplier}><label>Supplier business name<input name="supplierName" placeholder="ABC Trading Ltd" required /></label><div className="split"><label>Currency<input type="hidden" name="currency" value={supplierCurrency} /><div className="custom-select-wrap"><button type="button" className={`custom-select-trigger ${supplierCurrencyOpen ? 'open' : ''}`} onClick={() => setSupplierCurrencyOpen((open) => !open)}><span><strong>{selectedSupplierCurrency.label}</strong><small>{selectedSupplierCurrency.helper}</small></span><em>⌄</em></button>{supplierCurrencyOpen && <div className="custom-select-menu">{supplierCurrencyOptions.map((option) => <button type="button" className={option.value === supplierCurrency ? 'selected' : ''} key={option.value} onClick={() => { setSupplierCurrency(option.value); setSupplierCurrencyOpen(false); }}><span>{option.label}</span><small>{option.helper}</small></button>)}</div>}</div></label><label>Supplier country<input name="supplierCountry" defaultValue={supplierCurrency === 'gbp' ? 'GB' : supplierCurrency === 'usd' ? 'US' : supplierCurrency === 'mxn' ? 'MX' : supplierCurrency === 'brl' ? 'BR' : 'FR'} /></label></div><label>Bank name<input name="bankName" placeholder={supplierCurrency === 'gbp' ? 'Barclays' : supplierCurrency === 'usd' ? 'Lead Bank' : 'Supplier bank'} required /></label><label>Account owner name<input name="accountOwnerName" placeholder="ABC Trading Ltd" required /></label>{supplierCurrency === 'gbp' && <div className="split"><label>GBP account number<input name="gbAccountNumber" placeholder="12345678" required /></label><label>GBP sort code<input name="sortCode" placeholder="123456" required /></label></div>}{supplierCurrency === 'usd' && <div className="split"><label>USD account number<input name="accountNumber" placeholder="215268129123" required /></label><label>USD routing<input name="routingNumber" placeholder="101019644" required /></label></div>}{supplierCurrency === 'eur' && <><label>EUR IBAN<input name="ibanAccountNumber" placeholder="IE04MODR99035512826162" required /></label><label>BIC optional<input name="bic" placeholder="MODRIE22XXX" /></label></>}{supplierCurrency === 'mxn' && <label>CLABE<input name="clabeNumber" placeholder="18-digit CLABE" required /></label>}{supplierCurrency === 'brl' && <label>PIX key<input name="pixKey" placeholder="Supplier PIX key" required /></label>}<label>Supplier address<input name="street" placeholder="Supplier business address" /></label><div className="warning-box compact">{supplierCurrencyLabel} details are saved for compliance review. New suppliers stay pending until admin approval; AI can recommend, but never releases funds.</div><button className="primary-btn" disabled={loading}>{loading ? 'Adding supplier…' : 'Add supplier for review →'}</button></form>}</article>
       <article className="panel form-panel supplier-form-card"><p className="eyebrow">Create supplier payment</p><h3>Pay from settled USDC</h3>{!approvedSuppliers.length ? <Empty>Add a supplier and wait for approval before creating a payment.</Empty> : <form className="form premium-form" onSubmit={handleSupplierReview}><label>Supplier<CustomSelect name="supplierId" options={approvedSuppliers.map((supplier) => ({ value: supplier.id, label: supplier.supplierName, helper: `${supplier.currency.toUpperCase()} · approved` }))} /></label><label>Amount USDC<input name="amount" inputMode="decimal" placeholder="300" required /></label><label>Payment purpose<textarea name="paymentPurpose" placeholder="Invoice INV-1001 for software services" required /></label><label>Invoice URL<input name="invoiceUrl" placeholder="https://... optional but recommended" /></label><div className="warning-box compact">Sivan places a hold on settled USDC. Admin/backend risk controls release or reject. AI never releases funds.</div><button className="primary-btn" disabled={loading || available <= 0}>{loading ? 'Creating payment…' : available <= 0 ? 'No settled USDC available' : 'Review payment →'}</button></form>}</article></>}
       {activeRoute === 'user' && <article className="panel transfer-history-card"><div className="panel-head"><div><p className="eyebrow">Coming soon</p><h3>Send to a Sivan user</h3></div><Badge status="pending">Roadmap</Badge></div><p className="muted">This future route will let approved Sivan customers send settled stablecoin value to another approved Sivan account without exposing provider internals.</p><div className="warning-box compact">For now, use Send crypto for wallet transfers or Pay supplier for cross-border bank payouts.</div></article>}
-      <article className="panel transfer-balance-card"><p className="eyebrow">USDC available to send</p><h2>{available.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC</h2><div className="balance-mini-grid"><Kv label="In your wallet" value={`${(unified ? Number(unified.chain || 0) : 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Pending settlement" value={`${pending.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Held for review" value={`${held.toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /><Kv label="Spent" value={`${Number(usdc?.spent || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })} USDC`} /></div>{/* THE COPY HAD TO CHANGE WITH THE NUMBER.
+      <article className="panel transfer-balance-card"><p className="eyebrow">{assetLabelUpper} available to send</p><h2>{available.toLocaleString(undefined, { maximumFractionDigits: 6 })} {assetLabelUpper}</h2>{/* The dollar value, second and marked approximate. Stablecoins are
+          counted 1:1 here, the same as the dashboard total - honest enough to
+          compare two assets at a glance, and never the figure anyone types. */}
+        <p className="muted balance-usd-approx">{usdApprox(available)}</p><div className="balance-mini-grid"><Kv label="In your wallet" value={`${inWallet.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${assetLabelUpper}`} /><Kv label="Pending settlement" value={`${pending.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${assetLabelUpper}`} /><Kv label="Held for review" value={`${held.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${assetLabelUpper}`} /><Kv label="Spent" value={`${spent.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${assetLabelUpper} · ${usdApprox(spent)}`} /></div>{/* THE COPY HAD TO CHANGE WITH THE NUMBER.
           It said "an internal mirror of settled stablecoin funds from
           virtual-account deposits or approved adjustments" - which described
           the LEDGER, the very thing that could not see a user's own on-chain
