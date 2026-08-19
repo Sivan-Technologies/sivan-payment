@@ -323,6 +323,7 @@ export async function recipientNeedsTokenAccount(input: {
 
     const exists = await accountExists(ata.toBase58(), {
       production: input.production,
+      timeoutMs: 2500,
       ...(input.rpcOptions ?? {}),
     });
     return !exists;

@@ -138,7 +138,7 @@ export async function accountExists(address: string, options: SolanaRpcOptions =
   const { result } = await solanaRpc<{ value: unknown } | null>(
     'getAccountInfo',
     [address, { encoding: 'base64' }],
-    options
+    { timeoutMs: 2500, ...options }
   );
   return (result as any)?.value != null;
 }
