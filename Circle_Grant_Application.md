@@ -76,9 +76,9 @@ Sivan Payment AI enforces a master automated test suite runner (`npm test`) cove
 
 - Total Test Suites: 10
 - Status: 10 Passed, 0 Failed
-- Verification Time: 63.38s
+- Real Terminal Verification Time: 33.08s
 
-![Sivan Master Test Runner Terminal](/Users/user/Documents/Project%20X/Sivan/sivan_master_test_runner_terminal.jpg)
+![Sivan Real Terminal Master Test Summary](/Users/user/Documents/Project%20X/Sivan/grant_assets/sivan_test_summary_terminal.png)
 
 ---
 
