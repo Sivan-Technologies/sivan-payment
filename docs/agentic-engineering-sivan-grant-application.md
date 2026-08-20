@@ -9,7 +9,7 @@ Applicant Details:
 - Telegram Username: t.me/airspexta
 - Solana Wallet Address: B39T6aQagM2zaxee4iLb1ADc9o86zahutvtcskVQKg2m
 - Personal X Profile: x.com/samswitchy
-- Target Shipping Deadline: 2026-08-31 23:59 UTC (Production Live)
+- Target Shipping Deadline: 2026-09-20 23:59 UTC (Target Launch Date: September 20, 2026)
 
 
 ## Step 1: Basics
@@ -40,7 +40,7 @@ This is a non-custodial, compliance-first architecture. Settlement and banking i
 
 
 Deadline:
-2026-08-31 23:59 UTC (Production Live and Soft Launch Ready)
+2026-09-20 23:59 UTC (Target Launch Date: September 20, 2026)
 
 
 Proof of Work:
@@ -114,6 +114,7 @@ Milestone 6: Bank Off-Ramping and Payout Onboarding
 - Deliverable: Automated Nigerian bank account resolution, account matching, and fiat payout settlement pipeline.
 
 Milestone 7: Public Production Launch and Demo Readiness
+- Target: 20 September 2026
 - Status: Completed
 - Deliverable: Production deployment on custom domains (https://app.sivantech.online and https://api.sivantech.online), GitHub repositories merged to main, full unit test coverage, and demo readiness.
 
@@ -137,6 +138,6 @@ Secondary KPIs:
 - Telegram username filled (t.me/airspexta).
 - Solana wallet address filled (B39T6aQagM2zaxee4iLb1ADc9o86zahutvtcskVQKg2m).
 - Personal X profile filled (x.com/samswitchy).
-- Shipping deadline filled (2026-08-31 23:59 UTC).
+- Shipping deadline filled (2026-09-20 23:59 UTC).
 - Active GitHub repository links included.
-- Production live endpoint links included (https://app.sivantech.online & https://api.sivantech.online).
+- Production live endpoint links included (https://app.sivantech.online and https://api.sivantech.online).
