@@ -12,6 +12,7 @@
     "test:build-isolation": "tsx scripts/test-build-isolation.ts",
     "seed": "tsx scripts/seed.ts",
     "test:webhook-signature": "tsx scripts/test-webhook-signature.ts",
+    "test:fee-invariants": "tsx scripts/test-fee-and-schema-invariants.ts",
     "e2e:local": "tsx scripts/e2e-local.ts",
     "bridge:smoke": "tsx scripts/bridge-smoke.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",
