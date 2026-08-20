@@ -182,7 +182,7 @@ export async function adminRoutes(app: FastifyInstance) {
     return { data: await updateLimitControls(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.get('/api/admin/users/:userId/limits', async (request) => {
+  app.get('/api/admin/users/:userId/limits/override', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await getUserLimitControls(userId) };
   });
