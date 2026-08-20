@@ -120,16 +120,16 @@ Milestone 7: Public Production Launch and Demo Readiness
 
 
 Primary KPI:
-Total USDC Transaction and Settlement Volume Executed on Solana.
+$2,500 USDC in Total Transaction and Settlement Volume Executed on Solana during pilot phase.
 
-Secondary KPIs:
-1. Number of active Telegram and WhatsApp pilot users
-2. Number of service agreements created and successfully settled
-3. Number of direct on-chain Solana transfers executed
-4. Instant balance settlement rate (1-second balance settlements)
-5. Solscan transaction verification link click rate
-6. Bank off-ramp payout success rate
-7. Zero double-spend incident rate (100% deduplication protection)
+Secondary Realistic KPIs:
+1. 25 Active Pilot Users: Onboard 25 freelancers and business clients across Telegram and WhatsApp.
+2. 30 Completed Service Agreements: Successfully draft, fund, and settle 30 service agreements.
+3. 20 Direct On-Chain Solana Transfers: Execute 20 direct P2P USDC transfers with verified Solscan links.
+4. 70% Instant Balance Payment Adoption Rate: 70% of active users utilize 1-tap balance payment option for instant funding.
+5. 100% On-Chain Verification Rate: Every agreement and transfer generates a verified Solscan link.
+6. Zero Double-Spend Incident Rate: 100% deduplication protection against duplicate sends.
+7. Sub-2 Minute Settlement Velocity: Average end-to-end agreement creation to payment completion in under 2 minutes.
 
 
 ## Submission Checklist
