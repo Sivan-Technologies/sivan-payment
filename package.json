@@ -5,6 +5,7 @@
   "description": "Sivan payments engine: off-ramp MVP with on-ramp module placeholder and provider abstraction.",
   "type": "module",
   "scripts": {
+    "test": "tsx scripts/run-all-tests.ts",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",
     "build": "tsc -p tsconfig.json",
