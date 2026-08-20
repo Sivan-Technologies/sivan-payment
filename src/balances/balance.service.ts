@@ -1,5 +1,39 @@
 import { z } from 'zod';
 import { validateAddressForChain, type AddressChain } from '../wallets/address-validation.js';
+
+/**
+ * DUPLICATE TRANSFER DEDUP WINDOW.
+ *
+ * If the same userId submits a transfer with the same amount + destinationAddress
+ * within 30 seconds, the second request is rejected with a 409-style error.
+ *
+ * This guards against the real-world failure mode where:
+ *   1. A user taps "Confirm & Send" in Telegram or WhatsApp.
+ *   2. The network times out or the bot restarts mid-flight.
+ *   3. The in-memory callback lock is gone (process restart drops Set contents).
+ *   4. The user taps again (or the client retries), fires a second POST.
+ *   5. Both go through and 2x the amount is sent.
+ *
+ * The provider idempotency key (btx_${transferId}) guards SAME transfer id;
+ * this guards DIFFERENT transfer ids that represent the same human intent.
+ *
+ * Keyed as `${userId}:${amount}:${destinationAddress}` with a 30-second TTL.
+ * Cleared immediately on definitive failure so an invalid address can be
+ * corrected without waiting 30 seconds.
+ */
+const recentTransferKeys = new Map<string, number>();
+const DEDUP_WINDOW_MS = 30_000;
+
+function dedupKey(userId: string, amount: number, destinationAddress: string): string {
+  return `${userId}:${amount}:${destinationAddress.toLowerCase()}`;
+}
+
+function pruneExpiredDedupKeys(): void {
+  const now = Date.now();
+  for (const [key, ts] of recentTransferKeys.entries()) {
+    if (now - ts > DEDUP_WINDOW_MS) recentTransferKeys.delete(key);
+  }
+}
 import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
@@ -567,6 +601,26 @@ async function raceBroadcastDeadline(
 }
 
 export async function requestBalanceTransfer(userId: string, input: z.infer<typeof createBalanceTransferSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+  /**
+   * DOUBLE-SPEND DEDUP CHECK.
+   *
+   * Reject if an identical transfer (same user, amount, destination) was
+   * accepted within the last 30 seconds. This is the server-side backstop
+   * for the in-process locks on the Telegram and WhatsApp bots: those locks
+   * drop on restart, so without this a network blip + reconnect sends twice.
+   */
+  pruneExpiredDedupKeys();
+  const dKey = dedupKey(userId, input.amount, input.destinationAddress);
+  const lastSeen = recentTransferKeys.get(dKey);
+  if (lastSeen !== undefined && Date.now() - lastSeen < DEDUP_WINDOW_MS) {
+    throw badRequest(
+      'A transfer to this address for this amount was just submitted. Please wait 30 seconds before trying again to prevent a duplicate send.'
+    );
+  }
+  // Register the key before the async path proceeds so a concurrent second
+  // request hitting this check before the first resolves is also blocked.
+  recentTransferKeys.set(dKey, Date.now());
+
   /**
    * The gateway's 12s clock starts HERE, so ours does too. Everything between
    * this line and the broadcast - chain balance reads, a Solana RPC for the
