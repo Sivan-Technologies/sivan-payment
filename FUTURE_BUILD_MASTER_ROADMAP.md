@@ -37,6 +37,12 @@ Below is the catalog of planned post-launch features, including their purpose, U
 - Impact: Gives users granular privacy control while optimizing outbound messaging API costs for the platform.
 - Deferral Rationale: Enforced under Phase 1 Code Freeze Protocol. All future UX enhancements are documented here for Phase 2 implementation.
 
+### Feature 6: Explicit Delivery Deadline Field & Automated Countdown Alerts
+- Documented Spec: FUTURE_BUILD_DELIVERY_DEADLINE_TIMER.md
+- Description: Extract natural language delivery durations (e.g. deliver in 1 days) into an explicit deadlineDays database column, render live remaining-hours countdown cards, and fire 6-hour reminder push alerts to sellers.
+- Impact: Proactively prevents seller delays and gives buyers transparent delivery countdowns across Telegram and WhatsApp.
+- Deferral Rationale: Phase 1 Code Freeze Active. Natural language duration is stored in agreement scope of work in Phase 1.
+
 ---
 
 ## 2. Code Freeze & Maintenance Protocol
