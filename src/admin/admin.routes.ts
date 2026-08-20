@@ -182,28 +182,38 @@ export async function adminRoutes(app: FastifyInstance) {
     return { data: await updateLimitControls(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.get('/api/admin/users/:userId/limits/override', async (request) => {
-    const { userId } = request.params as { userId: string };
-    return { data: await getUserLimitControls(userId) };
-  });
+  const registerUserLimitRoutes = (prefix: string) => {
+    app.get(`${prefix}/users/:userId/limits`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      return { data: await getUserLimitControls(userId) };
+    });
 
-  app.post('/api/admin/users/:userId/limits/override', async (request) => {
-    const { userId } = request.params as { userId: string };
-    const body = parseBody(userLimitOverrideSchema, request.body);
-    return { data: await updateUserLimitOverride(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
-  });
+    app.get(`${prefix}/users/:userId/limits/override`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      return { data: await getUserLimitControls(userId) };
+    });
 
-  app.delete('/api/admin/users/:userId/limits/override', async (request) => {
-    const { userId } = request.params as { userId: string };
-    const body = (request.body ?? {}) as { updatedBy?: string; reason?: string };
-    return { data: await removeUserLimitOverride(userId, body.updatedBy, body.reason, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
-  });
+    app.post(`${prefix}/users/:userId/limits/override`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      const body = parseBody(userLimitOverrideSchema, request.body);
+      return { data: await updateUserLimitOverride(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+    });
 
-  app.post('/api/admin/users/:userId/kyc/approve', async (request) => {
-    const { userId } = request.params as { userId: string };
-    const body = (request.body ?? {}) as { approvedBy?: string; reason?: string; customerType?: 'individual' | 'business' };
-    return { data: await manuallyApproveCustomerKyc(userId, { approvedBy: body.approvedBy || 'admin', reason: body.reason || 'Admin manual KYC approval and tier upgrade', customerType: body.customerType }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
-  });
+    app.delete(`${prefix}/users/:userId/limits/override`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      const body = (request.body ?? {}) as { updatedBy?: string; reason?: string };
+      return { data: await removeUserLimitOverride(userId, body.updatedBy, body.reason, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+    });
+
+    app.post(`${prefix}/users/:userId/kyc/approve`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      const body = (request.body ?? {}) as { approvedBy?: string; reason?: string; customerType?: 'individual' | 'business' };
+      return { data: await manuallyApproveCustomerKyc(userId, { approvedBy: body.approvedBy || 'admin', reason: body.reason || 'Admin manual KYC approval and tier upgrade', customerType: body.customerType }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+    });
+  };
+
+  registerUserLimitRoutes('/api/admin');
+  registerUserLimitRoutes('');
 
   app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));
   app.get('/api/admin/business-kpis', async () => ({ data: await getBusinessKpis() }));
