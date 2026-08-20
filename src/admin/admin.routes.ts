@@ -9,7 +9,7 @@ import { buildReferenceReconciliationDashboard, persistReferenceReconciliationRu
 import { getWithdrawal, syncWithdrawalDrains } from '../offramp/service/withdrawals.service.js';
 import { getOnrampOrder } from '../onramp/service/onramp-orders.service.js';
 import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
-import { forceSandboxKycApproval, importBridgeCustomerSchema, importExistingBridgeCustomer, refreshKycStatus } from '../customers/customers.service.js';
+import { forceSandboxKycApproval, importBridgeCustomerSchema, importExistingBridgeCustomer, manuallyApproveCustomerKyc, refreshKycStatus } from '../customers/customers.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
 import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, getUserLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, markWithdrawalCompleted, reconcileAllPendingWithdrawals, rejectRequest, removeUserLimitOverride, reviewRiskCase, riskReviewSchema, updateLimitControls, updateUserLimitOverride, userLimitOverrideSchema } from './admin-ops.service.js';
@@ -197,6 +197,12 @@ export async function adminRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = (request.body ?? {}) as { updatedBy?: string; reason?: string };
     return { data: await removeUserLimitOverride(userId, body.updatedBy, body.reason, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.post('/api/admin/users/:userId/kyc/approve', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = (request.body ?? {}) as { approvedBy?: string; reason?: string; customerType?: 'individual' | 'business' };
+    return { data: await manuallyApproveCustomerKyc(userId, { approvedBy: body.approvedBy || 'admin', reason: body.reason || 'Admin manual KYC approval and tier upgrade', customerType: body.customerType }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));

@@ -561,3 +561,60 @@ export async function forceSandboxKycApproval(userId: string, actorId = 'admin_a
   };
   return db.updateCustomerRecord(record);
 }
+
+export async function manuallyApproveCustomerKyc(
+  userId: string,
+  input: { approvedBy?: string; reason: string; customerType?: 'individual' | 'business' },
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const data = await db.read();
+  let customer = data.customers.find((c) => c.userId === userId);
+  const user = data.users.find((u) => u.id === userId);
+  if (!user) throw notFound('User');
+
+  const now = nowIso();
+  const customerType = input.customerType || customer?.customerType || 'individual';
+
+  if (!customer) {
+    customer = {
+      id: id('cus'),
+      userId: user.id,
+      provider: 'bridge',
+      providerCustomerId: `admin_approved_${user.id}`,
+      customerType,
+      kycStatus: 'kyc_approved' as const,
+      tosStatus: 'approved' as const,
+      onboardingCostUsd: '0.00',
+      onboardingCostType: customerType === 'business' ? ('kyb' as const) : ('kyc' as const),
+      onboardingCostRecordedAt: now,
+      raw: { adminManualApproval: { approvedBy: input.approvedBy || 'admin', reason: input.reason, approvedAt: now } },
+      createdAt: now,
+      updatedAt: now
+    };
+    await db.insertCustomerRecord(customer);
+  } else {
+    customer = {
+      ...customer,
+      kycStatus: 'kyc_approved' as const,
+      tosStatus: 'approved' as const,
+      customerType,
+      raw: { previous: customer.raw, adminManualApproval: { approvedBy: input.approvedBy || 'admin', reason: input.reason, approvedAt: now } },
+      updatedAt: now
+    };
+    await db.updateCustomerRecord(customer);
+  }
+
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: input.approvedBy || 'admin',
+    action: 'customer.kyc_manually_approved',
+    resourceType: 'customer',
+    resourceId: customer.id,
+    severity: 'warning',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: { userId: user.id, userEmail: user.email, reason: input.reason, customerType }
+  });
+
+  return { success: true, userId, customerId: customer.id, kycStatus: 'kyc_approved', customerType };
+}
