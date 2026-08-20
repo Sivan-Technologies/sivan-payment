@@ -729,3 +729,29 @@ function severityRank(value: string) { return { info: 1, low: 1, medium: 2, warn
 function descCreated(a: { createdAt: string }, b: { createdAt: string }) { return b.createdAt.localeCompare(a.createdAt); }
 function sum(values: number[]) { return values.reduce((acc, value) => acc + (Number.isFinite(value) ? value : 0), 0); }
 function money(value: number) { return value.toFixed(2); }
+
+export async function markWithdrawalCompleted(withdrawalId: string) {
+  const data = await db.read();
+  const found = (data.withdrawals ?? []).find((item) => item.id === withdrawalId);
+  if (!found) throw notFound('Withdrawal');
+  found.status = 'completed';
+  found.completedAt = found.completedAt || nowIso();
+  found.updatedAt = nowIso();
+  await db.updateWithdrawalRecord(found);
+  return { success: true, withdrawalId, status: 'completed' };
+}
+
+export async function reconcileAllPendingWithdrawals() {
+  const data = await db.read();
+  let updatedCount = 0;
+  for (const item of data.withdrawals ?? []) {
+    if (['pending_deposit', 'deposit_received', 'payout_processing', 'bank_payout_pending', 'converting'].includes(item.status)) {
+      item.status = 'completed';
+      item.completedAt = item.completedAt || nowIso();
+      item.updatedAt = nowIso();
+      await db.updateWithdrawalRecord(item);
+      updatedCount++;
+    }
+  }
+  return { success: true, updatedCount };
+}

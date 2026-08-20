@@ -12,7 +12,7 @@ import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
 import { forceSandboxKycApproval, importBridgeCustomerSchema, importExistingBridgeCustomer, refreshKycStatus } from '../customers/customers.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
-import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
+import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, markWithdrawalCompleted, reconcileAllPendingWithdrawals, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
@@ -283,6 +283,15 @@ export async function adminRoutes(app: FastifyInstance) {
   app.post('/api/admin/withdrawals/:id/sync', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await syncWithdrawalDrains(id) };
+  });
+
+  app.post('/api/admin/withdrawals/:id/complete', async (request) => {
+    const { id } = request.params as { id: string };
+    return { data: await markWithdrawalCompleted(id) };
+  });
+
+  app.post('/api/admin/withdrawals/reconcile-all-completed', async () => {
+    return { data: await reconcileAllPendingWithdrawals() };
   });
 
   app.get('/api/admin/onramp/orders/:id', async (request) => {
