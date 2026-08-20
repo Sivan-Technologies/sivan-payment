@@ -703,53 +703,48 @@ export async function ngnRoutes(app: FastifyInstance) {
    * the same reason the tier matrix does - a ceiling cannot be judged without
    * seeing what it was changed from.
    */
-  app.get('/api/admin/users/:userId/limits', async (request) => {
-    const { userId } = request.params as { userId: string };
-    return { data: await getUserLimitDetail(userId) };
-  });
-
-  app.put('/api/admin/users/:userId/limits', async (request) => {
-    const { userId } = request.params as { userId: string };
-    // The path is authoritative for WHO. Trusting a userId in the body would
-    // let a mistyped payload silently edit a different customer's ceiling
-    // than the one the admin has open on screen.
-    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
-    const body = parseBody(setUserLimitSchema, {
-      ...(request.body as object),
-      userId,
-      ...(actor ? { updatedBy: actor } : {}),
+  const registerNgnUserLimitRoutes = (prefix: string) => {
+    app.get(`${prefix}/users/:userId/limits`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      return { data: await getUserLimitDetail(userId) };
     });
-    return { data: await setUserLimit(body) };
-  });
 
-  app.delete('/api/admin/users/:userId/limits', async (request) => {
-    const { userId } = request.params as { userId: string };
-    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
-    const body = parseBody(clearUserLimitSchema, {
-      ...(request.body as object),
-      userId,
-      ...(actor ? { clearedBy: actor } : {}),
+    app.put(`${prefix}/users/:userId/limits`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
+      const body = parseBody(setUserLimitSchema, {
+        ...(request.body as object),
+        userId,
+        ...(actor ? { updatedBy: actor } : {}),
+      });
+      return { data: await setUserLimit(body) };
     });
-    return { data: await clearUserLimit(body) };
-  });
 
-  /**
-   * Forgive the volume already counted in this user's rolling window.
-   *
-   * A SEPARATE ROUTE from the ceiling above, not a field on it. Raising a cap
-   * and forgiving spend are different acts with different risk, and folding
-   * them together would make them indistinguishable in the audit log.
-   */
-  app.post('/api/admin/users/:userId/limits/reset', async (request) => {
-    const { userId } = request.params as { userId: string };
-    const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
-    const body = parseBody(resetUserWindowSchema, {
-      ...(request.body as object),
-      userId,
-      ...(actor ? { createdBy: actor } : {}),
+    app.delete(`${prefix}/users/:userId/limits`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
+      const body = parseBody(clearUserLimitSchema, {
+        ...(request.body as object),
+        userId,
+        ...(actor ? { clearedBy: actor } : {}),
+      });
+      return { data: await clearUserLimit(body) };
     });
-    return { data: await resetUserWindow(body) };
-  });
+
+    app.post(`${prefix}/users/:userId/limits/reset`, async (request) => {
+      const { userId } = request.params as { userId: string };
+      const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
+      const body = parseBody(resetUserWindowSchema, {
+        ...(request.body as object),
+        userId,
+        ...(actor ? { createdBy: actor } : {}),
+      });
+      return { data: await resetUserWindow(body) };
+    });
+  };
+
+  registerNgnUserLimitRoutes('/api/admin');
+  registerNgnUserLimitRoutes('');
   /**
    * WHO IS CONSUMING HEADROOM RIGHT NOW.
    *

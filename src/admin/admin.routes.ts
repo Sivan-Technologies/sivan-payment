@@ -183,11 +183,6 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   const registerUserLimitRoutes = (prefix: string) => {
-    app.get(`${prefix}/users/:userId/limits`, async (request) => {
-      const { userId } = request.params as { userId: string };
-      return { data: await getUserLimitControls(userId) };
-    });
-
     app.get(`${prefix}/users/:userId/limits/override`, async (request) => {
       const { userId } = request.params as { userId: string };
       return { data: await getUserLimitControls(userId) };
