@@ -12,7 +12,7 @@ import { syncOnrampOrder } from '../onramp/service/onramp-sync.service.js';
 import { forceSandboxKycApproval, importBridgeCustomerSchema, importExistingBridgeCustomer, refreshKycStatus } from '../customers/customers.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation.service.js';
-import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, markWithdrawalCompleted, reconcileAllPendingWithdrawals, rejectRequest, reviewRiskCase, riskReviewSchema, updateLimitControls } from './admin-ops.service.js';
+import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, getUserLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, markWithdrawalCompleted, reconcileAllPendingWithdrawals, rejectRequest, removeUserLimitOverride, reviewRiskCase, riskReviewSchema, updateLimitControls, updateUserLimitOverride, userLimitOverrideSchema } from './admin-ops.service.js';
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
@@ -180,6 +180,23 @@ export async function adminRoutes(app: FastifyInstance) {
   app.put('/api/admin/limits', async (request) => {
     const body = parseBody(limitControlsSchema, request.body);
     return { data: await updateLimitControls(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.get('/api/admin/users/:userId/limits', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await getUserLimitControls(userId) };
+  });
+
+  app.post('/api/admin/users/:userId/limits/override', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(userLimitOverrideSchema, request.body);
+    return { data: await updateUserLimitOverride(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  app.delete('/api/admin/users/:userId/limits/override', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = (request.body ?? {}) as { updatedBy?: string; reason?: string };
+    return { data: await removeUserLimitOverride(userId, body.updatedBy, body.reason, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.get('/api/admin/finance/dashboard', async () => ({ data: await getFinanceDashboard() }));

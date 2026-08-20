@@ -545,6 +545,72 @@ export async function updateLimitControls(input: z.infer<typeof limitControlsSch
   return { ...defaultLimitControls, ...limits, updatedBy, updatedAt: nowIso() };
 }
 
+export const userLimitOverrideSchema = z.object({
+  updatedBy: z.string().default('admin'),
+  reason: z.string().min(3),
+  maxTransactionNgn: z.string().optional(),
+  dailyLimitNgn: z.string().optional(),
+  maxOfframpAmountUsd: z.string().optional(),
+  maxOnrampAmountUsd: z.string().optional(),
+  expiresAt: z.string().optional(),
+});
+
+export async function getUserLimitControls(userId: string) {
+  const globalLimits = await getLimitControls();
+  const data = await db.read();
+  const userLogs = (data.auditLogs ?? [])
+    .filter((log) => log.action === 'user.limit_override.updated' && (log.resourceId === userId || (log.metadata as any)?.userId === userId))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const latestOverride = userLogs[0];
+  if (!latestOverride) {
+    return { ...globalLimits, isUserOverride: false, userId };
+  }
+  const overrideData = (latestOverride.metadata as any)?.override ?? {};
+  if (overrideData.expiresAt && new Date(overrideData.expiresAt).getTime() < Date.now()) {
+    return { ...globalLimits, isUserOverride: false, userId, overrideExpiredAt: overrideData.expiresAt };
+  }
+  return {
+    ...globalLimits,
+    ...overrideData,
+    isUserOverride: true,
+    userId,
+    overrideUpdatedBy: latestOverride.actorId,
+    overrideUpdatedAt: latestOverride.createdAt,
+    overrideReason: (latestOverride.metadata as any)?.reason,
+  };
+}
+
+export async function updateUserLimitOverride(userId: string, input: z.infer<typeof userLimitOverrideSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+  const { updatedBy, reason, ...override } = input;
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: updatedBy,
+    action: 'user.limit_override.updated',
+    resourceType: 'user',
+    resourceId: userId,
+    severity: 'warning',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: { userId, override, reason }
+  });
+  return getUserLimitControls(userId);
+}
+
+export async function removeUserLimitOverride(userId: string, updatedBy = 'admin', reason = 'Override reset to global limits', context: { ipAddress?: string; userAgent?: string } = {}) {
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: updatedBy,
+    action: 'user.limit_override.removed',
+    resourceType: 'user',
+    resourceId: userId,
+    severity: 'warning',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: { userId, reason }
+  });
+  return getUserLimitControls(userId);
+}
+
 export async function getLegalEvidenceSummary() {
   const data = await db.read();
   const acceptances = data.legalAcceptances ?? [];
