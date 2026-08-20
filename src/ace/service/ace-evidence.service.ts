@@ -2,6 +2,7 @@ import { db } from '../../database/json-database.js';
 import { buildPublicOnrampTimeline, buildPublicWithdrawalTimeline } from '../../timeline/transaction-timeline.service.js';
 import { buildTimeline as buildNgnTimeline } from '../../ngn/service/ngn-transfers.service.js';
 import { getVerificationSummary } from '../../kyc/service/verification-summary.service.js';
+import { isSettledStatus, isFailedStatus } from './ace-response.service.js';
 import type { AceEvidenceBundle, AceEvidenceItem, AceIntent, AceResourceType } from '../types/ace.types.js';
 
 export async function buildAceEvidence(input: { userId?: string; message: string; resourceType: AceResourceType; resourceId?: string; intent?: AceIntent; admin?: boolean }): Promise<AceEvidenceBundle> {
@@ -294,8 +295,28 @@ function deriveQueueStatus(record: any, webhooks: any[], findings: any[]): Array
   if (!record) return [{ name: 'transaction_lookup', status: 'not_found', detail: 'No matching transaction found' }];
   const ageMinutes = (Date.now() - new Date(record.updatedAt ?? record.createdAt).getTime()) / 60000;
   const openFindings = findings.filter((finding) => finding.status === 'open');
-  const queue: Array<{ name: string; status: string; detail?: string }> = [{ name: 'provider_webhooks', status: webhooks.length ? 'seen' : ['completed', 'failed', 'cancelled'].includes(record.status) ? 'not_required' : 'pending' }];
-  if (ageMinutes > 30 && !['completed', 'failed', 'cancelled'].includes(record.status)) queue.push({ name: 'stale_transaction_watch', status: 'watch', detail: `${Math.round(ageMinutes)} minutes since update` });
+
+  /**
+   * A FOURTH COPY OF "IS THIS FINISHED", AND IT WAS THE ONE THAT ESCALATED.
+   *
+   * This read ['completed','failed','cancelled'] - a hardcoded list that does
+   * not contain 'confirmed', the terminal status of every wallet deposit. So a
+   * deposit that landed more than 30 minutes ago was marked
+   * `stale_transaction_watch`, shouldReviewHuman() saw a 'watch' entry, and a
+   * perfectly healthy confirmed deposit told the user "I recommend contacting
+   * support so a human can review the evidence".
+   *
+   * That is the line in the reported screenshot. It sends people to support
+   * for money that already arrived.
+   *
+   * Now shares isTerminalStatus with the responder, so adding a status in one
+   * place cannot leave the other behind.
+   */
+  const terminal = isTerminalStatus(record.status);
+  const queue: Array<{ name: string; status: string; detail?: string }> = [
+    { name: 'provider_webhooks', status: webhooks.length ? 'seen' : terminal ? 'not_required' : 'pending' },
+  ];
+  if (ageMinutes > 30 && !terminal) queue.push({ name: 'stale_transaction_watch', status: 'watch', detail: `${Math.round(ageMinutes)} minutes since update` });
   if (openFindings.length) queue.push({ name: 'reconciliation', status: 'open_findings', detail: `${openFindings.length} open finding(s)` });
   return queue;
 }
@@ -345,6 +366,11 @@ const TRANSFER_AUDIT_EVENTS = [
   'balance.transfer_approved',
   'balance.transfer_cancelled',
 ];
+
+/** Shared with the responder so "finished" has ONE definition. */
+function isTerminalStatus(status?: string) {
+  return isSettledStatus(status) || isFailedStatus(status);
+}
 
 function balanceTransferRows(data: any): any[] {
   const events = (data.auditLogs ?? [])

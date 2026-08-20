@@ -147,6 +147,8 @@ export function composeAceSupportAnswer(bundle: AceEvidenceBundle, options: { ad
     wallet_deposit: 'wallet deposit',
   };
   const typeLabel = TYPE_LABELS[tx.type] ?? 'transaction';
+  const settled = isSettledStatus(tx.status);
+  const failed = isFailedStatus(tx.status);
   const statusLine = `Your ${typeLabel} is currently ${tx.status.replaceAll('_', ' ')}${tx.provider ? ` with ${tx.provider}` : ''}.`;
 
   const answer = incident
@@ -170,10 +172,38 @@ export function composeAceSupportAnswer(bundle: AceEvidenceBundle, options: { ad
         '',
         'Current stage:',
         ...completed.map((step) => `✅ ${step.label}`),
-        current && current.status !== 'completed' ? `⏳ ${current.label}` : current ? `✅ ${current.label}` : '⏳ Processing',
+        /**
+         * THE STAGE MUST AGREE WITH THE STATUS.
+         *
+         * The fallback here was a hardcoded '⏳ Processing', printed whenever
+         * a record had no timeline - which is every deposit, crypto send and
+         * supplier payment. So a row the line above had just called
+         * "confirmed" was immediately labelled as still processing.
+         *
+         * Records without a timeline now render their terminal state
+         * directly, and only a genuinely in-flight one shows the hourglass.
+         */
+        settled ? `✅ ${capitalise(tx.status)}`
+          : failed ? `⚠️ ${capitalise(tx.status)}`
+          : current && current.status !== 'completed' ? `⏳ ${current.label}`
+          : current ? `✅ ${current.label}`
+          : '⏳ Processing',
         '',
         'What this means:',
-        tx.explanation || 'Your transaction is moving through provider processing.',
+        /**
+         * The kind-specific meaning wins for a finished transaction.
+         *
+         * `tx.explanation` comes from the timeline's current step, which for a
+         * settled record is the last step's description - accurate but generic
+         * ("The NGN off-ramp is complete"). For a deposit there is no timeline
+         * at all and the fallback claimed it was still processing.
+         *
+         * A user asking "is this in my spendable balance?" needs the answer to
+         * that question, not a restatement of the status word.
+         */
+        settled ? settledMeaning(tx.type)
+          : failed ? failedMeaning(tx.type, tx.status)
+          : tx.explanation || 'Your transaction is moving through provider processing.',
         '',
         'Estimated completion:',
         estimatedCompletion,
@@ -209,22 +239,139 @@ export function composeAceSupportAnswer(bundle: AceEvidenceBundle, options: { ad
 
 function calculateConfidence(bundle: AceEvidenceBundle): AceConfidence {
   if (!bundle.transaction) return 'low';
+  /**
+   * A terminal status is the most certain thing this system knows.
+   *
+   * Confidence was derived from timeline LENGTH, so a deposit - which has no
+   * timeline at all - scored 'medium' even when its status was unambiguously
+   * confirmed. The screenshot showed "Confidence: medium" on a settled
+   * deposit, which reads as doubt about whether the money arrived.
+   */
+  if (isSettledStatus(bundle.transaction.status) || isFailedStatus(bundle.transaction.status)) return 'high';
   if (bundle.timeline.length >= 4 && bundle.evidenceItems.length >= 6) return 'high';
   return 'medium';
 }
 
 function shouldNeedHuman(bundle: AceEvidenceBundle, confidence: AceConfidence) {
+  /**
+   * MONEY THAT ALREADY ARRIVED DOES NOT NEED A HUMAN.
+   *
+   * A settled transaction is the end of the story: there is nothing for
+   * support to chase, and telling the user to open a ticket about a deposit
+   * they can already spend wastes their time and support's. This runs FIRST so
+   * no later heuristic - a stale-age watch, a low confidence score - can
+   * escalate something that is demonstrably finished.
+   *
+   * Failures still escalate, below: those genuinely need a person.
+   */
+  if (bundle.transaction && isSettledStatus(bundle.transaction.status)) return false;
   if (confidence === 'low') return true;
-  if (bundle.transaction && ['failed', 'requires_action'].includes(bundle.transaction.status)) return true;
+  if (bundle.transaction && (['failed', 'requires_action'].includes(bundle.transaction.status) || isFailedStatus(bundle.transaction.status))) return true;
   if (bundle.reconciliationFindings.some((finding) => finding.status === 'open')) return true;
   if (bundle.queue.some((item) => ['open_findings', 'watch', 'not_found'].includes(item.status))) return true;
   return false;
 }
 
+/**
+ * IS THIS TRANSACTION FINISHED? ONE ANSWER, USED EVERYWHERE.
+ *
+ * Reported with a screenshot: a deposit reading "Confirmed" was told
+ * "Estimated completion: Timing depends on provider confirmation" and
+ * "⏳ Processing". A supplier payment reading "completed" was told the same.
+ *
+ * The cause was that "finished" was decided in three places from three
+ * different lists, and each list only knew the statuses its own author had in
+ * mind. `estimateCompletion` recognised 'completed' but not 'confirmed';
+ * the stage line had no list at all and printed a hardcoded "⏳ Processing";
+ * and the explanation fell back to "moving through provider processing" for
+ * anything without a timeline.
+ *
+ * So the same record was simultaneously described as done, in progress, and
+ * of unknown duration. For a user asking "is my money spendable" that is not
+ * a vague answer - it is three contradictory ones.
+ *
+ * These sets are the union of every terminal status across the seven record
+ * types, read from their own type definitions rather than guessed:
+ *
+ *   WalletDepositStatus        'confirmed' | 'failed'          (types.ts:885)
+ *   BalanceTransferStatus      'completed' | 'rejected' | 'failed'
+ *   SupplierPaymentStatus      'completed' | 'rejected' | 'failed'
+ *   NgnTransferStatus          'completed' | 'failed' | 'expired' | 'cancelled'
+ *   WithdrawalStatus/onramp    'completed' | 'failed' | 'cancelled'
+ */
+const SETTLED_STATUSES = new Set(['completed', 'confirmed', 'settled', 'succeeded', 'complete']);
+const TERMINAL_FAILURE_STATUSES = new Set(['failed', 'rejected', 'cancelled', 'canceled', 'expired', 'returned']);
+
+export function isSettledStatus(status?: string) {
+  return SETTLED_STATUSES.has(String(status ?? '').toLowerCase());
+}
+export function isFailedStatus(status?: string) {
+  return TERMINAL_FAILURE_STATUSES.has(String(status ?? '').toLowerCase());
+}
+function isTerminalStatus(status?: string) {
+  return isSettledStatus(status) || isFailedStatus(status);
+}
+
+/**
+ * What a finished transaction MEANS, per kind.
+ *
+ * "Your transaction is moving through provider processing" was printed for
+ * every record that carried no timeline - which is every deposit, crypto send
+ * and supplier payment. It is the sentence in the screenshot, sitting under
+ * the word "Confirmed".
+ *
+ * A confirmed deposit has exactly one thing the user wants to know, and it is
+ * the question they asked: yes, it is spendable.
+ */
+/** "confirmed" -> "Confirmed". Status words are shown to users. */
+function capitalise(value?: string) {
+  const text = String(value ?? '').replaceAll('_', ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Processing';
+}
+
+function settledMeaning(type?: string) {
+  switch (type) {
+    case 'wallet_deposit':
+    case 'virtual_account_transaction':
+      return 'This deposit has been credited and is part of your spendable balance. You can send or withdraw it now.';
+    case 'balance_transfer':
+      return 'This send completed and left your balance. The recipient has it.';
+    case 'supplier_payment':
+      return 'This supplier payment completed and the funds have been sent to your supplier.';
+    case 'withdrawal':
+    case 'ngn_transfer':
+      return 'This payout completed. The money has left Sivan and been sent to your bank.';
+    case 'onramp_order':
+      return 'This buy order completed and the crypto has been delivered to your wallet.';
+    default:
+      return 'This transaction has completed. No further steps are pending.';
+  }
+}
+
+function failedMeaning(type?: string, status?: string) {
+  const verb = String(status ?? '').toLowerCase() === 'expired' ? 'expired' : String(status ?? '').toLowerCase().startsWith('cancel') ? 'was cancelled' : 'did not go through';
+  switch (type) {
+    case 'wallet_deposit':
+    case 'virtual_account_transaction':
+      return `This deposit ${verb}, so it was not added to your balance. Nothing was taken from you.`;
+    case 'balance_transfer':
+      return `This send ${verb}. The amount was not deducted, or has been returned to your balance.`;
+    default:
+      return `This transaction ${verb}. Any amount held for it has been released back to your balance.`;
+  }
+}
+
 function estimateCompletion(bundle: AceEvidenceBundle, incident?: any) {
-  if (incident?.eta) return incident.eta;
   const status = bundle.transaction?.status;
-  if (status === 'completed') return 'Completed';
+  /**
+   * A FINISHED TRANSACTION HAS NO ETA, INCIDENT OR NOT.
+   *
+   * The incident check used to run first, so an unrelated provider incident
+   * would attach "ETA: 2 hours" to a deposit that had already landed.
+   */
+  if (isSettledStatus(status)) return 'Completed';
+  if (isFailedStatus(status)) return 'This transaction is closed. No further updates are expected.';
+  if (incident?.eta) return incident.eta;
   if (status === 'pending_deposit' || status === 'awaiting_payment') return 'After your payment/deposit is confirmed';
   if (['deposit_received', 'converting', 'payout_processing', 'payment_received', 'processing'].includes(String(status))) return 'Usually 2–5 minutes after provider confirmation';
   if (status === 'requires_action') return 'Requires support review';

@@ -89,6 +89,7 @@ function seed() {
 seed();
 
 const { answerAceSupport } = await import('../src/ace/service/ace-support.service.js');
+const { buildAceEvidence } = await import('../src/ace/service/ace-evidence.service.js');
 const ask = async (message: string) => answerAceSupport({ userId: 'usr_1', message, channel: 'web_dashboard' });
 
 console.log('\n1. the intent classifier actually classifies');
@@ -289,6 +290,75 @@ check('and shows only the last four digits',
 check('and NEVER the full account number',
   !ngnAnswerWithBank.answer.includes('8079604214'),
   'the unmasked NUBAN leaked into an answer that is shipped to an external model');
+
+console.log('\n4e. a finished transaction is described as finished');
+
+/**
+ * Reported with a screenshot: a deposit reading "Confirmed" was answered with
+ * "⏳ Processing", "Your transaction is moving through provider processing",
+ * "Timing depends on provider confirmation" and "I recommend contacting
+ * support". Four statements, all wrong, about money the user could already
+ * spend - and the question asked was literally "Is this in my spendable
+ * balance?".
+ *
+ * Root cause: "is this finished" was decided in FOUR places from four
+ * hardcoded lists, and none of them contained 'confirmed' - the terminal
+ * status of every wallet deposit.
+ *
+ * The fixture is seeded 9h old on purpose, matching the screenshot: that is
+ * what tripped the 30-minute stale-watch into escalating a healthy deposit.
+ */
+const settledDeposit = await ask(DEP_ID);
+check('a confirmed deposit is not called "Processing"',
+  !/⏳ Processing/.test(settledDeposit.answer), settledDeposit.answer);
+check('and it answers the spendable-balance question directly',
+  /spendable balance/i.test(settledDeposit.answer), settledDeposit.answer.slice(0, 160));
+check('and it is not described as still moving through the provider',
+  !/moving through provider processing/i.test(settledDeposit.answer), settledDeposit.answer.slice(0, 160));
+check('and the ETA is Completed, not "timing depends on..."',
+  !/Timing depends on provider confirmation/i.test(settledDeposit.answer), settledDeposit.answer);
+/** The line that sent people to support for money that had already arrived. */
+check('and it does NOT escalate a healthy settled deposit to a human',
+  settledDeposit.needsHuman === false, `needsHuman=${settledDeposit.needsHuman}`);
+check('and a terminal status is reported at high confidence',
+  settledDeposit.confidence === 'high', settledDeposit.confidence);
+
+/**
+ * THE CONVERSE, so the fix is not just "always say completed".
+ *
+ * SPP_ID is seeded 'processing' - genuinely in flight - and MUST still be
+ * described as in progress. My first version of this assertion expected
+ * "completed" here and failed; the fixture was right and the assertion was
+ * wrong. Keeping the in-flight case pinned is what proves the change reads
+ * the status rather than hardcoding the opposite default.
+ */
+/**
+ * THE QUEUE GUARD, PINNED DIRECTLY.
+ *
+ * Two independent guards stop a settled row escalating: deriveQueueStatus no
+ * longer marks it stale, and shouldNeedHuman returns false for settled. That
+ * is deliberate defence in depth - but it means mutating either one alone
+ * leaves the suite green, which I proved by doing exactly that.
+ *
+ * An untested guard is the failure mode I keep hitting here, so this asserts
+ * the queue's own output rather than the escalation it feeds: the 9h-old
+ * confirmed deposit must NOT be under stale-transaction watch.
+ */
+const depositEvidence = await buildAceEvidence({
+  userId: 'usr_1', message: 'status', resourceType: 'wallet_deposit', resourceId: DEP_ID, intent: 'deposit',
+});
+check('a settled deposit is not flagged as a stale transaction',
+  !depositEvidence.queue.some((item) => item.status === 'watch'),
+  JSON.stringify(depositEvidence.queue));
+check('and its provider webhooks are marked not_required, not pending',
+  depositEvidence.queue.some((item) => item.name === 'provider_webhooks' && item.status === 'not_required'),
+  JSON.stringify(depositEvidence.queue));
+
+const inFlightSupplier = await ask(SPP_ID);
+check('a processing supplier payment is still shown as in progress',
+  /⏳/.test(inFlightSupplier.answer), inFlightSupplier.answer.slice(0, 160));
+check('and it is NOT claimed to have reached the supplier',
+  !/sent to your supplier/i.test(inFlightSupplier.answer), inFlightSupplier.answer.slice(0, 160));
 
 console.log('\n5. transaction questions still work');
 
