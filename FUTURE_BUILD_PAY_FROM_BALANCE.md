@@ -1,8 +1,8 @@
 # Future Build Specification: Instant Pay-from-Sivan-Balance Option
 
 **Document ID:** `FUTURE_BUILD_PAY_FROM_BALANCE`  
-**Target Release:** Phase 2  
-**Status:** Documented / Deferred under Phase 1 Code Freeze Protocol  
+**Target Release:** Phase 1 (Implemented)  
+**Status:** ✅ IMPLEMENTED & VERIFIED (End-to-End Test Passed)  
 
 ---
 

@@ -47,7 +47,7 @@ Below is the catalog of planned post-launch features, including their purpose, U
 - Documented Spec: FUTURE_BUILD_PAY_FROM_BALANCE.md
 - Description: Present a 1-tap `[⚡ Pay 12.74 USDC from Sivan Balance]` button when a buyer's internal Sivan balance is sufficient, auto-debiting the ledger and funding the agreement in 1 second without on-chain deposit waiting times.
 - Impact: Delivers instant 1-second agreement settlement for users holding internal Sivan balances.
-- Deferral Rationale: Phase 1 Code Freeze Active. Service agreements currently settle via the x402 on-chain deposit protocol in Phase 1.
+- Status: ✅ IMPLEMENTED & VERIFIED (End-to-End Integration Test Passed)
 
 ---
 
