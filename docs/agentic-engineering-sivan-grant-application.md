@@ -46,8 +46,10 @@ Deadline:
 Proof of Work:
 
 Public Live Services and Endpoints:
+- Production Web App / Platform: https://app.sivantech.online
+- Production Ingress API Gateway (AWS): https://api.sivantech.online
+- Staging Ingress API Gateway: https://test-sivan.sivantech.online
 - Telegram Payment AI Agent: https://t.me/Sivan_Ai
-- Production API Gateway: https://test-sivan.sivantech.online
 - Core Payment Engine (sivan-payment): https://sivan-payments-api-test-x9xq.onrender.com/health
 - Service Agreement Backend (sivan-escrow-agent): https://sivan-escrow-agent-test-gb84.onrender.com/api/health
 - WhatsApp Payment AI Layer: https://whatsapp-bot-ix7t.onrender.com/api/health
@@ -113,7 +115,7 @@ Milestone 6: Bank Off-Ramping and Payout Onboarding
 
 Milestone 7: Public Production Launch and Demo Readiness
 - Status: Completed
-- Deliverable: Production deployment on custom domains, GitHub repositories merged to main, full unit test coverage, and demo readiness.
+- Deliverable: Production deployment on custom domains (https://app.sivantech.online and https://api.sivantech.online), GitHub repositories merged to main, full unit test coverage, and demo readiness.
 
 
 Primary KPI:
@@ -137,4 +139,4 @@ Secondary KPIs:
 - Personal X profile filled (x.com/samswitchy).
 - Shipping deadline filled (2026-08-31 23:59 UTC).
 - Active GitHub repository links included.
-- Production live endpoint links included.
+- Production live endpoint links included (https://app.sivantech.online & https://api.sivantech.online).
