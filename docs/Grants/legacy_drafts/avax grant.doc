@@ -1,0 +1,219 @@
+<html xmlns:o='urn:schemas-microsoft-com:office:office' 
+      xmlns:w='urn:schemas-microsoft-com:office:word' 
+      xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+  <meta charset="utf-8">
+  <title>Sivan Technologies - Avalanche Build Grant Application</title>
+  <!--[if gte mso 9]>
+  <xml>
+    <w:WordDocument>
+      <w:View>Print</w:View>
+      <w:Zoom>100</w:Zoom>
+      <w:DoNotOptimizeForBrowser/>
+    </w:WordDocument>
+  </xml>
+  <![endif]-->
+  <style>
+    body {
+      font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+      font-size: 11.5pt;
+      line-height: 1.6;
+      color: #2D3748;
+      margin: 1in;
+    }
+    h1 {
+      font-family: 'Segoe UI Semibold', Arial, sans-serif;
+      font-size: 22pt;
+      color: #0F172A;
+      border-bottom: 2px solid #E84142;
+      padding-bottom: 6px;
+      margin-top: 24pt;
+      margin-bottom: 12pt;
+    }
+    h2 {
+      font-family: 'Segoe UI Semibold', Arial, sans-serif;
+      font-size: 15pt;
+      color: #E84142;
+      margin-top: 20pt;
+      margin-bottom: 8pt;
+      border-bottom: 1px solid #E2E8F0;
+      padding-bottom: 4px;
+    }
+    h3 {
+      font-family: 'Segoe UI Semibold', Arial, sans-serif;
+      font-size: 12pt;
+      color: #1E293B;
+      margin-top: 14pt;
+      margin-bottom: 4pt;
+      font-weight: bold;
+    }
+    p {
+      margin-top: 0;
+      margin-bottom: 8pt;
+      text-align: justify;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10pt;
+      margin-bottom: 18pt;
+    }
+    th {
+      background-color: #F8FAFC;
+      color: #1E293B;
+      font-weight: bold;
+      text-align: left;
+      padding: 10px;
+      border: 1px solid #CBD5E1;
+    }
+    td {
+      padding: 10px;
+      border: 1px solid #CBD5E1;
+      vertical-align: top;
+    }
+    .label {
+      font-weight: bold;
+      color: #475569;
+      background-color: #F8FAFC;
+      width: 30%;
+    }
+    .value {
+      width: 70%;
+    }
+    .bullet-list {
+      margin-top: 0;
+      margin-bottom: 8pt;
+      padding-left: 20px;
+    }
+    .highlight-box {
+      background-color: #FFF5F5;
+      border-left: 4px solid #E84142;
+      padding: 12px;
+      margin-bottom: 12pt;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Avalanche Build Grant Application: Sivan Technologies</h1>
+  
+  <div class="highlight-box">
+    <strong>Project Summary:</strong> Sivan is a WhatsApp-based project and service coordination software platform. By integrating the Avalanche C-Chain, Sivan enables international buyers to fund service agreements in Avalanche USDC while local freelancers and service providers receive their settlements directly in local fiat (Naira) straight to their bank accounts. No wallet setup, no gas management—just WhatsApp.
+  </div>
+
+  <h2>1. General Project Details (Step 1)</h2>
+  <p>Basic identifiers, URLs, and social links matching your application configuration.</p>
+  
+  <table>
+    <tr>
+      <td class="label">Project name</td>
+      <td class="value">Sivan</td>
+    </tr>
+    <tr>
+      <td class="label">One-sentence description (max 280 characters)</td>
+      <td class="value">A WhatsApp-native service agreement platform enabling international clients to pay in Avalanche USDC while local freelancers receive payouts directly to their bank accounts, with zero wallet setup or gas complexity.</td>
+    </tr>
+    <tr>
+      <td class="label">Project URL</td>
+      <td class="value"><a href="https://sivantech.online">https://sivantech.online</a></td>
+    </tr>
+    <tr>
+      <td class="label">X (Twitter) Link</td>
+      <td class="value"><a href="https://x.com/sivan_Tech">https://x.com/sivan_Tech</a></td>
+    </tr>
+    <tr>
+      <td class="label">GitHub Link</td>
+      <td class="value"><a href="https://github.com/Samswitchy/sivan-escrow-agent">https://github.com/Samswitchy/sivan-escrow-agent</a></td>
+    </tr>
+    <tr>
+      <td class="label">Other links: Pitch deck</td>
+      <td class="value">
+        <strong>Label:</strong> Pitchdeck<br/>
+        <strong>URL:</strong> <a href="https://sivantech.online/docs/Sivan_Pitch_Deck.pdf">https://sivantech.online/docs/Sivan_Pitch_Deck.pdf</a>
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Project category</td>
+      <td class="value">DeFi</td>
+    </tr>
+    <tr>
+      <td class="label">Is this an existing project?</td>
+      <td class="value">Yes — existing project</td>
+    </tr>
+  </table>
+
+  <h2>2. Business & Technical Fit for Avalanche</h2>
+  <p>Detailed explanations of Sivan's architecture, problem alignment, and use of Avalanche rails.</p>
+
+  <table>
+    <tr>
+      <td class="label">Describe Sivan and what it does</td>
+      <td class="value">
+        Sivan Technologies is a software platform providing WhatsApp-based project and service coordination. Sivan allows digital creative freelancers, creators, and small businesses to organize service requests, document agreement terms, and coordinate payment tracking directly inside daily chat screens. 
+        Sivan is expanding to support native USDC settlements on the Avalanche C-Chain. This enables international buyers to fund service agreements securely in USDC, while local sellers receive local fiat currency (Naira) directly to their bank accounts, bypassing crypto exchanges and gas configuration.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">What is Sivan's target market and traction?</td>
+      <td class="value">
+        Sivan targets digital creative freelancers, small design agencies, creators, and social commerce merchants in emerging markets (primarily Nigeria/Africa) doing business with international clients. Sivan's local fiat service agreement layer is live in closed beta, having processed pilot transaction volumes, integrated WhatsApp Interactive templates, and gathered 500+ signups on the waitlist.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Why did you choose to build on Avalanche?</td>
+      <td class="value">
+        We chose the Avalanche C-Chain due to its sub-second transaction finality, ultra-low fees, and robust EVM compatibility. Since our users are digital freelancers and creative agencies executing micro-to-medium service contracts, high network gas fees and latency are major friction points. Avalanche allows us to execute on-chain contract agreements and automate payouts efficiently. Furthermore, we plan to evaluate custom Avalanche Subnets as we scale to support independent compliance controls.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">How does Sivan implement "Invisible Web3"?</td>
+      <td class="value">
+        Sivan coordinates the agreement lifecycle off-chain using a deterministic Express/Postgres backend and WhatsApp DM bot. When a buyer funds an agreement on Avalanche, the backend tracks the transaction and updates the status. The USDC is securely locked in a smart contract wrapper. Once the buyer verifies delivery, the contract releases the USDC, which is immediately routed to our regulated payout infrastructure partners (via Sivan's multicurrency engine) to credit the seller's bank account. Neither party needs to manage gas tokens or complex wallet keys.
+      </td>
+    </tr>
+  </table>
+
+  <h2>3. Application Details & Funding Requirements (Step 2)</h2>
+  <p>Detailed parameters and write-ups for the second page of the Avalanche Build grant form.</p>
+
+  <table>
+    <tr>
+      <td class="label">Requested Amount (USD)</td>
+      <td class="value"><strong>$5,000 USD</strong> (Whole dollars, maximum $10,000 USD)</td>
+    </tr>
+    <tr>
+      <td class="label">Summary</td>
+      <td class="value">
+        Sivan is a WhatsApp-based project and service coordination platform. We are integrating the Avalanche C-Chain to enable international buyers to fund service agreements in Avalanche USDC, while local creative freelancers receive their payouts directly to their bank accounts in local fiat (Naira)—with zero gas or wallet onboarding friction. The grant funding will be utilized to design, audit, and deploy our Solidity service-agreement contract wrappers on the Avalanche C-Chain, integrate Fuji/Mainnet transaction monitoring, and cover initial Twilio WhatsApp Interactive Template API costs.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Milestones</td>
+      <td class="value">
+        1. <strong>Smart Contract Deployment (Fuji Testnet):</strong> Write and deploy Sivan’s Solidity service agreement wrappers on Fuji Testnet; integrate C-Chain block checking and transaction event listeners into Node.js backend.<br/>
+        2. <strong>Mainnet Deployment & Gas Sponsorship:</strong> Deploy smart contracts to Avalanche C-Chain mainnet; enable native/bridged Avalanche USDC as base asset; integrate gas sponsorship/sponsorship wallets to abstract network fees.<br/>
+        3. <strong>Fiat Off-Ramp API Bridge:</strong> Connect Sivan's multicurrency engine to regional payout gateway APIs for real-time Avalanche USDC-to-Naira conversion and local bank settlement.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Why You Deserve a Grant</td>
+      <td class="value">
+        Sivan solves a massive trust barrier for freelancers and creators in emerging markets (primarily Nigeria/Africa) who face up to 30% order refuse waste and payment friction from international clients. By using WhatsApp—the region's primary business channel with 50M+ active users—we make Web3 and Avalanche USDC utility completely accessible to daily service providers who have never interacted with crypto. We are a great fit because we already have a fully functioning, double-entry Naira ledger MVP live in production with a 500+ waitlist, meaning we are ready to build, integrate, and deploy on Avalanche immediately. The grant will accelerate our timeline and subsidize initial pilot user fees.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Additional Link</td>
+      <td class="value"><a href="https://sivantech.online/docs/Sivan_Pitch_Deck.pdf">https://sivantech.online/docs/Sivan_Pitch_Deck.pdf</a> (Supporting Pitch Deck)</td>
+    </tr>
+    <tr>
+      <td class="label">X Profile</td>
+      <td class="value">https://x.com/sivan_Tech</td>
+    </tr>
+    <tr>
+      <td class="label">Telegram</td>
+      <td class="value">airspexta</td>
+    </tr>
+  </table>
+
+</body>
+</html>

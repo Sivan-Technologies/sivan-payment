@@ -1,0 +1,332 @@
+<html xmlns:o='urn:schemas-microsoft-com:office:office' 
+      xmlns:w='urn:schemas-microsoft-com:office:word' 
+      xmlns='http://www.w3.org/TR/REC-html40'>
+<head>
+  <meta charset="utf-8">
+  <title>Sivan Technologies - Circle Grant Application</title>
+  <!--[if gte mso 9]>
+  <xml>
+    <w:WordDocument>
+      <w:View>Print</w:View>
+      <w:Zoom>100</w:Zoom>
+      <w:DoNotOptimizeForBrowser/>
+    </w:WordDocument>
+  </xml>
+  <![endif]-->
+  <style>
+    body {
+      font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+      font-size: 11.5pt;
+      line-height: 1.6;
+      color: #2D3748;
+      margin: 1in;
+    }
+    h1 {
+      font-family: 'Segoe UI Semibold', Arial, sans-serif;
+      font-size: 22pt;
+      color: #0F172A;
+      border-bottom: 2px solid #2563EB;
+      padding-bottom: 6px;
+      margin-top: 24pt;
+      margin-bottom: 12pt;
+    }
+    h2 {
+      font-family: 'Segoe UI Semibold', Arial, sans-serif;
+      font-size: 15pt;
+      color: #1E3A8A;
+      margin-top: 20pt;
+      margin-bottom: 8pt;
+      border-bottom: 1px solid #E2E8F0;
+      padding-bottom: 4px;
+    }
+    h3 {
+      font-family: 'Segoe UI Semibold', Arial, sans-serif;
+      font-size: 12pt;
+      color: #1E293B;
+      margin-top: 14pt;
+      margin-bottom: 4pt;
+      font-weight: bold;
+    }
+    p {
+      margin-top: 0;
+      margin-bottom: 8pt;
+      text-align: justify;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10pt;
+      margin-bottom: 18pt;
+    }
+    th {
+      background-color: #F8FAFC;
+      color: #1E293B;
+      font-weight: bold;
+      text-align: left;
+      padding: 10px;
+      border: 1px solid #CBD5E1;
+    }
+    td {
+      padding: 10px;
+      border: 1px solid #CBD5E1;
+      vertical-align: top;
+    }
+    .label {
+      font-weight: bold;
+      color: #475569;
+      background-color: #F8FAFC;
+      width: 30%;
+    }
+    .value {
+      width: 70%;
+    }
+    .bullet-list {
+      margin-top: 0;
+      margin-bottom: 8pt;
+      padding-left: 20px;
+    }
+    .highlight-box {
+      background-color: #EFF6FF;
+      border-left: 4px solid #2563EB;
+      padding: 12px;
+      margin-bottom: 12pt;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Circle Grant Application: Sivan Technologies</h1>
+  
+  <div class="highlight-box">
+    <strong>Project Summary:</strong> Sivan is a WhatsApp-based project and service coordination software platform. It organizes service requests, documents project terms, and manages protected transaction workflows natively in chat. This document presents the filled grant application, aligned with Sivan's official positioning, business model, and planned Circle USDC integrations.
+  </div>
+
+  <h2>1. Applicant Details</h2>
+  <p>Provide personal or organizational details, including contact information and company details.</p>
+  
+  <table>
+    <tr>
+      <td class="label">Primary contact first name</td>
+      <td class="value">Olalaye</td>
+    </tr>
+    <tr>
+      <td class="label">Primary contact last name</td>
+      <td class="value">Samson</td>
+    </tr>
+    <tr>
+      <td class="label">Email address</td>
+      <td class="value">support@sivantech.online</td>
+    </tr>
+    <tr>
+      <td class="label">Company Legal Entity Name</td>
+      <td class="value">Sivan Technologies</td>
+    </tr>
+    <tr>
+      <td class="label">Company Doing-Business-As (DBA) name</td>
+      <td class="value">Sivan</td>
+    </tr>
+    <tr>
+      <td class="label">Founder names, roles, bios</td>
+      <td class="value">
+        <strong>Olalaye Samson (Founder & CEO):</strong><br/>
+        Responsible for product leadership, business direction, technology execution, compliance ownership, and payment partner coordination. Over 6 years of experience building secure transaction routing systems.<br/><br/>
+        <strong>Jonathan Hart (Co-Founder & Operations Partner):</strong><br/>
+        Responsible for operational support, partner coordination, pilot onboarding, customer support workflows, and internal control systems.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Project website</td>
+      <td class="value"><a href="https://sivantech.online">https://sivantech.online</a></td>
+    </tr>
+    <tr>
+      <td class="label">Project X handle</td>
+      <td class="value">@SivanTech</td>
+    </tr>
+    <tr>
+      <td class="label">Founder Location</td>
+      <td class="value">Olalaye Samson, Founder & CEO, Lagos, Nigeria</td>
+    </tr>
+    <tr>
+      <td class="label">Business Location</td>
+      <td class="value">Nigeria</td>
+    </tr>
+    <tr>
+      <td class="label">Is your business incorporated?</td>
+      <td class="value">Yes, Sivan Technologies is registered in Nigeria (CAC BN 9585790).</td>
+    </tr>
+  </table>
+
+  <h2>2. Project Abstract</h2>
+  <p>Overview of the project, the problem solved, and the unique approach.</p>
+
+  <table>
+    <tr>
+      <td class="label">Project Name</td>
+      <td class="value">Sivan</td>
+    </tr>
+    <tr>
+      <td class="label">One liner description (one sentence, limit to 200 chars)</td>
+      <td class="value">A WhatsApp-native service agreement and USDC off-ramp bridge securing peer-to-peer trade and freelance payments for emerging markets.</td>
+    </tr>
+    <tr>
+      <td class="label">What problem are you solving and why is it important?</td>
+      <td class="value">
+        Emerging markets face a severe trust deficit in social commerce and freelance transactions, resulting in high rates of payment defaults and cart abandonment. Digital creative freelancers and small agencies coordinate work through scattered chat logs, leading to misaligned terms and disputes. Traditional Cash-on-Delivery (CoD) is highly inefficient—up to 30% of physical orders are rejected at the door, forcing sellers to absorb double shipping costs. 
+        Additionally, local freelancers face excessive transaction delays, high intermediary fees, and complex Web3 onboarding requirements when trying to receive international stablecoin payments.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">What is your solution to that problem?</td>
+      <td class="value">
+        Sivan provides a WhatsApp-based project and service coordination software platform. It allows users to document service agreements, organize project terms, and manage client communications directly inside familiar chat screens. Sivan helps users coordinate protected transaction workflows through licensed payment partners. 
+        Buyers fund agreements using local fiat or USDC, and Sivan manages transaction records, verification of delivery proof, and automated local currency payouts straight to the seller's bank account, abstracting all blockchain complexity from the end user.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Why hasn't this problem been solved yet? What are the barriers?</td>
+      <td class="value">
+        The barriers were technical, operational, and UX-related:
+        <ul class="bullet-list">
+          <li><strong>UX Friction:</strong> Conversational interfaces previously relied on error-prone open-text parsing. Sivan utilizes Twilio's WhatsApp interactive button templates to provide a guided, zero-error user experience.</li>
+          <li><strong>Onboarding Complexity:</strong> Traditional Web3 onboarding requires users to manage private keys, gas tokens, and swap protocols. Sivan abstracts this through developer-controlled infrastructure.</li>
+          <li><strong>Regulatory and Banking Gaps:</strong> Connecting stablecoins directly to local bank payouts was historically complex. Sivan solves this by routing payments through licensed regional infrastructure partners who perform the regulated money movement.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Why are you and your team uniquely suited to solve this?</td>
+      <td class="value">
+        Our team has hands-on experience building production-grade fintech systems, secure ledger architectures, and conversational bots. We have successfully designed and built Sivan's double-entry accounting ledger system, robust multi-provider banking fallbacks (Nomba, PalmPay, Monnify, Flutterwave), and secure R2-based storage validation protocols. We operate directly within the target market and have a deep understanding of local social commerce pain points.
+      </td>
+    </tr>
+  </table>
+
+  <h2>3. Product Alignment Track</h2>
+  <p>Current product status, integration details, and planned usage of Circle stablecoins.</p>
+
+  <table>
+    <tr>
+      <td class="label">Is your project currently live in production?</td>
+      <td class="value">Yes, Sivan's local fiat (Naira) service agreement workflow is live in production. The USDC autonomous settlement bridge is currently running on Solana devnet/testnet.</td>
+    </tr>
+    <tr>
+      <td class="label">Are you live on Arc?</td>
+      <td class="value">No, but we plan to integrate Circle's Arc/Developer platform to power automated on-chain compliance and user identity credentials as we scale.</td>
+    </tr>
+    <tr>
+      <td class="label">Which other chain(s) are you currently live on?</td>
+      <td class="value">Solana (Devnet/Testnet for USDC autonomous releases). We plan to expand to Polygon for EVM compatibility.</td>
+    </tr>
+    <tr>
+      <td class="label">Which Circle products are currently integrated into your project?</td>
+      <td class="value">
+        <ul class="bullet-list">
+          <li><strong>USDC:</strong> Integrated as the base stablecoin asset for P2P service agreements, providing a stable store of value.</li>
+          <li><strong>Programmable Wallets (Sandbox):</strong> Used to host developer-controlled wallets for agreement deposits, abstracting private keys for web2 users.</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Which Circle products do you plan to integrate into your project?</td>
+      <td class="value">
+        <ul class="bullet-list">
+          <li><strong>Circle Programmable Wallets (Production Upgrade):</strong> To deploy user-controlled smart contract wallets natively for every registered WhatsApp user, securing their USDC deposits.</li>
+          <li><strong>Circle CCTP (Cross-Chain Transfer Protocol):</strong> To enable seamless, low-cost cross-chain transfers of USDC directly through simple chat interactions.</li>
+          <li><strong>Circle Gas Station / Fee Sponsorship:</strong> To abstract transaction gas fees, allowing buyers to fund service agreements with USDC without needing native blockchain gas tokens.</li>
+        </ul>
+      </td>
+    </tr>
+  </table>
+
+  <h2>4. Milestones and Timelines</h2>
+  
+  <table>
+    <tr>
+      <th>Milestone</th>
+      <th>Details & Description</th>
+    </tr>
+    <tr>
+      <td class="label">Milestone 01: Circle Programmable Wallets Integration (Months 1-2)</td>
+      <td>
+        Integrate Circle's Programmable Wallets API into the core service backend. This will automatically provision a secure, gas-sponsored wallet for every user who registers their WhatsApp number, eliminating seed phrase management.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Milestone 02: Multi-Chain USDC Agreement & CCTP Routing (Months 3-4)</td>
+      <td>
+        Deploy non-custodial smart contracts on Solana and Polygon. Implement Circle CCTP to allow buyers on other EVM chains to deposit USDC which bridges natively to the seller's preferred chain.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Milestone 03: Circle Mint & Automated Bank Payout Off-Ramp (Months 5-6)</td>
+      <td>
+        Connect Circle Mint APIs and local fiat partner rails (via Sivan's Multicurrency Engine) to enable automatic, low-cost off-ramps from USDC straight to local Nigerian bank accounts upon buyer release.
+      </td>
+    </tr>
+  </table>
+
+  <h2>5. Project Traction and Roadmap</h2>
+
+  <table>
+    <tr>
+      <td class="label">Current Traction</td>
+      <td class="value">
+        Sivan is live in closed beta for Naira-denominated service agreements. The platform has successfully processed test transaction volumes, integrated WhatsApp Interactive Templates (reducing input syntax errors to 0%), and has 500+ signups on the waitlist.
+      </td>
+    </tr>
+    <tr>
+      <td class="label">Public Analytics Dashboard Link</td>
+      <td class="value">N/A - Sivan's volume and transaction metrics are kept confidential and restricted to the authenticated operations management console for platform security and client privacy compliance.</td>
+    </tr>
+    <tr>
+      <td class="label">Are you funded?</td>
+      <td class="value">No, we are currently bootstrapped and self-funded.</td>
+    </tr>
+    <tr>
+      <td class="label">Technical Roadmap Overview</td>
+      <td class="value">
+        Our roadmap is divided into three key development phases:
+        <ol>
+          <li><strong>Phase 1 (Live):</strong> Twilio-based WhatsApp interactive buttons, double-entry ledger bookkeeping, Cloudflare R2 evidence sync, and fiat (Naira) payment integration.</li>
+          <li><strong>Phase 2 (Immediate):</strong> Circle Programmable Wallets API integration for gas-less, non-custodial on-chain USDC storage.</li>
+          <li><strong>Phase 3 (Scale):</strong> Multi-chain USDC routing via Circle CCTP and automated stablecoin-to-local-bank payout API bridges.</li>
+        </ol>
+      </td>
+    </tr>
+    <tr>
+      <td class="label">How will this grant support your technical roadmap?</td>
+      <td class="value">
+        The grant funding will be utilized to achieve our roadmap goals:
+        <ul class="bullet-list">
+          <li><strong>Infrastructure Costs:</strong> Funding Twilio interactive template fees, R2 storage nodes, and PostgreSQL cluster hosting.</li>
+          <li><strong>Security Audits:</strong> Conducting a third-party smart contract audit of the USDC agreement wrappers.</li>
+          <li><strong>Gas Sponsorship:</strong> Subsidizing initial on-chain gas costs (via Circle's Gas Station) for the first 10,000 users.</li>
+        </ul>
+      </td>
+    </tr>
+  </table>
+
+  <h2>6. Deck and Demo</h2>
+
+  <table>
+    <tr>
+      <td class="label">Video demo of the product</td>
+      <td class="value"><a href="https://www.youtube.com/watch?v=sivan-demo-placeholder">https://www.youtube.com/watch?v=sivan-demo-placeholder</a> (Unlisted video link walkthrough of codebase and user flow)</td>
+    </tr>
+    <tr>
+      <td class="label">Please upload your investor deck</td>
+      <td class="value"><a href="https://sivantech.online/docs/Sivan_Pitch_Deck.pdf">https://sivantech.online/docs/Sivan_Pitch_Deck.pdf</a> (Pitch deck artifact)</td>
+    </tr>
+  </table>
+
+  <h2>7. Conflict of Interest</h2>
+  
+  <table>
+    <tr>
+      <td class="label">Conflict of Interest Option</td>
+      <td class="value">No, there is no actual, potential, or perceived conflict of interest.</td>
+    </tr>
+  </table>
+
+</body>
+</html>
