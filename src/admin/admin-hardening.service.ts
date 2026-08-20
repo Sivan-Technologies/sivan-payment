@@ -182,9 +182,12 @@ export async function getSettlementReconciliation() {
   ];
 
   const completedWithdrawals = withdrawalsList.filter((item) => ['completed', 'settled', 'success'].includes(item.status));
-  const completedOnramps = (data.onrampOrders ?? []).filter((item) => ['completed', 'settled', 'success'].includes(item.status));
+  const completedOnramps = [
+    ...(data.onrampOrders ?? []),
+    ...((data as any).virtualAccountTransactions ?? []),
+  ].filter((item) => ['completed', 'settled', 'success'].includes(item.status));
   const offrampGross = completedWithdrawals.reduce((sum, item) => sum + Number(item.destinationAmount ?? item.sourceAmount ?? item.amount ?? 0) + Number(item.feeAmount ?? 0), 0);
-  const onrampGross = completedOnramps.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+  const onrampGross = completedOnramps.reduce((sum, item) => sum + Number(item.amount ?? item.grossAmount ?? 0), 0);
   const sivanFees = completedWithdrawals.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0) + completedOnramps.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0);
   const providerCostEstimate = offrampGross * (fees.bridgeOfframpCostPercent / 100);
 
@@ -480,7 +483,8 @@ export async function getBusinessKpis() {
     ...data.withdrawals,
     ...((data as any).ngnWithdrawals ?? []),
     ...((data as any).balanceTransfers ?? []),
-    ...(data.onrampOrders ?? [])
+    ...(data.onrampOrders ?? []),
+    ...((data as any).virtualAccountTransactions ?? []),
   ];
   const monthlyTransactions = allTransactions.filter((item: any) => inMonth(item.createdAt) || inMonth(item.updatedAt) || inMonth(item.completedAt));
   const monthlyUserIds = new Set<string>();
@@ -490,11 +494,11 @@ export async function getBusinessKpis() {
   for (const item of data.supportTickets ?? []) if (inMonth(item.createdAt) || inMonth(item.updatedAt)) monthlyUserIds.add(item.userId);
 
   const completedWithdrawals = [...data.withdrawals, ...((data as any).ngnWithdrawals ?? []), ...((data as any).balanceTransfers ?? [])].filter((item) => ['completed', 'settled', 'success'].includes(item.status));
-  const completedOnramps = (data.onrampOrders ?? []).filter((item) => ['completed', 'settled', 'success'].includes(item.status));
+  const completedOnramps = [...(data.onrampOrders ?? []), ...((data as any).virtualAccountTransactions ?? [])].filter((item) => ['completed', 'settled', 'success'].includes(item.status));
   const monthlyCompletedWithdrawals = completedWithdrawals.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
   const monthlyCompletedOnramps = completedOnramps.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
   const monthlyWithdrawalVolume = monthlyCompletedWithdrawals.reduce((sum, item) => sum + Number(item.destinationAmount ?? item.sourceAmount ?? item.amount ?? 0) + Number(item.feeAmount ?? 0), 0);
-  const monthlyOnrampVolume = monthlyCompletedOnramps.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+  const monthlyOnrampVolume = monthlyCompletedOnramps.reduce((sum, item) => sum + Number(item.amount ?? item.grossAmount ?? 0), 0);
   const payoutDurations = completedWithdrawals
     .map((item) => item.completedAt ? new Date(item.completedAt).getTime() - new Date(item.createdAt).getTime() : 0)
     .filter((value) => Number.isFinite(value) && value > 0);
