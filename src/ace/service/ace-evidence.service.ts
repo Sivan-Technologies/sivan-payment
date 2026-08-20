@@ -59,6 +59,7 @@ export async function buildAceEvidence(input: { userId?: string; message: string
   const providerHealth = deriveProviderHealth(transaction?.record?.provider, relevantIncidents);
   const currentStep = timeline?.steps.find((step) => step.status === 'current') ?? [...(timeline?.steps ?? [])].reverse().find((step) => step.status === 'completed');
   const providerReference = transaction ? providerReferenceFor(transaction.kind, transaction.record, trace) : undefined;
+  const payoutDestination = transaction ? payoutDestinationFor(transaction.kind, transaction.record, data) : undefined;
   const evidenceItems: AceEvidenceItem[] = [
     ...(user ? [{ source: 'user.id', label: 'User ID', value: user.id, customerSafe: false }, { source: 'user.email', label: 'User email', value: user.email, customerSafe: false }] : []),
     ...(customer ? [{ source: 'customer.kycStatus', label: 'KYC status', value: customer.kycStatus, customerSafe: true }] : []),
@@ -99,7 +100,25 @@ export async function buildAceEvidence(input: { userId?: string; message: string
       { source: 'transaction.provider', label: 'Provider', value: transaction.record.provider, customerSafe: true },
       { source: 'transaction.providerReference', label: 'Provider reference', value: providerReference, customerSafe: true },
       { source: 'transaction.explanation', label: 'Explanation', value: timeline?.explanation, customerSafe: true },
-      { source: 'timeline.currentStage', label: 'Current stage', value: currentStep?.label, customerSafe: true }
+      { source: 'timeline.currentStage', label: 'Current stage', value: currentStep?.label, customerSafe: true },
+      /**
+       * The destination, itemised so the model can actually use it.
+       *
+       * evidenceItems is the ONLY thing shipped to Sivan AI - typed bundle
+       * fields are for local composition. A destination present on the bundle
+       * but absent here would be invisible to the model, which is exactly how
+       * verification data was silently unusable before d5f5664.
+       *
+       * Already masked by payoutDestinationFor(); nothing here re-derives it
+       * from the raw record.
+       */
+      ...(payoutDestination?.bankName || payoutDestination?.accountLast4 ? [{
+        source: 'transaction.payoutDestination',
+        label: 'Paid to',
+        value: [payoutDestination.bankName, payoutDestination.accountLast4 ? `ending ${payoutDestination.accountLast4}` : undefined, payoutDestination.accountName]
+          .filter(Boolean).join(' · '),
+        customerSafe: true,
+      }] : []),
     ] : []),
     ...relevantIncidents.map((incident) => ({ source: 'incident.active', label: 'Incident', value: `${incident.provider}: ${incident.message}`, customerSafe: true, metadata: { eta: incident.eta, severity: incident.severity } })),
     { source: 'webhooks.count', label: 'Webhook count', value: webhooks.length, customerSafe: Boolean(input.admin) },
@@ -128,7 +147,7 @@ export async function buildAceEvidence(input: { userId?: string; message: string
         ? { label: verification.nextStep.label, description: verification.nextStep.description, available: verification.nextStep.available }
         : undefined,
     } : undefined,
-    transaction: transaction ? { id: transaction.record.id, type: transaction.kind, status: transaction.record.status, explanation: timeline?.explanation, amount: amountFor(transaction.kind, transaction.record), currency: currencyFor(transaction.kind, transaction.record), provider: transaction.record.provider, providerReference } : undefined,
+    transaction: transaction ? { id: transaction.record.id, type: transaction.kind, status: transaction.record.status, explanation: timeline?.explanation, amount: amountFor(transaction.kind, transaction.record), currency: currencyFor(transaction.kind, transaction.record), provider: transaction.record.provider, providerReference, payoutDestination } : undefined,
     timeline: timeline?.steps ?? [],
     trace: input.admin ? trace : trace.map(({ metadata, ...item }) => item),
     incidents: relevantIncidents,
@@ -189,6 +208,35 @@ function findTransaction(data: any, input: { userId?: string; resourceType: AceR
    * the one path I did not cover. Every declared type now has a branch, and the
    * fallthrough is reachable only by transaction_lookup.
    */
+  /**
+   * A CRYPTO SEND. Stored as audit-log metadata, not a table.
+   *
+   * listUserBalanceTransfers() folds the TRANSFER_EVENTS audit trail into one
+   * row per transferId, so the same shape is rebuilt here rather than reading
+   * a collection that does not exist. Matching the service keeps one
+   * definition of "what a transfer looks like".
+   */
+  if (input.resourceType === 'balance_transfer') {
+    const rows = balanceTransferRows(data).filter((item: any) => !input.userId || item.userId === input.userId);
+    const record = input.resourceId
+      ? rows.find((item: any) => item.id === input.resourceId)
+      : rows.sort(descCreated)[0];
+    return record ? { kind: 'balance_transfer' as const, record } : undefined;
+  }
+  if (input.resourceType === 'supplier_payment') {
+    const rows = (data.supplierPayments ?? []).filter((item: any) => !input.userId || item.userId === input.userId);
+    const record = input.resourceId
+      ? rows.find((item: any) => item.id === input.resourceId)
+      : rows.sort(descCreated)[0];
+    return record ? { kind: 'supplier_payment' as const, record } : undefined;
+  }
+  if (input.resourceType === 'wallet_deposit') {
+    const rows = (data.walletDeposits ?? []).filter((item: any) => !input.userId || item.userId === input.userId);
+    const record = input.resourceId
+      ? rows.find((item: any) => item.id === input.resourceId)
+      : rows.sort(descCreated)[0];
+    return record ? { kind: 'wallet_deposit' as const, record } : undefined;
+  }
   if (input.resourceType === 'virtual_account_transaction') {
     const rows = (data.virtualAccountTransactions ?? []).filter((item: any) => !input.userId || item.userId === input.userId);
     const record = input.resourceId
@@ -207,6 +255,14 @@ function findTransaction(data: any, input: { userId?: string; resourceType: AceR
     { kind: 'withdrawal' as const, record: mine(data.withdrawals).sort(descCreated)[0] },
     { kind: 'onramp_order' as const, record: mine(data.onrampOrders).sort(descCreated)[0] },
     { kind: 'ngn_transfer' as const, record: mine(data.ngnTransfers).sort(descCreated)[0] },
+    /**
+     * The three kinds that used to be invisible here too. A user whose most
+     * recent activity was a crypto send would be told about an older naira
+     * payout instead - right question, wrong transaction.
+     */
+    { kind: 'balance_transfer' as const, record: mine(balanceTransferRows(data)).sort(descCreated)[0] },
+    { kind: 'supplier_payment' as const, record: mine(data.supplierPayments).sort(descCreated)[0] },
+    { kind: 'wallet_deposit' as const, record: mine(data.walletDeposits).sort(descCreated)[0] },
   ].filter((item) => Boolean(item.record));
   if (!candidates.length) return undefined;
   return candidates.sort((a, b) => descCreated(a.record, b.record))[0];
@@ -254,6 +310,13 @@ function deriveProviderHealth(provider?: string, incidents: any[] = []) {
 function providerReferenceFor(kind: string, record: any, trace: any[]) {
   /** Breet's own ids, in the order a support agent would quote them. */
   if (kind === 'ngn_transfer') return record.settlementReference ?? record.providerTransferId ?? record.bankReference;
+  /**
+   * For on-chain rows the reference a user can actually look up is the hash.
+   * A sponsored send has a userOperationHash before it has a txHash, so both
+   * are offered in the order they become available.
+   */
+  if (kind === 'balance_transfer') return record.txHash ?? record.userOperationHash ?? record.providerTransferId;
+  if (kind === 'wallet_deposit') return record.txHash;
   if (kind === 'withdrawal') return record.providerDrainId ?? record.destinationReference ?? trace.find((item) => ['bridge_drain_id', 'destination_reference'].includes(item.referenceType))?.referenceValue;
   return record.providerTransferId ?? record.providerReference ?? trace.find((item) => ['provider_transfer_id', 'provider_reference'].includes(item.referenceType))?.referenceValue;
 }
@@ -263,14 +326,112 @@ function providerReferenceFor(kind: string, record: any, trace: any[]) {
  * payout reported an undefined amount - the record was found and then
  * described as having no value.
  */
+/**
+ * Crypto sends, rebuilt from the audit trail.
+ *
+ * There is no balanceTransfers collection - balance.service.ts derives them by
+ * folding TRANSFER_EVENTS audit logs down to the latest state per transferId.
+ * Reproduced here (read-only) so the assistant sees exactly what the
+ * Transactions page sees. `id` is aliased from transferId because every other
+ * record type in this file identifies itself with `id`, and the callers above
+ * are written against that.
+ */
+const TRANSFER_AUDIT_EVENTS = [
+  'balance.transfer_requested',
+  'balance.transfer_submitted',
+  'balance.transfer_completed',
+  'balance.transfer_failed',
+  'balance.transfer_rejected',
+  'balance.transfer_approved',
+  'balance.transfer_cancelled',
+];
+
+function balanceTransferRows(data: any): any[] {
+  const events = (data.auditLogs ?? [])
+    .filter((log: any) => TRANSFER_AUDIT_EVENTS.includes(log.action))
+    .map((log: any) => ({ log, transfer: log.metadata }))
+    .filter((item: any) => item.transfer?.transferId)
+    .sort((a: any, b: any) => String(a.log.createdAt).localeCompare(String(b.log.createdAt)));
+
+  const latest = new Map<string, any>();
+  for (const event of events) {
+    const existing = latest.get(event.transfer.transferId);
+    latest.set(event.transfer.transferId, {
+      ...event.transfer,
+      id: event.transfer.transferId,
+      // The ORIGINAL request time, not the last time an operator touched it -
+      // that is the timestamp a user recognises.
+      createdAt: existing?.createdAt ?? event.transfer.createdAt ?? event.log.createdAt,
+      updatedAt: event.transfer.updatedAt ?? event.log.createdAt,
+    });
+  }
+  return [...latest.values()];
+}
+
+/**
+ * Where a fiat payout landed - MASKED before it leaves this function.
+ *
+ * Only the last four digits of the account number, because the returned object
+ * is itemised into evidenceItems and shipped to an external model. A full
+ * NUBAN beside an account name is a social-engineering kit; the last four is
+ * what a user needs to recognise their own account.
+ *
+ * NGN payouts resolve through ngnPayoutAccounts, foreign ones through
+ * externalAccounts, and each is matched by the id the transaction actually
+ * carries rather than by "the user's first account" - three orders can share
+ * one user and go to three different banks.
+ */
+function payoutDestinationFor(kind: string, record: any, data: any) {
+  const mask = (value?: string) => {
+    const digits = String(value ?? '').replace(/\D/g, '');
+    return digits.length >= 4 ? digits.slice(-4) : undefined;
+  };
+
+  if (kind === 'ngn_transfer') {
+    const accountId = record?.metadata?.transferMetadata?.payoutAccountId
+      ?? record?.metadata?.quoteMetadata?.payoutAccountId
+      ?? record?.payoutAccountId;
+    const account = (data.ngnPayoutAccounts ?? []).find((item: any) => item.id === accountId)
+      // Fall back to the user's single verified account ONLY when there is
+      // exactly one - with several, naming the wrong bank is worse than
+      // naming none.
+      ?? ((rows: any[]) => (rows.length === 1 ? rows[0] : undefined))(
+        (data.ngnPayoutAccounts ?? []).filter((item: any) => item.userId === record.userId && item.status === 'verified')
+      );
+    if (!account) return undefined;
+    return { bankName: account.bankName, accountLast4: mask(account.accountNumber), accountName: account.accountName };
+  }
+
+  if (kind === 'withdrawal' || kind === 'supplier_payment') {
+    const account = (data.externalAccounts ?? []).find((item: any) => item.id === record?.externalAccountId);
+    if (!account) return undefined;
+    return {
+      bankName: account.bankName,
+      accountLast4: account.accountLast4 ? mask(account.accountLast4) ?? account.accountLast4 : undefined,
+      accountName: account.accountName ?? account.accountOwnerName,
+    };
+  }
+
+  return undefined;
+}
+
 function amountFor(kind: string, record: any) {
   if (kind === 'withdrawal' || kind === 'ngn_transfer') return record.destinationAmount ?? record.sourceAmount;
+  /**
+   * A supplier payment's `amount` is the GROSS debited, but what the user
+   * cares about - and what the supplier receives - is netAmount. Reported as
+   * the invoice figure, with the gross available in the ledger.
+   */
+  if (kind === 'supplier_payment') return record.netAmount ?? record.amount;
   return record.amount;
 }
 function currencyFor(kind: string, record: any) {
   if (kind === 'withdrawal' || kind === 'ngn_transfer') return record.destinationCurrency?.toUpperCase?.();
   /** A virtual-account deposit carries plain `currency`, not sourceCurrency. */
   if (kind === 'virtual_account_transaction') return record.currency?.toUpperCase?.();
+  /** Crypto moves an ASSET, so the asset IS the currency for these two. */
+  if (kind === 'balance_transfer' || kind === 'wallet_deposit') return record.asset?.toUpperCase?.();
+  if (kind === 'supplier_payment') return record.destinationCurrency?.toUpperCase?.();
   return record.sourceCurrency?.toUpperCase?.();
 }
 function descCreated(a: any, b: any) { return String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')); }

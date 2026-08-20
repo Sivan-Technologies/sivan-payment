@@ -19,6 +19,20 @@ export type AceResourceType =
   | 'onramp_order'
   | 'ngn_transfer'
   | 'virtual_account_transaction'
+  /**
+   * THE THREE KINDS THE ACTIVITY FEED SHOWS BUT ACE COULD NOT ANSWER.
+   *
+   * activityFeed.ts emits seven kinds; this union carried four. So a user who
+   * opened a crypto send, a supplier payout or a wallet deposit and asked
+   * about it got "I could not find that reference" - a worse outcome than no
+   * button at all, because it reads as "your transaction is missing".
+   *
+   * Named to match the feed's own `kind` strings so the frontend can pass
+   * `row.kind` straight through without a translation table that would drift.
+   */
+  | 'balance_transfer'
+  | 'supplier_payment'
+  | 'wallet_deposit'
   | 'transaction_lookup'
   | 'general';
 
@@ -39,7 +53,7 @@ export type AceConfidence = 'high' | 'medium' | 'low';
 
 export const aceSupportRequestSchema = z.object({
   message: z.string().min(1).max(2000),
-  resourceType: z.enum(['withdrawal', 'onramp_order', 'ngn_transfer', 'virtual_account_transaction', 'transaction_lookup', 'general']).optional().default('general'),
+  resourceType: z.enum(['withdrawal', 'onramp_order', 'ngn_transfer', 'virtual_account_transaction', 'balance_transfer', 'supplier_payment', 'wallet_deposit', 'transaction_lookup', 'general']).optional().default('general'),
   resourceId: z.string().optional(),
   channel: z.enum(['web_dashboard', 'admin_hub', 'whatsapp', 'api', 'telegram']).optional().default('web_dashboard')
 });
@@ -90,13 +104,33 @@ export interface AceEvidenceBundle {
   };
   transaction?: {
     id: string;
-    type: 'withdrawal' | 'onramp_order' | 'ngn_transfer' | 'virtual_account_transaction';
+    type: 'withdrawal' | 'onramp_order' | 'ngn_transfer' | 'virtual_account_transaction' | 'balance_transfer' | 'supplier_payment' | 'wallet_deposit';
     status: string;
     explanation?: string;
     amount?: string;
     currency?: string;
     provider?: string;
     providerReference?: string;
+    /**
+     * WHERE THE MONEY WENT, MASKED.
+     *
+     * "Which account was I paid into" is the single most common question about
+     * a completed payout, and the assistant could not answer it - the bundle
+     * carried no destination at all.
+     *
+     * The account number is MASKED to the last four digits before it ever
+     * enters this object, because evidenceItems is shipped to an external
+     * model. A full NUBAN plus an account name is enough to attempt a social
+     * engineering call against the user's bank; the last four is enough for
+     * the user to recognise their own account, which is all this needs to do.
+     * The unmasked value stays server-side and is rendered by the UI from
+     * Sivan's own API.
+     */
+    payoutDestination?: {
+      bankName?: string;
+      accountLast4?: string;
+      accountName?: string;
+    };
   };
   timeline: any[];
   trace: any[];

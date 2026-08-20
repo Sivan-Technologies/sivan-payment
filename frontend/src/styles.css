@@ -3514,3 +3514,52 @@ textarea:focus-visible,
   .premium-landing .quote-fees span,
   .premium-landing .quote-widget small { font-size: 12px; }
 }
+
+/* ── Ask Sivan, inline in the transaction panel ─────────────────────────────
+   The bubbles, chips and composer are the SAME classes the Support drawer
+   uses, so the two cannot drift apart visually. Only the container differs:
+   the drawer is a fixed-height overlay with its own scroll region, this one
+   grows in place inside a panel that already scrolls.
+
+   Deliberately not a floating chat window. The question is almost always
+   about the timeline directly above it, and covering the evidence to ask
+   about the evidence is backwards - so the thread appears under the steps it
+   refers to and pushes the panel down. */
+.ask-sivan-inline{display:grid;gap:10px}
+.ask-sivan-inline .ask-sivan-thread{
+  /* Capped so a long conversation cannot push the timeline off screen; the
+     thread scrolls internally past that point. */
+  max-height:min(46vh,340px);
+  min-height:0;
+  overflow:auto;
+  margin:0;
+  padding:2px 1px;
+}
+.ask-sivan-inline .ask-sivan-message{max-width:100%;padding:10px 11px;border-radius:13px}
+.ask-sivan-inline .ask-sivan-message p{font-size:12.5px;line-height:1.45}
+.ask-sivan-inline .ask-sivan-quick{gap:6px}
+.ask-sivan-inline .ask-sivan-quick button{
+  padding:7px 10px;
+  font-size:11.5px;
+  /* 38px was below the 44px touch target the rest of the app moved to in
+     e2822f0; these are the primary control once a thread has started. */
+  min-height:36px;
+}
+.ask-sivan-inline .ask-sivan-compose{grid-template-columns:minmax(0,1fr) auto;gap:7px}
+.ask-sivan-inline .ask-sivan-compose input{min-height:40px;border-radius:12px;font-size:12.5px}
+.ask-sivan-inline .ask-sivan-limits span{padding:5px 8px;font-size:10.5px}
+.ask-sivan-inline .muted{font-size:11.5px;line-height:1.45}
+
+@media (pointer: coarse){
+  /* Touch: the chips are the main way to ask a follow-up, so they get the
+     full target size rather than the compact desktop one. */
+  .ask-sivan-inline .ask-sivan-quick button{min-height:44px;font-size:12px}
+  .ask-sivan-inline .ask-sivan-compose input{min-height:44px}
+}
+
+@media (max-width:640px){
+  .ask-sivan-inline .ask-sivan-thread{max-height:52vh}
+  .ask-sivan-inline .ask-sivan-quick{display:grid;grid-template-columns:1fr}
+  .ask-sivan-inline .ask-sivan-compose{grid-template-columns:1fr}
+  .ask-sivan-inline .ask-sivan-compose button{width:100%}
+}

@@ -46,6 +46,9 @@ const NOW = new Date().toISOString();
 const ORDER_ID = 'or_17f19d8b-6385-4e14-a491-8f616c7a02df';
 const NGN_ID = 'ngnt_f17c5017-564e-4fc5-82cc-e29513ead925';
 const VA_ID = 'va_deposit-2222-3333';
+const BTX_ID = 'btx_9f2c1a84-3b7e-4d21-9c55-0a1b2c3d4e5f';
+const SPP_ID = 'spp_7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f';
+const DEP_ID = 'dep_6999232a-578c-4486-aedd-0a4a02d3b43c';
 /** Deliberately older, so a fallthrough would NOT pick it - only a real lookup can. */
 const OLDER = new Date(Date.now() - 86_400_000).toISOString();
 
@@ -60,11 +63,27 @@ function seed() {
     customers: [{ id: 'cus_1', userId: 'usr_1', kycStatus: 'kyc_approved', createdAt: NOW }],
     withdrawals: [],
     onrampOrders: [{ id: ORDER_ID, userId: 'usr_1', status: 'awaiting_payment', provider: 'bridge', amount: '100', sourceCurrency: 'usd', createdAt: NOW, updatedAt: NOW }],
-    ngnTransfers: [{ id: NGN_ID, userId: 'usr_1', quoteId: 'q1', direction: 'offramp', status: 'settlement_processing', provider: 'breet', sourceCurrency: 'usdt', destinationCurrency: 'ngn', sourceAmount: '15', destinationAmount: '24697.89', rate: '1600', feeAmount: '50', createdAt: NOW, updatedAt: NOW }],
+    ngnTransfers: [{ id: NGN_ID, userId: 'usr_1', quoteId: 'q1', direction: 'offramp', status: 'settlement_processing', provider: 'breet', sourceCurrency: 'usdt', destinationCurrency: 'ngn', sourceAmount: '15', destinationAmount: '24697.89', rate: '1600', feeAmount: '50', metadata: { transferMetadata: { payoutAccountId: 'pa_1' } }, createdAt: NOW, updatedAt: NOW }],
     virtualAccountTransactions: [{ id: VA_ID, userId: 'usr_1', status: 'settled', amount: '500', currency: 'usd', createdAt: OLDER, updatedAt: OLDER }],
+    /**
+     * The three kinds the activity feed shows but ACE could not answer.
+     * All seeded OLDER than the buy order so a fallthrough would pick the
+     * WRONG row - only a real lookup can resolve them.
+     */
+    walletDeposits: [{ id: DEP_ID, userId: 'usr_1', walletId: 'w1', address: '4JStq', chain: 'solana', asset: 'usdc', amount: '19.500000', status: 'confirmed', detectionSource: 'balance_poll', idempotencyKey: 'k1', createdAt: OLDER, updatedAt: OLDER }],
+    supplierPayments: [{ id: SPP_ID, userId: 'usr_1', supplierId: 'sup_1', amount: '305', netAmount: '300', destinationCurrency: 'gbp', status: 'processing', externalAccountId: 'ext_1', createdAt: OLDER, updatedAt: OLDER }],
+    externalAccounts: [{ id: 'ext_1', userId: 'usr_1', customerId: 'cus_1', provider: 'bridge', providerExternalAccountId: 'p1', currency: 'gbp', accountType: 'gb', bankName: 'Barclays', accountOwnerName: 'ABC Trading Ltd', accountLast4: '4321', paymentRail: 'faster_payments', status: 'active', createdAt: OLDER }],
+    ngnPayoutAccounts: [{ id: 'pa_1', userId: 'usr_1', provider: 'breet', bankId: '25', bankName: 'OPay - Paycom', accountNumber: '8079604214', accountName: 'SAMSON MICHEAL OLALEYE', declaredName: 'SAMSON MICHEAL OLALEYE', matchVerdict: 'match', status: 'verified', createdAt: OLDER }],
     supportTickets: [], systemIncidents: [], webhookEvents: [], transactionReferences: [],
-    reconciliationFindings: [], externalAccounts: [], ngnPayoutAccounts: [],
-    aceSupportSessions: [], aceSupportMessages: [], aceToolCalls: [], aceResolutions: [], auditLogs: [],
+    reconciliationFindings: [],
+    /* externalAccounts and ngnPayoutAccounts are seeded ABOVE. They were
+       redeclared as [] here, and a later duplicate key silently wins in an
+       object literal - so the seeded rows vanished and payoutDestinationFor()
+       correctly found nothing. The assertion caught it; the bug was the
+       fixture, not the resolver. */
+    aceSupportSessions: [], aceSupportMessages: [], aceToolCalls: [], aceResolutions: [],
+    /** A crypto send lives in the audit trail, not a table - see balanceTransferRows(). */
+    auditLogs: [{ id: 'al_1', action: 'balance.transfer_completed', actorType: 'user', actorId: 'usr_1', resourceType: 'balance_transfer', resourceId: BTX_ID, createdAt: OLDER, metadata: { transferId: BTX_ID, userId: 'usr_1', asset: 'usdc', network: 'solana', amount: '80', status: 'completed', destinationAddress: 'HN7cAB', txHash: '5CVfPVMp', createdAt: OLDER, updatedAt: OLDER } }],
   }, null, 2));
 }
 seed();
@@ -224,6 +243,52 @@ check('an unknown va_ reference is reported as not found',
 check('and does not substitute another transaction',
   !vaMissing.answer.includes(ORDER_ID) && !vaMissing.answer.includes(NGN_ID),
   vaMissing.answer.slice(0, 100));
+
+console.log('\n4c. the three kinds the activity feed shows but ACE could not answer');
+
+/**
+ * activityFeed.ts emits seven kinds; AceResourceType carried four. A user who
+ * opened a crypto send, supplier payout or wallet deposit and pressed "Ask
+ * Sivan about this transaction" was told the reference could not be found -
+ * worse than no button, because it reads as "your transaction is missing".
+ *
+ * Each is seeded OLDER than the buy order deliberately: if the lookup were
+ * still falling through to "newest of any kind", these would resolve to
+ * ORDER_ID and the assertions below would fail. A same-age fixture would pass
+ * either way.
+ */
+for (const [label, id, prefixKind] of [
+  ['a crypto send', BTX_ID, 'crypto send'],
+  ['a supplier payment', SPP_ID, 'supplier payment'],
+  ['a wallet deposit', DEP_ID, 'wallet deposit'],
+] as const) {
+  const answer = await ask(id);
+  check(`${label} resolves to itself`, answer.answer.includes(id), answer.answer.slice(0, 100));
+  check(`${label} never returns the buy order`,
+    !answer.answer.includes(ORDER_ID),
+    `leaked ${ORDER_ID} - the lookup fell through`);
+  check(`${label} is named correctly, not "buy order"`,
+    answer.answer.toLowerCase().includes(prefixKind),
+    answer.answer.slice(0, 100));
+}
+
+console.log('\n4d. the payout destination, masked');
+
+/**
+ * "Which account was I paid into" is the commonest follow-up on a payout, and
+ * the bundle carried no destination at all. It is included MASKED because
+ * evidenceItems ships to an external model - a full NUBAN beside an account
+ * name is a social-engineering kit.
+ */
+const ngnAnswerWithBank = await ask(NGN_ID);
+check('a naira payout names the bank it was sent to',
+  /OPay/i.test(ngnAnswerWithBank.answer), ngnAnswerWithBank.answer.slice(-220));
+check('and shows only the last four digits',
+  ngnAnswerWithBank.answer.includes('4214'), ngnAnswerWithBank.answer.slice(-220));
+/** THE LOAD-BEARING ONE. The full NUBAN must never appear. */
+check('and NEVER the full account number',
+  !ngnAnswerWithBank.answer.includes('8079604214'),
+  'the unmasked NUBAN leaked into an answer that is shipped to an external model');
 
 console.log('\n5. transaction questions still work');
 

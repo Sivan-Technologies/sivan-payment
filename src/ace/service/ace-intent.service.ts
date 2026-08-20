@@ -49,6 +49,20 @@ const REFERENCE_PATTERNS: Array<{ prefix: string; resourceType: AceResourceType 
   { prefix: 'wd', resourceType: 'withdrawal' },
   { prefix: 'or', resourceType: 'onramp_order' },
   { prefix: 'va', resourceType: 'virtual_account_transaction' },
+  /**
+   * Read off the id() calls that mint them, not guessed:
+   *   balance.service.ts:692        id('btx')   crypto send
+   *   supplier.service.ts:489       id('spp')   supplier PAYMENT
+   *   deposit.service.ts:151        id('dep')   wallet deposit
+   *
+   * `sup` is deliberately ABSENT even though supplier.service.ts:185 uses it:
+   * support.service.ts:61 mints support TICKETS with the same prefix, so a
+   * pasted sup_ id is ambiguous and routing it would be a coin flip between a
+   * payment and a ticket.
+   */
+  { prefix: 'btx', resourceType: 'balance_transfer' },
+  { prefix: 'spp', resourceType: 'supplier_payment' },
+  { prefix: 'dep', resourceType: 'wallet_deposit' },
 ];
 
 export interface AceIntentResult {
@@ -178,7 +192,8 @@ export function classifyAceMessage(
 }
 
 function intentForResource(resourceType: AceResourceType): AceIntent {
-  if (resourceType === 'virtual_account_transaction') return 'deposit';
+  /** Both kinds of incoming money are deposit questions. */
+  if (resourceType === 'virtual_account_transaction' || resourceType === 'wallet_deposit') return 'deposit';
   if (resourceType === 'general') return 'unknown';
   return 'transaction';
 }

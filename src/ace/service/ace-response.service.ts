@@ -132,13 +132,21 @@ export function composeAceSupportAnswer(bundle: AceEvidenceBundle, options: { ad
    * naira payout - once it became findable at all - would have been announced
    * as "Your buy order is currently settlement processing".
    */
-  const typeLabel = tx.type === 'withdrawal'
-    ? 'withdrawal'
-    : tx.type === 'ngn_transfer'
-      ? 'naira payout'
-      : tx.type === 'virtual_account_transaction'
-        ? 'deposit'
-        : 'buy order';
+  const TYPE_LABELS: Record<string, string> = {
+    withdrawal: 'withdrawal',
+    ngn_transfer: 'naira payout',
+    virtual_account_transaction: 'deposit',
+    onramp_order: 'buy order',
+    /**
+     * The three kinds that became answerable at the same time as their
+     * lookups. Without entries here they would have fallen to the old `else`
+     * and every crypto send would have been announced as "your buy order".
+     */
+    balance_transfer: 'crypto send',
+    supplier_payment: 'supplier payment',
+    wallet_deposit: 'wallet deposit',
+  };
+  const typeLabel = TYPE_LABELS[tx.type] ?? 'transaction';
   const statusLine = `Your ${typeLabel} is currently ${tx.status.replaceAll('_', ' ')}${tx.provider ? ` with ${tx.provider}` : ''}.`;
 
   const answer = incident
@@ -172,6 +180,15 @@ export function composeAceSupportAnswer(bundle: AceEvidenceBundle, options: { ad
         '',
         'Do you need to do anything?',
         needsHuman ? 'I recommend contacting support so a human can review the evidence.' : 'No action is needed right now.',
+        '',
+        /**
+         * WHERE IT WENT, when we know. The single most common follow-up on a
+         * completed payout, and the local composer could not answer it either.
+         * Masked upstream; this only formats what it is given.
+         */
+        ...(tx.payoutDestination?.bankName || tx.payoutDestination?.accountLast4
+          ? ['', 'Paid to:', [tx.payoutDestination.bankName, tx.payoutDestination.accountLast4 ? `account ending ${tx.payoutDestination.accountLast4}` : undefined, tx.payoutDestination.accountName].filter(Boolean).join(' · ')]
+          : []),
         '',
         'Reference:',
         `Request ID: ${tx.id}`

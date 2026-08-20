@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { useAskSivan, ASSISTANT_INTRO, chatId, readDailyCount, transcript, useAssistantWaitStage, MAX_SESSION_MESSAGES, MAX_DAILY_MESSAGES, type AssistantChatMessage, type AssistantAnswer, type AssistantContext } from './askSivan';
 import type { CustomerRecord, ExternalAccountRecord, OnrampOrderRecord, SupportTicketRecord, UserRecord, WithdrawalRecord } from '../../types';
 
 function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active','resolved'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected'].includes(status)) return 'danger'; return 'pending'; }
@@ -12,12 +13,7 @@ function Kv({ label, value }: { label: string; value?: string | number | null })
 function LegalResources({ compact = false }: { compact?: boolean }) { const links=[['Terms','https://www.sivantech.online/legal/terms'],['Privacy','https://www.sivantech.online/legal/privacy'],['Risk Disclosure','https://www.sivantech.online/legal/risk-disclosure'],['Data Retention','https://www.sivantech.online/legal/data-retention'],['AML/KYC Policy','https://www.sivantech.online/legal/aml-kyc'],['Supported Jurisdictions','https://www.sivantech.online/legal/supported-jurisdictions'],['Wrong Network Policy','https://www.sivantech.online/legal/wrong-network'],['Complaints Policy','https://www.sivantech.online/legal/complaints'],['Cookie Policy','https://www.sivantech.online/legal/cookies']]; return <article className={compact ? 'legal-resource-card compact' : 'legal-resource-card'}><h3>Legal resources</h3><p className="muted">Review Sivan’s user terms, privacy practices, risk disclosures, and data retention policy.</p><div>{links.map(([label,href])=><a key={label} href={href} target="_blank" rel="noreferrer">{label} ↗</a>)}</div></article>; }
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 
-type ChatRole = 'assistant' | 'user' | 'system';
-type AssistantChatMessage = { id: string; role: ChatRole; text: string; createdAt: string; meta?: any };
-type AssistantAnswer = { answer: string; confidence: 'high' | 'medium' | 'low'; needsHuman: boolean; evidenceChecked?: string[]; suggestedActions?: any[]; sessionId?: string };
-type AssistantContext = { resourceType: 'withdrawal' | 'onramp_order' | 'ngn_transfer' | 'virtual_account_transaction' | 'transaction_lookup' | 'general'; resourceId?: string; ticketType: 'withdrawal' | 'onramp_payment' | 'deposit_not_detected' | 'account_access' | 'verification' | 'other'; subject: string };
 
-const assistantIntro = 'Hi, I’m Sivan Assistant. I can help with payments, verification, transfers, virtual accounts, and account recovery. I can’t move funds or change your account, but I can explain what’s happening and help create a support ticket if needed.';
 /**
  * What the typing bubble says, by how long the user has been waiting.
  *
@@ -31,56 +27,40 @@ const assistantIntro = 'Hi, I’m Sivan Assistant. I can help with payments, ver
  * gathered locally first, then the model is consulted, and only past ~7s is a
  * fallback genuinely likely. No invented progress percentages.
  */
-const assistantWaitStages = [
-  { afterMs: 0, text: 'Checking safe account evidence...' },
-  { afterMs: 2500, text: 'Reviewing your account history...' },
-  { afterMs: 5000, text: 'Composing an answer from what I found...' },
-  { afterMs: 7500, text: 'Still working. If this takes much longer, I will answer from Sivan\u2019s guides instead.' }
-];
-
-function useAssistantWaitStage(busy: boolean) {
-  const [elapsedMs, setElapsedMs] = useState(0);
-  useEffect(() => {
-    if (!busy) {
-      setElapsedMs(0);
-      return;
-    }
-    const startedAt = Date.now();
-    const interval = setInterval(() => setElapsedMs(Date.now() - startedAt), 500);
-    return () => clearInterval(interval);
-  }, [busy]);
-  return assistantWaitStages.filter((stage) => elapsedMs >= stage.afterMs).slice(-1)[0]?.text ?? assistantWaitStages[0].text;
-}
-
-const maxSessionMessages = 5;
-const maxDailyMessages = 10;
-function chatId() { return `chat_${Date.now()}_${Math.random().toString(16).slice(2)}`; }
-function todayKey(userId?: string) { return `sivan.askSivan.daily.${userId || 'guest'}.${new Date().toISOString().slice(0,10)}`; }
-function readDailyCount(userId?: string) { try { return Number(localStorage.getItem(todayKey(userId)) || 0); } catch { return 0; } }
-function writeDailyCount(userId: string | undefined, count: number) {
-  try {
-    localStorage.setItem(todayKey(userId), String(count));
-  } catch {
-    // Deliberately swallowed. localStorage.setItem throws in Safari private
-    // browsing and when the origin quota is full, and this is a rate-limit
-    // counter for support tickets - losing it degrades to "the user may open
-    // one more ticket than intended", which is not worth breaking the screen
-    // over. Written as a commented block rather than `catch {}` so the intent
-    // is visible; a bare empty block reads as an unfinished edit.
-  }
-}
-function transcript(messages: AssistantChatMessage[]) { return messages.map((msg) => `${msg.role === 'assistant' ? 'Sivan Assistant' : msg.role === 'system' ? 'System' : 'Customer'}: ${msg.text}`).join('\n\n'); }
+/**
+ * The wait narration, limits, id helper, daily counter and transcript all
+ * moved to ./askSivan so the Transactions panel enforces the same rules.
+ * Re-exported names are imported at the top of this file.
+ */
 
 export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders, accounts, customer, api, onCreateTicket, onTicketsChanged, loading }: { hasUser: boolean; user: UserRecord | null; tickets: SupportTicketRecord[]; withdrawals: WithdrawalRecord[]; onrampOrders: OnrampOrderRecord[]; accounts: ExternalAccountRecord[]; customer: CustomerRecord | null; api: <T>(path: string, options?: RequestInit) => Promise<T>; onCreateTicket: (event: FormEvent<HTMLFormElement>) => void; onTicketsChanged: (tickets: SupportTicketRecord[]) => void; loading: boolean }) {
   const [selectedTicket, setSelectedTicket] = useState<SupportTicketRecord | null>(null);
+  const [ticketBusy, setTicketBusy] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<AssistantChatMessage[]>([]);
-  const [chatDraft, setChatDraft] = useState('');
-  const [chatBusy, setChatBusy] = useState(false);
-  const [chatError, setChatError] = useState('');
+  /**
+   * THE SAME CONVERSATION ENGINE THE TRANSACTIONS PANEL USES.
+   *
+   * This screen owned the only implementation: thread, limits, warmup, typing
+   * narration and error copy. When Ask Sivan was added to Transactions, copying
+   * it would have created a second set of the same rules - and the copy is
+   * always the one that ends up missing a guard. Extracted to useAskSivan so
+   * both surfaces share one definition by construction.
+   *
+   * The intro bubble stays here and not there: this drawer opens on a blank
+   * chat and needs a greeting; the transaction panel already has the
+   * transaction on screen.
+   */
+  const assistant = useAskSivan({ userId: user?.id, hasUser, api, intro: ASSISTANT_INTRO });
+  const chatMessages = assistant.messages;
+  const setChatMessages = assistant.setMessages;
+  const chatDraft = assistant.draft;
+  const setChatDraft = assistant.setDraft;
+  const chatBusy = assistant.busy;
+  const chatError = assistant.error;
+  const setChatError = assistant.setError;
   const [chatContext, setChatContext] = useState<AssistantContext>({ resourceType: 'general', ticketType: 'other', subject: 'Sivan Assistant support handoff' });
-  const [aiMessagesUsed, setAiMessagesUsed] = useState(0);
-  const [lastAnswer, setLastAnswer] = useState<AssistantAnswer | null>(null);
+  const aiMessagesUsed = assistant.sessionUsed;
+  const lastAnswer = assistant.lastAnswer;
   // Whether this session already woke Sivan AI. A ref rather than state because
   // nothing renders from it and flipping it must not cause a re-render.
   const warmedRef = useRef(false);
@@ -91,7 +71,7 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
   function openAssistant() {
     setChatOpen(true);
     setChatError('');
-    if (!chatMessages.length) setChatMessages([{ id: chatId(), role: 'assistant', text: assistantIntro, createdAt: new Date().toISOString() }]);
+    if (!chatMessages.length) setChatMessages([{ id: chatId(), role: 'assistant', text: ASSISTANT_INTRO, createdAt: new Date().toISOString() }]);
     void prewarmAssistant();
   }
 
@@ -164,56 +144,32 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
     return { resourceType: 'general', ticketType: 'other', subject: 'Sivan Assistant support handoff' };
   }
 
+  /**
+   * Delegates to the shared hook. The only thing this screen still owns is
+   * WHICH CONTEXT a free-typed message maps to - resolveContext() reads the
+   * user's own withdrawals and orders, which the hook has no business knowing.
+   */
   async function sendAssistantMessage(rawMessage: string, explicitContext?: AssistantContext) {
     const message = rawMessage.trim();
     if (!message) return;
-    if (!hasUser || !user?.id) {
-      setChatError('Sign in or create an account before using Sivan Assistant.');
-      return;
-    }
-    if (aiMessagesUsed >= maxSessionMessages) {
-      addSystemMessage('You have reached the 5-message assistant limit for this chat. Create a support ticket and the team will follow up.');
-      return;
-    }
-    const dailyCount = readDailyCount(user.id);
-    if (dailyCount >= maxDailyMessages) {
-      addSystemMessage('You have reached today’s Ask Sivan limit. Create a support ticket and Sivan Support will follow up.');
-      return;
-    }
-
     const context = explicitContext ?? resolveContext(message);
     setChatContext(context);
-    const userMessage: AssistantChatMessage = { id: chatId(), role: 'user', text: message, createdAt: new Date().toISOString() };
-    setChatMessages((items) => [...items, userMessage]);
-    setChatDraft('');
-    setChatBusy(true);
-    setChatError('');
-    try {
-      const result = await api<AssistantAnswer>(`/api/users/${user.id}/ace/support`, { method: 'POST', body: JSON.stringify({ message, resourceType: context.resourceType, resourceId: context.resourceId, channel: 'web_dashboard' }) });
-      setLastAnswer(result);
-      setAiMessagesUsed((value) => value + 1);
-      writeDailyCount(user.id, dailyCount + 1);
-      setChatMessages((items) => [...items, { id: chatId(), role: 'assistant', text: result.answer, createdAt: new Date().toISOString(), meta: result }]);
-      if (result.needsHuman || result.confidence === 'low') addSystemMessage('I should get Sivan Support to review this. You can create a support ticket with this chat attached.');
-    } catch (error) {
-      const raw = error instanceof Error ? error.message : 'Sivan Assistant could not respond right now.';
-      const friendly = /signal is aborted|aborted without reason|timed out|taking longer/i.test(raw)
-        ? 'Sivan Assistant is taking longer than expected. No problem: create a support ticket and Sivan Support will review this.'
-        : raw;
-      setChatError('');
-      addSystemMessage(friendly);
-    } finally {
-      setChatBusy(false);
-    }
+    await assistant.send(message, context);
   }
 
-  function addSystemMessage(text: string) {
-    setChatMessages((items) => [...items, { id: chatId(), role: 'system', text, createdAt: new Date().toISOString() }]);
-  }
+  const addSystemMessage = assistant.addSystemMessage;
 
+  /**
+   * Ticket creation has its OWN busy flag.
+   *
+   * It is not an assistant turn - it must not consume a question from the
+   * 5-per-chat allowance, and it must not be blocked by the assistant's limit
+   * either. A user who has exhausted their questions is precisely the user who
+   * most needs to open a ticket.
+   */
   async function createTicketFromChat() {
     if (!user?.id) return setChatError('Sign in before creating a support ticket.');
-    setChatBusy(true);
+    setTicketBusy(true);
     setChatError('');
     try {
       const description = [
@@ -252,7 +208,7 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
     } catch (error) {
       setChatError(error instanceof Error ? error.message : 'Could not create support ticket.');
     } finally {
-      setChatBusy(false);
+      setTicketBusy(false);
     }
   }
 
@@ -314,7 +270,7 @@ export function SupportView({ hasUser, user, tickets, withdrawals, onrampOrders,
 
 function AskSivanDrawer({ messages, draft, busy, error, aiMessagesUsed, dailyCount, onDraft, onClose, onSubmit, onQuick, onCreateTicket }: { messages: AssistantChatMessage[]; draft: string; busy: boolean; error: string; aiMessagesUsed: number; dailyCount: number; onDraft: (value: string) => void; onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onQuick: (kind: 'transaction' | 'verification' | 'virtual_account' | 'recovery' | 'human') => void; onCreateTicket: () => void }) {
   const waitStage = useAssistantWaitStage(busy);
-  return <div className="ask-sivan-backdrop"><aside className="ask-sivan-drawer"><div className="ask-sivan-head"><div><p className="eyebrow">Ask Sivan</p><h3>Sivan Assistant</h3><span>Read-only guidance · Human support when needed</span></div><button className="ghost-btn small" onClick={onClose}>Close</button></div><div className="ask-sivan-limits"><span>{aiMessagesUsed}/{maxSessionMessages} messages this chat</span><span>{dailyCount}/{maxDailyMessages} today</span></div><div className="ask-sivan-quick"><button onClick={() => onQuick('transaction')}>Where is my transaction?</button><button onClick={() => onQuick('verification')}>Verification help</button><button onClick={() => onQuick('virtual_account')}>Virtual account deposit</button><button onClick={() => onQuick('recovery')}>2FA/account recovery</button><button onClick={() => onQuick('human')}>Talk to support</button></div><div className="ask-sivan-thread">{messages.map((message) => <div className={`ask-sivan-message ${message.role}`} key={message.id}><strong>{message.role === 'assistant' ? 'Sivan Assistant' : message.role === 'system' ? 'System' : 'You'}</strong><p>{message.text}</p>{message.meta?.confidence && <small>Confidence: {message.meta.confidence} · {message.meta.needsHuman ? 'Support review recommended' : 'No human review needed'}</small>}</div>)}{busy && <div className="ask-sivan-message assistant typing" aria-live="polite"><strong>Sivan Assistant</strong><p>{waitStage}</p></div>}</div>{error && <div className="form-error">{error}</div>}<div className="ask-sivan-safe-note"><strong>Safety promise</strong><span>Sivan Assistant can explain and guide. It cannot move funds, reset 2FA, change email, approve KYC, retry payouts, or change transaction status.</span></div><form className="ask-sivan-compose" onSubmit={onSubmit}><input value={draft} onChange={(event) => onDraft(event.target.value)} placeholder="Ask about payments, verification, deposits, transfers, or account recovery…" disabled={busy || aiMessagesUsed >= maxSessionMessages || dailyCount >= maxDailyMessages} /><button className="primary-btn small" disabled={busy || !draft.trim() || aiMessagesUsed >= maxSessionMessages || dailyCount >= maxDailyMessages}>{busy ? 'Checking…' : 'Send'}</button></form><button className="secondary-btn ask-sivan-ticket" disabled={busy} onClick={onCreateTicket}>Create support ticket with this chat →</button></aside></div>;
+  return <div className="ask-sivan-backdrop"><aside className="ask-sivan-drawer"><div className="ask-sivan-head"><div><p className="eyebrow">Ask Sivan</p><h3>Sivan Assistant</h3><span>Read-only guidance · Human support when needed</span></div><button className="ghost-btn small" onClick={onClose}>Close</button></div><div className="ask-sivan-limits"><span>{aiMessagesUsed}/{MAX_SESSION_MESSAGES} messages this chat</span><span>{dailyCount}/{MAX_DAILY_MESSAGES} today</span></div><div className="ask-sivan-quick"><button onClick={() => onQuick('transaction')}>Where is my transaction?</button><button onClick={() => onQuick('verification')}>Verification help</button><button onClick={() => onQuick('virtual_account')}>Virtual account deposit</button><button onClick={() => onQuick('recovery')}>2FA/account recovery</button><button onClick={() => onQuick('human')}>Talk to support</button></div><div className="ask-sivan-thread">{messages.map((message) => <div className={`ask-sivan-message ${message.role}`} key={message.id}><strong>{message.role === 'assistant' ? 'Sivan Assistant' : message.role === 'system' ? 'System' : 'You'}</strong><p>{message.text}</p>{message.meta?.confidence && <small>Confidence: {message.meta.confidence} · {message.meta.needsHuman ? 'Support review recommended' : 'No human review needed'}</small>}</div>)}{busy && <div className="ask-sivan-message assistant typing" aria-live="polite"><strong>Sivan Assistant</strong><p>{waitStage}</p></div>}</div>{error && <div className="form-error">{error}</div>}<div className="ask-sivan-safe-note"><strong>Safety promise</strong><span>Sivan Assistant can explain and guide. It cannot move funds, reset 2FA, change email, approve KYC, retry payouts, or change transaction status.</span></div><form className="ask-sivan-compose" onSubmit={onSubmit}><input value={draft} onChange={(event) => onDraft(event.target.value)} placeholder="Ask about payments, verification, deposits, transfers, or account recovery…" disabled={busy || aiMessagesUsed >= MAX_SESSION_MESSAGES || dailyCount >= MAX_DAILY_MESSAGES} /><button className="primary-btn small" disabled={busy || !draft.trim() || aiMessagesUsed >= MAX_SESSION_MESSAGES || dailyCount >= MAX_DAILY_MESSAGES}>{busy ? 'Checking…' : 'Send'}</button></form><button className="secondary-btn ask-sivan-ticket" disabled={busy} onClick={onCreateTicket}>Create support ticket with this chat →</button></aside></div>;
 }
 
 function TicketConversation({ ticket, onClose, onReply }: { ticket: SupportTicketRecord; onClose: () => void; onReply: (event: FormEvent<HTMLFormElement>) => void }) {

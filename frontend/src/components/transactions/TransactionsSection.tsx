@@ -4,6 +4,7 @@ import { buildActivityFeed, filterActivity, searchActivity, type ActivityRow } f
 import { ActivityRowItem } from '../activity/ActivityRowItem';
 import { explorerLink, networkLabel, shortHash } from '../../blockExplorer';
 import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
+import { useAskSivan, AssistantThread, followUpsFor, MAX_SESSION_MESSAGES, MAX_DAILY_MESSAGES, type AssistantContext } from '../support/askSivan';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
@@ -125,10 +126,39 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
   }, [combinedFeed, filter, query, serviceAgreements]);
   const [selectedId, setSelectedId] = useState<string>(initialSelectedId ?? '');
   useEffect(() => { if (initialSelectedId) setSelectedId(initialSelectedId); }, [initialSelectedId]);
-  const [assistantAnswer, setAssistantAnswer] = useState<any>(null);
-  const [assistantLoading, setAssistantLoading] = useState(false);
   const selectedRow: ActivityRow | null = filtered.find((row) => row.id === selectedId) || filtered[0] || null;
   const selected = selectedRow ? detailById.get(selectedRow.id) ?? null : null;
+
+  /**
+   * ONE CONVERSATION, SHARED WITH THE SUPPORT DRAWER.
+   *
+   * This page used to hold a single `assistantAnswer` object rendered into a
+   * <pre>: one shot, no follow-up, and a second click silently replaced the
+   * first answer. It also duplicated none of the drawer's guards, so the
+   * 5-per-chat and 10-per-day limits were simply absent here - a user could
+   * ask unlimited questions from Transactions while Support enforced a cap.
+   *
+   * useAskSivan owns the thread, the limits, the warmup and the error copy, so
+   * both surfaces enforce the same rules by construction rather than by two
+   * people remembering to.
+   *
+   * No intro bubble: the drawer greets a user who opened a blank chat, but
+   * here the transaction is already on screen and a greeting would just push
+   * the answer down.
+   */
+  const assistant = useAskSivan({ userId: user?.id, hasUser: Boolean(user?.id), api });
+
+  /**
+   * Reset the thread when the user selects a DIFFERENT transaction.
+   *
+   * Without this, answers about the previous row stay on screen under the new
+   * one's timeline - the single most misleading thing this panel could do,
+   * because every answer names a Request ID the user is no longer looking at.
+   */
+  useEffect(() => {
+    assistant.setMessages([]);
+    assistant.setError('');
+  }, [selectedRow?.id]);
 
   async function cancelTransfer(id: string) {
     if (!user) return;
@@ -136,20 +166,53 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     await onRefresh?.();
   }
 
-  async function askSivanAssistant(tx: CustomerTransactionRow | null) {
-    if (!tx || !user) return;
-    setAssistantLoading(true);
-    try {
-      const result = await api<any>(`/api/users/${user.id}/ace/support`, { method: 'POST', body: JSON.stringify({ message: tx.direction === 'sell' ? 'Where is my withdrawal?' : 'Where is my buy order?', resourceType: tx.kind, resourceId: tx.id, channel: 'web_dashboard' }) });
-      setAssistantAnswer(result);
-    } finally {
-      setAssistantLoading(false);
+  /**
+   * Ask about the row the user is LOOKING AT, whatever kind it is.
+   *
+   * The old version read `tx.direction` off the detail record, which only
+   * exists for withdrawals, buy orders and naira transfers. A deposit, crypto
+   * send or supplier payout has no detail row, so the button was absent from
+   * that branch entirely - and had it been present it would have asked
+   * "Where is my buy order?" about a deposit.
+   *
+   * Driven by the ACTIVITY row instead, which every kind has, and the question
+   * is chosen per kind so the assistant is never asked the wrong one.
+   */
+  function contextForRow(row: ActivityRow | null): AssistantContext {
+    const kind = String(row?.kind ?? 'general');
+    const resourceType = (
+      kind === 'virtual_account_deposit' ? 'virtual_account_transaction' : kind
+    ) as AssistantContext['resourceType'];
+    const ticketType: AssistantContext['ticketType'] =
+      kind === 'withdrawal' || kind === 'ngn_transfer' ? 'withdrawal'
+      : kind === 'onramp_order' ? 'onramp_payment'
+      : kind === 'wallet_deposit' || kind === 'virtual_account_deposit' ? 'deposit_not_detected'
+      : 'other';
+    return { resourceType, resourceId: row?.id, ticketType, subject: `Question about ${row?.label ?? 'a transaction'}` };
+  }
+
+  function openingQuestionFor(row: ActivityRow | null): string {
+    switch (String(row?.kind)) {
+      case 'withdrawal':
+      case 'ngn_transfer': return 'What is the status of this withdrawal, and where is the money going?';
+      case 'onramp_order': return 'What is the status of this buy order?';
+      case 'wallet_deposit':
+      case 'virtual_account_deposit': return 'What is the status of this deposit?';
+      case 'balance_transfer': return 'What is the status of this crypto send?';
+      case 'supplier_payment': return 'What is the status of this supplier payment?';
+      default: return 'What is the status of this transaction?';
     }
+  }
+
+  function askAboutSelected(question?: string) {
+    if (!selectedRow) return;
+    void assistant.prewarm();
+    void assistant.send(question ?? openingQuestionFor(selectedRow), contextForRow(selectedRow));
   }
 
   const showAgreementsTab = Boolean(serviceAgreements?.linked || (serviceAgreements?.deals && serviceAgreements.deals.length > 0));
 
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}{showAgreementsTab && <button className={filter === 'agreements' ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter('agreements')}>Service Agreements ({serviceAgreements?.deals?.length || 0})</button>}</div></div>{!combinedFeed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistantAnswer={assistantAnswer} assistantLoading={assistantLoading} onAskSivanAssistant={() => askSivanAssistant(selected)} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}{showAgreementsTab && <button className={filter === 'agreements' ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter('agreements')}>Service Agreements ({serviceAgreements?.deals?.length || 0})</button>}</div></div>{!combinedFeed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistant={assistant} onAsk={askAboutSelected} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
 }
 
 /**
@@ -286,7 +349,59 @@ function activitySummaryExplanation(row: ActivityRow): string {
   return row.state === 'success' ? 'This transaction is complete.' : 'This transaction is still in progress.';
 }
 
-function TransactionTimelinePanel({ transaction, activityRow, networkMode, assistantAnswer, assistantLoading, onAskSivanAssistant, onCancelTransfer }: { transaction: CustomerTransactionRow | null; activityRow?: ActivityRow | null; networkMode?: 'mainnet' | 'testnet'; assistantAnswer?: any; assistantLoading?: boolean; onAskSivanAssistant?: () => void; onCancelTransfer?: (id: string) => Promise<void> | void }) {
+/**
+ * The Ask Sivan block that sits under every transaction, whatever its kind.
+ *
+ * ONE component used by BOTH render branches of the panel below. They diverged
+ * before: the timeline branch had the button and the activityRow fallback -
+ * which serves deposits, crypto sends and supplier payouts - had only a
+ * "share your Request ID" note. Reported from a deposit screenshot as the
+ * assistant being missing; it was never rendered on that path.
+ */
+function AskSivanBlock({ assistant, row, onAsk }: { assistant: ReturnType<typeof useAskSivan>; row: ActivityRow | null; onAsk: (question?: string) => void }) {
+  const started = assistant.messages.length > 0;
+  const followUps = row ? followUpsFor(String(row.kind), String(row.state)) : [];
+
+  return <div className="support-reference-box ask-sivan-inline">
+    <strong>Need support?</strong>
+    <span>Ask about this transaction, or share the Request ID with support to have it traced.</span>
+
+    {started && <AssistantThread messages={assistant.messages} busy={assistant.busy} />}
+
+    {/* The opening question, only while there is nothing to follow up on. */}
+    {!started && <button className="secondary-btn small" onClick={() => onAsk()} disabled={assistant.busy || assistant.exhausted}>
+      {assistant.busy ? 'Sivan Assistant is checking...' : 'Ask Sivan about this transaction'}
+    </button>}
+
+    {/* FOLLOW-UPS APPEAR ONLY AFTER AN ANSWER, and only while questions remain.
+        Offering them before the first answer would be asking the user to pick
+        a follow-up to nothing. */}
+    {started && !assistant.exhausted && followUps.length > 0 && <div className="ask-sivan-quick">
+      {followUps.map((question) => <button key={question} onClick={() => onAsk(question)} disabled={assistant.busy}>{question}</button>)}
+    </div>}
+
+    {/* Free text stays available but SECONDARY - a chip is one tap and cannot
+        be phrased into a question the evidence cannot answer. */}
+    {started && !assistant.exhausted && <form className="ask-sivan-compose" onSubmit={(event) => { event.preventDefault(); onAsk(assistant.draft); }}>
+      <input value={assistant.draft} onChange={(event) => assistant.setDraft(event.target.value)} placeholder="Ask something else about this transaction..." disabled={assistant.busy} />
+      <button className="primary-btn small" disabled={assistant.busy || !assistant.draft.trim()}>Send</button>
+    </form>}
+
+    {/* THE COUNTER IS SHOWN ONLY ONCE A CONVERSATION EXISTS.
+        Displaying "0/10 today" beside an unclicked button advertises a limit
+        to someone who has not asked for anything. Once they are talking, it is
+        the honest thing - better than hitting a wall mid-conversation. */}
+    {started && <div className="ask-sivan-limits">
+      <span>{assistant.sessionUsed}/{MAX_SESSION_MESSAGES} this transaction</span>
+      <span>{assistant.dailyUsed}/{MAX_DAILY_MESSAGES} today</span>
+    </div>}
+
+    {assistant.exhausted && <span className="muted">You have reached the Ask Sivan limit. Create a support ticket from the Support page and the team will follow up.</span>}
+    {assistant.error && <div className="form-error">{assistant.error}</div>}
+  </div>;
+}
+
+function TransactionTimelinePanel({ transaction, activityRow, networkMode, assistant, onAsk, onCancelTransfer }: { transaction: CustomerTransactionRow | null; activityRow?: ActivityRow | null; networkMode?: 'mainnet' | 'testnet'; assistant: ReturnType<typeof useAskSivan>; onAsk: (question?: string) => void; onCancelTransfer?: (id: string) => Promise<void> | void }) {
   // A NAIRA TRANSFER HAS NO BRIDGE TIMELINE, AND MUST NOT FALL THROUGH TO
   // "Select a transaction to see its timeline."
   //
@@ -317,6 +432,12 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
         <Kv label="Asset" value={transaction.asset} />
       </div>
       {transaction.depositAddress && <DepositInstruction transaction={transaction} onCancel={onCancelTransfer} />}
+      {/* THE THIRD BRANCH. Naira payouts render here, not through the timeline
+          or the activityRow fallback - and this is the panel in the reported
+          screenshot, the one whose "Need support?" box had no way to ask
+          anything. Found only by reading the rendered DOM: the two branches I
+          had already fixed both looked correct in the source. */}
+      <AskSivanBlock assistant={assistant} row={activityRow ?? null} onAsk={onAsk} />
     </aside>;
   }
   /**
@@ -405,10 +526,7 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
           : onChain
             ? <small className="deposit-note">This was detected from an on-chain balance change, so there is no transaction link for it.</small>
             : null}
-      <div className="support-reference-box">
-        <strong>Need support?</strong>
-        <span>Share the Request ID so support can trace this transaction faster.</span>
-      </div>
+      <AskSivanBlock assistant={assistant} row={activityRow} onAsk={onAsk} />
     </aside>;
   }
   if (!transaction?.timeline) return <aside className="transaction-timeline-card"><Empty>Select a transaction to see its timeline.</Empty></aside>;
@@ -433,7 +551,7 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
    */
   const steps = timeline.steps ?? [];
   const currentStep = steps.find((step) => step.status === 'current') || steps.find((step) => step.status === 'failed') || steps[steps.length - 1];
-  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || transaction.amount} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><div className="support-reference-box"><strong>Need support?</strong><span>Share the Request ID and Provider reference so support can trace this transaction faster.</span><button className="secondary-btn small" onClick={onAskSivanAssistant} disabled={assistantLoading}>{assistantLoading ? 'Sivan Assistant is checking...' : 'Ask Sivan about this transaction'}</button>{assistantAnswer && <pre className="sivan-assistant-answer-box">{assistantAnswer.answer}</pre>}</div></aside>;
+  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || transaction.amount} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><AskSivanBlock assistant={assistant} row={activityRow ?? null} onAsk={onAsk} /></aside>;
 }
 
 export function InlineTransactionTimeline({ timeline }: { timeline: TransactionTimeline }) {
