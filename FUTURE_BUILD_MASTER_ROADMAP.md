@@ -25,10 +25,17 @@ Below is the catalog of planned post-launch features, including their purpose, U
 - **Impact:** Establishes Sivan as a complete global payroll tool for remote agencies.
 - **Deferral Rationale:** Core manual service agreement creation and release must be battle-tested with real users first.
 
-### Feature 4: Standalone Standalone Fraud Engine Microservice
-- **Description:** Activate the full standalone `Fraud_engine` service for real-time velocity checking, IP geolocation risk scoring, and device fingerprinting.
-- **Impact:** Replaces basic risk heuristics with advanced machine-learning fraud scoring.
-- **Deferral Rationale:** Existing `supplier-risk.service.ts` and `complianceRisk.ts` inside `sivan-payment` and `sivan-escrow-agent` provide sufficient coverage for early launch cohorts.
+### Feature 4: Standalone Fraud Engine Microservice
+- Documented Spec: Internal Fraud Engine Architecture
+- Description: Activate the full standalone Fraud_engine service for real-time velocity checking, IP geolocation risk scoring, and device fingerprinting.
+- Impact: Replaces basic risk heuristics with advanced machine-learning fraud scoring.
+- Deferral Rationale: Existing supplier-risk.service.ts and complianceRisk.ts inside sivan-payment and sivan-escrow-agent provide sufficient coverage for early launch cohorts.
+
+### Feature 5: Per-Channel Notification Toggles & Default Policy
+- Documented Spec: FUTURE_BUILD_NOTIFICATION_CONTROLS.md
+- Description: Add web dashboard notification toggles under Linked Telegram and Linked WhatsApp identity cards. Telegram defaults to ON (free/instant API); WhatsApp defaults to OFF (prevents per-message Meta API costs and spam).
+- Impact: Gives users granular privacy control while optimizing outbound messaging API costs for the platform.
+- Deferral Rationale: Enforced under Phase 1 Code Freeze Protocol. All future UX enhancements are documented here for Phase 2 implementation.
 
 ---
 
