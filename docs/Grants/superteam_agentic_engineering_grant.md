@@ -79,9 +79,12 @@
 
 - Live Production Console: [https://sivan-admin-hub-test.vercel.app/dashboard/modules/sivan-escrow-agent](https://sivan-admin-hub-test.vercel.app/dashboard/modules/sivan-escrow-agent)
 - GitHub Repository: [https://github.com/Sivan-Technologies/sivan-escrow-agent](https://github.com/Sivan-Technologies/sivan-escrow-agent)
-- Real Solana Devnet Transaction Proof:
-  - Trace A Signature: [`3thGdZiueT3N4ziKz6HSZthc3oi7fFwDYbhm5GW1mfjSnmQGthc9pqzSVt5f5ARLGmg87FL9ZtdQnXx3YJQbbHPv`](https://explorer.solana.com/tx/3thGdZiueT3N4ziKz6HSZthc3oi7fFwDYbhm5GW1mfjSnmQGthc9pqzSVt5f5ARLGmg87FL9ZtdQnXx3YJQbbHPv?cluster=devnet)
-  - Trace B Signature: [`KGCWMiJd9c3Mw7WpVvwwb7XKFjNa7XgnQ3uqajrEabwA1sYwyuLhPU6PnZjSf4TsPmGE7tFfdUmhPxsXrbCCPgs`](https://explorer.solana.com/tx/KGCWMiJd9c3Mw7WpVvwwb7XKFjNa7XgnQ3uqajrEabwA1sYwyuLhPU6PnZjSf4TsPmGE7tFfdUmhPxsXrbCCPgs?cluster=devnet)
+- Verified Solscan Transaction & Account Proofs:
+  1. Direct On-Chain Transfer (70.00 USDC): [https://solscan.io/tx/4vr4yH4nPwDevRC3ELdm?cluster=devnet](https://solscan.io/tx/4vr4yH4nPwDevRC3ELdm?cluster=devnet)
+  2. Standard Agreement Funding (5.00 USDC): [https://solscan.io/tx/3thGdZiueT3N4ziKz6HSZthc3oi7fFwDYbhm5GW1mfjSnmQGthc9pqzSVt5f5ARLGmg87FL9ZtdQnXx3YJQbbHPv?cluster=devnet](https://solscan.io/tx/3thGdZiueT3N4ziKz6HSZthc3oi7fFwDYbhm5GW1mfjSnmQGthc9pqzSVt5f5ARLGmg87FL9ZtdQnXx3YJQbbHPv?cluster=devnet)
+  3. High-Value Agreement Transfer (15.00 USDC): [https://solscan.io/tx/KGCWMiJd9c3Mw7WpVvwwb7XKFjNa7XgnQ3uqajrEabwA1sYwyuLhPU6PnZjSf4TsPmGE7tFfdUmhPxsXrbCCPgs?cluster=devnet](https://solscan.io/tx/KGCWMiJd9c3Mw7WpVvwwb7XKFjNa7XgnQ3uqajrEabwA1sYwyuLhPU6PnZjSf4TsPmGE7tFfdUmhPxsXrbCCPgs?cluster=devnet)
+  4. Confirmed Facility Settlement Release: [https://solscan.io/tx/35LNV94hcqsHJwAyukQ88FXVDvejiAsV8v9cnJRFMGex96vfuqHNEF6kkYDuCQ8Vrcum6y3NQMiPBFmoFUw5WeRZ?cluster=devnet](https://solscan.io/tx/35LNV94hcqsHJwAyukQ88FXVDvejiAsV8v9cnJRFMGex96vfuqHNEF6kkYDuCQ8Vrcum6y3NQMiPBFmoFUw5WeRZ?cluster=devnet)
+  5. Buyer Solana SPL Token Wallet Account: [https://solscan.io/account/W7ydftpwxsEE7732N2w5UTHDFrBvYUDmAeuGCZwPDu7?cluster=devnet](https://solscan.io/account/W7ydftpwxsEE7732N2w5UTHDFrBvYUDmAeuGCZwPDu7?cluster=devnet)
 
 ---
 

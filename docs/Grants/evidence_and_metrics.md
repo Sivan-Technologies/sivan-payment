@@ -30,28 +30,38 @@ stateDiagram-v2
     RELEASED --> [*]: On-Chain / Fiat Payout Settled
 ```
 
-### B. Multi-Trace Verified Transaction Evidence
+### B. Multi-Trace Verified Solscan Transaction Evidence
 
 - Facility / Merchant Wallet Key: `AH1EZro8AHseUwdJMYiwx71QxVq6sm9eCUW75HyrvQr6`
-- Buyer Solana Devnet Wallet: `W7ydftpwxsEE7732N2w5UTHDFrBvYUDmAeuGCZwPDu7` (`solianetwork0@gmail.com` / Telegram ID `8756506224`)
-- Seller Solana Devnet Wallet: `9MDEk5f6MpsaYXsq2VDA8zncBouWNigeTB7aezDsKxpz` (`airspexta1@gmail.com` / Telegram ID `1767972274`)
+- Buyer Solana Devnet Wallet: [`W7ydftpwxsEE7732N2w5UTHDFrBvYUDmAeuGCZwPDu7`](https://solscan.io/account/W7ydftpwxsEE7732N2w5UTHDFrBvYUDmAeuGCZwPDu7?cluster=devnet)
+- Seller Solana Devnet Wallet: [`9MDEk5f6MpsaYXsq2VDA8zncBouWNigeTB7aezDsKxpz`](https://solscan.io/account/9MDEk5f6MpsaYXsq2VDA8zncBouWNigeTB7aezDsKxpz?cluster=devnet)
 
-#### 🔹 TRACE A: 5.00 USDC Standard Agreement (Solana Devnet Crypto Rail)
+#### TRACE 1: Direct On-Chain Transfer (70.00 USDC Solana Devnet)
+- Transfer ID: `btx_219f9d12-3d82-4556-a0a4-1105c8f5545e`
+- Amount Sent: 70.00 USDC
+- Net Delivered: 69.65 USDC
+- Solscan Transaction Proof: [`4vr4yH4nPw...DevRC3ELdm`](https://solscan.io/tx/4vr4yH4nPwDevRC3ELdm?cluster=devnet)
+
+#### TRACE 2: 5.00 USDC Standard Agreement (Solana Devnet Crypto Rail)
 - Agreement ID: `SIV-E2E-1001`
-- Asset: `USDC` (Solana Devnet Mint: `4zMMC9srt5Ri5X14GAgXhaUii3GnPAEERYPJgZJDNCDU`)
-- Amount: `5.00 USDC`
+- Asset: USDC (Solana Devnet Mint: `4zMMC9srt5Ri5X14GAgXhaUii3GnPAEERYPJgZJDNCDU`)
+- Amount: 5.00 USDC
 - Work Proof: `https://github.com/Sivan-Technologies/sivan-escrow-agent`
-- Push Alerts: Instant Telegram pop-up cards dispatched to Seller (`[📦 Submit delivery]`) and Buyer (`[Release Funds]`).
-- Transfer ID: `btx_c54f3f2a-a200-40b0-8095-1bcdc90ccd08`
-- Solana On-Chain Transaction Signature: [`3thGdZiueT3N4ziKz6HSZthc3oi7fFwDYbhm5GW1mfjSnmQGthc9pqzSVt5f5ARLGmg87FL9ZtdQnXx3YJQbbHPv`](https://explorer.solana.com/tx/3thGdZiueT3N4ziKz6HSZthc3oi7fFwDYbhm5GW1mfjSnmQGthc9pqzSVt5f5ARLGmg87FL9ZtdQnXx3YJQbbHPv?cluster=devnet)
+- Solscan Transaction Proof: [`3thGdZiueT...YJQbbHPv`](https://solscan.io/tx/3thGdZiueT3N4ziKz6HSZthc3oi7fFwDYbhm5GW1mfjSnmQGthc9pqzSVt5f5ARLGmg87FL9ZtdQnXx3YJQbbHPv?cluster=devnet)
 
-#### 🔹 TRACE B: 15.00 USDC High-Value Agreement (Solana Devnet Crypto Rail)
+#### TRACE 3: 15.00 USDC High-Value Agreement Transfer (Solana Devnet Crypto Rail)
 - Agreement ID: `SIV-020500-1FCE`
-- Asset: `USDC` (Solana Devnet)
-- Amount: `15.00 USDC`
+- Asset: USDC (Solana Devnet)
+- Amount: 15.00 USDC
 - Transfer ID: `btx_b8d5f103-bbe5-41ec-ae61-80fbf69ae873`
-- Solana On-Chain Transaction Signature: [`KGCWMiJd9c3Mw7WpVvwwb7XKFjNa7XgnQ3uqajrEabwA1sYwyuLhPU6PnZjSf4TsPmGE7tFfdUmhPxsXrbCCPgs`](https://explorer.solana.com/tx/KGCWMiJd9c3Mw7WpVvwwb7XKFjNa7XgnQ3uqajrEabwA1sYwyuLhPU6PnZjSf4TsPmGE7tFfdUmhPxsXrbCCPgs?cluster=devnet)
-- Confirmed On-Chain Facility Signature: [`35LNV94hcqsHJwAyukQ88FXVDvejiAsV8v9cnJRFMGex96vfuqHNEF6kkYDuCQ8Vrcum6y3NQMiPBFmoFUw5WeRZ`](https://explorer.solana.com/tx/35LNV94hcqsHJwAyukQ88FXVDvejiAsV8v9cnJRFMGex96vfuqHNEF6kkYDuCQ8Vrcum6y3NQMiPBFmoFUw5WeRZ?cluster=devnet)
+- Solscan Transaction Proof: [`KGCWMiJd9c...rbCCPgs`](https://solscan.io/tx/KGCWMiJd9c3Mw7WpVvwwb7XKFjNa7XgnQ3uqajrEabwA1sYwyuLhPU6PnZjSf4TsPmGE7tFfdUmhPxsXrbCCPgs?cluster=devnet)
+
+#### TRACE 4: Confirmed Facility On-Chain Release Settlement
+- Agreement ID: `SIV-020500-1FCE`
+- Solscan Settlement Proof: [`35LNV94hcq...PBFmoFUw5WeRZ`](https://solscan.io/tx/35LNV94hcqsHJwAyukQ88FXVDvejiAsV8v9cnJRFMGex96vfuqHNEF6kkYDuCQ8Vrcum6y3NQMiPBFmoFUw5WeRZ?cluster=devnet)
+
+#### TRACE 5: Buyer Solana SPL Token Wallet Account
+- Solscan Account Proof: [`W7ydftpwxsEE7732N2w5UTHDFrBvYUDmAeuGCZwPDu7`](https://solscan.io/account/W7ydftpwxsEE7732N2w5UTHDFrBvYUDmAeuGCZwPDu7?cluster=devnet)
 
 #### 🔹 TRACE C: 50,000 NGN Bank Transfer & Payout (African Fiat Rail)
 - Agreement ID: `SIV-NGN-9021`
