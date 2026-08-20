@@ -69,7 +69,7 @@ Recent Live Implementation Achievements:
 - Master Test Suite Verification: 10 out of 10 payment test suites passing (30.99s duration) and 0 TypeScript compilation errors across all microservices.
 
 AI-Assisted Development Proof:
-- Attach codex-session.jsonl from project root.
+- Attach ./.superstack/grants/gemini-session.jsonl from project root.
 
 
 Personal X Profile:
