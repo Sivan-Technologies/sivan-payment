@@ -43,6 +43,12 @@ Below is the catalog of planned post-launch features, including their purpose, U
 - Impact: Proactively prevents seller delays and gives buyers transparent delivery countdowns across Telegram and WhatsApp.
 - Deferral Rationale: Phase 1 Code Freeze Active. Natural language duration is stored in agreement scope of work in Phase 1.
 
+### Feature 7: Instant Pay-from-Sivan-Balance Option for Service Agreements
+- Documented Spec: FUTURE_BUILD_PAY_FROM_BALANCE.md
+- Description: Present a 1-tap `[⚡ Pay 12.74 USDC from Sivan Balance]` button when a buyer's internal Sivan balance is sufficient, auto-debiting the ledger and funding the agreement in 1 second without on-chain deposit waiting times.
+- Impact: Delivers instant 1-second agreement settlement for users holding internal Sivan balances.
+- Deferral Rationale: Phase 1 Code Freeze Active. Service agreements currently settle via the x402 on-chain deposit protocol in Phase 1.
+
 ---
 
 ## 2. Code Freeze & Maintenance Protocol
