@@ -505,6 +505,11 @@ export async function getBusinessKpis() {
   const monthlyWithdrawalVolume = monthlyCompletedWithdrawals.reduce((sum, item) => sum + Number(item.destinationAmount ?? item.sourceAmount ?? item.amount ?? 0) + Number(item.feeAmount ?? 0), 0);
   const monthlyNgnOfframpVolume = monthlyCompletedNgnOfframps.reduce((sum, item) => sum + ngnTransferSourceUsd(item), 0);
   const monthlyOnrampVolume = monthlyCompletedOnramps.reduce((sum, item) => sum + Number(item.amount ?? item.grossAmount ?? 0), 0);
+  const x402Transactions = allTransactions.filter(hasX402Signal);
+  const completedX402Transactions = x402Transactions.filter((item: any) => ['completed', 'settled', 'success'].includes(String(item.status ?? '').toLowerCase()));
+  const monthlyCompletedX402Transactions = completedX402Transactions.filter((item: any) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+  const x402AuditSignals = (data.auditLogs ?? []).filter(hasX402Signal);
+  const monthlyX402Volume = monthlyCompletedX402Transactions.reduce((sum, item: any) => sum + transactionUsdAmount(item), 0);
   const payoutDurations = [...completedWithdrawals, ...completedNgnOfframps]
     .map((item) => item.completedAt ? new Date(item.completedAt).getTime() - new Date(item.createdAt).getTime() : 0)
     .filter((value) => Number.isFinite(value) && value > 0);
@@ -535,12 +540,50 @@ export async function getBusinessKpis() {
       transactionCount: allTransactions.length,
       monthlyTransactionCount: monthlyTransactions.length,
       repeatCustomerCount: repeatUsers,
-      disputeTicketCount: disputeTickets
+      disputeTicketCount: disputeTickets,
+      x402PaymentRail: {
+        source: 'sivan-payment',
+        channelBoundary: 'Telegram and WhatsApp can initiate or display x402 flows, but this KPI only counts payment-owned x402 records.',
+        status: x402Transactions.length ? 'live' : 'ready',
+        monthlyVolumeUsd: money(monthlyX402Volume),
+        totalVolumeUsd: money(completedX402Transactions.reduce((sum, item: any) => sum + transactionUsdAmount(item), 0)),
+        count: x402Transactions.length,
+        completedCount: completedX402Transactions.length,
+        monthlyCompletedCount: monthlyCompletedX402Transactions.length,
+        auditSignalCount: x402AuditSignals.length,
+        lastSeenAt: latestIso([...x402Transactions, ...x402AuditSignals].map((item: any) => item.completedAt ?? item.updatedAt ?? item.createdAt))
+      }
     }
   };
 }
 
 function percent(value: number) { return Number(value.toFixed(2)).toString(); }
+function hasX402Signal(item: any) {
+  const directFields = [
+    item?.provider,
+    item?.providerRail,
+    item?.paymentProvider,
+    item?.reference,
+    item?.providerReference,
+    item?.paymentId,
+    item?.id,
+    item?.resourceId,
+    item?.action,
+    item?.eventType,
+    item?.eventCategory
+  ];
+  const metadata = item?.metadata ?? item?.payload;
+  const haystack = [...directFields, metadata ? JSON.stringify(metadata) : ''].join(' ').toLowerCase();
+  return /\bx402\b|x402-/.test(haystack);
+}
+function transactionUsdAmount(item: any) {
+  const sourceCurrency = String(item?.sourceCurrency ?? item?.asset ?? item?.currency ?? '').toLowerCase();
+  if (sourceCurrency === 'usdc' || sourceCurrency === 'usdt' || sourceCurrency === 'usd') return Number(item?.sourceAmount ?? item?.amount ?? item?.amountUsd ?? item?.usdAmount ?? 0) || 0;
+  return Number(item?.amountUsd ?? item?.usdAmount ?? item?.sourceAmountUsd ?? item?.amount ?? 0) || 0;
+}
+function latestIso(values: Array<string | undefined>) {
+  return values.filter(Boolean).sort().at(-1);
+}
 function ngnTransferSourceUsd(item: NgnTransferRecord) { return Number(item.sourceAmount ?? 0); }
 function ngnTransferFeeUsd(item: NgnTransferRecord) {
   const fee = Number(item.feeAmount ?? 0);
