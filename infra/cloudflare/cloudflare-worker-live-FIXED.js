@@ -295,12 +295,13 @@ function resolveRoute(request, url) {
     url.pathname.startsWith("/api/payment")
   ) {
     host = LIVE_PAYMENTS;
-    // /api/payment/api/system/status        -> /api/system/status
-    // /api/admin/payment/api/admin/whatever -> /api/admin/whatever
-    // /api/admin/payment/health             -> /health
-    // Do not prepend /api/admin here; the caller already includes it.
-    upstreamPath =
-      url.pathname.replace(/^\/api\/admin\/payment/, "").replace(/^\/api\/payment/, "") || "/";
+    if (url.pathname.startsWith("/api/admin/payment")) {
+      upstreamPath = url.pathname.replace(/^\/api\/admin\/payment/, "/api/admin") || "/api/admin";
+    } else if (url.pathname.startsWith("/api/payment")) {
+      upstreamPath = url.pathname.replace(/^\/api\/payment/, "/api") || "/api";
+    } else {
+      upstreamPath = url.pathname || "/";
+    }
     serviceName = "payments-api";
   } else if (
     url.pathname.startsWith("/api/admin/auth-service") ||
