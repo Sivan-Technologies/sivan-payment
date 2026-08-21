@@ -354,6 +354,23 @@ export async function buildApp() {
     }
   });
 
+  app.addHook('onRequest', async (request) => {
+    const rawUrl = request.raw.url || request.url;
+    if (!rawUrl || rawUrl.startsWith('/api/admin')) return;
+    const path = rawUrl.split('?')[0];
+    const strippedAdminPrefixes = [
+      '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
+      '/finance', '/approvals', '/reconciliation', '/webhooks',
+      '/compliance', '/search', '/risk', '/suppliers', '/fees',
+      '/virtual-account', '/support', '/audit', '/settings', '/system'
+    ];
+    if (strippedAdminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+      const normalizedUrl = `/api/admin${rawUrl}`;
+      request.raw.url = normalizedUrl;
+      (request as any).url = normalizedUrl;
+    }
+  });
+
   app.addHook('preHandler', async (request, reply) => {
     if (!env.AUTH_REQUIRE_USER || !requiresUserAuth(request.method, request.url)) return;
 
