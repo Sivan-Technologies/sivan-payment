@@ -45,6 +45,15 @@ function kycNoticeKind(status?: string) {
 function Badge({ children, status }: { children: string; status?: string }) { return <span className={`badge ${statusClass(status)}`}>{children}</span>; }
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 function getForm(form: HTMLFormElement) { return Object.fromEntries(new FormData(form).entries()) as Record<string, string>; }
+function digitsOnly(value?: string) { return String(value || '').replace(/\D/g, ''); }
+function normalizeNgnDateOfBirth(value?: string) {
+  const raw = String(value || '').trim();
+  const iso = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (iso) return `${iso[3]}-${iso[2]}-${iso[1]}`;
+  const local = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (local) return `${local[1]}-${local[2]}-${local[3]}`;
+  return raw;
+}
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0, 8)}…${value.slice(-6)}`; }
 function timeAgo(value?: string, nowMs = Date.now()) { if (!value) return 'Now'; const then = new Date(value).getTime(); if (!Number.isFinite(then)) return 'Recently'; const seconds = Math.max(0, Math.floor((nowMs - then) / 1000)); if (seconds < 60) return 'Just now'; const minutes = Math.floor(seconds / 60); if (minutes < 60) return `${minutes}m ago`; const hours = Math.floor(minutes / 60); if (hours < 24) return `${hours}h ago`; const days = Math.floor(hours / 24); if (days < 7) return `${days}d ago`; return new Date(value).toLocaleDateString(); }
 function initials(nameOrEmail?: string) { const value = (nameOrEmail || 'Sivan User').trim(); const parts = value.includes('@') ? value.split('@')[0].split(/[._-]+/) : value.split(/\s+/); return parts.slice(0, 2).map((p) => p[0]?.toUpperCase()).join('') || 'SU'; }
@@ -1190,7 +1199,13 @@ export function VerificationPage({ hasUser, userId, api, customer, customerTypes
     try {
       const result = await api<{ status: string; message: string; bvnLast4?: string }>(`/api/users/${userId}/kyc/ngn-bvn/verify`, {
         method: 'POST',
-        body: JSON.stringify({ bvn: data.bvn, firstName: data.firstName, lastName: data.lastName, dateOfBirth: data.dateOfBirth, mobileNo: data.mobileNo })
+        body: JSON.stringify({
+          bvn: digitsOnly(data.bvn),
+          firstName: String(data.firstName || '').trim(),
+          lastName: String(data.lastName || '').trim(),
+          dateOfBirth: normalizeNgnDateOfBirth(data.dateOfBirth),
+          mobileNo: digitsOnly(data.mobileNo)
+        })
       });
       setNgnLevel2Result(result);
       form.reset();
@@ -1773,7 +1788,7 @@ function NgnLevel2VerificationForm({ busy, result, error, onSubmit, consentBusy 
   return <form className="ngn-level2-card" onSubmit={onSubmit}>
     <div><p className="eyebrow">Level 2 · Nigerian identity</p><h3>Verify your BVN identity</h3><p className="muted">This checks your BVN identity details. We never show your full BVN after submission and this does not run automatically.</p></div>
     <div className="split"><label>First name<input name="firstName" placeholder="John" autoComplete="given-name" required /></label><label>Last name<input name="lastName" placeholder="Doe" autoComplete="family-name" required /></label></div>
-    <div className="split"><label>Date of birth<input name="dateOfBirth" placeholder="dd-MM-yyyy" inputMode="numeric" required /></label><label>Mobile number<input name="mobileNo" placeholder="08012345678" inputMode="tel" autoComplete="tel" required /></label></div>
+    <div className="split"><label>Date of birth<input name="dateOfBirth" placeholder="dd-MM-yyyy" inputMode="numeric" autoComplete="bday" required /></label><label>Mobile number<input name="mobileNo" placeholder="08012345678" inputMode="tel" autoComplete="tel" required /></label></div>
     <label>BVN<input name="bvn" placeholder="11-digit BVN" inputMode="numeric" autoComplete="off" required minLength={11} maxLength={11} /></label>
     <div className="warning-box compact">BVN is sensitive. Sivan uses it only for this Level 2 check. It is not sent to Sivan Assistant and should not be shared in support chat.</div>
     {result && <div className={result.status === 'matched' ? 'success-note' : 'verification-note'}><strong>{result.message}</strong>{result.bvnLast4 && <span> BVN ending {result.bvnLast4}</span>}</div>}

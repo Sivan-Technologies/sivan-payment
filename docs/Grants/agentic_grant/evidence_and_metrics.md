@@ -75,6 +75,16 @@ stateDiagram-v2
 
 ## 🖼️ 4. VISUAL PRODUCT SCREENSHOTS & LIVE DEPLOYMENT ARTIFACTS
 
+### A0. Colosseum Crowdedness Score
+![Colosseum-backed crowdedness score](assets/colosseum_crowdedness_score.png)
+
+- Colosseum-backed overall crowdedness: `6.8 / 10`
+- True Sivan wedge crowdedness: `5.0 / 10`
+- Market gap score: `7.6 / 10`
+- Build opportunity score: `8.0 / 10`
+
+This supports the grant positioning that the wider stablecoin payments space is moderately crowded, while Sivan's exact wedge remains differentiated: AI-assisted Solana payment operations across chat, escrow, off-ramp, virtual accounts, x402, admin reconciliation, and alerts.
+
 ### A. Sivan Operations Console — Live Overview Dashboard
 ![Sivan Console Overview](file:///Users/user/Documents/Project%20X/Sivan/docs/Grants/assets/real_sivan_admin_console_overview.png)
 Live performance analytics showing active users, monthly volume (₦10.0K / $3.1K USDC), 100% repeat customer rate, and currency volume distribution.

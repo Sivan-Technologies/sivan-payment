@@ -8,18 +8,31 @@ import { env } from '../../config/env.js';
 import { getKycLevelProvider } from '../providers/kyc-level-provider-registry.js';
 import type { KycLevelMatchResult } from '../providers/kyc-level-provider.js';
 
+function cleanDigits(value: unknown) {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+function normalizeDateOfBirth(value: unknown) {
+  const raw = String(value ?? '').trim();
+  const iso = raw.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+  if (iso) return `${iso[3]}-${iso[2]}-${iso[1]}`;
+  const local = raw.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (local) return `${local[1]}-${local[2]}-${local[3]}`;
+  return raw;
+}
+
 export const bvnInfoMatchSchema = z.object({
-  bvn: z.string().regex(/^\d{11}$/, 'BVN must be 11 digits'),
-  firstName: z.string().min(2).max(80),
-  lastName: z.string().min(2).max(80),
-  dateOfBirth: z.string().regex(/^\d{2}-\d{2}-\d{4}$/, 'dateOfBirth must be dd-MM-yyyy'),
-  mobileNo: z.string().min(8).max(20)
+  bvn: z.preprocess(cleanDigits, z.string().regex(/^\d{11}$/, 'BVN must be 11 digits')),
+  firstName: z.preprocess((value) => String(value ?? '').trim(), z.string().min(2).max(80)),
+  lastName: z.preprocess((value) => String(value ?? '').trim(), z.string().min(2).max(80)),
+  dateOfBirth: z.preprocess(normalizeDateOfBirth, z.string().regex(/^\d{2}-\d{2}-\d{4}$/, 'dateOfBirth must be dd-MM-yyyy')),
+  mobileNo: z.preprocess(cleanDigits, z.string().min(8).max(20))
 });
 
 export const bvnAccountMatchSchema = z.object({
-  bvn: z.string().regex(/^\d{11}$/, 'BVN must be 11 digits'),
+  bvn: z.preprocess(cleanDigits, z.string().regex(/^\d{11}$/, 'BVN must be 11 digits')),
   bankCode: z.string().min(2).max(20),
-  accountNumber: z.string().min(8).max(20),
+  accountNumber: z.preprocess(cleanDigits, z.string().min(8).max(20)),
   accountName: z.string().min(2).max(160)
 });
 
