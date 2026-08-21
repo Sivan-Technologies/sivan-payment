@@ -155,29 +155,6 @@ export async function adminRoutes(app: FastifyInstance) {
     return { data: await updateLimitControls(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  const handleGetUserLimits = async (request: any) => {
-    const userId = (request.params as any).id || (request.params as any).userId;
-    return { data: await getUserLimitControls(userId) };
-  };
-  regGet('/users/:id/limits', handleGetUserLimits);
-  regGet('/users/:id/limits/override', handleGetUserLimits);
-
-  const handleUpdateUserLimits = async (request: any) => {
-    const userId = (request.params as any).id || (request.params as any).userId;
-    const body = parseBody(userLimitOverrideSchema, request.body);
-    return { data: await updateUserLimitOverride(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
-  };
-  regPost('/users/:id/limits', handleUpdateUserLimits);
-  regPost('/users/:id/limits/override', handleUpdateUserLimits);
-
-  const handleRemoveUserLimits = async (request: any) => {
-    const userId = (request.params as any).id || (request.params as any).userId;
-    const body = (request.body ?? {}) as { updatedBy?: string; reason?: string };
-    return { data: await removeUserLimitOverride(userId, body.updatedBy, body.reason, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
-  };
-  regDelete('/users/:id/limits', handleRemoveUserLimits);
-  regDelete('/users/:id/limits/override', handleRemoveUserLimits);
-
   regPost('/users/:id/kyc/approve', async (request) => {
     const userId = (request.params as any).id || (request.params as any).userId;
     const body = (request.body ?? {}) as { approvedBy?: string; reason?: string; customerType?: 'individual' | 'business' };
