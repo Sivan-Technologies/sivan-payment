@@ -430,7 +430,16 @@ export async function buildApp() {
   });
 
   app.addHook('preHandler', async (request, reply) => {
-    if (!request.url.startsWith('/api/admin')) return;
+    const rawUrl = request.raw.url || request.url;
+    const path = rawUrl.split('?')[0];
+    const adminPrefixes = [
+      '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
+      '/finance', '/approvals', '/reconciliation', '/webhooks',
+      '/compliance', '/search', '/risk', '/suppliers', '/fees',
+      '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers'
+    ];
+    const isAdminPath = rawUrl.startsWith('/api/admin') || adminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+    if (!isAdminPath) return;
 
     // FAIL CLOSED. Previously this returned early when ADMIN_API_KEY was unset,
     // which silently exposed every /api/admin/* route - reads AND writes - to
@@ -617,6 +626,14 @@ function restrictedActionForRequest(method: string, url: string): 'onramp' | 'of
 
 function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/admin')) return false;
+  const path = url.split('?')[0];
+  const adminPrefixes = [
+    '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
+    '/finance', '/approvals', '/reconciliation', '/webhooks',
+    '/compliance', '/search', '/risk', '/suppliers', '/fees',
+    '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers'
+  ];
+  if (adminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return false;
   if (url.startsWith('/api/auth')) return false;
   if (url.startsWith('/api/identity/link-whatsapp/redeem')) return false;
   if (url.startsWith('/api/identity/link-telegram/redeem')) return false;
