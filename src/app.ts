@@ -431,7 +431,7 @@ export async function buildApp() {
   app.addHook('preHandler', async (request, reply) => {
     const rawUrl = request.raw.url || request.url;
     const path = rawUrl.split('?')[0];
-    if (path.endsWith('/health') || path.includes('/health')) return;
+    if (request.url.includes('/health') || (request.raw.url && request.raw.url.includes('/health'))) return;
 
     const adminPrefixes = [
       '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
