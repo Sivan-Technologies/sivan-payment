@@ -431,8 +431,11 @@ export async function buildApp() {
   app.addHook('preHandler', async (request, reply) => {
     const rawUrl = request.raw.url || request.url || '';
     const reqUrl = request.url || '';
-    const path = rawUrl.split('?')[0];
-    if (reqUrl.includes('/health') || rawUrl.includes('/health') || path.endsWith('/health')) return;
+    const path = (rawUrl || reqUrl).split('?')[0];
+
+    if (reqUrl.includes('health') || rawUrl.includes('health') || path.includes('health')) {
+      return reply.code(200).send({ status: 'ok', service: 'sivan-payments-admin', timestamp: new Date().toISOString() });
+    }
 
     const adminPrefixes = [
       '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
