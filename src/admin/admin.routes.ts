@@ -40,85 +40,139 @@ const referenceReconciliationRunSchema = z.object({
 });
 
 export async function adminRoutes(app: FastifyInstance) {
-  app.get('/api/admin/overview', async () => ({ data: await getAdminOverview() }));
-  app.get('/api/admin/users', async (request) => ({ data: await listAdminUsers(listOptions(request)) }));
+  const regGet = (path: string, handler: (request: any, reply?: any) => Promise<any>) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.get(`/api/admin${fullPath}`, handler);
+    app.get(fullPath, handler);
+  };
 
-  app.get('/api/admin/users/:id/details', async (request) => {
+  const regPost = (path: string, handler: (request: any, reply?: any) => Promise<any>) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.post(`/api/admin${fullPath}`, handler);
+    app.post(fullPath, handler);
+  };
+
+  const regPut = (path: string, handler: (request: any, reply?: any) => Promise<any>) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.put(`/api/admin${fullPath}`, handler);
+    app.put(fullPath, handler);
+  };
+
+  const regDelete = (path: string, handler: (request: any, reply?: any) => Promise<any>) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.delete(`/api/admin${fullPath}`, handler);
+    app.delete(fullPath, handler);
+  };
+
+  regGet('/overview', async () => ({ data: await getAdminOverview() }));
+  regGet('/users', async (request) => ({ data: await listAdminUsers(listOptions(request)) }));
+
+  regGet('/users/:id/details', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await getAdminUserDetails(id) };
   });
-  app.get('/api/admin/users/:id/account-controls', async (request) => {
+  regGet('/users/:id/account-controls', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await getAccountRecoveryControls(id) };
   });
 
-  app.post('/api/admin/users/:id/account-controls/username', async (request) => {
+  regPost('/users/:id/account-controls/username', async (request) => {
     const { id } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
     const body = parseBody(adminChangeUsernameSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
     return { data: await adminChangeUsername(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.post('/api/admin/users/:id/account-controls/remove-avatar', async (request) => {
+  regPost('/users/:id/account-controls/remove-avatar', async (request) => {
     const { id } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
     const body = parseBody(adminRemoveAvatarSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
     return { data: await adminRemoveAvatar(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.post('/api/admin/users/:id/account-controls/reset-2fa', async (request) => {
+  regPost('/users/:id/account-controls/reset-2fa', async (request) => {
     const { id } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
     const body = parseBody(adminResetTwoFactorSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
     return { data: await adminResetTwoFactor(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.post('/api/admin/users/:id/account-controls/name-correction-request', async (request) => {
+  regPost('/users/:id/account-controls/name-correction-request', async (request) => {
     const { id } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
     const body = parseBody(adminNameCorrectionRequestSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
     return { data: await adminRequestNameCorrection(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.post('/api/admin/users/:id/account-controls/email-change-request', async (request) => {
+  regPost('/users/:id/account-controls/email-change-request', async (request) => {
     const { id } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
     const body = parseBody(adminEmailChangeRequestSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
     return { data: await adminStartEmailChange(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.post('/api/admin/users/:id/account-controls/unlink-whatsapp', async (request) => {
+  regPost('/users/:id/account-controls/unlink-whatsapp', async (request) => {
     const { id } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role || 'admin_api_key';
     const body = parseBody(adminUnlinkWhatsappSchema, { ...(request.body as any), actorId: (request.body as any)?.actorId || actor });
     return { data: await adminUnlinkWhatsapp(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.get('/api/admin/users/:id/timeline', async (request) => {
+  regGet('/users/:id/timeline', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await getUserTimeline(id) };
   });
 
-  app.get('/api/admin/users/:id/restrictions', async (request) => {
+  regGet('/users/:id/restrictions', async (request) => {
     const { id } = request.params as { id: string };
     return { data: await listUserRestrictions(id) };
   });
 
-  app.post('/api/admin/users/:id/restrictions', async (request) => {
+  regPost('/users/:id/restrictions', async (request) => {
     const { id } = request.params as { id: string };
     const body = parseBody(userRestrictionSchema, request.body);
     return { data: await restrictUser(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.delete('/api/admin/users/:id/restrictions', async (request) => {
+  regDelete('/users/:id/restrictions', async (request) => {
     const { id } = request.params as { id: string };
     const body = parseBody(z.object({ reason: z.string().optional(), actorId: z.string().optional() }), request.body ?? {});
     return { data: await unrestrictUser(id, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
-  app.get('/api/admin/search', async (request) => {
+  regGet('/search', async (request) => {
     const query = (request.query ?? {}) as Record<string, string>;
-    return { data: await getGlobalSearch(query.q || query.search || '', { limit: Number(query.limit || 50) }) };
+    return { data: await getGlobalSearch(query.q ?? '', listOptions(request)) };
+  });
+
+  regGet('/limits', async () => ({ data: await getLimitControls() }));
+
+  regPut('/limits', async (request) => {
+    const body = parseBody(limitControlsSchema, request.body);
+    return { data: await updateLimitControls(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  regGet('/users/:userId/limits/override', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await getUserLimitControls(userId) };
+  });
+
+  regPost('/users/:userId/limits/override', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(userLimitOverrideSchema, request.body);
+    return { data: await updateUserLimitOverride(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  regDelete('/users/:userId/limits/override', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = (request.body ?? {}) as { updatedBy?: string; reason?: string };
+    return { data: await removeUserLimitOverride(userId, body.updatedBy, body.reason, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  regPost('/users/:userId/kyc/approve', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = (request.body ?? {}) as { approvedBy?: string; reason?: string; customerType?: 'individual' | 'business' };
+    return { data: await manuallyApproveCustomerKyc(userId, { approvedBy: body.approvedBy || 'admin', reason: body.reason || 'Admin manual KYC approval and tier upgrade', customerType: body.customerType }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.get('/api/admin/risk/cases', async (request) => {
