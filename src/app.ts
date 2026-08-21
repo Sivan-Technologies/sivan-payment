@@ -21,8 +21,31 @@ function safeKeyEquals(provided: string, expected: string): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+function normalizeAdminAliasUrl(rawUrl = '') {
+  if (rawUrl.startsWith('/api/admin/payment/')) {
+    return rawUrl.replace(/^\/api\/admin\/payment/, '/api/admin');
+  }
+  if (rawUrl.startsWith('/api/payment/')) {
+    return rawUrl.replace(/^\/api\/payment/, '/api/admin');
+  }
+  if (!rawUrl.startsWith('/api/admin')) {
+    const path = rawUrl.split('?')[0];
+    const strippedAdminPrefixes = [
+      '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
+      '/finance', '/approvals', '/reconciliation', '/webhooks',
+      '/compliance', '/search', '/risk', '/suppliers', '/fees',
+      '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers'
+    ];
+    if (strippedAdminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+      return `/api/admin${rawUrl}`;
+    }
+  }
+  return rawUrl;
+}
+
 export async function buildApp() {
   const app = Fastify({
+    rewriteUrl: (request) => normalizeAdminAliasUrl(request.url),
     logger: {
       level: env.LOG_LEVEL,
       /**
@@ -352,35 +375,6 @@ export async function buildApp() {
         });
       }
     }
-  });
-
-  app.addHook('onRequest', (request, _reply, done) => {
-    let rawUrl = request.raw.url || request.url;
-    if (rawUrl) {
-      if (rawUrl.startsWith('/api/admin/payment/')) {
-        rawUrl = rawUrl.replace(/^\/api\/admin\/payment/, '/api/admin');
-        request.raw.url = rawUrl;
-        (request as any).url = rawUrl;
-      } else if (rawUrl.startsWith('/api/payment/')) {
-        rawUrl = rawUrl.replace(/^\/api\/payment/, '/api/admin');
-        request.raw.url = rawUrl;
-        (request as any).url = rawUrl;
-      } else if (!rawUrl.startsWith('/api/admin')) {
-        const path = rawUrl.split('?')[0];
-        const strippedAdminPrefixes = [
-          '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
-          '/finance', '/approvals', '/reconciliation', '/webhooks',
-          '/compliance', '/search', '/risk', '/suppliers', '/fees',
-          '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers'
-        ];
-        if (strippedAdminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
-          const normalizedUrl = `/api/admin${rawUrl}`;
-          request.raw.url = normalizedUrl;
-          (request as any).url = normalizedUrl;
-        }
-      }
-    }
-    done();
   });
 
   app.addHook('preHandler', async (request, reply) => {
