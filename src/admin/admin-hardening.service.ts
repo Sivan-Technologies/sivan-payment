@@ -9,6 +9,7 @@ import { providerCapabilities } from '../providers/provider-routing.js';
 import { BridgeClient } from '../providers/bridge/bridge.client.js';
 import { refreshKycStatus } from '../customers/customers.service.js';
 import { searchTransactionReferences } from '../references/transaction-references.service.js';
+import type { NgnTransferRecord } from '../ngn/types/ngn.types.js';
 
 export const userRestrictionSchema = z.object({
   reason: z.string().min(5).max(2000),
@@ -479,8 +480,10 @@ export async function getBusinessKpis() {
   const now = Date.now();
   const monthAgo = now - 30 * 24 * 60 * 60 * 1000;
   const inMonth = (iso?: string) => Boolean(iso && new Date(iso).getTime() >= monthAgo);
+  const ngnTransfers = ((data as any).ngnTransfers ?? []) as NgnTransferRecord[];
   const allTransactions = [
     ...data.withdrawals,
+    ...ngnTransfers,
     ...((data as any).ngnWithdrawals ?? []),
     ...((data as any).balanceTransfers ?? []),
     ...(data.onrampOrders ?? []),
@@ -493,13 +496,16 @@ export async function getBusinessKpis() {
   for (const item of data.customers) if (inMonth(item.createdAt) || inMonth(item.updatedAt)) monthlyUserIds.add(item.userId);
   for (const item of data.supportTickets ?? []) if (inMonth(item.createdAt) || inMonth(item.updatedAt)) monthlyUserIds.add(item.userId);
 
+  const completedNgnOfframps = ngnTransfers.filter((item) => item.direction === 'offramp' && item.status === 'completed');
   const completedWithdrawals = [...data.withdrawals, ...((data as any).ngnWithdrawals ?? []), ...((data as any).balanceTransfers ?? [])].filter((item) => ['completed', 'settled', 'success'].includes(item.status));
   const completedOnramps = [...(data.onrampOrders ?? []), ...((data as any).virtualAccountTransactions ?? [])].filter((item) => ['completed', 'settled', 'success'].includes(item.status));
   const monthlyCompletedWithdrawals = completedWithdrawals.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+  const monthlyCompletedNgnOfframps = completedNgnOfframps.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
   const monthlyCompletedOnramps = completedOnramps.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
   const monthlyWithdrawalVolume = monthlyCompletedWithdrawals.reduce((sum, item) => sum + Number(item.destinationAmount ?? item.sourceAmount ?? item.amount ?? 0) + Number(item.feeAmount ?? 0), 0);
+  const monthlyNgnOfframpVolume = monthlyCompletedNgnOfframps.reduce((sum, item) => sum + ngnTransferSourceUsd(item), 0);
   const monthlyOnrampVolume = monthlyCompletedOnramps.reduce((sum, item) => sum + Number(item.amount ?? item.grossAmount ?? 0), 0);
-  const payoutDurations = completedWithdrawals
+  const payoutDurations = [...completedWithdrawals, ...completedNgnOfframps]
     .map((item) => item.completedAt ? new Date(item.completedAt).getTime() - new Date(item.createdAt).getTime() : 0)
     .filter((value) => Number.isFinite(value) && value > 0);
   const avgPayoutMinutes = payoutDurations.length ? Math.round(payoutDurations.reduce((sum, value) => sum + value, 0) / payoutDurations.length / 60000) : 0;
@@ -509,12 +515,14 @@ export async function getBusinessKpis() {
   const repeatUsers = [...transactingUsers.values()].filter((count) => count > 1).length;
   const disputeLikeTypes = new Set(['wrong_token_or_network', 'deposit_not_detected', 'payout_delayed', 'onramp_payment', 'onramp_delivery']);
   const disputeTickets = (data.supportTickets ?? []).filter((ticket) => disputeLikeTypes.has(ticket.type)).length;
-  const revenue = completedWithdrawals.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0) + completedOnramps.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0);
+  const revenue = completedWithdrawals.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0)
+    + completedNgnOfframps.reduce((sum, item) => sum + ngnTransferFeeUsd(item), 0)
+    + completedOnramps.reduce((sum, item) => sum + Number(item.feeAmount ?? 0), 0);
   return {
     generatedAt: nowIso(),
     currentUsers: data.users.length,
     monthlyActiveUsers: monthlyUserIds.size,
-    monthlyTransactionVolumeUsd: money(monthlyWithdrawalVolume + monthlyOnrampVolume),
+    monthlyTransactionVolumeUsd: money(monthlyWithdrawalVolume + monthlyNgnOfframpVolume + monthlyOnrampVolume),
     averagePayoutTimeMinutes: avgPayoutMinutes,
     successfulTransactionPercent: percent(allTransactions.length ? (successfulTransactions / allTransactions.length) * 100 : 100),
     repeatCustomerRatePercent: percent(transactingUsers.size ? (repeatUsers / transactingUsers.size) * 100 : 0),
@@ -522,6 +530,7 @@ export async function getBusinessKpis() {
     revenueUsd: money(revenue),
     details: {
       monthlyWithdrawalVolumeUsd: money(monthlyWithdrawalVolume),
+      monthlyNgnOfframpVolumeUsd: money(monthlyNgnOfframpVolume),
       monthlyOnrampVolumeUsd: money(monthlyOnrampVolume),
       transactionCount: allTransactions.length,
       monthlyTransactionCount: monthlyTransactions.length,
@@ -532,3 +541,12 @@ export async function getBusinessKpis() {
 }
 
 function percent(value: number) { return Number(value.toFixed(2)).toString(); }
+function ngnTransferSourceUsd(item: NgnTransferRecord) { return Number(item.sourceAmount ?? 0); }
+function ngnTransferFeeUsd(item: NgnTransferRecord) {
+  const fee = Number(item.feeAmount ?? 0);
+  if (!Number.isFinite(fee) || fee <= 0) return 0;
+  const sourceAmount = Math.abs(Number(item.sourceAmount ?? 0));
+  const rate = Number(item.rate ?? 0);
+  if (sourceAmount > 0 && fee > sourceAmount * 2 && rate > 0) return fee / rate;
+  return fee;
+}

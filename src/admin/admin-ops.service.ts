@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { db } from '../database/json-database.js';
 import type { AuditLogRecord, OnrampOrderRecord, SupportTicketRecord, WithdrawalRecord } from '../database/types.js';
+import type { NgnTransferRecord } from '../ngn/types/ngn.types.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
@@ -625,22 +626,40 @@ export async function getLegalEvidenceSummary() {
 export async function getFinanceDashboard() {
   const data = await db.read();
   const completedWithdrawals = data.withdrawals.filter((item) => item.status === 'completed');
+  const ngnTransfers = ((data as any).ngnTransfers ?? []) as NgnTransferRecord[];
+  const completedNgnOfframps = ngnTransfers.filter((item) => item.direction === 'offramp' && item.status === 'completed');
+  const pendingNgnOfframps = ngnTransfers.filter((item) => item.direction === 'offramp' && isNgnPendingStatus(item.status));
+  const failedNgnOfframps = ngnTransfers.filter((item) => item.direction === 'offramp' && isNgnFailedStatus(item.status));
   const completedOnrampOrders = (data.onrampOrders ?? []).filter((item) => item.status === 'completed');
   const offrampVolume = sum(completedWithdrawals.map((item) => Number(item.destinationAmount ?? item.sourceAmount ?? 0)));
+  const ngnOfframpVolume = sum(completedNgnOfframps.map(ngnTransferSourceUsd));
+  const pendingNgnOfframpVolume = sum(pendingNgnOfframps.map(ngnTransferSourceUsd));
+  const ngnOfframpDestinationNgn = sum(completedNgnOfframps.map((item) => Number(item.destinationAmount ?? 0)));
   const onrampVolume = sum(completedOnrampOrders.map((item) => Number(item.amount ?? 0)));
   const withdrawalFees = sum(completedWithdrawals.map((item) => Number(item.feeAmount ?? 0)));
+  const ngnFees = sum(completedNgnOfframps.map(ngnTransferFeeUsd));
   const onrampFees = sum(completedOnrampOrders.map((item) => Number(item.feeAmount ?? 0)));
   const kycKybCosts = sum(data.customers.map((item) => Number(item.onboardingCostUsd ?? 0)));
-  const grossFees = withdrawalFees + onrampFees;
-  const estimatedProviderVariableCost = offrampVolume * 0.005;
+  const totalOfframpVolume = offrampVolume + ngnOfframpVolume;
+  const grossFees = withdrawalFees + ngnFees + onrampFees;
+  const estimatedProviderVariableCost = totalOfframpVolume * 0.005;
   return {
     generatedAt: nowIso(),
-    volume: { totalUsd: money(offrampVolume + onrampVolume), offrampUsd: money(offrampVolume), onrampUsd: money(onrampVolume) },
-    fees: { grossFeesUsd: money(grossFees), offrampFeesUsd: money(withdrawalFees), onrampFeesUsd: money(onrampFees) },
-    costs: { providerVariableCostUsd: money(estimatedProviderVariableCost), kycKybCostsUsd: money(kycKybCosts), failedTransactionCount: data.withdrawals.filter((item) => item.status === 'failed').length + completedOnrampOrders.filter((item) => item.status === 'failed').length },
+    volume: { totalUsd: money(totalOfframpVolume + onrampVolume), offrampUsd: money(totalOfframpVolume), onrampUsd: money(onrampVolume) },
+    fees: { grossFeesUsd: money(grossFees), offrampFeesUsd: money(withdrawalFees + ngnFees), onrampFeesUsd: money(onrampFees) },
+    costs: { providerVariableCostUsd: money(estimatedProviderVariableCost), kycKybCostsUsd: money(kycKybCosts), failedTransactionCount: data.withdrawals.filter((item) => item.status === 'failed').length + failedNgnOfframps.length + completedOnrampOrders.filter((item) => item.status === 'failed').length },
     margin: { netRevenueUsd: money(grossFees - estimatedProviderVariableCost - kycKybCosts), grossMarginUsd: money(grossFees - estimatedProviderVariableCost) },
-    byCurrency: groupVolumeByCurrency(completedWithdrawals, completedOnrampOrders),
-    byChain: groupVolumeByChain(data.withdrawals, data.onrampOrders ?? [])
+    byCurrency: groupVolumeByCurrency(completedWithdrawals, completedOnrampOrders, completedNgnOfframps),
+    byChain: groupVolumeByChain(data.withdrawals, data.onrampOrders ?? [], completedNgnOfframps),
+    ngn: {
+      completedOfframpCount: completedNgnOfframps.length,
+      pendingOfframpCount: pendingNgnOfframps.length,
+      failedOfframpCount: failedNgnOfframps.length,
+      completedOfframpVolumeUsd: money(ngnOfframpVolume),
+      pendingOfframpVolumeUsd: money(pendingNgnOfframpVolume),
+      completedOfframpDestinationNgn: money(ngnOfframpDestinationNgn),
+      revenueUsd: money(ngnFees)
+    }
   };
 }
 
@@ -763,16 +782,21 @@ function estimateWithdrawalEconomics(withdrawal: WithdrawalRecord) {
   return { volumeUsd: money(volume), sivanFeeUsd: money(fee), providerCostUsd: money(providerCost), estimatedNetRevenueUsd: money(fee - providerCost) };
 }
 
-function groupVolumeByCurrency(withdrawals: WithdrawalRecord[], orders: OnrampOrderRecord[]) {
+function groupVolumeByCurrency(withdrawals: WithdrawalRecord[], orders: OnrampOrderRecord[], ngnTransfers: NgnTransferRecord[] = []) {
   const out: Record<string, number> = {};
   for (const item of withdrawals) out[item.destinationCurrency] = (out[item.destinationCurrency] ?? 0) + Number(item.destinationAmount ?? item.sourceAmount ?? 0);
+  for (const item of ngnTransfers) out[item.sourceCurrency] = (out[item.sourceCurrency] ?? 0) + ngnTransferSourceUsd(item);
   for (const item of orders) out[item.sourceCurrency] = (out[item.sourceCurrency] ?? 0) + Number(item.amount ?? 0);
   return Object.fromEntries(Object.entries(out).map(([key, value]) => [key, money(value)]));
 }
 
-function groupVolumeByChain(withdrawals: WithdrawalRecord[], orders: OnrampOrderRecord[]) {
+function groupVolumeByChain(withdrawals: WithdrawalRecord[], orders: OnrampOrderRecord[], ngnTransfers: NgnTransferRecord[] = []) {
   const out: Record<string, number> = {};
   for (const item of withdrawals) out[item.raw ? String((item.raw as any)?.chain ?? 'unknown') : 'unknown'] = (out[item.raw ? String((item.raw as any)?.chain ?? 'unknown') : 'unknown'] ?? 0) + Number(item.destinationAmount ?? item.sourceAmount ?? 0);
+  for (const item of ngnTransfers) {
+    const chain = String((item.metadata as any)?.network ?? (item.metadata as any)?.chain ?? 'solana').toLowerCase();
+    out[chain] = (out[chain] ?? 0) + ngnTransferSourceUsd(item);
+  }
   for (const item of orders) out[item.destinationChain] = (out[item.destinationChain] ?? 0) + Number(item.amount ?? 0);
   return Object.fromEntries(Object.entries(out).map(([key, value]) => [key, money(value)]));
 }
@@ -795,6 +819,22 @@ function severityRank(value: string) { return { info: 1, low: 1, medium: 2, warn
 function descCreated(a: { createdAt: string }, b: { createdAt: string }) { return b.createdAt.localeCompare(a.createdAt); }
 function sum(values: number[]) { return values.reduce((acc, value) => acc + (Number.isFinite(value) ? value : 0), 0); }
 function money(value: number) { return value.toFixed(2); }
+function ngnTransferSourceUsd(item: NgnTransferRecord) { return Number(item.sourceAmount ?? 0); }
+function ngnTransferFeeUsd(item: NgnTransferRecord) {
+  const fee = Number(item.feeAmount ?? 0);
+  if (!Number.isFinite(fee) || fee <= 0) return 0;
+  const sourceAmount = Math.abs(Number(item.sourceAmount ?? 0));
+  const rate = Number(item.rate ?? 0);
+  // Older NGN transfer rows stored feeAmount in naira. Newer rows store it in
+  // stablecoin/USD units. If the fee is larger than the source amount itself,
+  // treat it as NGN and convert back with the transfer rate for reporting.
+  if (sourceAmount > 0 && fee > sourceAmount * 2 && rate > 0) return fee / rate;
+  return fee;
+}
+function isNgnPendingStatus(status: string) {
+  return ['created', 'quote_created', 'quote_accepted', 'awaiting_deposit', 'awaiting_crypto_deposit', 'deposit_received', 'blockchain_confirmed', 'processing', 'settlement_processing', 'bank_processing', 'crypto_sent', 'requires_review'].includes(status);
+}
+function isNgnFailedStatus(status: string) { return ['failed', 'expired', 'cancelled'].includes(status); }
 
 export async function markWithdrawalCompleted(withdrawalId: string) {
   const data = await db.read();
