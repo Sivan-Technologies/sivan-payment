@@ -429,9 +429,10 @@ export async function buildApp() {
   });
 
   app.addHook('preHandler', async (request, reply) => {
-    const rawUrl = request.raw.url || request.url;
+    const rawUrl = request.raw.url || request.url || '';
+    const reqUrl = request.url || '';
     const path = rawUrl.split('?')[0];
-    if (request.url.includes('/health') || (request.raw.url && request.raw.url.includes('/health'))) return;
+    if (reqUrl.includes('/health') || rawUrl.includes('/health') || path.endsWith('/health')) return;
 
     const adminPrefixes = [
       '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',

@@ -64,7 +64,10 @@ export async function adminRoutes(app: FastifyInstance) {
     app.delete(fullPath, handler);
   };
 
-  regGet('/health', async () => ({ status: 'ok', service: 'sivan-payments-admin', timestamp: new Date().toISOString() }));
+  const healthHandler = async () => ({ status: 'ok', service: 'sivan-payments-admin', timestamp: new Date().toISOString() });
+  regGet('/health', healthHandler);
+  regGet('/payment/health', healthHandler);
+  app.get('/api/admin/payment/health', healthHandler);
   regGet('/overview', async () => ({ data: await getAdminOverview() }));
   regGet('/users', async (request) => ({ data: await listAdminUsers(listOptions(request)) }));
 
