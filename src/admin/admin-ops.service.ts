@@ -650,7 +650,7 @@ export async function getFinanceDashboard() {
     costs: { providerVariableCostUsd: money(estimatedProviderVariableCost), kycKybCostsUsd: money(kycKybCosts), failedTransactionCount: data.withdrawals.filter((item) => item.status === 'failed').length + failedNgnOfframps.length + completedOnrampOrders.filter((item) => item.status === 'failed').length },
     margin: { netRevenueUsd: money(grossFees - estimatedProviderVariableCost - kycKybCosts), grossMarginUsd: money(grossFees - estimatedProviderVariableCost) },
     byCurrency: groupVolumeByCurrency(completedWithdrawals, completedOnrampOrders, completedNgnOfframps),
-    byChain: groupVolumeByChain(data.withdrawals, data.onrampOrders ?? [], completedNgnOfframps),
+    byChain: groupVolumeByChain(completedWithdrawals, completedOnrampOrders, completedNgnOfframps),
     ngn: {
       completedOfframpCount: completedNgnOfframps.length,
       pendingOfframpCount: pendingNgnOfframps.length,
