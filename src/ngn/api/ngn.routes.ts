@@ -703,13 +703,13 @@ export async function ngnRoutes(app: FastifyInstance) {
    * the same reason the tier matrix does - a ceiling cannot be judged without
    * seeing what it was changed from.
    */
-  app.get('/api/admin/users/:userId/limits', async (request) => {
-    const { userId } = request.params as { userId: string };
+  app.get('/api/admin/users/:id/limits', async (request) => {
+    const { id: userId } = request.params as { id: string };
     return { data: await getUserLimitDetail(userId) };
   });
 
-  app.put('/api/admin/users/:userId/limits', async (request) => {
-    const { userId } = request.params as { userId: string };
+  app.put('/api/admin/users/:id/limits', async (request) => {
+    const { id: userId } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
     const body = parseBody(setUserLimitSchema, {
       ...(request.body as object),
@@ -719,8 +719,8 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await setUserLimit(body) };
   });
 
-  app.delete('/api/admin/users/:userId/limits', async (request) => {
-    const { userId } = request.params as { userId: string };
+  app.delete('/api/admin/users/:id/limits', async (request) => {
+    const { id: userId } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
     const body = parseBody(clearUserLimitSchema, {
       ...(request.body as object),
@@ -730,8 +730,8 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await clearUserLimit(body) };
   });
 
-  app.post('/api/admin/users/:userId/limits/reset', async (request) => {
-    const { userId } = request.params as { userId: string };
+  app.post('/api/admin/users/:id/limits/reset', async (request) => {
+    const { id: userId } = request.params as { id: string };
     const actor = (request as any).adminActor?.email || (request as any).adminActor?.role;
     const body = parseBody(resetUserWindowSchema, {
       ...(request.body as object),
