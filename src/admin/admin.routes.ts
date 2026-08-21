@@ -153,30 +153,30 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   const handleGetUserLimits = async (request: any) => {
-    const { userId } = request.params as { userId: string };
+    const userId = (request.params as any).id || (request.params as any).userId;
     return { data: await getUserLimitControls(userId) };
   };
-  regGet('/users/:userId/limits', handleGetUserLimits);
-  regGet('/users/:userId/limits/override', handleGetUserLimits);
+  regGet('/users/:id/limits', handleGetUserLimits);
+  regGet('/users/:id/limits/override', handleGetUserLimits);
 
   const handleUpdateUserLimits = async (request: any) => {
-    const { userId } = request.params as { userId: string };
+    const userId = (request.params as any).id || (request.params as any).userId;
     const body = parseBody(userLimitOverrideSchema, request.body);
     return { data: await updateUserLimitOverride(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   };
-  regPost('/users/:userId/limits', handleUpdateUserLimits);
-  regPost('/users/:userId/limits/override', handleUpdateUserLimits);
+  regPost('/users/:id/limits', handleUpdateUserLimits);
+  regPost('/users/:id/limits/override', handleUpdateUserLimits);
 
   const handleRemoveUserLimits = async (request: any) => {
-    const { userId } = request.params as { userId: string };
+    const userId = (request.params as any).id || (request.params as any).userId;
     const body = (request.body ?? {}) as { updatedBy?: string; reason?: string };
     return { data: await removeUserLimitOverride(userId, body.updatedBy, body.reason, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   };
-  regDelete('/users/:userId/limits', handleRemoveUserLimits);
-  regDelete('/users/:userId/limits/override', handleRemoveUserLimits);
+  regDelete('/users/:id/limits', handleRemoveUserLimits);
+  regDelete('/users/:id/limits/override', handleRemoveUserLimits);
 
-  regPost('/users/:userId/kyc/approve', async (request) => {
-    const { userId } = request.params as { userId: string };
+  regPost('/users/:id/kyc/approve', async (request) => {
+    const userId = (request.params as any).id || (request.params as any).userId;
     const body = (request.body ?? {}) as { approvedBy?: string; reason?: string; customerType?: 'individual' | 'business' };
     return { data: await manuallyApproveCustomerKyc(userId, { approvedBy: body.approvedBy || 'admin', reason: body.reason || 'Admin manual KYC approval and tier upgrade', customerType: body.customerType }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
