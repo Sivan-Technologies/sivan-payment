@@ -431,6 +431,8 @@ export async function buildApp() {
   app.addHook('preHandler', async (request, reply) => {
     const rawUrl = request.raw.url || request.url;
     const path = rawUrl.split('?')[0];
+    if (path.endsWith('/health') || path.includes('/health')) return;
+
     const adminPrefixes = [
       '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
       '/finance', '/approvals', '/reconciliation', '/webhooks',
@@ -439,7 +441,6 @@ export async function buildApp() {
     ];
     const isAdminPath = rawUrl.startsWith('/api/admin') || adminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
     if (!isAdminPath) return;
-    if (path.endsWith('/health') || path === '/api/admin/health' || path === '/health' || path === '/api/health') return;
 
     // FAIL CLOSED. Previously this returned early when ADMIN_API_KEY was unset,
     // which silently exposed every /api/admin/* route - reads AND writes - to
