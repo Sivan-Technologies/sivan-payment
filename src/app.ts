@@ -439,6 +439,7 @@ export async function buildApp() {
     ];
     const isAdminPath = rawUrl.startsWith('/api/admin') || adminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
     if (!isAdminPath) return;
+    if (path === '/api/admin/health' || path === '/health' || path === '/api/health') return;
 
     // FAIL CLOSED. Previously this returned early when ADMIN_API_KEY was unset,
     // which silently exposed every /api/admin/* route - reads AND writes - to
