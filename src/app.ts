@@ -427,7 +427,53 @@ export async function buildApp() {
     const reqUrl = request.url || '';
     const path = (rawUrl || reqUrl).split('?')[0];
 
-    if (reqUrl.includes('health') || rawUrl.includes('health') || path.includes('health')) {
+    /**
+     * THE UNAUTHENTICATED HEALTH SHORTCUT, MATCHED EXACTLY.
+     *
+     * This read `url.includes('health')` - a SUBSTRING test over the whole
+     * URL, query string included - and it sits above the admin key check
+     * below. Two consequences, both proven against production:
+     *
+     *   /api/admin/ngn/controls           -> 401  (correct)
+     *   /api/admin/ngn/controls?q=health  -> 200  (auth skipped entirely)
+     *
+     * Appending six characters to ANY admin URL bypassed authentication. The
+     * blast radius was limited only because this branch returns its own
+     * payload and stops - it never served admin data - but that is a property
+     * of what happens to sit below it, not a guarantee.
+     *
+     * The second consequence was the one costing us daily: a real admin route
+     * whose PATH contains "health" could never execute. Both of these are
+     * registered and were permanently shadowed by this branch:
+     *
+     *   /api/admin/kyc/ngn/provider-health   (kyc-level.routes.ts:6)
+     *   /api/admin/wallets/health            (ngn.routes.ts:601)
+     *
+     * The first is the endpoint that reports whether Monnify and Flutterwave
+     * can actually answer a BVN check. It returned this hardcoded
+     * {"status":"ok"} instead, so a dead KYC provider looked healthy and the
+     * one diagnostic that would have shown it was swallowed.
+     *
+     * HOW IT GOT HERE. It was tightened and re-loosened across five commits
+     * (2b3681d, 69f6e2f, 37522ed, 4d623ff, 34217bb) that were debugging
+     * against a Render deployment serving a stale build. Each attempt looked
+     * like it failed, so each widened the match:
+     *
+     *   path.endsWith('/health') -> url.includes('/health') -> includes('health')
+     *
+     * The code was never the problem; the deployment was.
+     *
+     * Now: exact path match, GET/HEAD only, query string discarded. The list
+     * is the routes that genuinely must answer without credentials - load
+     * balancer and uptime probes - and nothing else. An admin route that
+     * happens to contain the word reaches its own handler and its own auth.
+     */
+    const PUBLIC_HEALTH_PATHS = new Set([
+      '/health',
+      '/api/admin/health',
+      '/api/admin/payment/health',
+    ]);
+    if (['GET', 'HEAD'].includes(request.method) && PUBLIC_HEALTH_PATHS.has(path)) {
       return reply.code(200).send({ status: 'ok', service: 'sivan-payments-admin', timestamp: new Date().toISOString() });
     }
 
