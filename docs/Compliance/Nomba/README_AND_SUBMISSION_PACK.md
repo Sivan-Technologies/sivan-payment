@@ -8,16 +8,16 @@ Date: August 2026
 
 ## 1. Status of Requested Documents (8 Requirements)
 
-| # | Requested Requirement | Status | Document Name / Location | Action Needed by You |
+| # | Requested Requirement | Status | Document Name / Location | Notes |
 |---|---|---|---|---|
-| 1 | Bio-data page of international passport | Ready for Attachment | Samson Olaleye International Passport | Attach your passport scan (PDF or JPEG) |
-| 2 | Statements of account from commercial banks | Ready for Attachment | Sivan / Business Bank Statement (3-6 Months) | Export PDF statement from your bank app |
+| 1 | Identity Document (NIN Digital Slip) | Attached & Ready ✅ | `Samson_Micheal_Olaleye_NIN_Slip.jpg` | Valid Government-issued National ID (NIN: 7483 316 1267) |
+| 2 | Statements of account from commercial banks | Ready for Attachment | Sivan / Business Bank Statement (3-6 Months) | Export PDF statement from your commercial bank app |
 | 3 | Proof of address (Residential & Business) | Ready for Attachment | Utility bill / Bank statement showing address | Attach recent electricity/water bill or bank statement |
 | 4 | Signed AML Questionnaire for the business | Template Provided | Nomba AML Questionnaire | Fill, sign, and date the form attached in Nomba email |
-| 5 | Official social media handles | Ready | Website, X, Telegram, LinkedIn | Provided in email draft below |
-| 6 | Documented KYC and KYB Policy | Completed (Institutional Grade) | `SIVAN_KYC_AND_KYB_POLICY.md` | Attach exported PDF from `docs/Compliance/` |
-| 7 | Documented AML/CFT Framework / Policy | Completed (Institutional Grade) | `SIVAN_AML_CFT_FRAMEWORK_POLICY.md` | Attach exported PDF from `docs/Compliance/` |
-| 8 | Contact details for Support & Compliance | Completed | Support & Compliance official contact roster | Included in email draft below |
+| 5 | Official social media handles | Ready ✅ | Website, X, Telegram | Provided in email draft below |
+| 6 | Documented KYC and KYB Policy | Completed (Institutional Grade) ✅ | `SIVAN_KYC_AND_KYB_POLICY.md` | In `docs/Compliance/Nomba/` |
+| 7 | Documented AML/CFT Framework / Policy | Completed (Institutional Grade) ✅ | `SIVAN_AML_CFT_FRAMEWORK_POLICY.md` | In `docs/Compliance/Nomba/` |
+| 8 | Contact details for Support & Compliance | Completed ✅ | Support & Compliance official contact roster | Included in email draft below |
 
 ---
 
@@ -32,7 +32,8 @@ Thank you for your follow-up email. We have compiled and attached all outstandin
 Please find the requested details and attachments outlined below:
 
 ### 1. Director Identity and Verification Documents
-- Bio-data Page of International Passport: [Attached: Samson_Olaleye_International_Passport.pdf]
+- Government-Issued Photo Identification: [Attached: Samson_Micheal_Olaleye_NIN_Slip.jpg]
+  (Official Digital National Identification Number Slip issued by NIMC — NIN: 7483 316 1267, DOB: 14 Jan 1994).
 - Proof of Residential and Principal Business Address: [Attached: Sivan_Proof_of_Address.pdf]
 - Commercial Bank Statements (Business Operations): [Attached: Sivan_Commercial_Bank_Statement.pdf]
 
@@ -62,8 +63,9 @@ We look forward to completing our API Checkout integration.
 
 Warm regards,
 
-Samson Olaleye  
+Samson Micheal Olaleye  
 Founder & CEO, Sivan Technologies Ltd  
+NIN: 7483 316 1267  
 Email: michealsamson1@gmail.com / samson@sivantech.online  
 Phone: +234 816 777 5683  
 Website: https://sivantech.online
