@@ -74,3 +74,32 @@ Founder 2 (Co-Founder):
 - Role: Co-Founder & Operations Partner
 - Ownership: 20%
 - Location: Abuja, FCT, Nigeria
+
+---
+
+## 10. Founder Introduction Video Link & 60-Second Video Script
+
+Field Requirement:
+Paste a public or shareable link to your founder introduction video from YouTube, Google Drive, Vimeo or a similar platform. Make sure anyone with the link can view the video without requesting access or signing in.
+
+Recommended Video Link Format:
+- YouTube Unlisted/Public Link: https://youtu.be/YOUR_VIDEO_ID
+- Google Drive Shareable Link: https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing (Ensure access is set to "Anyone with the link can view")
+
+---
+
+### 60-to-90 Second Founder Video Script (Record on your phone or webcam):
+
+Hi everyone, my name is Samson Micheal Olaleye, Founder and CEO of Sivan Technologies based in Abuja, Nigeria.
+
+Over 80 percent of digital work and service transactions done by young Nigerians happen on social channels like Telegram and WhatsApp. But there is a massive trust problem: freelancers are afraid of doing work without getting paid, while buyers are afraid of paying upfront and losing their money.
+
+At Sivan Technologies, we built Sivan Payment AI to solve this exact problem. 
+
+Sivan Payment AI turns casual chat messages into formal, verifiable Service Agreements. Through our AI assistant, users can create an agreement, lock funds safely in digital dollars, submit proof of work, and release payment to their local Nigerian bank account in seconds—with zero friction.
+
+Our team has built and deployed battle-tested payment infrastructure, full-stack software, and automated regulatory compliance frameworks aligned with Nigerian financial standards.
+
+With the support of the Federal Ministry of Youth Development and NIYA, we will scale Sivan Payment AI to empower thousands of young Nigerian freelancers, agency owners, and digital creators to trade safely and participate in the global digital economy.
+
+Thank you!
