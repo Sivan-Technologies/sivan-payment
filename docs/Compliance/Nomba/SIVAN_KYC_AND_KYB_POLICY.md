@@ -1,8 +1,13 @@
-# Sivan Technologies Ltd — Customer Due Diligence, KYC and KYB Policy
+# Sivan Technologies — Customer Due Diligence, KYC and KYB Policy
 
 Document Reference: SIV-POL-KYC-2026-V1  
-Entity: Sivan Technologies Ltd (RC / Company Registration: Nigeria)  
-Effective Date: 1 January 2026  
+Entity: Sivan Technologies  
+CAC Registration Number (BN): 9585790  
+Tax Identification Number (TIN): 2623798940018  
+Registered Address: No. 3 Olayinka Street, Byazhin Across, Kubwa, Federal Capital Territory, Nigeria  
+Operational Address: No. 1 Ebenezer Street, Byazhin Across, Kubwa, Bwari, Federal Capital Territory, Nigeria  
+Date of Incorporation / Registration: 2 June 2026  
+Effective Date: 9 June 2026  
 Last Reviewed: August 2026  
 Classification: Formal Compliance & Regulatory Documentation  
 
@@ -10,7 +15,7 @@ Classification: Formal Compliance & Regulatory Documentation
 
 ## 1. Executive Summary and Policy Objective
 
-Sivan Technologies Ltd operates Sivan Payment AI, an agentic transaction coordination infrastructure and payment gateway facilitating multi-currency settlement, Service Agreements, and payment checkouts.
+Sivan Technologies operates Sivan Payment AI, an agentic transaction coordination infrastructure and payment gateway facilitating multi-currency settlement, Service Agreements, and payment checkouts.
 
 This Know Your Customer (KYC) and Know Your Business (KYB) Policy establishes mandatory customer identification, verification, and ongoing monitoring procedures in compliance with:
 - Central Bank of Nigeria (CBN) Anti-Money Laundering and Combating the Financing of Terrorism Regulations.
@@ -44,7 +49,7 @@ Sivan Payment AI enforces a four-tier risk-weighted KYC architecture for all ind
 ### Tier 2: Standard Due Diligence (Medium-Risk Retail & Freelancers)
 - Requirements:
   1. All Tier 1 requirements.
-  2. Government-issued Photo Identification (International Passport, National Identity Card, Driver's License, or Voter's Card) with automated biometric liveness and optical character recognition (OCR) match.
+  2. Government-issued Photo Identification (Digital National Identity Slip / Card NIN, International Passport, Driver's License, or Voter's Card) with automated biometric liveness and optical character recognition (OCR) match.
   3. Verified Residential Address via recent utility bill (electricity, water, waste) or official bank statement dated within the last 3 months.
 - Transaction Limits:
   - Single Transaction Limit: NGN 5,000,000 / $5,000 USDC.
@@ -68,12 +73,12 @@ Sivan Payment AI enforces a four-tier risk-weighted KYC architecture for all ind
 For corporate clients, agencies, and e-commerce merchants integrating Sivan Payment AI API Checkout, the following verification process is mandatory before API live keys are generated:
 
 ### 3.1 Required Corporate Documentation
-1. Certificate of Incorporation / Registration from the Corporate Affairs Commission (CAC) or relevant jurisdictional corporate registry.
-2. Memorandum and Articles of Association (MEMART) / Status Report / Form CAC 1.1 / CAC 2 & 7.
+1. Certificate of Incorporation / Business Name Registration from the Corporate Affairs Commission (CAC) or relevant jurisdictional corporate registry.
+2. Status Report / Certified Extract / Registration Form showing business details, principal place of business, and proprietor/director records.
 3. Tax Identification Number (TIN) and Tax Clearance Certificate where applicable.
 4. Corporate Bank Account Statement: 3 to 6 months of corporate bank statements issued by a licensed commercial bank.
 5. Proof of Physical Principal Place of Business: Commercial lease agreement, recent utility bill in the business name, or physical site inspection report.
-6. Corporate Resolution authorising the opening of the Sivan merchant account and designating authorized signatories.
+6. Corporate Resolution / Owner Authority Letter authorising the opening of the Sivan merchant account and designating authorized signatories.
 
 ### 3.2 Ultimate Beneficial Ownership (UBO) Verification
 - Identification of all natural persons who ultimately own or control 5% or more of the company's equity or voting rights.
@@ -106,7 +111,8 @@ For corporate clients, agencies, and e-commerce merchants integrating Sivan Paym
 
 ## 6. Governance and Compliance Officer Sign-Off
 
-Compliance Officer: Head of Risk and Compliance, Sivan Technologies Ltd  
+Compliance Officer: Head of Risk and Compliance, Sivan Technologies  
 Email: compliance@sivantech.online  
-Approval Date: August 2026  
+Escalations: risk@sivantech.online  
+Approval Date: 9 June 2026  
 Status: Approved & Enforced

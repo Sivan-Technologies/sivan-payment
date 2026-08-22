@@ -1,8 +1,13 @@
-# Sivan Technologies Ltd — Anti-Money Laundering and Counter-Terrorist Financing (AML/CFT) Framework
+# Sivan Technologies — Anti-Money Laundering and Counter-Terrorist Financing (AML/CFT) Framework
 
 Document Reference: SIV-POL-AML-2026-V1  
-Entity: Sivan Technologies Ltd  
-Effective Date: 1 January 2026  
+Entity: Sivan Technologies  
+CAC Registration Number (BN): 9585790  
+Tax Identification Number (TIN): 2623798940018  
+Registered Address: No. 3 Olayinka Street, Byazhin Across, Kubwa, Federal Capital Territory, Nigeria  
+Operational Address: No. 1 Ebenezer Street, Byazhin Across, Kubwa, Bwari, Federal Capital Territory, Nigeria  
+Date of Incorporation / Registration: 2 June 2026  
+Effective Date: 9 June 2026  
 Last Reviewed: August 2026  
 Classification: Formal Compliance & Regulatory Documentation  
 
@@ -10,7 +15,7 @@ Classification: Formal Compliance & Regulatory Documentation
 
 ## 1. Policy Statement and Purpose
 
-Sivan Technologies Ltd (operators of Sivan Payment AI) is committed to preventing the use of its payment infrastructure, API checkout rails, Service Agreements, and digital asset settlement facilities for money laundering, terrorism financing, proliferation financing, fraud, or other financial crimes.
+Sivan Technologies (operators of Sivan Payment AI) is committed to preventing the use of its payment infrastructure, API checkout rails, Service Agreements, and digital asset settlement facilities for money laundering, terrorism financing, proliferation financing, fraud, or other financial crimes.
 
 This framework defines the internal systems, operational controls, suspicious activity reporting mechanisms, and employee obligations established to comply with:
 - Money Laundering (Prevention and Prohibition) Act, 2022 (Nigeria).
@@ -23,7 +28,7 @@ This framework defines the internal systems, operational controls, suspicious ac
 
 ## 2. Institutional Risk Assessment (Risk-Based Approach)
 
-Sivan Technologies Ltd applies a Risk-Based Approach (RBA) to identify, assess, and understand its money laundering and terrorist financing risks across:
+Sivan Technologies applies a Risk-Based Approach (RBA) to identify, assess, and understand its money laundering and terrorist financing risks across:
 1. Customer Risk: Individual consumers, freelance creators, corporate merchants, and autonomous software agents.
 2. Geographic Risk: High-risk jurisdictions identified by FATF, non-cooperative tax regimes, and sanctioned territories.
 3. Product & Channel Risk: Multi-channel conversational commerce (Telegram, WhatsApp), API checkouts, stablecoin on/off-ramps, and Service Agreement state machines.
@@ -85,7 +90,7 @@ The Sivan Payment AI platform operates an automated transaction surveillance eng
 ## 7. Compliance Contact Information
 
 Compliance Department  
-Sivan Technologies Ltd  
+Sivan Technologies  
 Email: compliance@sivantech.online  
-Escalations: legal@sivantech.online  
+Escalations: risk@sivantech.online  
 Website: https://sivantech.online
