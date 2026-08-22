@@ -2,6 +2,7 @@ import { env } from '../../config/env.js';
 import { MockKycLevelProvider } from './mock-kyc-level.provider.js';
 import { MonnifyKycLevelProvider } from './monnify-kyc-level.provider.js';
 import { FlutterwaveKycLevelProvider } from './flutterwave-kyc-level.provider.js';
+import { IdentifyOrgKycLevelProvider, isIdentifyOrgConfigured } from './identifyorg-kyc-level.provider.js';
 import { FailoverKycLevelProvider, buildKycProviderChain } from './failover-kyc-level.provider.js';
 
 /**
@@ -25,6 +26,7 @@ import { FailoverKycLevelProvider, buildKycProviderChain } from './failover-kyc-
 export function getKycLevelProvider(name?: string) {
   if (name === 'monnify') return new MonnifyKycLevelProvider();
   if (name === 'flutterwave') return new FlutterwaveKycLevelProvider();
+  if (name === 'identifyorg') return new IdentifyOrgKycLevelProvider();
   if (name === 'mock') return new MockKycLevelProvider();
   if (name) return new MockKycLevelProvider();
 
@@ -63,6 +65,12 @@ export function isKycLevelProviderConfigured(): boolean {
   if (buildKycProviderChain().length > 0) return true;
 
   const name = env.KYC_LEVEL_PROVIDER;
+  /**
+   * A key is all IdentifyOrg needs - no OAuth step, no redirect URL, no
+   * consent page. That is also why it is the one provider whose readiness can
+   * be stated from configuration alone without lying.
+   */
+  if (name === 'identifyorg') return isIdentifyOrgConfigured();
   if (name === 'monnify') {
     return Boolean(env.MONNIFY_API_KEY && env.MONNIFY_SECRET_KEY);
   }

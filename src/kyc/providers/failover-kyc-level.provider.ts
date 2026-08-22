@@ -3,6 +3,7 @@ import { AppError } from '../../shared/errors.js';
 import { createAuditLog } from '../../audit/audit.service.js';
 import { MonnifyKycLevelProvider } from './monnify-kyc-level.provider.js';
 import { FlutterwaveKycLevelProvider } from './flutterwave-kyc-level.provider.js';
+import { IdentifyOrgKycLevelProvider, isIdentifyOrgConfigured } from './identifyorg-kyc-level.provider.js';
 import type {
   BvnAccountMatchInput,
   BvnInfoMatchInput,
@@ -121,6 +122,7 @@ export function buildKycProviderChain(preferred = env.KYC_LEVEL_PROVIDER): Chain
   const makers: Record<string, { make: () => KycLevelProvider; configured: boolean }> = {
     monnify: { make: () => new MonnifyKycLevelProvider(), configured: monnifyConfigured },
     flutterwave: { make: () => new FlutterwaveKycLevelProvider(), configured: flutterwaveConfigured },
+    identifyorg: { make: () => new IdentifyOrgKycLevelProvider(), configured: isIdentifyOrgConfigured() },
   };
 
   // The preferred provider goes first, when it is one of the real vendors.
@@ -128,7 +130,16 @@ export function buildKycProviderChain(preferred = env.KYC_LEVEL_PROVIDER): Chain
     add(preferred, makers[preferred].make, makers[preferred].configured);
   }
   // Then everyone else, in a fixed order so the chain is predictable.
-  for (const name of ['monnify', 'flutterwave']) {
+  /**
+   * identifyorg is listed FIRST in the fallback order, not last.
+   *
+   * The order here is what a deployment falls back to when the preferred
+   * vendor cannot answer, and today only one of the three actually can:
+   * Monnify has no live key issued, and Flutterwave's compliant v3 path
+   * cannot settle synchronously. Putting the working provider first means a
+   * deployment that has not set KYC_LEVEL_PROVIDER still verifies people.
+   */
+  for (const name of ['identifyorg', 'monnify', 'flutterwave']) {
     add(name, makers[name].make, makers[name].configured);
   }
 
@@ -146,17 +157,35 @@ export class FailoverKycLevelProvider implements KycLevelProvider {
   }
 
   async verifyBvnIdentity(input: BvnInfoMatchInput): Promise<KycLevelMatchResult> {
-    return this.run('verifyBvnIdentity', (provider) => provider.verifyBvnIdentity(input), input.bvn);
+    return this.run('verifyBvnIdentity', (provider) => provider.verifyBvnIdentity(input), input.bvn, 'bvnIdentity');
   }
 
   async verifyBvnBankAccount(input: BvnAccountMatchInput): Promise<KycLevelMatchResult> {
-    return this.run('verifyBvnBankAccount', (provider) => provider.verifyBvnBankAccount(input), input.bvn);
+    return this.run('verifyBvnBankAccount', (provider) => provider.verifyBvnBankAccount(input), input.bvn, 'bvnBankAccount');
+  }
+
+  /**
+   * CAN THIS VENDOR ANSWER THIS QUESTION AT ALL?
+   *
+   * Not every provider offers every check: neither IdentifyOrg nor Flutterwave
+   * has a BVN-to-account endpoint, and both throw when asked. Without this,
+   * that throw is indistinguishable from a real outage - the chain records a
+   * fallthrough, audits an "error", and moves on as if the vendor had failed.
+   *
+   * A provider that does not implement capabilities() is assumed capable, so
+   * existing providers behave exactly as before.
+   */
+  private supports(provider: KycLevelProvider, capability: 'bvnIdentity' | 'bvnBankAccount'): boolean {
+    const caps = (provider as { capabilities?: () => Record<string, boolean> }).capabilities?.();
+    if (!caps) return true;
+    return caps[capability] !== false;
   }
 
   private async run(
     operation: string,
     call: (provider: KycLevelProvider) => Promise<KycLevelMatchResult>,
-    bvn: string
+    bvn: string,
+    capability?: 'bvnIdentity' | 'bvnBankAccount'
   ): Promise<KycLevelMatchResult> {
     if (!this.chain.length) {
       const { forbidden } = await import('../../shared/errors.js');
@@ -168,6 +197,15 @@ export class FailoverKycLevelProvider implements KycLevelProvider {
 
     for (let index = 0; index < this.chain.length; index += 1) {
       const entry = this.chain[index];
+
+      /**
+       * Skip a vendor that structurally cannot perform this operation. Not
+       * recorded as "attempted", because it was never asked - counting it
+       * would make the audit trail claim a provider failed when it was simply
+       * the wrong tool.
+       */
+      if (capability && !this.supports(entry.provider, capability)) continue;
+
       attempted.push(entry.name);
 
       try {

@@ -14,6 +14,7 @@
     "seed": "tsx scripts/seed.ts",
     "test:webhook-signature": "tsx scripts/test-webhook-signature.ts",
     "test:admin-health-bypass": "tsx scripts/test-admin-health-bypass.ts",
+    "test:identifyorg-kyc": "tsx scripts/test-identifyorg-kyc.ts",
     "test:fee-invariants": "tsx scripts/test-fee-and-schema-invariants.ts",
     "e2e:local": "tsx scripts/e2e-local.ts",
     "bridge:smoke": "tsx scripts/bridge-smoke.ts",

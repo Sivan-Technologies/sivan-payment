@@ -440,7 +440,7 @@ const envSchema = z.object({
   PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_BANK_ID: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
-  KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify', 'flutterwave']).default('mock'),
+  KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify', 'flutterwave', 'identifyorg']).default('mock'),
   MONNIFY_BASE_URL: z.string().url().optional().default('https://api.monnify.com'),
   MONNIFY_API_KEY: z.string().optional().default(''),
   MONNIFY_SECRET_KEY: z.string().optional().default(''),
@@ -460,6 +460,43 @@ const envSchema = z.object({
    * because some accounts still have it enabled, but it must not be the
    * default. See KYC-DESIGN.md.
    */
+  /**
+   * IDENTIFYORG - the third BVN provider, and the one intended to carry Level 2.
+   *
+   * WHY A THIRD. The other two cannot currently do the job:
+   *   - Monnify has no live API key issued to this account at all.
+   *   - Flutterwave's working path is v2, a direct lookup with NO consent step,
+   *     which is exactly the thing the CBN expects a merchant not to do. Its
+   *     compliant v3 consent flow needs a human on a NIBSS page and so cannot
+   *     settle synchronously.
+   *
+   * IdentifyOrg answers a BVN match in ONE synchronous call - under 3 seconds
+   * by their own documentation - and accepts first_name/last_name/date_of_birth
+   * for cross-matching, which is precisely the shape BvnInfoMatchInput already
+   * carries. That is why it slots in without changing the interface.
+   *
+   * ONE HEADER, NO TOKEN DANCE: X-IdentifyOrg-Key. Unlike Monnify there is no
+   * OAuth step to fail separately, which is also what makes health() honest -
+   * GET /v1/balance either answers with a real credit balance or it does not.
+   *
+   * COST IS PER CALL and denominated in NGN (their responses carry a `cost`
+   * field). Nothing in the provider retries on its own: a retry loop against a
+   * metered identity API is a spending bug as much as a correctness one.
+   */
+  IDENTIFYORG_BASE_URL: z.string().url().optional().default('https://api.identifyorg.com'),
+  IDENTIFYORG_API_KEY: z.string().optional().default(''),
+  /**
+   * The confidence at or above which a cross-match counts as `matched`.
+   *
+   * Their BVN response carries `match` (boolean) AND `confidence_score`
+   * (0-100). Trusting `match` alone would accept a weak cross-match as proof
+   * of identity on the step that raises a user's ceiling to NGN 5,000,000, so
+   * a score below this threshold is downgraded to `review` for a human rather
+   * than granted. 80 is deliberately conservative; raise it, never lower it
+   * silently.
+   */
+  IDENTIFYORG_MIN_CONFIDENCE: z.coerce.number().min(0).max(100).default(80),
+
   FLUTTERWAVE_BASE_URL: z.string().url().optional().default('https://api.flutterwave.com'),
   FLUTTERWAVE_V2_BASE_URL: z.string().url().optional().default('https://api.ravepay.co'),
   FLUTTERWAVE_SECRET_KEY: z.string().optional().default(''),
