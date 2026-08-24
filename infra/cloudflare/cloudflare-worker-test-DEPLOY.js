@@ -75,7 +75,7 @@ const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const MAX_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 1000;
-const UPSTREAM_TIMEOUT_MS = 12000;
+const UPSTREAM_TIMEOUT_MS = 25000;
 
 function log(requestId, service, message) {
   console.log(`[${requestId}] [${service}] ${message}`);
@@ -339,7 +339,10 @@ async function fetchUpstream({
           `(attempt ${attempt}/${maxAttempts})`
       );
 
-      if (!RETRYABLE_METHODS.has(method)) break;
+      const isIdempotentEscrowWrite = path.endsWith('/api/escrows') || path.endsWith('/api/users/profile');
+      const safeToRetry = RETRYABLE_METHODS.has(method) || isIdempotentEscrowWrite;
+
+      if (!safeToRetry) break;
       if (attempt < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
       }
@@ -348,8 +351,10 @@ async function fetchUpstream({
       lastError = error?.message || String(error);
       log(requestId, serviceName, `failed: ${lastError} (attempt ${attempt}/${maxAttempts})`);
 
-      // A timeout on a write is ambiguous: the upstream may have applied it.
-      if (!RETRYABLE_METHODS.has(method)) break;
+      const isIdempotentEscrowWrite = path.endsWith('/api/escrows') || path.endsWith('/api/users/profile');
+      const safeToRetry = RETRYABLE_METHODS.has(method) || isIdempotentEscrowWrite;
+
+      if (!safeToRetry) break;
       if (attempt < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
       }

@@ -91,7 +91,7 @@ const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const MAX_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 1000;
-const UPSTREAM_TIMEOUT_MS = 12000;
+const UPSTREAM_TIMEOUT_MS = 25000;
 
 function log(requestId, service, message) {
   console.log(`[${requestId}] [${service}] ${message}`);
