@@ -91,6 +91,22 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await acceptNgnQuote(body) };
   });
 
+  app.get('/api/ngn/offramp/orders/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const transfers = await listNgnTransfers();
+    const order = transfers.find((t) => t.id === id || t.settlementReference === id || (t as any).providerTransferId === id);
+    if (!order) {
+      return reply.status(404).send({ error: "ORDER_NOT_FOUND", message: `Order ${id} not found`, statusCode: 404 });
+    }
+    return { data: order };
+  });
+
+  app.get('/api/ngn/offramp/orders', async (request) => {
+    const query = (request.query || {}) as { userId?: string };
+    const transfers = await listNgnTransfers({ userId: query.userId });
+    return { data: transfers };
+  });
+
   app.get('/api/users/:userId/ngn-transfers', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await listNgnTransfers({ userId }) };
