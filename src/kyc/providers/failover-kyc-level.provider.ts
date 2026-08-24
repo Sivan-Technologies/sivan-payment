@@ -10,6 +10,7 @@ import type {
   KycLevelMatchResult,
   KycLevelProvider,
   KycLevelProviderHealth,
+  NinInfoMatchInput,
 } from './kyc-level-provider.js';
 
 /**
@@ -175,17 +176,41 @@ export class FailoverKycLevelProvider implements KycLevelProvider {
    * A provider that does not implement capabilities() is assumed capable, so
    * existing providers behave exactly as before.
    */
-  private supports(provider: KycLevelProvider, capability: 'bvnIdentity' | 'bvnBankAccount'): boolean {
+  private supports(provider: KycLevelProvider, capability: 'bvnIdentity' | 'bvnBankAccount' | 'ninIdentity'): boolean {
+    /**
+     * A method that does not exist cannot be capable, whatever capabilities()
+     * says. verifyNinIdentity is optional on the interface - Monnify and
+     * Flutterwave simply do not implement it - so this is checked first.
+     */
+    if (capability === 'ninIdentity' && typeof (provider as any).verifyNinIdentity !== 'function') return false;
     const caps = (provider as { capabilities?: () => Record<string, boolean> }).capabilities?.();
     if (!caps) return true;
     return caps[capability] !== false;
+  }
+
+  /**
+   * NIN, across the chain. Only IdentifyOrg implements it today; the rest are
+   * skipped by supports() rather than throwing, so an unsupported vendor is
+   * never audited as a failure.
+   */
+  async verifyNinIdentity(input: NinInfoMatchInput): Promise<KycLevelMatchResult> {
+    return this.run(
+      'verifyNinIdentity',
+      (provider) => {
+        const fn = (provider as any).verifyNinIdentity;
+        if (typeof fn !== 'function') throw new Error('provider does not support NIN');
+        return fn.call(provider, input);
+      },
+      input.nin,
+      'ninIdentity'
+    );
   }
 
   private async run(
     operation: string,
     call: (provider: KycLevelProvider) => Promise<KycLevelMatchResult>,
     bvn: string,
-    capability?: 'bvnIdentity' | 'bvnBankAccount'
+    capability?: 'bvnIdentity' | 'bvnBankAccount' | 'ninIdentity'
   ): Promise<KycLevelMatchResult> {
     if (!this.chain.length) {
       const { forbidden } = await import('../../shared/errors.js');

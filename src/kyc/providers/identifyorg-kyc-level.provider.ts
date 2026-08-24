@@ -3,11 +3,12 @@ import { badRequest } from '../../shared/errors.js';
 import type {
   BvnAccountMatchInput,
   BvnInfoMatchInput,
+  NinInfoMatchInput,
   KycLevelMatchResult,
   KycLevelProvider,
   KycLevelProviderHealth,
 } from './kyc-level-provider.js';
-import { bvnLast4 } from './kyc-level-provider.js';
+import { bvnLast4, ninLast4 } from './kyc-level-provider.js';
 
 /**
  * IDENTIFYORG - a synchronous Nigerian identity provider.
@@ -221,6 +222,20 @@ function matchedFields(input: BvnInfoMatchInput, data: Record<string, unknown> |
   return Object.keys(fields).length ? fields : undefined;
 }
 
+/**
+ * Which returned NIN fields agreed. Same normalisation as the BVN path -
+ * vendors return "OKAFOR" where the user typed "Okafor".
+ */
+function ninMatchedFields(input: NinInfoMatchInput, data: Record<string, unknown> | null | undefined) {
+  if (!data) return undefined;
+  const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
+  const fields: Record<string, boolean | string> = {};
+  if (data.first_name && input.firstName) fields.firstName = norm(data.first_name) === norm(input.firstName);
+  if (data.last_name && input.lastName) fields.lastName = norm(data.last_name) === norm(input.lastName);
+  if (data.date_of_birth) fields.dateOfBirth = String(data.date_of_birth);
+  return Object.keys(fields).length ? fields : undefined;
+}
+
 export class IdentifyOrgKycLevelProvider implements KycLevelProvider {
   name = PROVIDER_NAME;
 
@@ -234,7 +249,7 @@ export class IdentifyOrgKycLevelProvider implements KycLevelProvider {
    * vendor is down and wrong when it simply does not offer the endpoint.
    */
   capabilities() {
-    return { bvnIdentity: true, bvnBankAccount: false };
+    return { bvnIdentity: true, bvnBankAccount: false, ninIdentity: true };
   }
 
   async verifyBvnIdentity(input: BvnInfoMatchInput): Promise<KycLevelMatchResult> {
@@ -274,6 +289,62 @@ export class IdentifyOrgKycLevelProvider implements KycLevelProvider {
        * and must never be stored. Last four only, which is what the rest of
        * the system already records.
        */
+      raw: redactBvn(payload),
+    };
+  }
+
+  /**
+   * NIN verification - a SECOND route to Level 2, not a higher level.
+   *
+   * The ladder already says so: VerificationLevel.IDENTITY is documented as
+   * "NIN and/or BVN validated against the national source", and the next-step
+   * action is literally named 'nin_bvn'. Level 3 is documents plus proof of
+   * address, reviewed by a human. So this widens who can reach Level 2; it
+   * does not add a rung.
+   *
+   * WHY IT MATTERS: today BVN is the only route, and a BVN links every bank
+   * account a person owns. A user who will not share one - a reasonable
+   * position - cannot verify at all. A NIN is a national identity number and
+   * carries no banking graph with it.
+   *
+   * NAMES ARE ENFORCED HERE even though their API treats them as optional.
+   * Without them NIMC returns the record on file and IdentifyOrg has nothing
+   * to compare it against, so `match` comes back null and the call is a
+   * LOOKUP, not a verification. Granting Level 2 on "this NIN exists" would
+   * hand a NGN 5,000,000 ceiling to anyone who typed eleven digits belonging
+   * to someone else.
+   */
+  async verifyNinIdentity(input: NinInfoMatchInput): Promise<KycLevelMatchResult> {
+    if (!input.firstName || !input.lastName) {
+      throw badRequest('A first and last name are required to verify a NIN.');
+    }
+
+    const payload = await postJson('/v1/verify/nin', {
+      nin: input.nin,
+      first_name: input.firstName,
+      last_name: input.lastName,
+    });
+
+    const verdict = toVerdict(payload);
+
+    /**
+     * THE NIN ENDPOINT MAY RETURN NO CONFIDENCE SCORE.
+     *
+     * Their documented NIN response carries `match` but, unlike BVN, no
+     * `confidence_score`. toVerdict() treats a missing score as "no threshold
+     * to apply" and would return `matched` on the boolean alone - which is
+     * correct only if the boolean is a real cross-match. It is real ONLY
+     * because names were sent above; that check is what makes this safe.
+     */
+    return {
+      provider: this.name,
+      status: verdict.status,
+      message: verdict.message,
+      // Last four of the NIN, carried in the same field the caller already
+      // reads. The record's checkType says which identifier it refers to.
+      bvnLast4: ninLast4(input.nin),
+      matchedFields: ninMatchedFields(input, payload.data),
+      providerReference: payload.id,
       raw: redactBvn(payload),
     };
   }

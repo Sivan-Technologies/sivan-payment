@@ -203,6 +203,47 @@ try {
 } catch { threw = true; }
 check('and calling it refuses rather than inventing an answer', threw);
 
+console.log('\n══ 6b. NIN - the second route to Level 2 ══════════════════');
+
+const NIN_INPUT = { nin: '98765432109', firstName: 'Adaeze', lastName: 'Okafor' };
+
+stubVendor(200, {
+  id: 'ver_n1', status: 'success', match: true,
+  data: { nin: '98765432109', first_name: 'Adaeze', last_name: 'Okafor', date_of_birth: '1992-04-15' },
+});
+const nin = await provider.verifyNinIdentity(NIN_INPUT);
+check('posts to the documented NIN endpoint',
+  lastRequest?.url.endsWith('/v1/verify/nin'), String(lastRequest?.url));
+check('a matched NIN verifies',
+  nin.status === 'matched', `${nin.status} - ${nin.message}`);
+check('and only the last four NIN digits are kept',
+  nin.bvnLast4 === '2109', nin.bvnLast4);
+check('and the full NIN never reaches the stored payload',
+  !JSON.stringify(nin.raw).includes('98765432109'), JSON.stringify(nin.raw));
+check('capabilities() declares NIN support',
+  provider.capabilities().ninIdentity === true, JSON.stringify(provider.capabilities()));
+
+/**
+ * THE LOAD-BEARING NIN ASSERTION.
+ *
+ * Their API treats names as optional - without them NIMC returns the record on
+ * file and there is nothing to compare against, so `match` is meaningless. If
+ * we allowed that, anyone typing eleven digits belonging to someone else would
+ * be granted a NGN 5,000,000 ceiling.
+ */
+let ninThrew = false;
+try { await provider.verifyNinIdentity({ nin: '98765432109' } as any); } catch { ninThrew = true; }
+check('a NIN check WITHOUT names is refused, not treated as a lookup',
+  ninThrew, 'no names means no cross-match, so no verification');
+
+stubVendor(200, { id: 'ver_n2', status: 'success', match: false, data: {} });
+check('a non-matching NIN is failed',
+  (await provider.verifyNinIdentity(NIN_INPUT)).status === 'failed');
+
+stubVendor(200, { id: 'ver_n3', status: 'success', data: {} });
+check('a NIN with no match decision is review, never matched',
+  (await provider.verifyNinIdentity(NIN_INPUT)).status === 'review');
+
 console.log('\n══ 7. the failover chain ══════════════════════════════════');
 
 const chain = buildKycProviderChain('identifyorg');
@@ -228,6 +269,17 @@ check('a bank-account check with no capable provider refuses',
 const msg = String(bankErr?.message ?? '');
 check('and the refusal does not blame identifyorg for an outage',
   !/identifyorg (failed|error|unavailable)/i.test(msg), msg);
+
+/**
+ * NIN through the chain. Monnify and Flutterwave do not implement
+ * verifyNinIdentity at all, so supports() must skip them by METHOD ABSENCE
+ * rather than letting a TypeError surface as a provider outage.
+ */
+stubVendor(200, { id: 'ver_n4', status: 'success', match: true, data: { first_name: 'Adaeze', last_name: 'Okafor' } });
+const chainNin = await (failover as any).verifyNinIdentity(NIN_INPUT);
+check('the chain routes a NIN to the one provider that supports it',
+  chainNin.status === 'matched' && chainNin.provider === 'identifyorg',
+  `${chainNin.status} / ${chainNin.provider}`);
 
 globalThis.fetch = realFetch;
 

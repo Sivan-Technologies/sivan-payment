@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { forbidden } from '../../shared/errors.js';
+import { badRequest, forbidden } from '../../shared/errors.js';
 import { db } from '../../database/json-database.js';
 import { createAuditLog } from '../../audit/audit.service.js';
 import { id, nowIso } from '../../shared/id.js';
@@ -29,6 +29,19 @@ export const bvnInfoMatchSchema = z.object({
   mobileNo: z.preprocess(cleanDigits, z.string().min(8).max(20))
 });
 
+/**
+ * A NIN check. Names are REQUIRED here even though the vendor treats them as
+ * optional: without them the upstream returns the record on file and there is
+ * nothing to cross-match against, which is a lookup, not a verification.
+ * Granting Level 2 on "this NIN exists" would hand a NGN 5,000,000 ceiling to
+ * anyone who typed eleven digits belonging to someone else.
+ */
+export const ninInfoMatchSchema = z.object({
+  nin: z.preprocess(cleanDigits, z.string().regex(/^\d{11}$/, 'NIN must be 11 digits')),
+  firstName: z.preprocess((value) => String(value ?? '').trim(), z.string().min(2).max(80)),
+  lastName: z.preprocess((value) => String(value ?? '').trim(), z.string().min(2).max(80))
+});
+
 export const bvnAccountMatchSchema = z.object({
   bvn: z.preprocess(cleanDigits, z.string().regex(/^\d{11}$/, 'BVN must be 11 digits')),
   bankCode: z.string().min(2).max(20),
@@ -40,7 +53,7 @@ const attempts = new Map<string, { count: number; resetAt: number }>();
 const maxAttempts = 3;
 const windowMs = 24 * 60 * 60 * 1000;
 
-function attemptKey(userId: string, kind: 'bvn_info' | 'bvn_bank', suffix = '') {
+function attemptKey(userId: string, kind: 'bvn_info' | 'bvn_bank' | 'nin_info', suffix = '') {
   return `${userId}:${kind}:${suffix}`;
 }
 
@@ -308,6 +321,77 @@ export async function completeNgnBvnConsent(userId: string) {
       provider: result.provider,
       bvnLast4: result.bvnLast4,
       providerReference: record.providerReference ?? null
+    }
+  }).catch(() => undefined);
+
+  return toCustomerSafe(result, 'ngn_level_2');
+}
+
+/**
+ * Verify a NIN. A SECOND ROUTE TO LEVEL 2, not a higher level.
+ *
+ * Mirrors verifyNgnBvnIdentity deliberately - same rate limit shape, same
+ * persistence, same audit trail - because the two are alternatives for the
+ * same rung and anything they do differently becomes a discrepancy an operator
+ * has to reason about later.
+ *
+ * The one real difference: there is no cross-account hash. hashBvn() exists to
+ * notice one BVN under several accounts, and the equivalent for NIN would need
+ * its own column and its own migration. Recording a NIN in the bvnHash column
+ * would silently corrupt that check by mixing two identifier spaces - a NIN
+ * and a BVN that hash into the same column would look like a reused BVN. Left
+ * out rather than done wrongly; noted so it is a known gap, not an oversight.
+ */
+export async function verifyNgnNinIdentity(userId: string, input: z.infer<typeof ninInfoMatchSchema>) {
+  enforceAttemptLimit(attemptKey(userId, 'nin_info'));
+  const provider = getKycLevelProvider();
+
+  /**
+   * No vendor in the chain offers NIN -> say so plainly.
+   *
+   * The failover chain skips providers that cannot answer, so with only
+   * Monnify or Flutterwave configured this would otherwise surface as a
+   * confusing "all providers failed" when in truth none was ever asked.
+   */
+  const verifyNin = (provider as any).verifyNinIdentity;
+  if (typeof verifyNin !== 'function') {
+    throw badRequest('NIN verification is not available with the current identity provider.');
+  }
+
+  const result: KycLevelMatchResult = await verifyNin.call(provider, input);
+
+  const at = nowIso();
+  const record = await db.upsertNgnIdentityVerification({
+    id: id('ngnkyc'),
+    userId,
+    checkType: 'nin_info',
+    status: result.status,
+    provider: result.provider,
+    providerReference: result.providerReference,
+    // The provider put the NIN's last four here; checkType says which
+    // identifier it belongs to. See the note on the column.
+    bvnLast4: result.bvnLast4,
+    matchedFields: result.matchedFields,
+    // ONLY a match sets this, and only this grants Level 2.
+    verifiedAt: result.status === 'matched' ? at : undefined,
+    createdAt: at,
+    updatedAt: at
+  });
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: userId,
+    action: 'kyc.ngn_nin_verification',
+    resourceType: 'ngn_identity_verification',
+    resourceId: record.id,
+    severity: result.status === 'matched' ? 'info' : 'warning',
+    // The NIN itself is deliberately absent, exactly as the BVN is. An audit
+    // log is not a place to leak the identifier the table refuses to store.
+    metadata: {
+      status: result.status,
+      provider: result.provider,
+      ninLast4: result.bvnLast4,
+      providerReference: result.providerReference ?? null
     }
   }).catch(() => undefined);
 

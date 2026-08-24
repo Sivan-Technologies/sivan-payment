@@ -940,11 +940,27 @@ export type NgnIdentityCheckStatus = 'matched' | 'review' | 'failed';
 export interface NgnIdentityVerificationRecord {
   id: string;
   userId: string;
-  checkType: 'bvn_info' | 'bvn_bank';
+  /**
+   * WHICH identifier this row is about.
+   *
+   * 'nin_info' is a second route to the SAME Level 2 - the ladder documents
+   * IDENTITY as "NIN and/or BVN validated against the national source". It is
+   * a distinct checkType rather than reusing 'bvn_info' so an operator reading
+   * the queue can see which national source answered, and so the unique
+   * (userId, checkType) upsert does not let a NIN result overwrite a BVN one.
+   */
+  checkType: 'bvn_info' | 'bvn_bank' | 'nin_info';
   status: NgnIdentityCheckStatus;
   provider: string;
   providerReference?: string;
-  /** Last four digits, so support can say "the one ending 4821". */
+  /**
+   * Last four digits, so support can say "the one ending 4821".
+   *
+   * Carries the NIN's last four on a 'nin_info' row. Deliberately NOT renamed:
+   * the column is written and read in a dozen places and a rename is a wide,
+   * silent change to a KYC path for a cosmetic gain. checkType says which
+   * identifier it refers to.
+   */
   bvnLast4?: string;
   /** SHA-256 + pepper. Detects one BVN across accounts; not reversible. */
   bvnHash?: string;

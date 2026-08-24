@@ -114,8 +114,22 @@ export async function getVerificationState(userId: string): Promise<Verification
    * testing the timestamp cannot mistake an attempt for a success.
    */
   const identityChecks = await db.listNgnIdentityVerifications(userId).catch(() => []);
+  /**
+   * EITHER national identifier reaches Level 2.
+   *
+   * VerificationLevel.IDENTITY is documented as "NIN and/or BVN validated
+   * against the national source", and the next-step action is named
+   * 'nin_bvn'. This read only 'bvn_info', so a user who verified with a NIN
+   * would have been left at Level 1 holding a matched row - the same class of
+   * bug migration 047 fixed for BVN, where the outcome was stored and never
+   * read.
+   *
+   * `verifiedAt` and not `status`: a row exists for failed and review attempts
+   * too, and only a match writes the timestamp.
+   */
+  const IDENTITY_CHECK_TYPES = ['bvn_info', 'nin_info'];
   const bvnVerified = identityChecks.some(
-    (row: any) => row.checkType === 'bvn_info' && Boolean(row.verifiedAt)
+    (row: any) => IDENTITY_CHECK_TYPES.includes(row.checkType) && Boolean(row.verifiedAt)
   );
 
   // A payout account that has been name-resolved against the bank is Sivan's
@@ -243,7 +257,7 @@ export async function getVerificationState(userId: string): Promise<Verification
    */
   const bvnStatus = bvnVerified
     ? CheckStatus.VERIFIED
-    : identityChecks.some((row: any) => row.checkType === 'bvn_info' && row.status === 'review')
+    : identityChecks.some((row: any) => IDENTITY_CHECK_TYPES.includes(row.checkType) && row.status === 'review')
       ? CheckStatus.PENDING
       : CheckStatus.NOT_STARTED;
 
