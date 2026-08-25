@@ -15,6 +15,7 @@
     "test:webhook-signature": "tsx scripts/test-webhook-signature.ts",
     "test:admin-health-bypass": "tsx scripts/test-admin-health-bypass.ts",
     "test:identifyorg-kyc": "tsx scripts/test-identifyorg-kyc.ts",
+    "test:identifyorg-live": "tsx scripts/test-identifyorg-live-contract.ts",
     "test:nin-level2": "tsx scripts/test-nin-grants-level2.ts",
     "test:fee-invariants": "tsx scripts/test-fee-and-schema-invariants.ts",
     "e2e:local": "tsx scripts/e2e-local.ts",

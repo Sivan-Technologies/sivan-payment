@@ -12,6 +12,20 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-build-isolation.ts',
   },
   {
+    /**
+     * The only suite here that talks to a real vendor. It self-skips with
+     * exit 0 when IDENTIFYORG_API_KEY is absent, so a machine without the
+     * secret does not go red - and it refuses outright on an io_live_ key,
+     * because those calls are metered and hit real identity records.
+     *
+     * It is worth the network dependency: every other IdentifyOrg assertion
+     * stubs their PUBLISHED contract, and three of those documented shapes
+     * turned out to be wrong the first time this code met the live API.
+     */
+    name: 'IdentifyOrg Live Contract (skips without a test key)',
+    command: 'tsx scripts/test-identifyorg-live-contract.ts',
+  },
+  {
     name: 'Webhook Signature Verification',
     command: 'tsx scripts/test-webhook-signature.ts',
   },

@@ -110,9 +110,52 @@ type IdentifyOrgVerifyResponse = {
   currency?: string;
   is_test?: boolean;
   message?: string;
-  error?: string;
-  detail?: string;
+  /**
+   * MEASURED, NOT ASSUMED. Their error body is NESTED, not a string:
+   *   {"error":{"code":"invalid_api_key","message":"...","status":401}}
+   * Typing this as `string` and interpolating it produced the literal text
+   * "IdentifyOrg /v1/verify/bvn failed: [object Object]" - an operator reading
+   * that log learns nothing about whether the key was revoked or the balance
+   * was empty. Confirmed live against a deliberately invalid key.
+   */
+  error?: string | { code?: string; message?: string; status?: number };
+  /**
+   * FastAPI validation errors arrive as an ARRAY of objects, not a string:
+   *   {"detail":[{"type":"string_too_short","loc":["body","bvn"],"msg":"..."}]}
+   * Confirmed live by sending a 3-digit BVN (HTTP 422, not the 400 documented).
+   */
+  detail?: string | Array<{ msg?: string; loc?: unknown[]; type?: string }>;
 };
+
+/**
+ * Pull a human-readable sentence out of any of the three error shapes this API
+ * actually returns. Written against measured responses, not the docs.
+ */
+function errorDetail(payload: IdentifyOrgVerifyResponse, status: number): string {
+  if (typeof payload.message === 'string' && payload.message) return payload.message;
+
+  const err = payload.error;
+  if (typeof err === 'string' && err) return err;
+  if (err && typeof err === 'object') {
+    const code = err.code ? ` (${err.code})` : '';
+    if (err.message) return `${err.message}${code}`;
+    if (err.code) return err.code;
+  }
+
+  const det = payload.detail;
+  if (typeof det === 'string' && det) return det;
+  if (Array.isArray(det) && det.length) {
+    // "bvn: String should have at least 11 characters"
+    return det
+      .map((item) => {
+        const field = Array.isArray(item?.loc) ? item.loc.filter((p) => p !== 'body').join('.') : '';
+        return field ? `${field}: ${item?.msg ?? item?.type ?? 'invalid'}` : String(item?.msg ?? item?.type ?? 'invalid');
+      })
+      .join('; ');
+  }
+
+  return `HTTP ${status}`;
+}
 
 async function postJson(path: string, body: Record<string, unknown>): Promise<IdentifyOrgVerifyResponse> {
   const controller = new AbortController();
@@ -140,8 +183,44 @@ async function postJson(path: string, body: Record<string, unknown>): Promise<Id
        * must not deny their verification. Thrown, so the chain can try another
        * provider or surface a real outage.
        */
-      const detail = payload.message || payload.error || payload.detail || `HTTP ${response.status}`;
-      throw badRequest(`IdentifyOrg ${path} failed: ${detail}`);
+      throw badRequest(`IdentifyOrg ${path} failed: ${errorDetail(payload, response.status)}`);
+    }
+
+    /**
+     * ─────────────────────────────────────────────────────────────────
+     * A SANDBOX ANSWER MUST NEVER GRANT A REAL LEVEL 2.
+     *
+     * MEASURED against their test key, and this is the whole reason this
+     * guard exists. In sandbox the API ECHOES BACK WHATEVER NAMES YOU SEND
+     * and still reports a match:
+     *
+     *   POST /v1/verify/nin {"nin":"12345678901",
+     *                        "first_name":"Wrong","last_name":"Person"}
+     *   -> {"status":"success","match":true,"confidence_score":98,
+     *       "data":{"first_name":"Wrong","last_name":"Person",...},
+     *       "is_test":true}
+     *
+     * Every input passes. Every score is above the 80% threshold. So if an
+     * `io_test_` key ever reached production - a copy-pasted Render env var,
+     * a staging value promoted by mistake - toVerdict() would return `matched`
+     * for ANY eleven digits with ANY name attached, and Level 2 raises a
+     * user's ceiling to NGN 5,000,000. That is not a degraded check, it is no
+     * check at all, and nothing else in the chain would notice: the response
+     * is a well-formed 200 with a high confidence score.
+     *
+     * THROWN, NOT `failed`. A thrown error means "this provider could not
+     * answer", so the failover chain tries a real vendor and no customer is
+     * denied for our configuration mistake. A `failed` verdict is final and
+     * would be a statement about them.
+     *
+     * Keyed on the vendor's OWN `is_test` flag rather than on the key prefix,
+     * because the server is the authority on which mode it actually served.
+     */
+    if (payload.is_test === true && env.APP_ENV === 'production') {
+      throw badRequest(
+        'IdentifyOrg answered with sandbox data (is_test) while running in production. ' +
+          'IDENTIFYORG_API_KEY is a test key - refusing to grant verification on simulated data.'
+      );
     }
 
     return payload;
@@ -174,8 +253,27 @@ function toVerdict(payload: IdentifyOrgVerifyResponse): { status: KycLevelMatchR
   const minConfidence = env.IDENTIFYORG_MIN_CONFIDENCE;
   const score = typeof payload.confidence_score === 'number' ? payload.confidence_score : undefined;
 
+  /**
+   * `not_found` MEASURED LIVE: BVN 00000000000 returns
+   *   {"status":"not_found","match":null,"confidence_score":null,"data":null}
+   * with HTTP 200 - so it never reaches the non-2xx path above.
+   *
+   * This is a statement about the identifier, not a vendor malfunction: the
+   * number does not exist at the national source. Held as `review` rather than
+   * `failed` because a typo and a fabricated number are indistinguishable here,
+   * and `failed` is final - but the MESSAGE now says what actually happened.
+   * Previously it rendered the raw vendor token to the user as
+   * `IdentifyOrg returned status "not_found"`, which tells a Nigerian customer
+   * nothing about what to do next.
+   */
+  if (payload.status === 'not_found') {
+    return {
+      status: 'review',
+      message: 'That number could not be found at the national source. Check the digits and try again.',
+    };
+  }
   if (payload.status && payload.status !== 'success') {
-    return { status: 'review', message: `IdentifyOrg returned status "${payload.status}". Sent for manual review.` };
+    return { status: 'review', message: 'The verification could not be completed. Sent for manual review.' };
   }
   if (payload.match === false) {
     return { status: 'failed', message: 'The details provided do not match the record on file.' };
