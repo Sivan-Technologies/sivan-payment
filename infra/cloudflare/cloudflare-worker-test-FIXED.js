@@ -192,8 +192,15 @@ export default {
     ) {
       primaryHost = TEST_ESCROW_PRIMARY;
       fallbackHost = TEST_ESCROW_FALLBACK;
-      upstreamPath =
-        url.pathname.replace(/^\/api\/admin\/escrow/, "").replace(/^\/api\/escrow(?:\/|$)/, "/") || "/";
+      if (url.pathname.startsWith("/api/admin/escrow")) {
+        upstreamPath = url.pathname.replace(/^\/api\/admin\/escrow/, "/api/admin");
+      } else if (url.pathname.startsWith("/api/escrow/")) {
+        upstreamPath = url.pathname.replace(/^\/api\/escrow\//, "/api/escrows/");
+      } else if (url.pathname === "/api/escrow") {
+        upstreamPath = "/api/escrows";
+      } else {
+        upstreamPath = url.pathname;
+      }
       if (upstreamPath === "/health") upstreamPath = "/api/health";
       serviceName = "escrow-backend";
     } else if (
