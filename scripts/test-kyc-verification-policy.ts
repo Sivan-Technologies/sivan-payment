@@ -84,28 +84,58 @@ console.log('\nlevel 0 moves nothing');
     `got ${d.requiredLevel}`);
 }
 
-console.log('\nbank level: escrow up to NGN 100,000');
+console.log('\nbank level: escrow up to NGN 500,000');
 {
-  const under = decide(bankVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 99_000, priorVolumeNgn: 0 });
-  check('NGN 99,000 passes', under.allowed);
+  /**
+   * THE LEVEL 1 CEILING IS NGN 500,000, RAISED FROM 100,000 IN 3b91eea.
+   *
+   * This block asserted 100,000 for a week after that commit shipped. The
+   * limit moved, three sibling suites were updated with it, and this file was
+   * missed - so it reported ten failures against correct code.
+   *
+   * Worth stating why the boundary cases are pinned to the CONSTANT's meaning
+   * rather than to a literal: what is being tested is that the ceiling is
+   * inclusive and that the next naira is refused. Hard-coding the figure in
+   * three places is what let it drift out of step in the first place.
+   */
+  const under = decide(bankVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 499_000, priorVolumeNgn: 0 });
+  check('NGN 499,000 passes', under.allowed);
 
-  const exact = decide(bankVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 100_000, priorVolumeNgn: 0 });
-  check('exactly NGN 100,000 passes (boundary is inclusive)', exact.allowed);
+  const exact = decide(bankVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 500_000, priorVolumeNgn: 0 });
+  check('exactly NGN 500,000 passes (boundary is inclusive)', exact.allowed);
 
-  const over = decide(bankVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 100_001, priorVolumeNgn: 0 });
-  check('NGN 100,001 is refused', !over.allowed);
+  const over = decide(bankVerified, { flow: 'escrow', rail: 'ngn', amountNgn: 500_001, priorVolumeNgn: 0 });
+  check('NGN 500,001 is refused', !over.allowed);
   check('and asks for NIN/BVN, not an ID document', over.requiredLevel === VerificationLevel.IDENTITY,
     `got ${over.requiredLevel}`);
+
+  /**
+   * THE ASSERTION THAT WOULD HAVE CAUGHT THE DRIFT.
+   *
+   * Every case above is a literal. If the ceiling moves again, they all fail
+   * with "expected refused, got allowed" - which reads like a broken gate, not
+   * a stale test, and that is exactly how an hour gets lost. This one names
+   * the real relationship: the numbers above are only meaningful if they
+   * straddle whatever FLOW_LIMITS currently says.
+   */
+  check('the cases above actually straddle the configured ceiling',
+    limitFor('escrow', 'ngn', VerificationLevel.BANK) === 500_000,
+    `FLOW_LIMITS says ${limitFor('escrow', 'ngn', VerificationLevel.BANK)} - update this block to match`);
 }
 
 console.log('\nSTRUCTURING: the reason thresholds are cumulative');
 {
-  // Ten transfers of NGN 99,000. Each is individually under the NGN 100,000
-  // line; together they are NGN 990,000. A per-transaction limit would pass
-  // every one of these.
+  // Twenty transfers of NGN 99,000. Each is individually well under the NGN
+  // 500,000 line; together they are NGN 1,980,000. A per-transaction limit
+  // would pass every one of these.
+  //
+  // Five fit (NGN 495,000). The sixth would reach NGN 594,000 and is refused,
+  // which is the whole point: the window totals, it does not reset per
+  // transfer. Raising the ceiling to 500,000 widened the runway but did not
+  // change the property being tested here.
   let volume = 0;
   let allowedCount = 0;
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < 20; i += 1) {
     const d = decide(bankVerified, {
       flow: 'escrow',
       rail: 'ngn',
@@ -117,19 +147,23 @@ console.log('\nSTRUCTURING: the reason thresholds are cumulative');
     volume += 99_000;
   }
   check('slicing stops at the cumulative limit, not the per-transaction one',
-    allowedCount === 1 && volume === 99_000,
+    allowedCount === 5 && volume === 495_000,
     `allowed ${allowedCount} transfers totalling ${volume}`);
+
+  check('and it stopped short of the ceiling rather than at a transfer count',
+    volume < 500_000 && volume + 99_000 > 500_000,
+    `stopped at ${volume}`);
 
   const second = decide(bankVerified, {
     flow: 'escrow',
     rail: 'ngn',
     amountNgn: 99_000,
-    priorVolumeNgn: 99_000,
+    priorVolumeNgn: 495_000,
   });
-  check('the second NGN 99,000 is refused', !second.allowed);
-  check('and the user is told what headroom remains', second.remainingNgn === 1_000,
+  check('the transfer that would cross the line is refused', !second.allowed);
+  check('and the user is told what headroom remains', second.remainingNgn === 5_000,
     `remaining ${second.remainingNgn}`);
-  check('the message states the remaining amount', /1,000/.test(second.reason), second.reason);
+  check('the message states the remaining amount', /5,000/.test(second.reason), second.reason);
 }
 
 console.log('\noff-ramp is never held looser than escrow');
@@ -151,11 +185,13 @@ console.log('\noff-ramp is never held looser than escrow');
       `offramp ${offrampLimit} vs escrow ${escrowLimit}`);
   }
 
-  // The raised Level 1 ceiling: one sandbox-minimum withdrawal fits, a second
-  // does not, because the threshold is cumulative.
-  const first = decide(bankVerified, { flow: 'offramp', rail: 'ngn', amountNgn: 80_000, priorVolumeNgn: 0 });
-  check('one NGN 80,000 off-ramp fits under the raised ceiling', first.allowed);
-  const second = decide(bankVerified, { flow: 'offramp', rail: 'ngn', amountNgn: 80_000, priorVolumeNgn: 80_000 });
+  // The raised Level 1 ceiling: one large withdrawal fits, a second does not,
+  // because the threshold is cumulative. At NGN 500,000 the figures have to be
+  // bigger than the old 80,000 to still exercise the boundary - with the old
+  // numbers BOTH transfers passed and the case proved nothing.
+  const first = decide(bankVerified, { flow: 'offramp', rail: 'ngn', amountNgn: 400_000, priorVolumeNgn: 0 });
+  check('one NGN 400,000 off-ramp fits under the raised ceiling', first.allowed);
+  const second = decide(bankVerified, { flow: 'offramp', rail: 'ngn', amountNgn: 400_000, priorVolumeNgn: 400_000 });
   check('a second one in the same window does not', !second.allowed);
   check('and IDENTITY is what lifts it', second.requiredLevel === VerificationLevel.IDENTITY);
 }
@@ -458,7 +494,11 @@ console.log('\nBRIDGE UPLIFT: unlimited, but never a shortcut past the basics');
   });
   check('Bridge approval WITHOUT any NIN/BVN gives no uplift',
     !upliftApplies(noIdentity));
-  const capped = decide(noIdentity, { flow: 'escrow', rail: 'ngn', amountNgn: 500_000, priorVolumeNgn: 0 });
+  // NGN 500,000 is now exactly the Level 1 ceiling and therefore ALLOWED - the
+  // boundary is inclusive. Testing the refusal requires one naira above it.
+  // Left at 500,000 this asserted "refused" against a figure the policy
+  // permits, and failed against correct code.
+  const capped = decide(noIdentity, { flow: 'escrow', rail: 'ngn', amountNgn: 500_001, priorVolumeNgn: 0 });
   check('that user is still held to the Level 1 ceiling', !capped.allowed);
   check('and is asked for NIN/BVN', capped.requiredLevel === VerificationLevel.IDENTITY);
 
