@@ -949,7 +949,8 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     if (funded) wallet = funded;
   }
 
-  const walletChain = chainFamily(transfer.network) === 'solana' ? 'solana' : 'ethereum';
+  const family = chainFamily(transfer.network);
+  const walletChain = family === 'solana' ? 'solana' : family === 'stellar' ? 'stellar' : 'ethereum';
   if (!wallet) {
     /**
      * NO WALLET IS NOT AN ERROR - IT IS A DIFFERENT CUSTODY STORY.
