@@ -70,6 +70,7 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
   base: 'ethereum',
   solana: 'solana',
   stellar: 'stellar',
+  celo: 'ethereum',
 };
 
 /**
@@ -88,6 +89,10 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   stellar: {
     mainnet: 'stellar:pubnet',
     testnet: 'stellar:testnet',
+  },
+  celo: {
+    mainnet: 'eip155:42220',
+    testnet: 'eip155:44787',
   },
 };
 

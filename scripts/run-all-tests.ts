@@ -112,6 +112,10 @@ const TEST_SUITES: TestSuite[] = [
     name: 'Multi-Chain Stellar Adapter & Protocols',
     command: 'tsx scripts/test-stellar-adapter.ts',
   },
+  {
+    name: 'Multi-Chain Celo Adapter & Protocols',
+    command: 'tsx scripts/test-celo-adapter.ts',
+  },
 ];
 
 function runMasterTestRunner() {

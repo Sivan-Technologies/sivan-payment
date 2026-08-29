@@ -28,7 +28,7 @@ export type WalletProviderName = 'mock' | 'bridge' | 'privy';
  * Wallets support and what Sivan enables in payment controls.
  * See CHAIN_ASSET_SUPPORT in src/controls/payment-controls.service.ts.
  */
-export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar';
+export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo';
 
 export type WalletAsset = 'usdc' | 'usdt';
 

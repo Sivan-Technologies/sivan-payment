@@ -28,10 +28,10 @@
 
 import { createHash } from 'node:crypto';
 
-export type AddressChain = 'base' | 'ethereum' | 'polygon' | 'arbitrum' | 'avalanche_c_chain' | 'solana' | 'stellar';
+export type AddressChain = 'base' | 'ethereum' | 'polygon' | 'arbitrum' | 'avalanche_c_chain' | 'solana' | 'stellar' | 'celo';
 
 /** EVM chains share an address format, so they share a validator. */
-const EVM_CHAINS = new Set<AddressChain>(['base', 'ethereum', 'polygon', 'arbitrum', 'avalanche_c_chain']);
+const EVM_CHAINS = new Set<AddressChain>(['base', 'ethereum', 'polygon', 'arbitrum', 'avalanche_c_chain', 'celo']);
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]+$/;
 const STELLAR_BASE32 = /^[A-Z2-7]+$/;
