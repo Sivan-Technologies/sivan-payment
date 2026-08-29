@@ -108,6 +108,10 @@ const TEST_SUITES: TestSuite[] = [
       BRIDGE_MOCK_MODE: 'true',
     },
   },
+  {
+    name: 'Multi-Chain Stellar Adapter & Protocols',
+    command: 'tsx scripts/test-stellar-adapter.ts',
+  },
 ];
 
 function runMasterTestRunner() {

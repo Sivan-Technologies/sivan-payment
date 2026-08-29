@@ -33,15 +33,23 @@ function mockSolanaAddress(seed: string): string {
   return s;
 }
 
+const STELLAR_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function mockStellarAddress(seed: string): string {
+  const bytes = seededBytes(seed, 35);
+  let s = 'G';
+  for (let i = 0; i < 55; i++) s += STELLAR_ALPHABET[bytes[i % bytes.length] % STELLAR_ALPHABET.length];
+  return s;
+}
+
 function mockEvmAddress(seed: string): string {
   return `0x${seededBytes(seed, 20).toString('hex')}`;
 }
 
 export function mockAddressForChain(chain: WalletChain, seed: string): string {
-  // Base and Ethereum share the EVM address format, which is a real source of
-  // user confusion. The mock reproduces that faithfully rather than hiding it,
-  // so the UI gets tested against the same footgun production will have.
-  return chain === 'solana' ? mockSolanaAddress(seed) : mockEvmAddress(seed);
+  if (chain === 'solana') return mockSolanaAddress(seed);
+  if (chain === 'stellar') return mockStellarAddress(seed);
+  return mockEvmAddress(seed);
 }
 
 /**
@@ -61,7 +69,7 @@ export class MockWalletProvider implements WalletProvider {
    */
   readonly custodyModel = 'non_custodial' as const;
 
-  readonly supportedChains = ['solana', 'base', 'ethereum'] as const;
+  readonly supportedChains = ['solana', 'base', 'ethereum', 'stellar'] as const;
 
   private wallets = new Map<string, ProviderWallet>();
   private transfers = new Map<string, WalletTransfer>();

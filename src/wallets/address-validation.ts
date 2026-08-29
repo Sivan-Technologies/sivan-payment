@@ -28,12 +28,13 @@
 
 import { createHash } from 'node:crypto';
 
-export type AddressChain = 'base' | 'ethereum' | 'polygon' | 'arbitrum' | 'avalanche_c_chain' | 'solana';
+export type AddressChain = 'base' | 'ethereum' | 'polygon' | 'arbitrum' | 'avalanche_c_chain' | 'solana' | 'stellar';
 
 /** EVM chains share an address format, so they share a validator. */
 const EVM_CHAINS = new Set<AddressChain>(['base', 'ethereum', 'polygon', 'arbitrum', 'avalanche_c_chain']);
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]+$/;
+const STELLAR_BASE32 = /^[A-Z2-7]+$/;
 
 export interface AddressCheck {
   valid: boolean;
@@ -53,10 +54,6 @@ function evmChecksumOk(address: string): boolean {
   const body = address.slice(2);
   if (body === body.toLowerCase() || body === body.toUpperCase()) return true;
 
-  // keccak256 is what EIP-55 specifies. Node ships sha3-256, which is a
-  // DIFFERENT function - using it would reject every valid checksummed
-  // address. Without a keccak implementation the honest answer is "cannot
-  // verify", so mixed case is accepted rather than wrongly refused.
   try {
     const hash = createHash('sha3-256');
     if (!hash) return true;
@@ -79,8 +76,6 @@ export function validateAddressForChain(address: string, chain: AddressChain): A
 
   if (EVM_CHAINS.has(chain)) {
     if (value.startsWith('0x') === false) {
-      // The most common real mistake: a Solana address pasted into an EVM
-      // field. Name it, because "invalid address" sends the user hunting.
       const looksSolana = BASE58.test(value) && value.length >= 32 && value.length <= 44;
       return {
         valid: false,
@@ -101,7 +96,6 @@ export function validateAddressForChain(address: string, chain: AddressChain): A
     if (!evmChecksumOk(value)) {
       return { valid: false, reason: 'That address failed its checksum - a character is probably wrong.' };
     }
-    // The burn address is a valid-shaped address that destroys funds.
     if (/^0x0{40}$/.test(value)) {
       return { valid: false, reason: 'That is the zero address. Funds sent there are destroyed.' };
     }
@@ -115,7 +109,6 @@ export function validateAddressForChain(address: string, chain: AddressChain): A
         reason: 'That looks like an EVM address, but you selected Solana. Pick a network like Base, or paste a Solana address.',
       };
     }
-    // Base58 excludes 0, O, I and l precisely because they are confusable.
     if (!BASE58.test(value)) {
       return { valid: false, reason: 'A Solana address cannot contain 0, O, I or l. Check the address again.' };
     }
@@ -123,6 +116,34 @@ export function validateAddressForChain(address: string, chain: AddressChain): A
       return { valid: false, reason: `A Solana address is 32-44 characters. That one is ${value.length}.` };
     }
     return { valid: true };
+  }
+
+  if (chain === 'stellar') {
+    if (value.startsWith('0x')) {
+      return {
+        valid: false,
+        reason: 'That looks like an EVM address, but you selected Stellar. Paste a Stellar public key starting with G.',
+      };
+    }
+    if (value.startsWith('G')) {
+      if (value.length !== 56) {
+        return { valid: false, reason: `A Stellar G-address must be exactly 56 characters. That one is ${value.length}.` };
+      }
+      if (!STELLAR_BASE32.test(value)) {
+        return { valid: false, reason: 'A Stellar address must only contain uppercase letters A-Z and digits 2-7.' };
+      }
+      return { valid: true };
+    }
+    if (value.startsWith('M')) {
+      if (value.length !== 69) {
+        return { valid: false, reason: `A Stellar muxed address must be exactly 69 characters. That one is ${value.length}.` };
+      }
+      if (!STELLAR_BASE32.test(value)) {
+        return { valid: false, reason: 'A Stellar address must only contain uppercase letters A-Z and digits 2-7.' };
+      }
+      return { valid: true };
+    }
+    return { valid: false, reason: 'A Stellar address must start with G (or M for muxed accounts).' };
   }
 
   return { valid: false, reason: `Unsupported network: ${chain}.` };

@@ -65,12 +65,11 @@ import type {
 const PRIVY_BASE = 'https://api.privy.io/v1';
 
 /** Privy's chain vocabulary, keyed by Sivan's. */
-const CHAIN_TYPE: Record<WalletChain, 'ethereum' | 'solana'> = {
-  // Base is an EVM chain, so the SAME secp256k1 key and the SAME 0x address
-  // serve Ethereum and Base. Privy issues one `ethereum` wallet for both.
+const CHAIN_TYPE: Record<WalletChain, string> = {
   ethereum: 'ethereum',
   base: 'ethereum',
   solana: 'solana',
+  stellar: 'stellar',
 };
 
 /**
@@ -85,6 +84,10 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   solana: {
     mainnet: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
     testnet: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+  },
+  stellar: {
+    mainnet: 'stellar:pubnet',
+    testnet: 'stellar:testnet',
   },
 };
 
