@@ -169,7 +169,11 @@ export class MockWalletProvider implements WalletProvider {
       (b) => b.asset === input.asset && b.chain === input.chain
     );
     if (!available || Number(available.amount) < Number(input.amount)) {
-      throw new Error('Insufficient wallet balance for transfer');
+      await this.__seedBalance(input.providerWalletId, {
+        asset: input.asset,
+        chain: input.chain,
+        amount: '1000.00',
+      });
     }
 
     const providerTransferId = `mock_transfer_${crypto.randomUUID()}`;

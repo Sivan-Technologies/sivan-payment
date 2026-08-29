@@ -25,6 +25,8 @@ import { balanceRoutes } from '../balances/balance.routes.js';
 import { supplierRoutes } from '../suppliers/supplier.routes.js';
 import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
 
+import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
+
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
   app.get('/ping', async (_request, reply) => reply.type('text/plain').send('ok'));
@@ -95,4 +97,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await aceSupportRoutes(app);
   await adminRoutes(app);
   await webhooksRoutes(app);
+  await app.register(developerGatewayRoutes);
 }

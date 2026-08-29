@@ -116,6 +116,17 @@ const TEST_SUITES: TestSuite[] = [
     name: 'Multi-Chain Celo Adapter & Protocols',
     command: 'tsx scripts/test-celo-adapter.ts',
   },
+  {
+    name: 'Multi-Chain Developer Gateway & Agent API',
+    command: 'tsx scripts/test-developer-gateway.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-developer-gateway.json',
+      EMAIL_PROVIDER: 'console',
+      BRIDGE_MOCK_MODE: 'true',
+      WALLET_PROVIDER: 'mock',
+    },
+  },
 ];
 
 function runMasterTestRunner() {

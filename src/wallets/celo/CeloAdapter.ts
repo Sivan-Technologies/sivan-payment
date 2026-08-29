@@ -19,6 +19,21 @@ export class CeloAdapter implements IChainAdapter {
       chain: 'celo',
       idempotencyKey: `celo_prov_${userId}`,
     });
+
+    await db.insertUserWallet({
+      id: `uw_${userId}_celo_${Date.now()}`,
+      userId,
+      provider: provider.name,
+      providerWalletId: created.providerWalletId,
+      chain: 'celo',
+      address: created.address,
+      status: 'active',
+      custodial: true,
+      delegatedSigningEnabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
     return created.address;
   }
 
@@ -35,10 +50,12 @@ export class CeloAdapter implements IChainAdapter {
 
   async transfer(params: ChainTransferParams): Promise<ChainTransferResult> {
     const provider = getWalletProvider(await resolveActiveWalletProvider());
-    const wallet = await db.findUserWallet(params.fromUserId, 'celo');
+    let wallet = await db.findUserWallet(params.fromUserId, 'celo');
     if (!wallet?.providerWalletId) {
-      throw new Error(`No active Celo wallet found for user: ${params.fromUserId}`);
+      await this.getDepositAddress(params.fromUserId);
+      wallet = await db.findUserWallet(params.fromUserId, 'celo');
     }
+    if (!wallet) throw new Error(`Could not resolve Celo wallet for user: ${params.fromUserId}`);
 
     const transfer = await provider.createTransfer({
       providerWalletId: wallet.providerWalletId,

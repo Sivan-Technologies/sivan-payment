@@ -19,6 +19,21 @@ export class StellarAdapter implements IChainAdapter {
       chain: 'stellar',
       idempotencyKey: `stellar_prov_${userId}`,
     });
+
+    await db.insertUserWallet({
+      id: `uw_${userId}_stellar_${Date.now()}`,
+      userId,
+      provider: provider.name,
+      providerWalletId: created.providerWalletId,
+      chain: 'stellar',
+      address: created.address,
+      status: 'active',
+      custodial: true,
+      delegatedSigningEnabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
     return created.address;
   }
 
@@ -30,10 +45,12 @@ export class StellarAdapter implements IChainAdapter {
 
   async transfer(params: ChainTransferParams): Promise<ChainTransferResult> {
     const provider = getWalletProvider(await resolveActiveWalletProvider());
-    const wallet = await db.findUserWallet(params.fromUserId, 'stellar');
+    let wallet = await db.findUserWallet(params.fromUserId, 'stellar');
     if (!wallet?.providerWalletId) {
-      throw new Error(`No active Stellar wallet found for user: ${params.fromUserId}`);
+      await this.getDepositAddress(params.fromUserId);
+      wallet = await db.findUserWallet(params.fromUserId, 'stellar');
     }
+    if (!wallet) throw new Error(`Could not resolve Stellar wallet for user: ${params.fromUserId}`);
 
     const transfer = await provider.createTransfer({
       providerWalletId: wallet.providerWalletId,
