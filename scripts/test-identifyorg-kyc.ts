@@ -47,7 +47,7 @@ const { IdentifyOrgKycLevelProvider } = await import('../src/kyc/providers/ident
 const { buildKycProviderChain, FailoverKycLevelProvider } = await import('../src/kyc/providers/failover-kyc-level.provider.js');
 
 const realFetch = globalThis.fetch;
-let lastRequest: { url: string; body: any; headers: any } | null = null;
+let lastRequest: any = null;
 
 /** Stub the vendor with one canned response. */
 function stubVendor(status: number, payload: unknown) {
