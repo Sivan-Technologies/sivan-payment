@@ -133,7 +133,51 @@ async function main() {
     assert.ok(celoBody.explorerUrl.includes('celoscan.io'));
     recordPass('executes programmatic Celo transfer');
 
-    // 5. Programmatic Service Agreement Creation
+    // 5. Programmatic Solana Transfer
+    const solanaTransferRes = await fetch(`${baseUrl}/api/v1/developer/transfers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-sivan-api-key': devKey,
+      },
+      body: JSON.stringify({
+        userId: 'usr_dev_test_agent',
+        destinationAddress: '7v91N7iZ9mNicL8WfG6DmSA4Fphk4B3U7nZ3VfF7pQZ1',
+        network: 'solana',
+        asset: 'usdc',
+        amount: 20.0,
+      }),
+    });
+    assert.equal(solanaTransferRes.status, 200);
+    const solanaBody: any = await solanaTransferRes.json();
+    assert.equal(solanaBody.success, true);
+    assert.equal(solanaBody.network, 'solana');
+    assert.ok(solanaBody.explorerUrl.includes('solscan.io'));
+    recordPass('executes programmatic Solana transfer');
+
+    // 6. Programmatic Base Transfer
+    const baseTransferRes = await fetch(`${baseUrl}/api/v1/developer/transfers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-sivan-api-key': devKey,
+      },
+      body: JSON.stringify({
+        userId: 'usr_dev_test_agent',
+        destinationAddress: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+        network: 'base',
+        asset: 'usdc',
+        amount: 15.0,
+      }),
+    });
+    assert.equal(baseTransferRes.status, 200);
+    const baseBody: any = await baseTransferRes.json();
+    assert.equal(baseBody.success, true);
+    assert.equal(baseBody.network, 'base');
+    assert.ok(baseBody.explorerUrl.includes('etherscan.io'));
+    recordPass('executes programmatic Base EVM transfer');
+
+    // 7. Programmatic Service Agreement Creation
     console.log('\n══ 4. AI Agent Service Agreement Lifecycle ══');
     const agreementRes = await fetch(`${baseUrl}/api/v1/developer/agreements`, {
       method: 'POST',

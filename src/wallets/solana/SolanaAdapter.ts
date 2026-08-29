@@ -19,6 +19,21 @@ export class SolanaAdapter implements IChainAdapter {
       chain: 'solana',
       idempotencyKey: `sol_prov_${userId}`,
     });
+
+    await db.insertUserWallet({
+      id: `uw_${userId}_solana_${Date.now()}`,
+      userId,
+      provider: provider.name,
+      providerWalletId: created.providerWalletId,
+      chain: 'solana',
+      address: created.address,
+      status: 'active',
+      custodial: true,
+      delegatedSigningEnabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
     return created.address;
   }
 
@@ -33,10 +48,12 @@ export class SolanaAdapter implements IChainAdapter {
 
   async transfer(params: ChainTransferParams): Promise<ChainTransferResult> {
     const provider = getWalletProvider(await resolveActiveWalletProvider());
-    const wallet = await db.findUserWallet(params.fromUserId, 'solana');
+    let wallet = await db.findUserWallet(params.fromUserId, 'solana');
     if (!wallet?.providerWalletId) {
-      throw new Error(`No active Solana wallet found for user: ${params.fromUserId}`);
+      await this.getDepositAddress(params.fromUserId);
+      wallet = await db.findUserWallet(params.fromUserId, 'solana');
     }
+    if (!wallet) throw new Error(`Could not resolve Solana wallet for user: ${params.fromUserId}`);
 
     const transfer = await provider.createTransfer({
       providerWalletId: wallet.providerWalletId,

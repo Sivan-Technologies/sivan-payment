@@ -23,6 +23,21 @@ export class EvmAdapter implements IChainAdapter {
       chain: this.chain,
       idempotencyKey: `evm_prov_${this.chain}_${userId}`,
     });
+
+    await db.insertUserWallet({
+      id: `uw_${userId}_${this.chain}_${Date.now()}`,
+      userId,
+      provider: provider.name,
+      providerWalletId: created.providerWalletId,
+      chain: this.chain,
+      address: created.address,
+      status: 'active',
+      custodial: true,
+      delegatedSigningEnabled: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
     return created.address;
   }
 
@@ -39,10 +54,12 @@ export class EvmAdapter implements IChainAdapter {
 
   async transfer(params: ChainTransferParams): Promise<ChainTransferResult> {
     const provider = getWalletProvider(await resolveActiveWalletProvider());
-    const wallet = await db.findUserWallet(params.fromUserId, this.chain);
+    let wallet = await db.findUserWallet(params.fromUserId, this.chain);
     if (!wallet?.providerWalletId) {
-      throw new Error(`No active ${this.chain} wallet found for user: ${params.fromUserId}`);
+      await this.getDepositAddress(params.fromUserId);
+      wallet = await db.findUserWallet(params.fromUserId, this.chain);
     }
+    if (!wallet) throw new Error(`Could not resolve ${this.chain} wallet for user: ${params.fromUserId}`);
 
     const transfer = await provider.createTransfer({
       providerWalletId: wallet.providerWalletId,
