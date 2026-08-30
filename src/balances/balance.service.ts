@@ -1231,13 +1231,6 @@ export async function executeP2pTransfer(
 
   const cleanTarget = input.recipientTarget.trim();
   const recipient = await db.findUserByTarget(cleanTarget);
-  if (!recipient) {
-    throw notFound('Recipient not found on Sivan. They will receive an invitation to claim these funds.');
-  }
-
-  if (recipient.id === senderUserId) {
-    throw badRequest('You cannot send a P2P transfer to yourself');
-  }
 
   // Check sender spendable balance
   const unified = await getUnifiedBalance(senderUserId);
@@ -1246,6 +1239,80 @@ export async function executeP2pTransfer(
 
   if (spendable < input.amount) {
     throw badRequest(`Insufficient spendable balance. Available: ${spendable} ${input.asset.toUpperCase()}, Requested: ${input.amount} ${input.asset.toUpperCase()}`);
+  }
+
+  const isPhoneTarget = cleanTarget.startsWith('+') || /^\d{7,15}$/.test(cleanTarget);
+
+  // If recipient not yet registered, create a 7-day secure claim vault
+  if (!recipient) {
+    if (!isPhoneTarget) {
+      throw notFound(`Recipient '${cleanTarget}' is not registered on Sivan. To invite a new user, send to their phone number.`);
+    }
+
+    const claimId = `clm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const claimToken = `siv_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const claimUrl = `https://app.sivantech.online/claim?token=${claimToken}`;
+    const amountStr = input.amount.toFixed(2);
+
+    await createBalanceLedgerEntry(
+      {
+        userId: senderUserId,
+        asset: input.asset,
+        amount: amountStr,
+        kind: 'hold',
+        status: 'held',
+        sourceType: 'p2p_claim',
+        sourceId: claimId,
+        description: `Held for P2P claim by ${cleanTarget}`,
+        destinationAddress: cleanTarget,
+        transferId: claimId,
+      },
+      { actorType: 'user', actorId: senderUserId }
+    );
+
+    await createAuditLog({
+      actorType: 'user',
+      actorId: senderUserId,
+      action: 'balance.p2p_claim_created',
+      resourceType: 'p2p_claim',
+      resourceId: claimId,
+      severity: 'info',
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metadata: {
+        claimId,
+        senderUserId,
+        recipientPhone: cleanTarget,
+        amount: input.amount,
+        asset: input.asset,
+        expiresAt,
+      },
+    });
+
+    return {
+      claimId,
+      claimToken,
+      claimUrl,
+      expiresAt,
+      isClaim: true,
+      amount: input.amount,
+      asset: input.asset,
+      fee: 0,
+      netAmount: input.amount,
+      status: 'pending_claim',
+      recipientPhone: cleanTarget,
+      sender: {
+        userId: sender.id,
+        username: sender.username,
+        displayName: (sender as any).name || (sender as any).fullName || sender.username || sender.whatsappNumber,
+      },
+      createdAt: nowIso(),
+    };
+  }
+
+  if (recipient.id === senderUserId) {
+    throw badRequest('You cannot send a P2P transfer to yourself');
   }
 
   const transferId = `p2p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;

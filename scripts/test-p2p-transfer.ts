@@ -120,7 +120,28 @@ export async function runP2pTransferTest() {
   assert.equal(Number(senderBal.data.available), 35, 'Sender balance is 35 USDC');
   console.log('✅ Verified: Sender balance deducted by exact 15.00 USDC');
 
-  console.log('🎉 ALL P2P DIRECT TRANSFER TESTS PASSED 100% GREEN!');
+  // Test 6: Case B - Create P2P Claim Vault for Unregistered Phone (+14159998877)
+  const unregPhone = '+14159998877';
+  const claimRes = await app.inject({
+    method: 'POST',
+    url: `/api/users/${senderUser.id}/balance/p2p-transfer`,
+    payload: {
+      asset: 'usdc',
+      amount: 10,
+      recipientTarget: unregPhone,
+      note: 'Invite bonus test',
+    },
+  });
+  assert.equal(claimRes.statusCode, 200, `Claim vault creation succeeded: ${claimRes.body}`);
+  const claimJson = claimRes.json();
+  assert.equal(claimJson.data.status, 'pending_claim');
+  assert.equal(claimJson.data.isClaim, true);
+  assert.equal(claimJson.data.fee, 0, 'Zero fee on claim creation');
+  assert.equal(claimJson.data.recipientPhone, unregPhone);
+  assert.match(claimJson.data.claimUrl, /https:\/\/app\.sivantech\.online\/claim\?token=siv_/);
+  console.log('✅ Verified: Created 7-day secure claim vault for unregistered phone (+14159998877)');
+
+  console.log('🎉 ALL P2P DIRECT TRANSFER TESTS (CASE A & CASE B) PASSED 100% GREEN!');
 }
 
 if (import.meta.url.endsWith(process.argv[1])) {
