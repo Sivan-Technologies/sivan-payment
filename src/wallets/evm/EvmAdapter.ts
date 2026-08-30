@@ -6,9 +6,9 @@ import { resolveActiveWalletProvider } from '../wallet-controls.service.js';
 import { db } from '../../database/json-database.js';
 
 export class EvmAdapter implements IChainAdapter {
-  readonly chain: 'base' | 'ethereum';
+  readonly chain: 'base' | 'ethereum' | 'bsc' | 'bnb';
 
-  constructor(chain: 'base' | 'ethereum' = 'base') {
+  constructor(chain: 'base' | 'ethereum' | 'bsc' | 'bnb' = 'base') {
     this.chain = chain;
   }
 

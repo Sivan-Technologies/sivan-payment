@@ -69,7 +69,7 @@ export class MockWalletProvider implements WalletProvider {
    */
   readonly custodyModel = 'non_custodial' as const;
 
-  readonly supportedChains = ['solana', 'base', 'ethereum', 'stellar', 'celo'] as const;
+  readonly supportedChains = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'bsc', 'bnb'] as const;
 
   private wallets = new Map<string, ProviderWallet>();
   private transfers = new Map<string, WalletTransfer>();

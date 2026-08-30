@@ -11,7 +11,7 @@ import {
 } from './user-wallet.service.js';
 import type { WalletChain } from '../database/types.js';
 
-const chainSchema = z.enum(['solana', 'base', 'ethereum', 'stellar', 'celo']);
+const chainSchema = z.enum(['solana', 'base', 'ethereum', 'stellar', 'celo', 'bsc', 'bnb']);
 
 const createWalletSchema = z.object({
   chain: chainSchema.default(DEFAULT_CHAIN),
