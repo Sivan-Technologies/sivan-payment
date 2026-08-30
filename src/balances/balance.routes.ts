@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
+import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
 import { quoteTransfer } from './balance.service.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
@@ -260,6 +260,15 @@ export async function balanceRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = parseBody(createBalanceTransferSchema, request.body);
     return { data: await requestBalanceTransfer(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Instant Free P2P Direct Transfer between Sivan accounts (@username or +phone).
+   */
+  app.post('/api/users/:userId/balance/p2p-transfer', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(createP2pTransferSchema, request.body);
+    return { data: await executeP2pTransfer(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   /**

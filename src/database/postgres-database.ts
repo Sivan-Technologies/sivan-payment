@@ -554,6 +554,27 @@ export class PostgresDatabase {
     } finally { client.release(); }
   }
 
+  async findUserByTarget(target: string) {
+    const clean = String(target || '').trim();
+    if (!clean) return undefined;
+    const client = await this.pool.connect();
+    try {
+      let res = await client.query('select * from users where user_id=$1 limit 1', [clean]);
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      const username = clean.replace(/^@/, '');
+      res = await client.query('select * from users where lower(username)=lower($1) or lower(telegram_username)=lower($1) limit 1', [username]);
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      const digitsOnly = clean.replace(/\D/g, '');
+      res = await client.query('select * from users where whatsapp_number=$1 or whatsapp_number=$2 limit 1', [clean, `+${digitsOnly}`]);
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
+      return res.rows[0] ? mapUser(res.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
   /**
    * Every user id and email, and nothing else.
    *

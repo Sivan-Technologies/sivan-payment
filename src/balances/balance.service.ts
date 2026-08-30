@@ -38,7 +38,7 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
-import { getSpendable } from './unified-balance.service.js';
+import { getSpendable, getUnifiedBalance } from './unified-balance.service.js';
 import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
@@ -1212,4 +1212,116 @@ export async function createAdminBalanceAdjustment(input: z.infer<typeof adminBa
   const entry = await createBalanceLedgerEntry({ userId: input.userId, asset: input.asset, amount: money(input.amount), kind: 'adjustment', status: input.status === 'available' ? 'available' : 'pending', sourceType: 'admin_adjustment', sourceId: id('adj'), description: input.reason }, { actorType: 'admin', actorId: input.adjustedBy });
   await createAuditLog({ actorType: 'admin', actorId: input.adjustedBy, action: 'balance.adjustment_created', resourceType: 'balance_ledger_entry', resourceId: entry.entryId, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { ...entry, reason: input.reason } });
   return entry;
+}
+
+export const createP2pTransferSchema = z.object({
+  asset: z.enum(['usdc', 'usdt']).default('usdc'),
+  amount: z.coerce.number().positive(),
+  recipientTarget: z.string().min(1).max(160),
+  note: z.string().max(500).optional(),
+});
+
+export async function executeP2pTransfer(
+  senderUserId: string,
+  input: z.infer<typeof createP2pTransferSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const sender = await db.findUserById(senderUserId);
+  if (!sender) throw notFound('Sender User');
+
+  const cleanTarget = input.recipientTarget.trim();
+  const recipient = await db.findUserByTarget(cleanTarget);
+  if (!recipient) {
+    throw notFound('Recipient not found on Sivan. They will receive an invitation to claim these funds.');
+  }
+
+  if (recipient.id === senderUserId) {
+    throw badRequest('You cannot send a P2P transfer to yourself');
+  }
+
+  // Check sender spendable balance
+  const unified = await getUnifiedBalance(senderUserId);
+  const assetEntry = unified.balances.find((b) => b.asset === input.asset) ?? unified.balances[0];
+  const spendable = Number(assetEntry?.spendable ?? 0);
+
+  if (spendable < input.amount) {
+    throw badRequest(`Insufficient spendable balance. Available: ${spendable} ${input.asset.toUpperCase()}, Requested: ${input.amount} ${input.asset.toUpperCase()}`);
+  }
+
+  const transferId = `p2p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const amountStr = input.amount.toFixed(2);
+
+  // 1. Debit sender ledger
+  await createBalanceLedgerEntry(
+    {
+      userId: senderUserId,
+      asset: input.asset,
+      amount: amountStr,
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: 'p2p_transfer',
+      sourceId: transferId,
+      description: `P2P transfer to ${recipient.username || (recipient as any).name || (recipient as any).fullName || recipient.whatsappNumber || recipient.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'user', actorId: senderUserId }
+  );
+
+  // 2. Credit recipient ledger
+  await createBalanceLedgerEntry(
+    {
+      userId: recipient.id,
+      asset: input.asset,
+      amount: amountStr,
+      kind: 'credit_available',
+      status: 'available',
+      sourceType: 'p2p_transfer',
+      sourceId: transferId,
+      description: `P2P transfer from ${sender.username || (sender as any).name || (sender as any).fullName || sender.whatsappNumber || sender.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'system', actorId: 'p2p_engine' }
+  );
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: senderUserId,
+    action: 'balance.p2p_transfer_completed',
+    resourceType: 'p2p_transfer',
+    resourceId: transferId,
+    severity: 'info',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: {
+      transferId,
+      senderUserId,
+      recipientUserId: recipient.id,
+      amount: input.amount,
+      asset: input.asset,
+      fee: 0,
+    },
+  });
+
+  return {
+    transferId,
+    amount: input.amount,
+    asset: input.asset,
+    fee: 0,
+    netAmount: input.amount,
+    status: 'completed',
+    sender: {
+      userId: sender.id,
+      username: sender.username,
+      displayName: (sender as any).name || (sender as any).fullName || sender.username || sender.whatsappNumber,
+    },
+    recipient: {
+      userId: recipient.id,
+      username: recipient.username,
+      displayName: (recipient as any).name || (recipient as any).fullName || recipient.username || (recipient as any).telegramUsername || recipient.whatsappNumber,
+      phone: recipient.whatsappNumber,
+    },
+    createdAt: nowIso(),
+  };
 }

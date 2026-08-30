@@ -242,6 +242,39 @@ export class JsonDatabase {
     return data.users.find((user) => user.telegramUserId === telegramUserId);
   }
 
+  async findUserByTarget(target: string) {
+    const data = await this.read();
+    const clean = String(target || '').trim();
+    if (!clean) return undefined;
+
+    // 1. Direct ID match
+    let user = data.users.find((u) => u.id === clean);
+    if (user) return user;
+
+    // 2. Username match (@username or username)
+    const username = clean.replace(/^@/, '').toLowerCase();
+    user = data.users.find((u) => u.username?.toLowerCase() === username || (u as any).telegramUsername?.toLowerCase() === username);
+    if (user) return user;
+
+    // 3. Phone / WhatsApp match (normalize to E.164 and local)
+    const digitsOnly = clean.replace(/\D/g, '');
+    user = data.users.find((u) => {
+      if (u.whatsappNumber === clean || u.whatsappNumber === `+${digitsOnly}`) return true;
+      if (digitsOnly.length === 13 && digitsOnly.startsWith('234')) {
+        return u.whatsappNumber === `+${digitsOnly}` || u.whatsappNumber === `0${digitsOnly.slice(3)}`;
+      }
+      if (digitsOnly.length === 11 && digitsOnly.startsWith('0')) {
+        return u.whatsappNumber === `+234${digitsOnly.slice(1)}` || u.whatsappNumber === digitsOnly;
+      }
+      return false;
+    });
+    if (user) return user;
+
+    // 4. Telegram user ID match
+    user = data.users.find((u) => u.telegramUserId === clean);
+    return user;
+  }
+
   /**
    * Every user id and email, and nothing else.
    *

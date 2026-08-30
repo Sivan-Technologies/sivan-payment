@@ -131,6 +131,17 @@ const TEST_SUITES: TestSuite[] = [
       WALLET_PROVIDER: 'mock',
     },
   },
+  {
+    name: 'P2P Direct Transfer & Universal Target Resolver',
+    command: 'tsx scripts/test-p2p-transfer.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-p2p-transfer.json',
+      EMAIL_PROVIDER: 'console',
+      BRIDGE_MOCK_MODE: 'true',
+      ADMIN_API_KEY: 'test-admin-key',
+    },
+  },
 ];
 
 function runMasterTestRunner() {

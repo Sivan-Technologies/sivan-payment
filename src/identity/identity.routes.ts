@@ -434,4 +434,31 @@ export async function identityRoutes(app: FastifyInstance) {
       },
     };
   });
+
+  /**
+   * Universal recipient target resolver (@username, +phone, or userId) for instant P2P transfers.
+   */
+  app.get('/api/identity/resolve-target', async (request, reply) => {
+    const { target } = request.query as { target?: string };
+    if (!target || typeof target !== 'string') {
+      return reply.code(400).send({ error: { message: 'Missing target query parameter' } });
+    }
+
+    const user = await db.findUserByTarget(target);
+    if (!user) {
+      return { data: { found: false, target } };
+    }
+
+    return {
+      data: {
+        found: true,
+        user: {
+          userId: user.id,
+          username: user.username,
+          displayName: (user as any).name || (user as any).fullName || user.username || (user as any).telegramUsername || user.whatsappNumber || 'Sivan User',
+          phone: user.whatsappNumber,
+        },
+      },
+    };
+  });
 }
