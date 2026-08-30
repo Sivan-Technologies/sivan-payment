@@ -76,6 +76,7 @@ export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing
 
 export const balanceTransferControlsSchema = z.object({
   transfersEnabled: z.boolean().default(false),
+  p2pTransfersEnabled: z.boolean().default(true),
   minimumSendAmount: z.coerce.number().positive().default(10),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
@@ -1230,6 +1231,16 @@ export async function executeP2pTransfer(
 ) {
   const sender = await db.findUserById(senderUserId);
   if (!sender) throw notFound('Sender User');
+
+  const controls = await getBalanceTransferControls().catch(() => null);
+  if (controls && controls.p2pTransfersEnabled === false) {
+    throw badRequest('P2P transfers are temporarily paused by administration for maintenance. Please try again shortly.');
+  }
+
+  const minAmount = controls?.minimumSendAmount ?? 1;
+  if (input.amount < minAmount) {
+    throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
+  }
 
   const cleanTarget = input.recipientTarget.trim();
   const recipient = await db.findUserByTarget(cleanTarget);
