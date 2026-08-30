@@ -80,6 +80,7 @@ export const balanceTransferControlsSchema = z.object({
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
   supportedNetworks: z.array(z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['base', 'solana', 'ethereum']),
+  p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
 });
@@ -341,6 +342,7 @@ export async function getBalanceTransferControls() {
      * Ethereum-specific cap, or when L1 gas makes it viable.
      */
     supportedNetworks: ['base', 'solana'] as BalanceNetwork[],
+    p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
@@ -1249,9 +1251,11 @@ export async function executeP2pTransfer(
       throw notFound(`Recipient '${cleanTarget}' is not registered on Sivan. To invite a new user, send to their phone number.`);
     }
 
+    const controls = await getBalanceTransferControls().catch(() => null);
+    const expiryDays = Number(controls?.p2pClaimExpiryDays || 7);
     const claimId = `clm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const claimToken = `siv_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString();
     const claimUrl = `https://app.sivantech.online/claim?token=${claimToken}`;
     const amountStr = input.amount.toFixed(2);
 
@@ -1286,6 +1290,7 @@ export async function executeP2pTransfer(
         recipientPhone: cleanTarget,
         amount: input.amount,
         asset: input.asset,
+        expiryDays,
         expiresAt,
       },
     });
@@ -1295,6 +1300,7 @@ export async function executeP2pTransfer(
       claimToken,
       claimUrl,
       expiresAt,
+      expiryDays,
       isClaim: true,
       amount: input.amount,
       asset: input.asset,
