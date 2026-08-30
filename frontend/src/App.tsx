@@ -228,6 +228,9 @@ export default function App() {
   // tables; the Transactions page only read the Bridge ones, so a naira sell
   // was invisible to the person who had just created it.
   const [ngnTransfers, setNgnTransfers] = useState<NgnTransferRecord[]>([]);
+  const [claimToken, setClaimToken] = useState(() => new URLSearchParams(window.location.search).get('token') || '');
+  const [claimInfo, setClaimInfo] = useState<{ amount: number; asset: string; senderName: string; status: string; recipientPhone?: string } | null>(null);
+  const [claiming, setClaiming] = useState(false);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
@@ -1100,6 +1103,45 @@ export default function App() {
       window.removeEventListener('focus', poll);
     };
   }, [authToken, customer?.id, kycApproved, refreshKycStatus, user?.id, view]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || (window.location.pathname.startsWith('/claim') ? params.get('token') : '');
+    if (token) {
+      setClaimToken(token);
+      void (async () => {
+        try {
+          const res = await api<any>(`/api/claims/${encodeURIComponent(token)}`);
+          const data = res?.data ?? res;
+          if (data?.amount) {
+            setClaimInfo(data);
+          }
+        } catch {
+          // Silent fallback
+        }
+      })();
+    }
+  }, [api]);
+
+  const handleRedeemClaim = useCallback(async () => {
+    if (!claimToken || !user?.id) return;
+    setClaiming(true);
+    try {
+      await api<any>(`/api/claims/${encodeURIComponent(claimToken)}/redeem`, {
+        method: 'POST',
+        body: JSON.stringify({ userId: user.id }),
+      });
+      notify(`🎉 Successfully claimed ${claimInfo?.amount ?? 10} ${(claimInfo?.asset ?? 'usdc').toUpperCase()} from ${claimInfo?.senderName ?? 'Sivan'}!`, 'success');
+      setClaimToken('');
+      setClaimInfo(null);
+      await loadUserData();
+      goToView('overview');
+    } catch (err: any) {
+      notify(err.message || 'Could not claim transfer.', 'error');
+    } finally {
+      setClaiming(false);
+    }
+  }, [claimToken, user?.id, claimInfo, api, notify, loadUserData, goToView]);
 
 
   async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
@@ -2463,6 +2505,38 @@ export default function App() {
         )}
 
         {(systemStatus.activeIncidents?.length || systemStatus.mode !== 'active') && <IncidentBanner systemStatus={systemStatus} />}
+
+        {claimInfo && (
+          <div className="incident-banner warning" style={{ background: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff', padding: '16px 20px', borderRadius: '12px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '24px' }}>🎁</span>
+              <div>
+                <strong style={{ fontSize: '16px', display: 'block', color: '#fff' }}>{claimInfo.senderName} sent you {claimInfo.amount.toFixed(2)} {claimInfo.asset.toUpperCase()}!</strong>
+                <span style={{ fontSize: '13px', opacity: 0.9 }}>{user?.id ? 'Funds are ready to deposit into your Sivan balance.' : 'Sign in or create an account to claim your funds.'}</span>
+              </div>
+            </div>
+            {user?.id ? (
+              <button
+                type="button"
+                className="primary-btn"
+                style={{ background: '#fff', color: '#059669', fontWeight: 600, border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer' }}
+                disabled={claiming}
+                onClick={handleRedeemClaim}
+              >
+                {claiming ? 'Claiming…' : `Claim ${claimInfo.amount.toFixed(2)} ${claimInfo.asset.toUpperCase()}`}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary-btn"
+                style={{ background: '#fff', color: '#059669', fontWeight: 600, border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer' }}
+                onClick={() => { setAuthTab('signup'); setView('signup'); }}
+              >
+                Create Free Account to Claim
+              </button>
+            )}
+          </div>
+        )}
 
         {view === 'emailRecovery' && <EmailRecoveryConfirmView api={api} loading={loading} onConfirmed={handleEmailRecoveryConfirmed} onSignIn={handleEmailRecoverySignIn} onSupport={handleEmailRecoverySupport} />}
 

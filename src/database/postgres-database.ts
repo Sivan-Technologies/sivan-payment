@@ -23,6 +23,7 @@ import type {
   SourceCurrency,
   SupplierPayoutCurrency,
   SupplierRecord,
+  P2pClaimRecord,
   SupplierPaymentRecord,
   SupplierControlsRecord,
   UserRecord,
@@ -393,7 +394,8 @@ export class PostgresDatabase {
         aceToolCalls: aceToolCalls.rows.map(mapAceToolCall),
         aceSupportResolutions: aceSupportResolutions.rows.map(mapAceSupportResolution),
         supportTickets: supportTickets.rows.map(mapSupportTicket),
-        supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage)
+        supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage),
+        p2pClaims: [],
       };
     } finally {
       client.release();
@@ -573,6 +575,67 @@ export class PostgresDatabase {
       res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
       return res.rows[0] ? mapUser(res.rows[0]) : undefined;
     } finally { client.release(); }
+  }
+
+  async saveP2pClaim(claim: P2pClaimRecord): Promise<P2pClaimRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `insert into payments_p2p_claims (id, claim_token, sender_user_id, recipient_phone, amount, asset, status, expires_at, claimed_by_user_id, claimed_at, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         on conflict (id) do update set
+           status = excluded.status,
+           claimed_by_user_id = excluded.claimed_by_user_id,
+           claimed_at = excluded.claimed_at,
+           updated_at = excluded.updated_at`,
+        [
+          claim.id,
+          claim.claimToken,
+          claim.senderUserId,
+          claim.recipientPhone,
+          claim.amount,
+          claim.asset,
+          claim.status,
+          claim.expiresAt,
+          claim.claimedByUserId ?? null,
+          claim.claimedAt ?? null,
+          claim.createdAt,
+          claim.updatedAt,
+        ]
+      ).catch(() => null);
+      return claim;
+    } finally {
+      client.release();
+    }
+  }
+
+  async findP2pClaimByToken(token: string): Promise<P2pClaimRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const res = await optionalQuery(
+        client,
+        `select * from payments_p2p_claims where claim_token = $1 limit 1`,
+        [token]
+      );
+      if (!res.rows[0]) return null;
+      const row = res.rows[0];
+      return {
+        id: row.id,
+        claimToken: row.claim_token,
+        senderUserId: row.sender_user_id,
+        recipientPhone: row.recipient_phone,
+        amount: Number(row.amount),
+        asset: row.asset,
+        status: row.status,
+        expiresAt: iso(row.expires_at),
+        claimedByUserId: str(row.claimed_by_user_id),
+        claimedAt: row.claimed_at ? iso(row.claimed_at) : undefined,
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+      };
+    } finally {
+      client.release();
+    }
   }
 
   /**

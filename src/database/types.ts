@@ -1063,6 +1063,21 @@ export interface UserLimitResetRecord {
   createdAt: string;
 }
 
+export interface P2pClaimRecord {
+  id: string;
+  claimToken: string;
+  senderUserId: string;
+  recipientPhone: string;
+  amount: number;
+  asset: string;
+  status: 'pending' | 'claimed' | 'expired' | 'refunded';
+  expiresAt: string;
+  claimedByUserId?: string;
+  claimedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DatabaseShape {
   users: UserRecord[];
   customerIdentityLinks: CustomerIdentityLinkRecord[];
@@ -1118,4 +1133,5 @@ export interface DatabaseShape {
   ngnWebhooks: NgnWebhookRecord[];
   walletDeposits: WalletDepositRecord[];
   ngnIdentityVerifications: NgnIdentityVerificationRecord[];
+  p2pClaims: P2pClaimRecord[];
 }

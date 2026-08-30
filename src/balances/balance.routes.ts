@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
+import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, getBalanceTransferControls, getP2pClaimDetails, redeemP2pClaim, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
 import { quoteTransfer } from './balance.service.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
@@ -347,5 +347,32 @@ export async function balanceRoutes(app: FastifyInstance) {
   app.post('/api/admin/balance/adjustments', async (request) => {
     const body = parseBody(adminBalanceAdjustmentSchema, request.body);
     return { data: await createAdminBalanceAdjustment({ ...body, adjustedBy: actor(request) }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * P2P Claim Vault Inspection & Redemption.
+   * Allows unregistered recipients to inspect and claim incoming funds upon sign up.
+   */
+  app.get('/api/claims/:token', async (request) => {
+    const { token } = request.params as { token: string };
+    return { data: await getP2pClaimDetails(token) };
+  });
+
+  app.post('/api/claims/:token/redeem', async (request) => {
+    const { token } = request.params as { token: string };
+    const body = (request.body as any) || {};
+    const userId = (request as any).user?.id || body.userId;
+    if (!userId) {
+      return {
+        statusCode: 401,
+        error: 'User not authenticated. Please provide userId or log in to claim funds.',
+      };
+    }
+    return {
+      data: await redeemP2pClaim(token, userId, {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      }),
+    };
   });
 }

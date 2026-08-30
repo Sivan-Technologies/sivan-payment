@@ -1275,6 +1275,19 @@ export async function executeP2pTransfer(
       { actorType: 'user', actorId: senderUserId }
     );
 
+    await db.saveP2pClaim({
+      id: claimId,
+      claimToken,
+      senderUserId,
+      recipientPhone: cleanTarget,
+      amount: input.amount,
+      asset: input.asset,
+      status: 'pending',
+      expiresAt,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    });
+
     await createAuditLog({
       actorType: 'user',
       actorId: senderUserId,
@@ -1396,5 +1409,145 @@ export async function executeP2pTransfer(
       phone: recipient.whatsappNumber,
     },
     createdAt: nowIso(),
+  };
+}
+
+export async function getP2pClaimDetails(token: string) {
+  const claim = await db.findP2pClaimByToken(token);
+  if (!claim) throw notFound('Claim not found or expired');
+
+  const sender = await db.findUserById(claim.senderUserId);
+  const senderName = sender?.username ? `@${sender.username}` : ((sender as any)?.name || (sender as any)?.fullName || 'Sivan User');
+  const isExpired = new Date(claim.expiresAt).getTime() < Date.now();
+
+  return {
+    claimId: claim.id,
+    amount: claim.amount,
+    asset: claim.asset,
+    status: isExpired ? 'expired' : claim.status,
+    expiresAt: claim.expiresAt,
+    senderName,
+    recipientPhone: claim.recipientPhone,
+    isExpired,
+  };
+}
+
+export async function redeemP2pClaim(
+  token: string,
+  recipientUserId: string,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const claim = await db.findP2pClaimByToken(token);
+  if (!claim) throw notFound('Claim not found');
+  if (claim.status !== 'pending') throw badRequest(`Claim is already ${claim.status}`);
+  if (new Date(claim.expiresAt).getTime() < Date.now()) {
+    claim.status = 'expired';
+    await db.saveP2pClaim(claim);
+    throw badRequest('This claim has expired and funds were returned to sender');
+  }
+
+  const recipient = await db.findUserById(recipientUserId);
+  if (!recipient) throw notFound('Recipient user account');
+  if (recipient.id === claim.senderUserId) {
+    throw badRequest('You cannot claim your own transfer');
+  }
+
+  const sender = await db.findUserById(claim.senderUserId);
+  const amountStr = claim.amount.toFixed(2);
+  const transferId = `p2p_claim_${claim.id}`;
+
+  // 1. Release hold & debit sender
+  await createBalanceLedgerEntry(
+    {
+      userId: claim.senderUserId,
+      asset: claim.asset as BalanceAsset,
+      amount: amountStr,
+      kind: 'hold_release',
+      status: 'available',
+      sourceType: 'p2p_claim_redeemed',
+      sourceId: transferId,
+      description: `Released hold for claimed transfer ${claim.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'system', actorId: 'p2p_claim_engine' }
+  );
+
+  await createBalanceLedgerEntry(
+    {
+      userId: claim.senderUserId,
+      asset: claim.asset as BalanceAsset,
+      amount: amountStr,
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: 'p2p_claim_redeemed',
+      sourceId: transferId,
+      description: `P2P claim redeemed by ${recipient.username || (recipient as any).name || (recipient as any).fullName || recipient.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'user', actorId: claim.senderUserId }
+  );
+
+  // 2. Credit recipient
+  await createBalanceLedgerEntry(
+    {
+      userId: recipient.id,
+      asset: claim.asset as BalanceAsset,
+      amount: amountStr,
+      kind: 'credit_available',
+      status: 'available',
+      sourceType: 'p2p_claim_redeemed',
+      sourceId: transferId,
+      description: `Claimed P2P transfer from ${sender?.username || (sender as any)?.name || (sender as any)?.fullName || claim.senderUserId}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'system', actorId: 'p2p_claim_engine' }
+  );
+
+  // 3. Mark claim as claimed
+  claim.status = 'claimed';
+  claim.claimedByUserId = recipient.id;
+  claim.claimedAt = nowIso();
+  claim.updatedAt = nowIso();
+  await db.saveP2pClaim(claim);
+
+  // 4. Auto-link phone number to recipient user profile if missing
+  if (!recipient.whatsappNumber && claim.recipientPhone) {
+    await db.updateUserRecord({
+      ...recipient,
+      whatsappNumber: claim.recipientPhone,
+      updatedAt: nowIso(),
+    });
+  }
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: recipientUserId,
+    action: 'balance.p2p_claim_redeemed',
+    resourceType: 'p2p_claim',
+    resourceId: claim.id,
+    severity: 'info',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: {
+      claimId: claim.id,
+      senderUserId: claim.senderUserId,
+      recipientUserId: recipient.id,
+      amount: claim.amount,
+      asset: claim.asset,
+    },
+  });
+
+  return {
+    success: true,
+    status: 'claimed',
+    amount: claim.amount,
+    asset: claim.asset,
+    claimId: claim.id,
+    senderName: sender?.username ? `@${sender.username}` : ((sender as any)?.name || (sender as any)?.fullName || 'Sivan User'),
+    creditedToUserId: recipient.id,
+    claimedAt: claim.claimedAt,
   };
 }

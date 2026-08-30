@@ -138,10 +138,60 @@ export async function runP2pTransferTest() {
   assert.equal(claimJson.data.isClaim, true);
   assert.equal(claimJson.data.fee, 0, 'Zero fee on claim creation');
   assert.equal(claimJson.data.recipientPhone, unregPhone);
-  assert.match(claimJson.data.claimUrl, /https:\/\/app\.sivantech\.online\/claim\?token=siv_/);
-  console.log('✅ Verified: Created 7-day secure claim vault for unregistered phone (+14159998877)');
+  const claimToken = claimJson.data.claimToken;
+  assert.ok(claimToken, 'Claim token generated');
 
-  console.log('🎉 ALL P2P DIRECT TRANSFER TESTS (CASE A & CASE B) PASSED 100% GREEN!');
+  // Test 7: Public Claim Inspection via GET /api/claims/:token
+  const inspectRes = await app.inject({
+    method: 'GET',
+    url: `/api/claims/${claimToken}`,
+  });
+  assert.equal(inspectRes.statusCode, 200, 'Claim inspection succeeded');
+  const inspectJson = inspectRes.json();
+  assert.equal(inspectJson.data.amount, 10);
+  assert.equal(inspectJson.data.asset, 'usdc');
+  assert.equal(inspectJson.data.status, 'pending');
+  assert.equal(inspectJson.data.recipientPhone, unregPhone);
+  console.log('✅ Verified: Inspected claim via GET /api/claims/:token');
+
+  // Test 8: New User Signs Up on Web & Redeems Claim
+  const newSignup = await signup('New Invited User', 'newbie_claimant');
+  const newUser = newSignup.user;
+
+  const redeemRes = await app.inject({
+    method: 'POST',
+    url: `/api/claims/${claimToken}/redeem`,
+    payload: { userId: newUser.id },
+  });
+  assert.equal(redeemRes.statusCode, 200, `Claim redemption succeeded: ${redeemRes.body}`);
+  const redeemJson = redeemRes.json();
+  assert.equal(redeemJson.data.success, true);
+  assert.equal(redeemJson.data.status, 'claimed');
+  assert.equal(redeemJson.data.amount, 10);
+  assert.equal(redeemJson.data.creditedToUserId, newUser.id);
+  console.log('✅ Verified: Successfully redeemed claim into newly registered account');
+
+  // Test 9: Verify New User Balance & Auto-Linked Phone
+  const newBalRes = await app.inject({
+    method: 'GET',
+    url: `/api/users/${newUser.id}/balance`,
+  });
+  assert.equal(newBalRes.statusCode, 200);
+  const newBal = newBalRes.json();
+  assert.equal(Number(newBal.data.available), 10, 'New user balance is 10 USDC');
+
+  // Verify Phone Auto-Linked to New User Profile
+  const resolveNewPhoneRes = await app.inject({
+    method: 'GET',
+    url: `/api/identity/resolve-target?target=${unregPhone}`,
+  });
+  assert.equal(resolveNewPhoneRes.statusCode, 200);
+  const resolveNewPhoneJson = resolveNewPhoneRes.json();
+  assert.equal(resolveNewPhoneJson.data.found, true);
+  assert.equal(resolveNewPhoneJson.data.user.userId, newUser.id);
+  console.log('✅ Verified: Phone number automatically linked to new user profile upon claim!');
+
+  console.log('🎉 ALL P2P DIRECT TRANSFER & CLAIM REDEMPTION TESTS PASSED 100% GREEN!');
 }
 
 if (import.meta.url.endsWith(process.argv[1])) {
