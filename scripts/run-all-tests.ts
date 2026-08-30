@@ -117,6 +117,10 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-celo-adapter.ts',
   },
   {
+    name: 'Multi-Chain BNB Chain (BSC) Adapter & Protocols',
+    command: 'tsx scripts/test-bsc-adapter.ts',
+  },
+  {
     name: 'Multi-Chain Developer Gateway & Agent API',
     command: 'tsx scripts/test-developer-gateway.ts',
     env: {
