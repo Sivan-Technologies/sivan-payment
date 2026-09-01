@@ -169,7 +169,25 @@ services:
       # frontends against one API means a fix deployed to one is invisible on
       # the other, and users will be on whichever link they were sent.
       - key: CORS_ORIGIN
-        value: https://sivan-payments-user-test.onrender.com,https://sivan-payments-user-test.vercel.app,http://localhost:5173
+        value: https://staging.sivantech.online,https://api-staging.sivantech.online,https://sivan-payments-user-test.onrender.com,https://sivan-payments-user-test.vercel.app,http://localhost:5173
+      - key: CUSTOMER_APP_URL
+        value: https://staging.sivantech.online
+      - key: TELEGRAM_MINIAPP_URL
+        value: https://staging.sivantech.online/pin-pad
+      - key: WEBAUTHN_RP_ID
+        value: sivantech.online
+      - key: WEBAUTHN_ORIGIN
+        value: https://staging.sivantech.online,https://sivan-payments-user-test.onrender.com
+      - key: FRAUD_ENGINE_URL
+        value: https://sivan-fraud-engine-staging.onrender.com
+      - key: STELLAR_NETWORK
+        value: testnet
+      - key: CELO_RPC_URL
+        value: https://alfajores-forno.celo-testnet.org
+      - key: BASE_RPC_URL
+        value: https://sepolia.base.org
+      - key: BSC_RPC_URL
+        value: https://data-seed-prebsc-1-s1.binance.org:8545
       - key: ADMIN_API_KEY
         sync: false
       - key: USER_JWT_SECRET
