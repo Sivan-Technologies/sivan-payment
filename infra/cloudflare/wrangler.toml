@@ -1,0 +1,7 @@
+name = "sivan-staging-gateway"
+main = "cloudflare-worker-staging-multichain.js"
+compatibility_date = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
