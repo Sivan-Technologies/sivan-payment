@@ -40,9 +40,9 @@ services:
         value: strict-origin-when-cross-origin
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://sivan-payments-api-test-x9xq.onrender.com
+        value: https://api-staging.sivantech.online
       - key: VITE_APP_ENV
-        value: test
+        value: staging
       - key: VITE_SENTRY_DSN
         sync: false
 
@@ -169,7 +169,7 @@ services:
       # frontends against one API means a fix deployed to one is invisible on
       # the other, and users will be on whichever link they were sent.
       - key: CORS_ORIGIN
-        value: https://staging.sivantech.online,https://api-staging.sivantech.online,https://sivan-payments-user-test.onrender.com,https://sivan-payments-user-test.vercel.app,http://localhost:5173
+        value: https://staging.sivantech.online,https://api-staging.sivantech.online,https://sivan-payments-user-test-vuzt.onrender.com,https://sivan-payments-user-test.onrender.com,https://sivan-payments-user-test.vercel.app,http://localhost:5173
       - key: CUSTOMER_APP_URL
         value: https://staging.sivantech.online
       - key: TELEGRAM_MINIAPP_URL
@@ -177,7 +177,7 @@ services:
       - key: WEBAUTHN_RP_ID
         value: sivantech.online
       - key: WEBAUTHN_ORIGIN
-        value: https://staging.sivantech.online,https://sivan-payments-user-test.onrender.com
+        value: https://staging.sivantech.online,https://sivan-payments-user-test-vuzt.onrender.com,https://sivan-payments-user-test.onrender.com
       - key: FRAUD_ENGINE_URL
         value: https://sivan-fraud-engine-staging.onrender.com
       - key: STELLAR_NETWORK
