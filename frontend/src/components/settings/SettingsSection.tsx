@@ -308,16 +308,19 @@ function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatus
 }
 
 function NotificationPreferencesPanel({ preferences, loading, onUpdate }: { preferences: UserPreferencesRecord; loading: boolean; onUpdate: (patch: Partial<UserPreferencesRecord>) => Promise<void> }) {
-  const rows: Array<{ key: keyof Pick<UserPreferencesRecord, 'transactionUpdates' | 'marketingEmails' | 'securityAlerts' | 'emailConfirmationsForHighValue'>; icon: string; title: string; body: string; locked?: boolean }> = [
-    { key: 'transactionUpdates', icon: '♢', title: 'Transaction updates', body: 'Deposits, on-ramp payments, payouts, balance credits, supplier payments, and transfer status.' },
-    { key: 'securityAlerts', icon: '◈', title: 'Security alerts', body: 'Verification, account changes, support-risk events, and important account safety notices.' },
-    { key: 'emailConfirmationsForHighValue', icon: '✉', title: 'High-value confirmations', body: 'Require email confirmation for high-value transfers where supported.' },
-    { key: 'marketingEmails', icon: '◎', title: 'Marketing emails', body: 'Product news, feature updates, offers, and launch announcements.' }
+  const rows: Array<{ key: keyof Pick<UserPreferencesRecord, 'telegramNotificationsEnabled' | 'whatsappNotificationsEnabled' | 'multiChainAlertsEnabled' | 'transactionUpdates' | 'marketingEmails' | 'securityAlerts' | 'emailConfirmationsForHighValue'>; icon: string; title: string; body: string; defaultVal: boolean; locked?: boolean }> = [
+    { key: 'telegramNotificationsEnabled', icon: '✈', title: 'Telegram alerts (@Sivan_Ai)', body: 'Instant free real-time deal alerts, deposit confirmations, and service agreement milestones via Telegram.', defaultVal: true },
+    { key: 'whatsappNotificationsEnabled', icon: '💬', title: 'WhatsApp alerts', body: 'Transaction-critical WhatsApp updates and cashout notices. Defaults to paused to optimize messaging costs.', defaultVal: false },
+    { key: 'multiChainAlertsEnabled', icon: '⛓', title: 'Multi-Chain settlement alerts', body: 'Real-time on-chain confirmation alerts across Stellar, Celo, Solana, Base, and BNB Chain.', defaultVal: true },
+    { key: 'transactionUpdates', icon: '♢', title: 'Transaction updates', body: 'Deposits, on-ramp payments, payouts, balance credits, supplier payments, and transfer status.', defaultVal: true },
+    { key: 'securityAlerts', icon: '◈', title: 'Security alerts', body: 'Verification, account changes, support-risk events, and important account safety notices.', defaultVal: true },
+    { key: 'emailConfirmationsForHighValue', icon: '✉', title: 'High-value confirmations', body: 'Require email confirmation for high-value transfers where supported.', defaultVal: false },
+    { key: 'marketingEmails', icon: '◎', title: 'Marketing emails', body: 'Product news, feature updates, offers, and launch announcements.', defaultVal: false }
   ];
-  return <div className="notification-settings-panel"><div className="settings-section-head"><h3>Notifications</h3><p className="muted">These switches save directly to your Sivan preferences. Critical transactional and security notices may still be sent when required for account safety or compliance.</p></div><div className="notification-settings-list">{rows.map((row) => {
-    const checked = Boolean(preferences[row.key]);
+  return <div className="notification-settings-panel"><div className="settings-section-head"><h3>Notifications & Channel Alert Controls</h3><p className="muted">Manage where you receive instant deal updates, payment confirmations, and virtual account deposit alerts. Telegram defaults to enabled (free and instant) while WhatsApp defaults to cost-optimized.</p></div><div className="notification-settings-list">{rows.map((row) => {
+    const checked = preferences[row.key] !== undefined ? Boolean(preferences[row.key]) : row.defaultVal;
     return <div className={`notification-setting-row ${checked ? 'enabled' : ''}`} key={row.key}><span>{row.icon}</span><div><strong>{row.title}</strong><small>{row.body}</small><em>{checked ? 'Enabled' : 'Disabled'}</em></div><label className="switch-toggle connected"><input name={row.key} type="checkbox" checked={checked} disabled={loading} onChange={(event) => void onUpdate({ [row.key]: event.target.checked } as Partial<UserPreferencesRecord>)} /><i /></label></div>;
-  })}</div><div className="notification-settings-foot"><strong>Connected</strong><span>Saved to your account preferences and used by Sivan notification surfaces.</span></div></div>;
+  })}</div><div className="notification-settings-foot"><strong>Connected</strong><span>Saved to your account preferences and synced across Sivan notification surfaces.</span></div></div>;
 }
 
 function SettingsRows({ rows, preferences }: { rows: string[][]; preferences?: UserPreferencesRecord }) {

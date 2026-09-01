@@ -408,6 +408,15 @@ const envSchema = z.object({
    * user actually watches, and waiting longer saves no chain reads.
    */
   DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(45),
+  /**
+   * How often the service agreement deadline sweeper runs, in seconds. 0 disables.
+   *
+   * Checks funded/in_delivery agreements for approaching or missed deadlines and
+   * dispatches proactive notifications (6-hour warning to seller; overdue notice
+   * to both buyer and seller). 300s (5 minutes) is fine-grained enough to catch
+   * the 6-hour window well in advance while not generating noise under load.
+   */
+  DEADLINE_SWEEP_SECONDS: z.coerce.number().int().nonnegative().default(300),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),

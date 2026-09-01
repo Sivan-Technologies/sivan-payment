@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord } from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -67,6 +67,7 @@ const emptyDb = (): DatabaseShape => ({
   walletDeposits: [],
   ngnIdentityVerifications: [],
   p2pClaims: [],
+  serviceAgreements: [],
 });
 
 export class JsonDatabase {
@@ -1408,6 +1409,133 @@ export class JsonDatabase {
       return record;
     });
   }
+  // ── Service Agreements ──────────────────────────────────────────────────
+
+  async insertServiceAgreement(record: ServiceAgreementRecord): Promise<ServiceAgreementRecord> {
+    return this.mutate((data) => {
+      data.serviceAgreements = data.serviceAgreements ?? [];
+      data.serviceAgreements.push(record);
+      return record;
+    });
+  }
+
+  async updateServiceAgreement(record: ServiceAgreementRecord): Promise<ServiceAgreementRecord> {
+    return this.mutate((data) => {
+      data.serviceAgreements = data.serviceAgreements ?? [];
+      const idx = data.serviceAgreements.findIndex((a) => a.id === record.id);
+      if (idx >= 0) data.serviceAgreements[idx] = record;
+      return record;
+    });
+  }
+
+  async findServiceAgreementById(id: string): Promise<ServiceAgreementRecord | null> {
+    const data = await this.read();
+    return (data.serviceAgreements ?? []).find((a) => a.id === id) ?? null;
+  }
+
+  /**
+   * Returns agreements with status 'funded' or 'in_delivery' that have a
+   * delivery_due_at set. Used exclusively by the deadline sweeper.
+   */
+  async listActiveAgreementsForDeadlineSweep(limit = 100): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    return (data.serviceAgreements ?? [])
+      .filter((a) =>
+        (a.status === 'funded' || a.status === 'in_delivery') &&
+        a.deliveryDueAt != null
+      )
+      .slice(0, limit);
+  }
+
+  /**
+   * Atomically claims the 6-hour reminder slot. Returns true if this call
+   * was the one that flipped the flag; false if it was already true.
+   *
+   * JSON driver: single-process, no true concurrency, so this is a safe
+   * read-modify-write. The Postgres driver uses WHERE reminder_6h_sent = false.
+   */
+  async markAgreementReminder6hSent(id: string): Promise<boolean> {
+    return this.mutate((data) => {
+      const a = (data.serviceAgreements ?? []).find((x) => x.id === id);
+      if (!a || a.reminder6hSent) return false;
+      a.reminder6hSent = true;
+      a.updatedAt = new Date().toISOString();
+      return true;
+    });
+  }
+
+  /**
+   * Atomically claims the overdue notice slot. Returns true if this call
+   * was the one that flipped the flag.
+   */
+  async markAgreementOverdueNoticeSent(id: string): Promise<boolean> {
+    return this.mutate((data) => {
+      const a = (data.serviceAgreements ?? []).find((x) => x.id === id);
+      if (!a || a.overdueNoticeSent) return false;
+      a.overdueNoticeSent = true;
+      a.updatedAt = new Date().toISOString();
+      return true;
+    });
+  }
+
+  /**
+   * Passkey & Biometrics Storage Methods
+   */
+  async listPasskeyCredentials(userId: string): Promise<PasskeyCredentialRecord[]> {
+    const data = await this.read();
+    return (data.passkeyCredentials ?? []).filter((p) => p.userId === userId);
+  }
+
+  async findPasskeyCredentialById(credentialId: string): Promise<PasskeyCredentialRecord | undefined> {
+    const data = await this.read();
+    return (data.passkeyCredentials ?? []).find((p) => p.credentialId === credentialId);
+  }
+
+  async upsertPasskeyCredential(record: PasskeyCredentialRecord): Promise<PasskeyCredentialRecord> {
+    return this.mutate((data) => {
+      data.passkeyCredentials = data.passkeyCredentials ?? [];
+      const index = data.passkeyCredentials.findIndex((p) => p.credentialId === record.credentialId);
+      if (index >= 0) {
+        data.passkeyCredentials[index] = record;
+      } else {
+        data.passkeyCredentials.push(record);
+      }
+      return record;
+    });
+  }
+
+  async deletePasskeyCredential(credentialId: string): Promise<boolean> {
+    return this.mutate((data) => {
+      data.passkeyCredentials = data.passkeyCredentials ?? [];
+      const prevLen = data.passkeyCredentials.length;
+      data.passkeyCredentials = data.passkeyCredentials.filter((p) => p.credentialId !== credentialId);
+      return data.passkeyCredentials.length < prevLen;
+    });
+  }
+
+  async savePasskeyChallenge(record: PasskeyChallengeRecord): Promise<PasskeyChallengeRecord> {
+    return this.mutate((data) => {
+      data.passkeyChallenges = data.passkeyChallenges ?? [];
+      data.passkeyChallenges.push(record);
+      return record;
+    });
+  }
+
+  async findPasskeyChallenge(userId: string, challenge: string): Promise<PasskeyChallengeRecord | undefined> {
+    const data = await this.read();
+    const now = Date.now();
+    return (data.passkeyChallenges ?? []).find(
+      (c) => c.userId === userId && c.challenge === challenge && Date.parse(c.expiresAt) > now
+    );
+  }
+
+  async deletePasskeyChallenge(id: string): Promise<void> {
+    await this.mutate((data) => {
+      data.passkeyChallenges = (data.passkeyChallenges ?? []).filter((c) => c.id !== id);
+      return true;
+    });
+  }
+
   private async persist(): Promise<void> {
     if (!this.db) return;
     const data = JSON.stringify(this.db, null, 2);

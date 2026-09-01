@@ -17,7 +17,10 @@ export const updateUserPreferencesSchema = z.object({
   transactionUpdates: z.boolean().optional(),
   marketingEmails: z.boolean().optional(),
   securityAlerts: z.boolean().optional(),
-  emailConfirmationsForHighValue: z.boolean().optional()
+  emailConfirmationsForHighValue: z.boolean().optional(),
+  telegramNotificationsEnabled: z.boolean().optional(),
+  whatsappNotificationsEnabled: z.boolean().optional(),
+  multiChainAlertsEnabled: z.boolean().optional()
 });
 
 export function defaultUserPreferences(userId: string): UserPreferencesRecord {
@@ -29,6 +32,9 @@ export function defaultUserPreferences(userId: string): UserPreferencesRecord {
     marketingEmails: false,
     securityAlerts: true,
     emailConfirmationsForHighValue: false,
+    telegramNotificationsEnabled: true, // Free and instant channel default
+    whatsappNotificationsEnabled: false, // Default OFF to optimize Meta/Twilio business messaging costs
+    multiChainAlertsEnabled: true,
     updatedAt: nowIso()
   };
 }
@@ -36,7 +42,17 @@ export function defaultUserPreferences(userId: string): UserPreferencesRecord {
 
 export async function getUserPreferences(userId: string) {
   await getUser(userId).catch(() => { throw notFound('User'); });
-  return (await db.getUserPreferencesRecord(userId)) ?? defaultUserPreferences(userId);
+  const stored = await db.getUserPreferencesRecord(userId);
+  if (!stored) {
+    return defaultUserPreferences(userId);
+  }
+  return {
+    ...defaultUserPreferences(userId),
+    ...stored,
+    telegramNotificationsEnabled: stored.telegramNotificationsEnabled ?? true,
+    whatsappNotificationsEnabled: stored.whatsappNotificationsEnabled ?? false,
+    multiChainAlertsEnabled: stored.multiChainAlertsEnabled ?? true
+  };
 }
 
 export async function updateUserPreferences(userId: string, input: z.infer<typeof updateUserPreferencesSchema>) {

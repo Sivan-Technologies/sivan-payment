@@ -667,6 +667,9 @@ export interface UserPreferencesRecord {
   marketingEmails: boolean;
   securityAlerts: boolean;
   emailConfirmationsForHighValue: boolean;
+  telegramNotificationsEnabled?: boolean;
+  whatsappNotificationsEnabled?: boolean;
+  multiChainAlertsEnabled?: boolean;
   /**
    * Which network the SERVER signs against. Read-only, and not a preference -
    * it is returned by GET/PUT preferences and must never be sent back.
@@ -885,4 +888,38 @@ export interface SupplierFeeQuoteResponse {
   breakdown: Array<{ fromUsd: number; toUsd: number | null; percent: number; amountInBand: string; feeFromBand: string }>;
   explanation: string;
   windowDays: number;
+}
+
+export type ServiceAgreementStatus =
+  | 'pending_payment'
+  | 'funded'
+  | 'in_delivery'
+  | 'delivered'
+  | 'released'
+  | 'cancelled'
+  | 'disputed';
+
+export interface ServiceAgreement {
+  id: string;
+  buyerUserId: string;
+  sellerUserId: string;
+  title: string;
+  description: string;
+  amountUsdc: number;
+  currency: string;
+  network: string;
+  status: ServiceAgreementStatus;
+  /** Delivery window extracted from natural language at creation time. */
+  deadlineDays: number;
+  /** ISO timestamp of delivery deadline. Null until agreement is funded. */
+  deliveryDueAt: string | null;
+  /** Live countdown label for display in chat and dashboard cards. */
+  countdownLabel: string;
+  reminder6hSent: boolean;
+  overdueNoticeSent: boolean;
+  fundedAt: string | null;
+  deliveredAt: string | null;
+  releasedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

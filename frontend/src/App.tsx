@@ -20,6 +20,7 @@ import { useSessionActivity } from './hooks/useAuth';
 import { usePaymentDataLoader } from './hooks/usePaymentData';
 import { useTheme } from './hooks/useTheme';
 import { ThemeToggle } from './components/ThemeToggle';
+import { PinPadModal } from './components/tma/PinPadModal';
 
 /**
  * Server-enforced gap between OTP emails, mirrored here so the countdown tells
@@ -2425,6 +2426,10 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (window.location.pathname === '/pin-pad' || window.location.pathname.startsWith('/pin-pad')) {
+    return <PinPadModal />;
   }
 
   if (view === 'landing') {

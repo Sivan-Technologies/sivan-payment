@@ -27,6 +27,9 @@ import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
 import { metamapKycRoutes } from '../kyc/api/metamap.routes.js';
 
 import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
+import { agreementRoutes } from '../agreements/agreement.routes.js';
+import { passkeyRoutes } from '../identity/passkey.routes.js';
+import { fraudSecurityRoutes } from '../security/fraud.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -100,4 +103,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await adminRoutes(app);
   await webhooksRoutes(app);
   await app.register(developerGatewayRoutes);
+  await agreementRoutes(app);
+  await passkeyRoutes(app);
+  await fraudSecurityRoutes(app);
 }

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { defaultMetaMapProvider } from '../providers/metamap-kyc.provider.js';
 import { unauthorized, badRequest } from '../../shared/errors.js';
-import { dataStore } from '../../data/store.js';
+import { db } from '../../database/json-database.js';
 
 export async function metamapKycRoutes(app: FastifyInstance) {
   /**
@@ -37,18 +37,19 @@ export async function metamapKycRoutes(app: FastifyInstance) {
     const parsed = defaultMetaMapProvider.parseWebhookResult(payload);
 
     if (parsed.userId) {
-      const user = dataStore.users.find((u) => u.id === parsed.userId);
-      const customer = dataStore.customers.find((c) => c.userId === parsed.userId);
+      const customer = await db.findCustomerByUserId(parsed.userId);
 
       if (parsed.isApproved) {
         if (customer) {
           customer.kycStatus = 'kyc_approved';
           customer.updatedAt = new Date().toISOString();
+          await db.updateCustomerRecord(customer);
         }
       } else if (parsed.isRejected) {
         if (customer) {
           customer.kycStatus = 'kyc_rejected';
           customer.updatedAt = new Date().toISOString();
+          await db.updateCustomerRecord(customer);
         }
       }
     }

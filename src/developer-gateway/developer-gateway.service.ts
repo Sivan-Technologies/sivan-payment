@@ -10,6 +10,8 @@ import {
   DeveloperSettleResponse,
 } from './developer-api.types.js';
 import { badRequest } from '../shared/errors.js';
+import { parseDeliveryDeadline } from '../agreements/deadline-parser.js';
+import { getCountdownLabel } from '../agreements/agreement.service.js';
 
 export class DeveloperGatewayService {
   /**
@@ -109,6 +111,31 @@ export class DeveloperGatewayService {
     const depositAddress = await adapter.getDepositAddress(input.buyerUserId);
     const agreementId = `SIV-${Math.floor(100000 + Math.random() * 900000)}-${input.network.toUpperCase()}`;
 
+    const parseResult = parseDeliveryDeadline(input.description || input.title || '');
+    const deadlineDays = input.deadlineDays ?? parseResult.deadlineDays;
+
+    // Placeholder record for countdown label (not funded yet, so deliveryDueAt is null)
+    const labelRecord = {
+      id: agreementId,
+      status: 'pending_payment' as const,
+      deadlineDays,
+      deliveryDueAt: null,
+      buyerUserId: input.buyerUserId,
+      sellerUserId: '',
+      title: input.title,
+      description: input.description || '',
+      amountUsdc: input.amount,
+      currency: input.currency || 'usdc',
+      network: input.network,
+      reminder6hSent: false,
+      overdueNoticeSent: false,
+      fundedAt: null,
+      deliveredAt: null,
+      releasedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
     return {
       success: true,
       agreementId,
@@ -121,6 +148,9 @@ export class DeveloperGatewayService {
         memo: `Sivan Deal: ${agreementId}`,
       },
       createdAt: new Date().toISOString(),
+      deadlineDays,
+      deliveryDueAt: null,
+      countdownLabel: getCountdownLabel(labelRecord),
     };
   }
 

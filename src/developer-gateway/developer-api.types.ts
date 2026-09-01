@@ -39,6 +39,11 @@ export interface DeveloperAgreementRequest {
   currency: 'USDC' | 'CUSD';
   amount: number;
   inspectionWindowDays?: number;
+  /** Optional explicit delivery deadline in days. If omitted, Sivan extracts the
+   *  deadline from the title/description via natural language parsing (default 3 days). */
+  deadlineDays?: number;
+  /** Optional description used for natural language deadline extraction. */
+  description?: string;
 }
 
 export interface DeveloperAgreementResponse {
@@ -53,6 +58,12 @@ export interface DeveloperAgreementResponse {
     memo?: string;
   };
   createdAt: string;
+  /** Number of calendar days extracted (or supplied) for delivery. */
+  deadlineDays: number;
+  /** ISO timestamp when delivery is due, computed after funding. Null until funded. */
+  deliveryDueAt: string | null;
+  /** Live countdown badge label for the chat card. */
+  countdownLabel: string;
 }
 
 export interface DeveloperSettleRequest {

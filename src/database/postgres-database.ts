@@ -52,7 +52,10 @@ import type {
   CustomerIdentityLinkRecord,
   IdentityPairingTokenRecord,
   WithdrawalPinRecord,
-  WithdrawalStepUpTokenRecord
+  WithdrawalStepUpTokenRecord,
+  ServiceAgreementRecord,
+  PasskeyCredentialRecord,
+  PasskeyChallengeRecord,
 } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -396,6 +399,7 @@ export class PostgresDatabase {
         supportTickets: supportTickets.rows.map(mapSupportTicket),
         supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage),
         p2pClaims: [],
+        serviceAgreements: [],
       };
     } finally {
       client.release();
@@ -2147,9 +2151,272 @@ export class PostgresDatabase {
       client.release();
     }
   }
+
+  // ── Service Agreements ──────────────────────────────────────────────────
+
+  async insertServiceAgreement(record: ServiceAgreementRecord): Promise<ServiceAgreementRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_service_agreements
+          (id, buyer_user_id, seller_user_id, title, description, amount_usdc, currency, network,
+           status, deadline_days, delivery_due_at, reminder_6h_sent, overdue_notice_sent,
+           funded_at, delivered_at, released_at, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+        [
+          record.id, record.buyerUserId, record.sellerUserId, record.title, record.description,
+          record.amountUsdc, record.currency, record.network, record.status, record.deadlineDays,
+          record.deliveryDueAt ?? null, record.reminder6hSent, record.overdueNoticeSent,
+          record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
+          record.createdAt, record.updatedAt,
+        ]
+      );
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateServiceAgreement(record: ServiceAgreementRecord): Promise<ServiceAgreementRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `UPDATE payments_service_agreements SET
+           status=$2, deadline_days=$3, delivery_due_at=$4,
+           reminder_6h_sent=$5, overdue_notice_sent=$6,
+           funded_at=$7, delivered_at=$8, released_at=$9, updated_at=$10
+         WHERE id=$1`,
+        [
+          record.id, record.status, record.deadlineDays, record.deliveryDueAt ?? null,
+          record.reminder6hSent, record.overdueNoticeSent,
+          record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
+          record.updatedAt,
+        ]
+      );
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async findServiceAgreementById(id: string): Promise<ServiceAgreementRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT * FROM payments_service_agreements WHERE id=$1',
+        [id]
+      );
+      return result.rows[0] ? mapServiceAgreement(result.rows[0]) : null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listActiveAgreementsForDeadlineSweep(limit = 100): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT * FROM payments_service_agreements
+         WHERE status IN ('funded', 'in_delivery') AND delivery_due_at IS NOT NULL
+         ORDER BY delivery_due_at ASC
+         LIMIT $1`,
+        [limit]
+      );
+      return result.rows.map(mapServiceAgreement);
+    } finally {
+      client.release();
+    }
+  }
+
+  async markAgreementReminder6hSent(id: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `UPDATE payments_service_agreements
+         SET reminder_6h_sent=true, updated_at=NOW()
+         WHERE id=$1 AND reminder_6h_sent=false
+         RETURNING id`,
+        [id]
+      );
+      return result.rowCount != null && result.rowCount > 0;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markAgreementOverdueNoticeSent(id: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `UPDATE payments_service_agreements
+         SET overdue_notice_sent=true, updated_at=NOW()
+         WHERE id=$1 AND overdue_notice_sent=false
+         RETURNING id`,
+        [id]
+      );
+      return result.rowCount != null && result.rowCount > 0;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listPasskeyCredentials(userId: string): Promise<PasskeyCredentialRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_passkey_credentials WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+      return result.rows.map((r) => ({
+        id: r.id,
+        userId: r.user_id,
+        credentialId: r.credential_id,
+        publicKey: r.public_key,
+        counter: r.counter || 0,
+        deviceType: r.device_type || 'apple',
+        deviceName: r.device_name,
+        transports: r.transports,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        lastUsedAt: r.last_used_at?.toISOString?.() || r.last_used_at,
+      }));
+    } catch {
+      return [];
+    } finally {
+      client.release();
+    }
+  }
+
+  async findPasskeyCredentialById(credentialId: string): Promise<PasskeyCredentialRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_passkey_credentials WHERE credential_id = $1 LIMIT 1', [credentialId]);
+      if (!result.rows.length) return undefined;
+      const r = result.rows[0];
+      return {
+        id: r.id,
+        userId: r.user_id,
+        credentialId: r.credential_id,
+        publicKey: r.public_key,
+        counter: r.counter || 0,
+        deviceType: r.device_type || 'apple',
+        deviceName: r.device_name,
+        transports: r.transports,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        lastUsedAt: r.last_used_at?.toISOString?.() || r.last_used_at,
+      };
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async upsertPasskeyCredential(record: PasskeyCredentialRecord): Promise<PasskeyCredentialRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_passkey_credentials (id, user_id, credential_id, public_key, counter, device_type, device_name, transports, created_at, last_used_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (credential_id) DO UPDATE SET
+           counter = EXCLUDED.counter,
+           last_used_at = EXCLUDED.last_used_at`,
+        [record.id, record.userId, record.credentialId, record.publicKey, record.counter, record.deviceType, record.deviceName, record.transports, record.createdAt, record.lastUsedAt]
+      );
+      return record;
+    } catch {
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deletePasskeyCredential(credentialId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('DELETE FROM payments_passkey_credentials WHERE credential_id = $1', [credentialId]);
+      return result.rowCount != null && result.rowCount > 0;
+    } catch {
+      return false;
+    } finally {
+      client.release();
+    }
+  }
+
+  async savePasskeyChallenge(record: PasskeyChallengeRecord): Promise<PasskeyChallengeRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_passkey_challenges (id, user_id, challenge, type, expires_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO NOTHING`,
+        [record.id, record.userId, record.challenge, record.type, record.expiresAt, record.createdAt]
+      );
+      return record;
+    } catch {
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async findPasskeyChallenge(userId: string, challenge: string): Promise<PasskeyChallengeRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT * FROM payments_passkey_challenges WHERE user_id = $1 AND challenge = $2 AND expires_at > NOW() LIMIT 1',
+        [userId, challenge]
+      );
+      if (!result.rows.length) return undefined;
+      const r = result.rows[0];
+      return {
+        id: r.id,
+        userId: r.user_id,
+        challenge: r.challenge,
+        type: r.type,
+        expiresAt: r.expires_at?.toISOString?.() || r.expires_at,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      };
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deletePasskeyChallenge(id: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('DELETE FROM payments_passkey_challenges WHERE id = $1', [id]);
+    } catch {
+      // Ignored
+    } finally {
+      client.release();
+    }
+  }
 }
 
 
+
+
+function mapServiceAgreement(row: any): ServiceAgreementRecord {
+  return {
+    id: row.id,
+    buyerUserId: row.buyer_user_id,
+    sellerUserId: row.seller_user_id,
+    title: row.title,
+    description: row.description ?? '',
+    amountUsdc: Number(row.amount_usdc),
+    currency: row.currency,
+    network: row.network,
+    status: row.status,
+    deadlineDays: row.deadline_days,
+    deliveryDueAt: row.delivery_due_at ? new Date(row.delivery_due_at).toISOString() : null,
+    reminder6hSent: Boolean(row.reminder_6h_sent),
+    overdueNoticeSent: Boolean(row.overdue_notice_sent),
+    fundedAt: row.funded_at ? new Date(row.funded_at).toISOString() : null,
+    deliveredAt: row.delivered_at ? new Date(row.delivered_at).toISOString() : null,
+    releasedAt: row.released_at ? new Date(row.released_at).toISOString() : null,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
 
 function mapLegalAcceptance(row: any): LegalAcceptanceRecord {
   return {
@@ -2185,14 +2452,17 @@ function mapUserPreferences(row: any): UserPreferencesRecord {
     marketingEmails: row.marketing_emails,
     securityAlerts: row.security_alerts,
     emailConfirmationsForHighValue: row.email_confirmations_for_high_value,
+    telegramNotificationsEnabled: row.telegram_notifications_enabled ?? true,
+    whatsappNotificationsEnabled: row.whatsapp_notifications_enabled ?? false,
+    multiChainAlertsEnabled: row.multi_chain_alerts_enabled ?? true,
     updatedAt: iso(row.updated_at)
   };
 }
 
 async function upsertUserPreferences(client: pg.PoolClient, item: UserPreferencesRecord) {
   await client.query(
-    `insert into payments_user_preferences (user_id, default_fiat_currency, language, transaction_updates, marketing_emails, security_alerts, email_confirmations_for_high_value, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+    `insert into payments_user_preferences (user_id, default_fiat_currency, language, transaction_updates, marketing_emails, security_alerts, email_confirmations_for_high_value, telegram_notifications_enabled, whatsapp_notifications_enabled, multi_chain_alerts_enabled, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      on conflict (user_id) do update set
        default_fiat_currency=excluded.default_fiat_currency,
        language=excluded.language,
@@ -2200,8 +2470,23 @@ async function upsertUserPreferences(client: pg.PoolClient, item: UserPreference
        marketing_emails=excluded.marketing_emails,
        security_alerts=excluded.security_alerts,
        email_confirmations_for_high_value=excluded.email_confirmations_for_high_value,
+       telegram_notifications_enabled=excluded.telegram_notifications_enabled,
+       whatsapp_notifications_enabled=excluded.whatsapp_notifications_enabled,
+       multi_chain_alerts_enabled=excluded.multi_chain_alerts_enabled,
        updated_at=excluded.updated_at`,
-    [item.userId, item.defaultFiatCurrency, item.language, item.transactionUpdates, item.marketingEmails, item.securityAlerts, item.emailConfirmationsForHighValue, item.updatedAt]
+    [
+      item.userId,
+      item.defaultFiatCurrency,
+      item.language,
+      item.transactionUpdates,
+      item.marketingEmails,
+      item.securityAlerts,
+      item.emailConfirmationsForHighValue,
+      item.telegramNotificationsEnabled ?? true,
+      item.whatsappNotificationsEnabled ?? false,
+      item.multiChainAlertsEnabled ?? true,
+      item.updatedAt
+    ]
   );
 }
 

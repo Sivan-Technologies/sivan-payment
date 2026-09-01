@@ -28,6 +28,8 @@ import {
   setWithdrawalPinSchema,
   verifyWithdrawalPin,
   verifyWithdrawalPinSchema,
+  verifyTmaPinStepUp,
+  evaluatePinRequirement,
 } from './withdrawal-pin.service.js';
 
 function getAuthUserId(request: any) {
@@ -380,13 +382,69 @@ export async function identityRoutes(app: FastifyInstance) {
    */
   app.post('/api/identity/withdrawal-pin-status', async (request) => {
     requireIdentityServiceSecret(request);
-    // Picked from the verify schema rather than redeclared, so the two routes
-    // parse and normalise channel/identity identically. Declared separately,
-    // one could trim where the other does not, and the bot would be told a PIN
-    // exists for an identity that verify-pin then resolves to nobody.
     const body = parseBody(verifyWithdrawalPinSchema.pick({ channel: true, identity: true }), request.body);
     const userId = await resolveChatIdentity(body.channel, body.identity);
     return { data: { hasPin: userId ? await hasWithdrawalPin(userId) : false } };
+  });
+
+  /**
+   * Telegram Mini-App (TMA) & Web Keypad Step-Up PIN Verification.
+   * Authenticates PIN for high-value transactions ($50+) and returns a single-use step-up token.
+   */
+  app.post('/api/identity/pin/verify-step-up', async (request, reply) => {
+    const { userId, pin, amount, currency, destinationRef, channel } = (request.body || {}) as any;
+    if (!userId || !pin || !amount || !currency || !destinationRef) {
+      return reply.code(400).send({
+        error: { message: 'Missing required parameters (userId, pin, amount, currency, destinationRef)' },
+      });
+    }
+
+    try {
+      const result = await verifyTmaPinStepUp(
+        {
+          userId: String(userId),
+          pin: String(pin),
+          amount: String(amount),
+          currency: String(currency),
+          destinationRef: String(destinationRef),
+          channel: channel || 'telegram',
+        },
+        { ipAddress: request.ip }
+      );
+      return { data: result };
+    } catch (err: any) {
+      return reply.code(err.statusCode || 400).send({
+        error: {
+          message: err.message || 'PIN verification failed',
+          code: err.details?.code || 'PIN_VERIFICATION_FAILED',
+          details: err.details,
+        },
+      });
+    }
+  });
+
+  /**
+   * Evaluates the $50 Tiered Risk Threshold for transfers and milestone releases.
+   */
+  app.post('/api/identity/pin/evaluate-threshold', async (request) => {
+    const { amount, currency } = (request.body || {}) as { amount?: number; currency?: string };
+    const result = evaluatePinRequirement(Number(amount || 0), currency || 'USDC');
+    return { data: result };
+  });
+
+  /**
+   * Returns system-wide PIN and threshold policies.
+   */
+  app.get('/api/identity/pin/policy', async () => {
+    return {
+      data: {
+        thresholdUsd: 50.0,
+        thresholdNgn: 50000,
+        maxFailedAttempts: 5,
+        lockoutMinutes: 30,
+        stepUpTokenTtlSeconds: 120,
+      },
+    };
   });
 
   /**

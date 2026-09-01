@@ -142,6 +142,66 @@ const TEST_SUITES: TestSuite[] = [
       ADMIN_API_KEY: 'test-admin-key',
     },
   },
+  {
+    name: 'Service Agreement Deadline Tracking',
+    command: 'tsx scripts/test-service-agreements.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-service-agreements.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'Model Context Protocol (MCP) & A2A Gateway',
+    command: 'tsx scripts/test-mcp-server.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-mcp-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'Transaction PIN & Telegram Mini-App (TMA) Keypad',
+    command: 'tsx scripts/test-transaction-pin-tma.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-tma-pin-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'WebAuthn Passkeys & Biometric Security',
+    command: 'tsx scripts/test-passkey-biometrics.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-passkey-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'Machine Learning Fraud Engine & Risk Scoring',
+    command: 'tsx scripts/test-fraud-engine-integration.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-fraud-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
 ];
 
 function runMasterTestRunner() {
