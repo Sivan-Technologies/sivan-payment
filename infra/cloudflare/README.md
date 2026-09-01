@@ -32,6 +32,7 @@ back for the Render origin.
 
 | File | Lines | Newest dated comment | Notes |
 |---|---:|---|---|
+| `cloudflare-worker-staging-multichain.js` | 170 | 2026-09-01 | Staging & Devnet gateway, `staging.sivantech.online` & `api-staging.sivantech.online` (Routes Multi-Chain backend, Fraud Engine, MCP server & SPA) |
 | `cloudflare-worker-live-FIXED.js` | 463 | 2026-07-29 | Production gateway, `api.sivantech.online` |
 | `cloudflare-worker-test-DEPLOY.js` | 436 | 2026-07-30 | Test gateway. Newest of the three; its header says "Deploy on: test-sivan.sivantech.online/*" |
 | `cloudflare-worker-test-FIXED.js` | 431 | 2026-07-28 | Older test revision, superseded by `-DEPLOY` |
