@@ -144,9 +144,9 @@ export default {
       targetUpstream = UPSTREAM_WHATSAPP_API;
       targetPath = pathname.startsWith("/api/whatsapp") ? (pathname.replace(/^\/api\/whatsapp/, "") || "/") : pathname;
       serviceName = "whatsapp-service";
-    } else if (pathname.startsWith("/api/admin-auth") || pathname.startsWith("/api/auth")) {
+    } else if (pathname.startsWith("/api/admin-auth")) {
       targetUpstream = UPSTREAM_AUTH;
-      targetPath = pathname.startsWith("/api/admin-auth") ? (pathname.replace(/^\/api\/admin-auth/, "") || "/") : pathname;
+      targetPath = pathname.replace(/^\/api\/admin-auth/, "") || "/";
       serviceName = "admin-auth";
     } else if (pathname.startsWith("/api/sivan-ai") || pathname.startsWith("/api/ai")) {
       targetUpstream = UPSTREAM_SIVAN_AI;
