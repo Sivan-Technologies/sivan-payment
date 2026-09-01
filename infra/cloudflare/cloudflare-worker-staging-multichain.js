@@ -136,6 +136,22 @@ export default {
       targetUpstream = UPSTREAM_ESCROW_API;
       targetPath = pathname;
       serviceName = "escrow-api";
+    } else if (pathname.startsWith("/api/telegram") || pathname.startsWith("/webhooks/telegram")) {
+      targetUpstream = UPSTREAM_TELEGRAM_API;
+      targetPath = pathname.startsWith("/api/telegram") ? (pathname.replace(/^\/api\/telegram/, "") || "/") : pathname;
+      serviceName = "telegram-service";
+    } else if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/webhooks/whatsapp") || pathname.startsWith("/webhooks/twilio") || pathname.startsWith("/webhooks/meta")) {
+      targetUpstream = UPSTREAM_WHATSAPP_API;
+      targetPath = pathname.startsWith("/api/whatsapp") ? (pathname.replace(/^\/api\/whatsapp/, "") || "/") : pathname;
+      serviceName = "whatsapp-service";
+    } else if (pathname.startsWith("/api/admin-auth") || pathname.startsWith("/api/auth")) {
+      targetUpstream = UPSTREAM_AUTH;
+      targetPath = pathname.startsWith("/api/admin-auth") ? (pathname.replace(/^\/api\/admin-auth/, "") || "/") : pathname;
+      serviceName = "admin-auth";
+    } else if (pathname.startsWith("/api/sivan-ai") || pathname.startsWith("/api/ai")) {
+      targetUpstream = UPSTREAM_SIVAN_AI;
+      targetPath = pathname.startsWith("/api/sivan-ai") ? (pathname.replace(/^\/api\/sivan-ai/, "") || "/") : pathname;
+      serviceName = "sivan-ai";
     } else if (pathname.startsWith("/api/payment")) {
       targetUpstream = UPSTREAM_PAYMENTS_API;
       targetPath = pathname.replace(/^\/api\/payment/, "") || "/";
