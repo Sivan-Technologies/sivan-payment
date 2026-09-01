@@ -14,10 +14,15 @@
 
 // ─── UPSTREAM CONFIGURATION ──────────────────────────────────────────────────
 // Update these endpoints with your active staging services
-const UPSTREAM_PAYMENTS_API = "https://sivan-payments-api-test-x9xq.onrender.com";
-const UPSTREAM_FRAUD_ENGINE = "https://sivan-fraud-engine-staging.onrender.com";
+const UPSTREAM_ESCROW_API = "https://sivan-escrow-agent-test.onrender.com";
+const UPSTREAM_PAYMENTS_API = "https://sivan-payments-api-test.onrender.com";
+const UPSTREAM_TELEGRAM_API = "https://sivan-telegram-service-bh32.onrender.com";
+const UPSTREAM_WHATSAPP_API = "https://sivan-whatsapp-bot-test.onrender.com";
+//const UPSTREAM_FRAUD_ENGINE = "https://sivan-fraud-engine-staging.onrender.com";
 const UPSTREAM_FRONTEND_APP = "https://sivan-payments-user-test.onrender.com";
-const UPSTREAM_SIVAN_AI     = "https://ai.sivantech.online";
+const UPSTREAM_AUTH = "https://telegram-admin-auth-z3e8.onrender.com";
+
+const UPSTREAM_SIVAN_AI = "https://ai.sivantech.online";
 
 // ─── CORS WHITELIST ──────────────────────────────────────────────────────────
 const ALLOWED_ORIGIN_PATTERNS = [
