@@ -162,6 +162,13 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
     }
   };
 
+  const handleDigit = (digit: string) => {
+    if (loading || success || pin.length >= 6) return;
+    triggerHaptic('tap');
+    setErrorMessage(null);
+    setPin((prev) => prev + digit);
+  };
+
   const handleBackspace = () => {
     if (loading || success || pin.length === 0) return;
     triggerHaptic('tap');
