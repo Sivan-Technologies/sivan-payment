@@ -117,16 +117,14 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
+    const isApiHost = url.hostname.startsWith("api-staging") || url.hostname.startsWith("api.");
+
     let targetUpstream = UPSTREAM_FRONTEND_APP;
     let targetPath = pathname;
     let serviceName = "frontend";
 
-    // 2. Route Matching
-    if (pathname.startsWith("/api/payment")) {
-      targetUpstream = UPSTREAM_PAYMENTS_API;
-      targetPath = pathname.replace(/^\/api\/payment/, "") || "/";
-      serviceName = "payments-api";
-    } else if (pathname.startsWith("/api/v1/fraud")) {
+    // 2. Intelligent Route Matching
+    if (pathname.startsWith("/api/v1/fraud")) {
       targetUpstream = UPSTREAM_FRAUD_ENGINE;
       targetPath = pathname;
       serviceName = "fraud-engine";
@@ -134,8 +132,21 @@ export default {
       targetUpstream = UPSTREAM_PAYMENTS_API;
       targetPath = pathname;
       serviceName = "mcp-gateway";
+    } else if (pathname.startsWith("/api/escrow")) {
+      targetUpstream = UPSTREAM_ESCROW_API;
+      targetPath = pathname;
+      serviceName = "escrow-api";
+    } else if (pathname.startsWith("/api/payment")) {
+      targetUpstream = UPSTREAM_PAYMENTS_API;
+      targetPath = pathname.replace(/^\/api\/payment/, "") || "/";
+      serviceName = "payments-api";
+    } else if (isApiHost) {
+      // Entire api-staging.sivantech.online domain routes to Payments Backend
+      targetUpstream = UPSTREAM_PAYMENTS_API;
+      targetPath = pathname;
+      serviceName = "payments-api-host";
     } else if (pathname.startsWith("/api/")) {
-      // General API fallback to payments backend
+      // Direct API call on web frontend domain -> Payments Backend
       targetUpstream = UPSTREAM_PAYMENTS_API;
       targetPath = pathname;
       serviceName = "payments-api-fallback";
