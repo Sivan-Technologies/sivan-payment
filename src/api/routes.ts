@@ -24,6 +24,7 @@ import { ngnRoutes } from '../ngn/api/ngn.routes.js';
 import { balanceRoutes } from '../balances/balance.routes.js';
 import { supplierRoutes } from '../suppliers/supplier.routes.js';
 import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
+import { metamapKycRoutes } from '../kyc/api/metamap.routes.js';
 
 import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
 
@@ -93,6 +94,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await balanceRoutes(app);
   await supplierRoutes(app);
   await kycLevelRoutes(app);
+  await metamapKycRoutes(app);
   await supportRoutes(app);
   await aceSupportRoutes(app);
   await adminRoutes(app);
