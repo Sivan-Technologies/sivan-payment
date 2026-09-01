@@ -19,8 +19,8 @@
 CREATE TABLE IF NOT EXISTS payments_service_agreements (
   id                   TEXT PRIMARY KEY,
 
-  buyer_user_id        TEXT NOT NULL REFERENCES payments_users(id) ON DELETE RESTRICT,
-  seller_user_id       TEXT NOT NULL REFERENCES payments_users(id) ON DELETE RESTRICT,
+  buyer_user_id        TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
+  seller_user_id       TEXT NOT NULL REFERENCES users(user_id) ON DELETE RESTRICT,
 
   title                TEXT NOT NULL,
   description          TEXT NOT NULL DEFAULT '',
