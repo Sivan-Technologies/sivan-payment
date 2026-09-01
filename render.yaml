@@ -231,24 +231,13 @@ services:
       - key: ACE_PROVIDER
         value: remote
       - key: SIVAN_AI_API_URL
-        value: https://test-sivan.sivantech.online/api/sivan-ai
+        value: https://staging.sivantech.online/api/sivan-ai
       - key: SIVAN_AI_API_KEY
         sync: false
       - key: SIVAN_AI_TIMEOUT_MS
         value: "3500"
       - key: SIVAN_AI_FALLBACK_ENABLED
         value: "true"
-
-      - key: KYC_LEVEL_PROVIDER
-        value: mock
-      - key: MONNIFY_BASE_URL
-        value: https://api.monnify.com
-      - key: MONNIFY_API_KEY
-        sync: false
-      - key: MONNIFY_SECRET_KEY
-        sync: false
-      - key: MONNIFY_CONTRACT_CODE
-        sync: false
 
       - key: KYC_LEVEL_PROVIDER
         value: mock
