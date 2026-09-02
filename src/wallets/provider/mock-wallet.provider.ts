@@ -11,6 +11,8 @@ import type {
 
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
+import { Keypair } from '@solana/web3.js';
+
 /**
  * Deterministic per-seed address generation, so the same wallet id always
  * yields the same address across calls and restarts. Without this the UI
@@ -27,10 +29,9 @@ function seededBytes(seed: string, length: number): Buffer {
 }
 
 function mockSolanaAddress(seed: string): string {
-  const bytes = seededBytes(seed, 32);
-  let s = '';
-  for (let i = 0; i < 44; i++) s += BASE58[bytes[i % bytes.length] % BASE58.length];
-  return s;
+  const bytes = Uint8Array.from(seededBytes(seed, 32));
+  const keypair = Keypair.fromSeed(bytes);
+  return keypair.publicKey.toBase58();
 }
 
 const STELLAR_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
