@@ -371,20 +371,22 @@ export async function identityRoutes(app: FastifyInstance) {
       });
     }
 
-    if (!link) {
-      await db.upsertCustomerIdentityLinkRecord({
-        id: id('identity'),
-        paymentUserId: user.id,
-        email: user.email,
-        channel: 'telegram',
-        telegramUserId: cleanId,
-        whatsappNumber: normalized,
-        status: 'linked',
-        linkedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      }).catch(() => undefined);
-    }
+    const links = await db.listCustomerIdentityLinks();
+    const existingLink = links.find((item) => item.paymentUserId === user.id && item.channel === 'telegram')
+      || links.find((item) => item.telegramUserId === cleanId);
+
+    await db.upsertCustomerIdentityLinkRecord({
+      id: existingLink?.id || id('identity'),
+      paymentUserId: user.id,
+      email: user.email,
+      channel: 'telegram',
+      telegramUserId: cleanId,
+      whatsappNumber: normalized,
+      status: 'linked',
+      linkedAt: now,
+      createdAt: existingLink?.createdAt || now,
+      updatedAt: now,
+    }).catch((err) => console.warn('[identity] upsert link warning:', err));
 
     return {
       data: {
@@ -451,8 +453,12 @@ export async function identityRoutes(app: FastifyInstance) {
     }
 
     if (cleanTelegramId) {
+      const links = await db.listCustomerIdentityLinks();
+      const existingLink = links.find((item) => item.paymentUserId === user.id && item.channel === 'telegram')
+        || links.find((item) => item.telegramUserId === cleanTelegramId);
+
       await db.upsertCustomerIdentityLinkRecord({
-        id: id('identity'),
+        id: existingLink?.id || id('identity'),
         paymentUserId: user.id,
         email: user.email,
         channel: 'telegram',
@@ -460,9 +466,9 @@ export async function identityRoutes(app: FastifyInstance) {
         whatsappNumber: normalized,
         status: 'linked',
         linkedAt: now,
-        createdAt: now,
+        createdAt: existingLink?.createdAt || now,
         updatedAt: now,
-      }).catch(() => undefined);
+      }).catch((err) => console.warn('[identity] upsert link warning:', err));
     }
 
     return { success: true, user, data: user };
