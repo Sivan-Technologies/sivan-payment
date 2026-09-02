@@ -407,7 +407,7 @@ export async function identityRoutes(app: FastifyInstance) {
     const unified = await getUnifiedBalance(userId);
     const unreadable = unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
-      : unified.wallets.some((w) => w.balancesUnavailable);
+      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable);
     if (unreadable) {
       return reply.code(503).send({
         error: { message: 'Could not reach the network to read this balance. Nothing has changed.' },

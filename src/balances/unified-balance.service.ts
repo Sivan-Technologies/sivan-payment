@@ -170,9 +170,18 @@ async function readChainBalances(userId: string) {
    * networksServedByWallet() answers from the key family, so it is correct for
    * a row filed under either name and cannot degrade to an empty list.
    */
-  const reads = active.flatMap((wallet) =>
-    networksServedByWallet(wallet.chain).map((chain) => ({ wallet, chain }))
-  );
+  const uniqueReads = new Map<string, { wallet: (typeof active)[0]; chain: string }>();
+  for (const wallet of active) {
+    const chains = networksServedByWallet(wallet.chain);
+    for (const chain of chains) {
+      const key = `${chain}:${wallet.address.toLowerCase()}`;
+      if (!uniqueReads.has(key)) {
+        uniqueReads.set(key, { wallet, chain });
+      }
+    }
+  }
+
+  const reads = Array.from(uniqueReads.values());
 
   return Promise.all(
     reads.map(async ({ wallet, chain }) => {
