@@ -183,7 +183,29 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     }
   }
 
-  const targetChain = chain === 'stellar' ? 'stellar' : (chain === 'solana' ? 'solana' : 'ethereum');
+  if (chain === 'stellar') {
+    const { generateStellarAddress } = await import('./stellar/stellar-keypair.js');
+    const address = generateStellarAddress('sivan_stellar_' + userId);
+    const now = nowIso();
+    const record: UserWalletRecord = {
+      id: id('uw'),
+      userId,
+      customerId: customer?.id,
+      provider: 'stellar_native',
+      providerWalletId: `stellar_${address}`,
+      chain: 'stellar',
+      address,
+      status: 'active',
+      custodial: false,
+      delegatedSigningEnabled: true,
+      raw: { address, chain: 'stellar' },
+      createdAt: now,
+      updatedAt: now,
+    };
+    return await db.insertUserWallet(record);
+  }
+
+  const targetChain = chain === 'solana' ? 'solana' : 'ethereum';
   const providerWallet = await provider.createWallet({
     userId,
     providerCustomerId: customer?.providerCustomerId,
