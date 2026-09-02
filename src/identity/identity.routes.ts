@@ -437,6 +437,65 @@ export async function identityRoutes(app: FastifyInstance) {
     return { success: true, user, data: user };
   });
 
+  /**
+   * Reset / wipe a test user completely for end-to-end testing.
+   */
+  app.post('/api/admin/identity/reset-test-user', async (request, reply) => {
+    requireIdentityServiceSecret(request);
+    const body = (request.body || {}) as any;
+    const rawPhone = String(body.phone || body.whatsappNumber || '').trim();
+    const cleanPhone = rawPhone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    const cleanTelegramId = String(body.telegramUserId || body.telegramId || '').trim();
+
+    let unlinkedTelegram = false;
+    let unlinkedPhone = false;
+    let wipedUserId: string | null = null;
+
+    if (cleanTelegramId) {
+      const link = await activeLinkForTelegram(cleanTelegramId);
+      if (link) {
+        await unlinkTelegramIdentity(link.paymentUserId, {
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+        });
+        unlinkedTelegram = true;
+      }
+    }
+
+    if (cleanPhone) {
+      const withPlus = `+${cleanPhone}`;
+      const user = (await db.findUserByWhatsappNumber(withPlus))
+        || (await db.findUserByWhatsappNumber(`whatsapp:${withPlus}`))
+        || (await db.findUserByWhatsappNumber(cleanPhone));
+      if (user) {
+        wipedUserId = user.id;
+        const links = await db.listCustomerIdentityLinks();
+        for (const l of links) {
+          if (l.paymentUserId === user.id || l.whatsappNumber === withPlus || l.telegramUserId === cleanTelegramId) {
+            await db.upsertCustomerIdentityLinkRecord({ ...l, status: 'unlinked', updatedAt: nowIso() });
+          }
+        }
+        await db.updateUserRecord({
+          ...user,
+          whatsappNumber: undefined,
+          telegramUserId: undefined,
+          updatedAt: nowIso(),
+        });
+        unlinkedPhone = true;
+      }
+    }
+
+    return {
+      data: {
+        success: true,
+        reset: true,
+        unlinkedTelegram,
+        unlinkedPhone,
+        wipedUserId,
+      },
+    };
+  });
+
 
   /**
    * Set or change the withdrawal PIN. WEB ONLY - note there is no service

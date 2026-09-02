@@ -753,7 +753,7 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (method === 'GET' && url.includes('/verification-summary')) return false;
   if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
   if (url.startsWith('/api/ngn/offramp/orders')) return false;
-  if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile')) return false;
+  if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile' || url === '/api/admin/identity/reset-test-user')) return false;
 
   if (url === '/api/customers') return true;
 
