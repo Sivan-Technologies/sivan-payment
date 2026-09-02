@@ -59,19 +59,17 @@ async function requireWalletEligibility(userId: string, providerName: string) {
   let user: UserRecord | undefined = data.users.find((item) => item.id === userId);
   if (!user) {
     const link = (data.customerIdentityLinks || []).find((l) => l.paymentUserId === userId);
-    if (link) {
-      user = await db.insertUserRecord({
-        id: userId,
-        email: link.email || `${userId}@sivan.user`,
-        fullName: `${userId}`,
-        telegramUserId: link.telegramUserId,
-        whatsappNumber: link.whatsappNumber,
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-      }).catch(() => ({ id: userId, email: `${userId}@sivan.user`, fullName: `${userId}`, createdAt: nowIso(), updatedAt: nowIso() }));
-    } else {
-      user = { id: userId, email: `${userId}@sivan.user`, fullName: `${userId}`, createdAt: nowIso(), updatedAt: nowIso() };
-    }
+    user = await db.insertUserRecord({
+      id: userId,
+      email: link?.email || `${userId}@sivan.user`,
+      fullName: link?.email?.split('@')[0] || `${userId}`,
+      telegramUserId: link?.telegramUserId,
+      whatsappNumber: link?.whatsappNumber,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    }).catch(async () => {
+      return (await db.findUserById(userId)) || { id: userId, email: `${userId}@sivan.user`, fullName: `${userId}`, createdAt: nowIso(), updatedAt: nowIso() };
+    });
   }
 
   const state = await getVerificationState(userId);
