@@ -440,7 +440,7 @@ export async function identityRoutes(app: FastifyInstance) {
   /**
    * Reset / wipe a test user completely for end-to-end testing.
    */
-  app.post('/api/admin/identity/reset-test-user', async (request, reply) => {
+  app.post('/api/identity/reset-test-user', async (request, reply) => {
     requireIdentityServiceSecret(request);
     const body = (request.body || {}) as any;
     const rawPhone = String(body.phone || body.whatsappNumber || '').trim();
