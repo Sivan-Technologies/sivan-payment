@@ -5,6 +5,8 @@ import { getWalletProvider } from '../provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallet-controls.service.js';
 import { db } from '../../database/json-database.js';
 
+import { generateStellarAddress } from './stellar-keypair.js';
+
 export class StellarAdapter implements IChainAdapter {
   readonly chain = 'stellar' as const;
 
@@ -13,28 +15,24 @@ export class StellarAdapter implements IChainAdapter {
     if (wallet?.address) {
       return wallet.address;
     }
-    const provider = getWalletProvider(await resolveActiveWalletProvider());
-    const created = await provider.createWallet({
-      userId,
-      chain: 'stellar',
-      idempotencyKey: `stellar_prov_${userId}`,
-    });
+
+    const address = generateStellarAddress(`sivan_stellar_${userId}`);
 
     await db.insertUserWallet({
       id: `uw_${userId}_stellar_${Date.now()}`,
       userId,
-      provider: provider.name,
-      providerWalletId: created.providerWalletId,
+      provider: 'stellar_native',
+      providerWalletId: `stellar_w_${userId}`,
       chain: 'stellar',
-      address: created.address,
+      address,
       status: 'active',
-      custodial: true,
+      custodial: false,
       delegatedSigningEnabled: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
 
-    return created.address;
+    return address;
   }
 
   async getBalance(userId: string, asset = 'usdc'): Promise<number> {
