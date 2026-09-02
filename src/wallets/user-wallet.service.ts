@@ -2,7 +2,7 @@ import { db } from '../database/json-database.js';
 import { canProvisionWallet } from './wallet-eligibility.js';
 import { getVerificationState } from '../kyc/service/verification-state.js';
 import { isApprovedKycStatus } from '../kyc/types/verification.types.js';
-import { DEFAULT_WALLET_CHAIN, type UserWalletRecord, type WalletChain } from '../database/types.js';
+import { DEFAULT_WALLET_CHAIN, type UserWalletRecord, type WalletChain, type UserRecord } from '../database/types.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
@@ -56,8 +56,23 @@ export function assetsForChain(chain: WalletChain): Array<'usdc' | 'usdt'> {
  */
 async function requireWalletEligibility(userId: string, providerName: string) {
   const data = await db.read();
-  const user = data.users.find((item) => item.id === userId);
-  if (!user) throw notFound('User');
+  let user: UserRecord | undefined = data.users.find((item) => item.id === userId);
+  if (!user) {
+    const link = (data.customerIdentityLinks || []).find((l) => l.paymentUserId === userId);
+    if (link) {
+      user = await db.insertUserRecord({
+        id: userId,
+        email: link.email || `${userId}@sivan.user`,
+        fullName: `${userId}`,
+        telegramUserId: link.telegramUserId,
+        whatsappNumber: link.whatsappNumber,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      }).catch(() => ({ id: userId, email: `${userId}@sivan.user`, fullName: `${userId}`, createdAt: nowIso(), updatedAt: nowIso() }));
+    } else {
+      user = { id: userId, email: `${userId}@sivan.user`, fullName: `${userId}`, createdAt: nowIso(), updatedAt: nowIso() };
+    }
+  }
 
   const state = await getVerificationState(userId);
   const eligibility = canProvisionWallet(state);
