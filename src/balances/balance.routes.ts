@@ -120,14 +120,8 @@ export async function balanceRoutes(app: FastifyInstance) {
      */
     const unreadable = unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
-      : // NO ASSET ROWS AT ALL is the subtler half of the same problem. Rows are
-        // built from the chain read plus the ledger, so a wallet whose read
-        // failed contributes nothing; if the ledger is also empty, `balances` is
-        // `[]` and a length-guarded check would wave it through as zero. Here
-        // "empty" is only trustworthy when every wallet actually answered.
-        unified.wallets.some((w) => w.balancesUnavailable);
+      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable);
     if (unreadable) {
-
       return reply.code(503).send({
         error: { message: 'Could not reach the network to read this balance. Nothing has changed.' },
       });
