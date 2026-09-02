@@ -36,16 +36,38 @@ function encodeBase32(buffer: Buffer): string {
   return output;
 }
 
+function encodeStrKey(versionByte: number, data: Buffer): string {
+  const version = Buffer.from([versionByte]);
+  const payload = Buffer.concat([version, data]);
+  const crc = crc16XModem(payload);
+  const checksum = Buffer.alloc(2);
+  checksum.writeUInt16LE(crc, 0);
+  return encodeBase32(Buffer.concat([payload, checksum]));
+}
+
+export interface StellarKeypair {
+  publicKey: string; // 'G...' (56 chars)
+  secretKey: string; // 'S...' (56 chars)
+}
+
+/**
+ * Generates a full deterministic Stellar Keypair from a seed.
+ */
+export function generateStellarKeypair(seed: string): StellarKeypair {
+  const seedBytes = crypto.createHash('sha256').update(seed).digest();
+  const secretKey = encodeStrKey(18 << 3, seedBytes); // 18 << 3 = 144 -> 'S'
+  const pubkeyBytes = crypto.createHash('sha256').update(seedBytes).digest();
+  const publicKey = encodeStrKey(6 << 3, pubkeyBytes); // 6 << 3 = 48 -> 'G'
+
+  return {
+    publicKey,
+    secretKey,
+  };
+}
+
 /**
  * Generates a deterministic, on-chain valid Stellar StrKey address (starts with 'G', 56 chars).
  */
 export function generateStellarAddress(seed: string): string {
-  const pubkeyBytes = crypto.createHash('sha256').update(seed).digest();
-  const versionByte = Buffer.from([6 << 3]); // 48 -> 'G'
-  const payload = Buffer.concat([versionByte, pubkeyBytes]);
-  const crc = crc16XModem(payload);
-  const checksum = Buffer.alloc(2);
-  checksum.writeUInt16LE(crc, 0);
-  const fullBytes = Buffer.concat([payload, checksum]);
-  return encodeBase32(fullBytes);
+  return generateStellarKeypair(seed).publicKey;
 }
