@@ -702,7 +702,19 @@ export async function identityRoutes(app: FastifyInstance) {
     const userId = await resolveChatIdentity(channel, String(identity));
     if (!userId) return reply.code(404).send({ error: { message: 'Chat identity is not linked to a Sivan Payment account.' } });
 
-    const unified = await getUnifiedBalance(userId);
+    let unified = await getUnifiedBalance(userId);
+    if (!unified.wallets || !unified.wallets.length) {
+      const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+      await Promise.all([
+        ensureUserWallet(userId, 'solana').catch(() => null),
+        ensureUserWallet(userId, 'base').catch(() => null),
+        ensureUserWallet(userId, 'celo').catch(() => null),
+        ensureUserWallet(userId, 'stellar').catch(() => null),
+        ensureUserWallet(userId, 'bsc').catch(() => null),
+      ]);
+      unified = await getUnifiedBalance(userId);
+    }
+
     const unreadable = unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
       : unified.wallets.some((w) => w.balancesUnavailable);
