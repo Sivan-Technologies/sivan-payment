@@ -57,7 +57,7 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -75,12 +75,12 @@ export type BalanceLedgerKind = 'credit_pending' | 'credit_available' | 'debit_t
 export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing' | 'completed' | 'rejected' | 'failed';
 
 export const balanceTransferControlsSchema = z.object({
-  transfersEnabled: z.boolean().default(false),
+  transfersEnabled: z.boolean().default(true),
   p2pTransfersEnabled: z.boolean().default(true),
-  minimumSendAmount: z.coerce.number().positive().default(10),
+  minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['base', 'solana', 'ethereum']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -299,50 +299,10 @@ export async function getBalanceTransferControls() {
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
   return {
-    transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED === 'true',
+    transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    // Defaults chosen against what BOTH Breet and the wallet layer can service.
-    //
-    //   solana / ethereum  - work in both directions at Breet, and Privy issues
-    //                        keys for both (ed25519 for Solana, secp256k1 EVM)
-    //   base               - off-ramp only; Breet publishes no Base withdrawal,
-    //                        but the EVM key already covers the address
-    //
-    // NOT enabled, each for a different reason:
-    //
-    //   tron              - Breet handles it fine, but Privy's documented chains
-    //                       are EVM, Solana, Bitcoin and Stellar. Tron uses its
-    //                       own address encoding and account model, so an EVM
-    //                       key does not yield a Tron address. Enabling it would
-    //                       mean a second wallet provider purely for one chain,
-    //                       which defeats having a single wallet layer. Kept in
-    //                       the Breet map so it is one line to enable if Privy
-    //                       adds support.
-    //   avalanche_c_chain - Breet supports AVAX the coin but no USDC or USDT on
-    //                       that chain, either direction.
-    /**
-     * ETHEREUM IS DISABLED FOR TRANSFERS, and this is an economic decision
-     * rather than a technical one - the EVM key serves it perfectly well.
-     *
-     * Sivan sponsors gas. Modelled against real 2026 costs (Solana ~$0.0005,
-     * Base ~$0.01, Ethereum L1 ~$3) and the 0.5%/$0.10/$1.00 fee curve:
-     *
-     *     amount    fee     solana     base     ethereum
-     *     $10       $0.10   +0.100     +0.090   -2.900
-     *     $100      $0.50   +0.499     +0.490   -2.500
-     *     $500      $1.00   +1.000     +0.990   -2.000
-     *
-     * Ethereum loses money on EVERY transfer at EVERY size, because a $1 cap
-     * cannot cover $2-5 of L1 gas. Break-even at 0.5% needs a $600 transfer and
-     * the cap prevents ever reaching it. Raising the cap to $5 would make a $10
-     * Ethereum send cost half the amount, which is worse than not offering it.
-     *
-     * Base and Solana serve the identical purpose at roughly 1/300th the cost,
-     * and Base is already the default. Re-enable only alongside an
-     * Ethereum-specific cap, or when L1 gas makes it viable.
-     */
-    supportedNetworks: ['base', 'solana'] as BalanceNetwork[],
+    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum'] as BalanceNetwork[],
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
