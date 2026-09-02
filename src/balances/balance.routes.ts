@@ -95,7 +95,18 @@ export async function balanceRoutes(app: FastifyInstance) {
     const user = await findUserByChannelPhone(whatsapp);
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
 
-    const unified = await getUnifiedBalance(user.id);
+    let unified = await getUnifiedBalance(user.id);
+    const existingChains = (unified.wallets || []).map((w) => w.chain);
+    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc'];
+    const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
+
+    if (missingChains.length > 0) {
+      const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+      await Promise.all(
+        missingChains.map((chain) => ensureUserWallet(user.id, chain as any).catch(() => null))
+      );
+      unified = await getUnifiedBalance(user.id);
+    }
 
     /**
      * A FAILED CHAIN READ MUST NOT LEAVE AS A CONFIDENT ZERO.
