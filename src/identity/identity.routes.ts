@@ -581,8 +581,13 @@ export async function identityRoutes(app: FastifyInstance) {
    */
   app.post('/api/identity/balance-status', async (request, reply) => {
     requireIdentityServiceSecret(request);
-    const body = parseBody(verifyWithdrawalPinSchema.pick({ channel: true, identity: true }), request.body);
-    const userId = await resolveChatIdentity(body.channel, body.identity);
+    const rawBody = (request.body || {}) as any;
+    const channel = rawBody.channel || (rawBody.telegramUserId ? 'telegram' : 'whatsapp');
+    const identity = rawBody.identity || rawBody.telegramUserId || rawBody.whatsappNumber || '';
+    if (!identity) {
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'identity or telegramUserId required' } });
+    }
+    const userId = await resolveChatIdentity(channel, String(identity));
     if (!userId) return reply.code(404).send({ error: { message: 'Chat identity is not linked to a Sivan Payment account.' } });
 
     const unified = await getUnifiedBalance(userId);

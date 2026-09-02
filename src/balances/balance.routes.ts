@@ -15,14 +15,21 @@ import { requireIdentityServiceSecret } from '../shared/service-auth.js';
  */
 async function findUserByChannelPhone(phone: string) {
   const rawClean = phone.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
-  const normalized = normalizeWhatsappNumber(phone);
+  const withPlus = `+${rawClean}`;
+  const withWhatsapp = `whatsapp:+${rawClean}`;
 
-  let user = await db.findUserByWhatsappNumber(normalized);
+  let user = await db.findUserByWhatsappNumber(withPlus);
+  if (user) return user;
+
+  user = await db.findUserByWhatsappNumber(withWhatsapp);
+  if (user) return user;
+
+  user = await db.findUserByWhatsappNumber(rawClean);
   if (user) return user;
 
   const identityLinks = await db.listCustomerIdentityLinks();
   const whatsappLink = identityLinks.find(
-    (l) => l.status === 'linked' && (l.whatsappNumber === normalized || l.whatsappNumber === `whatsapp:+${rawClean}`)
+    (l) => l.status === 'linked' && (l.whatsappNumber === withPlus || l.whatsappNumber === withWhatsapp || l.whatsappNumber === rawClean)
   );
   if (whatsappLink) {
     user = await db.findUserById(whatsappLink.paymentUserId);
