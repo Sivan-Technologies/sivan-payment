@@ -6,6 +6,7 @@ import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import { solanaRpc } from '../solana/solana-rpc.js';
 import { erc20BalanceOf, fromBaseUnits } from '../evm/evm-rpc.js';
 import { resolveNetworkMode } from '../network-mode.js';
+import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
 import type { WalletProvider } from './wallet-provider.js';
 
@@ -522,69 +523,45 @@ export class PrivyWalletProvider implements WalletProvider {
    * Base is served by the Ethereum wallet - same key, same address - so all
    * three are supported with only TWO keys per user.
    */
-  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base'];
+  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb'];
 
   /**
    * Create (or return) the user's wallet for a chain.
    *
-   * One Privy USER per Sivan user, carrying their Sivan user id as a
-   * linked custom account so the two systems can always be reconciled without
-   * a lookup table that can drift.
-   *
-   * Note what this means for addresses: asking for `base` and `ethereum`
-   * returns THE SAME wallet and the same 0x address. That is correct - they are
-   * one key - and the caller must not treat them as distinct deposits.
+   * Direct Server Wallets via POST /v1/wallets:
+   * Issues genuine on-chain Ed25519 (Solana) and secp256k1 (EVM) keypairs.
    */
   async createWallet(input: CreateWalletInput): Promise<ProviderWallet> {
     const chainType = CHAIN_TYPE[input.chain];
-    if (!chainType) throw forbidden(`Privy does not issue wallets on ${input.chain}.`);
+    if (!chainType || input.chain === 'stellar') throw forbidden(`Privy does not issue wallets on ${input.chain}.`);
 
     // Reuse an existing wallet of this chain type before creating another.
-    // Privy will happily create a second wallet, and a user with two Solana
-    // addresses has one nobody is watching for deposits.
     const existing = await this.findWallet(input.userId, chainType);
     if (existing) return existing;
 
     const quorumId = (process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || '').trim();
 
+    let ownerUserId: string | undefined;
+    try {
+      ownerUserId = await this.ensurePrivyUser(input.userId, input.metadata);
+    } catch {
+      ownerUserId = undefined;
+    }
+
+    const payload: any = {
+      chain_type: chainType,
+    };
+    if (ownerUserId) {
+      payload.owner = { user_id: ownerUserId };
+    }
+    if (quorumId) {
+      payload.additional_signers = [{ signer_id: quorumId }];
+    }
+
     const created = await privyRequest<any>('/wallets', {
       method: 'POST',
-      // ALWAYS derived, and deliberately NOT `input.idempotencyKey ||  ...`.
-      //
-      // Privy issues a second wallet for the same user and chain when this is
-      // absent - verified live - so the key is the last line of defence behind
-      // the findWallet reuse check above.
-      //
-      // Letting the caller win defeated it. user-wallet.service.ts sends
-      // `sivan-wallet-${userId}-${chain}` using the SIVAN chain name, so
-      // 'ethereum' and 'base' produce two DIFFERENT keys for what is one
-      // secp256k1 wallet at Privy. Sequentially the reuse lookup hides that;
-      // concurrently it does not, and the user ends up with two EVM addresses.
-      //
-      // Keying on chainType collapses ethereum and base onto one key, which is
-      // the truth of the underlying key material. input.idempotencyKey is now
-      // ignored here on purpose: there is no legitimate reason for a caller to
-      // ask for a SECOND wallet on a chain the user already has, and every
-      // accidental one costs a billable wallet that cannot be deleted.
       idempotencyKey: `sivan_wallet_${input.userId}_${chainType}`,
-      body: JSON.stringify({
-        chain_type: chainType,
-        // Ties the Privy wallet back to the Sivan user. Without this the only
-        // link is a row in Sivan's database, and a lost row means an orphaned
-        // wallet with funds in it.
-        owner: { user_id: await this.ensurePrivyUser(input.userId, input.metadata) },
-        // Sivan as an ADDITIONAL SIGNER, when one is configured.
-        //
-        // Note what this is not: the owner is still the user. An additional
-        // signer is a narrower grant that can be scoped by policy and revoked,
-        // and it is what allows a one-tap NGN off-ramp without Sivan taking
-        // custody.
-        //
-        // It must be set AT CREATION. Attaching a signer later is a PATCH that
-        // itself requires the wallet owner's signature - which Sivan does not
-        // have - so a wallet created without this can never be delegated to.
-        ...(quorumId ? { additional_signers: [{ signer_id: quorumId }] } : {}),
-      }),
+      body: JSON.stringify(payload),
     });
 
     return this.toProviderWallet(created, input.chain);
@@ -602,7 +579,6 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const created = await privyRequest<any>('/users', {
       method: 'POST',
-      // Same Sivan user must never produce two Privy users, even under retry.
       idempotencyKey: `privy_user_${userId}`,
       body: JSON.stringify({
         linked_accounts: [
@@ -611,21 +587,9 @@ export class PrivyWalletProvider implements WalletProvider {
         ],
       }),
     }).catch(async (error: any) => {
-      // LOST A RACE. Not a hypothetical: provisioning ethereum and base
-      // concurrently for a new user made both branches find no Privy user,
-      // both POST /users, and the loser threw
-      //   "Input conflict caused by an existing user: did:privy:..."
-      // straight out of createWallet. A user double-tapping "create wallet"
-      // hits this too.
-      //
-      // Sequential duplicates are fine - Privy answers 200 with the existing
-      // user, verified live - so this is purely a concurrency edge, and the
-      // right response is to adopt the winner rather than fail the request.
       const message = String(error?.message ?? '');
       if (!/conflict/i.test(message)) throw error;
 
-      // Privy names the winning user in the error text; prefer re-reading it
-      // over trusting a parsed string, and fall back to a fresh lookup.
       const did = message.match(/did:privy:[a-z0-9]+/i)?.[0];
       if (did) return { id: did };
 
@@ -641,30 +605,21 @@ export class PrivyWalletProvider implements WalletProvider {
 
   /**
    * The user's existing wallet of a chain type, if any.
-   *
-   * Deliberately NOT error-tolerant. Privy does not deduplicate wallets:
-   * verified live by posting the same {chain_type, owner} twice without an
-   * idempotency key, which produced a second Ethereum address for one user.
-   * A swallowed error here therefore does not degrade gracefully, it mints a
-   * second address that receives deposits nothing is watching.
    */
   private async findWallet(userId: string, chainType: string): Promise<ProviderWallet | undefined> {
-    const user = await findPrivyUser(userId);
+    const chain = chainType === 'solana' ? 'solana' : 'ethereum';
+    const dbWallet = await db.findUserWallet(userId, chain as any).catch(() => undefined);
+    if (dbWallet?.providerWalletId) {
+      const full = await privyRequest<any>(`/wallets/${encodeURIComponent(dbWallet.providerWalletId)}`).catch(() => undefined);
+      if (full) return this.toProviderWallet(full, chain);
+    }
 
+    const user = await findPrivyUser(userId).catch(() => undefined);
     const wallet = (user?.linked_accounts ?? []).find(
       (account: any) => account?.type === 'wallet' && account?.chain_type === chainType
     );
     if (!wallet) return undefined;
 
-    const chain = chainType === 'solana' ? 'solana' : 'ethereum';
-
-    // Re-read the wallet rather than returning the linked-account projection.
-    //
-    // `user.linked_accounts` does NOT carry `additional_signers` - verified
-    // live, the field is absent entirely, not empty. Returning that projection
-    // would report every REUSED wallet as non-delegated, which is almost all
-    // of them after the first call, and Sivan would fall back to asking the
-    // user to sign on wallets it can actually sign for itself.
     if (wallet?.id) {
       const full = await privyRequest<any>(`/wallets/${encodeURIComponent(wallet.id)}`).catch(() => undefined);
       if (full) return this.toProviderWallet(full, chain);

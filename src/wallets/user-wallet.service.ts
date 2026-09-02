@@ -149,18 +149,30 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const { customer } = await requireWalletEligibility(userId, provider.name);
 
-  if (!provider.supportedChains.includes(chain)) {
-    throw badRequest(`${chain} wallets are not supported by the current provider`);
+  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC)
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(chain)) {
+    const evmWallet = await db.findUserWallet(userId, 'base')
+      || await db.findUserWallet(userId, 'ethereum')
+      || await db.findUserWallet(userId, 'celo')
+      || await db.findUserWallet(userId, 'bsc');
+    if (evmWallet) {
+      const now = nowIso();
+      const record: UserWalletRecord = {
+        ...evmWallet,
+        id: id('uw'),
+        chain,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return await db.insertUserWallet(record);
+    }
   }
 
+  const targetChain = chain === 'stellar' ? 'stellar' : (chain === 'solana' ? 'solana' : 'ethereum');
   const providerWallet = await provider.createWallet({
     userId,
     providerCustomerId: customer?.providerCustomerId,
-    chain,
-    // Deliberately deterministic, NOT shared/id.ts idempotencyKey() which
-    // appends a random UUID. A retry must reuse the same key so the provider
-    // returns the existing wallet instead of provisioning (and billing for)
-    // a second one.
+    chain: targetChain as WalletChain,
     idempotencyKey: `sivan-wallet-${userId}-${chain}`,
   });
 
@@ -171,12 +183,10 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     customerId: customer?.id,
     provider: providerWallet.provider,
     providerWalletId: providerWallet.providerWalletId,
-    chain: providerWallet.chain,
+    chain,
     address: providerWallet.address,
     status: providerWallet.status,
     custodial: providerWallet.custodyModel === 'custodial',
-    // Recorded from what the provider actually returned. Immutable at Privy,
-    // so this is a permanent property of the wallet, not of the provider.
     delegatedSigningEnabled: providerWallet.delegatedSigningEnabled ?? false,
     delegatedSignerId: providerWallet.delegatedSignerId,
     raw: providerWallet.rawProviderPayload,
