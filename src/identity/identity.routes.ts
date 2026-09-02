@@ -343,12 +343,13 @@ export async function identityRoutes(app: FastifyInstance) {
     }
 
     const fullName = body.fullName || (body.firstName ? `${body.firstName} ${body.lastName || ''}`.trim() : user?.fullName) || 'Sivan User';
+    const email = body.email ? String(body.email).trim().toLowerCase() : (user?.email || `${cleanPhone}@sivantech.online`);
     const now = nowIso();
 
     if (!user) {
       user = await db.insertUserRecord({
         id: id('usr'),
-        email: `${cleanPhone}@sivantech.online`,
+        email,
         fullName,
         whatsappNumber: normalized,
         telegramUserId: cleanId,
@@ -358,6 +359,7 @@ export async function identityRoutes(app: FastifyInstance) {
     } else {
       user = await db.updateUserRecord({
         ...user,
+        email,
         fullName: user.fullName || fullName,
         whatsappNumber: normalized,
         telegramUserId: cleanId,
