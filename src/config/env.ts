@@ -166,6 +166,11 @@ const envSchema = z.object({
   BASE_RPC_FALLBACK_URL: z.string().url().optional(),
   ETHEREUM_RPC_URL: z.string().url().optional(),
   ETHEREUM_RPC_FALLBACK_URL: z.string().url().optional(),
+  STELLAR_HORIZON_URL: z.string().url().optional(),
+  STELLAR_SPONSOR_ACCOUNT_ID: z.string().optional(),
+  STELLAR_SPONSOR_SECRET_KEY: z.string().optional(),
+  STELLAR_MAX_FEE_STROOPS: z.coerce.number().optional().default(1000),
+  STELLAR_SPONSORED_RESERVES: z.coerce.boolean().optional().default(true),
   WEBHOOK_MAX_AGE_MS: positiveIntFromEnv.default(10 * 60 * 1000),
   /**
    * 1.25%, not 0.
