@@ -750,6 +750,7 @@ function requiresUserAuth(method: string, url: string): boolean {
    */
   if (method === 'GET' && url.startsWith('/api/users/whatsapp-balance')) return false;
   if (url.startsWith('/api/users/whatsapp-payout-account')) return false;
+  if (method === 'GET' && url.includes('/verification-summary')) return false;
   if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
   if (url.startsWith('/api/ngn/offramp/orders')) return false;
   if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile')) return false;

@@ -41,6 +41,15 @@ export function requireIdentityServiceSecret(request: {
   throw forbidden('Invalid identity link service secret.');
 }
 
+export function isIdentityServiceAuthorized(request: { headers: Record<string, unknown> }): boolean {
+  try {
+    requireIdentityServiceSecret(request);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Constant-time comparison over fixed-width digests.
  *

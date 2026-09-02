@@ -3,7 +3,7 @@ import { env } from '../config/env.js';
 import { parseBody } from '../shared/validation.js';
 import { forbidden, notFound } from '../shared/errors.js';
 import { db } from '../database/json-database.js';
-import { requireIdentityServiceSecret } from '../shared/service-auth.js';
+import { requireIdentityServiceSecret, isIdentityServiceAuthorized } from '../shared/service-auth.js';
 import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
 import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
@@ -106,10 +106,22 @@ export async function identityRoutes(app: FastifyInstance) {
    * number resolved through the admin-overridable limit table, never
    * hardcoded. An admin moving a ceiling changes this response immediately.
    */
-  app.get('/api/users/:userId/verification-summary', async (request) => {
+  app.get('/api/users/:userId/verification-summary', async (request, reply) => {
     const { userId } = request.params as { userId: string };
-    ensureOwnUser(request, userId);
-    return { data: await getVerificationSummary(userId) };
+    const isService = isIdentityServiceAuthorized(request);
+    let resolvedUserId = userId;
+    if (isService) {
+      if (userId.startsWith('+') || /^\d{10,14}$/.test(userId) || userId.startsWith('whatsapp:')) {
+        const rawClean = userId.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+        const user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) || (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) || (await db.findUserByWhatsappNumber(rawClean));
+        if (user) resolvedUserId = user.id;
+      }
+    } else {
+      ensureOwnUser(request, userId);
+    }
+    const summary = await getVerificationSummary(resolvedUserId);
+    if (!summary) return reply.code(404).send({ error: { message: 'User not found' } });
+    return { data: summary };
   });
 
   /**
