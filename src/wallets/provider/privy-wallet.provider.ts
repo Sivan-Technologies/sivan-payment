@@ -730,6 +730,18 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.solanaBalances(address, production);
     }
 
+    if (chain === 'stellar') {
+      const { readStellarUsdcBalance } = await import('../stellar/stellar-rpc.js');
+      const usdc = await readStellarUsdcBalance(address).catch(() => 0);
+      return [
+        {
+          asset: 'usdc',
+          chain: 'stellar',
+          amount: Number(usdc).toFixed(6),
+        },
+      ];
+    }
+
     // USDC and USDT where a contract is known for this chain and network. A
     // missing entry is skipped rather than reported as zero: Base has no
     // native USDT, and "0 USDT on Base" would be an invented figure.
