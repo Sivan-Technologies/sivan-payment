@@ -8,7 +8,9 @@ import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
 import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
 import { getUnifiedBalance } from '../balances/unified-balance.service.js';
+import { id, nowIso } from '../shared/id.js';
 import {
+  activeLinkForTelegram,
   cancelTelegramLink,
   cancelWhatsappLink,
   getIdentityStatus,
@@ -298,6 +300,127 @@ export async function identityRoutes(app: FastifyInstance) {
       userAgent: request.headers['user-agent'],
     });
     return { data: { linked: false as const, unlinked: true as const } };
+  });
+
+  /**
+   * Directly link or update the phone number for a Telegram user from chat.
+   */
+  app.post('/api/identity/telegram/:telegramUserId/phone', async (request, reply) => {
+    requireIdentityServiceSecret(request);
+    const { telegramUserId } = request.params as { telegramUserId: string };
+    const body = (request.body || {}) as any;
+    const rawPhone = String(body.phone || body.whatsappNumber || '').trim();
+    if (!rawPhone) {
+      return reply.code(400).send({ error: 'phone is required' });
+    }
+    const cleanPhone = rawPhone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    const normalized = `+${cleanPhone}`;
+    const cleanId = telegramUserId.trim();
+
+    const link = await activeLinkForTelegram(cleanId);
+    let user: any = null;
+
+    if (link) {
+      user = await db.findUserById(link.paymentUserId);
+    }
+    if (!user) {
+      user = await db.findUserByTelegramUserId(cleanId);
+    }
+    if (!user) {
+      user = await db.findUserByWhatsappNumber(normalized);
+    }
+
+    const fullName = body.fullName || (body.firstName ? `${body.firstName} ${body.lastName || ''}`.trim() : user?.fullName) || 'Sivan User';
+    const now = nowIso();
+
+    if (!user) {
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email: `${cleanPhone}@sivantech.online`,
+        fullName,
+        whatsappNumber: normalized,
+        telegramUserId: cleanId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      user = await db.updateUserRecord({
+        ...user,
+        fullName: user.fullName || fullName,
+        whatsappNumber: normalized,
+        telegramUserId: cleanId,
+        updatedAt: now,
+      });
+    }
+
+    if (!link) {
+      await db.upsertCustomerIdentityLinkRecord({
+        id: id('identity'),
+        paymentUserId: user.id,
+        email: user.email,
+        channel: 'telegram',
+        telegramUserId: cleanId,
+        whatsappNumber: normalized,
+        status: 'linked',
+        linkedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }).catch(() => undefined);
+    }
+
+    return {
+      data: {
+        linked: true as const,
+        paymentUserId: user.id,
+        whatsappNumber: normalized,
+        fullName: user.fullName,
+        email: user.email,
+        canTransact: true,
+      },
+    };
+  });
+
+  /**
+   * Compatibility endpoint for user profile registration.
+   */
+  app.post('/api/users/profile', async (request, reply) => {
+    const body = (request.body || {}) as any;
+    const rawPhone = String(body.whatsappNumber || body.phone || '').trim();
+    if (!rawPhone) {
+      return reply.code(400).send({ error: 'whatsappNumber is required' });
+    }
+    const cleanPhone = rawPhone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    const normalized = `+${cleanPhone}`;
+
+    let user = await db.findUserByWhatsappNumber(normalized);
+    if (!user) {
+      user = await db.findUserByWhatsappNumber(`whatsapp:${normalized}`);
+    }
+
+    const firstName = body.firstName || 'Sivan User';
+    const lastName = body.lastName || '';
+    const fullName = `${firstName} ${lastName}`.trim();
+    const now = nowIso();
+
+    if (!user) {
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email: `${cleanPhone}@sivantech.online`,
+        fullName,
+        whatsappNumber: normalized,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      user = await db.updateUserRecord({
+        ...user,
+        fullName: user.fullName || fullName,
+        whatsappNumber: normalized,
+        updatedAt: now,
+      });
+    }
+
+    return { success: true, user, data: user };
   });
 
 

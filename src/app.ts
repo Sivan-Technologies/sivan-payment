@@ -731,7 +731,7 @@ function requiresUserAuth(method: string, url: string): boolean {
    * The failure mode of getting it wrong is a user who must re-link, not a user
    * whose funds moved.
    */
-  if (method === 'POST' && url.startsWith('/api/identity/telegram/') && url.endsWith('/unlink')) return false;
+  if (method === 'POST' && url.startsWith('/api/identity/telegram/') && (url.endsWith('/unlink') || url.endsWith('/phone'))) return false;
 
 
   /**
@@ -752,7 +752,7 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/users/whatsapp-payout-account')) return false;
   if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
   if (url.startsWith('/api/ngn/offramp/orders')) return false;
-  if (method === 'POST' && url === '/api/users') return false;
+  if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile')) return false;
 
   if (url === '/api/customers') return true;
 
