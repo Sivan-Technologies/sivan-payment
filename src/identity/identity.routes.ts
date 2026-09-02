@@ -347,6 +347,10 @@ export async function identityRoutes(app: FastifyInstance) {
     const now = nowIso();
 
     if (!user) {
+      user = await db.findUserByEmail(email);
+    }
+
+    if (!user) {
       user = await db.insertUserRecord({
         id: id('usr'),
         email,
@@ -405,10 +409,19 @@ export async function identityRoutes(app: FastifyInstance) {
     }
     const cleanPhone = rawPhone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
     const normalized = `+${cleanPhone}`;
+    const cleanTelegramId = body.telegramId ? String(body.telegramId).trim() : undefined;
 
     let user = await db.findUserByWhatsappNumber(normalized);
     if (!user) {
       user = await db.findUserByWhatsappNumber(`whatsapp:${normalized}`);
+    }
+    if (!user && cleanTelegramId) {
+      user = await db.findUserByTelegramUserId(cleanTelegramId);
+    }
+
+    const email = body.email ? String(body.email).trim().toLowerCase() : (user?.email || `${cleanPhone}@sivantech.online`);
+    if (!user) {
+      user = await db.findUserByEmail(email);
     }
 
     const firstName = body.firstName || 'Sivan User';
@@ -419,19 +432,37 @@ export async function identityRoutes(app: FastifyInstance) {
     if (!user) {
       user = await db.insertUserRecord({
         id: id('usr'),
-        email: `${cleanPhone}@sivantech.online`,
+        email,
         fullName,
         whatsappNumber: normalized,
+        telegramUserId: cleanTelegramId,
         createdAt: now,
         updatedAt: now,
       });
     } else {
       user = await db.updateUserRecord({
         ...user,
+        email,
         fullName: user.fullName || fullName,
         whatsappNumber: normalized,
+        telegramUserId: cleanTelegramId || user.telegramUserId,
         updatedAt: now,
       });
+    }
+
+    if (cleanTelegramId) {
+      await db.upsertCustomerIdentityLinkRecord({
+        id: id('identity'),
+        paymentUserId: user.id,
+        email: user.email,
+        channel: 'telegram',
+        telegramUserId: cleanTelegramId,
+        whatsappNumber: normalized,
+        status: 'linked',
+        linkedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }).catch(() => undefined);
     }
 
     return { success: true, user, data: user };
@@ -466,7 +497,8 @@ export async function identityRoutes(app: FastifyInstance) {
       const withPlus = `+${cleanPhone}`;
       const user = (await db.findUserByWhatsappNumber(withPlus))
         || (await db.findUserByWhatsappNumber(`whatsapp:${withPlus}`))
-        || (await db.findUserByWhatsappNumber(cleanPhone));
+        || (await db.findUserByWhatsappNumber(cleanPhone))
+        || (await db.findUserByEmail(`${cleanPhone}@sivantech.online`));
       if (user) {
         wipedUserId = user.id;
         const links = await db.listCustomerIdentityLinks();
@@ -477,6 +509,7 @@ export async function identityRoutes(app: FastifyInstance) {
         }
         await db.updateUserRecord({
           ...user,
+          email: `reset_${user.id}_${Date.now()}@sivantech.online`,
           whatsappNumber: undefined,
           telegramUserId: undefined,
           updatedAt: nowIso(),
