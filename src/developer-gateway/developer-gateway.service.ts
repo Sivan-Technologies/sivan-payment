@@ -1,5 +1,5 @@
 import { getChainAdapter } from '../wallets/chain-adapter-registry.js';
-import { getSpendable } from '../balances/unified-balance.service.js';
+import { getSpendable, getUnifiedBalance } from '../balances/unified-balance.service.js';
 import {
   DeveloperTransferRequest,
   DeveloperTransferResponse,
@@ -98,18 +98,43 @@ export class DeveloperGatewayService {
   }
 
   /**
+   * Intelligently auto-detect optimal settlement chain based on available balance and cost.
+   */
+  async resolveOptimalNetwork(userId: string, requestedNetwork?: string, amount = 0): Promise<string> {
+    const validChains = ['solana', 'base', 'stellar', 'celo', 'bsc'];
+    if (requestedNetwork && requestedNetwork !== 'auto' && validChains.includes(requestedNetwork.toLowerCase())) {
+      return requestedNetwork.toLowerCase();
+    }
+
+    try {
+      const unified = await getUnifiedBalance(userId);
+      for (const w of unified.wallets) {
+        const chainName = String(w.chain).toLowerCase();
+        const chainBalance = w.balances?.find((b: any) => String(b.asset).toLowerCase() === 'usdc');
+        const numAmt = Number(chainBalance?.amount || 0);
+        if (numAmt >= amount && validChains.includes(chainName)) {
+          return chainName;
+        }
+      }
+    } catch {}
+
+    return 'solana';
+  }
+
+  /**
    * Create programmatic service agreement for AI agents or developer platforms.
    */
   async createProgrammaticAgreement(
     input: DeveloperAgreementRequest
   ): Promise<DeveloperAgreementResponse> {
-    if (!input.title || !input.buyerUserId || !input.network || !input.amount) {
-      throw badRequest('title, buyerUserId, network, and amount are required');
+    if (!input.title || !input.buyerUserId || !input.amount) {
+      throw badRequest('title, buyerUserId, and amount are required');
     }
 
-    const adapter = getChainAdapter(input.network);
+    const selectedNetwork = (await this.resolveOptimalNetwork(input.buyerUserId, input.network, input.amount)) as any;
+    const adapter = getChainAdapter(selectedNetwork);
     const depositAddress = await adapter.getDepositAddress(input.buyerUserId);
-    const agreementId = `SIV-${Math.floor(100000 + Math.random() * 900000)}-${input.network.toUpperCase()}`;
+    const agreementId = `SIV-${Math.floor(100000 + Math.random() * 900000)}-${selectedNetwork.toUpperCase()}`;
 
     const parseResult = parseDeliveryDeadline(input.description || input.title || '');
     const deadlineDays = input.deadlineDays ?? parseResult.deadlineDays;

@@ -386,11 +386,13 @@ export function initWebMcp() {
     const userMatch = prompt.match(/@([a-zA-Z0-9_]+)/i);
     const forMatch = prompt.match(/for\s+([^.]+)/i);
     const milestoneMatch = prompt.match(/(\d+)\s*milestones?/i);
+    const chainMatch = prompt.match(/\b(on|via|using|network)\s+(solana|base|stellar|celo|bsc|ethereum)\b/i);
 
     return {
       counterparty: userMatch ? `@${userMatch[1]}` : '@soliame',
       amount: amountMatch ? Number(amountMatch[1]) : 20,
       currency: (prompt.toUpperCase().includes('USDT') ? 'USDT' : 'USDC') as 'USDC' | 'USDT',
+      network: chainMatch ? chainMatch[2].toLowerCase() : 'solana',
       milestones: milestoneMatch ? Number(milestoneMatch[1]) : 2,
       deliverables: forMatch ? forMatch[1].replace(/with\s+\d+\s+milestones?/i, '').trim() : 'Mobile UI Design'
     };
