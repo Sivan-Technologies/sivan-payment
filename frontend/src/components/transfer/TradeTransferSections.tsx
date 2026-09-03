@@ -1,4 +1,4 @@
-import { FormEvent, useRef, useState, useEffect } from 'react';
+import { FormEvent, useRef, useState, useEffect, useMemo } from 'react';
 import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord, SupplierFeeQuoteResponse } from '../../types';
 import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
 import { explorerLink, explorerReference, shortHash } from '../../blockExplorer';
@@ -623,6 +623,56 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
    * asset; this component threw that away and looked up one hardcoded key.
    */
   const selectedAssetKey = String(sendAsset || '').toLowerCase();
+  const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
+
+  const networkBalances = useMemo(() => {
+    const map = new Map<string, number>();
+    if (unifiedBalance?.wallets) {
+      for (const w of unifiedBalance.wallets) {
+        const b = w.balances?.find((item) => String(item.asset).toLowerCase() === selectedAssetKey);
+        const amt = b ? parseFloat(b.amount || '0') : 0;
+        const current = map.get(w.chain.toLowerCase()) || 0;
+        map.set(w.chain.toLowerCase(), current + amt);
+      }
+    }
+    return map;
+  }, [unifiedBalance, selectedAssetKey]);
+
+  const bestNetwork = useMemo(() => {
+    let topChain = '';
+    let maxAmount = -1;
+    for (const [chain, amt] of networkBalances.entries()) {
+      if (amt > maxAmount) {
+        maxAmount = amt;
+        topChain = chain;
+      }
+    }
+    if (maxAmount > 0 && topChain) {
+      const match = networks.find((n) => n.network.toLowerCase() === topChain.toLowerCase());
+      if (match) return match.network;
+    }
+    return networks.find((n) => n.network === 'solana')?.network || networks[0]?.network || 'solana';
+  }, [networkBalances, networks]);
+
+  const [sendNetwork, setSendNetwork] = useState<string>(bestNetwork);
+
+  useEffect(() => {
+    if (bestNetwork) {
+      setSendNetwork(bestNetwork);
+    }
+  }, [bestNetwork]);
+
+  const networkOptions = useMemo(() => {
+    return networks.map((n) => {
+      const bal = networkBalances.get(n.network.toLowerCase()) || 0;
+      return {
+        value: n.network,
+        label: n.label,
+        helper: bal > 0 ? `${bal.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${(sendAsset || 'usdc').toUpperCase()} available` : undefined
+      };
+    });
+  }, [networks, networkBalances, sendAsset]);
+
   const unified = unifiedBalance?.balances.find(
     (item) => String(item.asset).toLowerCase() === selectedAssetKey
   );
@@ -710,7 +760,6 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
     .filter((item) => item.amount > 0);
   /** True when the chain read failed - NOT the same as a zero balance. */
   const chainUnavailable = Boolean(unified?.chainUnavailable);
-  const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
   const approvedSuppliers = suppliers.filter((supplier) => supplier.status === 'approved');
   const supplierCurrencyLabel = { gbp: 'GBP · Faster Payments', usd: 'USD · ACH/Wire', eur: 'EUR · SEPA', mxn: 'MXN · SPEI', brl: 'BRL · PIX' }[supplierCurrency];
   return <section className="app-page transfer-premium"><PageHero title="Send & transfer" subtitle={supplierPayoutsEnabled ? 'Send settled stablecoins to wallets or pay suppliers through Sivan’s provider routing. Sivan does not hold a live USD fiat balance for you.' : 'Send settled stablecoins to wallets on a supported network. Sivan does not hold a live USD fiat balance for you.'} action={<button className="primary-btn small" onClick={() => void onRefresh()}>Refresh balance</button>} />
@@ -743,7 +792,7 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
           before anything they could actually do. The thing you came here to
           do now leads, the balance it spends from sits under it, and history
           - the least urgent - comes last. */}
-      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer {assetLabelUpper} to a wallet</h3>{!hasUser ? <div className="empty-state"><p>Create your account before transferring crypto.</p><button className="primary-btn" onClick={onContinue}>Get started →</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" value={sendAsset} defaultValue={sendableAssetOptions[0]?.asset || 'usdc'} onChange={setSendAsset} options={sendableAssetOptions.map((item) => ({ value: item.asset, label: assetLabel(item) }))} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label>{/* THE SECOND SENTENCE POINTS AT A ROUTE THAT MAY NOT EXIST.
+      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer {assetLabelUpper} to a wallet</h3>{!hasUser ? <div className="empty-state"><p>Create your account before transferring crypto.</p><button className="primary-btn" onClick={onContinue}>Get started →</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" value={sendAsset} defaultValue={sendableAssetOptions[0]?.asset || 'usdc'} onChange={setSendAsset} options={sendableAssetOptions.map((item) => ({ value: item.asset, label: assetLabel(item) }))} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" value={sendNetwork} onChange={setSendNetwork} defaultValue={bestNetwork} options={networkOptions} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label>{/* THE SECOND SENTENCE POINTS AT A ROUTE THAT MAY NOT EXIST.
  
      Caught in a screenshot with supplier payouts switched off: the crypto
      form still told users to "use the Pay supplier route", which was no
