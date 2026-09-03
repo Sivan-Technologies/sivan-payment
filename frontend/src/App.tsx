@@ -1562,7 +1562,6 @@ export default function App() {
   async function handleBalanceTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
-    if (!isVerified) return notify('Please complete verification before transferring crypto.', 'error');
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
