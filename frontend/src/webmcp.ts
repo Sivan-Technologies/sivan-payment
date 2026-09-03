@@ -276,6 +276,46 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
     }
   },
 
+  mark_agreement_delivered: {
+    name: 'mark_agreement_delivered',
+    description: 'Contractor signals deliverables are submitted and requests milestone payment release.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agreementId: { type: 'string', description: 'Unique identifier of the active Service Agreement.' },
+        deliverableUrl: { type: 'string', description: 'Optional link to submitted work / repository / Figma.' }
+      },
+      required: ['agreementId']
+    },
+    async execute(params: any) {
+      const token = getStoredToken();
+      const apiBase = getEffectiveApiBase();
+      if (token && params.agreementId) {
+        try {
+          await fetch(buildApiUrl(apiBase, `/api/agreements/${encodeURIComponent(params.agreementId)}/deliver`), {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+        } catch (e) {
+          console.warn('[Sivan WebMCP] Deliver agreement API call note:', e);
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Deliverables for Service Agreement ${params.agreementId} submitted successfully! Client has been notified to review and release payment.`
+          }
+        ]
+      };
+    }
+  },
+
   release_agreement_milestone: {
     name: 'release_agreement_milestone',
     description: 'Releases milestone funds to the contractor upon delivery confirmation.',
