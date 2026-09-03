@@ -73,8 +73,8 @@ async function main() {
     throw new Error('Failed to generate valid OTP code');
   }
 
-  console.log('\n=== [2. Launching Staging Login Screen in Chrome] ===');
-  const target = await cdpRequest('/json/new?' + encodeURIComponent(`${STAGING_URL}/signup`), 'PUT');
+  console.log('\n=== [2. Launching Staging Sign In Screen in Chrome] ===');
+  const target = await cdpRequest('/json/new?' + encodeURIComponent(`${STAGING_URL}/signin`), 'PUT');
   console.log('Target Created:', target.id);
 
   const ws = new WebSocket(target.webSocketDebuggerUrl);
@@ -82,11 +82,11 @@ async function main() {
 
   await sendCdpCommand(ws, 'Page.enable', {}, 10);
   await sendCdpCommand(ws, 'Runtime.enable', {}, 11);
-  await sendCdpCommand(ws, 'Page.navigate', { url: `${STAGING_URL}/signup` }, 12);
+  await sendCdpCommand(ws, 'Page.navigate', { url: `${STAGING_URL}/signin` }, 12);
 
-  console.log('Waiting 5s for signup form to load...');
+  console.log('Waiting 5s for signin form to load...');
   await new Promise((r) => setTimeout(r, 5000));
-  await captureScreenshot(ws, 'real_login_step1_signup_page.png');
+  await captureScreenshot(ws, 'real_signin_step1_page.png');
 
   console.log('\n=== [3. Submitting Email on UI and Transitioning to Code Screen] ===');
   const enterEmailScript = `
