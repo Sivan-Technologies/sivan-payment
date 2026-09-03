@@ -264,14 +264,39 @@ export function initWebMcp() {
     });
   }
 
+  function parsePrompt(prompt: string) {
+    const amountMatch = prompt.match(/(\d+(\.\d+)?)\s*(USDC|USD|dollars|usdt)?/i);
+    const userMatch = prompt.match(/@([a-zA-Z0-9_]+)/i);
+    const forMatch = prompt.match(/for\s+([^.]+)/i);
+    const milestoneMatch = prompt.match(/(\d+)\s*milestones?/i);
+
+    return {
+      counterparty: userMatch ? `@${userMatch[1]}` : '@soliame',
+      amount: amountMatch ? Number(amountMatch[1]) : 20,
+      currency: (prompt.toUpperCase().includes('USDT') ? 'USDT' : 'USDC') as 'USDC' | 'USDT',
+      milestones: milestoneMatch ? Number(milestoneMatch[1]) : 2,
+      deliverables: forMatch ? forMatch[1].replace(/with\s+\d+\s+milestones?/i, '').trim() : 'Mobile UI Design'
+    };
+  }
+
+  const promptHelper = async (text: string) => {
+    const parsed = parsePrompt(text);
+    console.log('[Sivan WebMCP] Parsed prompt into tool call:', parsed);
+    return await TOOLS.create_service_agreement.execute(parsed);
+  };
+
   (window as any).SIVAN_WEBMCP = {
     listTools: () => Object.keys(TOOLS).map(k => ({ name: TOOLS[k].name, description: TOOLS[k].description })),
     callTool: async (name: string, params: any) => {
       const tool = TOOLS[name];
       if (!tool) throw new Error(`Tool ${name} not found`);
       return await tool.execute(params);
-    }
+    },
+    prompt: promptHelper
   };
 
-  console.log('[Sivan WebMCP] Global WebMCP layer initialized. Connected to Service Agreement protocol.');
+  // Expose convenient global sivan("...") helper for DevTools console
+  (window as any).sivan = promptHelper;
+
+  console.log('[Sivan WebMCP] Global WebMCP layer initialized. Use sivan("prompt") or SIVAN_WEBMCP.callTool()');
 }
