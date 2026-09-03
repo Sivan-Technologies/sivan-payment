@@ -6,6 +6,8 @@
  * Directly integrates with Sivan's on-chain Service Agreement protocol.
  */
 
+import { buildApiUrl, normalizeFrontendApiBase } from './appUtils';
+
 export interface WebMcpToolDefinition {
   name: string;
   description: string;
@@ -26,6 +28,12 @@ function getStoredUser(): any {
   } catch {
     return null;
   }
+}
+
+function getEffectiveApiBase(): string {
+  if (typeof window === 'undefined') return '';
+  const envBase = (import.meta as any).env?.VITE_API_BASE_URL || '';
+  return normalizeFrontendApiBase(envBase || window.location.origin);
 }
 
 // Known counterparty dictionary for username resolution
@@ -89,8 +97,9 @@ function renderApprovalCard(detail: any) {
     approveBtn.textContent = 'Locking Funds in Solana Vault...';
     try {
       const token = getStoredToken();
+      const apiBase = getEffectiveApiBase();
       if (token && detail.agreementId) {
-        await fetch(`/api/agreements/${encodeURIComponent(detail.agreementId)}/fund`, {
+        await fetch(buildApiUrl(apiBase, `/api/agreements/${encodeURIComponent(detail.agreementId)}/fund`), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -99,14 +108,43 @@ function renderApprovalCard(detail: any) {
           body: JSON.stringify({ network: 'solana' })
         });
       }
-      approveBtn.textContent = '✓ Agreement Funded on Solana Devnet';
-      (approveBtn as HTMLElement).style.backgroundColor = '#059669';
-      setTimeout(() => {
+
+      // Show rich Post-Approval Confirmation popup
+      card.innerHTML = `
+        <div style="text-align: center; padding: 8px 0;">
+          <div style="font-size: 38px; line-height: 1; margin-bottom: 10px; color: #10B981;">✓</div>
+          <h3 style="margin: 0 0 8px 0; font-size: 20px; font-weight: 700; color: #F8FAFC;">Agreement Successfully Funded!</h3>
+          <p style="margin: 0 0 14px 0; font-size: 13px; color: #CBD5E1;">
+            <strong>${detail.amount} ${detail.currency || 'USDC'}</strong> is locked in the agreement vault. Delivery countdown active.
+          </p>
+          <div style="background: #1E293B; padding: 10px; border-radius: 8px; margin-bottom: 16px; font-size: 12px; color: #38BDF8;">
+            ✓ Solana Devnet Settlement Confirmed
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button id="sivan-webmcp-view-tx-btn" style="flex: 1; background: #2563EB; color: #FFF; border: none; padding: 11px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
+              View in Transactions Ledger →
+            </button>
+            <button id="sivan-webmcp-done-btn" style="background: #334155; color: #FFF; border: none; padding: 11px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;">
+              Done
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('sivan-webmcp-done-btn')?.addEventListener('click', () => {
         card.remove();
-        if (window.location.pathname.includes('withdrawals') || window.location.pathname.includes('dashboard')) {
-          window.location.reload();
+      });
+
+      document.getElementById('sivan-webmcp-view-tx-btn')?.addEventListener('click', () => {
+        card.remove();
+        const txNav = Array.from(document.querySelectorAll('.nav-item')).find(n => n.textContent?.includes('Transactions')) as HTMLElement;
+        if (txNav) {
+          txNav.click();
+        } else {
+          window.location.href = '/withdrawals';
         }
-      }, 2500);
+      });
+
     } catch (e) {
       approveBtn.textContent = '✓ Approved & Recorded';
       setTimeout(() => card.remove(), 2000);
@@ -133,6 +171,7 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
       console.log('[Sivan WebMCP] create_service_agreement called with:', params);
       const token = getStoredToken();
       const user = getStoredUser();
+      const apiBase = getEffectiveApiBase();
 
       const sellerUserId = KNOWN_USERS[params.counterparty.toLowerCase()] || params.counterparty;
       let agreementResult: any = null;
@@ -140,7 +179,7 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
       // Call real Service Agreement backend endpoint
       if (token && user?.id) {
         try {
-          const res = await fetch('/api/agreements', {
+          const res = await fetch(buildApiUrl(apiBase, '/api/agreements'), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -200,11 +239,12 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
     },
     async execute(params: any) {
       const token = getStoredToken();
+      const apiBase = getEffectiveApiBase();
       let fundResult: any = null;
 
       if (token && params.agreementId) {
         try {
-          const res = await fetch(`/api/agreements/${encodeURIComponent(params.agreementId)}/fund`, {
+          const res = await fetch(buildApiUrl(apiBase, `/api/agreements/${encodeURIComponent(params.agreementId)}/fund`), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -244,9 +284,10 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
     },
     async execute(params: any) {
       const token = getStoredToken();
+      const apiBase = getEffectiveApiBase();
       if (token && params.agreementId) {
         try {
-          await fetch(`/api/agreements/${encodeURIComponent(params.agreementId)}/release`, {
+          await fetch(buildApiUrl(apiBase, `/api/agreements/${encodeURIComponent(params.agreementId)}/release`), {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -280,9 +321,10 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
     },
     async execute() {
       const token = getStoredToken();
+      const apiBase = getEffectiveApiBase();
       if (token) {
         try {
-          const res = await fetch('/api/balances/unified', {
+          const res = await fetch(buildApiUrl(apiBase, '/api/balances/unified'), {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (res.ok) {
