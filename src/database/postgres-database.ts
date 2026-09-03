@@ -153,10 +153,11 @@ function numberString(value: unknown): string | undefined {
   return raw.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 
-function splitName(fullName: string) {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+function splitName(fullName?: string | null) {
+  const safe = String(fullName || '').trim();
+  const parts = safe ? safe.split(/\s+/).filter(Boolean) : [];
   return {
-    firstName: parts[0] || fullName || 'Sivan',
+    firstName: parts[0] || 'Sivan',
     lastName: parts.slice(1).join(' ') || null
   };
 }

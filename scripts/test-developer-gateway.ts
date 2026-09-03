@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
+import { db } from '../src/database/json-database.js';
 
 /**
  * AUTOMATED MULTI-CHAIN TEST SUITE: DEVELOPER API & AI AGENT GATEWAY
@@ -22,6 +23,21 @@ async function main() {
 
   const dbPath = path.isAbsolute(env.DATABASE_FILE) ? env.DATABASE_FILE : path.join(process.cwd(), env.DATABASE_FILE);
   await fs.rm(dbPath, { force: true });
+
+  for (const u of [
+    { id: 'usr_dev_test_agent', email: 'dev_agent@sivan.test', fullName: 'Dev Test Agent' },
+    { id: 'usr_agent_buyer', email: 'agent_buyer@sivan.test', fullName: 'Agent Buyer' },
+    { id: 'usr_freelancer_seller', email: 'freelancer_seller@sivan.test', fullName: 'Freelancer Seller' },
+  ]) {
+    await db.insertUserRecord({
+      id: u.id,
+      email: u.email,
+      fullName: u.fullName,
+      primaryChannel: 'email',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   const app = await buildApp();
   await app.listen({ port: 0, host: '127.0.0.1' });

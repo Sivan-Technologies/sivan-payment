@@ -111,8 +111,29 @@ export class MockWalletProvider implements WalletProvider {
   }
 
   async getWallet(providerWalletId: string): Promise<ProviderWallet> {
-    const wallet = this.wallets.get(providerWalletId);
-    if (!wallet) throw new Error(`Mock wallet not found: ${providerWalletId}`);
+    let wallet = this.wallets.get(providerWalletId);
+    if (!wallet) {
+      const isStellar = providerWalletId.includes('stellar');
+      const isSolana = providerWalletId.includes('sol');
+      const chain: WalletChain = isStellar ? 'stellar' : isSolana ? 'solana' : 'base';
+      const address = isStellar
+        ? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+        : isSolana
+          ? '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+          : '0x1111111111111111111111111111111111111111';
+      wallet = {
+        providerWalletId,
+        chain,
+        address,
+        status: 'active',
+        balances: [
+          { asset: 'usdc', chain, amount: '1000.00' },
+          { asset: 'usdt', chain, amount: '1000.00' },
+        ],
+        rawProviderPayload: { providerWalletId, chain },
+      };
+      this.wallets.set(providerWalletId, wallet);
+    }
     return wallet;
   }
 
