@@ -150,22 +150,40 @@ export async function identityRoutes(app: FastifyInstance) {
     const userId = getAuthUserId(request);
     if (!userId) return { data: { linked: false, deals: [] } };
 
-    // 1. Fetch native Service Agreements from database for this user
+    const user = await db.findUserById(userId);
+    const userEmail = (user?.email || '').toLowerCase();
+    const handle = userEmail ? userEmail.split('@')[0] : '';
+    const aliases = [
+      userId,
+      user?.email,
+      userEmail,
+      user?.fullName,
+      handle ? `@${handle}` : '',
+      handle
+    ].filter(Boolean) as string[];
+
+    // 1. Fetch native Service Agreements from database for this user (dual-lookup by ID, email, handle)
     let nativeDeals: any[] = [];
     try {
-      const agreements = await (db as any).listServiceAgreementsByUserId(userId);
-      nativeDeals = (agreements || []).map((a: any) => ({
-        escrowId: a.id,
-        title: a.title,
-        role: a.buyerUserId === userId ? 'buyer' : 'seller',
-        amount: String(a.amountUsdc),
-        currency: a.currency || 'USDC',
-        status: (a.status || 'PENDING').toUpperCase(),
-        createdAt: a.createdAt,
-        network: a.network,
-        buyerUserId: a.buyerUserId,
-        sellerUserId: a.sellerUserId
-      }));
+      const agreements = await (db as any).listServiceAgreementsByUserId(aliases);
+      const aliasSet = new Set(aliases.map((a) => a.toLowerCase()));
+      nativeDeals = (agreements || []).map((a: any) => {
+        const isBuyer = aliasSet.has(String(a.buyerUserId || '').toLowerCase());
+        return {
+          escrowId: a.id,
+          title: a.title,
+          role: isBuyer ? 'buyer' : 'seller',
+          amount: String(a.amountUsdc),
+          currency: a.currency || 'USDC',
+          status: (a.status || 'PENDING').toUpperCase(),
+          createdAt: a.createdAt,
+          network: a.network,
+          buyerUserId: a.buyerUserId,
+          sellerUserId: a.sellerUserId,
+          deadlineDays: a.deadlineDays,
+          deliveryDueAt: a.deliveryDueAt
+        };
+      });
     } catch (e) {
       console.warn('[Service Agreements] Native lookup note:', e);
     }

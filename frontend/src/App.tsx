@@ -975,6 +975,24 @@ export default function App() {
     void loadUserData();
   }, [loadFee, loadControls, loadUserData]);
 
+  useEffect(() => {
+    const handleAgreementsRefresh = () => {
+      void loadUserData();
+    };
+    window.addEventListener('sivan:agreements:refresh', handleAgreementsRefresh);
+    window.addEventListener('sivan:balances:refresh', handleAgreementsRefresh);
+    return () => {
+      window.removeEventListener('sivan:agreements:refresh', handleAgreementsRefresh);
+      window.removeEventListener('sivan:balances:refresh', handleAgreementsRefresh);
+    };
+  }, [loadUserData]);
+
+  const activeAgreementDeal = useMemo(() => {
+    return (serviceAgreements?.deals || []).find((d: any) =>
+      ['funded', 'in_delivery', 'delivered'].includes(String(d.status || '').toLowerCase())
+    ) || null;
+  }, [serviceAgreements?.deals]);
+
   /**
    * NETWORKS NEED A TOKEN, SO DO NOT ASK FOR THEM WITHOUT ONE.
    *
@@ -2607,6 +2625,52 @@ export default function App() {
             {bridgeNeedsAttention
               ? <KycOutcomeNotice customer={customer!} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />
               : <DashboardAccountNotice summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} displayCurrency={displayCurrency} displayFx={displayFx} />}
+
+            {activeAgreementDeal && (
+              <div
+                style={{
+                  background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95))',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                  borderRadius: '12px',
+                  padding: '16px 20px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+                  gap: '16px',
+                  flexWrap: 'wrap'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div style={{ fontSize: '24px', background: 'rgba(56, 189, 248, 0.15)', padding: '8px 12px', borderRadius: '10px' }}>
+                    🔒
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <strong style={{ fontSize: '15px', color: '#F8FAFC' }}>
+                        {activeAgreementDeal.role === 'seller' ? 'Active Service Agreement (Funded in Vault)' : 'Service Agreement Active in Vault'}
+                      </strong>
+                      <span style={{ fontSize: '11px', background: '#0284C7', color: '#FFF', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                        {activeAgreementDeal.amount} {activeAgreementDeal.currency || 'USDC'}
+                      </span>
+                    </div>
+                    <small style={{ color: '#94A3B8', fontSize: '13px' }}>
+                      {activeAgreementDeal.role === 'seller'
+                        ? `Client locked ${activeAgreementDeal.amount} USDC into vault for "${activeAgreementDeal.title}". Deliverable active.`
+                        : `${activeAgreementDeal.title} is locked on Solana Devnet vault. Milestone delivery in progress.`}
+                    </small>
+                  </div>
+                </div>
+                <button
+                  className="primary-btn"
+                  style={{ padding: '8px 18px', fontSize: '13px', whiteSpace: 'nowrap' }}
+                  onClick={() => goToView('history')}
+                >
+                  View in Transactions Ledger →
+                </button>
+              </div>
+            )}
 
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Withdraw</strong><small>Cash out to your bank account</small></div><em>→</em></button>

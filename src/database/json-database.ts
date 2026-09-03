@@ -1433,11 +1433,17 @@ export class JsonDatabase {
     return (data.serviceAgreements ?? []).find((a) => a.id === id) ?? null;
   }
 
-  async listServiceAgreementsByUserId(userId: string): Promise<ServiceAgreementRecord[]> {
+  async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
     const data = await this.read();
-    const records = (data.serviceAgreements ?? []).filter(
-      (a) => a.buyerUserId === userId || a.sellerUserId === userId
-    );
+    const aliases = (Array.isArray(userIdOrAliases) ? userIdOrAliases : [userIdOrAliases])
+      .filter(Boolean)
+      .map((s) => String(s).toLowerCase());
+
+    const records = (data.serviceAgreements ?? []).filter((a) => {
+      const buyer = String(a.buyerUserId || '').toLowerCase();
+      const seller = String(a.sellerUserId || '').toLowerCase();
+      return aliases.includes(buyer) || aliases.includes(seller);
+    });
     return records.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
 

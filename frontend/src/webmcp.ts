@@ -107,6 +107,8 @@ function renderApprovalCard(detail: any) {
           },
           body: JSON.stringify({ network: 'solana' })
         });
+        window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+        window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
       }
 
       // Show rich Post-Approval Confirmation popup
@@ -200,6 +202,7 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
           if (res.ok) {
             agreementResult = await res.json();
             console.log('[Sivan WebMCP] Service Agreement created in DB:', agreementResult);
+            window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
           }
         } catch (e) {
           console.warn('[Sivan WebMCP] Agreement creation API call note:', e);
@@ -254,6 +257,8 @@ const TOOLS: Record<string, WebMcpToolDefinition> = {
           });
           if (res.ok) {
             fundResult = await res.json();
+            window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+            window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
           }
         } catch (e) {
           console.warn('[Sivan WebMCP] Fund agreement API call note:', e);

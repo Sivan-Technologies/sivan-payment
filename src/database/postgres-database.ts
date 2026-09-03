@@ -2212,12 +2212,15 @@ export class PostgresDatabase {
     }
   }
 
-  async listServiceAgreementsByUserId(userId: string): Promise<ServiceAgreementRecord[]> {
+  async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
     const client = await this.pool.connect();
     try {
+      const aliases = Array.isArray(userIdOrAliases) ? userIdOrAliases.filter(Boolean) : [userIdOrAliases].filter(Boolean);
+      if (aliases.length === 0) return [];
+
       const result = await client.query(
-        'SELECT * FROM payments_service_agreements WHERE buyer_user_id=$1 OR seller_user_id=$1 ORDER BY created_at DESC',
-        [userId]
+        'SELECT * FROM payments_service_agreements WHERE buyer_user_id = ANY($1) OR seller_user_id = ANY($1) ORDER BY created_at DESC',
+        [aliases]
       );
       return result.rows.map(mapServiceAgreement);
     } finally {
