@@ -53,7 +53,7 @@ export function viewFromPath(pathname: string): ViewKey {
   if (clean === '/settings' || clean === '/app/settings') return 'settings';
   if (clean === '/help' || clean === '/support' || clean === '/app/support') return 'help';
   if (clean === '/email-recovery/confirm' || clean === '/recover-email') return 'emailRecovery';
-  if (clean === '/signup' || clean === '/login') return 'signup';
+  if (clean === '/signup' || clean === '/login' || clean === '/signin') return 'signup';
   return 'landing';
 }
 

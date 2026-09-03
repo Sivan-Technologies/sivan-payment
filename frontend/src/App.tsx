@@ -57,7 +57,10 @@ export default function App() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
   const [twoFactorPromptDismissedUntil, setTwoFactorPromptDismissedUntil] = useState(() => Number(localStorage.getItem('sivan.2faPromptDismissedUntil') || 0));
-  const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
+  const [authTab, setAuthTab] = useState<'signup' | 'signin'>(() => {
+    const path = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '';
+    return path.includes('signin') || path.includes('login') ? 'signin' : 'signup';
+  });
   const [pendingEmail, setPendingEmail] = useState('');
   const [pendingFullName, setPendingFullName] = useState('');
   const [devCode, setDevCode] = useState<string | undefined>();
@@ -319,13 +322,21 @@ export default function App() {
     if (nextView === 'signin') {
       setAuthTab('signin');
       resetPendingEmail();
-      goToView('signup');
+      setView('signup');
+      setMobileMenuOpen(false);
+      setUserMenuOpen(false);
+      setNotificationOpen(false);
+      if (window.location.pathname !== '/signin') window.history.pushState({}, '', '/signin');
       return;
     }
     if (nextView === 'signup') {
       setAuthTab('signup');
       resetPendingEmail();
-      goToView('signup');
+      setView('signup');
+      setMobileMenuOpen(false);
+      setUserMenuOpen(false);
+      setNotificationOpen(false);
+      if (window.location.pathname !== '/signup') window.history.pushState({}, '', '/signup');
       return;
     }
     goToView('help');
@@ -1043,15 +1054,24 @@ export default function App() {
   }, [verificationSummaryLoaded, verificationSummary]);
 
   useEffect(() => {
-    const onPopState = () => setView(viewFromPath(window.location.pathname));
+    const onPopState = () => {
+      const nextView = viewFromPath(window.location.pathname);
+      setView(nextView);
+      if (nextView === 'signup') {
+        const path = window.location.pathname.toLowerCase();
+        if (path === '/login' || path === '/signin') setAuthTab('signin');
+        if (path === '/signup') setAuthTab('signup');
+      }
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   useEffect(() => {
     if (view !== 'signup') return;
-    if (window.location.pathname === '/login') setAuthTab('signin');
-    if (window.location.pathname === '/signup') setAuthTab('signup');
+    const path = window.location.pathname.toLowerCase();
+    if (path === '/login' || path === '/signin') setAuthTab('signin');
+    if (path === '/signup') setAuthTab('signup');
   }, [view]);
 
   useEffect(() => {
@@ -2688,8 +2708,8 @@ export default function App() {
               <h3>{pendingEmail ? 'Check your email' : authTab === 'signup' ? 'Create your Sivan account' : 'Welcome back to Sivan'}</h3>
               <p className="muted auth-lead">{pendingEmail ? 'Enter the 6-digit code we sent. This keeps your account secure without passwords.' : authTab === 'signup' ? 'Start with secure email access, then complete verification when you are ready to move money.' : 'Sign in with a one-time code. No password to remember, no seed phrase ever requested.'}</p>
               <div className="auth-tabs">
-                <button type="button" className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); }}>Create account</button>
-                <button type="button" className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); }}>Sign in</button>
+                <button type="button" className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); if (window.location.pathname !== '/signup') window.history.pushState({}, '', '/signup'); }}>Create account</button>
+                <button type="button" className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); if (window.location.pathname !== '/signin') window.history.pushState({}, '', '/signin'); }}>Sign in</button>
               </div>
               {!pendingEmail ? (
                 <form className="form auth-form-premium" onSubmit={handleEmailAuthStart}>
