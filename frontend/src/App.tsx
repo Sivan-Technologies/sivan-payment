@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NgnTransferRecord, WalletDepositRecord, TransactionTimelineStep, ServiceAgreementsSummary } from './types';
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
-import { buildActivityFeed } from './activityFeed';
+import { buildActivityFeed, type ActivityRow } from './activityFeed';
 import { inProgressKpi, limitKpi, stableUsdBalanceKpi } from './dashboardKpis';
 import { resolveDisplayCurrency } from './displayCurrency';
 import { buildApiUrl, fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
@@ -345,9 +345,7 @@ export default function App() {
   const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
-
-
-  const { notifications, readNotificationIds, unreadNotifications, notificationDotClass, markNotificationRead, markAllNotificationsRead } = useNotifications({ systemStatus, customer, hasBank, hasUser, user, twoFactorEnabled: Boolean(twoFactorStatus?.enabled), onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets });
+  const { notifications, readNotificationIds, unreadNotifications, notificationDotClass, markNotificationRead, markAllNotificationsRead } = useNotifications({ systemStatus, customer, hasBank, hasUser, user, twoFactorEnabled: Boolean(twoFactorStatus?.enabled), onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets, serviceAgreements });
   const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
   const verificationRedirectUri = useMemo(() => `${window.location.origin}/verification-complete`, []);
   const verificationUrl = customer?.hostedKycLink || customer?.kycLink;
@@ -378,12 +376,6 @@ export default function App() {
    *
    * Only three states are worth interrupting someone for:
    *
-   *   kyc_incomplete    they started and something is outstanding
-   *   kyc_under_review  submitted, waiting - so "verify" would be wrong
-   *   rejected/failed   it did not work and they can retry
-   *
-   * And NONE of them if their own path is already complete: a Nigerian who
-   * verified by bank check has everything Sivan asks of them, and an abandoned
    * Bridge attempt on top of that is not a problem to solve on the dashboard.
    * It still shows on /verification, where they went looking for it.
    */
@@ -423,10 +415,31 @@ export default function App() {
    * records against 0 rows on the reporter's live account. All six sources are
    * already loaded here; only two were being handed on.
    */
-  const activityFeed = useMemo(
-    () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits }),
-    [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits]
-  );
+  const activityFeed = useMemo(() => {
+    const baseFeed = buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits });
+    if (!serviceAgreements?.deals || serviceAgreements.deals.length === 0) return baseFeed;
+    const dealRows: ActivityRow[] = serviceAgreements.deals.map((d: any) => ({
+      id: d.escrowId,
+      kind: 'withdrawal',
+      label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
+      direction: d.role === 'buyer' ? 'out' : 'in',
+      amount: d.amount || '—',
+      asset: 'USDC',
+      network: ((d as any).network || 'solana').toLowerCase(),
+      providerReference: (d as any).txHash || (d as any).txSignature,
+      currency: (d.currency || 'USDC').toUpperCase(),
+      status: d.status || 'PENDING',
+      statusLabel: friendlyStatus(d.status),
+      state: (d.status === 'funded' || d.status === 'in_delivery' ? 'pending' : d.status === 'released' ? 'success' : 'failed') as any,
+      createdAt: d.createdAt || new Date().toISOString(),
+      raw: d as any
+    }));
+    const map = new Map<string, ActivityRow>();
+    for (const r of [...dealRows, ...baseFeed]) {
+      map.set(r.id, r);
+    }
+    return Array.from(map.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }, [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits, serviceAgreements]);
   /**
    * Which row the Transactions page should open on, set when a dashboard row
    * is clicked. A dashboard row is a POINTER to the real detail view, not a

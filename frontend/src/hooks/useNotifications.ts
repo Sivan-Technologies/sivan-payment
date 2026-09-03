@@ -26,6 +26,7 @@ export function useNotifications(input: {
   supplierPayments: SupplierPaymentRecord[];
   virtualAccountTransactions: VirtualAccountTransactionRecord[];
   supportTickets: SupportTicketRecord[];
+  serviceAgreements?: { linked: boolean; deals: any[] } | null;
 }) {
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() => readStorage<string[]>('sivan.readNotifications', []));
 
@@ -37,7 +38,7 @@ export function useNotifications(input: {
     const items: UserNotification[] = [];
     const push = (item: UserNotification) => items.push(item);
     const now = new Date().toISOString();
-    const { systemStatus, customer, hasBank, hasUser, user, twoFactorEnabled, onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets } = input;
+    const { systemStatus, customer, hasBank, hasUser, user, twoFactorEnabled, onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets, serviceAgreements } = input;
 
     for (const incident of systemStatus.activeIncidents ?? []) {
       push({ id: `incident:${incident.id}`, icon: incident.severity === 'critical' ? '!' : '⚠', title: incident.severity === 'critical' ? 'Service disruption' : 'Provider maintenance', message: incident.customerMessage || incident.message || 'Some payment services may be delayed.', severity: incident.severity === 'critical' ? 'urgent' : 'action', createdAt: incident.startedAt || (incident as any).createdAt || now, actionLabel: 'View support', view: 'help' });
@@ -48,6 +49,47 @@ export function useNotifications(input: {
     else if (customer?.kycStatus === 'kyc_approved' && !hasBank) push({ id: `bank:${user?.id || 'me'}:missing`, icon: '▭', title: 'Add payout bank', message: 'You are verified. Add a payout bank to start selling crypto.', severity: 'action', createdAt: customer.updatedAt || now, actionLabel: 'Add bank', view: 'banks' });
     if (customer?.kycStatus === 'kyc_approved' && !twoFactorEnabled) push({ id: `security:${user?.id || 'me'}:2fa-recommended`, icon: '⚿', title: 'Protect your Sivan account', message: 'Enable authenticator 2FA to secure transfers and payouts.', severity: 'info', createdAt: customer.updatedAt || now, actionLabel: 'Enable', view: 'settings' });
     else if (!customer && hasUser) push({ id: `kyc:${user?.id || 'me'}:not-started`, icon: '◈', title: 'Identity verification required', message: 'Complete identity verification to unlock payments.', severity: 'action', createdAt: user?.createdAt || now, actionLabel: 'Start verification', view: 'kyc' });
+
+    for (const deal of (serviceAgreements?.deals || []).slice(0, 6)) {
+      if (deal.status === 'funded' || deal.status === 'in_delivery') {
+        if (deal.role === 'seller') {
+          push({
+            id: `agreement:${deal.escrowId}:funded`,
+            icon: '🔒',
+            title: `Agreement funded: ${deal.amount || '20'} USDC`,
+            message: `Client locked ${deal.amount || '20'} USDC in vault for "${deal.title || 'Work Deliverable'}". Delivery active.`,
+            severity: 'action',
+            createdAt: deal.createdAt || now,
+            actionLabel: 'View details',
+            view: 'history'
+          });
+        } else {
+          push({
+            id: `agreement:${deal.escrowId}:funded-buyer`,
+            icon: '🔒',
+            title: `Agreement vault active: ${deal.amount || '20'} USDC`,
+            message: `${deal.title || 'Service Agreement'} is active. ${deal.amount || '20'} USDC held in Solana vault.`,
+            severity: 'info',
+            createdAt: deal.createdAt || now,
+            actionLabel: 'Track',
+            view: 'history'
+          });
+        }
+      } else if (deal.status === 'delivered') {
+        push({
+          id: `agreement:${deal.escrowId}:delivered`,
+          icon: '✓',
+          title: `Milestone submitted: ${deal.amount || '20'} USDC`,
+          message: deal.role === 'buyer'
+            ? `Seller submitted delivery for "${deal.title}". Review and release payout.`
+            : `You submitted delivery for "${deal.title}". Awaiting client release.`,
+          severity: deal.role === 'buyer' ? 'action' : 'info',
+          createdAt: deal.createdAt || now,
+          actionLabel: 'Open agreement',
+          view: 'history'
+        });
+      }
+    }
 
     for (const order of onrampOrders.slice(0, 5)) {
       if (order.status === 'awaiting_payment') push({ id: `onramp:${order.id}:awaiting`, icon: '↙', title: 'Buy order awaiting payment', message: `Send ${order.amount} ${order.sourceCurrency.toUpperCase()} using the exact reference.`, severity: 'action', createdAt: order.updatedAt || order.createdAt, actionLabel: 'View', view: 'history' });
