@@ -766,6 +766,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/ngn/,
     /^\/api\/support\/tickets/,
     /^\/api\/users\/me\/identity/,
+    /^\/api\/users\/me\/service-agreements/,
     /**
      * Setting or changing the withdrawal PIN. This is the route that
      * establishes the secret every chat withdrawal is later checked against,

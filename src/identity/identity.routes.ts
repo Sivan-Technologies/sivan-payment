@@ -24,6 +24,7 @@ import {
   unlinkTelegramIdentity,
   unlinkWhatsappIdentity,
 } from './identity.service.js';
+import { verifyUserJwt } from '../auth/jwt.js';
 import {
   hasWithdrawalPin,
   setWithdrawalPin,
@@ -34,8 +35,17 @@ import {
   evaluatePinRequirement,
 } from './withdrawal-pin.service.js';
 
-function getAuthUserId(request: any) {
-  return request.authUser?.sub as string | undefined;
+function getAuthUserId(request: any): string | undefined {
+  if (request.authUser?.sub) return request.authUser.sub;
+  const header = request.headers?.authorization;
+  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+  if (token) {
+    try {
+      const payload = verifyUserJwt(token);
+      return payload.sub;
+    } catch {}
+  }
+  return undefined;
 }
 
 /**
