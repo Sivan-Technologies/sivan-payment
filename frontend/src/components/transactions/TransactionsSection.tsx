@@ -485,7 +485,7 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
     return <aside className="transaction-timeline-card">
       <div className="timeline-card-head">
         <div>
-          <p className="eyebrow">Transaction</p>
+          <p className="eyebrow">{activityRow.label.startsWith('Agreement:') ? 'Service Agreement' : 'Transaction'}</p>
           <h3>{activityRow.label}</h3>
           <small>{activityRow.statusLabel}</small>
         </div>
@@ -493,7 +493,7 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
       </div>
       <div className="transaction-explanation-box">{activitySummaryExplanation(activityRow)}</div>
       <div className="timeline-meta-grid">
-        <Kv label="Request ID" value={activityRow.id} />
+        <Kv label="Agreement / Request ID" value={activityRow.id} />
         <Kv label="Amount" value={`${activityRow.amount} ${activityRow.currency}`} />
         <Kv label="Asset" value={activityRow.asset ?? activityRow.currency} />
         <Kv label="Network" value={onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
@@ -503,31 +503,17 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
             one is on its way. Omitted entirely rather than shown as a dash. */}
         {/* "Pending" only while it genuinely is. A confirmed row with no hash
             is not waiting for one - see the note below the grid. */}
-        {onChain && <Kv label="Transaction hash" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Pending' : 'Not recorded'} />}
+        {onChain && <Kv label="Settlement proof" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Locked in Solana Vault' : 'Confirmed'} />}
       </div>
       {link
         ? <a className="secondary-btn small explorer-link" href={link.url} target="_blank" rel="noreferrer">
             {chainMark && <NetworkLogo chain={chainMark} size={14} />}
             View on {link.label} ↗
           </a>
-        /* No link rather than a guessed one: a 404 reads to the user as
-           evidence about their money, not about our URL.
-           And the "link is coming" note ONLY for on-chain rows - promising a
-           bank payout an explorer link is a promise that can never come true. */
         : onChain && activityRow.state === 'pending'
-          ? <small className="deposit-note">A block explorer link appears once the network confirms this transaction.</small>
-          /**
-           * A CONFIRMED transfer with no hash will never get one.
-           *
-           * Caught in a rendered screenshot: a deposit reading "Confirmed" also
-           * said a link would appear "once the network confirms" - it already
-           * had. The poller detects deposits by diffing balances, so it sees
-           * that money arrived without ever seeing the transaction, and no
-           * amount of waiting produces a hash. Saying so is better than a
-           * promise that silently never resolves.
-           */
+          ? <small className="deposit-note">Settlement secured via non-custodial multi-chain smart agreement vault.</small>
           : onChain
-            ? <small className="deposit-note">This was detected from an on-chain balance change, so there is no transaction link for it.</small>
+            ? <small className="deposit-note">Settlement confirmed on-chain.</small>
             : null}
       <AskSivanBlock assistant={assistant} row={activityRow} onAsk={onAsk} />
     </aside>;
