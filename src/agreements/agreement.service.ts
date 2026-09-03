@@ -19,6 +19,7 @@ import { db } from '../database/json-database.js';
 import { id as generateId, nowIso } from '../shared/id.js';
 import { parseDeliveryDeadline } from './deadline-parser.js';
 import { badRequest, notFound } from '../shared/errors.js';
+import { createBalanceLedgerEntry } from '../balances/balance.service.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain } from '../database/types.js';
 
 // ─── Input shapes ────────────────────────────────────────────────────────────
@@ -152,6 +153,25 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
   };
 
   await db.updateServiceAgreement(updated);
+
+  try {
+    await createBalanceLedgerEntry(
+      {
+        userId: existing.buyerUserId,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        amount: String(existing.amountUsdc),
+        kind: 'hold',
+        status: 'held',
+        sourceType: 'service_agreement',
+        sourceId: existing.id,
+        description: `Hold ${existing.amountUsdc} ${(existing.currency || 'USDC').toUpperCase()} locked into Service Agreement (${existing.title})`
+      },
+      { actorType: 'user', actorId: existing.buyerUserId }
+    );
+  } catch (err) {
+    console.warn('[agreement.fund] Ledger hold note:', err);
+  }
+
   return updated;
 }
 
@@ -213,6 +233,41 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
     updatedAt: now,
   };
   await db.updateServiceAgreement(updated);
+
+  try {
+    // 1. Debit hold from buyer
+    await createBalanceLedgerEntry(
+      {
+        userId: existing.buyerUserId,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        amount: String(existing.amountUsdc),
+        kind: 'debit_transfer',
+        status: 'completed',
+        sourceType: 'service_agreement',
+        sourceId: existing.id,
+        description: `Debit ${existing.amountUsdc} ${(existing.currency || 'USDC').toUpperCase()} released for Service Agreement (${existing.title})`
+      },
+      { actorType: 'system', actorId: 'agreement_release' }
+    );
+
+    // 2. Credit payout to seller
+    await createBalanceLedgerEntry(
+      {
+        userId: existing.sellerUserId,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        amount: String(existing.amountUsdc),
+        kind: 'credit_available',
+        status: 'available',
+        sourceType: 'service_agreement',
+        sourceId: existing.id,
+        description: `Contractor payout of ${existing.amountUsdc} ${(existing.currency || 'USDC').toUpperCase()} from Service Agreement (${existing.title})`
+      },
+      { actorType: 'system', actorId: 'agreement_release' }
+    );
+  } catch (err) {
+    console.warn('[agreement.release] Ledger release note:', err);
+  }
+
   return updated;
 }
 
@@ -234,6 +289,27 @@ export async function cancelAgreement(agreementId: string): Promise<ServiceAgree
     updatedAt: nowIso(),
   };
   await db.updateServiceAgreement(updated);
+
+  if (existing.status === 'funded' || existing.status === 'in_delivery' || existing.status === 'delivered') {
+    try {
+      await createBalanceLedgerEntry(
+        {
+          userId: existing.buyerUserId,
+          asset: ((existing.currency || 'usdc').toLowerCase() as any),
+          amount: String(existing.amountUsdc),
+          kind: 'hold_release',
+          status: 'available',
+          sourceType: 'service_agreement',
+          sourceId: existing.id,
+          description: `Release hold for cancelled Service Agreement (${existing.title})`
+        },
+        { actorType: 'user', actorId: existing.buyerUserId }
+      );
+    } catch (err) {
+      console.warn('[agreement.cancel] Ledger hold release note:', err);
+    }
+  }
+
   return updated;
 }
 
