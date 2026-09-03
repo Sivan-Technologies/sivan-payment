@@ -5,6 +5,7 @@ import { ActivityRowItem } from '../activity/ActivityRowItem';
 import { explorerLink, networkLabel, shortHash } from '../../blockExplorer';
 import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
 import { useAskSivan, AssistantThread, followUpsFor, MAX_SESSION_MESSAGES, MAX_DAILY_MESSAGES, type AssistantContext } from '../support/askSivan';
+import { ConfirmModal } from '../ConfirmModal';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
@@ -416,6 +417,7 @@ function ServiceAgreementActionBox({
   onRefresh?: () => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -458,9 +460,9 @@ function ServiceAgreementActionBox({
     }
   };
 
-  const handleCancel = async () => {
+  const executeCancel = async () => {
     if (!api || !agreementId) return;
-    if (!window.confirm('Are you sure you want to cancel this agreement? Locked funds will return to your spendable balance.')) return;
+    setCancelModalOpen(false);
     setLoading(true);
     setActionError(null);
     try {
@@ -527,7 +529,7 @@ function ServiceAgreementActionBox({
             <button className="primary-btn small" onClick={handleRelease} disabled={loading} style={{ flex: 2 }}>
               {loading ? 'Releasing...' : '✓ Approve & Release Funds'}
             </button>
-            <button className="ghost-btn small" onClick={handleCancel} disabled={loading} style={{ flex: 1, color: '#f87171' }}>
+            <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ flex: 1, color: '#f87171' }}>
               ✕ Cancel
             </button>
           </div>
@@ -545,6 +547,17 @@ function ServiceAgreementActionBox({
           ✕ Agreement was cancelled and held funds returned to spendable balance.
         </p>
       )}
+
+      <ConfirmModal
+        open={cancelModalOpen}
+        title="Cancel Service Agreement"
+        description="Are you sure you want to cancel this agreement? Locked funds will return immediately to your spendable balance."
+        confirmLabel="Yes, Cancel Agreement"
+        isDestructive
+        loading={loading}
+        onConfirm={executeCancel}
+        onCancel={() => setCancelModalOpen(false)}
+      />
     </div>
   );
 }

@@ -24,6 +24,8 @@ async function main() {
     deadlineDays: 7,
     fundedAt: new Date().toISOString(),
     deliveryDueAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    deliveredAt: null,
+    releasedAt: null,
     reminder6hSent: false,
     overdueNoticeSent: false,
     createdAt: new Date().toISOString(),

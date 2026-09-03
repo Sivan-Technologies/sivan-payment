@@ -22,6 +22,7 @@ async function testWalletGenerationEngine() {
   const solanaA = await provider.createWallet({
     userId: userA,
     chain: 'solana',
+    idempotencyKey: `idem_sol_${userA}`,
   });
   console.log('  -> Solana Address A:', solanaA.address);
   const solPubKeyA = new PublicKey(solanaA.address);
@@ -32,6 +33,7 @@ async function testWalletGenerationEngine() {
   const evmA = await provider.createWallet({
     userId: userA,
     chain: 'base',
+    idempotencyKey: `idem_evm_${userA}`,
   });
   console.log('  -> EVM Address A (Base/Celo/BSC):', evmA.address);
   const isEvmValidA = isEvmAddress(evmA.address);
@@ -49,6 +51,7 @@ async function testWalletGenerationEngine() {
   const solanaB = await provider.createWallet({
     userId: userB,
     chain: 'solana',
+    idempotencyKey: `idem_sol_${userB}`,
   });
   console.log('  -> Solana Address B:', solanaB.address);
 
@@ -56,6 +59,7 @@ async function testWalletGenerationEngine() {
   const evmB = await provider.createWallet({
     userId: userB,
     chain: 'base',
+    idempotencyKey: `idem_evm_${userB}`,
   });
   console.log('  -> EVM Address B:', evmB.address);
 

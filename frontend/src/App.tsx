@@ -21,6 +21,7 @@ import { usePaymentDataLoader } from './hooks/usePaymentData';
 import { useTheme } from './hooks/useTheme';
 import { ThemeToggle } from './components/ThemeToggle';
 import { PinPadModal } from './components/tma/PinPadModal';
+import { ConfirmModal } from './components/ConfirmModal';
 
 /**
  * Server-enforced gap between OTP emails, mirrored here so the countdown tells
@@ -107,6 +108,17 @@ export default function App() {
    */
   const [telegramPairingCode, setTelegramPairingCode] = useState('');
   const [telegramPairingExpiresAt, setTelegramPairingExpiresAt] = useState('');
+  const [unlinkModal, setUnlinkModal] = useState<{
+    open: boolean;
+    channel: 'whatsapp' | 'telegram';
+    title: string;
+    description: string;
+  }>({
+    open: false,
+    channel: 'whatsapp',
+    title: '',
+    description: ''
+  });
 
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: [], sourceNetworks: [], supplierPayoutsEnabled: true });
@@ -2353,20 +2365,13 @@ export default function App() {
     }
   }
 
-  async function handleUnlinkWhatsapp() {
-    setLoading(true);
-    try {
-      if (!window.confirm('Unlink this WhatsApp / Service Agreement identity from your Sivan web account?')) return;
-      await api('/api/users/me/identity/unlink-whatsapp', { method: 'POST', body: '{}' });
-      setPairingCode('');
-      setPairingExpiresAt('');
-      await loadUserData();
-      notify('WhatsApp account unlinked.');
-    } catch (error) {
-      notify((error as Error).message, 'error');
-    } finally {
-      setLoading(false);
-    }
+  function handleUnlinkWhatsapp() {
+    setUnlinkModal({
+      open: true,
+      channel: 'whatsapp',
+      title: 'Unlink WhatsApp Identity',
+      description: 'Are you sure you want to unlink your WhatsApp / Service Agreement identity from your Sivan web account?'
+    });
   }
 
   /**
@@ -2411,15 +2416,32 @@ export default function App() {
     }
   }
 
-  async function handleUnlinkTelegram() {
+  function handleUnlinkTelegram() {
+    setUnlinkModal({
+      open: true,
+      channel: 'telegram',
+      title: 'Unlink Telegram Identity',
+      description: 'Are you sure you want to unlink this Telegram account from your Sivan web account?'
+    });
+  }
+
+  async function executeUnlink() {
+    const channel = unlinkModal.channel;
+    setUnlinkModal((m) => ({ ...m, open: false }));
     setLoading(true);
     try {
-      if (!window.confirm('Unlink this Telegram account from your Sivan web account?')) return;
-      await api('/api/users/me/identity/unlink-telegram', { method: 'POST', body: '{}' });
-      setTelegramPairingCode('');
-      setTelegramPairingExpiresAt('');
+      if (channel === 'whatsapp') {
+        await api('/api/users/me/identity/unlink-whatsapp', { method: 'POST', body: '{}' });
+        setPairingCode('');
+        setPairingExpiresAt('');
+        notify('WhatsApp account unlinked.');
+      } else {
+        await api('/api/users/me/identity/unlink-telegram', { method: 'POST', body: '{}' });
+        setTelegramPairingCode('');
+        setTelegramPairingExpiresAt('');
+        notify('Telegram account unlinked.');
+      }
       await loadUserData();
-      notify('Telegram account unlinked.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -2934,6 +2956,17 @@ export default function App() {
         requestedPath={requestedVerificationPath}
         dateOfBirth={user?.dateOfBirth}
         onDateOfBirthChange={handleDateOfBirthChange}
+      />
+
+      <ConfirmModal
+        open={unlinkModal.open}
+        title={unlinkModal.title}
+        description={unlinkModal.description}
+        confirmLabel="Unlink Identity"
+        isDestructive
+        loading={loading}
+        onConfirm={executeUnlink}
+        onCancel={() => setUnlinkModal((m) => ({ ...m, open: false }))}
       />
     </div>
   );

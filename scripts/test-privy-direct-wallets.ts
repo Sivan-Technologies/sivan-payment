@@ -14,6 +14,7 @@ async function main() {
   const solanaWallet = await provider.createWallet({
     userId: testUserId,
     chain: 'solana',
+    idempotencyKey: `idem_sol_${testUserId}`,
   });
   console.log('Solana Wallet Result:');
   console.log('  Provider Wallet ID:', solanaWallet.providerWalletId);
@@ -30,6 +31,7 @@ async function main() {
   const evmWallet = await provider.createWallet({
     userId: testUserId,
     chain: 'base',
+    idempotencyKey: `idem_evm_${testUserId}`,
   });
   console.log('EVM Wallet Result:');
   console.log('  Provider Wallet ID:', evmWallet.providerWalletId);
