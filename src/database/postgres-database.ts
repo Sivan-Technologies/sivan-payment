@@ -2212,6 +2212,19 @@ export class PostgresDatabase {
     }
   }
 
+  async listServiceAgreementsByUserId(userId: string): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT * FROM payments_service_agreements WHERE buyer_user_id=$1 OR seller_user_id=$1 ORDER BY created_at DESC',
+        [userId]
+      );
+      return result.rows.map(mapServiceAgreement);
+    } finally {
+      client.release();
+    }
+  }
+
   async listActiveAgreementsForDeadlineSweep(limit = 100): Promise<ServiceAgreementRecord[]> {
     const client = await this.pool.connect();
     try {

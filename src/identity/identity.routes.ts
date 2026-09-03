@@ -149,36 +149,64 @@ export async function identityRoutes(app: FastifyInstance) {
   app.get('/api/users/me/service-agreements', async (request) => {
     const userId = getAuthUserId(request);
     if (!userId) return { data: { linked: false, deals: [] } };
+
+    // 1. Fetch native Service Agreements from database for this user
+    let nativeDeals: any[] = [];
+    try {
+      const agreements = await (db as any).listServiceAgreementsByUserId(userId);
+      nativeDeals = (agreements || []).map((a: any) => ({
+        escrowId: a.id,
+        title: a.title,
+        role: a.buyerUserId === userId ? 'buyer' : 'seller',
+        amount: String(a.amountUsdc),
+        currency: a.currency || 'USDC',
+        status: (a.status || 'PENDING').toUpperCase(),
+        createdAt: a.createdAt,
+        network: a.network,
+        buyerUserId: a.buyerUserId,
+        sellerUserId: a.sellerUserId
+      }));
+    } catch (e) {
+      console.warn('[Service Agreements] Native lookup note:', e);
+    }
+
+    // 2. Fetch external Telegram / WhatsApp linked deals if linked
     const status = await getIdentityStatus(userId);
     const whatsappNumber = status?.link?.whatsappNumber;
     const isLinked = Boolean(whatsappNumber || status?.channels?.telegram?.linked);
 
-    if (!isLinked) {
-      return { data: { linked: false, deals: [] } };
-    }
+    let externalDeals: any[] = [];
+    if (isLinked) {
+      const escrowAgentUrl = env.ESCROW_AGENT_URL || 'http://127.0.0.1:4000';
+      const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
 
-    const escrowAgentUrl = env.ESCROW_AGENT_URL || 'http://127.0.0.1:4000';
-    const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
-
-    let url = `${escrowAgentUrl}/api/users/escrows?limit=50`;
-    if (whatsappNumber) {
-      url += `&actorWhatsapp=${encodeURIComponent(whatsappNumber)}`;
-    }
-
-    try {
-      const res = await fetch(url, {
-        headers: {
-          'x-core-api-key': coreSecret,
-        },
-      });
-      if (!res.ok) {
-        return { data: { linked: true, deals: [] } };
+      let url = `${escrowAgentUrl}/api/users/escrows?limit=50`;
+      if (whatsappNumber) {
+        url += `&actorWhatsapp=${encodeURIComponent(whatsappNumber)}`;
       }
-      const json: any = await res.json();
-      return { data: { linked: true, deals: json.deals || [] } };
-    } catch (err: any) {
-      return { data: { linked: true, deals: [] } };
+
+      try {
+        const res = await fetch(url, {
+          headers: {
+            'x-core-api-key': coreSecret,
+          },
+        });
+        if (res.ok) {
+          const json: any = await res.json();
+          externalDeals = json.deals || [];
+        }
+      } catch (err: any) {
+        // quiet fallback
+      }
     }
+
+    const allDeals = [...nativeDeals, ...externalDeals];
+    return {
+      data: {
+        linked: isLinked || nativeDeals.length > 0,
+        deals: allDeals
+      }
+    };
   });
 
   app.post('/api/users/me/identity/link-whatsapp/start', async (request) => {

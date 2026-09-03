@@ -1433,6 +1433,14 @@ export class JsonDatabase {
     return (data.serviceAgreements ?? []).find((a) => a.id === id) ?? null;
   }
 
+  async listServiceAgreementsByUserId(userId: string): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    const records = (data.serviceAgreements ?? []).filter(
+      (a) => a.buyerUserId === userId || a.sellerUserId === userId
+    );
+    return records.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+
   /**
    * Returns agreements with status 'funded' or 'in_delivery' that have a
    * delivery_due_at set. Used exclusively by the deadline sweeper.
