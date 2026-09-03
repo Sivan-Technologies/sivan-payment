@@ -121,18 +121,23 @@ export class MockWalletProvider implements WalletProvider {
         : isSolana
           ? '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
           : '0x1111111111111111111111111111111111111111';
-      wallet = {
+      const createdWallet: ProviderWallet = {
         providerWalletId,
+        provider: 'mock',
         chain,
         address,
         status: 'active',
+        custodyModel: this.custodyModel,
+        requiresUserSignature: true,
         balances: [
           { asset: 'usdc', chain, amount: '1000.00' },
           { asset: 'usdt', chain, amount: '1000.00' },
         ],
         rawProviderPayload: { providerWalletId, chain },
+        createdAt: new Date().toISOString(),
       };
-      this.wallets.set(providerWalletId, wallet);
+      this.wallets.set(providerWalletId, createdWallet);
+      return createdWallet;
     }
     return wallet;
   }
