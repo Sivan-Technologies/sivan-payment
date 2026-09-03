@@ -2,7 +2,11 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import * as Sentry from '@sentry/react';
 import App from './App';
+import { initWebMcp } from './webmcp';
 import './styles.css';
+
+// Initialize WebMCP tools on window and document.modelContext
+initWebMcp();
 // Must come AFTER styles.css: the dark rules are same-specificity overrides
 // scoped to [data-theme="dark"], so they win on source order.
 import './theme-dark.css';
