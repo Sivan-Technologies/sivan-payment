@@ -247,26 +247,8 @@ export function ReceiveView({
    * name-matched a NUBAN is verified by that route and must keep working
    * exactly as before.
    */
-  if (!isVerified) {
-    return (
-      <section className="app-page receive-page">
-        <PageHead onRefresh={onRefresh} />
-        <article className="receive-panel">
-          <div className="receive-empty">
-            <h3>Verify your identity first</h3>
-            <p className="muted">
-              Deposit addresses are issued after verification. This protects your funds and is required by our regulated partners.
-            </p>
-            {/* Adding a name-matched payout account is one of the two ways to
-                clear this, so the route stays offered here. */}
-            {!hasPayoutAccount && onAddBank && (
-              <button className="secondary-btn" onClick={onAddBank}>Add payout account →</button>
-            )}
-          </div>
-        </article>
-      </section>
-    );
-  }
+  // Level 0 users can view their multi-chain deposit addresses immediately.
+  // Bank verification is requested when initiating a fiat withdrawal or off-ramp.
 
   if (!availableChains.length) {
     return (
