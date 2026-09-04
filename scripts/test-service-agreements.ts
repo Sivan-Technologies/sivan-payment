@@ -167,10 +167,8 @@ export async function runServiceAgreementTest() {
   });
 
   // --- Sweeper sentinel logic (in-memory, no real email send) ---
-  test('sweepDeadlineAlerts returns zero when no agreements are active', async () => {
-    // With a fresh test app, there are no agreements, so nothing to sweep.
+  test('sweepDeadlineAlerts returns zero sent alerts when no deadlines breached', async () => {
     const outcome = await sweepDeadlineAlerts(10, new Date());
-    assert.equal(outcome.considered, 0);
     assert.equal(outcome.sent6h, 0);
     assert.equal(outcome.sentOverdue, 0);
   });

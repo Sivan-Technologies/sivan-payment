@@ -191,7 +191,10 @@ export async function identityRoutes(app: FastifyInstance) {
           buyerUserId: a.buyerUserId,
           sellerUserId: a.sellerUserId,
           deadlineDays: a.deadlineDays,
-          deliveryDueAt: a.deliveryDueAt
+          deliveryDueAt: a.deliveryDueAt,
+          fundingTxHash: a.fundingTxHash,
+          releaseTxHash: a.releaseTxHash,
+          vaultAddress: a.vaultAddress,
         };
       });
     } catch (e) {

@@ -592,6 +592,36 @@ function ServiceAgreementActionBox({
         </p>
       )}
 
+      {(deal?.fundingTxHash || deal?.releaseTxHash || deal?.txHash) && (
+        <div style={{ marginTop: '12px', padding: '10px 12px', background: 'rgba(56,189,248,0.06)', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.2)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginBottom: '6px' }}>
+            Blockchain Transaction Proof
+          </div>
+          {deal.fundingTxHash && (
+            <a
+              href={`https://solscan.io/tx/${deal.fundingTxHash}?cluster=devnet`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '12px', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '4px' }}
+            >
+              <span>🔒 Vault Funding Solscan Receipt</span>
+              <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
+            </a>
+          )}
+          {deal.releaseTxHash && (
+            <a
+              href={`https://solscan.io/tx/${deal.releaseTxHash}?cluster=devnet`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '12px', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}
+            >
+              <span>✓ Settlement Release Solscan Receipt</span>
+              <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
+            </a>
+          )}
+        </div>
+      )}
+
       <ConfirmModal
         open={cancelModalOpen}
         title="Cancel Service Agreement"

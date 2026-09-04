@@ -405,8 +405,12 @@ export async function getUserBalance(userId: string) {
   for (const entry of entries) {
     const row = ensure(entry.asset);
     const value = amount(entry.amount);
-    if (entry.kind === 'credit_pending') row.pending += value;
-    if (entry.kind === 'credit_available' || entry.kind === 'adjustment') { row.available += value; row.totalCredited += Math.max(value, 0); }
+    if (entry.kind === 'credit_available' || entry.kind === 'adjustment') {
+      if (entry.sourceType !== 'service_agreement') {
+        row.available += value;
+      }
+      row.totalCredited += Math.max(value, 0);
+    }
     if (entry.kind === 'hold') { row.available -= value; row.held += value; }
     if (entry.kind === 'hold_release') { row.available += value; row.held -= value; }
     if (entry.kind === 'debit_transfer') { row.held -= value; row.spent += value; }

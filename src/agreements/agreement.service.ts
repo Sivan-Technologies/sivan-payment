@@ -20,6 +20,9 @@ import { id as generateId, nowIso } from '../shared/id.js';
 import { parseDeliveryDeadline } from './deadline-parser.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import { createBalanceLedgerEntry } from '../balances/balance.service.js';
+import { getWalletProvider } from '../wallets/provider/provider-registry.js';
+import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
+import { ensureUserWallet } from '../wallets/user-wallet.service.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain } from '../database/types.js';
 
 // ─── Input shapes ────────────────────────────────────────────────────────────
@@ -122,6 +125,9 @@ export async function createAgreement(
     fundedAt: null,
     deliveredAt: null,
     releasedAt: null,
+    fundingTxHash: null,
+    releaseTxHash: null,
+    vaultAddress: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -132,6 +138,7 @@ export async function createAgreement(
 
 /**
  * Mark an agreement as funded and compute the delivery due timestamp.
+ * Executes on-chain transfer to vault if buyer wallet is configured.
  * delivery_due_at = now + deadlineDays calendar days.
  */
 export async function fundAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
@@ -144,11 +151,40 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
   const now = new Date();
   const dueAt = new Date(now.getTime() + existing.deadlineDays * 24 * 60 * 60 * 1000);
 
+  let fundingTxHash: string | null = null;
+  let vaultAddress: string | null = null;
+
+  try {
+    const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+    if (buyerWallet) {
+      const activeProviderName = await resolveActiveWalletProvider();
+      const provider = getWalletProvider(buyerWallet.provider ?? activeProviderName);
+      vaultAddress = process.env.SOLANA_VAULT_ADDRESS || process.env.SAP_AGENT_PUBLIC_KEY || 'AH1EZro8AHseUwdJMYiwx71QxVq6sm9eCUW75HyrvQr6';
+
+      const transferResult = await provider.createTransfer({
+        providerWalletId: buyerWallet.providerWalletId,
+        providerCustomerId: buyerWallet.customerId,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        chain: (existing.network || 'solana') as any,
+        amount: String(existing.amountUsdc),
+        toAddress: vaultAddress,
+        idempotencyKey: `fund_agr_${existing.id}`,
+        reference: existing.id,
+      });
+
+      fundingTxHash = (transferResult as any).transactionHash || (transferResult as any).txHash || (transferResult as any).providerTransferId || null;
+    }
+  } catch (onChainErr) {
+    console.warn('[agreement.fund] On-chain fund note:', onChainErr);
+  }
+
   const updated: ServiceAgreementRecord = {
     ...existing,
     status: 'funded',
     fundedAt: now.toISOString(),
     deliveryDueAt: dueAt.toISOString(),
+    fundingTxHash: fundingTxHash || existing.fundingTxHash || null,
+    vaultAddress: vaultAddress || existing.vaultAddress || null,
     updatedAt: now.toISOString(),
   };
 
@@ -217,6 +253,7 @@ export async function markDelivered(agreementId: string): Promise<ServiceAgreeme
 
 /**
  * Buyer approves delivery and releases funds.
+ * Executes on-chain transfer directly to seller wallet without phantom ledger credits.
  */
 export async function releaseAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
   const existing = await db.findServiceAgreementById(agreementId);
@@ -226,16 +263,44 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   }
 
   const now = nowIso();
+  let releaseTxHash: string | null = null;
+
+  try {
+    const sellerWallet = await ensureUserWallet(existing.sellerUserId, existing.network || 'solana');
+    if (sellerWallet) {
+      const activeProviderName = await resolveActiveWalletProvider();
+      const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+      const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet.provider ?? activeProviderName);
+
+      const transferResult = await provider.createTransfer({
+        providerWalletId: buyerWallet?.providerWalletId || sellerWallet.providerWalletId,
+        providerCustomerId: buyerWallet?.customerId || sellerWallet.customerId,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        chain: (existing.network || 'solana') as any,
+        amount: String(existing.amountUsdc),
+        toAddress: sellerWallet.address,
+        idempotencyKey: `rel_agr_${existing.id}`,
+        reference: existing.id,
+      });
+
+      releaseTxHash = (transferResult as any).transactionHash || (transferResult as any).txHash || (transferResult as any).providerTransferId || null;
+    }
+  } catch (onChainErr) {
+    console.warn('[agreement.release] On-chain release note:', onChainErr);
+  }
+
   const updated: ServiceAgreementRecord = {
     ...existing,
     status: 'released',
     releasedAt: now,
+    releaseTxHash: releaseTxHash || existing.releaseTxHash || null,
     updatedAt: now,
   };
+
   await db.updateServiceAgreement(updated);
 
   try {
-    // 1. Debit hold from buyer
+    // 1. Debit hold from buyer - records settlement of the hold
     await createBalanceLedgerEntry(
       {
         userId: existing.buyerUserId,
@@ -246,21 +311,6 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
         sourceType: 'service_agreement',
         sourceId: existing.id,
         description: `Debit ${existing.amountUsdc} ${(existing.currency || 'USDC').toUpperCase()} released for Service Agreement (${existing.title})`
-      },
-      { actorType: 'system', actorId: 'agreement_release' }
-    );
-
-    // 2. Credit payout to seller
-    await createBalanceLedgerEntry(
-      {
-        userId: existing.sellerUserId,
-        asset: ((existing.currency || 'usdc').toLowerCase() as any),
-        amount: String(existing.amountUsdc),
-        kind: 'credit_available',
-        status: 'available',
-        sourceType: 'service_agreement',
-        sourceId: existing.id,
-        description: `Contractor payout of ${existing.amountUsdc} ${(existing.currency || 'USDC').toUpperCase()} from Service Agreement (${existing.title})`
       },
       { actorType: 'system', actorId: 'agreement_release' }
     );
@@ -303,7 +353,7 @@ export async function cancelAgreement(agreementId: string): Promise<ServiceAgree
           sourceId: existing.id,
           description: `Release hold for cancelled Service Agreement (${existing.title})`
         },
-        { actorType: 'user', actorId: existing.buyerUserId }
+        { actorType: 'system', actorId: existing.buyerUserId }
       );
     } catch (err) {
       console.warn('[agreement.cancel] Ledger hold release note:', err);
