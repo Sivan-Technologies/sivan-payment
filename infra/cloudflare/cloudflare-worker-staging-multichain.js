@@ -132,7 +132,15 @@ export default {
       targetUpstream = UPSTREAM_PAYMENTS_API;
       targetPath = pathname;
       serviceName = "mcp-gateway";
-    } else if (pathname.startsWith("/api/escrow")) {
+    } else if (
+      pathname.startsWith("/api/escrow") ||
+      pathname.startsWith("/api/users/escrows") ||
+      pathname === "/api/users/profile" ||
+      pathname === "/api/users/payout-account" ||
+      pathname === "/api/users/link-email" ||
+      pathname === "/api/users/pair-whatsapp" ||
+      pathname.startsWith("/api/paystack")
+    ) {
       targetUpstream = UPSTREAM_ESCROW_API;
       targetPath = pathname;
       serviceName = "escrow-api";

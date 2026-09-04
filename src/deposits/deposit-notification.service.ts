@@ -135,7 +135,7 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
     const telegramLink = links.find((l) => l.paymentUserId === userId && l.status === 'linked' && l.telegramUserId);
     if (!telegramLink?.telegramUserId) return;
 
-    const prefs = await db.findUserPreferencesByUserId(userId);
+    const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && prefs.telegramNotificationsEnabled === false) return;
 
     const amount = `${deposit.amount} ${deposit.asset}`;
