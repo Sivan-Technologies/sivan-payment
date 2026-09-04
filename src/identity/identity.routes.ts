@@ -835,21 +835,38 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy fallback for /api/users/escrows
    */
   app.get('/api/users/escrows', async (request, reply) => {
-    const escrowAgentUrl = env.ESCROW_AGENT_URL || 'https://test-sivan.sivantech.online';
+    const configuredUrl = process.env.ESCROW_AGENT_URL || env.ESCROW_AGENT_URL;
+    const isLocalhost = !configuredUrl || configuredUrl.includes('127.0.0.1') || configuredUrl.includes('localhost');
+    const primaryUrl = isLocalhost ? 'https://sivan-escrow-agent-test.onrender.com' : configuredUrl;
+    const fallbackUrl = 'https://test-sivan.sivantech.online';
     const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
-    const url = `${escrowAgentUrl.replace(/\/$/, '')}/api/users/escrows${query ? `?${query}` : ''}`;
 
-    try {
+    const tryFetch = async (targetBase: string) => {
+      const url = `${targetBase.replace(/\/$/, '')}/api/users/escrows${query ? `?${query}` : ''}`;
       const res = await fetch(url, {
         headers: {
           'x-core-api-key': coreSecret,
         },
       });
+      if (!res.ok && res.status >= 500) {
+        throw new Error(`Upstream returned ${res.status}`);
+      }
+      return res;
+    };
+
+    try {
+      const res = await tryFetch(primaryUrl);
       const data = await res.json();
       return reply.code(res.status).send(data);
-    } catch (err: any) {
-      return reply.code(502).send({ error: { message: err?.message || 'Escrow API unavailable' } });
+    } catch (primaryErr: any) {
+      try {
+        const res = await tryFetch(fallbackUrl);
+        const data = await res.json();
+        return reply.code(res.status).send(data);
+      } catch (fallbackErr: any) {
+        return reply.code(502).send({ error: { message: fallbackErr?.message || primaryErr?.message || 'Escrow API unavailable' } });
+      }
     }
   });
 
@@ -857,21 +874,38 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy fallback for /api/users/profile
    */
   app.get('/api/users/profile', async (request, reply) => {
-    const escrowAgentUrl = env.ESCROW_AGENT_URL || 'https://test-sivan.sivantech.online';
+    const configuredUrl = process.env.ESCROW_AGENT_URL || env.ESCROW_AGENT_URL;
+    const isLocalhost = !configuredUrl || configuredUrl.includes('127.0.0.1') || configuredUrl.includes('localhost');
+    const primaryUrl = isLocalhost ? 'https://sivan-escrow-agent-test.onrender.com' : configuredUrl;
+    const fallbackUrl = 'https://test-sivan.sivantech.online';
     const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
-    const url = `${escrowAgentUrl.replace(/\/$/, '')}/api/users/profile${query ? `?${query}` : ''}`;
 
-    try {
+    const tryFetch = async (targetBase: string) => {
+      const url = `${targetBase.replace(/\/$/, '')}/api/users/profile${query ? `?${query}` : ''}`;
       const res = await fetch(url, {
         headers: {
           'x-core-api-key': coreSecret,
         },
       });
+      if (!res.ok && res.status >= 500) {
+        throw new Error(`Upstream returned ${res.status}`);
+      }
+      return res;
+    };
+
+    try {
+      const res = await tryFetch(primaryUrl);
       const data = await res.json();
       return reply.code(res.status).send(data);
-    } catch (err: any) {
-      return reply.code(502).send({ error: { message: err?.message || 'Escrow API unavailable' } });
+    } catch (primaryErr: any) {
+      try {
+        const res = await tryFetch(fallbackUrl);
+        const data = await res.json();
+        return reply.code(res.status).send(data);
+      } catch (fallbackErr: any) {
+        return reply.code(502).send({ error: { message: fallbackErr?.message || primaryErr?.message || 'Escrow API unavailable' } });
+      }
     }
   });
 }
