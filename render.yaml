@@ -172,6 +172,10 @@ services:
         value: https://staging.sivantech.online,https://api-staging.sivantech.online,https://sivan-payments-user-test-vuzt.onrender.com,https://sivan-payments-user-test.onrender.com,https://sivan-payments-user-test.vercel.app,http://localhost:5173
       - key: CUSTOMER_APP_URL
         value: https://staging.sivantech.online
+      - key: ESCROW_AGENT_URL
+        value: https://sivan-escrow-agent-test.onrender.com
+      - key: CORE_API_BASE_URL
+        value: https://api-staging.sivantech.online
       - key: TELEGRAM_MINIAPP_URL
         value: https://staging.sivantech.online/pin-pad
       - key: WEBAUTHN_RP_ID
@@ -467,6 +471,14 @@ services:
         # console. CUSTOMER_APP_URL has defaulted to it since env.ts was
         # written; the allow-list never caught up.
         value: https://app.sivantech.online,https://sivan-payments-user-live.onrender.com,https://sivan-payments-user-live.vercel.app
+      - key: CUSTOMER_APP_URL
+        value: https://app.sivantech.online
+      - key: ESCROW_AGENT_URL
+        value: https://sivan-escrow-agent-live.onrender.com
+      - key: CORE_API_BASE_URL
+        value: https://api.sivantech.online
+      - key: TELEGRAM_MINIAPP_URL
+        value: https://app.sivantech.online/pin-pad
       - key: ADMIN_API_KEY
         sync: false
       - key: USER_JWT_SECRET
