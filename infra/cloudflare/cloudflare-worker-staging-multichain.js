@@ -136,9 +136,9 @@ export default {
       targetUpstream = UPSTREAM_ESCROW_API;
       targetPath = pathname;
       serviceName = "escrow-api";
-    } else if (pathname.startsWith("/api/telegram") || pathname.startsWith("/webhooks/telegram")) {
+    } else if (pathname.startsWith("/api/telegram") || pathname.startsWith("/webhooks/telegram") || pathname === "/api/notify" || pathname.startsWith("/api/notify/telegram")) {
       targetUpstream = UPSTREAM_TELEGRAM_API;
-      targetPath = pathname.startsWith("/api/telegram") ? (pathname.replace(/^\/api\/telegram/, "") || "/") : pathname;
+      targetPath = pathname.startsWith("/api/telegram") ? (pathname.replace(/^\/api\/telegram/, "") || "/") : (pathname.startsWith("/api/notify/telegram") ? "/api/notify" : pathname);
       serviceName = "telegram-service";
     } else if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/webhooks/whatsapp") || pathname.startsWith("/webhooks/twilio") || pathname.startsWith("/webhooks/meta")) {
       targetUpstream = UPSTREAM_WHATSAPP_API;

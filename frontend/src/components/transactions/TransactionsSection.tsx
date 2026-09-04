@@ -443,6 +443,23 @@ function ServiceAgreementActionBox({
     }
   };
 
+  const handleFund = async () => {
+    if (!api || !agreementId) return;
+    setLoading(true);
+    setActionError(null);
+    try {
+      await api(`/api/agreements/${agreementId}/fund`, { method: 'POST' });
+      setActionSuccess('Agreement funded! Funds are securely locked in the vault.');
+      window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+      window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
+      onRefresh?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to fund agreement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRelease = async () => {
     if (!api || !agreementId) return;
     setLoading(true);
@@ -485,7 +502,7 @@ function ServiceAgreementActionBox({
           Your Role: {isBuyer ? 'Client / Buyer' : 'Contractor / Seller'}
         </strong>
         <span style={{ fontSize: '12px', color: '#38bdf8' }}>
-          {status === 'FUNDED' ? '🔒 Locked in Vault' : status === 'DELIVERED' ? '📦 Deliverables Submitted' : status === 'RELEASED' ? '✓ Settlement Complete' : status}
+          {status === 'FUNDED' ? '🔒 Locked in Vault' : status === 'DELIVERED' ? '📦 Deliverables Submitted' : status === 'RELEASED' ? '✓ Settlement Complete' : status === 'PENDING_PAYMENT' ? '⏳ Awaiting Funding' : status === 'PENDING_ACCEPTANCE' ? '⏳ Pending Acceptance' : status === 'CANCELLED' ? '✕ Cancelled' : status}
         </span>
       </div>
 
@@ -498,6 +515,33 @@ function ServiceAgreementActionBox({
       {actionError && (
         <div style={{ padding: '8px 12px', marginBottom: '10px', background: 'rgba(239,68,68,0.15)', border: '1px solid #ef4444', borderRadius: '6px', fontSize: '12px', color: '#f87171' }}>
           {actionError}
+        </div>
+      )}
+
+      {isBuyer && (status === 'PENDING_PAYMENT' || status === 'PENDING_ACCEPTANCE' || status === 'CREATED') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            This agreement is waiting to be funded. Lock funds in the vault to activate the milestone and allow work to begin.
+          </p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="primary-btn small" onClick={handleFund} disabled={loading} style={{ flex: 2 }}>
+              {loading ? 'Funding Vault...' : '🔒 Fund Agreement & Lock in Vault'}
+            </button>
+            <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ flex: 1, color: '#f87171' }}>
+              ✕ Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isSeller && (status === 'PENDING_PAYMENT' || status === 'PENDING_ACCEPTANCE' || status === 'CREATED') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            Agreement created. Waiting for client to fund the vault before delivery begins.
+          </p>
+          <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ width: '100%', color: '#f87171' }}>
+            ✕ Cancel Agreement
+          </button>
         </div>
       )}
 

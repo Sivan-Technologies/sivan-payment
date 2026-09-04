@@ -51,13 +51,18 @@ export function useNotifications(input: {
     else if (!customer && hasUser) push({ id: `kyc:${user?.id || 'me'}:not-started`, icon: '◈', title: 'Identity verification required', message: 'Complete identity verification to unlock payments.', severity: 'action', createdAt: user?.createdAt || now, actionLabel: 'Start verification', view: 'kyc' });
 
     for (const deal of (serviceAgreements?.deals || []).slice(0, 6)) {
+      const dealAmount = deal.amount ? `${deal.amount} ${(deal.currency || 'USDC').toUpperCase()}` : '';
+      const dealTitle = deal.title ? `"${deal.title}"` : 'Service Agreement';
+
       if (deal.status === 'funded' || deal.status === 'in_delivery') {
         if (deal.role === 'seller') {
           push({
             id: `agreement:${deal.escrowId}:funded`,
             icon: '🔒',
-            title: `Agreement funded: ${deal.amount || '20'} USDC`,
-            message: `Client locked ${deal.amount || '20'} USDC in vault for "${deal.title || 'Work Deliverable'}". Delivery active.`,
+            title: dealAmount ? `Agreement funded: ${dealAmount}` : 'Agreement funded',
+            message: dealAmount
+              ? `Client locked ${dealAmount} in vault for ${dealTitle}. Delivery active.`
+              : `Client locked funds in vault for ${dealTitle}. Delivery active.`,
             severity: 'action',
             createdAt: deal.createdAt || now,
             actionLabel: 'View details',
@@ -67,8 +72,10 @@ export function useNotifications(input: {
           push({
             id: `agreement:${deal.escrowId}:funded-buyer`,
             icon: '🔒',
-            title: `Agreement vault active: ${deal.amount || '20'} USDC`,
-            message: `${deal.title || 'Service Agreement'} is active. ${deal.amount || '20'} USDC held in Solana vault.`,
+            title: dealAmount ? `Agreement vault active: ${dealAmount}` : 'Agreement vault active',
+            message: dealAmount
+              ? `${dealTitle} is active with ${dealAmount} held in vault.`
+              : `${dealTitle} is active. Funds held securely in vault.`,
             severity: 'info',
             createdAt: deal.createdAt || now,
             actionLabel: 'Track',
@@ -79,13 +86,24 @@ export function useNotifications(input: {
         push({
           id: `agreement:${deal.escrowId}:delivered`,
           icon: '✓',
-          title: `Milestone submitted: ${deal.amount || '20'} USDC`,
+          title: dealAmount ? `Milestone submitted: ${dealAmount}` : 'Milestone submitted',
           message: deal.role === 'buyer'
-            ? `Seller submitted delivery for "${deal.title}". Review and release payout.`
-            : `You submitted delivery for "${deal.title}". Awaiting client release.`,
+            ? `Seller submitted delivery for ${dealTitle}. Review and release payout.`
+            : `You submitted delivery for ${dealTitle}. Awaiting client release.`,
           severity: deal.role === 'buyer' ? 'action' : 'info',
           createdAt: deal.createdAt || now,
           actionLabel: 'Open agreement',
+          view: 'history'
+        });
+      } else if (deal.status === 'completed') {
+        push({
+          id: `agreement:${deal.escrowId}:completed`,
+          icon: '✓',
+          title: dealAmount ? `Agreement settled: ${dealAmount}` : 'Agreement settled',
+          message: `${dealTitle} completed and settled on-chain.`,
+          severity: 'info',
+          createdAt: deal.updatedAt || deal.createdAt || now,
+          actionLabel: 'View details',
           view: 'history'
         });
       }
@@ -94,13 +112,18 @@ export function useNotifications(input: {
     for (const order of onrampOrders.slice(0, 5)) {
       if (order.status === 'awaiting_payment') push({ id: `onramp:${order.id}:awaiting`, icon: '↙', title: 'Buy order awaiting payment', message: `Send ${order.amount} ${order.sourceCurrency.toUpperCase()} using the exact reference.`, severity: 'action', createdAt: order.updatedAt || order.createdAt, actionLabel: 'View', view: 'history' });
       if (['payment_received', 'processing'].includes(order.status)) push({ id: `onramp:${order.id}:processing`, icon: '↙', title: 'Bank payment received', message: 'We are preparing your crypto delivery.', severity: 'info', createdAt: order.updatedAt || order.createdAt, actionLabel: 'Track', view: 'history' });
+      if (order.status === 'completed') push({ id: `onramp:${order.id}:completed`, icon: '✓', title: `Buy order completed: ${order.amount} ${order.sourceCurrency.toUpperCase()}`, message: `Crypto delivery of ${(order.destinationCurrency || 'USDC').toUpperCase()} completed successfully.`, severity: 'info', createdAt: order.updatedAt || order.createdAt, actionLabel: 'Track', view: 'history' });
       if (order.status === 'failed') push({ id: `onramp:${order.id}:failed`, icon: '!', title: 'Buy order failed', message: 'Open the transaction timeline or contact support.', severity: 'urgent', createdAt: order.updatedAt || order.createdAt, actionLabel: 'View', view: 'history' });
     }
     for (const withdrawal of withdrawals.slice(0, 5)) {
       if (['pending_deposit', 'deposit_received', 'payout_processing', 'requires_action'].includes(withdrawal.status)) push({ id: `withdrawal:${withdrawal.id}:${withdrawal.status}`, icon: '↗', title: withdrawal.status === 'deposit_received' ? 'Withdrawal deposit detected' : 'Withdrawal in progress', message: withdrawal.status === 'requires_action' ? 'This withdrawal needs review.' : 'Your sell transaction is moving through settlement.', severity: withdrawal.status === 'requires_action' ? 'action' : 'info', createdAt: withdrawal.updatedAt || withdrawal.createdAt, actionLabel: 'Track', view: 'history' });
+      if (withdrawal.status === 'completed') push({ id: `withdrawal:${withdrawal.id}:completed`, icon: '✓', title: `Withdrawal completed: ${withdrawal.sourceAmount || ''} ${(withdrawal.sourceCurrency || 'USDC').toUpperCase()}`, message: `Payout of ${withdrawal.destinationAmount ? `${withdrawal.destinationAmount} ` : ''}${(withdrawal.destinationCurrency || 'NGN').toUpperCase()} delivered to your bank.`, severity: 'info', createdAt: withdrawal.updatedAt || withdrawal.createdAt, actionLabel: 'Track', view: 'history' });
       if (withdrawal.status === 'failed') push({ id: `withdrawal:${withdrawal.id}:failed`, icon: '!', title: 'Withdrawal failed', message: 'Open the transaction timeline or contact support.', severity: 'urgent', createdAt: withdrawal.updatedAt || withdrawal.createdAt, actionLabel: 'View', view: 'history' });
     }
-    for (const transfer of balanceTransfers.slice(0, 5)) if (transfer.status === 'pending_review') push({ id: `balance-transfer:${transfer.transferId}:review`, icon: '⇆', title: 'Transfer held for review', message: 'Your transfer is pending compliance review.', severity: 'action', createdAt: transfer.updatedAt || transfer.createdAt, actionLabel: 'View', view: 'transfer' });
+    for (const transfer of balanceTransfers.slice(0, 5)) {
+      if (transfer.status === 'pending_review') push({ id: `balance-transfer:${transfer.transferId}:review`, icon: '⇆', title: 'Transfer held for review', message: 'Your transfer is pending compliance review.', severity: 'action', createdAt: transfer.updatedAt || transfer.createdAt, actionLabel: 'View', view: 'transfer' });
+      if (transfer.status === 'completed') push({ id: `balance-transfer:${transfer.transferId}:completed`, icon: '⇆', title: `Transfer completed: ${transfer.amount} ${transfer.asset}`, message: `Transfer to @${(transfer as any).recipientUsername || 'user'} completed.`, severity: 'info', createdAt: transfer.updatedAt || transfer.createdAt, actionLabel: 'View', view: 'transfer' });
+    }
     for (const payment of supplierPayments.slice(0, 5)) {
       if (payment.status === 'pending_review') push({ id: `supplier-payment:${payment.id}:review`, icon: '▭', title: 'Supplier payment held for review', message: 'Sivan is reviewing your supplier payout before provider release.', severity: 'action', createdAt: payment.updatedAt || payment.createdAt, actionLabel: 'View', view: 'transfer' });
       if (payment.status === 'failed') push({ id: `supplier-payment:${payment.id}:failed`, icon: '!', title: 'Supplier payment failed', message: 'Open Transfer & Pay or contact support.', severity: 'urgent', createdAt: payment.updatedAt || payment.createdAt, actionLabel: 'View', view: 'transfer' });
@@ -112,6 +135,19 @@ export function useNotifications(input: {
     for (const ticket of supportTickets.slice(0, 5)) {
       if (['open', 'in_review', 'waiting_on_user', 'waiting_on_provider'].includes(ticket.status)) push({ id: `support:${ticket.id}:${ticket.status}`, icon: '?', title: ticket.status === 'waiting_on_user' ? 'Support needs your response' : 'Support ticket active', message: `${ticket.subject || 'Your ticket'} · ${friendlyStatus(ticket.status)}`, severity: ticket.status === 'waiting_on_user' ? 'action' : 'info', createdAt: ticket.updatedAt || ticket.lastMessageAt || ticket.createdAt, actionLabel: 'Open', view: 'help' });
       if (ticket.status === 'resolved') push({ id: `support:${ticket.id}:resolved`, icon: '✓', title: 'Support ticket resolved', message: ticket.subject || 'Your ticket has been marked resolved.', severity: 'info', createdAt: ticket.updatedAt || ticket.closedAt || ticket.createdAt, actionLabel: 'View', view: 'help' });
+    }
+
+    if (hasUser && user && items.length === 0) {
+      push({
+        id: `account:${user.id}:ready`,
+        icon: '⚡',
+        title: 'Payment channels active',
+        message: 'Your account is active. Instant USDC settlement, virtual accounts, and bank off-ramps are ready.',
+        severity: 'info',
+        createdAt: user.createdAt || now,
+        actionLabel: 'Send & Pay',
+        view: 'transfer'
+      });
     }
     const rank = { urgent: 3, action: 2, info: 1 } as const;
     return items.sort((a, b) => rank[b.severity] - rank[a.severity] || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 12);
