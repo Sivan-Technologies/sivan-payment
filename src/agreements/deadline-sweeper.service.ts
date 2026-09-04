@@ -28,6 +28,7 @@
 
 import { db } from '../database/json-database.js';
 import { sendEmail, buildSivanBrandedEmail } from '../notifications/email.service.js';
+import { env } from '../config/env.js';
 
 export interface DeadlineSweepOutcome {
   considered: number;
@@ -53,7 +54,7 @@ function fmt6hWarning(agreementId: string, sellerName: string): { subject: strin
     title: '6 Hours Remaining',
     intro: `You have 6 hours remaining to submit delivery for agreement ${agreementId}. Please submit your deliverables before the deadline to avoid a dispute.`,
     ctaLabel: 'View Agreement',
-    ctaUrl: `https://app.sivantech.online/agreements/${agreementId}`,
+    ctaUrl: `${(env.CUSTOMER_APP_URL || 'https://app.sivantech.online').replace(/\/$/, '')}/agreements/${agreementId}`,
   });
   return { subject, text, html };
 }
@@ -66,6 +67,7 @@ function fmtOverdueNotice(
   buyerEmail: string | undefined
 ): Array<{ to: string; subject: string; text: string; html: string }> {
   const messages: Array<{ to: string; subject: string; text: string; html: string }> = [];
+  const appBase = (env.CUSTOMER_APP_URL || 'https://app.sivantech.online').replace(/\/$/, '');
 
   if (sellerEmail) {
     const subject = `🔴 Delivery deadline passed — Agreement ${agreementId}`;
@@ -83,7 +85,7 @@ function fmtOverdueNotice(
         title: 'Deadline Passed',
         intro: `The delivery deadline for agreement ${agreementId} has passed. The buyer can now extend the deadline or request mutual cancellation.`,
         ctaLabel: 'View Agreement',
-        ctaUrl: `https://app.sivantech.online/agreements/${agreementId}`,
+        ctaUrl: `${appBase}/agreements/${agreementId}`,
       }),
     });
   }
@@ -104,7 +106,7 @@ function fmtOverdueNotice(
         title: 'Deadline Passed',
         intro: `The delivery deadline for agreement ${agreementId} has passed. You can extend the deadline or request mutual cancellation from your dashboard.`,
         ctaLabel: 'View Agreement',
-        ctaUrl: `https://app.sivantech.online/agreements/${agreementId}`,
+        ctaUrl: `${appBase}/agreements/${agreementId}`,
       }),
     });
   }

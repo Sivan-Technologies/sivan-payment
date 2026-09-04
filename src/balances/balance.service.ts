@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { validateAddressForChain, type AddressChain } from '../wallets/address-validation.js';
+import { env } from '../config/env.js';
 
 /**
  * DUPLICATE TRANSFER DEDUP WINDOW.
@@ -1231,7 +1232,8 @@ export async function executeP2pTransfer(
     const claimId = `clm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
     const claimToken = `siv_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
     const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString();
-    const claimUrl = `https://app.sivantech.online/claim?token=${claimToken}`;
+    const appUrl = (env.CUSTOMER_APP_URL || 'https://app.sivantech.online').replace(/\/$/, '');
+    const claimUrl = `${appUrl}/claim?token=${claimToken}`;
     const amountStr = input.amount.toFixed(2);
 
     await createBalanceLedgerEntry(
