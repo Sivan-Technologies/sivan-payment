@@ -44,7 +44,7 @@ const DEFAULT_ALLOWED_HEADERS =
 const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const MAX_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 800;
-const UPSTREAM_TIMEOUT_MS = 25000;
+const UPSTREAM_TIMEOUT_MS = 60000;
 
 function isAllowedOrigin(origin) {
   if (!origin) return false;
