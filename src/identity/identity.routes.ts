@@ -164,6 +164,14 @@ export async function identityRoutes(app: FastifyInstance) {
     const user = await db.findUserById(userId);
     const userEmail = (user?.email || '').toLowerCase().trim();
     const handle = userEmail ? userEmail.split('@')[0] : '';
+    const status = await getIdentityStatus(userId);
+    const whatsappNumber = status?.link?.whatsappNumber || status?.channels?.whatsapp?.link?.whatsappNumber || user?.whatsappNumber || (user as any)?.phone;
+    const telegramLink = status?.channels?.telegram?.link;
+    const telegramUserId = telegramLink?.telegramUserId || user?.telegramUserId;
+    const telegramUsername = telegramLink?.telegramUsername || user?.telegramUsername;
+    const cleanTgUsername = telegramUsername ? telegramUsername.replace(/^@/, '') : '';
+    const linkedEscrowUserId = telegramLink?.escrowUserId || status?.link?.escrowUserId;
+
     const aliases = [
       userId,
       user?.id,
@@ -171,11 +179,16 @@ export async function identityRoutes(app: FastifyInstance) {
       userEmail,
       user?.fullName,
       user?.username,
+      whatsappNumber,
+      telegramUserId ? String(telegramUserId) : '',
+      telegramUsername,
+      cleanTgUsername ? `@${cleanTgUsername}` : '',
+      cleanTgUsername,
       handle ? `@${handle}` : '',
       handle
     ].filter(Boolean) as string[];
 
-    // 1. Fetch native Service Agreements from database for this user (dual-lookup by ID, email, handle)
+    // 1. Fetch native Service Agreements from database for this user (dual-lookup by ID, email, handle, telegram)
     let nativeDeals: any[] = [];
     try {
       const agreements = await (db as any).listServiceAgreementsByUserId(aliases);
@@ -207,12 +220,8 @@ export async function identityRoutes(app: FastifyInstance) {
       console.warn('[Service Agreements] Native lookup note:', e);
     }
 
-    // 2. Fetch external Telegram / WhatsApp linked deals if linked
-    const status = await getIdentityStatus(userId);
-    const whatsappNumber = status?.link?.whatsappNumber;
-    const telegramLink = status?.channels?.telegram?.link;
-    const linkedEscrowUserId = telegramLink?.escrowUserId || status?.link?.escrowUserId;
-    const isLinked = Boolean(whatsappNumber || status?.channels?.telegram?.linked || linkedEscrowUserId);
+    // 2. Fetch external Telegram / WhatsApp linked deals if linked or available
+    const isLinked = Boolean(whatsappNumber || telegramUserId || status?.channels?.telegram?.linked || linkedEscrowUserId || userEmail);
 
     let externalDeals: any[] = [];
     if (isLinked) {
@@ -222,8 +231,21 @@ export async function identityRoutes(app: FastifyInstance) {
       const params: string[] = ['limit=50'];
       if (linkedEscrowUserId) {
         params.push(`actorUserId=${encodeURIComponent(linkedEscrowUserId)}`);
-      } else if (whatsappNumber) {
+      }
+      if (whatsappNumber) {
         params.push(`actorWhatsapp=${encodeURIComponent(whatsappNumber)}`);
+      }
+      if (telegramUserId) {
+        params.push(`actorTelegramId=${encodeURIComponent(telegramUserId)}`);
+      }
+      if (cleanTgUsername) {
+        params.push(`actorTelegramUsername=${encodeURIComponent(cleanTgUsername)}`);
+      }
+      if (userEmail) {
+        params.push(`actorEmail=${encodeURIComponent(userEmail)}`);
+      }
+      if (!linkedEscrowUserId && !whatsappNumber && !telegramUserId && !userEmail) {
+        params.push(`actorUserId=${encodeURIComponent(userId)}`);
       }
 
       const url = `${escrowAgentUrl}/api/users/escrows?${params.join('&')}`;
@@ -233,33 +255,45 @@ export async function identityRoutes(app: FastifyInstance) {
           headers: {
             'x-core-api-key': coreSecret,
           },
-          signal: AbortSignal.timeout(2500),
+          signal: AbortSignal.timeout(3500),
         });
         if (res.ok) {
           const json: any = await res.json();
-          externalDeals = (json.deals || []).map((d: any) => ({
-            id: d.escrowId || d.id,
-            escrowId: d.escrowId || d.id,
-            title: d.title || d.description || 'Service Agreement',
-            role: d.role || (d.buyerUserId === userId ? 'buyer' : 'seller'),
-            amount: String(d.amountUsdc || d.amount || '0'),
-            amountUsdc: Number(d.amountUsdc || d.amount || 0),
-            currency: d.currency || 'USDC',
-            network: d.network || 'solana',
-            status: String(d.status || 'PENDING').toUpperCase(),
-            createdAt: d.createdAt || new Date().toISOString(),
-            channel: d.channel || (telegramLink ? 'telegram' : whatsappNumber ? 'whatsapp' : 'web'),
-            buyerUserId: d.buyerUserId,
-            sellerUserId: d.sellerUserId,
-            deadlineDays: d.deadlineDays,
-            deliveryDueAt: d.deliveryDueAt,
-            fundingTxHash: d.fundingTxHash,
-            releaseTxHash: d.releaseTxHash,
-            vaultAddress: d.vaultAddress,
-          }));
+          externalDeals = (json.deals || []).map((d: any) => {
+            const escrow = d.escrow || d;
+            const channel = escrow.createdByChannel === 'whatsapp_dm' || escrow.createdByChannel === 'whatsapp_group'
+              ? 'whatsapp'
+              : (escrow.createdByChannel === 'telegram' || d.channel === 'telegram' || Boolean(telegramUserId))
+              ? 'telegram'
+              : (d.channel || (telegramLink ? 'telegram' : whatsappNumber ? 'whatsapp' : 'web'));
+
+            const rawRole = d.participant?.role || d.role;
+            const isBuyer = rawRole === 'buyer' || (escrow.buyerUserId && (escrow.buyerUserId === userId || escrow.buyerUserId === linkedEscrowUserId));
+
+            return {
+              id: escrow.escrowId || escrow.id || d.escrowId || d.id,
+              escrowId: escrow.escrowId || escrow.id || d.escrowId || d.id,
+              title: escrow.purpose || escrow.title || d.title || d.description || 'Service Agreement',
+              role: isBuyer ? 'buyer' : 'seller',
+              amount: String(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || '0'),
+              amountUsdc: Number(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || 0),
+              currency: escrow.currency || d.currency || 'USDC',
+              network: escrow.network || d.network || 'solana',
+              status: String(escrow.status || d.status || 'PENDING').toUpperCase(),
+              createdAt: escrow.createdAt || d.createdAt || new Date().toISOString(),
+              channel,
+              buyerUserId: escrow.buyerUserId || d.buyerUserId,
+              sellerUserId: escrow.sellerUserId || d.sellerUserId,
+              deadlineDays: escrow.deadlineDays || d.deadlineDays,
+              deliveryDueAt: escrow.deliveryDueAt || d.deliveryDueAt,
+              fundingTxHash: escrow.fundingTxHash || d.fundingTxHash,
+              releaseTxHash: escrow.releaseTxHash || d.releaseTxHash,
+              vaultAddress: escrow.vaultAddress || d.vaultAddress,
+            };
+          });
         }
       } catch (err: any) {
-        // quiet fallback
+        console.warn('[Service Agreements] External lookup note:', err?.message || err);
       }
     }
 
