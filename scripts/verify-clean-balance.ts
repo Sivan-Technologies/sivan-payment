@@ -9,7 +9,7 @@ async function verifyCleanBalance() {
   for (const user of users) {
     try {
       const unified = await getUnifiedBalance(user.id);
-      console.log(`\nUser: ${user.fullName || user.email} (${user.id})`);
+      console.log(`\nUser: ${(user as any).fullName || user.email || user.id} (${user.id})`);
       for (const b of unified.balances) {
         console.log(`  ${b.asset.toUpperCase()}: spendable=${b.spendable}, chain=${b.chain}, credited=${b.credited}, held=${b.held}`);
       }

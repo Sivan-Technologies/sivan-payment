@@ -17,7 +17,6 @@ async function runTests() {
     id: testBuyerId,
     email: 'buyer_test_onchain@sivantech.online',
     fullName: 'Test Buyer',
-    status: 'active',
     createdAt: now,
     updatedAt: now,
   }).catch(() => null);
@@ -26,7 +25,6 @@ async function runTests() {
     id: testSellerId,
     email: 'seller_test_onchain@sivantech.online',
     fullName: 'Test Seller',
-    status: 'active',
     createdAt: now,
     updatedAt: now,
   }).catch(() => null);
