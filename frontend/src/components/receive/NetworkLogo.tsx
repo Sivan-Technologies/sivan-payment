@@ -15,25 +15,15 @@
  * confusion this screen exists to prevent.
  */
 
-export type LogoChain = 'solana' | 'base' | 'ethereum';
+export type LogoChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc';
 
 /**
  * Is there a real mark for this chain string?
- *
- * Returns undefined rather than a fallback, and callers render NOTHING when it
- * does. That is the whole point: `destinationChain` on an on-ramp order allows
- * polygon, arbitrum and avalanche_c_chain, and this file draws marks for three
- * networks. A generic placeholder blob in the other cases would be worse than
- * an absent logo - on a screen where the user is deciding which chain their
- * money is on, an unrecognisable circle next to "Polygon" invites them to read
- * it as a network they know.
- *
- * The text label always renders regardless, so nothing is lost when this
- * returns undefined; only the icon is omitted.
  */
 export function logoChainFor(chain?: string): LogoChain | undefined {
   const key = String(chain ?? '').trim().toLowerCase();
-  return key === 'solana' || key === 'base' || key === 'ethereum' ? key : undefined;
+  const valid: LogoChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'polygon', 'arbitrum', 'bsc'];
+  return valid.includes(key as LogoChain) ? (key as LogoChain) : undefined;
 }
 
 export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: number }) {
@@ -41,8 +31,6 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
     width: size,
     height: size,
     viewBox: '0 0 32 32',
-    // Decorative: the network name is always adjacent in text, so announcing
-    // the logo too would make a screen reader say "Base Base".
     'aria-hidden': true as const,
     focusable: 'false' as const,
   };
@@ -67,29 +55,61 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
   }
 
   if (chain === 'base') {
-    /**
-     * THE BASE MARK IS A BLUE DISC WITH A NOTCH CUT OUT OF THE LEFT EDGE.
-     *
-     * The previous version drew a #0052FF circle and then laid a WHITE shape
-     * over most of it, leaving a blue bar across the middle. Rendered at 13px
-     * in a transaction row that reads unmistakably as a "no entry" sign - a
-     * white disc with a bar through it. A prohibition symbol beside a completed
-     * payment is about the worst accidental meaning available on this screen,
-     * and at the 20px Receive size it was already ambiguous.
-     *
-     * Caught by zooming a real render; every unit assertion passed throughout,
-     * because they check that AN svg exists, not what it depicts.
-     *
-     * Drawn correctly here: one blue path, notch formed by the geometry itself
-     * rather than by a white overlay, so the background shows through the cut
-     * exactly as the official mark does on any colour.
-     */
     return (
       <svg {...common}>
         <path
           fill="#0052FF"
           d="M16 32c8.837 0 16-7.163 16-16S24.837 0 16 0C7.616 0 .744 6.451.052 14.657h21.16v2.686H.052C.744 25.549 7.616 32 16 32z"
         />
+      </svg>
+    );
+  }
+
+  if (chain === 'stellar') {
+    return (
+      <svg {...common} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#00BFFF" />
+        <path
+          fill="#fff"
+          d="M23.5 10.2L8.5 15.8c-.8.3-.8 1.4 0 1.7l3.6 1.4 1.4 3.6c.3.8 1.4.8 1.7 0l5.6-15c.3-.8-.5-1.6-1.3-1.3zm-8.8 6.5l4.8-4.8-3.4 5.9-1.4-1.1z"
+        />
+      </svg>
+    );
+  }
+
+  if (chain === 'celo') {
+    return (
+      <svg {...common} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#35D07F" />
+        <circle cx="13" cy="13" r="6" fill="none" stroke="#fff" strokeWidth="2.5" />
+        <circle cx="19" cy="19" r="6" fill="none" stroke="#FCFF52" strokeWidth="2.5" />
+      </svg>
+    );
+  }
+
+  if (chain === 'polygon') {
+    return (
+      <svg {...common} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#8247E5" />
+        <path fill="#fff" d="M16 8l6 3.5v7L16 22l-6-3.5v-7L16 8zm0 3.2L12.5 13v4l3.5 1.8 3.5-1.8v-4L16 11.2z" />
+      </svg>
+    );
+  }
+
+  if (chain === 'arbitrum') {
+    return (
+      <svg {...common} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#28A0F0" />
+        <path fill="#fff" d="M16 7l8 14h-4.2l-3.8-6.6-3.8 6.6H8l8-14zm0 5.2L13 18h6l-3-5.8z" />
+      </svg>
+    );
+  }
+
+  if (chain === 'bsc') {
+    return (
+      <svg {...common} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#F0B90B" />
+        <path fill="#fff" d="M16 8l3 3-4.5 4.5 4.5 4.5-3 3-7.5-7.5L16 8zm4.5 4.5l3 3-3 3-3-3 3-3z" />
       </svg>
     );
   }

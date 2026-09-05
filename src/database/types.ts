@@ -3,7 +3,7 @@ import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountReq
 export type Currency = 'usd' | 'gbp' | 'eur';
 export type SupplierPayoutCurrency = Currency | 'mxn' | 'brl';
 export type SourceCurrency = 'usdc' | 'usdt';
-export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism' | 'avalanche_c_chain';
+export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
 export type ExternalAccountStatus = 'created' | 'active' | 'verification_pending' | 'verified' | 'verification_failed' | 'deactivated';
 export type OnrampStatus = 'created' | 'awaiting_payment' | 'payment_received' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'requires_action';
