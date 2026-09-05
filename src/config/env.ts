@@ -33,7 +33,7 @@ const envSchema = z.object({
   CUSTOMER_APP_URL: z.string().url().optional().default('https://app.sivantech.online'),
   CORS_ORIGIN: z.string().default('*'),
   LOG_LEVEL: z.string().default('info'),
-  ESCROW_AGENT_URL: z.string().optional().default(process.env.ESCROW_AGENT_URL || (process.env.RENDER ? 'https://sivan-escrow-agent-test.onrender.com' : 'http://127.0.0.1:4000')),
+  ESCROW_AGENT_URL: z.string().optional().default(process.env.ESCROW_AGENT_URL || (process.env.RENDER ? (process.env.APP_ENV === 'production' ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online') : 'http://127.0.0.1:4000')),
   SENTRY_DSN: z.string().optional().default(''),
   SENTRY_ENVIRONMENT: z.string().optional().default(''),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),

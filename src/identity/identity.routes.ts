@@ -847,7 +847,7 @@ export async function identityRoutes(app: FastifyInstance) {
   app.get('/api/users/escrows', async (request, reply) => {
     const configuredUrl = process.env.ESCROW_AGENT_URL || env.ESCROW_AGENT_URL;
     const isLocalhost = !configuredUrl || configuredUrl.includes('127.0.0.1') || configuredUrl.includes('localhost');
-    const primaryUrl = isLocalhost ? 'https://sivan-escrow-agent-test.onrender.com' : configuredUrl;
+    const primaryUrl = isLocalhost ? (env.APP_ENV === 'production' ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online') : configuredUrl;
     const fallbackUrl = 'https://test-sivan.sivantech.online';
     const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
@@ -886,7 +886,7 @@ export async function identityRoutes(app: FastifyInstance) {
   app.get('/api/users/profile', async (request, reply) => {
     const configuredUrl = process.env.ESCROW_AGENT_URL || env.ESCROW_AGENT_URL;
     const isLocalhost = !configuredUrl || configuredUrl.includes('127.0.0.1') || configuredUrl.includes('localhost');
-    const primaryUrl = isLocalhost ? 'https://sivan-escrow-agent-test.onrender.com' : configuredUrl;
+    const primaryUrl = isLocalhost ? (env.APP_ENV === 'production' ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online') : configuredUrl;
     const fallbackUrl = 'https://test-sivan.sivantech.online';
     const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
