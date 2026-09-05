@@ -86,9 +86,9 @@ const CHAIN_META: Record<ReceiveChain, {
   celo: {
     label: 'Celo',
     short: 'CELO',
-    addressFormat: 'Starts with 0x',
+    addressFormat: 'Starts with 0x (EVM)',
     confirmations: 'Usually 5 seconds',
-    accent: '#35D07F',
+    accent: '#FCFF52',
     note: 'Mobile-first fast EVM network with near-zero gas.',
   },
   polygon: {
@@ -528,7 +528,7 @@ export function ReceiveView({
               <p className="eyebrow">Step 2</p>
               <h3>Send {assetLabel} to this address</h3>
             </div>
-            <span className="receive-chain-pill" style={{ background: meta.accent }}>
+            <span className="receive-chain-pill" style={{ background: meta.accent, color: (activeChain === 'celo' || activeChain === 'bsc') ? '#10182b' : '#FFFFFF' }}>
               <NetworkLogo chain={activeChain} size={14} />
               {meta.label}
             </span>
