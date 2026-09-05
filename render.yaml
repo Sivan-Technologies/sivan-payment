@@ -132,17 +132,17 @@ services:
       - key: RATE_LIMIT_ENABLED
         value: "true"
       - key: RATE_LIMIT_DEFAULT_MAX_PER_MINUTE
-        value: "120"
+        value: "600"
       - key: RATE_LIMIT_ADMIN_MAX_PER_MINUTE
-        value: "300"
+        value: "600"
       - key: RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE
-        value: "300"
+        value: "600"
       - key: RATE_LIMIT_AUTH_WINDOW_MS
-        value: "900000"
+        value: "60000"
       - key: RATE_LIMIT_AUTH_START_MAX
-        value: "5"
+        value: "30"
       - key: RATE_LIMIT_AUTH_VERIFY_MAX
-        value: "20"
+        value: "60"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
@@ -445,17 +445,17 @@ services:
       - key: RATE_LIMIT_ENABLED
         value: "true"
       - key: RATE_LIMIT_DEFAULT_MAX_PER_MINUTE
-        value: "120"
+        value: "600"
       - key: RATE_LIMIT_ADMIN_MAX_PER_MINUTE
-        value: "300"
+        value: "600"
       - key: RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE
-        value: "300"
+        value: "600"
       - key: RATE_LIMIT_AUTH_WINDOW_MS
-        value: "900000"
+        value: "60000"
       - key: RATE_LIMIT_AUTH_START_MAX
-        value: "5"
+        value: "30"
       - key: RATE_LIMIT_AUTH_VERIFY_MAX
-        value: "20"
+        value: "60"
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
