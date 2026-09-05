@@ -110,10 +110,10 @@ const CHAIN_META: Record<ReceiveChain, {
   bsc: {
     label: 'BNB Chain',
     short: 'BNB',
-    addressFormat: 'Starts with 0x',
-    confirmations: 'Usually 1–3 minutes',
+    addressFormat: 'Starts with 0x (BEP-20)',
+    confirmations: 'Usually 3–5 seconds',
     accent: '#F0B90B',
-    note: 'BNB Smart Chain EVM network.',
+    note: 'BNB Smart Chain (BEP-20). Ultra-low gas fees for USDC & USDT.',
   },
 };
 
@@ -160,7 +160,7 @@ export function ReceiveView({
   onRefresh: () => void;
 }) {
   const availableChains = useMemo(() => {
-    const supported: ReceiveChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo'];
+    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
     if (!enabledNetworks || enabledNetworks.length === 0) {
       return supported;
     }
@@ -173,9 +173,8 @@ export function ReceiveView({
   /**
    * NETWORKS PRESENTED AS DISTINCT CHOICES.
    *
-   * All 5 networks (Solana, Base, Ethereum, Stellar, Celo) are presented
-   * as individual options so users know exactly which network they are
-   * depositing on without ambiguity.
+   * All 5 ultra-low-fee networks (Solana, Base, BNB Chain, Stellar, Celo)
+   * are presented as individual options so users can deposit instantly without high gas fees.
    */
   const chainFamilies = useMemo(() => {
     const families: Array<{
@@ -202,11 +201,11 @@ export function ReceiveView({
         chains: ['base'],
       },
       {
-        key: 'ethereum',
-        label: 'Ethereum',
-        note: 'Ethereum L1 network for high-value transfers. Shares 0x format.',
-        accent: CHAIN_META.ethereum.accent,
-        chains: ['ethereum'],
+        key: 'bsc',
+        label: 'BNB Chain',
+        note: 'BNB Smart Chain (BEP-20). Ultra-low fees for USDC & USDT.',
+        accent: CHAIN_META.bsc.accent,
+        chains: ['bsc'],
       },
       {
         key: 'stellar',
