@@ -171,7 +171,8 @@ export function isRetryableNetworkError(error: unknown) {
 }
 
 export function isRetryableHttpStatus(status: number) {
-  return [408, 425, 429, 500, 502, 503, 504, 520, 522, 523, 524, 530].includes(status);
+  // 429 is explicitly NOT retryable immediately: retrying on rate limit amplifies the burst
+  return [408, 425, 502, 503, 504, 520, 522, 523, 524, 530].includes(status);
 }
 
 export const fallbackCustomerTypes = [
