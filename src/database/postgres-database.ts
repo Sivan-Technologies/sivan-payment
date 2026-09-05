@@ -2163,14 +2163,15 @@ export class PostgresDatabase {
         `INSERT INTO payments_service_agreements
           (id, buyer_user_id, seller_user_id, title, description, amount_usdc, currency, network,
            status, deadline_days, delivery_due_at, reminder_6h_sent, overdue_notice_sent,
-           funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+           funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, channel, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
         [
           record.id, record.buyerUserId, record.sellerUserId, record.title, record.description,
           record.amountUsdc, record.currency, record.network, record.status, record.deadlineDays,
           record.deliveryDueAt ?? null, record.reminder6hSent, record.overdueNoticeSent,
           record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
           record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
+          record.channel || 'web',
           record.createdAt, record.updatedAt,
         ]
       );
@@ -2188,13 +2189,14 @@ export class PostgresDatabase {
            status=$2, deadline_days=$3, delivery_due_at=$4,
            reminder_6h_sent=$5, overdue_notice_sent=$6,
            funded_at=$7, delivered_at=$8, released_at=$9,
-           funding_tx_hash=$10, release_tx_hash=$11, vault_address=$12, updated_at=$13
+           funding_tx_hash=$10, release_tx_hash=$11, vault_address=$12, channel=$13, updated_at=$14
          WHERE id=$1`,
         [
           record.id, record.status, record.deadlineDays, record.deliveryDueAt ?? null,
           record.reminder6hSent, record.overdueNoticeSent,
           record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
           record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
+          record.channel || 'web',
           record.updatedAt,
         ]
       );
@@ -2425,7 +2427,8 @@ async function ensureServiceAgreementsSchema(client: pg.PoolClient) {
       ALTER TABLE payments_service_agreements
       ADD COLUMN IF NOT EXISTS funding_tx_hash TEXT,
       ADD COLUMN IF NOT EXISTS release_tx_hash TEXT,
-      ADD COLUMN IF NOT EXISTS vault_address TEXT;
+      ADD COLUMN IF NOT EXISTS vault_address TEXT,
+      ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'web';
     `);
     serviceAgreementsSchemaMigrated = true;
   } catch (err) {
