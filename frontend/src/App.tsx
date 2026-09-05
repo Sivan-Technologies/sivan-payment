@@ -953,15 +953,16 @@ export default function App() {
   }, [loadFee, loadControls, loadUserData]);
 
   /**
-   * NETWORKS NEED A TOKEN, SO DO NOT ASK FOR THEM WITHOUT ONE.
+   * NETWORKS NEED A TOKEN, AND ARE ONLY FETCHED ON BUY/WITHDRAW VIEWS.
    */
   useEffect(() => {
     if (!authToken) return;
+    if (view !== 'withdraw' && view !== 'buy') return;
     const cacheKey = `${authToken}:${ngnAsset}`;
     if (lastLoadedNgnAssetRef.current === cacheKey) return;
     lastLoadedNgnAssetRef.current = cacheKey;
     void loadNgnNetworks(ngnAsset);
-  }, [authToken, loadNgnNetworks, ngnAsset]);
+  }, [authToken, loadNgnNetworks, ngnAsset, view]);
 
   /**
    * DEFAULT THE SELL ASSET TO WHAT THE USER CAN ACTUALLY WITHDRAW.
@@ -1042,22 +1043,7 @@ export default function App() {
     if (window.location.pathname === '/signup') setAuthTab('signup');
   }, [view]);
 
-  useEffect(() => {
-    const refreshControls = () => {
-      if (document.visibilityState === 'visible') void loadControls();
-    };
-    // Avoid hammering public bootstrap endpoints on unauthenticated signup/login
-    // pages. Controls/status still refresh on focus/visibility, and authenticated
-    // app sessions get a gentle one-minute background refresh.
-    const interval = hasUser ? window.setInterval(refreshControls, 60_000) : undefined;
-    window.addEventListener('focus', refreshControls);
-    document.addEventListener('visibilitychange', refreshControls);
-    return () => {
-      if (interval) window.clearInterval(interval);
-      window.removeEventListener('focus', refreshControls);
-      document.removeEventListener('visibilitychange', refreshControls);
-    };
-  }, [hasUser, loadControls]);
+
 
   useEffect(() => {
     if (!pendingEmail || !resendAvailableAt) return;
