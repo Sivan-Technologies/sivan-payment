@@ -2454,6 +2454,7 @@ function mapServiceAgreement(row: any): ServiceAgreementRecord {
     fundingTxHash: row.funding_tx_hash ?? null,
     releaseTxHash: row.release_tx_hash ?? null,
     vaultAddress: row.vault_address ?? null,
+    channel: row.channel || 'web',
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };

@@ -683,7 +683,8 @@ function TransactionTimelinePanel({
     </aside>;
   }
   if (!transaction?.timeline && activityRow) {
-    const isAgreement = activityRow.label.startsWith('Agreement:') || Boolean((activityRow.raw as any)?.escrowId);
+    const deal = serviceAgreements?.deals?.find((d) => d.escrowId === activityRow.id || d.id === activityRow.id) || (activityRow.raw as any);
+    const isAgreement = activityRow.label.startsWith('Agreement:') || Boolean((activityRow.raw as any)?.escrowId) || Boolean(deal?.escrowId);
     const link = explorerLink({
       network: activityRow.network,
       txHash: activityRow.providerReference,
@@ -705,6 +706,20 @@ function TransactionTimelinePanel({
         <Kv label="Agreement / Request ID" value={activityRow.id} />
         <Kv label="Amount" value={`${activityRow.amount} ${activityRow.currency}`} />
         <Kv label="Asset" value={activityRow.asset ?? activityRow.currency} />
+        {isAgreement && (
+          <Kv
+            label="Origin Channel"
+            value={
+              String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'telegram'
+                ? '✈ Telegram'
+                : String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'whatsapp'
+                  ? '💬 WhatsApp'
+                  : String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'webmcp' || String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'agent'
+                    ? '✦ Sivan AI / MCP'
+                    : '🌐 Web App'
+            }
+          />
+        )}
         <Kv label="Network" value={onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
         <Kv label="When" value={new Date(activityRow.createdAt).toLocaleString()} />
         {onChain && <Kv label="Settlement proof" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Locked in Solana Vault' : 'Confirmed'} />}

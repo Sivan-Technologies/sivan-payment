@@ -37,6 +37,7 @@ export interface CreateAgreementInput {
   network: WalletChain;
   /** Optional override: bypass NL extraction and set deadline_days directly. */
   deadlineDays?: number;
+  channel?: string;
 }
 
 // ─── Countdown label ─────────────────────────────────────────────────────────
@@ -128,6 +129,7 @@ export async function createAgreement(
     fundingTxHash: null,
     releaseTxHash: null,
     vaultAddress: null,
+    channel: input.channel || 'web',
     createdAt: now,
     updatedAt: now,
   };

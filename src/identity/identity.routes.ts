@@ -200,6 +200,7 @@ export async function identityRoutes(app: FastifyInstance) {
           fundingTxHash: a.fundingTxHash,
           releaseTxHash: a.releaseTxHash,
           vaultAddress: a.vaultAddress,
+          channel: a.channel || 'web',
         };
       });
     } catch (e) {

@@ -1124,6 +1124,7 @@ export interface ServiceAgreementRecord {
   fundingTxHash?: string | null;
   releaseTxHash?: string | null;
   vaultAddress?: string | null;
+  channel?: string;
   createdAt: string;
   updatedAt: string;
 }

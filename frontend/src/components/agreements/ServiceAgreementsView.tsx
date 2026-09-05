@@ -27,6 +27,44 @@ function statusClass(status?: string) {
   return 'pending';
 }
 
+function getChannelBadge(channel?: string) {
+  const ch = String(channel || 'web').toLowerCase();
+  if (ch === 'telegram') {
+    return {
+      label: 'Telegram',
+      icon: '✈',
+      bg: 'rgba(36, 161, 222, 0.12)',
+      color: '#24a1de',
+      border: 'rgba(36, 161, 222, 0.3)',
+    };
+  }
+  if (ch === 'whatsapp') {
+    return {
+      label: 'WhatsApp',
+      icon: '💬',
+      bg: 'rgba(37, 211, 102, 0.12)',
+      color: '#25d366',
+      border: 'rgba(37, 211, 102, 0.3)',
+    };
+  }
+  if (ch === 'agent' || ch === 'ai' || ch === 'webmcp' || ch === 'mcp') {
+    return {
+      label: 'Sivan AI / MCP',
+      icon: '✦',
+      bg: 'rgba(168, 85, 247, 0.12)',
+      color: '#a855f7',
+      border: 'rgba(168, 85, 247, 0.3)',
+    };
+  }
+  return {
+    label: 'Web App',
+    icon: '🌐',
+    bg: 'rgba(59, 130, 246, 0.12)',
+    color: '#3b82f6',
+    border: 'rgba(59, 130, 246, 0.3)',
+  };
+}
+
 function friendlyStatus(status?: string) {
   if (!status) return 'Pending';
   const map: Record<string, string> = {
@@ -362,6 +400,8 @@ export function ServiceAgreementsView({
                   updatedAt: deal.updatedAt || deal.createdAt
                 };
 
+                const channelInfo = getChannelBadge(deal.channel);
+
                 return (
                   <div
                     key={dealId}
@@ -371,7 +411,27 @@ export function ServiceAgreementsView({
                   >
                     <div className="activity-icon">📜</div>
                     <div className="activity-main">
-                      <strong>{deal.title || 'Service Agreement'}</strong>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <strong>{deal.title || 'Service Agreement'}</strong>
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: '2px 8px',
+                            borderRadius: '12px',
+                            background: channelInfo.bg,
+                            color: channelInfo.color,
+                            border: `1px solid ${channelInfo.border}`,
+                            lineHeight: '1.3',
+                          }}
+                        >
+                          <span>{channelInfo.icon}</span>
+                          <span>{channelInfo.label}</span>
+                        </span>
+                      </div>
                       <small>
                         <span style={{ fontFamily: 'var(--mono)' }}>{dealId}</span> • {(deal.network || 'solana').toUpperCase()} • {deal.role || (isBuyer ? 'Buyer' : 'Seller')}
                       </small>
@@ -436,6 +496,12 @@ export function ServiceAgreementsView({
                     <Kv label="Agreement ID" value={currentId} />
                     <Kv label="Amount" value={`${selectedDeal.amount} ${selectedDeal.currency || 'USDC'}`} />
                     <Kv label="Role" value={selectedDeal.role || (isBuyer ? 'Buyer' : 'Seller')} />
+                    <Kv label="Origin Channel" value={
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: getChannelBadge(selectedDeal.channel).color }}>
+                        <span>{getChannelBadge(selectedDeal.channel).icon}</span>
+                        <span>{getChannelBadge(selectedDeal.channel).label}</span>
+                      </span>
+                    } />
                     <Kv label="Settlement Rail" value={(selectedDeal.network || 'solana').toUpperCase()} />
                     <Kv label="Counterparty" value={selectedDeal.counterparty || selectedDeal.buyerWhatsapp || selectedDeal.sellerWhatsapp || selectedDeal.sellerUserId || 'Contractor'} />
                     <Kv label="Created Date" value={new Date(selectedDeal.createdAt).toLocaleDateString()} />
