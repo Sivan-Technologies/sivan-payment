@@ -972,9 +972,14 @@ export default function App() {
    * null, and the withdraw path then refuses to guess a minimum rather than
    * inventing one.
    */
+  const lastLoadedNgnAssetRef = useRef<string>('');
   const loadNgnNetworks = useCallback(async (asset: 'usdc' | 'usdt' = 'usdc') => {
-    const lists = await api<NgnNetworkLists>(`/api/ngn/networks?asset=${asset}`).catch(() => null);
-    setNgnNetworks(lists);
+    try {
+      const lists = await api<NgnNetworkLists>(`/api/ngn/networks?asset=${asset}`);
+      if (lists) setNgnNetworks(lists);
+    } catch {
+      // Keep existing list on transient network error
+    }
   }, [api]);
 
   /**
@@ -1029,25 +1034,12 @@ export default function App() {
 
   /**
    * NETWORKS NEED A TOKEN, SO DO NOT ASK FOR THEM WITHOUT ONE.
-   *
-   * /api/ngn/* is authenticated (requiresUserAuth matches /^\/api\/ngn/), but
-   * this was fired from the unconditional bootstrap effect alongside genuinely
-   * public calls like /api/fees/offramp. So every visitor to the landing and
-   * login pages produced
-   *
-   *   GET /api/ngn/networks?asset=usdc 401 (Unauthorized)
-   *
-   * before they had any way of being authenticated. The request was guaranteed
-   * to fail, its result was swallowed by .catch(() => null), and the only
-   * thing it accomplished was a red line in the console on the first screen
-   * every user sees - plus an unauthenticated round trip per page load.
-   *
-   * Gating on the token also means the list is fetched the moment a session
-   * appears, which is when it is first useful.
    */
   useEffect(() => {
     if (!authToken) return;
-    setNgnNetworks(null);
+    const cacheKey = `${authToken}:${ngnAsset}`;
+    if (lastLoadedNgnAssetRef.current === cacheKey) return;
+    lastLoadedNgnAssetRef.current = cacheKey;
     void loadNgnNetworks(ngnAsset);
   }, [authToken, loadNgnNetworks, ngnAsset]);
 

@@ -56,6 +56,8 @@ export function useSessionActivity(
   // silently disable the timeout.
   const refreshedRef = useRef(onTokenRefreshed);
   refreshedRef.current = onTokenRefreshed;
+  const lastRefreshedRef = useRef<number>(Date.now());
+  const isRefreshingRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!authToken) return;
@@ -71,28 +73,29 @@ export function useSessionActivity(
 
     /**
      * Renew, but only for someone who is still here.
-     *
-     * Guarded on recent activity so a tab left open overnight does not renew
-     * itself indefinitely - that would turn the idle timeout into a fiction,
-     * since the token would still be alive every time the check ran.
+     * Enforces a 5-minute minimum cooldown and deduplication.
      */
     const refreshToken = async () => {
       if (Date.now() - lastActivity() > IDLE_TIMEOUT_MS) return;
       if (document.visibilityState === 'hidden') return;
+      if (isRefreshingRef.current) return;
+      if (Date.now() - lastRefreshedRef.current < 5 * 60 * 1000) return;
+
+      isRefreshingRef.current = true;
       try {
         const response = await fetch(buildApiUrl(apiBase, '/api/auth/session/refresh'), {
           method: 'POST',
           headers: { Authorization: `Bearer ${authToken}` },
         });
+        lastRefreshedRef.current = Date.now();
         if (!response.ok) return;
         const json = await response.json().catch(() => null);
         const next = json?.data?.token;
-        // Never log the user out on a failed refresh. A flaky network must not
-        // end a session that is otherwise perfectly valid - the token still
-        // has 40 minutes on it, and the next attempt can succeed.
         if (typeof next === 'string' && next) refreshedRef.current?.(next);
       } catch {
-        /* keep the existing token; see above */
+        /* keep existing token */
+      } finally {
+        isRefreshingRef.current = false;
       }
     };
 
