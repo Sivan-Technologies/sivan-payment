@@ -162,13 +162,15 @@ export async function identityRoutes(app: FastifyInstance) {
     if (!userId) return { data: { linked: false, deals: [] } };
 
     const user = await db.findUserById(userId);
-    const userEmail = (user?.email || '').toLowerCase();
+    const userEmail = (user?.email || '').toLowerCase().trim();
     const handle = userEmail ? userEmail.split('@')[0] : '';
     const aliases = [
       userId,
+      user?.id,
       user?.email,
       userEmail,
       user?.fullName,
+      user?.username,
       handle ? `@${handle}` : '',
       handle
     ].filter(Boolean) as string[];
@@ -177,14 +179,16 @@ export async function identityRoutes(app: FastifyInstance) {
     let nativeDeals: any[] = [];
     try {
       const agreements = await (db as any).listServiceAgreementsByUserId(aliases);
-      const aliasSet = new Set(aliases.map((a) => a.toLowerCase()));
+      const aliasSet = new Set(aliases.map((a) => String(a).toLowerCase().trim()));
       nativeDeals = (agreements || []).map((a: any) => {
-        const isBuyer = aliasSet.has(String(a.buyerUserId || '').toLowerCase());
+        const isBuyer = aliasSet.has(String(a.buyerUserId || '').toLowerCase().trim());
         return {
+          id: a.id,
           escrowId: a.id,
           title: a.title,
           role: isBuyer ? 'buyer' : 'seller',
           amount: String(a.amountUsdc),
+          amountUsdc: Number(a.amountUsdc || 0),
           currency: a.currency || 'USDC',
           status: (a.status || 'PENDING').toUpperCase(),
           createdAt: a.createdAt,
@@ -211,7 +215,7 @@ export async function identityRoutes(app: FastifyInstance) {
 
     let externalDeals: any[] = [];
     if (isLinked) {
-      const escrowAgentUrl = env.ESCROW_AGENT_URL || 'http://127.0.0.1:4000';
+      const escrowAgentUrl = env.ESCROW_AGENT_URL || process.env.ESCROW_AGENT_URL || (process.env.NODE_ENV === 'production' ? 'https://sivan-escrow-agent-test.onrender.com' : 'http://127.0.0.1:4000');
       const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
 
       const params: string[] = ['limit=50'];
@@ -228,6 +232,7 @@ export async function identityRoutes(app: FastifyInstance) {
           headers: {
             'x-core-api-key': coreSecret,
           },
+          signal: AbortSignal.timeout(2500),
         });
         if (res.ok) {
           const json: any = await res.json();

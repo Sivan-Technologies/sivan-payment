@@ -432,7 +432,7 @@ export default function App() {
     const baseFeed = buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits });
     if (!serviceAgreements?.deals || serviceAgreements.deals.length === 0) return baseFeed;
     const dealRows: ActivityRow[] = serviceAgreements.deals.map((d: any) => ({
-      id: d.escrowId,
+      id: d.escrowId || d.id,
       kind: 'withdrawal',
       label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
       direction: d.role === 'buyer' ? 'out' : 'in',
@@ -443,7 +443,7 @@ export default function App() {
       currency: (d.currency || 'USDC').toUpperCase(),
       status: d.status || 'PENDING',
       statusLabel: friendlyStatus(d.status),
-      state: (d.status === 'funded' || d.status === 'in_delivery' ? 'pending' : d.status === 'released' ? 'success' : 'failed') as any,
+      state: (String(d.status).toLowerCase() === 'funded' || String(d.status).toLowerCase() === 'in_delivery' || String(d.status).toLowerCase() === 'pending_payment' ? 'pending' : String(d.status).toLowerCase() === 'released' ? 'success' : 'failed') as any,
       createdAt: d.createdAt || new Date().toISOString(),
       raw: d as any
     }));

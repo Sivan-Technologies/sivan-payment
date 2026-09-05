@@ -2220,12 +2220,13 @@ export class PostgresDatabase {
   async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
     const client = await this.pool.connect();
     try {
-      const aliases = Array.isArray(userIdOrAliases) ? userIdOrAliases.filter(Boolean) : [userIdOrAliases].filter(Boolean);
-      if (aliases.length === 0) return [];
+      const rawList = Array.isArray(userIdOrAliases) ? userIdOrAliases.filter(Boolean) : [userIdOrAliases].filter(Boolean);
+      if (rawList.length === 0) return [];
+      const lowerAliases = Array.from(new Set(rawList.map((a) => String(a).toLowerCase().trim())));
 
       const result = await client.query(
-        'SELECT * FROM payments_service_agreements WHERE buyer_user_id = ANY($1) OR seller_user_id = ANY($1) ORDER BY created_at DESC',
-        [aliases]
+        'SELECT * FROM payments_service_agreements WHERE LOWER(buyer_user_id) = ANY($1) OR LOWER(seller_user_id) = ANY($1) ORDER BY created_at DESC',
+        [lowerAliases]
       );
       return result.rows.map(mapServiceAgreement);
     } finally {

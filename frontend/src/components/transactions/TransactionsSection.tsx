@@ -27,7 +27,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
   const combinedFeed = useMemo(() => {
     if (!serviceAgreements?.deals || serviceAgreements.deals.length === 0) return feed;
     const dealRows: ActivityRow[] = serviceAgreements.deals.map((d) => ({
-      id: d.escrowId,
+      id: String(d.escrowId || d.id || ''),
       kind: 'withdrawal',
       label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
       direction: d.role === 'buyer' ? 'out' : 'in',
@@ -38,7 +38,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
       currency: (d.currency || 'USDC').toUpperCase(),
       status: d.status || 'PENDING',
       statusLabel: friendlyStatus(d.status),
-      state: statusClass(d.status) as any,
+      state: (String(d.status).toLowerCase() === 'funded' || String(d.status).toLowerCase() === 'in_delivery' || String(d.status).toLowerCase() === 'pending_payment' ? 'pending' : String(d.status).toLowerCase() === 'released' ? 'success' : statusClass(d.status)) as any,
       createdAt: d.createdAt || new Date().toISOString(),
       raw: d as any
     }));
@@ -122,7 +122,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
    */
   const filtered = useMemo(() => {
     if (filter === 'agreements') {
-      const dealIds = new Set(serviceAgreements?.deals?.map((d) => d.escrowId) || []);
+      const dealIds = new Set(serviceAgreements?.deals?.map((d) => d.escrowId || d.id) || []);
       const matched = combinedFeed.filter((row) => dealIds.has(row.id));
       return searchActivity(matched, query);
     }
