@@ -1808,7 +1808,7 @@ export default function App() {
    * Create the user's wallet for a chain. Idempotent server-side, so a double
    * click cannot produce two addresses.
    */
-  async function handleCreateWallet(chain: 'solana' | 'base' | 'ethereum') {
+  async function handleCreateWallet(chain: string) {
     if (!user?.id) return;
     setLoading(true);
     try {

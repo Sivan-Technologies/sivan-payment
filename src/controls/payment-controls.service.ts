@@ -79,9 +79,11 @@ export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
   { network: 'solana', enabled: true, label: 'Solana', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'base', enabled: true, label: 'Base', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'avalanche_c_chain', enabled: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
+  { network: 'stellar', enabled: true, label: 'Stellar', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'celo', enabled: true, label: 'Celo', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 70, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'avalanche_c_chain', enabled: false, label: 'Avalanche C-Chain', sortOrder: 80, updatedBy: 'system', updatedAt: nowIso() }
 ];
 
 export const updatePaymentControlsSchema = z.object({
@@ -106,7 +108,7 @@ export const updatePaymentControlsSchema = z.object({
     enabled: z.boolean()
   })).optional(),
   sourceNetworks: z.array(z.object({
-    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain']),
+    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']),
     enabled: z.boolean()
   })).optional(),
   // Legacy support for older admin frontend payloads.
@@ -315,6 +317,8 @@ export const CHAIN_ASSET_SUPPORT: Record<string, SourceCurrency[]> = {
   base: ['usdc'],
   ethereum: ['usdc', 'usdt'],
   solana: ['usdc', 'usdt'],
+  stellar: ['usdc'],
+  celo: ['usdc'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
   optimism: ['usdc', 'usdt'],

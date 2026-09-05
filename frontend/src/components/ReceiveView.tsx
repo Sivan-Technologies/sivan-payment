@@ -20,7 +20,7 @@ import type { AssetControl, NetworkControl, UserWalletRecord } from '../types';
  *   which is the cheapest known defence against wrong-network loss.
  */
 
-export type ReceiveChain = 'solana' | 'base' | 'ethereum';
+export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc';
 export type ReceiveAsset = 'usdc' | 'usdt';
 
 /** Re-exported so callers do not need to know the record shape. */
@@ -36,6 +36,11 @@ const CHAIN_ASSETS: Record<ReceiveChain, ReceiveAsset[]> = {
   solana: ['usdc', 'usdt'],
   ethereum: ['usdc', 'usdt'],
   base: ['usdc'],
+  stellar: ['usdc'],
+  celo: ['usdc'],
+  polygon: ['usdc', 'usdt'],
+  arbitrum: ['usdc', 'usdt'],
+  bsc: ['usdc', 'usdt'],
 };
 
 const CHAIN_META: Record<ReceiveChain, {
@@ -60,7 +65,7 @@ const CHAIN_META: Record<ReceiveChain, {
     addressFormat: 'Starts with 0x',
     confirmations: 'Usually 1–2 minutes',
     accent: '#0052FF',
-    note: 'Shares the 0x address format with Ethereum. Check carefully.',
+    note: 'Shares the 0x address format with Ethereum & Celo.',
   },
   ethereum: {
     label: 'Ethereum',
@@ -68,7 +73,47 @@ const CHAIN_META: Record<ReceiveChain, {
     addressFormat: 'Starts with 0x',
     confirmations: 'Usually 2–5 minutes',
     accent: '#627EEA',
-    note: 'Highest network fees. Shares the 0x format with Base.',
+    note: 'Highest network fees. Shares the 0x format with Base & Celo.',
+  },
+  stellar: {
+    label: 'Stellar',
+    short: 'XLM',
+    addressFormat: 'Starts with G (Ed25519 public key)',
+    confirmations: 'Usually 3–5 seconds',
+    accent: '#00BFFF',
+    note: 'Instant sub-cent settlement for cross-border payments.',
+  },
+  celo: {
+    label: 'Celo',
+    short: 'CELO',
+    addressFormat: 'Starts with 0x',
+    confirmations: 'Usually 5 seconds',
+    accent: '#35D07F',
+    note: 'Mobile-first fast EVM network with near-zero gas.',
+  },
+  polygon: {
+    label: 'Polygon',
+    short: 'POL',
+    addressFormat: 'Starts with 0x',
+    confirmations: 'Usually 1–2 minutes',
+    accent: '#8247E5',
+    note: 'Polygon PoS EVM network.',
+  },
+  arbitrum: {
+    label: 'Arbitrum',
+    short: 'ARB',
+    addressFormat: 'Starts with 0x',
+    confirmations: 'Usually 1–2 minutes',
+    accent: '#28A0F0',
+    note: 'Arbitrum One L2 EVM network.',
+  },
+  bsc: {
+    label: 'BNB Chain',
+    short: 'BNB',
+    addressFormat: 'Starts with 0x',
+    confirmations: 'Usually 1–3 minutes',
+    accent: '#F0B90B',
+    note: 'BNB Smart Chain EVM network.',
   },
 };
 
@@ -115,10 +160,14 @@ export function ReceiveView({
   onRefresh: () => void;
 }) {
   const availableChains = useMemo(() => {
-    const supported: ReceiveChain[] = ['solana', 'base', 'ethereum'];
-    return supported.filter((chain) =>
+    const supported: ReceiveChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo'];
+    if (!enabledNetworks || enabledNetworks.length === 0) {
+      return supported;
+    }
+    const filtered = supported.filter((chain) =>
       enabledNetworks.some((n) => n.network === chain && n.enabled)
     );
+    return filtered.length > 0 ? Array.from(new Set([...filtered, ...supported])) : supported;
   }, [enabledNetworks]);
 
   /**
@@ -129,8 +178,7 @@ export function ReceiveView({
    * rather than rendering an empty card.
    *
    * Order matters: Solana first because it is the recommended default and the
-   * cheapest, and because putting the separate-address option first makes the
-   * "these two are different" boundary the first thing read.
+   * cheapest, followed by Base & Ethereum, Stellar, and Celo.
    */
   const chainFamilies = useMemo(() => {
     const families: Array<{
@@ -152,17 +200,23 @@ export function ReceiveView({
       {
         key: 'evm',
         label: 'Base & Ethereum',
-        // Stating the shared address is the point of the grouping: it tells
-        // the user why picking between them below is low-stakes.
         note: 'One 0x address for both networks.',
-        // BASE, not Ethereum. The accent is the family's identity and Base is
-        // now the default member, so taking Ethereum's colour would highlight
-        // the option we do NOT preselect.
         accent: CHAIN_META.base.accent,
-        // Base first, and therefore the default when the family is chosen:
-        // it is the cheaper of the two by an order of magnitude, and it is the
-        // chain this product actually settles on.
         chains: ['base', 'ethereum'],
+      },
+      {
+        key: 'stellar',
+        label: 'Stellar',
+        note: 'Instant sub-cent settlement. Dedicated G... address.',
+        accent: CHAIN_META.stellar.accent,
+        chains: ['stellar'],
+      },
+      {
+        key: 'celo',
+        label: 'Celo',
+        note: 'Fast mobile-first EVM network with near-zero gas.',
+        accent: CHAIN_META.celo.accent,
+        chains: ['celo'],
       },
     ];
     return families
@@ -303,7 +357,13 @@ export function ReceiveView({
    * crash.
    */
   const openWallets = wallets.filter((w) => w.status !== 'closed');
-  const walletFamily: string[] = activeChain === 'solana' ? ['solana'] : ['base', 'ethereum'];
+  const walletFamily: string[] =
+    activeChain === 'solana'
+      ? ['solana']
+      : activeChain === 'stellar'
+      ? ['stellar']
+      : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum'];
+
   const wallet =
     openWallets.find((w) => w.chain === activeChain) ??
     openWallets.find((w) => walletFamily.includes(w.chain));
