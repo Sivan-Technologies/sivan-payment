@@ -671,7 +671,11 @@ export default function App() {
         const json = await response.json().catch(() => ({}));
         if (!response.ok) {
           if (canRetry && isRetryableHttpStatus(response.status) && attempt < attempts) {
-            await sleep(500 * attempt);
+            const retryAfterHeader = response.headers?.get('Retry-After');
+            const retryDelay = response.status === 429
+              ? (retryAfterHeader ? Math.min(Number(retryAfterHeader) * 1000, 5000) : 1500 * attempt)
+              : 500 * attempt;
+            await sleep(retryDelay);
             continue;
           }
           /**
@@ -934,14 +938,23 @@ export default function App() {
     }
   }, [api, authToken, notify, user?.id]);
 
-  const loadControls = useCallback(async () => {
-    const [controls, status] = await Promise.all([
-      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks, supplierPayoutsEnabled: true })),
-      api<SystemStatus>('/api/system/status').catch(() => systemStatus)
-    ]);
-    setPaymentControls(controls);
-    setSystemStatus(status);
-    return controls;
+  const loadControlsPromiseRef = useRef<Promise<OfframpControls> | null>(null);
+  const loadControls = useCallback(async (): Promise<OfframpControls> => {
+    if (loadControlsPromiseRef.current) return loadControlsPromiseRef.current;
+    loadControlsPromiseRef.current = (async () => {
+      try {
+        const [controls, status] = await Promise.all([
+          api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks, supplierPayoutsEnabled: true })),
+          api<SystemStatus>('/api/system/status').catch(() => systemStatus)
+        ]);
+        setPaymentControls(controls);
+        setSystemStatus(status);
+        return controls;
+      } finally {
+        loadControlsPromiseRef.current = null;
+      }
+    })();
+    return loadControlsPromiseRef.current;
   }, [api]);
 
   const loadFee = useCallback(async () => {
@@ -984,8 +997,10 @@ export default function App() {
   useEffect(() => {
     void loadFee();
     void loadControls();
-    void loadUserData();
-  }, [loadFee, loadControls, loadUserData]);
+    if (hasUser) {
+      void loadUserData();
+    }
+  }, [hasUser, authToken, user?.id]);
 
   useEffect(() => {
     const handleAgreementsRefresh = () => {
