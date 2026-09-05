@@ -71,12 +71,20 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
 
   if (chain === 'stellar') {
     return (
-      <svg {...common} viewBox="0 0 32 32">
-        <circle cx="16" cy="16" r="15" fill="#00BFFF" />
-        <path
-          fill="#fff"
-          d="M23.5 10.2L8.5 15.8c-.8.3-.8 1.4 0 1.7l3.6 1.4 1.4 3.6c.3.8 1.4.8 1.7 0l5.6-15c.3-.8-.5-1.6-1.3-1.3zm-8.8 6.5l4.8-4.8-3.4 5.9-1.4-1.1z"
-        />
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 100 100"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <circle cx="50" cy="50" r="48" fill="#000000" />
+        <g fill="#FFFFFF" fillRule="evenodd">
+          <path d="M50 18c-14.8 0-27.2 10.1-30.7 23.9l7-4.2C28.8 28.1 38.6 24 50 24c13.2 0 24.2 9.8 25.8 22.8l7-4.2C80.8 27.6 66.8 18 50 18z" />
+          <path d="M50 82c14.8 0 27.2-10.1 30.7-23.9l-7 4.2C71.2 71.9 61.4 76 50 76c-13.2 0-24.2-9.8-25.8-22.8l-7 4.2C19.2 72.4 33.2 82 50 82z" />
+          <path d="M12.5 56.5L87.5 11.5v6.5L12.5 63z" />
+          <path d="M12.5 76.5L87.5 31.5v6.5L12.5 83z" />
+        </g>
       </svg>
     );
   }

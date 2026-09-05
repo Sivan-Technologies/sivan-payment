@@ -171,14 +171,11 @@ export function ReceiveView({
   }, [enabledNetworks]);
 
   /**
-   * NETWORKS GROUPED BY THE ADDRESS THEY SHARE.
+   * NETWORKS PRESENTED AS DISTINCT CHOICES.
    *
-   * Derived from availableChains so a network disabled by an admin disappears
-   * from its family, and a family with nothing left disappears entirely -
-   * rather than rendering an empty card.
-   *
-   * Order matters: Solana first because it is the recommended default and the
-   * cheapest, followed by Base & Ethereum, Stellar, and Celo.
+   * All 5 networks (Solana, Base, Ethereum, Stellar, Celo) are presented
+   * as individual options so users know exactly which network they are
+   * depositing on without ambiguity.
    */
   const chainFamilies = useMemo(() => {
     const families: Array<{
@@ -192,29 +189,36 @@ export function ReceiveView({
       {
         key: 'solana',
         label: 'Solana',
-        note: 'Its own address. Fastest and cheapest for most deposits.',
+        note: 'Its own base58 address. Fastest and lowest fees for most deposits.',
         accent: CHAIN_META.solana.accent,
         recommended: true,
         chains: ['solana'],
       },
       {
-        key: 'evm',
-        label: 'Base & Ethereum',
-        note: 'One 0x address for both networks.',
+        key: 'base',
+        label: 'Base',
+        note: 'Fast L2 EVM network with low fees. Shares 0x address format.',
         accent: CHAIN_META.base.accent,
-        chains: ['base', 'ethereum'],
+        chains: ['base'],
+      },
+      {
+        key: 'ethereum',
+        label: 'Ethereum',
+        note: 'Ethereum L1 network for high-value transfers. Shares 0x format.',
+        accent: CHAIN_META.ethereum.accent,
+        chains: ['ethereum'],
       },
       {
         key: 'stellar',
         label: 'Stellar',
-        note: 'Instant sub-cent settlement. Dedicated G... address.',
+        note: 'Dedicated G... address. Ultra-fast sub-cent cross-border settlement.',
         accent: CHAIN_META.stellar.accent,
         chains: ['stellar'],
       },
       {
         key: 'celo',
         label: 'Celo',
-        note: 'Fast mobile-first EVM network with near-zero gas.',
+        note: 'Mobile-first fast EVM network with near-zero gas.',
         accent: CHAIN_META.celo.accent,
         chains: ['celo'],
       },
