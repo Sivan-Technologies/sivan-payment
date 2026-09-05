@@ -205,17 +205,23 @@ export async function identityRoutes(app: FastifyInstance) {
     // 2. Fetch external Telegram / WhatsApp linked deals if linked
     const status = await getIdentityStatus(userId);
     const whatsappNumber = status?.link?.whatsappNumber;
-    const isLinked = Boolean(whatsappNumber || status?.channels?.telegram?.linked);
+    const telegramLink = status?.channels?.telegram?.link;
+    const linkedEscrowUserId = telegramLink?.escrowUserId || status?.link?.escrowUserId;
+    const isLinked = Boolean(whatsappNumber || status?.channels?.telegram?.linked || linkedEscrowUserId);
 
     let externalDeals: any[] = [];
     if (isLinked) {
       const escrowAgentUrl = env.ESCROW_AGENT_URL || 'http://127.0.0.1:4000';
       const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
 
-      let url = `${escrowAgentUrl}/api/users/escrows?limit=50`;
-      if (whatsappNumber) {
-        url += `&actorWhatsapp=${encodeURIComponent(whatsappNumber)}`;
+      const params: string[] = ['limit=50'];
+      if (linkedEscrowUserId) {
+        params.push(`actorUserId=${encodeURIComponent(linkedEscrowUserId)}`);
+      } else if (whatsappNumber) {
+        params.push(`actorWhatsapp=${encodeURIComponent(whatsappNumber)}`);
       }
+
+      const url = `${escrowAgentUrl}/api/users/escrows?${params.join('&')}`;
 
       try {
         const res = await fetch(url, {
@@ -225,14 +231,45 @@ export async function identityRoutes(app: FastifyInstance) {
         });
         if (res.ok) {
           const json: any = await res.json();
-          externalDeals = json.deals || [];
+          externalDeals = (json.deals || []).map((d: any) => ({
+            id: d.escrowId || d.id,
+            escrowId: d.escrowId || d.id,
+            title: d.title || d.description || 'Service Agreement',
+            role: d.role || (d.buyerUserId === userId ? 'buyer' : 'seller'),
+            amount: String(d.amountUsdc || d.amount || '0'),
+            amountUsdc: Number(d.amountUsdc || d.amount || 0),
+            currency: d.currency || 'USDC',
+            network: d.network || 'solana',
+            status: String(d.status || 'PENDING').toUpperCase(),
+            createdAt: d.createdAt || new Date().toISOString(),
+            channel: d.channel || (telegramLink ? 'telegram' : whatsappNumber ? 'whatsapp' : 'web'),
+            buyerUserId: d.buyerUserId,
+            sellerUserId: d.sellerUserId,
+            deadlineDays: d.deadlineDays,
+            deliveryDueAt: d.deliveryDueAt,
+            fundingTxHash: d.fundingTxHash,
+            releaseTxHash: d.releaseTxHash,
+            vaultAddress: d.vaultAddress,
+          }));
         }
       } catch (err: any) {
         // quiet fallback
       }
     }
 
-    const allDeals = [...nativeDeals, ...externalDeals];
+    // Merge & Deduplicate by ID
+    const dealMap = new Map<string, any>();
+    for (const d of [...nativeDeals, ...externalDeals]) {
+      const key = d.escrowId || d.id;
+      if (key) {
+        dealMap.set(key, { ...d, id: key, escrowId: key });
+      }
+    }
+
+    const allDeals = Array.from(dealMap.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+
     return {
       data: {
         linked: isLinked || nativeDeals.length > 0,

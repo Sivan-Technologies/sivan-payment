@@ -1,6 +1,6 @@
 import type { PayoutCurrency } from './rails';
 
-export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'receive' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery';
+export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'receive' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery' | 'agreements';
 
 export interface UserRecord {
   id: string;
@@ -69,19 +69,34 @@ export interface IdentityChannelStatus {
 
 export interface ServiceAgreementDeal {
   escrowId: string;
+  id?: string;
   title: string;
+  description?: string;
   amount: string;
+  amountUsdc?: number;
   currency: string;
+  network?: string;
   role: 'buyer' | 'seller' | 'actor';
   status: string;
   statusLabel?: string;
   buyerWhatsapp?: string;
   sellerWhatsapp?: string;
+  buyerUserId?: string;
+  sellerUserId?: string;
   counterparty?: string;
+  countdownLabel?: string;
+  deliveryDueAt?: string | null;
+  fundedAt?: string | null;
+  deliveredAt?: string | null;
+  releasedAt?: string | null;
+  fundingTxHash?: string | null;
+  releaseTxHash?: string | null;
+  vaultAddress?: string | null;
   createdAt: string;
   updatedAt?: string;
   terms?: string;
   notes?: string;
+  channel?: 'web' | 'telegram' | 'webmcp';
 }
 
 export interface ServiceAgreementsSummary {

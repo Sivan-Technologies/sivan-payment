@@ -22,6 +22,7 @@ import { useTheme } from './hooks/useTheme';
 import { ThemeToggle } from './components/ThemeToggle';
 import { PinPadModal } from './components/tma/PinPadModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { ServiceAgreementsView } from './components/agreements/ServiceAgreementsView';
 
 /**
  * Server-enforced gap between OTP emails, mirrored here so the countdown tells
@@ -1018,6 +1019,12 @@ export default function App() {
     return (serviceAgreements?.deals || []).find((d: any) =>
       ['funded', 'in_delivery', 'delivered'].includes(String(d.status || '').toLowerCase())
     ) || null;
+  }, [serviceAgreements?.deals]);
+
+  const activeAgreementsCount = useMemo(() => {
+    return (serviceAgreements?.deals || []).filter((d: any) =>
+      ['funded', 'in_delivery', 'delivered', 'pending_funding', 'draft', 'pending'].includes(String(d.status || '').toLowerCase())
+    ).length;
   }, [serviceAgreements?.deals]);
 
   /**
@@ -2550,6 +2557,11 @@ export default function App() {
           {hasUser ? views.map((item) => (
             <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => goToView(item.key)}>
               <span>{item.icon}</span> {item.label}
+              {item.key === 'agreements' && activeAgreementsCount > 0 && (
+                <span className="nav-badge" style={{ marginLeft: 'auto', background: 'rgba(234, 179, 8, 0.15)', color: '#eab308', border: '1px solid rgba(234, 179, 8, 0.3)', borderRadius: '999px', fontSize: '11px', fontWeight: 600, padding: '1px 7px' }}>
+                  {activeAgreementsCount}
+                </span>
+              )}
             </button>
           )) : publicViews.map((item) => {
             const active = item.key === 'landing'
@@ -2948,6 +2960,16 @@ export default function App() {
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} balanceTransfers={balanceTransfers} supplierPayments={supplierPayments} virtualAccountTransactions={virtualAccountTransactions} walletDeposits={walletDeposits} serviceAgreements={serviceAgreements} networkMode={userPreferences?.networkMode} initialSelectedId={selectedActivityId} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onRefresh={loadUserData} />}
+
+        {view === 'agreements' && (
+          <ServiceAgreementsView
+            user={user}
+            serviceAgreements={serviceAgreements}
+            api={api}
+            onRefresh={loadUserData}
+            onGoToTransactions={() => goToView('history')}
+          />
+        )}
 
         {view === 'settings' && <SettingsView api={api} user={user} isVerified={isVerified} onUserUpdated={(updated) => { setUser(updated); localStorage.setItem('sivan.user', JSON.stringify(updated)); }} preferences={userPreferences} initialTab={settingsInitialTab} twoFactorStatus={twoFactorStatus} onTwoFactorStatusChanged={setTwoFactorStatus} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} telegramPairingCode={telegramPairingCode} telegramPairingExpiresAt={telegramPairingExpiresAt} onStartTelegramLink={handleStartTelegramLink} onCancelTelegramLink={handleCancelTelegramLink} onUnlinkTelegram={handleUnlinkTelegram} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} user={user} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}

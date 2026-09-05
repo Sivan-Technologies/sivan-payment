@@ -8,6 +8,7 @@ export const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'transfer', icon: '⇆', label: 'Send & transfer' },
   { key: 'withdraw', icon: '↗', label: 'Withdraw' },
   { key: 'history', icon: '◷', label: 'Transactions' },
+  { key: 'agreements', icon: '📜', label: 'Service agreements' },
   { key: 'banks', icon: '▭', label: 'Payment methods' },
   { key: 'virtualAccounts', icon: '▥', label: 'Virtual account' },
   { key: 'kyc', icon: '◈', label: 'Identity verification' },
@@ -30,6 +31,7 @@ export const pathByView: Record<ViewKey, string> = {
   receive: '/receive',
   transfer: '/transfer',
   history: '/withdrawals',
+  agreements: '/agreements',
   banks: '/bank-accounts',
   virtualAccounts: '/virtual-account',
   kyc: '/verification',
@@ -47,6 +49,7 @@ export function viewFromPath(pathname: string): ViewKey {
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/receive' || clean === '/deposit' || clean === '/app/receive') return 'receive';
   if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
+  if (clean === '/agreements' || clean === '/service-agreements' || clean === '/app/agreements') return 'agreements';
   if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
   if (clean === '/virtual-account' || clean === '/virtual-accounts' || clean === '/receiving-accounts' || clean === '/app/virtual-account') return 'virtualAccounts';
   if (clean === '/verification' || clean === '/verification-complete' || clean === '/app/verification') return 'kyc';
