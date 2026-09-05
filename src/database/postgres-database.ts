@@ -2429,6 +2429,10 @@ async function ensureServiceAgreementsSchema(client: pg.PoolClient) {
       ADD COLUMN IF NOT EXISTS release_tx_hash TEXT,
       ADD COLUMN IF NOT EXISTS vault_address TEXT,
       ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'web';
+
+      ALTER TABLE payments_service_agreements
+      DROP CONSTRAINT IF EXISTS payments_service_agreements_buyer_user_id_fkey,
+      DROP CONSTRAINT IF EXISTS payments_service_agreements_seller_user_id_fkey;
     `);
     serviceAgreementsSchemaMigrated = true;
   } catch (err) {
