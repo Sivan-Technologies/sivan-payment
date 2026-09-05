@@ -87,10 +87,20 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
 
   if (chain === 'celo') {
     return (
-      <svg {...common} viewBox="0 0 32 32">
-        <circle cx="16" cy="16" r="15" fill="#35D07F" />
-        <circle cx="13" cy="13" r="6" fill="none" stroke="#fff" strokeWidth="2.5" />
-        <circle cx="19" cy="19" r="6" fill="none" stroke="#FCFF52" strokeWidth="2.5" />
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 2500 2500"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <circle cx="1250" cy="1250" r="1250" fill="#FCFF52" />
+        <path
+          fill="#1E1E1E"
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M1949.3 546.2H550.7v1407.7h1398.7v-491.4h-232.1c-80 179.3-260.1 304.1-466.2 304.1-284.1 0-514.2-233.6-514.2-517.5 0-284 230.1-515.6 514.2-515.6 210.1 0 390.2 128.9 470.2 312.1h228.1V546.2z"
+        />
       </svg>
     );
   }
