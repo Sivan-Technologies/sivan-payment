@@ -512,4 +512,23 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
   return { linked: false as const };
 }
 
+/**
+ * Resolve a phone number to its Sivan identity, including Telegram user ID.
+ */
+export async function lookupPhoneIdentity(phone: string) {
+  const cleanPhone = phone.trim().replace(/^whatsapp:/, '');
+  const user = (await db.findUserByWhatsappNumber(cleanPhone)) || (await db.findUserByTarget(cleanPhone));
+  if (user) {
+    return {
+      linked: true as const,
+      paymentUserId: user.id,
+      telegramUserId: user.telegramUserId || undefined,
+      whatsappNumber: user.whatsappNumber || cleanPhone,
+      email: user.email,
+      fullName: user.fullName,
+    };
+  }
+  return { linked: false as const };
+}
+
 

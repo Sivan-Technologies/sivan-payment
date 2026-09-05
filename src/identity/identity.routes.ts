@@ -16,6 +16,7 @@ import {
   getIdentityStatus,
   redeemIdentityLinkSchema,
   lookupTelegramIdentity,
+  lookupPhoneIdentity,
   redeemTelegramLink,
   redeemTelegramLinkSchema,
   redeemWhatsappLink,
@@ -333,6 +334,15 @@ export async function identityRoutes(app: FastifyInstance) {
     requireIdentityServiceSecret(request);
     const { telegramUserId } = request.params as { telegramUserId: string };
     return { data: await lookupTelegramIdentity(telegramUserId) };
+  });
+
+  /**
+   * Resolve a phone number to its Sivan identity (including Telegram user ID).
+   */
+  app.get('/api/identity/phone/:phone', async (request) => {
+    requireIdentityServiceSecret(request);
+    const { phone } = request.params as { phone: string };
+    return { data: await lookupPhoneIdentity(phone) };
   });
 
   /**
