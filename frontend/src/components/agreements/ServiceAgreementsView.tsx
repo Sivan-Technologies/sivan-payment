@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import type { ServiceAgreementsSummary, ServiceAgreementDeal, UserRecord, ServiceAgreement } from '../../types';
 import { AgreementCountdownBadge } from './AgreementCountdownBadge';
+import { explorerLink, shortHash } from '../../blockExplorer';
 
 interface ServiceAgreementsViewProps {
   user?: UserRecord | null;
@@ -25,13 +26,11 @@ export function ServiceAgreementsView({
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
-  // Draft form state
   const [counterparty, setCounterparty] = useState('');
   const [amount, setAmount] = useState('5');
   const [deliverables, setDeliverables] = useState('');
   const [milestones, setMilestones] = useState('2');
   const [network, setNetwork] = useState('solana');
-  const [deadlineDays, setDeadlineDays] = useState('7');
 
   const deals = useMemo(() => {
     return serviceAgreements?.deals || [];
@@ -45,7 +44,7 @@ export function ServiceAgreementsView({
     deals.forEach((deal) => {
       const st = String(deal.status || '').toLowerCase();
       const numAmount = Number(deal.amount || deal.amountUsdc || 0);
-      if (['funded', 'in_delivery', 'delivered'].includes(st)) {
+      if (['funded', 'in_delivery', 'delivered', 'pending_payment'].includes(st)) {
         activeCount += 1;
         tvl += numAmount;
       } else if (['released', 'completed'].includes(st)) {
@@ -88,7 +87,7 @@ export function ServiceAgreementsView({
         method: 'POST',
         body: JSON.stringify({ network: deal.network || 'solana' })
       });
-      setSuccessBanner(`Agreement ${agreementId} funded successfully! Funds locked in non-custodial vault.`);
+      setSuccessBanner(`Agreement ${agreementId} funded successfully! Funds locked in on-chain vault.`);
       await onRefresh();
     } catch (e: any) {
       setErrorBanner(e?.message || 'Failed to fund agreement vault.');
@@ -107,7 +106,7 @@ export function ServiceAgreementsView({
       await api(`/api/agreements/${encodeURIComponent(agreementId)}/deliver`, {
         method: 'POST'
       });
-      setSuccessBanner(`Work marked as delivered for ${agreementId}. Client notified for milestone payout.`);
+      setSuccessBanner(`Work marked as delivered for ${agreementId}. Client notified for milestone release.`);
       await onRefresh();
     } catch (e: any) {
       setErrorBanner(e?.message || 'Failed to submit deliverable.');
@@ -176,7 +175,7 @@ export function ServiceAgreementsView({
           amountUsdc: Number(amount),
           currency: 'USDC',
           network,
-          deadlineDays: Number(deadlineDays) || 7
+          deadlineDays: 7
         })
       });
 
@@ -194,413 +193,377 @@ export function ServiceAgreementsView({
   };
 
   return (
-    <div className="space-y-6 animate-fade-in" style={{ padding: '4px 0' }}>
-      {/* Header section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/40 border border-slate-800/80 rounded-2xl p-6 backdrop-blur-md">
+    <section className="app-page agreements-premium">
+      <div className="page-hero">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-white tracking-tight">Service Agreements</h1>
-            <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              WebMCP Protocol
-            </span>
-          </div>
-          <p className="text-slate-400 text-sm mt-1">
-            Non-custodial, milestone-based multi-chain agreements across Web, Telegram, and AI agents.
-          </p>
+          <h1>Service Agreements</h1>
+          <p>Non-custodial, milestone-based multi-chain agreements across Web, Telegram, and AI agents.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => onRefresh()}
-            className="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-300 hover:text-white bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 transition-colors"
-          >
-            ↻ Refresh
-          </button>
-          <button
-            onClick={() => setShowDraftModal(true)}
-            className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition-all flex items-center gap-2"
-          >
-            <span>+</span> Draft Agreement
-          </button>
+        <div className="button-row">
+          <button className="secondary-btn small" onClick={() => onRefresh()}>↻ Refresh</button>
+          <button className="primary-btn small" onClick={() => setShowDraftModal(true)}>+ Draft agreement</button>
         </div>
       </div>
 
-      {/* Alert banners */}
+      <div className="kpi-grid">
+        <article className="kpi-card">
+          <p>Active deals</p>
+          <strong>{stats.activeCount}</strong>
+          <span>In progress & awaiting release</span>
+          <small className="kpi-trend action">Live</small>
+        </article>
+
+        <article className="kpi-card">
+          <p>Total value protected</p>
+          <strong style={{ color: '#16856d' }}>${stats.tvl.toFixed(2)} USDC</strong>
+          <span>Multi-chain vaults</span>
+          <small className="kpi-trend ok">Protected</small>
+        </article>
+
+        <article className="kpi-card">
+          <p>Completed deals</p>
+          <strong>{stats.completedCount}</strong>
+          <span>Milestones settled & released</span>
+          <small className="kpi-trend ok">Settled</small>
+        </article>
+
+        <article className="kpi-card">
+          <p>All agreements</p>
+          <strong>{stats.totalCount}</strong>
+          <span>Recorded across channels</span>
+          <small className="kpi-trend muted">Web + Telegram</small>
+        </article>
+      </div>
+
       {errorBanner && (
-        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center justify-between">
+        <div className="toast-banner danger" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '14px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444' }}>
           <span>{errorBanner}</span>
-          <button onClick={() => setErrorBanner(null)} className="text-red-400 font-bold hover:text-red-300">✕</button>
+          <button onClick={() => setErrorBanner(null)} style={{ background: 'transparent', border: 0, color: '#ef4444', fontWeight: 'bold', cursor: 'pointer' }}>✕</button>
         </div>
       )}
       {successBanner && (
-        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm flex items-center justify-between">
+        <div className="toast-banner success" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '14px', background: 'rgba(22, 133, 109, 0.1)', border: '1px solid rgba(22, 133, 109, 0.3)', color: '#16856d' }}>
           <span>{successBanner}</span>
-          <button onClick={() => setSuccessBanner(null)} className="text-emerald-400 font-bold hover:text-emerald-300">✕</button>
+          <button onClick={() => setSuccessBanner(null)} style={{ background: 'transparent', border: 0, color: '#16856d', fontWeight: 'bold', cursor: 'pointer' }}>✕</button>
         </div>
       )}
 
-      {/* Top Stats Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5">
-          <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">Active Deals</div>
-          <div className="text-2xl font-bold text-white mt-1">{stats.activeCount}</div>
-          <div className="text-xs text-emerald-400 mt-1">In progress & awaiting release</div>
-        </div>
-
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5">
-          <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Value Locked</div>
-          <div className="text-2xl font-bold text-emerald-400 mt-1">${stats.tvl.toFixed(2)} USDC</div>
-          <div className="text-xs text-slate-400 mt-1">Protected in multi-chain vaults</div>
-        </div>
-
-        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5">
-          <div className="text-xs font-medium text-slate-400 uppercase tracking-wider">Completed Deals</div>
-          <div className="text-2xl font-bold text-white mt-1">{stats.completedCount}</div>
-          <div className="text-xs text-slate-400 mt-1">Milestones settled & released</div>
-        </div>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-2 p-1 bg-slate-900/60 border border-slate-800 rounded-xl">
-          <button
-            onClick={() => setFilter('all')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              filter === 'all'
-                ? 'bg-slate-700 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            All ({deals.length})
-          </button>
-          <button
-            onClick={() => setFilter('active')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              filter === 'active'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Active ({stats.activeCount})
-          </button>
-          <button
-            onClick={() => setFilter('completed')}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              filter === 'completed'
-                ? 'bg-slate-700 text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Completed ({stats.completedCount})
-          </button>
-        </div>
-
-        <div className="relative flex-1 sm:max-w-xs">
+      <article className="transactions-table-card transaction-control-card">
+        <div className="transactions-toolbar">
           <input
-            type="text"
-            placeholder="Search agreement, handle, or ID..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+            placeholder="Search agreement title, counterparty, ID..."
           />
+          <div>
+            <button
+              className={filter === 'all' ? 'primary-btn small' : 'ghost-btn small'}
+              onClick={() => setFilter('all')}
+            >
+              All ({deals.length})
+            </button>
+            <button
+              className={filter === 'active' ? 'primary-btn small' : 'ghost-btn small'}
+              onClick={() => setFilter('active')}
+            >
+              Active ({stats.activeCount})
+            </button>
+            <button
+              className={filter === 'completed' ? 'primary-btn small' : 'ghost-btn small'}
+              onClick={() => setFilter('completed')}
+            >
+              Completed ({stats.completedCount})
+            </button>
+          </div>
         </div>
-      </div>
 
-      {/* Agreements List / Feed */}
-      <div className="space-y-3">
-        {filteredDeals.length === 0 ? (
-          <div className="bg-slate-900/30 border border-slate-800/60 rounded-2xl p-12 text-center">
-            <div className="text-4xl mb-3">📜</div>
-            <h3 className="text-base font-semibold text-white">No Service Agreements found</h3>
-            <p className="text-slate-400 text-xs mt-1 max-w-sm mx-auto">
-              {searchQuery
-                ? 'No agreements match your search query.'
-                : 'You have no active or historical agreements yet. Draft one now or prompt Sivan AI on Telegram or WebMCP.'}
-            </p>
-            <div className="mt-5">
-              <button
-                onClick={() => setShowDraftModal(true)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors"
-              >
-                + Draft First Agreement
-              </button>
+        {!filteredDeals.length ? (
+          <div className="dashboard-empty">
+            <p>{searchQuery ? 'No service agreements match your search filter.' : 'No service agreements found.'}</p>
+            <div className="button-row">
+              <button className="primary-btn" onClick={() => setShowDraftModal(true)}>+ Draft first agreement</button>
+              {onGoToTransactions && <button className="secondary-btn" onClick={onGoToTransactions}>View all transactions</button>}
             </div>
           </div>
         ) : (
-          filteredDeals.map((deal) => {
-            const agreementId = deal.id || deal.escrowId;
-            const isBuyer = deal.role === 'buyer' || deal.buyerUserId === user?.id;
-            const isSeller = deal.role === 'seller' || deal.sellerUserId === user?.id;
-            const st = String(deal.status || '').toLowerCase();
-            const networkLabel = (deal.network || 'solana').toUpperCase();
-            const isLoading = actionLoadingId === agreementId;
+          <div className="agreements-list">
+            {filteredDeals.map((deal) => {
+              const agreementId = deal.id || deal.escrowId;
+              const isBuyer = deal.role === 'buyer' || deal.buyerUserId === user?.id;
+              const st = String(deal.status || '').toLowerCase();
+              const networkLabel = (deal.network || 'solana').toUpperCase();
+              const isLoading = actionLoadingId === agreementId;
 
-            // Generate agreement structure for AgreementCountdownBadge
-            const agreementObj: ServiceAgreement = {
-              id: agreementId,
-              buyerUserId: deal.buyerUserId || '',
-              sellerUserId: deal.sellerUserId || '',
-              title: deal.title || 'Service Agreement Deliverable',
-              description: deal.description || deal.terms || '',
-              amountUsdc: Number(deal.amount || deal.amountUsdc || 0),
-              currency: deal.currency || 'USDC',
-              network: deal.network || 'solana',
-              status: deal.status as any,
-              deadlineDays: 7,
-              deliveryDueAt: deal.deliveryDueAt || null,
-              countdownLabel: deal.countdownLabel || deal.statusLabel || (st === 'funded' ? '⏱ In Delivery' : st === 'delivered' ? '✅ Delivered — awaiting release' : st === 'released' ? '✅ Released' : '⏳ Awaiting payment'),
-              reminder6hSent: false,
-              overdueNoticeSent: false,
-              fundedAt: deal.fundedAt || null,
-              deliveredAt: deal.deliveredAt || null,
-              releasedAt: deal.releasedAt || null,
-              createdAt: deal.createdAt,
-              updatedAt: deal.updatedAt || deal.createdAt
-            };
+              const agreementObj: ServiceAgreement = {
+                id: agreementId,
+                buyerUserId: deal.buyerUserId || '',
+                sellerUserId: deal.sellerUserId || '',
+                title: deal.title || 'Service Agreement Deliverable',
+                description: deal.description || deal.terms || '',
+                amountUsdc: Number(deal.amount || deal.amountUsdc || 0),
+                currency: deal.currency || 'USDC',
+                network: deal.network || 'solana',
+                status: deal.status as any,
+                deadlineDays: 7,
+                deliveryDueAt: deal.deliveryDueAt || null,
+                countdownLabel: deal.countdownLabel || deal.statusLabel || (st === 'funded' ? '⏱ In Delivery' : st === 'delivered' ? '✅ Delivered' : st === 'released' ? '✅ Released' : '⏳ Awaiting payment'),
+                reminder6hSent: false,
+                overdueNoticeSent: false,
+                fundedAt: deal.fundedAt || null,
+                deliveredAt: deal.deliveredAt || null,
+                releasedAt: deal.releasedAt || null,
+                createdAt: deal.createdAt,
+                updatedAt: deal.updatedAt || deal.createdAt
+              };
 
-            return (
-              <div
-                key={agreementId}
-                className="bg-slate-900/50 hover:bg-slate-900/80 border border-slate-800/80 rounded-2xl p-5 transition-all space-y-4"
-              >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-mono font-medium text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded">
-                        {agreementId}
-                      </span>
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                        {networkLabel}
-                      </span>
-                      {deal.channel && (
-                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                          {deal.channel === 'telegram' ? 'Telegram @Sivan_Ai' : deal.channel === 'webmcp' ? 'WebMCP Agent' : 'Web App'}
-                        </span>
+              return (
+                <div key={agreementId} className="agreement-deal-card">
+                  <div className="agreement-card-top">
+                    <div className="agreement-title-group">
+                      <div className="agreement-tags">
+                        <span className="agreement-id-pill">{agreementId}</span>
+                        <span className="agreement-network-pill">{networkLabel}</span>
+                        {deal.channel && (
+                          <span className="agreement-channel-pill">
+                            {deal.channel === 'telegram' ? 'Telegram @Sivan_Ai' : deal.channel === 'webmcp' ? 'WebMCP Protocol' : 'Web App'}
+                          </span>
+                        )}
+                        <AgreementCountdownBadge agreement={agreementObj} />
+                      </div>
+                      <h3>{deal.title}</h3>
+                    </div>
+
+                    <div className="agreement-amount-block">
+                      <div className="agreement-amount-val">
+                        {deal.amount} {deal.currency || 'USDC'}
+                      </div>
+                      <div className="agreement-role-label">
+                        Role: <strong>{deal.role || (isBuyer ? 'Buyer' : 'Seller')}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="agreement-details-grid">
+                    <div className="agreement-kv">
+                      <span>Counterparty</span>
+                      <strong>{deal.counterparty || deal.buyerWhatsapp || deal.sellerWhatsapp || deal.sellerUserId || 'Contractor'}</strong>
+                    </div>
+                    <div className="agreement-kv">
+                      <span>Created</span>
+                      <strong>{new Date(deal.createdAt).toLocaleDateString()}</strong>
+                    </div>
+                    {deal.fundingTxHash && (() => {
+                      const link = explorerLink({ txHash: deal.fundingTxHash, network: deal.network || 'solana' });
+                      return (
+                        <div className="agreement-kv" style={{ gridColumn: '1 / -1' }}>
+                          <span>Vault Transaction Proof</span>
+                          <strong>
+                            {link ? (
+                              <a
+                                href={link.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: '#007ac7', textDecoration: 'underline' }}
+                              >
+                                {shortHash(deal.fundingTxHash)} ↗
+                              </a>
+                            ) : (
+                              <span>{shortHash(deal.fundingTxHash)}</span>
+                            )}
+                          </strong>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="agreement-footer-actions">
+                    <div style={{ fontSize: '12px', color: '#5a6678' }}>
+                      Status: <strong style={{ color: '#10182b', textTransform: 'capitalize' }}>{st.replace(/_/g, ' ')}</strong>
+                    </div>
+
+                    <div className="agreement-action-buttons">
+                      {(st === 'pending_payment' || st === 'pending_funding' || st === 'draft' || st === 'pending') && isBuyer && (
+                        <>
+                          <button
+                            disabled={isLoading}
+                            onClick={() => handleFund(deal)}
+                            className="primary-btn small"
+                          >
+                            {isLoading ? 'Locking...' : 'Lock Funds in Vault →'}
+                          </button>
+                          <button
+                            disabled={isLoading}
+                            onClick={() => handleCancel(deal)}
+                            className="ghost-btn small"
+                            style={{ color: '#ef4444' }}
+                          >
+                            Cancel
+                          </button>
+                        </>
                       )}
-                      <AgreementCountdownBadge agreement={agreementObj} />
-                    </div>
-                    <h3 className="text-base font-semibold text-white mt-1">
-                      {deal.title}
-                    </h3>
-                  </div>
 
-                  <div className="text-right flex sm:flex-col items-baseline sm:items-end justify-between gap-1">
-                    <div className="text-lg font-bold text-emerald-400">
-                      {deal.amount} {deal.currency || 'USDC'}
-                    </div>
-                    <div className="text-xs text-slate-400">
-                      Role: <span className="font-semibold text-slate-300 capitalize">{deal.role || (isBuyer ? 'Buyer' : 'Seller')}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Scope & Counterparty info */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-400 bg-slate-950/40 p-3 rounded-xl border border-slate-800/40">
-                  <div>
-                    <span className="text-slate-500">Counterparty: </span>
-                    <span className="text-slate-300 font-medium">{deal.counterparty || deal.buyerWhatsapp || deal.sellerWhatsapp || deal.sellerUserId || 'Contractor'}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500">Created: </span>
-                    <span className="text-slate-300 font-medium">{new Date(deal.createdAt).toLocaleDateString()}</span>
-                  </div>
-                  {deal.fundingTxHash && (
-                    <div className="col-span-full truncate">
-                      <span className="text-slate-500">Vault Tx: </span>
-                      <span className="text-blue-400 font-mono text-[11px]">{deal.fundingTxHash}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Interactive Action Controls */}
-                <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/60 flex-wrap">
-                  <div className="text-xs text-slate-500">
-                    Status: <span className="text-slate-300 font-medium capitalize">{st.replace('_', ' ')}</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {/* Pending state -> Buyer can Fund */}
-                    {st === 'pending_payment' && isBuyer && (
-                      <>
+                      {(st === 'funded' || st === 'in_delivery') && (
                         <button
                           disabled={isLoading}
-                          onClick={() => handleFund(deal)}
-                          className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 transition-colors"
+                          onClick={() => handleDeliver(deal)}
+                          className="primary-btn small"
+                          style={{ background: '#16856d', borderColor: '#16856d' }}
                         >
-                          {isLoading ? 'Locking...' : 'Lock Funds in Vault →'}
+                          {isLoading ? 'Submitting...' : 'Mark Delivered ✓'}
                         </button>
+                      )}
+
+                      {st === 'delivered' && isBuyer && (
                         <button
                           disabled={isLoading}
-                          onClick={() => handleCancel(deal)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          onClick={() => handleRelease(deal)}
+                          className="primary-btn small"
+                          style={{ background: '#007ac7', borderColor: '#007ac7' }}
                         >
-                          Cancel
+                          {isLoading ? 'Releasing...' : 'Approve & Release Funds ↗'}
                         </button>
-                      </>
-                    )}
+                      )}
 
-                    {/* Funded/In delivery state -> Seller can Deliver */}
-                    {(st === 'funded' || st === 'in_delivery') && (
-                      <button
-                        disabled={isLoading}
-                        onClick={() => handleDeliver(deal)}
-                        className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-amber-600 hover:bg-amber-500 disabled:opacity-50 transition-colors"
-                      >
-                        {isLoading ? 'Submitting...' : 'Mark Delivered ✓'}
-                      </button>
-                    )}
-
-                    {/* Delivered state -> Buyer can Release payout */}
-                    {st === 'delivered' && (
-                      <button
-                        disabled={isLoading}
-                        onClick={() => handleRelease(deal)}
-                        className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition-colors"
-                      >
-                        {isLoading ? 'Releasing...' : 'Approve & Release Payout ✓'}
-                      </button>
-                    )}
-
-                    {/* Released state */}
-                    {st === 'released' && (
-                      <span className="text-xs text-emerald-400 font-semibold px-2.5 py-1 rounded bg-emerald-500/10 border border-emerald-500/20">
-                        ✓ Milestone Settled & Released
-                      </span>
-                    )}
+                      {deal.fundingTxHash && (() => {
+                        const link = explorerLink({ txHash: deal.fundingTxHash, network: deal.network || 'solana' });
+                        if (!link) return null;
+                        return (
+                          <a
+                            href={link.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ghost-btn small"
+                          >
+                            {link.label} Proof ↗
+                          </a>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
-      </div>
+      </article>
 
-      {/* Draft New Agreement Modal */}
       {showDraftModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative space-y-5 animate-scale-in">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-white">Draft Service Agreement</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Non-custodial milestone vault with automated on-chain locking.</p>
-              </div>
-              <button
-                onClick={() => setShowDraftModal(false)}
-                className="text-slate-400 hover:text-white p-1"
-              >
-                ✕
-              </button>
+        <div className="sv-modal-backdrop" onClick={() => setShowDraftModal(false)} role="presentation" style={{ zIndex: 9999 }}>
+          <div className="sv-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '520px' }}>
+            <div className="sv-modal-head">
+              <button className="sv-modal-close" onClick={() => setShowDraftModal(false)} aria-label="Close">×</button>
+              <span className="sv-modal-eyebrow">Multi-Chain Vault Protocol</span>
+              <h2>Draft Service Agreement</h2>
+              <p className="sv-modal-sub">
+                Create a non-custodial milestone agreement. Funds remain protected in the on-chain vault until deliverables are verified.
+              </p>
             </div>
 
-            <form onSubmit={handleCreateDraft} className="space-y-4">
+            <form onSubmit={handleCreateDraft} className="sv-modal-body">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Counterparty (Username, Email, or Wallet Address)
+                <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
+                  Deliverables & Scope *
                 </label>
                 <input
                   type="text"
-                  required
-                  placeholder="@soliame or email or address"
-                  value={counterparty}
-                  onChange={(e) => setCounterparty(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Agreement Amount (USDC)
-                </label>
-                <div className="flex gap-2 mb-2">
-                  {['5', '10', '20', '50'].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => setAmount(amt)}
-                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                        amount === amt
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
-                    >
-                      ${amt} USDC
-                    </button>
-                  ))}
-                </div>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  max="1000"
-                  step="any"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Deliverables & Scope of Work
-                </label>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder="e.g. Design 3 mobile UI screens in Figma and deliver export assets within 7 days."
+                  placeholder="e.g. NFT Artwork Design with 2 Revisions"
                   value={deliverables}
                   onChange={(e) => setDeliverables(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                  required
+                  style={{ width: '100%', minHeight: '44px', padding: '0 14px', borderRadius: '12px', border: '1px solid rgba(1, 142, 232, 0.2)' }}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
+                  Counterparty (Username / Email / Address) *
+                </label>
+                <input
+                  type="text"
+                  placeholder="@designer or designer@example.com"
+                  value={counterparty}
+                  onChange={(e) => setCounterparty(e.target.value)}
+                  required
+                  style={{ width: '100%', minHeight: '44px', padding: '0 14px', borderRadius: '12px', border: '1px solid rgba(1, 142, 232, 0.2)' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Milestones
+                  <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
+                    Settlement Network
+                  </label>
+                  <select
+                    value={network}
+                    onChange={(e) => setNetwork(e.target.value)}
+                    style={{ width: '100%', minHeight: '44px', padding: '0 12px', borderRadius: '12px', border: '1px solid rgba(1, 142, 232, 0.2)' }}
+                  >
+                    <option value="solana">Solana (Instant / Low Fee)</option>
+                    <option value="base">Base (USDC Rail)</option>
+                    <option value="celo">Celo (Mobile-First)</option>
+                    <option value="stellar">Stellar (Cross-Border)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
+                    Milestone Count
                   </label>
                   <select
                     value={milestones}
                     onChange={(e) => setMilestones(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                    style={{ width: '100%', minHeight: '44px', padding: '0 12px', borderRadius: '12px', border: '1px solid rgba(1, 142, 232, 0.2)' }}
                   >
                     <option value="1">1 Milestone (Full)</option>
                     <option value="2">2 Milestones (50% / 50%)</option>
                     <option value="3">3 Milestones</option>
                   </select>
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Blockchain Network
-                  </label>
-                  <select
-                    value={network}
-                    onChange={(e) => setNetwork(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="solana">Solana Devnet</option>
-                    <option value="base">Base Sepolia</option>
-                    <option value="stellar">Stellar Testnet</option>
-                    <option value="celo">Celo Alfajores</option>
-                  </select>
+              <div>
+                <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
+                  Amount (USDC) *
+                </label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  {['5', '10', '20', '50'].map((preset) => (
+                    <button
+                      type="button"
+                      key={preset}
+                      className={`preset-amount-btn ${amount === preset ? 'active' : ''}`}
+                      onClick={() => setAmount(preset)}
+                    >
+                      ${preset} USDC
+                    </button>
+                  ))}
                 </div>
+                <input
+                  type="number"
+                  min="1"
+                  max="10000"
+                  step="0.1"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  required
+                  style={{ width: '100%', minHeight: '44px', padding: '0 14px', borderRadius: '12px', border: '1px solid rgba(1, 142, 232, 0.2)', fontFamily: 'var(--mono)' }}
+                />
               </div>
 
-              <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-400">
-                🔒 Funds will only be locked in the non-custodial vault once you review and approve the agreement.
-              </div>
-
-              <div className="flex gap-3 pt-2">
+              <div style={{ display: 'flex', gap: '10px', marginTop: '14px' }}>
                 <button
                   type="button"
+                  className="ghost-btn"
                   onClick={() => setShowDraftModal(false)}
-                  className="flex-1 py-2.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 transition-colors"
+                  disabled={submitting}
+                  style={{ flex: 1 }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
+                  className="primary-btn"
                   disabled={submitting}
-                  className="flex-1 py-2.5 rounded-xl text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition-colors"
+                  style={{ flex: 1 }}
                 >
                   {submitting ? 'Creating...' : 'Create Agreement →'}
                 </button>
@@ -609,8 +572,9 @@ export function ServiceAgreementsView({
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
 export default ServiceAgreementsView;
+

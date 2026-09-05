@@ -2716,3 +2716,59 @@
   color: #081018;
 }
 
+/* Service Agreements Dark Theme Overrides */
+[data-theme="dark"] .agreement-deal-card {
+  border-color: rgba(147, 183, 223, 0.14) !important;
+  background: linear-gradient(180deg, rgba(16, 25, 36, 0.96), rgba(9, 15, 23, 0.98)) !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
+}
+[data-theme="dark"] .agreement-deal-card:hover {
+  border-color: rgba(1, 142, 232, 0.35) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.38) !important;
+}
+[data-theme="dark"] .agreement-title-group h3 {
+  color: #f1f5f9;
+}
+[data-theme="dark"] .agreement-id-pill {
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+[data-theme="dark"] .agreement-network-pill {
+  background: rgba(56, 189, 248, 0.12);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.25);
+}
+[data-theme="dark"] .agreement-channel-pill {
+  background: rgba(192, 132, 252, 0.12);
+  color: #c084fc;
+  border-color: rgba(192, 132, 252, 0.25);
+}
+[data-theme="dark"] .agreement-amount-val {
+  color: #34d399;
+}
+[data-theme="dark"] .agreement-details-grid {
+  background: rgba(0, 0, 0, 0.25);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+[data-theme="dark"] .agreement-kv span {
+  color: #94a3b8;
+}
+[data-theme="dark"] .agreement-kv strong {
+  color: #f1f5f9;
+}
+[data-theme="dark"] .agreement-footer-actions {
+  border-top-color: rgba(255, 255, 255, 0.06);
+}
+[data-theme="dark"] .preset-amount-btn {
+  border-color: rgba(56, 189, 248, 0.25);
+  background: rgba(56, 189, 248, 0.08);
+  color: #38bdf8;
+}
+[data-theme="dark"] .preset-amount-btn.active, [data-theme="dark"] .preset-amount-btn:hover {
+  background: #0284c7;
+  color: #ffffff;
+  border-color: #0284c7;
+}
+
+
