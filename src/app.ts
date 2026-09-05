@@ -303,11 +303,24 @@ export async function buildApp() {
   app.addHook('preHandler', async (request, reply) => {
     if (isFastHealthRequest(request.method, request.url)) return;
     const body = request.body as Record<string, unknown> | undefined;
+    const authHeader = request.headers.authorization;
+    let tokenUser: string | undefined;
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      try {
+        const payload = verifyUserJwt(authHeader.slice(7));
+        tokenUser = payload?.sub;
+      } catch {
+        // Ignore decode error for rate limit lookup
+      }
+    }
+    const reqUser = (request as any).user?.id || (request as any).user?.userId || tokenUser || (typeof body?.userId === 'string' ? body.userId : undefined) || (typeof body?.buyerUserId === 'string' ? body.buyerUserId : undefined);
+
     const decision = checkRateLimit({
       ip: request.ip,
       method: request.method,
       url: request.url,
-      email: typeof body?.email === 'string' ? body.email : undefined
+      email: typeof body?.email === 'string' ? body.email : undefined,
+      userId: typeof reqUser === 'string' ? reqUser : undefined
     });
 
     if (!decision) return;

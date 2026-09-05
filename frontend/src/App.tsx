@@ -1098,8 +1098,10 @@ export default function App() {
   // Wallets are fetched separately from loadUserData because they depend on an
   // authenticated user and must refresh when that user changes.
   useEffect(() => {
-    void loadUserWallets();
-  }, [loadUserWallets]);
+    if (hasUser && user?.id) {
+      void loadUserWallets();
+    }
+  }, [hasUser, user?.id, authToken]);
 
   // Applied once the server has actually told us who this user is. Keyed on
   // the summary rather than on user.country so it cannot fire against a stale

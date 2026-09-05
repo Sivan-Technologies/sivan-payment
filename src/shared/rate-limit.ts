@@ -42,6 +42,17 @@ export function getRateLimitPolicy(method: string, url: string): RateLimitPolicy
     return { name: 'webhook', windowMs: 60_000, max: env.RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE };
   }
 
+  // Service agreements (creation, funding, delivery, release, dispute, cancel)
+  // WebMCP AI agents and frontend interactions require elevated burst throughput.
+  if (url.startsWith('/api/agreements')) {
+    return { name: 'agreements', windowMs: 60_000, max: env.RATE_LIMIT_WEBHOOK_MAX_PER_MINUTE };
+  }
+
+  // Session refresh tokens (background sliding session renewals)
+  if (method === 'POST' && (url.startsWith('/api/auth/session/refresh') || url.startsWith('/api/auth/refresh'))) {
+    return { name: 'session_refresh', windowMs: 60_000, max: env.RATE_LIMIT_DEFAULT_MAX_PER_MINUTE };
+  }
+
   /**
    * Pairing-code redemption, called by the WhatsApp and Telegram bots.
    *
@@ -105,11 +116,14 @@ export function checkRateLimit(input: {
   method: string;
   url: string;
   email?: string;
+  userId?: string;
 }): RateLimitDecision | null {
   const policy = getRateLimitPolicy(input.method, input.url);
   if (!policy) return null;
 
-  const identity = input.email ? `${input.ip}:${input.email.toLowerCase()}` : input.ip;
+  const identity = input.userId
+    ? `usr_${input.userId}`
+    : (input.email ? `${input.ip}:${input.email.toLowerCase()}` : input.ip);
   const key = `${policy.name}:${identity}`;
   const now = Date.now();
   const existing = buckets.get(key);
