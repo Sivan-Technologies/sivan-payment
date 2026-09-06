@@ -13,6 +13,7 @@ import type { WalletProvider } from './wallet-provider.js';
 import type {
   CreateWalletInput,
   ProviderWallet,
+  WalletAsset,
   WalletBalance,
   WalletChain,
   WalletCustodyModel,
@@ -784,8 +785,8 @@ export class PrivyWalletProvider implements WalletProvider {
     // missing entry is skipped rather than reported as zero: Base has no
     // native USDT, and "0 USDT on Base" would be an invented figure.
     const balances: WalletBalance[] = [];
-
-    for (const asset of ['usdc', 'usdt'] as const) {
+    const assetsToCheck: WalletAsset[] = chain === 'celo' ? ['usdc', 'usdt', 'cusd'] : ['usdc', 'usdt'];
+    for (const asset of assetsToCheck) {
       const token = erc20TokenAddress(chain, asset, production);
       if (!token) continue;
 
