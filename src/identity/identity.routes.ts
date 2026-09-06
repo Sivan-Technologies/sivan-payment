@@ -886,6 +886,11 @@ export async function identityRoutes(app: FastifyInstance) {
         wallets: unified.wallets.map((w) => ({
           chain: w.chain,
           address: w.address,
+          balances: (w.balances || []).map((b) => ({
+            asset: b.asset,
+            amount: Number(b.amount),
+          })),
+          balancesUnavailable: !!w.balancesUnavailable,
         })),
       },
     };
