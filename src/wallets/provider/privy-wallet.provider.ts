@@ -439,7 +439,7 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
   },
   'celo:usdc': {
     mainnet: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
-    testnet: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
+    testnet: '0x01C5C0122039549AD1493B8220cABEdD739BC44E',
   },
   'celo:usdt': {
     mainnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',

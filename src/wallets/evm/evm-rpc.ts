@@ -51,9 +51,9 @@ const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }>
       'https://1rpc.io/celo',
     ],
     testnet: [
-      'https://forno.celo.org',
-      'https://celo.drpc.org',
-      'https://1rpc.io/celo',
+      'https://forno.celo-sepolia.celo-testnet.org',
+      'https://celo-sepolia.drpc.org',
+      'https://sepolia-rpc.celo.org',
     ],
   },
   bsc: {

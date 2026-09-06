@@ -58,7 +58,7 @@ const TESTNET_LABELS: Record<WalletChain, string> = {
   base: 'Base Sepolia',
   ethereum: 'Sepolia',
   stellar: 'Testnet',
-  celo: 'Alfajores',
+  celo: 'Celo Sepolia',
   bsc: 'BSC Testnet',
   bnb: 'BSC Testnet',
 };
