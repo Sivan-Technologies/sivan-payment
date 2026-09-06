@@ -47,6 +47,10 @@ export class StellarAdapter implements IChainAdapter {
     if (normalizedAsset === 'usdt') {
       return readStellarUsdtBalance(wallet.address);
     }
+    if (normalizedAsset === 'xlm') {
+      const balances = await readStellarTokenBalances(wallet.address);
+      return balances.xlm;
+    }
     return readStellarUsdcBalance(wallet.address);
   }
 

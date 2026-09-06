@@ -731,13 +731,23 @@ export class PrivyWalletProvider implements WalletProvider {
     }
 
     if (chain === 'stellar') {
-      const { readStellarUsdcBalance } = await import('../stellar/stellar-rpc.js');
-      const usdc = await readStellarUsdcBalance(address).catch(() => 0);
+      const { readStellarTokenBalances } = await import('../stellar/stellar-rpc.js');
+      const stellarBalances = await readStellarTokenBalances(address).catch(() => ({ usdc: 0, usdt: 0, xlm: 0 }));
       return [
         {
           asset: 'usdc',
           chain: 'stellar',
-          amount: Number(usdc).toFixed(6),
+          amount: Number(stellarBalances.usdc).toFixed(6),
+        },
+        {
+          asset: 'usdt',
+          chain: 'stellar',
+          amount: Number(stellarBalances.usdt).toFixed(6),
+        },
+        {
+          asset: 'xlm',
+          chain: 'stellar',
+          amount: Number(stellarBalances.xlm).toFixed(6),
         },
       ];
     }
