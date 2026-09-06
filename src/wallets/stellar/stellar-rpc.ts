@@ -66,6 +66,36 @@ export async function readStellarUsdcBalance(accountId: string): Promise<number>
   return usdcEntry ? parseFloat(usdcEntry.balance) : 0;
 }
 
+export async function readStellarUsdtBalance(accountId: string): Promise<number> {
+  const account = await fetchStellarAccount(accountId);
+  if (!account) return 0;
+
+  const usdtEntry = account.balances.find(
+    (b) => (b.asset_code === 'USDT' || b.asset_code === 'usdt') && b.asset_type !== 'native'
+  );
+
+  return usdtEntry ? parseFloat(usdtEntry.balance) : 0;
+}
+
+export async function readStellarTokenBalances(accountId: string): Promise<{ usdc: number; usdt: number; xlm: number }> {
+  const account = await fetchStellarAccount(accountId);
+  if (!account) return { usdc: 0, usdt: 0, xlm: 0 };
+
+  const usdcEntry = account.balances.find(
+    (b) => (b.asset_code === 'USDC' || b.asset_code === 'usdc') && b.asset_type !== 'native'
+  );
+  const usdtEntry = account.balances.find(
+    (b) => (b.asset_code === 'USDT' || b.asset_code === 'usdt') && b.asset_type !== 'native'
+  );
+  const xlmEntry = account.balances.find((b) => b.asset_type === 'native');
+
+  return {
+    usdc: usdcEntry ? parseFloat(usdcEntry.balance) : 0,
+    usdt: usdtEntry ? parseFloat(usdtEntry.balance) : 0,
+    xlm: xlmEntry ? parseFloat(xlmEntry.balance) : 0,
+  };
+}
+
 export async function isStellarHorizonHealthy(): Promise<boolean> {
   const base = horizonEndpoint();
   try {

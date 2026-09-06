@@ -11,19 +11,31 @@ import {
 } from '@stellar/stellar-sdk';
 
 /**
- * Stellar USDC Trustline Configuration & Management.
+ * Stellar USDC & USDT Trustline Configuration & Management.
  *
  * Official Circle USDC Issuers on Stellar:
  * Mainnet: GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+ * Testnet: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+ *
+ * Official Tether USDT Issuers on Stellar:
+ * Mainnet: GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQJUOBURW3FSTKTRNMGXB5
  * Testnet: GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
  */
 
 export const STELLAR_USDC_ISSUER_MAINNET = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 export const STELLAR_USDC_ISSUER_TESTNET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
+export const STELLAR_USDT_ISSUER_MAINNET = 'GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQJUOBURW3FSTKTRNMGXB5';
+export const STELLAR_USDT_ISSUER_TESTNET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
 export function getStellarUsdcIssuer(): string {
   const isProd = env.APP_ENV === 'production';
   return (process.env.STELLAR_USDC_ISSUER || '').trim() || (isProd ? STELLAR_USDC_ISSUER_MAINNET : STELLAR_USDC_ISSUER_TESTNET);
+}
+
+export function getStellarUsdtIssuer(): string {
+  const isProd = env.APP_ENV === 'production';
+  return (process.env.STELLAR_USDT_ISSUER || '').trim() || (isProd ? STELLAR_USDT_ISSUER_MAINNET : STELLAR_USDT_ISSUER_TESTNET);
 }
 
 export async function hasUsdcTrustline(accountId: string): Promise<boolean> {
@@ -36,14 +48,24 @@ export async function hasUsdcTrustline(accountId: string): Promise<boolean> {
   );
 }
 
+export async function hasUsdtTrustline(accountId: string): Promise<boolean> {
+  const account = await fetchStellarAccount(accountId);
+  if (!account) return false;
+
+  const expectedIssuer = getStellarUsdtIssuer();
+  return account.balances.some(
+    (b) => (b.asset_code === 'USDT' || b.asset_code === 'usdt') && b.asset_issuer === expectedIssuer
+  );
+}
+
 /**
- * Ensures a Stellar account is funded on-chain and has an active Circle USDC trustline.
+ * Ensures a Stellar account is funded on-chain and has active USDC and USDT trustlines.
  * Automatically runs in the background when a Stellar wallet is created or queried.
  */
 export async function ensureStellarAccountAndTrustline(
   seedOrSecret: string,
   address?: string
-): Promise<{ success: boolean; address: string; trustlineActive: boolean; error?: string }> {
+): Promise<{ success: boolean; address: string; trustlineActive: boolean; usdcActive?: boolean; usdtActive?: boolean; error?: string }> {
   try {
     let keypair: Keypair;
     if (seedOrSecret.startsWith('S') && seedOrSecret.length === 56) {
@@ -79,27 +101,38 @@ export async function ensureStellarAccountAndTrustline(
       return { success: false, address: pubkey, trustlineActive: false, error: 'Account not initialized on network' };
     }
 
-    // 2. Check if trustline is already active
-    const alreadyHasTrustline = await hasUsdcTrustline(pubkey);
-    if (alreadyHasTrustline) {
-      return { success: true, address: pubkey, trustlineActive: true };
+    // 2. Check if trustlines are already active
+    const hasUsdc = await hasUsdcTrustline(pubkey);
+    const hasUsdt = await hasUsdtTrustline(pubkey);
+
+    if (hasUsdc && hasUsdt) {
+      return { success: true, address: pubkey, trustlineActive: true, usdcActive: true, usdtActive: true };
     }
 
-    // 3. Build & submit ChangeTrust transaction
+    // 3. Build & submit ChangeTrust transaction for missing trustlines
     const stellarAccount = await server.loadAccount(pubkey);
-    const usdcAsset = new Asset('USDC', getStellarUsdcIssuer());
-    const tx = new TransactionBuilder(stellarAccount, {
-      fee: '100',
+    const builder = new TransactionBuilder(stellarAccount, {
+      fee: '200',
       networkPassphrase,
-    })
-      .addOperation(
-        Operation.changeTrust({
-          asset: usdcAsset,
-        })
-      )
-      .setTimeout(30)
-      .build();
+    });
 
+    if (!hasUsdc) {
+      builder.addOperation(
+        Operation.changeTrust({
+          asset: new Asset('USDC', getStellarUsdcIssuer()),
+        })
+      );
+    }
+
+    if (!hasUsdt) {
+      builder.addOperation(
+        Operation.changeTrust({
+          asset: new Asset('USDT', getStellarUsdtIssuer()),
+        })
+      );
+    }
+
+    const tx = builder.setTimeout(30).build();
     tx.sign(keypair);
     await server.submitTransaction(tx);
 
@@ -107,6 +140,8 @@ export async function ensureStellarAccountAndTrustline(
       success: true,
       address: pubkey,
       trustlineActive: true,
+      usdcActive: true,
+      usdtActive: true,
     };
   } catch (err: any) {
     const errorDetails = err?.response?.data || err?.data || {};

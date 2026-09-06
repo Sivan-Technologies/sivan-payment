@@ -36,7 +36,7 @@ const CHAIN_ASSETS: Record<ReceiveChain, ReceiveAsset[]> = {
   solana: ['usdc', 'usdt'],
   ethereum: ['usdc', 'usdt'],
   base: ['usdc'],
-  stellar: ['usdc'],
+  stellar: ['usdc', 'usdt'],
   celo: ['usdc'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],

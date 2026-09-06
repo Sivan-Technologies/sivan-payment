@@ -1,5 +1,5 @@
 import { IChainAdapter, ChainTransferParams, ChainTransferResult } from '../IChainAdapter.js';
-import { readStellarUsdcBalance, isStellarHorizonHealthy } from './stellar-rpc.js';
+import { readStellarUsdcBalance, readStellarUsdtBalance, isStellarHorizonHealthy } from './stellar-rpc.js';
 import { validateAddressForChain } from '../address-validation.js';
 import { getWalletProvider } from '../provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallet-controls.service.js';
@@ -43,6 +43,10 @@ export class StellarAdapter implements IChainAdapter {
   async getBalance(userId: string, asset = 'usdc'): Promise<number> {
     const wallet = await db.findUserWallet(userId, 'stellar');
     if (!wallet?.address) return 0;
+    const normalizedAsset = (asset || 'usdc').toLowerCase();
+    if (normalizedAsset === 'usdt') {
+      return readStellarUsdtBalance(wallet.address);
+    }
     return readStellarUsdcBalance(wallet.address);
   }
 
