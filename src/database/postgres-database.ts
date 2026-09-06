@@ -1656,7 +1656,7 @@ export class PostgresDatabase {
            (id, user_id, payments_customer_id, provider, provider_wallet_id, chain, address, status, custodial, delegated_signing_enabled, delegated_signer_id, raw, created_at, updated_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), now())
          on conflict (user_id, chain) where status <> 'closed'
-         do update set updated_at = now()
+         do update set address = excluded.address, provider_wallet_id = excluded.provider_wallet_id, raw = excluded.raw, updated_at = now()
          returning *`,
         [record.id, record.userId, record.customerId, record.provider, record.providerWalletId,
          record.chain, record.address, record.status, record.custodial,
