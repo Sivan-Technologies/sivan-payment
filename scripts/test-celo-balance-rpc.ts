@@ -1,3 +1,5 @@
+export {};
+
 const testEndpoints = [
   'https://celo-alfajores.drpc.org',
   'https://celo-alfajores.blockpi.network/v1/rpc/public',

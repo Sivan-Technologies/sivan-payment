@@ -1,3 +1,5 @@
+export {};
+
 const addresses = [
   '0xC8cAA84402b1397A055b0c2F388a510f58786285',
   '0x901255F561BCf73688fa1b1c18a9cA836132d132',

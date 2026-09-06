@@ -1,5 +1,5 @@
 import { IChainAdapter, ChainTransferParams, ChainTransferResult } from '../IChainAdapter.js';
-import { readStellarUsdcBalance, readStellarUsdtBalance, isStellarHorizonHealthy } from './stellar-rpc.js';
+import { readStellarUsdcBalance, readStellarUsdtBalance, readStellarTokenBalances, isStellarHorizonHealthy } from './stellar-rpc.js';
 import { validateAddressForChain } from '../address-validation.js';
 import { getWalletProvider } from '../provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallet-controls.service.js';

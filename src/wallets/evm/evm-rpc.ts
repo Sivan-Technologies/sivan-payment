@@ -91,11 +91,11 @@ export function evmRpcEndpoints(chain: WalletChain, options: EvmRpcOptions = {})
     configured = env.BASE_RPC_URL || '';
     secondary = env.BASE_RPC_FALLBACK_URL || '';
   } else if (chain === 'celo') {
-    configured = process.env.CELO_RPC_URL || env.CELO_RPC_URL || '';
-    secondary = process.env.CELO_RPC_FALLBACK_URL || env.CELO_RPC_FALLBACK_URL || '';
+    configured = process.env.CELO_RPC_URL || '';
+    secondary = process.env.CELO_RPC_FALLBACK_URL || '';
   } else if (chain === 'bsc' || chain === 'bnb') {
-    configured = process.env.BSC_RPC_URL || env.BSC_RPC_URL || '';
-    secondary = process.env.BSC_RPC_FALLBACK_URL || env.BSC_RPC_FALLBACK_URL || '';
+    configured = process.env.BSC_RPC_URL || '';
+    secondary = process.env.BSC_RPC_FALLBACK_URL || '';
   } else {
     configured = env.ETHEREUM_RPC_URL || '';
     secondary = env.ETHEREUM_RPC_FALLBACK_URL || '';
