@@ -320,7 +320,7 @@ export const CHAIN_ASSET_SUPPORT: Record<string, SourceCurrency[]> = {
   bnb: ['usdc', 'usdt'],
   solana: ['usdc', 'usdt'],
   stellar: ['usdc', 'usdt'],
-  celo: ['usdc'],
+  celo: ['usdc', 'usdt'],
   ethereum: ['usdc', 'usdt'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],

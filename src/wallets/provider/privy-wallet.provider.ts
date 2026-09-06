@@ -436,6 +436,34 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
     mainnet: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     testnet: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // Base Sepolia
   },
+  'celo:usdc': {
+    mainnet: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
+    testnet: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
+  },
+  'celo:usdt': {
+    mainnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
+    testnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
+  },
+  'celo:cusd': {
+    mainnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
+    testnet: '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1',
+  },
+  'bsc:usdc': {
+    mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+    testnet: '0x64544969ed7EBf5f083679233325356EbE738930',
+  },
+  'bsc:usdt': {
+    mainnet: '0x55d398326f99059fF775485246999027B3197955',
+    testnet: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
+  },
+  'bnb:usdc': {
+    mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+    testnet: '0x64544969ed7EBf5f083679233325356EbE738930',
+  },
+  'bnb:usdt': {
+    mainnet: '0x55d398326f99059fF775485246999027B3197955',
+    testnet: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
+  },
 };
 
 export function erc20TokenAddress(

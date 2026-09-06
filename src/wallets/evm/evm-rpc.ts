@@ -27,12 +27,6 @@ import type { WalletChain } from '../types/wallet.types.js';
  */
 const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }> = {
   ethereum: {
-    // llamarpc was the SOLE ethereum fallback and returned HTTP 521 for hours.
-    // Verified 2026-08-05: publicnode, 1rpc and drpc all answered
-    // eth_blockNumber 200 in the same second llamarpc was failing. It is kept,
-    // last, because it does recover - but it can no longer be a single point
-    // of failure. (rpc.ankr.com/eth was tested and rejected: it now returns
-    // -32000 "Unauthorized" without a key, so it would only add a wasted hop.)
     mainnet: [
       'https://ethereum-rpc.publicnode.com',
       'https://eth.drpc.org',
@@ -42,8 +36,6 @@ const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }>
     testnet: ['https://ethereum-sepolia-rpc.publicnode.com'],
   },
   base: {
-    // base.llamarpc.com was ALSO 521 in the same test, from the same vendor -
-    // which is the argument against relying on one operator for both chains.
     mainnet: [
       'https://mainnet.base.org',
       'https://base-rpc.publicnode.com',
@@ -51,6 +43,34 @@ const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }>
       'https://1rpc.io/base',
     ],
     testnet: ['https://sepolia.base.org'],
+  },
+  celo: {
+    mainnet: [
+      'https://forno.celo.org',
+      'https://celo.drpc.org',
+      'https://1rpc.io/celo',
+    ],
+    testnet: [
+      'https://forno.celo.org',
+      'https://celo.drpc.org',
+      'https://1rpc.io/celo',
+    ],
+  },
+  bsc: {
+    mainnet: [
+      'https://bsc-dataseed.binance.org',
+      'https://bsc.drpc.org',
+      'https://1rpc.io/bnb',
+    ],
+    testnet: ['https://data-seed-prebsc-1-s1.binance.org:8545'],
+  },
+  bnb: {
+    mainnet: [
+      'https://bsc-dataseed.binance.org',
+      'https://bsc.drpc.org',
+      'https://1rpc.io/bnb',
+    ],
+    testnet: ['https://data-seed-prebsc-1-s1.binance.org:8545'],
   },
 };
 
@@ -61,24 +81,26 @@ export interface EvmRpcOptions {
   timeoutMs?: number;
 }
 
-/**
- * Endpoints to try, in order, with duplicates removed.
- *
- * Three tiers: the configured provider (Alchemy/Infura), then a configured
- * secondary, then the public endpoint as a last resort. A keyed provider is
- * tried first because it is the one with a rate limit Sivan controls; the
- * public endpoint exists so a rate-limited or unconfigured deployment still
- * answers rather than failing outright.
- *
- * Duplicates are dropped because configuring the same URL twice is a plausible
- * copy-paste error, and retrying an identical endpoint doubles the latency of a
- * failure while adding no resilience.
- */
 export function evmRpcEndpoints(chain: WalletChain, options: EvmRpcOptions = {}): string[] {
   const production = options.production ?? true;
 
-  const configured = chain === 'base' ? env.BASE_RPC_URL : env.ETHEREUM_RPC_URL;
-  const secondary = chain === 'base' ? env.BASE_RPC_FALLBACK_URL : env.ETHEREUM_RPC_FALLBACK_URL;
+  let configured = '';
+  let secondary = '';
+
+  if (chain === 'base') {
+    configured = env.BASE_RPC_URL || '';
+    secondary = env.BASE_RPC_FALLBACK_URL || '';
+  } else if (chain === 'celo') {
+    configured = process.env.CELO_RPC_URL || env.CELO_RPC_URL || '';
+    secondary = process.env.CELO_RPC_FALLBACK_URL || env.CELO_RPC_FALLBACK_URL || '';
+  } else if (chain === 'bsc' || chain === 'bnb') {
+    configured = process.env.BSC_RPC_URL || env.BSC_RPC_URL || '';
+    secondary = process.env.BSC_RPC_FALLBACK_URL || env.BSC_RPC_FALLBACK_URL || '';
+  } else {
+    configured = env.ETHEREUM_RPC_URL || '';
+    secondary = env.ETHEREUM_RPC_FALLBACK_URL || '';
+  }
+
   const fallback = PUBLIC_ENDPOINTS[chain];
   const publicEndpoints = fallback ? (production ? fallback.mainnet : fallback.testnet) : [];
 
@@ -103,7 +125,7 @@ function isEndpointLevelRpcError(error: any): boolean {
   // -32005 exceeded limit, -32011/-32603 provider-internal.
   if ([401, 403, 429, -32005, -32011].includes(code)) return true;
 
-  return /must be authenticated|unauthorized|forbidden|invalid api key|invalid key|quota|rate ?limit|too many requests|exceeded|over capacity|service unavailable/i.test(
+  return /must be authenticated|unauthorized|forbidden|invalid api key|invalid key|quota|rate ?limit|too many requests|exceeded|over capacity|service unavailable|unknown network|unsupported network|not supported|bad gateway/i.test(
     String(error?.message ?? '')
   );
 }

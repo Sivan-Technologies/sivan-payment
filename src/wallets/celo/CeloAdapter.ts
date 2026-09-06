@@ -41,7 +41,12 @@ export class CeloAdapter implements IChainAdapter {
     const provider = getWalletProvider(await resolveActiveWalletProvider());
     const wallet = await db.findUserWallet(userId, 'celo');
     if (!wallet?.providerWalletId) return 0;
-    const balances = await provider.getBalances(wallet.providerWalletId, 'celo');
+    const balances = await provider.getBalances(
+      wallet.providerWalletId,
+      wallet.customerId,
+      wallet.address,
+      'celo'
+    );
     const match = balances.find(
       (b) => b.asset.toLowerCase() === asset.toLowerCase() && (b.chain === 'celo' || b.chain === 'ethereum')
     );

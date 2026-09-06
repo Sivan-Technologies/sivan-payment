@@ -44,8 +44,12 @@ export class EvmAdapter implements IChainAdapter {
   async getBalance(userId: string, asset = 'usdc'): Promise<number> {
     const provider = getWalletProvider(await resolveActiveWalletProvider());
     const wallet = await db.findUserWallet(userId, this.chain);
-    if (!wallet?.providerWalletId) return 0;
-    const balances = await provider.getBalances(wallet.providerWalletId, this.chain);
+    const balances = await provider.getBalances(
+      wallet.providerWalletId,
+      wallet.customerId,
+      wallet.address,
+      this.chain
+    );
     const match = balances.find(
       (b) => b.asset.toLowerCase() === asset.toLowerCase() && (b.chain === this.chain || b.chain === 'ethereum')
     );

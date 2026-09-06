@@ -41,7 +41,12 @@ export class SolanaAdapter implements IChainAdapter {
     const provider = getWalletProvider(await resolveActiveWalletProvider());
     const wallet = await db.findUserWallet(userId, 'solana');
     if (!wallet?.providerWalletId) return 0;
-    const balances = await provider.getBalances(wallet.providerWalletId, 'solana');
+    const balances = await provider.getBalances(
+      wallet.providerWalletId,
+      wallet.customerId,
+      wallet.address,
+      'solana'
+    );
     const match = balances.find((b) => b.asset.toLowerCase() === asset.toLowerCase() && b.chain === 'solana');
     return match ? Number(match.amount) : 0;
   }

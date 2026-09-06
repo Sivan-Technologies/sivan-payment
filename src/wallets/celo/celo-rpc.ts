@@ -18,7 +18,9 @@ const PUBLIC_MAINNET_ENDPOINTS = [
 ];
 
 const PUBLIC_TESTNET_ENDPOINTS = [
-  'https://alfajores-forno.celo-testnet.org',
+  'https://forno.celo.org',
+  'https://celo.drpc.org',
+  'https://1rpc.io/celo',
 ];
 
 export function celoRpcEndpoints(): string[] {
