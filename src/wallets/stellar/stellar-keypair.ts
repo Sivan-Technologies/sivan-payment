@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { Keypair } from '@stellar/stellar-sdk';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
@@ -51,17 +52,14 @@ export interface StellarKeypair {
 }
 
 /**
- * Generates a full deterministic Stellar Keypair from a seed.
+ * Generates a full deterministic Stellar Keypair from a seed using true Ed25519 curve derivation.
  */
 export function generateStellarKeypair(seed: string): StellarKeypair {
   const seedBytes = crypto.createHash('sha256').update(seed).digest();
-  const secretKey = encodeStrKey(18 << 3, seedBytes); // 18 << 3 = 144 -> 'S'
-  const pubkeyBytes = crypto.createHash('sha256').update(seedBytes).digest();
-  const publicKey = encodeStrKey(6 << 3, pubkeyBytes); // 6 << 3 = 48 -> 'G'
-
+  const kp = Keypair.fromRawEd25519Seed(seedBytes);
   return {
-    publicKey,
-    secretKey,
+    publicKey: kp.publicKey(),
+    secretKey: kp.secret(),
   };
 }
 

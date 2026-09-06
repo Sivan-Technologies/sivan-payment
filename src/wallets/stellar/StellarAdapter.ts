@@ -6,6 +6,7 @@ import { resolveActiveWalletProvider } from '../wallet-controls.service.js';
 import { db } from '../../database/json-database.js';
 
 import { generateStellarAddress } from './stellar-keypair.js';
+import { ensureStellarAccountAndTrustline } from './trustline.js';
 
 export class StellarAdapter implements IChainAdapter {
   readonly chain = 'stellar' as const;
@@ -13,6 +14,7 @@ export class StellarAdapter implements IChainAdapter {
   async getDepositAddress(userId: string): Promise<string> {
     const wallet = await db.findUserWallet(userId, 'stellar');
     if (wallet?.address) {
+      ensureStellarAccountAndTrustline(`sivan_stellar_${userId}`, wallet.address).catch(() => null);
       return wallet.address;
     }
 
@@ -22,15 +24,18 @@ export class StellarAdapter implements IChainAdapter {
       id: `uw_${userId}_stellar_${Date.now()}`,
       userId,
       provider: 'stellar_native',
-      providerWalletId: `stellar_w_${userId}`,
+      providerWalletId: `stellar_${address}`,
       chain: 'stellar',
       address,
       status: 'active',
       custodial: false,
       delegatedSigningEnabled: true,
+      raw: { address, chain: 'stellar', trustlineActive: true },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
+
+    ensureStellarAccountAndTrustline(`sivan_stellar_${userId}`, address).catch(() => null);
 
     return address;
   }

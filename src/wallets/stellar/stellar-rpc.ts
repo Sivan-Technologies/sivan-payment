@@ -41,7 +41,7 @@ export async function fetchStellarAccount(accountId: string): Promise<StellarAcc
   const base = horizonEndpoint();
   const url = `${base}/accounts/${accountId}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
+  const timer = setTimeout(() => controller.abort(), 15000);
 
   try {
     const res = await fetch(url, { signal: controller.signal });

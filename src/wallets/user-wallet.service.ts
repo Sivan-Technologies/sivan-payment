@@ -183,6 +183,7 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
 
   if (chain === 'stellar') {
     const { generateStellarAddress } = await import('./stellar/stellar-keypair.js');
+    const { ensureStellarAccountAndTrustline } = await import('./stellar/trustline.js');
     const address = generateStellarAddress('sivan_stellar_' + userId);
     const now = nowIso();
     const record: UserWalletRecord = {
@@ -196,11 +197,15 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
       status: 'active',
       custodial: false,
       delegatedSigningEnabled: true,
-      raw: { address, chain: 'stellar' },
+      raw: { address, chain: 'stellar', trustlineActive: true },
       createdAt: now,
       updatedAt: now,
     };
-    return await db.insertUserWallet(record);
+    const saved = await db.insertUserWallet(record);
+    ensureStellarAccountAndTrustline('sivan_stellar_' + userId, address).catch((err) => {
+      console.warn('[user-wallet.stellar_trustline_bg_error]', err);
+    });
+    return saved;
   }
 
   const targetChain = chain === 'solana' ? 'solana' : 'ethereum';
