@@ -12,46 +12,41 @@ export class StellarAdapter implements IChainAdapter {
   readonly chain = 'stellar' as const;
 
   async getDepositAddress(userId: string): Promise<string> {
+    const address = generateStellarAddress(`sivan_stellar_${userId}`);
     const wallet = await db.findUserWallet(userId, 'stellar');
-    if (wallet?.address) {
-      ensureStellarAccountAndTrustline(`sivan_stellar_${userId}`, wallet.address).catch(() => null);
-      return wallet.address;
+
+    if (!wallet || wallet.address !== address) {
+      await db.insertUserWallet({
+        id: `uw_${userId}_stellar_${Date.now()}`,
+        userId,
+        provider: 'stellar_native',
+        providerWalletId: `stellar_${address}`,
+        chain: 'stellar',
+        address,
+        status: 'active',
+        custodial: false,
+        delegatedSigningEnabled: true,
+        raw: { address, chain: 'stellar', trustlineActive: true },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
     }
 
-    const address = generateStellarAddress(`sivan_stellar_${userId}`);
-
-    await db.insertUserWallet({
-      id: `uw_${userId}_stellar_${Date.now()}`,
-      userId,
-      provider: 'stellar_native',
-      providerWalletId: `stellar_${address}`,
-      chain: 'stellar',
-      address,
-      status: 'active',
-      custodial: false,
-      delegatedSigningEnabled: true,
-      raw: { address, chain: 'stellar', trustlineActive: true },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
     ensureStellarAccountAndTrustline(`sivan_stellar_${userId}`, address).catch(() => null);
-
     return address;
   }
 
   async getBalance(userId: string, asset = 'usdc'): Promise<number> {
-    const wallet = await db.findUserWallet(userId, 'stellar');
-    if (!wallet?.address) return 0;
+    const address = generateStellarAddress(`sivan_stellar_${userId}`);
     const normalizedAsset = (asset || 'usdc').toLowerCase();
     if (normalizedAsset === 'usdt') {
-      return readStellarUsdtBalance(wallet.address);
+      return readStellarUsdtBalance(address);
     }
     if (normalizedAsset === 'xlm') {
-      const balances = await readStellarTokenBalances(wallet.address);
+      const balances = await readStellarTokenBalances(address);
       return balances.xlm;
     }
-    return readStellarUsdcBalance(wallet.address);
+    return readStellarUsdcBalance(address);
   }
 
   async transfer(params: ChainTransferParams): Promise<ChainTransferResult> {

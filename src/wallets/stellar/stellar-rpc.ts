@@ -27,9 +27,23 @@ export interface StellarAccountResponse {
   balances: StellarAccountBalance[];
 }
 
-export function horizonEndpoint(): string {
+export const HORIZON_PUBLIC_MAINNET = [
+  'https://horizon.stellar.org',
+];
+
+export const HORIZON_PUBLIC_TESTNET = [
+  'https://horizon-testnet.stellar.org',
+];
+
+export function horizonEndpoints(): string[] {
   const isProd = env.APP_ENV === 'production';
-  return (process.env.STELLAR_HORIZON_URL || '').trim() || (isProd ? HORIZON_MAINNET : HORIZON_TESTNET);
+  const custom = (process.env.STELLAR_HORIZON_URL || '').trim();
+  const defaults = isProd ? HORIZON_PUBLIC_MAINNET : HORIZON_PUBLIC_TESTNET;
+  return [...new Set([custom, ...defaults].filter(Boolean))];
+}
+
+export function horizonEndpoint(): string {
+  return horizonEndpoints()[0];
 }
 
 export function sorobanEndpoint(): string {
@@ -38,21 +52,33 @@ export function sorobanEndpoint(): string {
 }
 
 export async function fetchStellarAccount(accountId: string): Promise<StellarAccountResponse | null> {
-  const base = horizonEndpoint();
-  const url = `${base}/accounts/${accountId}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const endpoints = horizonEndpoints();
+  let lastError: Error | null = null;
 
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (res.status === 404) return null;
-    if (!res.ok) {
-      throw new Error(`Stellar Horizon returned HTTP ${res.status}`);
+  for (const base of endpoints) {
+    const url = `${base}/accounts/${accountId}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        throw new Error(`Stellar Horizon ${base} returned HTTP ${res.status}`);
+      }
+      return (await res.json()) as StellarAccountResponse;
+    } catch (err: any) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      continue;
+    } finally {
+      clearTimeout(timer);
     }
-    return (await res.json()) as StellarAccountResponse;
-  } finally {
-    clearTimeout(timer);
   }
+
+  if (lastError) {
+    console.warn(`[stellar_rpc.fetch_account_warning] All Horizon endpoints failed for ${accountId}:`, lastError.message);
+  }
+  return null;
 }
 
 export async function readStellarUsdcBalance(accountId: string): Promise<number> {

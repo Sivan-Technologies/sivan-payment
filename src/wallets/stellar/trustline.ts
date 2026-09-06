@@ -1,5 +1,5 @@
 import { env } from '../../config/env.js';
-import { fetchStellarAccount, horizonEndpoint } from './stellar-rpc.js';
+import { fetchStellarAccount, horizonEndpoints } from './stellar-rpc.js';
 import { generateStellarKeypair } from './stellar-keypair.js';
 import {
   Keypair,
@@ -7,7 +7,7 @@ import {
   Networks,
   TransactionBuilder,
   Operation,
-  Horizon,
+  Account,
 } from '@stellar/stellar-sdk';
 
 /**
@@ -77,8 +77,6 @@ export async function ensureStellarAccountAndTrustline(
 
     const pubkey = address || keypair.publicKey();
     const isProd = env.APP_ENV === 'production';
-    const horizonUrl = horizonEndpoint();
-    const server = new Horizon.Server(horizonUrl);
     const networkPassphrase = isProd ? Networks.PUBLIC : Networks.TESTNET;
 
     // 1. Check if account exists on Horizon
@@ -110,7 +108,7 @@ export async function ensureStellarAccountAndTrustline(
     }
 
     // 3. Build & submit ChangeTrust transaction for missing trustlines
-    const stellarAccount = await server.loadAccount(pubkey);
+    const stellarAccount = new Account(pubkey, account.sequence);
     const builder = new TransactionBuilder(stellarAccount, {
       fee: '200',
       networkPassphrase,
@@ -134,7 +132,39 @@ export async function ensureStellarAccountAndTrustline(
 
     const tx = builder.setTimeout(30).build();
     tx.sign(keypair);
-    await server.submitTransaction(tx);
+    const xdr = tx.toXDR();
+
+    const endpoints = horizonEndpoints();
+    let submitted = false;
+    let submitErrorMsg = '';
+
+    for (const base of endpoints) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const res = await fetch(`${base}/transactions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ tx: xdr }),
+          signal: controller.signal,
+        });
+        const data: any = await res.json().catch(() => ({}));
+        if (res.ok || data.successful || data.hash) {
+          submitted = true;
+          break;
+        } else {
+          submitErrorMsg = data?.extras?.result_codes ? JSON.stringify(data.extras.result_codes) : (data?.title || `HTTP ${res.status}`);
+        }
+      } catch (err: any) {
+        submitErrorMsg = err instanceof Error ? err.message : String(err);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!submitted) {
+      throw new Error(`Stellar trustline transaction submission failed: ${submitErrorMsg}`);
+    }
 
     return {
       success: true,
