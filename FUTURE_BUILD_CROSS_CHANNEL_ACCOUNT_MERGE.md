@@ -1,9 +1,9 @@
 # Sivan Ai - Cross-Channel Identity & Wallet Merge Protocol (Telegram & WhatsApp)
 
 ## Overview
-This specification defines the automated architecture for merging split identities and multi-chain non-custodial wallets when a user creates an account on Telegram or WhatsApp first, and later creates an account on the Web Dashboard using different credentials (or vice versa).
+This specification defines the automated architecture for merging split identities, multi-chain non-custodial wallets, and universal KYC verification when a user creates an account on Telegram or WhatsApp first, and later creates an account on the Web Dashboard using different credentials (or vice versa).
 
-Document Version: 1.1.0
+Document Version: 1.2.0
 Author: Samson Micheal, Founder & CEO (Abuja, Nigeria)
 Platform: Sivan Ai / Sivan Payment Ai
 
@@ -34,7 +34,7 @@ Endpoints:
 - POST /api/identity/link-whatsapp/redeem
 
 When a pairing code issued by Account B is redeemed with a Telegram User ID or WhatsApp Number belonging to Account A:
-1. Inspect Account A wallet balances and pending agreements.
+1. Inspect Account A wallet balances, KYC verification state, and pending agreements.
 2. If Account A has active wallets, funds, or transaction history, return status: "merge_required" with a secure Merge Token (TTL: 10 minutes).
 3. Sivan Ai sends an interactive confirmation card to the user on that specific channel (Telegram or WhatsApp).
 
@@ -67,13 +67,31 @@ Upon user approval via signed Telegram callback or WhatsApp reply:
 1. Lock Account A and Account B records in a single database transaction.
 2. Transfer all rows in payments_user_wallets where user_id = Account A to user_id = Account B.
 3. Transfer all balance ledger entries, off-ramp orders, virtual account records, and Service agreements from Account A to Account B.
-4. Update customer_identity_links so both channels (Telegram and WhatsApp) point to Account B.
-5. Soft-delete or archive Account A with status: merged_into: Account B.
-6. Trigger an audit log event: identity.accounts_merged.
+4. Consolidate KYC verification records: the highest verified tier between Account A and Account B automatically applies to the combined account.
+5. Update customer_identity_links so both channels (Telegram and WhatsApp) point to Account B.
+6. Soft-delete or archive Account A with status: merged_into: Account B.
+7. Trigger an audit log event: identity.accounts_merged.
 
 ---
 
-## 3. Security & Fraud Protection Rules
+## 3. Universal "One KYC" Architecture (Verify Once, Verified Everywhere)
+
+### Core Mandate:
+A user must NEVER be asked to complete KYC more than once. Sivan Ai enforces a single, channel-agnostic KYC record.
+
+### Cross-Channel KYC Synchronization Rules:
+1. Web to Chat Inheritance:
+   - When a user completes Tier-1 or Tier-2 KYC on the Web Dashboard (e.g. submitting NIN, BVN, or government-issued ID), their Telegram bot and WhatsApp bot immediately inherit Tier-2 status.
+   - Daily fiat withdrawal limits and higher P2P thresholds unlock automatically across all chat channels.
+2. Chat to Web Inheritance:
+   - If a user provides verification data via conversational onboarding in WhatsApp or Telegram, the Web Dashboard immediately displays KYC Status: Verified.
+3. Merge Invariant:
+   - When merging Account A and Account B, if either account already possesses verified KYC status, the unified profile retains the highest verification level instantly.
+   - Any approved US/UK/EUR Virtual Bank Accounts attached to the verified account remain active and fully functional for the combined user.
+
+---
+
+## 4. Security & Fraud Protection Rules
 
 1. Dual Proof of Ownership:
    - Account B (Web) must initiate the link behind an authenticated JWT session.
@@ -86,7 +104,7 @@ Upon user approval via signed Telegram callback or WhatsApp reply:
 
 ---
 
-## 4. End-to-End User Experience
+## 5. End-to-End User Experience
 
 ### Telegram Journey:
 1. User logs into Web Dashboard (0.00 USDC) and clicks "Connect Telegram".
@@ -94,7 +112,7 @@ Upon user approval via signed Telegram callback or WhatsApp reply:
 3. Sivan Ai detects 50.00 USDC in the Telegram wallet and asks: "Merge 50.00 USDC into user@example.com?".
 4. User taps "Approve & Merge Funds".
 5. Sivan Ai confirms: "Accounts merged successfully! Total spendable balance: 50.00 USDC."
-6. Web Dashboard updates immediately with 50.00 USDC.
+6. Web Dashboard updates immediately with 50.00 USDC and applies user verified KYC tier.
 
 ### WhatsApp Journey:
 1. User logs into Web Dashboard and clicks "Connect WhatsApp".
@@ -105,10 +123,11 @@ Upon user approval via signed Telegram callback or WhatsApp reply:
 
 ---
 
-## 5. Implementation Checklist
+## 6. Implementation Checklist
 
 - Backend API:
   - Add mergeAccountIdentities service function in identity.service.ts
+  - Implement universal KYC tier propagation in getVerificationState
   - Update redeemTelegramLink and redeemWhatsappLink to handle merge_required status
   - Implement POST /api/identity/merge/confirm
 - Telegram Layer:
@@ -118,4 +137,4 @@ Upon user approval via signed Telegram callback or WhatsApp reply:
   - Add interactive list/button handler in whatsapp-bot dispatcher
   - Handle WhatsApp message reply confirmation ("1" or button click)
 - Web Dashboard:
-  - Add real-time sync listeners and merge status toast
+  - Add real-time sync listeners, merge status toast, and universal KYC badge
