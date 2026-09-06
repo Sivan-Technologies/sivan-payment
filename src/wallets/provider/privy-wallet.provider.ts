@@ -447,7 +447,7 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
   },
   'celo:cusd': {
     mainnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
-    testnet: '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1',
+    testnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
   },
   'bsc:usdc': {
     mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
@@ -790,15 +790,20 @@ export class PrivyWalletProvider implements WalletProvider {
       const token = erc20TokenAddress(chain, asset, production);
       if (!token) continue;
 
-      const amount = await erc20BalanceOf(
-        chain,
-        token,
-        address,
-        decimalsFor(asset),
-        { production }
-      );
+      try {
+        const amount = await erc20BalanceOf(
+          chain,
+          token,
+          address,
+          decimalsFor(asset),
+          { production }
+        );
 
-      balances.push({ asset, chain, amount, contractAddress: token });
+        balances.push({ asset, chain, amount, contractAddress: token });
+      } catch (err) {
+        // Individual token contract read error defaults to 0 rather than failing the entire wallet
+        balances.push({ asset, chain, amount: '0', contractAddress: token });
+      }
     }
 
     return balances;

@@ -125,7 +125,7 @@ function isEndpointLevelRpcError(error: any): boolean {
   // -32005 exceeded limit, -32011/-32603 provider-internal.
   if ([401, 403, 429, -32005, -32011].includes(code)) return true;
 
-  return /must be authenticated|unauthorized|forbidden|invalid api key|invalid key|quota|rate ?limit|too many requests|exceeded|over capacity|service unavailable|unknown network|unsupported network|not supported|bad gateway/i.test(
+  return /must be authenticated|unauthorized|forbidden|invalid api key|invalid key|quota|rate ?limit|too many requests|exceeded|over capacity|service unavailable|unknown network|unsupported network|not supported|bad gateway|free plan|paid plan/i.test(
     String(error?.message ?? '')
   );
 }

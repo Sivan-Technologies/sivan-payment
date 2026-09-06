@@ -118,9 +118,10 @@ export async function balanceRoutes(app: FastifyInstance) {
      * unreachable, nothing has changed" branch, which is true and actionable,
      * instead of telling a funded user their balance is empty.
      */
-    const unreadable = unified.balances.length
+    const hasAnyFunds = unified.balances.some((b) => Number(b.spendable) > 0 || Number(b.chain) > 0);
+    const unreadable = !hasAnyFunds && (unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
-      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable);
+      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable));
     if (unreadable) {
       return reply.code(503).send({
         error: { message: 'Could not reach the network to read this balance. Nothing has changed.' },
