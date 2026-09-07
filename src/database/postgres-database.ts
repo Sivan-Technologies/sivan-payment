@@ -3783,6 +3783,7 @@ function mapNetworkControl(row: any): NetworkControlRecord {
   return {
     network: row.network,
     enabled: row.enabled,
+    isDefault: Boolean(row.is_default),
     label: row.label,
     sortOrder: Number(row.sort_order ?? 100),
     updatedBy: str(row.updated_by),
@@ -3805,15 +3806,16 @@ async function upsertAssetControl(client: pg.PoolClient, item: AssetControlRecor
 
 async function upsertNetworkControl(client: pg.PoolClient, item: NetworkControlRecord) {
   await client.query(
-    `insert into payments_network_controls (network, enabled, label, sort_order, updated_by, updated_at)
-     values ($1,$2,$3,$4,$5,$6)
+    `insert into payments_network_controls (network, enabled, is_default, label, sort_order, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7)
      on conflict (network) do update set
        enabled=excluded.enabled,
+       is_default=excluded.is_default,
        label=excluded.label,
        sort_order=excluded.sort_order,
        updated_by=excluded.updated_by,
        updated_at=excluded.updated_at`,
-    [item.network, item.enabled, item.label, item.sortOrder, item.updatedBy, item.updatedAt]
+    [item.network, item.enabled, Boolean(item.isDefault), item.label, item.sortOrder, item.updatedBy, item.updatedAt]
   );
 }
 

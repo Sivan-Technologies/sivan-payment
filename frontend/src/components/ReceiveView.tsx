@@ -170,6 +170,14 @@ export function ReceiveView({
     return filtered.length > 0 ? Array.from(new Set([...filtered, ...supported])) : supported;
   }, [enabledNetworks]);
 
+  const defaultChain = useMemo(() => {
+    const configured = enabledNetworks?.find((n) => n.enabled && n.isDefault)?.network as ReceiveChain | undefined;
+    if (configured && availableChains.includes(configured)) {
+      return configured;
+    }
+    return availableChains[0] ?? null;
+  }, [enabledNetworks, availableChains]);
+
   /**
    * NETWORKS PRESENTED AS DISTINCT CHOICES.
    *
@@ -177,6 +185,7 @@ export function ReceiveView({
    * are presented as individual options so users can deposit instantly without high gas fees.
    */
   const chainFamilies = useMemo(() => {
+    const activeDefault = enabledNetworks?.find((n) => n.enabled && n.isDefault)?.network || 'solana';
     const families: Array<{
       key: string;
       label: string;
@@ -190,7 +199,7 @@ export function ReceiveView({
         label: 'Solana',
         note: 'Its own base58 address. Fastest and lowest fees for most deposits.',
         accent: CHAIN_META.solana.accent,
-        recommended: true,
+        recommended: activeDefault === 'solana',
         chains: ['solana'],
       },
       {
@@ -198,6 +207,7 @@ export function ReceiveView({
         label: 'Base',
         note: 'Fast L2 EVM network with low fees. Shares 0x address format.',
         accent: CHAIN_META.base.accent,
+        recommended: activeDefault === 'base',
         chains: ['base'],
       },
       {
@@ -205,6 +215,7 @@ export function ReceiveView({
         label: 'BNB Chain',
         note: 'BNB Smart Chain (BEP-20). Ultra-low fees for USDC & USDT.',
         accent: CHAIN_META.bsc.accent,
+        recommended: activeDefault === 'bsc' || activeDefault === 'bnb',
         chains: ['bsc'],
       },
       {
@@ -212,6 +223,7 @@ export function ReceiveView({
         label: 'Stellar',
         note: 'Dedicated G... address. Ultra-fast sub-cent cross-border settlement.',
         accent: CHAIN_META.stellar.accent,
+        recommended: activeDefault === 'stellar',
         chains: ['stellar'],
       },
       {
@@ -219,20 +231,23 @@ export function ReceiveView({
         label: 'Celo',
         note: 'Mobile-first fast EVM network with near-zero gas.',
         accent: CHAIN_META.celo.accent,
+        recommended: activeDefault === 'celo',
         chains: ['celo'],
       },
     ];
     return families
       .map((family) => ({ ...family, chains: family.chains.filter((c) => availableChains.includes(c)) }))
       .filter((family) => family.chains.length > 0);
-  }, [availableChains]);
+  }, [availableChains, enabledNetworks]);
 
-  const [chain, setChain] = useState<ReceiveChain | null>(availableChains[0] ?? null);
+  const [chain, setChain] = useState<ReceiveChain | null>(() => defaultChain);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!chain && availableChains.length) setChain(availableChains[0]);
-  }, [availableChains, chain]);
+    if (defaultChain && (!chain || !availableChains.includes(chain))) {
+      setChain(defaultChain);
+    }
+  }, [defaultChain, availableChains, chain]);
 
   // Switching chain clears the "Copied" flag: it referred to the previous
   // network's address, and leaving it up would suggest the new one is already

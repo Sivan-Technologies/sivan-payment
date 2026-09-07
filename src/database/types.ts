@@ -139,6 +139,7 @@ export interface AssetControlRecord {
 export interface NetworkControlRecord {
   network: Chain;
   enabled: boolean;
+  isDefault?: boolean;
   label: string;
   sortOrder: number;
   updatedBy?: string;

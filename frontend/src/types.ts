@@ -487,6 +487,7 @@ export interface AssetControl {
 export interface NetworkControl {
   network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb' | string;
   enabled: boolean;
+  isDefault?: boolean;
   label: string;
   sortOrder: number;
   updatedBy?: string;
@@ -581,6 +582,7 @@ export interface OfframpControls {
   virtualAccounts: VirtualAccountControl[];
   sourceAssets: AssetControl[];
   sourceNetworks: NetworkControl[];
+  defaultNetwork?: string;
   /**
    * Whether cross-border supplier payouts are open.
    *
