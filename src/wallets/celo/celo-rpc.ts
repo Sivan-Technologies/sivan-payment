@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { resolveNetworkMode } from '../network-mode.js';
 
 /**
  * Celo EVM JSON-RPC & Token Contracts.
@@ -25,8 +26,8 @@ const PUBLIC_TESTNET_ENDPOINTS = [
   'https://sepolia-rpc.celo.org',
 ];
 
-export function celoRpcEndpoints(): string[] {
-  const isProd = env.APP_ENV === 'production';
+export function celoRpcEndpoints(options?: { production?: boolean }): string[] {
+  const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
   const custom = (process.env.CELO_RPC_URL || '').trim();
   const fallback = (process.env.CELO_RPC_FALLBACK_URL || '').trim();
   const defaults = isProd ? PUBLIC_MAINNET_ENDPOINTS : PUBLIC_TESTNET_ENDPOINTS;
@@ -35,8 +36,8 @@ export function celoRpcEndpoints(): string[] {
   return [...new Set(ordered)];
 }
 
-export async function celoRpc<T = unknown>(method: string, params: unknown[]): Promise<T> {
-  const endpoints = celoRpcEndpoints();
+export async function celoRpc<T = unknown>(method: string, params: unknown[], options?: { production?: boolean }): Promise<T> {
+  const endpoints = celoRpcEndpoints(options);
   let lastError: Error | undefined;
 
   for (const endpoint of endpoints) {

@@ -12,6 +12,7 @@ import type {
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 import { Keypair } from '@solana/web3.js';
+import { generateStellarAddress } from '../stellar/stellar-keypair.js';
 
 /**
  * Deterministic per-seed address generation, so the same wallet id always
@@ -34,13 +35,8 @@ function mockSolanaAddress(seed: string): string {
   return keypair.publicKey.toBase58();
 }
 
-const STELLAR_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-
 function mockStellarAddress(seed: string): string {
-  const bytes = seededBytes(seed, 35);
-  let s = 'G';
-  for (let i = 0; i < 55; i++) s += STELLAR_ALPHABET[bytes[i % bytes.length] % STELLAR_ALPHABET.length];
-  return s;
+  return generateStellarAddress(seed);
 }
 
 function mockEvmAddress(seed: string): string {

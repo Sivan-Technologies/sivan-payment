@@ -1008,9 +1008,13 @@ export default function App() {
     }
   }, [hasUser, authToken, user?.id]);
 
+  const handleRefreshAll = useCallback(async () => {
+    await Promise.allSettled([loadUserData(), loadUserWallets()]);
+  }, [loadUserData, loadUserWallets]);
+
   useEffect(() => {
     const handleAgreementsRefresh = () => {
-      void loadUserData();
+      void handleRefreshAll();
     };
     window.addEventListener('sivan:agreements:refresh', handleAgreementsRefresh);
     window.addEventListener('sivan:balances:refresh', handleAgreementsRefresh);
@@ -1018,7 +1022,15 @@ export default function App() {
       window.removeEventListener('sivan:agreements:refresh', handleAgreementsRefresh);
       window.removeEventListener('sivan:balances:refresh', handleAgreementsRefresh);
     };
-  }, [loadUserData]);
+  }, [handleRefreshAll]);
+
+  useEffect(() => {
+    if (!hasUser || !user?.id) return;
+    const interval = setInterval(() => {
+      void handleRefreshAll();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [hasUser, user?.id, handleRefreshAll]);
 
   const activeAgreementDeal = useMemo(() => {
     return (serviceAgreements?.deals || []).find((d: any) =>
@@ -2933,7 +2945,7 @@ export default function App() {
           />
         )}
 
-        {view === 'receive' && <ReceiveView wallets={userWallets} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={loadUserWallets} />}
+        {view === 'receive' && <ReceiveView wallets={userWallets} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 

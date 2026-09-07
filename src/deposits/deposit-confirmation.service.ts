@@ -223,6 +223,15 @@ async function balanceStillPresent(
       return held + EPSILON >= expected ? 'confirmed' : 'unknown';
     }
 
+    if (deposit.chain === 'stellar') {
+      const { readStellarUsdcBalance, readStellarUsdtBalance } = await import('../wallets/stellar/stellar-rpc.js');
+      const isUsdt = deposit.asset.toLowerCase() === 'usdt';
+      const held = isUsdt
+        ? await readStellarUsdtBalance(deposit.address, { production })
+        : await readStellarUsdcBalance(deposit.address, { production });
+      return held + EPSILON >= expected ? 'confirmed' : 'unknown';
+    }
+
     /**
      * EVM: read at a block behind the head, not at 'latest'.
      *
@@ -292,6 +301,23 @@ async function txOutcome(
       // 'processed' is not enough - it can still be dropped. Matching
       // transfer-confirmation.service.ts exactly.
       return status.confirmationStatus === 'finalized' ? 'confirmed' : 'unknown';
+    }
+
+    if (deposit.chain === 'stellar') {
+      const { horizonEndpoints } = await import('../wallets/stellar/stellar-rpc.js');
+      const endpoints = horizonEndpoints({ production });
+      for (const base of endpoints) {
+        try {
+          const res = await fetch(`${base}/transactions/${hash}`);
+          if (res.status === 404) return 'unknown';
+          if (!res.ok) continue;
+          const data: any = await res.json();
+          return data.successful ? 'confirmed' : 'failed';
+        } catch {
+          continue;
+        }
+      }
+      return 'unknown';
     }
 
     const receipt = await evmRpc<any>(

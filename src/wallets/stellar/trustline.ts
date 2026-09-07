@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { resolveNetworkMode } from '../network-mode.js';
 import { fetchStellarAccount, horizonEndpoints } from './stellar-rpc.js';
 import { generateStellarKeypair } from './stellar-keypair.js';
 import {
@@ -28,31 +29,31 @@ export const STELLAR_USDC_ISSUER_TESTNET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQ
 export const STELLAR_USDT_ISSUER_MAINNET = 'GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQJUOBURW3FSTKTRNMGXB5';
 export const STELLAR_USDT_ISSUER_TESTNET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 
-export function getStellarUsdcIssuer(): string {
-  const isProd = env.APP_ENV === 'production';
+export function getStellarUsdcIssuer(options?: { production?: boolean }): string {
+  const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
   return (process.env.STELLAR_USDC_ISSUER || '').trim() || (isProd ? STELLAR_USDC_ISSUER_MAINNET : STELLAR_USDC_ISSUER_TESTNET);
 }
 
-export function getStellarUsdtIssuer(): string {
-  const isProd = env.APP_ENV === 'production';
+export function getStellarUsdtIssuer(options?: { production?: boolean }): string {
+  const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
   return (process.env.STELLAR_USDT_ISSUER || '').trim() || (isProd ? STELLAR_USDT_ISSUER_MAINNET : STELLAR_USDT_ISSUER_TESTNET);
 }
 
-export async function hasUsdcTrustline(accountId: string): Promise<boolean> {
-  const account = await fetchStellarAccount(accountId);
+export async function hasUsdcTrustline(accountId: string, options?: { production?: boolean }): Promise<boolean> {
+  const account = await fetchStellarAccount(accountId, options);
   if (!account) return false;
 
-  const expectedIssuer = getStellarUsdcIssuer();
+  const expectedIssuer = getStellarUsdcIssuer(options);
   return account.balances.some(
     (b) => (b.asset_code === 'USDC' || b.asset_code === 'usdc') && b.asset_issuer === expectedIssuer
   );
 }
 
-export async function hasUsdtTrustline(accountId: string): Promise<boolean> {
-  const account = await fetchStellarAccount(accountId);
+export async function hasUsdtTrustline(accountId: string, options?: { production?: boolean }): Promise<boolean> {
+  const account = await fetchStellarAccount(accountId, options);
   if (!account) return false;
 
-  const expectedIssuer = getStellarUsdtIssuer();
+  const expectedIssuer = getStellarUsdtIssuer(options);
   return account.balances.some(
     (b) => (b.asset_code === 'USDT' || b.asset_code === 'usdt') && b.asset_issuer === expectedIssuer
   );
@@ -64,7 +65,8 @@ export async function hasUsdtTrustline(accountId: string): Promise<boolean> {
  */
 export async function ensureStellarAccountAndTrustline(
   seedOrSecret: string,
-  address?: string
+  address?: string,
+  options?: { production?: boolean }
 ): Promise<{ success: boolean; address: string; trustlineActive: boolean; usdcActive?: boolean; usdtActive?: boolean; error?: string }> {
   try {
     let keypair: Keypair;
@@ -76,11 +78,11 @@ export async function ensureStellarAccountAndTrustline(
     }
 
     const pubkey = address || keypair.publicKey();
-    const isProd = env.APP_ENV === 'production';
+    const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
     const networkPassphrase = isProd ? Networks.PUBLIC : Networks.TESTNET;
 
     // 1. Check if account exists on Horizon
-    let account = await fetchStellarAccount(pubkey);
+    let account = await fetchStellarAccount(pubkey, options);
     if (!account) {
       if (!isProd) {
         // Fund via Friendbot on Testnet
@@ -88,7 +90,7 @@ export async function ensureStellarAccountAndTrustline(
           const fbRes = await fetch(`https://friendbot.stellar.org/?addr=${pubkey}`);
           await fbRes.json().catch(() => ({}));
           await new Promise((r) => setTimeout(r, 2000));
-          account = await fetchStellarAccount(pubkey);
+          account = await fetchStellarAccount(pubkey, options);
         } catch (fbErr) {
           console.warn('[stellar_trustline.friendbot_error]', fbErr);
         }
@@ -100,8 +102,8 @@ export async function ensureStellarAccountAndTrustline(
     }
 
     // 2. Check if trustlines are already active
-    const hasUsdc = await hasUsdcTrustline(pubkey);
-    const hasUsdt = await hasUsdtTrustline(pubkey);
+    const hasUsdc = await hasUsdcTrustline(pubkey, options);
+    const hasUsdt = await hasUsdtTrustline(pubkey, options);
 
     if (hasUsdc && hasUsdt) {
       return { success: true, address: pubkey, trustlineActive: true, usdcActive: true, usdtActive: true };

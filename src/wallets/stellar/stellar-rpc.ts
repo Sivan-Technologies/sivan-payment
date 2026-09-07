@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { resolveNetworkMode } from '../network-mode.js';
 
 /**
  * Stellar Horizon and Soroban RPC Clients.
@@ -35,30 +36,36 @@ export const HORIZON_PUBLIC_TESTNET = [
   'https://horizon-testnet.stellar.org',
 ];
 
-export function horizonEndpoints(): string[] {
-  const isProd = env.APP_ENV === 'production';
+export interface StellarRpcOptions {
+  production?: boolean;
+  timeoutMs?: number;
+}
+
+export function horizonEndpoints(options?: StellarRpcOptions): string[] {
+  const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
   const custom = (process.env.STELLAR_HORIZON_URL || '').trim();
   const defaults = isProd ? HORIZON_PUBLIC_MAINNET : HORIZON_PUBLIC_TESTNET;
   return [...new Set([custom, ...defaults].filter(Boolean))];
 }
 
-export function horizonEndpoint(): string {
-  return horizonEndpoints()[0];
+export function horizonEndpoint(options?: StellarRpcOptions): string {
+  return horizonEndpoints(options)[0];
 }
 
-export function sorobanEndpoint(): string {
-  const isProd = env.APP_ENV === 'production';
+export function sorobanEndpoint(options?: StellarRpcOptions): string {
+  const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
   return (process.env.STELLAR_SOROBAN_RPC_URL || '').trim() || (isProd ? SOROBAN_MAINNET : SOROBAN_TESTNET);
 }
 
-export async function fetchStellarAccount(accountId: string): Promise<StellarAccountResponse | null> {
-  const endpoints = horizonEndpoints();
+export async function fetchStellarAccount(accountId: string, options?: StellarRpcOptions): Promise<StellarAccountResponse | null> {
+  const endpoints = horizonEndpoints(options);
   let lastError: Error | null = null;
 
   for (const base of endpoints) {
     const url = `${base}/accounts/${accountId}`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timeout = options?.timeoutMs ?? 8000;
+    const timer = setTimeout(() => controller.abort(), timeout);
 
     try {
       const res = await fetch(url, { signal: controller.signal });
@@ -81,8 +88,8 @@ export async function fetchStellarAccount(accountId: string): Promise<StellarAcc
   return null;
 }
 
-export async function readStellarUsdcBalance(accountId: string): Promise<number> {
-  const account = await fetchStellarAccount(accountId);
+export async function readStellarUsdcBalance(accountId: string, options?: StellarRpcOptions): Promise<number> {
+  const account = await fetchStellarAccount(accountId, options);
   if (!account) return 0;
 
   const usdcEntry = account.balances.find(
@@ -92,8 +99,8 @@ export async function readStellarUsdcBalance(accountId: string): Promise<number>
   return usdcEntry ? parseFloat(usdcEntry.balance) : 0;
 }
 
-export async function readStellarUsdtBalance(accountId: string): Promise<number> {
-  const account = await fetchStellarAccount(accountId);
+export async function readStellarUsdtBalance(accountId: string, options?: StellarRpcOptions): Promise<number> {
+  const account = await fetchStellarAccount(accountId, options);
   if (!account) return 0;
 
   const usdtEntry = account.balances.find(
@@ -103,8 +110,8 @@ export async function readStellarUsdtBalance(accountId: string): Promise<number>
   return usdtEntry ? parseFloat(usdtEntry.balance) : 0;
 }
 
-export async function readStellarTokenBalances(accountId: string): Promise<{ usdc: number; usdt: number; xlm: number }> {
-  const account = await fetchStellarAccount(accountId);
+export async function readStellarTokenBalances(accountId: string, options?: StellarRpcOptions): Promise<{ usdc: number; usdt: number; xlm: number }> {
+  const account = await fetchStellarAccount(accountId, options);
   if (!account) return { usdc: 0, usdt: 0, xlm: 0 };
 
   const usdcEntry = account.balances.find(
@@ -122,8 +129,8 @@ export async function readStellarTokenBalances(accountId: string): Promise<{ usd
   };
 }
 
-export async function isStellarHorizonHealthy(): Promise<boolean> {
-  const base = horizonEndpoint();
+export async function isStellarHorizonHealthy(options?: StellarRpcOptions): Promise<boolean> {
+  const base = horizonEndpoint(options);
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);

@@ -270,7 +270,8 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   const wallet = await db.findUserWallet(userId, chain);
   if (!wallet) return null;
 
-  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  const activeProviderName = await resolveActiveWalletProvider();
+  const provider = getWalletProvider(wallet.provider ?? activeProviderName);
 
   // undefined means "could not load", [] means "loaded, and it is genuinely
   // zero". Collapsing the two would show a confirmed $0.00 to a user whose

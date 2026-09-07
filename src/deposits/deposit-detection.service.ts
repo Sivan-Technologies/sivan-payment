@@ -123,10 +123,22 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
   const wallets = await db.listAllOpenWallets();
   if (!wallets.length) return outcome;
 
-  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  const activeProviderName = await resolveActiveWalletProvider();
+  const providerCache = new Map<string, ReturnType<typeof getWalletProvider>>();
+  const providerFor = (w: { provider?: string }) => {
+    const name = w.provider ?? activeProviderName;
+    let resolved = providerCache.get(name);
+    if (!resolved) {
+      resolved = getWalletProvider(name);
+      providerCache.set(name, resolved);
+    }
+    return resolved;
+  };
+
   const windowStart = new Date().toISOString();
 
   for (const wallet of wallets) {
+    const provider = providerFor(wallet);
     // Every network this one key can receive on, not just the filed chain.
     const networks = networksServedByWallet(wallet.chain);
 
