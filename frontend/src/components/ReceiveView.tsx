@@ -397,29 +397,23 @@ export function ReceiveView({
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
 
-  const chainUnified = (unifiedBalance as any)?.byChain?.[activeChain];
+  const unifiedWallet = (unifiedBalance?.wallets || []).find(
+    (w) => w.chain === activeChain || (w.address && wallet?.address && w.address.toLowerCase() === wallet.address.toLowerCase())
+  );
+
   const activeBalances = useMemo(() => {
-    if (wallet?.balances && wallet.balances.length > 0) {
-      return wallet.balances.map((b) => {
-        const key = b.asset.toLowerCase() as 'usdc' | 'usdt';
-        if (chainUnified && chainUnified[key] !== undefined && Number(chainUnified[key]) > 0 && Number(b.amount) === 0) {
-          return { ...b, amount: String(chainUnified[key]) };
-        }
-        return b;
-      });
+    if (unifiedWallet?.balances && unifiedWallet.balances.length > 0) {
+      const nonZero = unifiedWallet.balances.some((b) => Number(b.amount) > 0);
+      if (nonZero) return unifiedWallet.balances;
     }
-    if (chainUnified) {
-      const list: Array<{ asset: string; chain: string; amount: string }> = [];
-      if (assetsOnChain.includes('usdc')) {
-        list.push({ asset: 'usdc', chain: activeChain, amount: String(chainUnified.usdc ?? 0) });
-      }
-      if (assetsOnChain.includes('usdt')) {
-        list.push({ asset: 'usdt', chain: activeChain, amount: String(chainUnified.usdt ?? 0) });
-      }
-      return list;
+    if (wallet?.balances && wallet.balances.length > 0) {
+      return wallet.balances;
+    }
+    if (unifiedWallet?.balances) {
+      return unifiedWallet.balances;
     }
     return wallet?.balances;
-  }, [wallet?.balances, chainUnified, assetsOnChain, activeChain]);
+  }, [wallet?.balances, unifiedWallet?.balances]);
 
   // Assets enabled globally but unavailable on this specific chain. Naming
   // them prevents the "why can't I see USDT?" support ticket.
@@ -681,7 +675,7 @@ export function ReceiveView({
               */}
               <div className="receive-balances">
                 <p className="eyebrow">Current balance</p>
-                {wallet.balancesUnavailable && !chainUnified ? (
+                {wallet.balancesUnavailable && !unifiedWallet?.balances ? (
                   <p className="muted receive-balance-note">
                     Balance temporarily unavailable. Your funds are safe and the address above
                     still works. Try refreshing in a moment.
