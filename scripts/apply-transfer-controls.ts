@@ -1,4 +1,4 @@
-import { updatePaymentControls, getPaymentControls } from '../src/controls/payment-controls.service.js';
+import { updatePaymentControls, listPaymentControls } from '../src/controls/payment-controls.service.js';
 
 async function main() {
   console.log('=== APPLYING STRICT MULTI-CHAIN SOURCE NETWORKS TO PAYMENT CONTROLS ===');
