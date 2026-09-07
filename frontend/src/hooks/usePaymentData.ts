@@ -100,11 +100,26 @@ export function usePaymentDataLoader(input: {
           api<WalletDepositRecord[]>(`/api/users/${userId}/balance/deposits`)
         ]);
 
-        if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
-        if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
-        if (balanceTransfersResult.status === 'fulfilled') setBalanceTransfers(balanceTransfersResult.value);
-        if (ngnTransfersResult.status === 'fulfilled') setNgnTransfers(Array.isArray(ngnTransfersResult.value) ? ngnTransfersResult.value : []);
-        if (walletDepositsResult.status === 'fulfilled') setWalletDeposits(Array.isArray(walletDepositsResult.value) ? walletDepositsResult.value : []);
+        if (withdrawalsResult.status === 'fulfilled') {
+          const v: any = withdrawalsResult.value;
+          setWithdrawals(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (onrampOrdersResult.status === 'fulfilled') {
+          const v: any = onrampOrdersResult.value;
+          setOnrampOrders(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (balanceTransfersResult.status === 'fulfilled') {
+          const v: any = balanceTransfersResult.value;
+          setBalanceTransfers(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (ngnTransfersResult.status === 'fulfilled') {
+          const v: any = ngnTransfersResult.value;
+          setNgnTransfers(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (walletDepositsResult.status === 'fulfilled') {
+          const v: any = walletDepositsResult.value;
+          setWalletDeposits(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
 
         // 3. Auxiliary & Preferences Group: Suppliers, Support, Preferences, Identity, 2FA
         const [suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult] = await Promise.allSettled([
