@@ -128,21 +128,49 @@ export interface NotifyOutcome {
  */
 export async function notifyTelegramDeposit(userId: string, deposit: WalletDepositRecord): Promise<void> {
   try {
+    // Ignore synthetic or test users during background sweeps
+    if (
+      userId.startsWith('usr_dev_') ||
+      userId.startsWith('usr_test_') ||
+      userId.includes('mock') ||
+      userId.includes('test_agent') ||
+      userId.includes('buyer_test') ||
+      userId.includes('seller_test')
+    ) {
+      return;
+    }
+
     const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL || 'https://telegram.sivantech.online';
     const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || 'vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU';
 
     const links = await db.listCustomerIdentityLinks();
-    const telegramLink = links.find((l) => l.paymentUserId === userId && l.status === 'linked' && l.telegramUserId);
+    const activeLinks = links
+      .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
+      .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+
+    const telegramLink = activeLinks[0];
     if (!telegramLink?.telegramUserId) return;
+
+    // Verify this Telegram ID has not been superseded by a newer link to a different user
+    const allLinksForTg = links
+      .filter((l) => l.telegramUserId === telegramLink.telegramUserId && l.status === 'linked')
+      .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+
+    if (allLinksForTg.length > 0 && allLinksForTg[0].paymentUserId !== userId) {
+      return;
+    }
 
     const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && prefs.telegramNotificationsEnabled === false) return;
 
+    const user = await db.findUserById(userId);
+    const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
+
     const amount = `${deposit.amount} ${deposit.asset}`;
     const network = humanNetwork(deposit.chain);
     const text = deposit.status === 'confirmed'
-      ? `💰 Deposit Confirmed: ${amount} on ${network} has settled into your Sivan balance.`
-      : `⏳ Deposit Detected: ${amount} on ${network} is currently confirming on-chain.`;
+      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
 
     await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
       method: 'POST',

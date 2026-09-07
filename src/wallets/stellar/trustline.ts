@@ -119,7 +119,7 @@ export async function ensureStellarAccountAndTrustline(
     if (!hasUsdc) {
       builder.addOperation(
         Operation.changeTrust({
-          asset: new Asset('USDC', getStellarUsdcIssuer()),
+          asset: new Asset('USDC', getStellarUsdcIssuer(options)),
         })
       );
     }
@@ -127,7 +127,7 @@ export async function ensureStellarAccountAndTrustline(
     if (!hasUsdt) {
       builder.addOperation(
         Operation.changeTrust({
-          asset: new Asset('USDT', getStellarUsdtIssuer()),
+          asset: new Asset('USDT', getStellarUsdtIssuer(options)),
         })
       );
     }
