@@ -255,8 +255,41 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   return saved;
 }
 
+import { networksServedByWallet, walletServesNetwork } from './chain-family.js';
+
 export async function listUserWallets(userId: string): Promise<UserWalletRecord[]> {
-  return db.listUserWallets(userId);
+  const stored = await db.listUserWallets(userId);
+  if (!stored.length) return stored;
+
+  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
+  const expanded: UserWalletRecord[] = [];
+
+  for (const chain of activeRails) {
+    const direct = stored.find((w) => w.chain === chain);
+    if (direct) {
+      expanded.push(direct);
+    } else {
+      const familyMatch = stored.find((w) => walletServesNetwork(w.chain, chain));
+      if (familyMatch) {
+        expanded.push({
+          ...familyMatch,
+          id: `${familyMatch.id}_${chain}`,
+          chain,
+          providerWalletId: familyMatch.providerWalletId,
+          address: familyMatch.address,
+        });
+      }
+    }
+  }
+
+  // Preserve any other stored wallets (e.g. legacy chains)
+  for (const w of stored) {
+    if (!expanded.some((e) => e.chain === w.chain && e.address === w.address)) {
+      expanded.push(w);
+    }
+  }
+
+  return expanded;
 }
 
 /**
@@ -267,7 +300,18 @@ export async function listUserWallets(userId: string): Promise<UserWalletRecord[
  * bug where our books and the provider's disagree.
  */
 export async function getUserWalletWithBalances(userId: string, chain: WalletChain = DEFAULT_CHAIN) {
-  const wallet = await db.findUserWallet(userId, chain);
+  let wallet = await db.findUserWallet(userId, chain);
+  if (!wallet) {
+    const all = await db.listUserWallets(userId);
+    const familyMatch = all.find((w) => walletServesNetwork(w.chain, chain));
+    if (familyMatch) {
+      wallet = {
+        ...familyMatch,
+        id: `${familyMatch.id}_${chain}`,
+        chain,
+      };
+    }
+  }
   if (!wallet) return null;
 
   if (wallet.chain === 'stellar') {
@@ -285,14 +329,14 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   let balancesUnavailable = false;
   try {
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`Timeout fetching balances for ${wallet.chain}`)), 2500);
+      setTimeout(() => reject(new Error(`Timeout fetching balances for ${chain}`)), 2500);
     });
     balances = await Promise.race([
       provider.getBalances(
         wallet.providerWalletId,
         wallet.customerId,
         wallet.address,
-        wallet.chain
+        chain
       ),
       timeoutPromise,
     ]);
@@ -305,7 +349,7 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
     // unavailable" reports needs to know which endpoint failed and why.
     console.warn('[wallet.balances_unavailable]', {
       userId,
-      chain: wallet.chain,
+      chain,
       provider: provider.name,
       reason: error instanceof Error ? error.message : String(error),
     });
@@ -315,9 +359,10 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
 
   return {
     ...wallet,
+    chain,
     balances,
     balancesUnavailable,
-    acceptedAssets: assetsForChain(wallet.chain),
+    acceptedAssets: assetsForChain(chain),
   };
 }
 

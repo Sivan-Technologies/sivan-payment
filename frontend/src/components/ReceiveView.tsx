@@ -397,23 +397,32 @@ export function ReceiveView({
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
 
-  const unifiedWallet = (unifiedBalance?.wallets || []).find(
-    (w) => w.chain === activeChain || (w.address && wallet?.address && w.address.toLowerCase() === wallet.address.toLowerCase())
+  const directChainWallet = openWallets.find((w) => w.chain === activeChain);
+  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain === activeChain);
+  const unifiedWallet = directUnified ?? (unifiedBalance?.wallets || []).find(
+    (w) => w.address && wallet?.address && w.address.toLowerCase() === wallet.address.toLowerCase()
   );
 
   const activeBalances = useMemo(() => {
-    if (unifiedWallet?.balances && unifiedWallet.balances.length > 0) {
-      const nonZero = unifiedWallet.balances.some((b) => Number(b.amount) > 0);
-      if (nonZero) return unifiedWallet.balances;
+    // 1. Direct wallet for the selected chain
+    if (directChainWallet?.balances && directChainWallet.balances.length > 0) {
+      return directChainWallet.balances.filter((b) => !b.chain || b.chain === activeChain);
     }
+    // 2. Direct unified entry for the selected chain
+    if (directUnified?.balances && directUnified.balances.length > 0) {
+      return directUnified.balances.filter((b) => !b.chain || b.chain === activeChain);
+    }
+    // 3. Fallback to matched wallet if it contains balances for this chain
     if (wallet?.balances && wallet.balances.length > 0) {
-      return wallet.balances;
+      const matching = wallet.balances.filter((b) => b.chain === activeChain);
+      if (matching.length > 0) return matching;
     }
-    if (unifiedWallet?.balances) {
-      return unifiedWallet.balances;
+    if (unifiedWallet?.balances && unifiedWallet.balances.length > 0) {
+      const matching = unifiedWallet.balances.filter((b) => b.chain === activeChain);
+      if (matching.length > 0) return matching;
     }
-    return wallet?.balances;
-  }, [wallet?.balances, unifiedWallet?.balances]);
+    return directChainWallet?.balances ?? directUnified?.balances ?? wallet?.balances;
+  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, activeChain]);
 
   // Assets enabled globally but unavailable on this specific chain. Naming
   // them prevents the "why can't I see USDT?" support ticket.
