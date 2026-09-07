@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { qrDataUri } from '../qrCode';
 import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
-import type { AssetControl, NetworkControl, UserWalletRecord } from '../types';
+import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } from '../types';
 
 /**
  * Receive (deposit) screen.
@@ -137,6 +137,7 @@ function truncateMiddle(value: string, lead = 10, tail = 8) {
 
 export function ReceiveView({
   wallets,
+  unifiedBalance,
   enabledAssets,
   enabledNetworks,
   isVerified,
@@ -148,6 +149,7 @@ export function ReceiveView({
   onRefresh,
 }: {
   wallets: WalletRecord[];
+  unifiedBalance?: UnifiedBalance | null;
   enabledAssets: AssetControl[];
   enabledNetworks: NetworkControl[];
   isVerified: boolean;
@@ -394,6 +396,30 @@ export function ReceiveView({
     enabledAssets.some((a) => a.asset === asset && a.enabled)
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
+
+  const chainUnified = (unifiedBalance as any)?.byChain?.[activeChain];
+  const activeBalances = useMemo(() => {
+    if (wallet?.balances && wallet.balances.length > 0) {
+      return wallet.balances.map((b) => {
+        const key = b.asset.toLowerCase() as 'usdc' | 'usdt';
+        if (chainUnified && chainUnified[key] !== undefined && Number(chainUnified[key]) > 0 && Number(b.amount) === 0) {
+          return { ...b, amount: String(chainUnified[key]) };
+        }
+        return b;
+      });
+    }
+    if (chainUnified) {
+      const list: Array<{ asset: string; chain: string; amount: string }> = [];
+      if (assetsOnChain.includes('usdc')) {
+        list.push({ asset: 'usdc', chain: activeChain, amount: String(chainUnified.usdc ?? 0) });
+      }
+      if (assetsOnChain.includes('usdt')) {
+        list.push({ asset: 'usdt', chain: activeChain, amount: String(chainUnified.usdt ?? 0) });
+      }
+      return list;
+    }
+    return wallet?.balances;
+  }, [wallet?.balances, chainUnified, assetsOnChain, activeChain]);
 
   // Assets enabled globally but unavailable on this specific chain. Naming
   // them prevents the "why can't I see USDT?" support ticket.
@@ -655,20 +681,20 @@ export function ReceiveView({
               */}
               <div className="receive-balances">
                 <p className="eyebrow">Current balance</p>
-                {wallet.balancesUnavailable ? (
+                {wallet.balancesUnavailable && !chainUnified ? (
                   <p className="muted receive-balance-note">
                     Balance temporarily unavailable. Your funds are safe and the address above
                     still works. Try refreshing in a moment.
                   </p>
-                ) : !wallet.balances ? (
+                ) : !activeBalances ? (
                   <p className="muted receive-balance-note">Loading…</p>
-                ) : wallet.balances.length === 0 ? (
+                ) : activeBalances.length === 0 ? (
                   <p className="muted receive-balance-note">
                     Nothing received yet. Deposits appear here once confirmed on {meta.label}.
                   </p>
                 ) : (
                   <div className="receive-balance-row">
-                    {wallet.balances.map((balance) => (
+                    {activeBalances.map((balance) => (
                       <div className="receive-balance" key={`${balance.asset}-${balance.chain}`}>
                         <strong>{balance.amount}</strong>
                         <small>{balance.asset.toUpperCase()}</small>
