@@ -409,7 +409,6 @@ export function initWebMcp() {
       tools: new Map(),
       async registerTool(def: any) {
         this.tools.set(def.name, def);
-        console.log(`[WebMCP] Registered tool: ${def.name}`);
       },
       async listTools() {
         return Array.from(this.tools.values());
@@ -445,7 +444,6 @@ export function initWebMcp() {
 
   const promptHelper = async (text: string) => {
     const parsed = parsePrompt(text);
-    console.log('[Sivan WebMCP] Parsed prompt into tool call:', parsed);
     return await TOOLS.create_service_agreement.execute(parsed);
   };
 
@@ -461,6 +459,4 @@ export function initWebMcp() {
 
   // Expose convenient global sivan("...") helper for DevTools console
   (window as any).sivan = promptHelper;
-
-  console.log('[Sivan WebMCP] Global WebMCP layer initialized. Use sivan("prompt") or SIVAN_WEBMCP.callTool()');
 }
