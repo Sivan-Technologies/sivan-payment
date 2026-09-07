@@ -197,15 +197,15 @@ export const fallbackSourceAssets: AssetControl[] = [
  * the one network Breet carries no stablecoin on, in either direction.
  */
 export const fallbackSourceNetworks: NetworkControl[] = [
-  { network: 'stellar', enabled: true, isDefault: true, label: 'Stellar', sortOrder: 10, updatedAt: new Date().toISOString() },
-  { network: 'solana', enabled: true, isDefault: false, label: 'Solana', sortOrder: 20, updatedAt: new Date().toISOString() },
-  { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 30, updatedAt: new Date().toISOString() },
-  { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 40, updatedAt: new Date().toISOString() },
-  { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 50, updatedAt: new Date().toISOString() },
-  { network: 'ethereum', enabled: true, isDefault: false, label: 'Ethereum', sortOrder: 60, updatedAt: new Date().toISOString() },
-  { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 70, updatedAt: new Date().toISOString() },
-  { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 80, updatedAt: new Date().toISOString() },
-  { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 90, updatedAt: new Date().toISOString() }
+  { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
+  { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
+  { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: true, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
 export const fallbackVirtualAccounts: VirtualAccountControl[] = [
