@@ -1024,14 +1024,6 @@ export default function App() {
     };
   }, [handleRefreshAll]);
 
-  useEffect(() => {
-    if (!hasUser || !user?.id) return;
-    const interval = setInterval(() => {
-      void handleRefreshAll();
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [hasUser, user?.id, handleRefreshAll]);
-
   const activeAgreementDeal = useMemo(() => {
     return (serviceAgreements?.deals || []).find((d: any) =>
       ['funded', 'in_delivery', 'delivered'].includes(String(d.status || '').toLowerCase())
