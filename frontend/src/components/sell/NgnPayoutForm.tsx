@@ -93,12 +93,15 @@ function networkLabel(network: string): string {
   const labels: Record<string, string> = {
     solana: 'Solana',
     base: 'Base',
+    bsc: 'BNB Chain',
+    bnb: 'BNB Chain',
+    stellar: 'Stellar',
+    celo: 'Celo',
     ethereum: 'Ethereum',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
     optimism: 'Optimism',
     avalanche: 'Avalanche',
-    bsc: 'BNB Smart Chain',
     tron: 'Tron',
   };
   return labels[network] ?? (network ? network.charAt(0).toUpperCase() + network.slice(1) : '');

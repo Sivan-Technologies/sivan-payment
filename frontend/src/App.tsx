@@ -549,7 +549,7 @@ export default function App() {
   const showTwoFactorRecommendation = Boolean(isVerified && !twoFactorStatus?.enabled && Date.now() > twoFactorPromptDismissedUntil);
 
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
-  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Solana';
+  const primaryNetworkLabel = enabledNetworks.map((network) => network.label).join(', ') || 'Solana, Base, BNB Chain, Stellar, Celo';
 
   const clearLocalSession = useCallback(() => {
     setAuthToken('');

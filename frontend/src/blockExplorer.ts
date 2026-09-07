@@ -43,17 +43,21 @@ export interface ExplorerLink {
  */
 const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: string }> = {
   base: { mainnet: 'https://basescan.org', testnet: 'https://sepolia.basescan.org', label: 'Basescan' },
+  bsc: { mainnet: 'https://bscscan.com', testnet: 'https://testnet.bscscan.com', label: 'BscScan' },
+  bnb: { mainnet: 'https://bscscan.com', testnet: 'https://testnet.bscscan.com', label: 'BscScan' },
+  celo: { mainnet: 'https://celoscan.io', testnet: 'https://celo-alfajores.blockscout.com', label: 'Celoscan' },
   ethereum: { mainnet: 'https://etherscan.io', testnet: 'https://sepolia.etherscan.io', label: 'Etherscan' },
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
   avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
   avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
-  celo: { mainnet: 'https://celoscan.io', testnet: 'https://celo-alfajores.blockscout.com', label: 'Celoscan' },
 };
 
 /** CAIP-ish chain ids jiffyscan uses for user operations. */
 const USEROP_CHAIN: Record<string, { mainnet: string; testnet: string }> = {
   base: { mainnet: 'base', testnet: 'base-sepolia' },
+  bsc: { mainnet: 'bsc', testnet: 'bsc-testnet' },
+  celo: { mainnet: 'celo', testnet: 'celo-alfajores' },
   ethereum: { mainnet: 'mainnet', testnet: 'sepolia' },
   polygon: { mainnet: 'matic', testnet: 'amoy' },
   arbitrum: { mainnet: 'arbitrum-one', testnet: 'arbitrum-sepolia' },
@@ -96,6 +100,16 @@ export function explorerLink(input: ExplorerInput): ExplorerLink | undefined {
     return {
       url: `https://solscan.io/tx/${encodeURIComponent(hash)}${cluster}`,
       label: 'Solscan',
+      testnet,
+    };
+  }
+
+  if (network === 'stellar') {
+    if (!hash) return undefined;
+    const host = testnet ? 'https://stellar.expert/explorer/testnet' : 'https://stellar.expert/explorer/public';
+    return {
+      url: `${host}/tx/${encodeURIComponent(hash)}`,
+      label: 'StellarExpert',
       testnet,
     };
   }
@@ -166,9 +180,13 @@ export function shortHash(value?: string): string {
 export function networkLabel(chain?: string): string {
   const key = String(chain ?? '').trim().toLowerCase();
   const map: Record<string, string> = {
-    base: 'Base',
-    ethereum: 'Ethereum',
     solana: 'Solana',
+    base: 'Base',
+    bsc: 'BNB Chain',
+    bnb: 'BNB Chain',
+    stellar: 'Stellar',
+    celo: 'Celo',
+    ethereum: 'Ethereum',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
     avalanche_c_chain: 'Avalanche',

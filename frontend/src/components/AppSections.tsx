@@ -391,7 +391,7 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
               disabled,
             };
           })} /></label>
-          <label>Deposit network<CustomSelect name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label>
+          <label>Deposit network<CustomSelect name="sourceChain" defaultValue={enabledNetworks.find((network) => network.isDefault)?.network || enabledNetworks[0]?.network || 'solana'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label>
         </div>
 
         {/* Same choice, same words, same default as the naira rail. Two
