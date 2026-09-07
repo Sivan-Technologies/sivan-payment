@@ -81,7 +81,7 @@ export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
   { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'ethereum', enabled: true, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }

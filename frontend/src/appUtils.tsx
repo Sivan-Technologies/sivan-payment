@@ -202,7 +202,7 @@ export const fallbackSourceNetworks: NetworkControl[] = [
   { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
-  { network: 'ethereum', enabled: true, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
   { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
   { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }

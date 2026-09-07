@@ -1,24 +1,23 @@
-import { updateBalanceTransferControls, getBalanceTransferControls } from '../src/balances/balance.service.js';
+import { updatePaymentControls, getPaymentControls } from '../src/controls/payment-controls.service.js';
 
-async function update() {
-  console.log('Current controls before:');
-  console.log(await getBalanceTransferControls());
+async function main() {
+  console.log('=== APPLYING STRICT MULTI-CHAIN SOURCE NETWORKS TO PAYMENT CONTROLS ===');
+  
+  const updated = await updatePaymentControls({
+    sourceNetworks: [
+      { network: 'solana', enabled: true, isDefault: true },
+      { network: 'base', enabled: true, isDefault: false },
+      { network: 'bsc', enabled: true, isDefault: false },
+      { network: 'stellar', enabled: true, isDefault: false },
+      { network: 'celo', enabled: true, isDefault: false },
+      { network: 'ethereum', enabled: false, isDefault: false },
+      { network: 'polygon', enabled: false, isDefault: false },
+      { network: 'arbitrum', enabled: false, isDefault: false },
+      { network: 'avalanche_c_chain', enabled: false, isDefault: false }
+    ]
+  }, 'system_migration');
 
-  console.log('Updating transfer controls to enabled across all chains...');
-  const updated = await updateBalanceTransferControls({
-    transfersEnabled: true,
-    p2pTransfersEnabled: true,
-    minimumSendAmount: 0.1,
-    manualReviewThreshold: 1000,
-    riskHoldsEnabled: false,
-    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum'] as any,
-    p2pClaimExpiryDays: 7,
-    updatedBy: 'admin',
-    reason: 'Multi-chain live testing activation',
-  }, { ipAddress: '127.0.0.1' });
-
-  console.log('Updated controls:', updated);
-  console.log('Verified getBalanceTransferControls():', await getBalanceTransferControls());
+  console.log('Updated Payment Controls:', JSON.stringify(updated.sourceNetworks, null, 2));
 }
 
-update().catch(console.error);
+main().catch(console.error);

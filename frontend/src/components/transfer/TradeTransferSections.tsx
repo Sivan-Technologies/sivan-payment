@@ -623,7 +623,20 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
    * asset; this component threw that away and looked up one hardcoded key.
    */
   const selectedAssetKey = String(sendAsset || '').toLowerCase();
-  const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
+  const SUPPORTED_TRANSFER_NETWORKS = ['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo'];
+  const networks = useMemo(() => {
+    const list = (enabledNetworks ?? []).filter(
+      (n) => n.enabled && SUPPORTED_TRANSFER_NETWORKS.includes(n.network.toLowerCase())
+    );
+    if (list.length > 0) return list;
+    return [
+      { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
+      { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
+      { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
+      { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
+      { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
+    ];
+  }, [enabledNetworks]);
 
   const networkBalances = useMemo(() => {
     const map = new Map<string, number>();
