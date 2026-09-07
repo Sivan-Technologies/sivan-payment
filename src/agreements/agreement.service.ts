@@ -160,16 +160,23 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
     const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
     if (buyerWallet) {
       const activeProviderName = await resolveActiveWalletProvider();
-      const provider = getWalletProvider(buyerWallet.provider ?? activeProviderName);
-      vaultAddress = process.env.SOLANA_VAULT_ADDRESS || process.env.SAP_AGENT_PUBLIC_KEY || 'AH1EZro8AHseUwdJMYiwx71QxVq6sm9eCUW75HyrvQr6';
+      const network = (existing.network || 'solana').toLowerCase();
+      if (network === 'stellar' || buyerWallet.chain === 'stellar') {
+        vaultAddress = process.env.STELLAR_VAULT_ADDRESS || process.env.STELLAR_DISTRIBUTION_PUBLIC_KEY || buyerWallet.address;
+      } else if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(network) || buyerWallet.address.startsWith('0x')) {
+        vaultAddress = process.env.EVM_VAULT_ADDRESS || process.env.EVM_SETTLEMENT_ROUTER_ADDRESS || buyerWallet.address;
+      } else {
+        vaultAddress = process.env.SOLANA_VAULT_ADDRESS || process.env.SAP_AGENT_PUBLIC_KEY || buyerWallet.address;
+      }
 
+      const provider = getWalletProvider(buyerWallet.provider ?? activeProviderName);
       const transferResult = await provider.createTransfer({
         providerWalletId: buyerWallet.providerWalletId,
         providerCustomerId: buyerWallet.customerId,
         asset: ((existing.currency || 'usdc').toLowerCase() as any),
         chain: (existing.network || 'solana') as any,
         amount: String(existing.amountUsdc),
-        toAddress: vaultAddress,
+        toAddress: vaultAddress || buyerWallet.address,
         idempotencyKey: `fund_agr_${existing.id}`,
         reference: existing.id,
       });

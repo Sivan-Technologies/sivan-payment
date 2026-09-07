@@ -159,28 +159,6 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const existing = await db.findUserWallet(userId, chain);
   if (existing) return existing;
 
-  const provider = getWalletProvider(await resolveActiveWalletProvider());
-  const { customer } = await requireWalletEligibility(userId, provider.name);
-
-  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC)
-  if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(chain)) {
-    const evmWallet = await db.findUserWallet(userId, 'base')
-      || await db.findUserWallet(userId, 'ethereum')
-      || await db.findUserWallet(userId, 'celo')
-      || await db.findUserWallet(userId, 'bsc');
-    if (evmWallet) {
-      const now = nowIso();
-      const record: UserWalletRecord = {
-        ...evmWallet,
-        id: id('uw'),
-        chain,
-        createdAt: now,
-        updatedAt: now,
-      };
-      return await db.insertUserWallet(record);
-    }
-  }
-
   if (chain === 'stellar') {
     const { generateStellarAddress } = await import('./stellar/stellar-keypair.js');
     const { ensureStellarAccountAndTrustline } = await import('./stellar/trustline.js');
@@ -189,7 +167,6 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     const record: UserWalletRecord = {
       id: id('uw'),
       userId,
-      customerId: customer?.id,
       provider: 'stellar_native',
       providerWalletId: `stellar_${address}`,
       chain: 'stellar',
@@ -207,6 +184,23 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     });
     return saved;
   }
+
+  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC)
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(chain)) {
+    const evmWallet = await db.findUserWallet(userId, 'base')
+      || await db.findUserWallet(userId, 'ethereum')
+      || await db.findUserWallet(userId, 'celo')
+      || await db.findUserWallet(userId, 'bsc');
+    if (evmWallet) {
+      return {
+        ...evmWallet,
+        chain,
+      };
+    }
+  }
+
+  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  const { customer } = await requireWalletEligibility(userId, provider.name);
 
   const targetChain = chain === 'solana' ? 'solana' : 'ethereum';
   const providerWallet = await provider.createWallet({
