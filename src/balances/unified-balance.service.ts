@@ -86,6 +86,36 @@ const num = (value: unknown) => {
 /** Six decimals: USDC and USDT both use six, and floats drift beyond that. */
 const money = (value: number) => (Math.round(value * 1e6) / 1e6).toFixed(6);
 
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(errorMessage)), ms);
+  });
+  return Promise.race([
+    promise.then((res) => {
+      clearTimeout(timer);
+      return res;
+    }),
+    timeoutPromise,
+  ]);
+}
+
+interface CachedUnifiedBalance {
+  timestamp: number;
+  data: UnifiedBalance;
+}
+
+const unifiedBalanceCache = new Map<string, CachedUnifiedBalance>();
+const BALANCE_CACHE_TTL_MS = 6_000; // 6-second short TTL to serve immediate reloads instantly
+
+export function invalidateUnifiedBalanceCache(userId?: string) {
+  if (userId) {
+    unifiedBalanceCache.delete(userId);
+  } else {
+    unifiedBalanceCache.clear();
+  }
+}
+
 /**
  * Read every wallet the user has, with live balances, tolerating failure.
  *
@@ -98,28 +128,6 @@ async function readChainBalances(userId: string) {
   const active = wallets.filter((wallet) => wallet.status !== 'closed');
   if (!active.length) return [];
 
-  /**
-   * EACH WALLET IS READ THROUGH ITS OWN CUSTODIAN.
-   *
-   * This resolved ONE provider -- resolveActiveWalletProvider() -- and used it
-   * for every wallet the user holds. That is the deployment-wide setting for
-   * issuing NEW wallets; it says nothing about who holds an EXISTING one.
-   *
-   * balance.service.ts already fixed exactly this bug on the SEND path
-   * (`wallet.provider ?? active`). The READ path kept the old shape, so the
-   * two disagreed: a user who on-ramped through a Bridge virtual account holds
-   * a Bridge wallet while the active provider is Privy, and their Bridge
-   * balance was requested from Privy, which has never heard of that wallet id.
-   * The call fails or returns nothing, so the dashboard shows zero -- while
-   * the send path, asking the right custodian, would happily have moved it.
-   *
-   * This matters more now the sweep ships OFF: funds legitimately STAY in the
-   * Bridge wallet, so reading only the active provider would hide the balance
-   * of every virtual-account user.
-   *
-   * Cached per provider name so a user with several wallets from the same
-   * custodian still resolves it once.
-   */
   const providerCache = new Map<string, ReturnType<typeof getWalletProvider>>();
   const activeProviderName = await resolveActiveWalletProvider();
   const providerFor = (wallet: { provider?: string }) => {
@@ -132,47 +140,10 @@ async function readChainBalances(userId: string) {
     return resolved;
   };
 
-  /**
-   * ONE EVM WALLET, SEVERAL EVM CHAINS - AND THE MONEY IS RARELY ON THE ONE
-   * IT IS FILED UNDER.
-   *
-   * walletsToProvision() issues a single 'ethereum' wallet that `alsoServes`
-   * base: same secp256k1 key, same address, different networks. NOTHING in the
-   * codebase read `alsoServes`, so this service asked for balances on
-   * 'ethereum' only.
-   *
-   * Caught by a real off-ramp: a wallet holding 180.59 USDC on BASE Sepolia
-   * reported chain=0, spendable=0, and the sweep silently declined to send.
-   * Every assertion in the unit suite passed, because they never crossed the
-   * chain boundary. A user whose funds are on Base - which is the default
-   * deposit network - would have seen zero and been unable to send anything.
-   *
-   * Each (address, chain) pair is read separately and summed per asset: the
-   * SAME address genuinely holds different amounts on Base and on Ethereum,
-   * and both are the user's money.
-   */
-  /**
-   * AND THE LOOKUP MUST NOT DEPEND ON WHICH NAME THE ROW WAS FILED UNDER.
-   *
-   * This previously read:
-   *
-   *   walletsToProvision().find((entry) => entry.chain === wallet.chain)?.alsoServes ?? []
-   *
-   * walletsToProvision() only ever lists 'ethereum' and 'solana'. Every wallet
-   * actually provisioned in this deployment is stored as chain:'base' -
-   * confirmed against the live audit log - so that `.find` returned undefined,
-   * alsoServes fell back to [], and this service read Base ONLY. A user with
-   * funds on Ethereum saw zero; had provisioning gone the other way they would
-   * have seen zero on Base. The fallback silently narrowed the read instead of
-   * failing, which is why it survived a test suite that never crossed a chain
-   * boundary.
-   *
-   * networksServedByWallet() answers from the key family, so it is correct for
-   * a row filed under either name and cannot degrade to an empty list.
-   */
+  const activeSupportedChains = new Set(['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo']);
   const uniqueReads = new Map<string, { wallet: (typeof active)[0]; chain: string }>();
   for (const wallet of active) {
-    const chains = networksServedByWallet(wallet.chain);
+    const chains = networksServedByWallet(wallet.chain).filter((c) => activeSupportedChains.has(c.toLowerCase()));
     for (const chain of chains) {
       const key = `${chain}:${wallet.address.toLowerCase()}`;
       if (!uniqueReads.has(key)) {
@@ -186,11 +157,15 @@ async function readChainBalances(userId: string) {
   return Promise.all(
     reads.map(async ({ wallet, chain }) => {
       try {
-        const balances = await providerFor(wallet).getBalances(
-          wallet.providerWalletId,
-          wallet.customerId,
-          wallet.address,
-          chain as WalletChain
+        const balances = await withTimeout(
+          providerFor(wallet).getBalances(
+            wallet.providerWalletId,
+            wallet.customerId,
+            wallet.address,
+            chain as WalletChain
+          ),
+          2500,
+          `RPC timeout for ${chain} after 2500ms`
         );
         return { chain, address: wallet.address, balances, balancesUnavailable: false };
       } catch (error) {
@@ -206,7 +181,14 @@ async function readChainBalances(userId: string) {
   );
 }
 
-export async function getUnifiedBalance(userId: string): Promise<UnifiedBalance> {
+export async function getUnifiedBalance(userId: string, bypassCache = false): Promise<UnifiedBalance> {
+  if (!bypassCache) {
+    const cached = unifiedBalanceCache.get(userId);
+    if (cached && Date.now() - cached.timestamp < BALANCE_CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+
   // Independent: the ledger is our database, the chain is an RPC.
   const [ledger, wallets] = await Promise.all([getUserBalance(userId), readChainBalances(userId)]);
 
@@ -343,12 +325,15 @@ export async function getUnifiedBalance(userId: string): Promise<UnifiedBalance>
       : money(Math.max(num(row.chain) + num(row.credited) - num(row.held), 0));
   }
 
-  return {
+  const result: UnifiedBalance = {
     userId,
     balances: [...byAsset.values()].sort((a, b) => a.asset.localeCompare(b.asset)),
     wallets,
     updatedAt: new Date().toISOString(),
   };
+
+  unifiedBalanceCache.set(userId, { timestamp: Date.now(), data: result });
+  return result;
 }
 
 /**

@@ -284,16 +284,18 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   let balances: Array<{ asset: string; chain: string; amount: string }> | undefined;
   let balancesUnavailable = false;
   try {
-    // address and chain are passed because Privy cannot answer without them -
-    // it is a key manager, not an indexer, so the balance is read from an RPC
-    // against this specific address on this specific network. Bridge and Mock
-    // ignore the extra arguments.
-    balances = await provider.getBalances(
-      wallet.providerWalletId,
-      wallet.customerId,
-      wallet.address,
-      wallet.chain
-    );
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Timeout fetching balances for ${wallet.chain}`)), 2500);
+    });
+    balances = await Promise.race([
+      provider.getBalances(
+        wallet.providerWalletId,
+        wallet.customerId,
+        wallet.address,
+        wallet.chain
+      ),
+      timeoutPromise,
+    ]);
   } catch (error) {
     // A provider outage must not blank the deposit address. The user can still
     // receive funds; only the balance figure is unavailable.

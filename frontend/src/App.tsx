@@ -73,12 +73,26 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
-  const [userWallets, setUserWallets] = useState<UserWalletRecord[]>([]);
+  const [userWallets, setUserWallets] = useState<UserWalletRecord[]>(() => {
+    try {
+      const cached = localStorage.getItem('sivan.userWallets');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [virtualAccountRequests, setVirtualAccountRequests] = useState<VirtualAccountRequestRecord[]>([]);
   const [virtualAccounts, setVirtualAccounts] = useState<VirtualAccountRecord[]>([]);
   const [virtualAccountTransactions, setVirtualAccountTransactions] = useState<VirtualAccountTransactionRecord[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
-  const [balance, setBalance] = useState<BalanceSummary | null>(null);
+  const [balance, setBalance] = useState<BalanceSummary | null>(() => {
+    try {
+      const cached = localStorage.getItem('sivan.balance');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   /**
    * THE ONE BALANCE. chain + ledger credits - holds, from the server.
    *
@@ -87,7 +101,14 @@ export default function App() {
    * a ledger that nothing credits from an on-chain deposit. Two sources, one
    * of which could not see the user's actual money.
    */
-  const [unifiedBalance, setUnifiedBalance] = useState<UnifiedBalance | null>(null);
+  const [unifiedBalance, setUnifiedBalance] = useState<UnifiedBalance | null>(() => {
+    try {
+      const cached = localStorage.getItem('sivan.unifiedBalance');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [balanceTransfers, setBalanceTransfers] = useState<BalanceTransferRecord[]>([]);
   // Inbound deposits - money arriving from outside Sivan, the seventh feed source.
   const [walletDeposits, setWalletDeposits] = useState<WalletDepositRecord[]>([]);
@@ -583,6 +604,9 @@ export default function App() {
     localStorage.removeItem('sivan.user');
     localStorage.removeItem('sivan.customer');
     localStorage.removeItem('sivan.accounts');
+    localStorage.removeItem('sivan.balance');
+    localStorage.removeItem('sivan.unifiedBalance');
+    localStorage.removeItem('sivan.userWallets');
   }, []);
 
   const logout = useCallback((message = 'You have been signed out.') => {
@@ -994,9 +1018,14 @@ export default function App() {
       // list endpoint does not include balances. Worth it here: the Receive
       // screen is where the user expects to see what has arrived.
       const wallets = await api<UserWalletRecord[]>(`/api/users/${user.id}/wallets?balances=true`);
-      setUserWallets(Array.isArray(wallets) ? wallets : []);
+      if (Array.isArray(wallets)) {
+        setUserWallets(wallets);
+        try {
+          localStorage.setItem('sivan.userWallets', JSON.stringify(wallets));
+        } catch {}
+      }
     } catch {
-      setUserWallets([]);
+      // Keep existing cached state on transient network error
     }
   }, [api, user?.id]);
 

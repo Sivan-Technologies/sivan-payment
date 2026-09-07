@@ -72,8 +72,14 @@ export function usePaymentDataLoader(input: {
 
         if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
         if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
-        if (balanceResult.status === 'fulfilled') setBalance(balanceResult.value);
-        if (unifiedBalanceResult.status === 'fulfilled') setUnifiedBalance(unifiedBalanceResult.value);
+        if (balanceResult.status === 'fulfilled') {
+          setBalance(balanceResult.value);
+          try { localStorage.setItem('sivan.balance', JSON.stringify(balanceResult.value)); } catch {}
+        }
+        if (unifiedBalanceResult.status === 'fulfilled') {
+          setUnifiedBalance(unifiedBalanceResult.value);
+          try { localStorage.setItem('sivan.unifiedBalance', JSON.stringify(unifiedBalanceResult.value)); } catch {}
+        }
         if (virtualAccountsResult.status === 'fulfilled') {
           setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []);
           setVirtualAccounts(virtualAccountsResult.value.accounts ?? []);
