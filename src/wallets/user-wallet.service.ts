@@ -270,6 +270,11 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   const wallet = await db.findUserWallet(userId, chain);
   if (!wallet) return null;
 
+  if (wallet.chain === 'stellar') {
+    const { ensureStellarAccountAndTrustline } = await import('./stellar/trustline.js');
+    ensureStellarAccountAndTrustline('sivan_stellar_' + userId, wallet.address).catch(() => null);
+  }
+
   const activeProviderName = await resolveActiveWalletProvider();
   const provider = getWalletProvider(wallet.provider ?? activeProviderName);
 
