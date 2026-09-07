@@ -76,11 +76,11 @@ export const DEFAULT_ASSET_CONTROLS: AssetControlRecord[] = [
  * disabled.
  */
 export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
-  { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'stellar', enabled: true, isDefault: true, label: 'Stellar', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'solana', enabled: true, isDefault: false, label: 'Solana', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 70, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 80, updatedBy: 'system', updatedAt: nowIso() },
