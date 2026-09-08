@@ -239,7 +239,12 @@ export function ReceiveView({
     ];
     return families
       .map((family) => ({ ...family, chains: family.chains.filter((c) => availableChains.includes(c)) }))
-      .filter((family) => family.chains.length > 0);
+      .filter((family) => family.chains.length > 0)
+      .sort((a, b) => {
+        if (a.recommended && !b.recommended) return -1;
+        if (!a.recommended && b.recommended) return 1;
+        return 0;
+      });
   }, [availableChains, enabledNetworks]);
 
   const [chain, setChain] = useState<ReceiveChain | null>(() => defaultChain);
