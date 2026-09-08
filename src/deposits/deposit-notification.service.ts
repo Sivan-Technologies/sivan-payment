@@ -140,8 +140,16 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
-    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL || 'https://telegram.sivantech.online';
-    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || 'vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU';
+    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    if (!notifyUrl) {
+      console.warn('[deposit-notification] TELEGRAM_NOTIFICATION_URL is not set — skipping Telegram deposit notification.');
+      return;
+    }
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (!secret) {
+      console.warn('[deposit-notification] NOTIFICATION_SECRET is not set — skipping Telegram deposit notification.');
+      return;
+    }
 
     const links = await db.listCustomerIdentityLinks();
     const activeLinks = links

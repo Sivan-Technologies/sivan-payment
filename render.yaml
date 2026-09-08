@@ -269,7 +269,7 @@ services:
       - key: PAJ_RAMP_API_KEY
         sync: false
       - key: PAJ_RAMP_WEBHOOK_URL
-        value: https://api.sivantech.online/api/payment/api/webhooks/paj
+        value: https://api-staging.sivantech.online/api/payment/api/webhooks/paj
       - key: PAJ_RAMP_DEFAULT_CURRENCY
         value: NGN
       - key: PAJ_RAMP_DEFAULT_CHAIN

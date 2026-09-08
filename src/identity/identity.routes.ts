@@ -225,8 +225,8 @@ export async function identityRoutes(app: FastifyInstance) {
 
     let externalDeals: any[] = [];
     if (isLinked) {
-      const escrowAgentUrl = env.ESCROW_AGENT_URL || process.env.ESCROW_AGENT_URL || (process.env.NODE_ENV === 'production' ? 'https://sivan-escrow-agent-test.onrender.com' : 'http://127.0.0.1:4000');
-      const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
+      const escrowAgentUrl = env.ESCROW_AGENT_URL;
+      const coreSecret = process.env.CORE_API_SECRET;
 
       const params: string[] = ['limit=50'];
       if (linkedEscrowUserId) {
@@ -250,50 +250,54 @@ export async function identityRoutes(app: FastifyInstance) {
 
       const url = `${escrowAgentUrl}/api/users/escrows?${params.join('&')}`;
 
-      try {
-        const res = await fetch(url, {
-          headers: {
-            'x-core-api-key': coreSecret,
-          },
-          signal: AbortSignal.timeout(3500),
-        });
-        if (res.ok) {
-          const json: any = await res.json();
-          externalDeals = (json.deals || []).map((d: any) => {
-            const escrow = d.escrow || d;
-            const channel = escrow.createdByChannel === 'whatsapp_dm' || escrow.createdByChannel === 'whatsapp_group'
-              ? 'whatsapp'
-              : (escrow.createdByChannel === 'telegram' || d.channel === 'telegram' || Boolean(telegramUserId))
-              ? 'telegram'
-              : (d.channel || (telegramLink ? 'telegram' : whatsappNumber ? 'whatsapp' : 'web'));
-
-            const rawRole = d.participant?.role || d.role;
-            const isBuyer = rawRole === 'buyer' || (escrow.buyerUserId && (escrow.buyerUserId === userId || escrow.buyerUserId === linkedEscrowUserId));
-
-            return {
-              id: escrow.escrowId || escrow.id || d.escrowId || d.id,
-              escrowId: escrow.escrowId || escrow.id || d.escrowId || d.id,
-              title: escrow.purpose || escrow.title || d.title || d.description || 'Service Agreement',
-              role: isBuyer ? 'buyer' : 'seller',
-              amount: String(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || '0'),
-              amountUsdc: Number(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || 0),
-              currency: escrow.currency || d.currency || 'USDC',
-              network: escrow.network || d.network || 'solana',
-              status: String(escrow.status || d.status || 'PENDING').toUpperCase(),
-              createdAt: escrow.createdAt || d.createdAt || new Date().toISOString(),
-              channel,
-              buyerUserId: escrow.buyerUserId || d.buyerUserId,
-              sellerUserId: escrow.sellerUserId || d.sellerUserId,
-              deadlineDays: escrow.deadlineDays || d.deadlineDays,
-              deliveryDueAt: escrow.deliveryDueAt || d.deliveryDueAt,
-              fundingTxHash: escrow.fundingTxHash || d.fundingTxHash,
-              releaseTxHash: escrow.releaseTxHash || d.releaseTxHash,
-              vaultAddress: escrow.vaultAddress || d.vaultAddress,
-            };
+      if (!escrowAgentUrl || !coreSecret) {
+        console.warn('[identity] ESCROW_AGENT_URL or CORE_API_SECRET not set — skipping external deals fetch.');
+      } else {
+        try {
+          const res = await fetch(url, {
+            headers: {
+              'x-core-api-key': coreSecret,
+            },
+            signal: AbortSignal.timeout(3500),
           });
+          if (res.ok) {
+            const json: any = await res.json();
+            externalDeals = (json.deals || []).map((d: any) => {
+              const escrow = d.escrow || d;
+              const channel = escrow.createdByChannel === 'whatsapp_dm' || escrow.createdByChannel === 'whatsapp_group'
+                ? 'whatsapp'
+                : (escrow.createdByChannel === 'telegram' || d.channel === 'telegram' || Boolean(telegramUserId))
+                ? 'telegram'
+                : (d.channel || (telegramLink ? 'telegram' : whatsappNumber ? 'whatsapp' : 'web'));
+
+              const rawRole = d.participant?.role || d.role;
+              const isBuyer = rawRole === 'buyer' || (escrow.buyerUserId && (escrow.buyerUserId === userId || escrow.buyerUserId === linkedEscrowUserId));
+
+              return {
+                id: escrow.escrowId || escrow.id || d.escrowId || d.id,
+                escrowId: escrow.escrowId || escrow.id || d.escrowId || d.id,
+                title: escrow.purpose || escrow.title || d.title || d.description || 'Service Agreement',
+                role: isBuyer ? 'buyer' : 'seller',
+                amount: String(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || '0'),
+                amountUsdc: Number(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || 0),
+                currency: escrow.currency || d.currency || 'USDC',
+                network: escrow.network || d.network || 'solana',
+                status: String(escrow.status || d.status || 'PENDING').toUpperCase(),
+                createdAt: escrow.createdAt || d.createdAt || new Date().toISOString(),
+                channel,
+                buyerUserId: escrow.buyerUserId || d.buyerUserId,
+                sellerUserId: escrow.sellerUserId || d.sellerUserId,
+                deadlineDays: escrow.deadlineDays || d.deadlineDays,
+                deliveryDueAt: escrow.deliveryDueAt || d.deliveryDueAt,
+                fundingTxHash: escrow.fundingTxHash || d.fundingTxHash,
+                releaseTxHash: escrow.releaseTxHash || d.releaseTxHash,
+                vaultAddress: escrow.vaultAddress || d.vaultAddress,
+              };
+            });
+          }
+        } catch (err: any) {
+          console.warn('[Service Agreements] External lookup note:', err?.message || err);
         }
-      } catch (err: any) {
-        console.warn('[Service Agreements] External lookup note:', err?.message || err);
       }
     }
 
@@ -928,11 +932,10 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy fallback for /api/users/escrows
    */
   app.get('/api/users/escrows', async (request, reply) => {
-    const configuredUrl = process.env.ESCROW_AGENT_URL || env.ESCROW_AGENT_URL;
-    const isLocalhost = !configuredUrl || configuredUrl.includes('127.0.0.1') || configuredUrl.includes('localhost');
-    const primaryUrl = isLocalhost ? (env.APP_ENV === 'production' ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online') : configuredUrl;
-    const fallbackUrl = 'https://test-sivan.sivantech.online';
-    const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
+    const configuredUrl = env.ESCROW_AGENT_URL;
+    const primaryUrl = configuredUrl;
+    const fallbackUrl = process.env.CORE_API_BASE_URL;
+    const coreSecret = process.env.CORE_API_SECRET ?? '';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
 
     const tryFetch = async (targetBase: string) => {
@@ -953,6 +956,9 @@ export async function identityRoutes(app: FastifyInstance) {
       const data = await res.json();
       return reply.code(res.status).send(data);
     } catch (primaryErr: any) {
+      if (!fallbackUrl) {
+        return reply.code(502).send({ error: { message: primaryErr?.message || 'Escrow API unavailable' } });
+      }
       try {
         const res = await tryFetch(fallbackUrl);
         const data = await res.json();
@@ -967,11 +973,10 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy fallback for /api/users/profile
    */
   app.get('/api/users/profile', async (request, reply) => {
-    const configuredUrl = process.env.ESCROW_AGENT_URL || env.ESCROW_AGENT_URL;
-    const isLocalhost = !configuredUrl || configuredUrl.includes('127.0.0.1') || configuredUrl.includes('localhost');
-    const primaryUrl = isLocalhost ? (env.APP_ENV === 'production' ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online') : configuredUrl;
-    const fallbackUrl = 'https://test-sivan.sivantech.online';
-    const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
+    const configuredUrl = env.ESCROW_AGENT_URL;
+    const primaryUrl = configuredUrl;
+    const fallbackUrl = process.env.CORE_API_BASE_URL;
+    const coreSecret = process.env.CORE_API_SECRET ?? '';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
 
     const tryFetch = async (targetBase: string) => {
@@ -992,6 +997,9 @@ export async function identityRoutes(app: FastifyInstance) {
       const data = await res.json();
       return reply.code(res.status).send(data);
     } catch (primaryErr: any) {
+      if (!fallbackUrl) {
+        return reply.code(502).send({ error: { message: primaryErr?.message || 'Escrow API unavailable' } });
+      }
       try {
         const res = await tryFetch(fallbackUrl);
         const data = await res.json();
