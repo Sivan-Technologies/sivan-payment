@@ -187,7 +187,7 @@ export function ReceiveView({
    * are presented as individual options so users can deposit instantly without high gas fees.
    */
   const chainFamilies = useMemo(() => {
-    const activeDefault = enabledNetworks?.find((n) => n.enabled && n.isDefault)?.network || 'solana';
+    const activeDefault = defaultChain || 'solana';
     const families: Array<{
       key: string;
       label: string;
@@ -217,7 +217,7 @@ export function ReceiveView({
         label: 'BNB Chain',
         note: 'BNB Smart Chain (BEP-20). Ultra-low fees for USDC & USDT.',
         accent: CHAIN_META.bsc.accent,
-        recommended: activeDefault === 'bsc' || activeDefault === 'bnb',
+        recommended: activeDefault === 'bsc' || (activeDefault as string) === 'bnb',
         chains: ['bsc'],
       },
       {
@@ -245,18 +245,25 @@ export function ReceiveView({
         if (!a.recommended && b.recommended) return 1;
         return 0;
       });
-  }, [availableChains, enabledNetworks]);
+  }, [availableChains, defaultChain]);
 
   const [chain, setChain] = useState<ReceiveChain | null>(() => defaultChain);
   const [copied, setCopied] = useState(false);
   const userManuallySelectedRef = useRef<boolean>(false);
-  const prevDefaultChainRef = useRef<ReceiveChain | null>(null);
+  const prevDefaultChainRef = useRef<ReceiveChain | null>(defaultChain);
 
   useEffect(() => {
     if (!defaultChain) return;
-    if (!chain || !availableChains.includes(chain) || (!userManuallySelectedRef.current && prevDefaultChainRef.current !== defaultChain)) {
-      setChain(defaultChain);
+    // When the default network changes from the server (e.g. admin switched to Stellar or Celo),
+    // immediately synchronize and prioritize the newly configured default.
+    if (prevDefaultChainRef.current !== defaultChain) {
       prevDefaultChainRef.current = defaultChain;
+      userManuallySelectedRef.current = false;
+      setChain(defaultChain);
+      return;
+    }
+    if (!chain || !availableChains.includes(chain)) {
+      setChain(defaultChain);
     }
   }, [defaultChain, availableChains, chain]);
 

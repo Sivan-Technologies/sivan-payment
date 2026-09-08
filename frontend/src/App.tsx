@@ -1039,8 +1039,18 @@ export default function App() {
   }, [hasUser, authToken, user?.id]);
 
   const handleRefreshAll = useCallback(async () => {
-    await Promise.allSettled([loadUserData(), loadUserWallets()]);
-  }, [loadUserData, loadUserWallets]);
+    await Promise.allSettled([loadUserData(), loadUserWallets(), loadControls()]);
+  }, [loadUserData, loadUserWallets, loadControls]);
+
+  useEffect(() => {
+    if (view === 'receive') {
+      void loadControls();
+      const interval = setInterval(() => {
+        void loadControls();
+      }, 8000);
+      return () => clearInterval(interval);
+    }
+  }, [view, loadControls]);
 
   useEffect(() => {
     const handleAgreementsRefresh = () => {
