@@ -69,6 +69,7 @@ export class CeloAdapter implements IChainAdapter {
     const { feeCurrencyAddress } = await resolveCeloFeeCurrency(wallet.address);
 
     const transfer = await provider.createTransfer({
+      userId: params.fromUserId,
       providerWalletId: wallet.providerWalletId,
       providerCustomerId: wallet.customerId,
       chain: 'celo',

@@ -8,6 +8,7 @@ import { erc20BalanceOf, fromBaseUnits } from '../evm/evm-rpc.js';
 import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
+import { buildCeloTransferPayload } from '../celo/celo-tx-builder.js';
 import type { WalletProvider } from './wallet-provider.js';
 import {
   Keypair as StellarKeypairSdk,
@@ -964,6 +965,12 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendSolanaTransfer(input, signingKey, caip2);
     }
 
+    // Celo has a dedicated flow supporting CIP-64 native fee abstraction
+    // and atomic Multicall3 protocol fee collection.
+    if (input.chain === 'celo') {
+      return this.sendCeloTransfer(input, signingKey, caip2);
+    }
+
     // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
     // disagreeing is the specific failure this parameter exists to prevent: a
     // mainnet USDC contract addressed on Base Sepolia is not a token contract
@@ -976,25 +983,11 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
 
-    /**
-     * CELO VS ALL OTHER EVM CHAINS.
-     *
-     * Celo supports native fee abstraction: the `feeCurrency` field in the
-     * transaction tells the node which ERC-20 adapter to deduct gas from.
-     * No CELO balance required. No Privy gas sponsorship required.
-     *
-     * Every other EVM chain (Base, BSC) uses Privy gas sponsorship via
-     * `sponsor: true`. That path is unchanged — this condition is the only
-     * thing that separates them.
-     */
-    const isCelo = input.chain === 'celo';
-
     const body = {
       method: 'eth_sendTransaction',
       caip2,
-      // Base and BSC: keep Privy gas sponsorship. Celo: drop it entirely —
-      // the node handles gas through feeCurrency in the transaction params.
-      ...(isCelo ? {} : { sponsor: true }),
+      // Base and BSC use Privy gas sponsorship.
+      sponsor: true,
       params: {
         transaction: {
           to: token,
@@ -1002,10 +995,6 @@ export class PrivyWalletProvider implements WalletProvider {
           // in a web3 library for one 68-byte call.
           data: encodeErc20Transfer(input.toAddress, input.amount, decimalsFor(input.asset)),
           value: '0x0',
-          // Celo fee abstraction: which stablecoin adapter pays gas.
-          // Resolved upstream by resolveCeloFeeCurrency() in CeloAdapter.ts.
-          // Omitted for Base and BSC — they never use this field.
-          ...(isCelo && input.feeCurrency ? { feeCurrency: input.feeCurrency } : {}),
         },
       },
     };
@@ -1263,6 +1252,100 @@ export class PrivyWalletProvider implements WalletProvider {
         estimatedRentSol: built.estimatedRentSol,
         feeSkippedReason: built.feeSkippedReason,
       },
+    };
+  }
+
+  /**
+   * Execute an on-chain transfer on Celo with native fee abstraction (CIP-64).
+   *
+   * Sivan fee collection: if SIVAN_CELO_FEE_WALLET is configured and input.feeAmount > 0,
+   * recipient settlement and fee collection are bundled atomically via Multicall3.
+   *
+   * Gas is deducted from the user's stablecoin balance (USDC, USDT, or cUSD) via feeCurrency.
+   */
+  private async sendCeloTransfer(
+    input: WalletTransferInput,
+    signingKey: string,
+    caip2: string
+  ): Promise<WalletTransfer> {
+    const production = isProduction(input.networkMode);
+    const token = erc20TokenAddress('celo', input.asset, production);
+
+    if (!token) {
+      throw forbidden(`No ${input.asset.toUpperCase()} contract known for Celo.`);
+    }
+
+    const feeWallet =
+      env.SIVAN_CELO_FEE_WALLET?.trim() ||
+      env.SIVAN_FEE_WALLET_CELO?.trim() ||
+      process.env.SIVAN_CELO_FEE_WALLET?.trim();
+
+    const payload = buildCeloTransferPayload({
+      tokenAddress: token,
+      recipientAddress: input.toAddress,
+      amount: input.amount,
+      feeAmount: input.feeAmount,
+      feeWallet: feeWallet || undefined,
+      decimals: decimalsFor(input.asset),
+    });
+
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+
+    const body = {
+      method: 'eth_sendTransaction',
+      caip2,
+      params: {
+        transaction: {
+          to: payload.to,
+          data: payload.data,
+          value: payload.value,
+          ...(input.feeCurrency ? { feeCurrency: input.feeCurrency } : {}),
+        },
+      },
+    };
+
+    const { appId } = credentials();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result: any = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
+      if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
+        throw forbidden(
+          `Gas sponsorship is not available for ${caip2}. Celo uses native fee abstraction (feeCurrency) to deduct gas from stablecoins.`
+        );
+      }
+      throw new Error(`Privy Celo: ${message}`);
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId:
+        result?.data?.transaction_id ||
+        result?.transaction_id ||
+        result?.data?.user_operation_hash ||
+        result?.data?.hash ||
+        `privy_celo_${crypto.randomUUID()}`,
+      status: 'submitted',
+      txHash: result?.data?.hash || result?.hash || undefined,
+      userOperationHash: result?.data?.user_operation_hash || undefined,
+      sponsored: false,
+      rawProviderPayload: result,
     };
   }
 

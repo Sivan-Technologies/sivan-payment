@@ -84,6 +84,54 @@ async function runCeloAdapterTests() {
     assert.ok(endpoints.length > 0);
   });
 
+  console.log('\n══ 4. Celo Multicall3 & Fee Abstraction Payload Building ══');
+
+  const { buildCeloTransferPayload, encodeMulticall3Aggregate3, MULTICALL3_ADDRESS } = await import('../src/wallets/celo/celo-tx-builder.js');
+  const { getCeloFeeCurrencyRegistry } = await import('../src/wallets/celo/celo-fee-currency.js');
+
+  test('verifies Multicall3 canonical address', () => {
+    assert.equal(MULTICALL3_ADDRESS, '0xcA11bde05977b3631167028862bE2a173976CA11');
+  });
+
+  test('builds single ERC-20 transfer when fee is zero or unconfigured', () => {
+    const payload = buildCeloTransferPayload({
+      tokenAddress: CELO_USDC_MAINNET,
+      recipientAddress: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
+      amount: '10.000000',
+      decimals: 6,
+    });
+    assert.equal(payload.isMulticall, false);
+    assert.equal(payload.to, CELO_USDC_MAINNET);
+    assert.ok(payload.data.startsWith('0xa9059cbb'));
+    assert.equal(payload.netAmount, '10.000000');
+    assert.equal(payload.feeAmount, '0');
+  });
+
+  test('builds atomic Multicall3 aggregate3 batch when fee is configured', () => {
+    const feeWallet = '0x1111111111111111111111111111111111111111';
+    const recipient = '0x2222222222222222222222222222222222222222';
+    const payload = buildCeloTransferPayload({
+      tokenAddress: CELO_USDC_MAINNET,
+      recipientAddress: recipient,
+      amount: '10.000000',
+      feeAmount: '0.250000',
+      feeWallet,
+      decimals: 6,
+    });
+    assert.equal(payload.isMulticall, true);
+    assert.equal(payload.to, MULTICALL3_ADDRESS);
+    assert.ok(payload.data.startsWith('0x82ad56a4'));
+    assert.equal(payload.netAmount, '9.750000');
+    assert.equal(payload.feeAmount, '0.250000');
+  });
+
+  test('verifies Celo fee currency registry resolution', () => {
+    const registry = getCeloFeeCurrencyRegistry();
+    assert.ok(registry.usdcAdapter.startsWith('0x'));
+    assert.ok(registry.usdtAdapter.startsWith('0x'));
+    assert.ok(registry.cusd.startsWith('0x'));
+  });
+
   console.log('\n==================================================');
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);
   console.log('==================================================\n');
