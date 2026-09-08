@@ -330,6 +330,7 @@ export default function App() {
   const nextStepView: ViewKey = !hasUser ? 'signup' : !isVerified ? 'kyc' : !hasBank ? 'banks' : 'withdraw';
   const nextStepLabel = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank account' : 'Withdraw stablecoins';
   const environmentLabel = appEnv === 'test' ? '⚠ Test environment: no real money moves' : isLiveEnv ? '● Live' : 'Local environment';
+  const onNavigateRefreshRef = useRef<((nextView: ViewKey) => void) | null>(null);
   const goToView = (nextView: ViewKey) => {
     setView(nextView);
     setMobileMenuOpen(false);
@@ -337,6 +338,7 @@ export default function App() {
     setNotificationOpen(false);
     const nextPath = pathByView[nextView] ?? '/dashboard';
     if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
+    onNavigateRefreshRef.current?.(nextView);
   };
 
   const goToSettingsSecurity = () => {
@@ -1030,24 +1032,69 @@ export default function App() {
     }
   }, [api, user?.id]);
 
+  const lastUserDataFetchRef = useRef<number>(0);
+  const throttledLoadUserData = useCallback(async (minGapMs = 6000) => {
+    if (!hasUser || !authToken) return;
+    const now = Date.now();
+    if (now - lastUserDataFetchRef.current < minGapMs) {
+      return;
+    }
+    lastUserDataFetchRef.current = now;
+    await loadUserData();
+  }, [hasUser, authToken, loadUserData]);
+
+  useEffect(() => {
+    onNavigateRefreshRef.current = (nextView: ViewKey) => {
+      void throttledLoadUserData(4000);
+      if (nextView === 'receive') {
+        void loadUserWallets();
+      }
+    };
+  }, [throttledLoadUserData, loadUserWallets]);
+
   useEffect(() => {
     void loadFee();
     void loadControls();
     if (hasUser) {
-      void loadUserData();
+      void throttledLoadUserData(0);
     }
-  }, [hasUser, authToken, user?.id]);
+  }, [hasUser, authToken, user?.id, throttledLoadUserData]);
 
   const handleRefreshAll = useCallback(async () => {
+    lastUserDataFetchRef.current = Date.now();
     await Promise.allSettled([loadUserData(), loadUserWallets(), loadControls()]);
   }, [loadUserData, loadUserWallets, loadControls]);
+
+  // Production-grade live background polling: every 15s when active tab is visible
+  useEffect(() => {
+    if (!hasUser || !authToken) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void throttledLoadUserData(10000);
+      }
+    }, 15000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void throttledLoadUserData(8000);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [hasUser, authToken, throttledLoadUserData]);
 
   useEffect(() => {
     if (view === 'receive') {
       void loadControls();
       const interval = setInterval(() => {
-        void loadControls();
-      }, 8000);
+        if (document.visibilityState === 'visible') {
+          void loadControls();
+        }
+      }, 10000);
       return () => clearInterval(interval);
     }
   }, [view, loadControls]);

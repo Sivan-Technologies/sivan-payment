@@ -182,10 +182,10 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
         // Always update the baseline, whatever we decide below.
         lastSeen.set(key, current);
 
-        // First sighting establishes a baseline. If there is an existing on-chain balance
-        // that has not yet been recorded as a deposit, record the unrecorded delta safely.
+        // First sighting establishes a baseline. In production, if there is an existing on-chain balance
+        // that has not yet been recorded as a deposit, record the unrecorded delta safely with a dynamic idempotency key.
         if (previous === undefined) {
-          if (current >= MIN_DEPOSIT) {
+          if (process.env.ALLOW_MOCK_WALLETS !== 'true' && current >= MIN_DEPOSIT) {
             const existing = await db.listWalletDeposits(wallet.userId);
             const recordedTotal = existing
               .filter((d) => d.chain.toLowerCase() === network.toLowerCase() && d.asset.toUpperCase() === asset.toUpperCase())
@@ -201,7 +201,7 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
                 asset,
                 amount: money(unrecorded),
                 detectionSource: 'balance_poll',
-                idempotencyKeyOverride: `${network}:${wallet.address.toLowerCase()}:${asset}:baseline_sync`,
+                idempotencyKeyOverride: `${network}:${wallet.address.toLowerCase()}:${asset}:baseline_sync_${money(recordedTotal)}_${money(current)}`,
                 rawPayload: { current: money(current), recordedTotal: money(recordedTotal), detector: 'baseline_sync' }
               });
 

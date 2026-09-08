@@ -445,6 +445,18 @@ export function ReceiveView({
     return directChainWallet?.balances ?? directUnified?.balances ?? wallet?.balances;
   }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, activeChain]);
 
+  const lastDispatchedBalanceRef = useRef<string>('');
+  useEffect(() => {
+    if (!activeBalances || activeBalances.length === 0) return;
+    const balanceKey = `${activeChain}:${activeBalances.map((b) => `${b.asset}:${b.amount}`).join(',')}`;
+    if (lastDispatchedBalanceRef.current && lastDispatchedBalanceRef.current !== balanceKey) {
+      lastDispatchedBalanceRef.current = balanceKey;
+      window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
+    } else if (!lastDispatchedBalanceRef.current) {
+      lastDispatchedBalanceRef.current = balanceKey;
+    }
+  }, [activeBalances, activeChain]);
+
   // Assets enabled globally but unavailable on this specific chain. Naming
   // them prevents the "why can't I see USDT?" support ticket.
   const unavailableHere = enabledAssets
