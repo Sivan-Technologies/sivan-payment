@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { qrDataUri } from '../qrCode';
 import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
 import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } from '../types';
@@ -244,10 +244,14 @@ export function ReceiveView({
 
   const [chain, setChain] = useState<ReceiveChain | null>(() => defaultChain);
   const [copied, setCopied] = useState(false);
+  const userManuallySelectedRef = useRef<boolean>(false);
+  const prevDefaultChainRef = useRef<ReceiveChain | null>(null);
 
   useEffect(() => {
-    if (defaultChain && (!chain || !availableChains.includes(chain))) {
+    if (!defaultChain) return;
+    if (!chain || !availableChains.includes(chain) || (!userManuallySelectedRef.current && prevDefaultChainRef.current !== defaultChain)) {
       setChain(defaultChain);
+      prevDefaultChainRef.current = defaultChain;
     }
   }, [defaultChain, availableChains, chain]);
 
@@ -258,10 +262,15 @@ export function ReceiveView({
     setCopied(false);
   }, [chain]);
 
+  const handleRefresh = () => {
+    userManuallySelectedRef.current = false;
+    onRefresh();
+  };
+
   if (!walletsEnabled) {
     return (
       <section className="app-page receive-page">
-        <PageHead onRefresh={onRefresh} />
+        <PageHead onRefresh={handleRefresh} />
         <article className="receive-panel">
           <div className="receive-empty">
             <h3>Deposits are not available yet</h3>
@@ -439,7 +448,7 @@ export function ReceiveView({
 
   return (
     <section className="app-page receive-page">
-      <PageHead onRefresh={onRefresh} />
+      <PageHead onRefresh={handleRefresh} />
 
       <article className="receive-panel">
         <div className="receive-chain-head">
@@ -479,7 +488,10 @@ export function ReceiveView({
                 className={`receive-family-card${selected ? ' selected' : ''}`}
                 style={selected ? { borderColor: family.accent } : undefined}
                 aria-pressed={selected}
-                onClick={() => setChain(family.chains[0])}
+                onClick={() => {
+                  userManuallySelectedRef.current = true;
+                  setChain(family.chains[0]);
+                }}
               >
                 <span className="receive-family-top">
                   {/* The mark, not a coloured dot. Every dot was the same
@@ -528,7 +540,10 @@ export function ReceiveView({
                   style={option === activeChain
                     ? { borderColor: CHAIN_META[option].accent, color: CHAIN_META[option].accent }
                     : undefined}
-                  onClick={() => setChain(option)}
+                  onClick={() => {
+                    userManuallySelectedRef.current = true;
+                    setChain(option);
+                  }}
                 >
                   <NetworkLogo chain={option} size={16} />
                   {CHAIN_META[option].label}
