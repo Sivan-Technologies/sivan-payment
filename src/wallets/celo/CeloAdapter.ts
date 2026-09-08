@@ -1,5 +1,6 @@
 import { IChainAdapter, ChainTransferParams, ChainTransferResult } from '../IChainAdapter.js';
-import { isCeloHealthy, CELO_USDC_MAINNET, CELO_CUSD_MAINNET } from './celo-rpc.js';
+import { isCeloHealthy } from './celo-rpc.js';
+import { resolveCeloFeeCurrency } from './celo-fee-currency.js';
 import { validateAddressForChain } from '../address-validation.js';
 import { getWalletProvider } from '../provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallet-controls.service.js';
@@ -62,6 +63,11 @@ export class CeloAdapter implements IChainAdapter {
     }
     if (!wallet) throw new Error(`Could not resolve Celo wallet for user: ${params.fromUserId}`);
 
+    // Resolve fee currency via native Celo fee abstraction.
+    // USDC → USDT → cUSD priority. No Privy gas sponsorship required.
+    // Gas cost is a fraction of a cent and is invisible to the user.
+    const { feeCurrencyAddress } = await resolveCeloFeeCurrency(wallet.address);
+
     const transfer = await provider.createTransfer({
       providerWalletId: wallet.providerWalletId,
       providerCustomerId: wallet.customerId,
@@ -71,6 +77,7 @@ export class CeloAdapter implements IChainAdapter {
       toAddress: params.toAddress,
       idempotencyKey: params.idempotencyKey,
       reference: params.idempotencyKey,
+      feeCurrency: feeCurrencyAddress,
     });
 
     return {
