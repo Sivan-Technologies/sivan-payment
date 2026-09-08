@@ -975,13 +975,26 @@ export class PrivyWalletProvider implements WalletProvider {
     }
 
     const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+
+    /**
+     * CELO VS ALL OTHER EVM CHAINS.
+     *
+     * Celo supports native fee abstraction: the `feeCurrency` field in the
+     * transaction tells the node which ERC-20 adapter to deduct gas from.
+     * No CELO balance required. No Privy gas sponsorship required.
+     *
+     * Every other EVM chain (Base, BSC) uses Privy gas sponsorship via
+     * `sponsor: true`. That path is unchanged — this condition is the only
+     * thing that separates them.
+     */
+    const isCelo = input.chain === 'celo';
+
     const body = {
       method: 'eth_sendTransaction',
       caip2,
-      // Gas sponsorship. On EVM Privy can also charge gas to the wallet's own
-      // USDC, but that is a dashboard setting rather than a request flag, so
-      // this asks for sponsorship and reports clearly when it is switched off.
-      sponsor: true,
+      // Base and BSC: keep Privy gas sponsorship. Celo: drop it entirely —
+      // the node handles gas through feeCurrency in the transaction params.
+      ...(isCelo ? {} : { sponsor: true }),
       params: {
         transaction: {
           to: token,
@@ -989,6 +1002,10 @@ export class PrivyWalletProvider implements WalletProvider {
           // in a web3 library for one 68-byte call.
           data: encodeErc20Transfer(input.toAddress, input.amount, decimalsFor(input.asset)),
           value: '0x0',
+          // Celo fee abstraction: which stablecoin adapter pays gas.
+          // Resolved upstream by resolveCeloFeeCurrency() in CeloAdapter.ts.
+          // Omitted for Base and BSC — they never use this field.
+          ...(isCelo && input.feeCurrency ? { feeCurrency: input.feeCurrency } : {}),
         },
       },
     };
