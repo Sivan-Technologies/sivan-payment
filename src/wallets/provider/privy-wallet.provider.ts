@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
-import { forbidden, serviceUnavailable, type AppError } from '../../shared/errors.js';
+import { forbidden, serviceUnavailable, badRequest, type AppError } from '../../shared/errors.js';
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import { solanaRpc } from '../solana/solana-rpc.js';
@@ -9,6 +9,19 @@ import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
 import type { WalletProvider } from './wallet-provider.js';
+import {
+  Keypair as StellarKeypairSdk,
+  Asset as StellarAssetSdk,
+  Networks as StellarNetworks,
+  TransactionBuilder as StellarTxBuilder,
+  Operation as StellarOperation,
+  Account as StellarAccountSdk,
+  StrKey as StellarStrKey,
+  Memo as StellarMemo,
+} from '@stellar/stellar-sdk';
+import { generateStellarKeypair } from '../stellar/stellar-keypair.js';
+import { fetchStellarAccount, horizonEndpoints } from '../stellar/stellar-rpc.js';
+import { getStellarUsdcIssuer, getStellarUsdtIssuer, ensureStellarAccountAndTrustline } from '../stellar/trustline.js';
 
 import type {
   CreateWalletInput,
@@ -869,6 +882,10 @@ export class PrivyWalletProvider implements WalletProvider {
    * Sivan the owner.
    */
   async createTransfer(input: WalletTransferInput): Promise<WalletTransfer> {
+    if (input.chain === 'stellar') {
+      return this.sendStellarTransfer(input);
+    }
+
     const caip = CAIP2[input.chain];
     if (!caip) throw forbidden(`No CAIP-2 chain id for ${input.chain}.`);
 
@@ -1232,6 +1249,155 @@ export class PrivyWalletProvider implements WalletProvider {
     };
   }
 
+  /**
+   * Execute an on-chain transfer on Stellar Horizon using non-custodial Ed25519 keys.
+   */
+  private async sendStellarTransfer(input: WalletTransferInput): Promise<WalletTransfer> {
+    const production = isProduction(input.networkMode);
+    const networkPassphrase = production ? StellarNetworks.PUBLIC : StellarNetworks.TESTNET;
+
+    let userId = input.userId;
+    if (!userId && input.providerWalletId) {
+      const w = await db.findWalletByProviderWalletId(input.providerWalletId).catch(() => undefined);
+      if (w?.userId) userId = w.userId;
+      if (!userId && input.providerWalletId.startsWith('stellar_')) {
+        const addr = input.providerWalletId.replace(/^stellar_/, '');
+        const wByAddr = await db.findWalletByAddress(addr).catch(() => undefined);
+        if (wByAddr?.userId) userId = wByAddr.userId;
+      }
+    }
+
+    if (!userId) {
+      throw badRequest('Could not resolve user identity for this Stellar transfer.');
+    }
+
+    if (!StellarStrKey.isValidEd25519PublicKey(input.toAddress)) {
+      throw badRequest(`Invalid Stellar destination address: ${input.toAddress}`);
+    }
+
+    const kp = generateStellarKeypair(`sivan_stellar_${userId}`);
+    const senderKeypair = StellarKeypairSdk.fromSecret(kp.secretKey);
+    const senderAddress = senderKeypair.publicKey();
+
+    let senderAccountResp = await fetchStellarAccount(senderAddress, { production });
+    if (!senderAccountResp && !production) {
+      try {
+        await fetch(`https://friendbot.stellar.org/?addr=${senderAddress}`);
+        await new Promise((r) => setTimeout(r, 2000));
+        senderAccountResp = await fetchStellarAccount(senderAddress, { production });
+      } catch {}
+    }
+
+    if (!senderAccountResp) {
+      throw forbidden(`Sending Stellar wallet (${senderAddress}) is not activated on the network.`);
+    }
+
+    // Auto-setup destination if it is an internal Sivan user
+    const destWallet = await db.findWalletByAddress(input.toAddress).catch(() => undefined);
+    if (destWallet?.userId) {
+      await ensureStellarAccountAndTrustline(`sivan_stellar_${destWallet.userId}`, input.toAddress, { production }).catch(() => null);
+    } else if (!production) {
+      const destAccount = await fetchStellarAccount(input.toAddress, { production });
+      if (!destAccount) {
+        try {
+          await fetch(`https://friendbot.stellar.org/?addr=${input.toAddress}`);
+          await new Promise((r) => setTimeout(r, 1500));
+        } catch {}
+      }
+    }
+
+    const senderAccount = new StellarAccountSdk(senderAddress, senderAccountResp.sequence);
+    const builder = new StellarTxBuilder(senderAccount, {
+      fee: '200',
+      networkPassphrase,
+    });
+
+    const normalizedAsset = String(input.asset || 'usdc').toLowerCase();
+    let stellarAsset: StellarAssetSdk;
+    if (normalizedAsset === 'xlm' || normalizedAsset === 'native') {
+      stellarAsset = StellarAssetSdk.native();
+    } else if (normalizedAsset === 'usdt') {
+      stellarAsset = new StellarAssetSdk('USDT', getStellarUsdtIssuer({ production }));
+    } else {
+      stellarAsset = new StellarAssetSdk('USDC', getStellarUsdcIssuer({ production }));
+    }
+
+    builder.addOperation(
+      StellarOperation.payment({
+        destination: input.toAddress,
+        asset: stellarAsset,
+        amount: String(input.amount),
+      })
+    );
+
+    const feeWallet = env.SIVAN_FEE_WALLET_STELLAR?.trim() || process.env.SIVAN_FEE_WALLET_STELLAR?.trim();
+    if (feeWallet && Number(input.feeAmount ?? 0) > 0 && StellarStrKey.isValidEd25519PublicKey(feeWallet)) {
+      builder.addOperation(
+        StellarOperation.payment({
+          destination: feeWallet,
+          asset: stellarAsset,
+          amount: String(input.feeAmount),
+        })
+      );
+    }
+
+    if (input.reference) {
+      builder.addMemo(StellarMemo.text(String(input.reference).slice(0, 28)));
+    }
+
+    const tx = builder.setTimeout(60).build();
+    tx.sign(senderKeypair);
+    const txXdr = tx.toXDR();
+
+    const endpoints = horizonEndpoints({ production });
+    let txHash: string | undefined;
+    let submitError: string | undefined;
+
+    for (const base of endpoints) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const formData = new URLSearchParams();
+        formData.append('tx', txXdr);
+
+        const res = await fetch(`${base}/transactions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData.toString(),
+          signal: controller.signal,
+        });
+
+        const data: any = await res.json().catch(() => ({}));
+        if (res.ok && (data?.hash || data?.successful)) {
+          txHash = data.hash || data.id;
+          break;
+        } else {
+          const detail = data?.extras?.result_codes
+            ? JSON.stringify(data.extras.result_codes)
+            : data?.detail || data?.title || `HTTP ${res.status}`;
+          submitError = detail;
+        }
+      } catch (err: any) {
+        submitError = err?.message || String(err);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!txHash) {
+      throw new Error(`Stellar Horizon transaction broadcast failed: ${submitError || 'Unknown error'}`);
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId: txHash,
+      txHash,
+      status: 'submitted',
+      sponsored: true,
+      rawProviderPayload: { txHash, network: production ? 'public' : 'testnet' },
+    };
+  }
+
   async getTransfer(providerTransferId: string): Promise<WalletTransfer> {
     // Nothing was submitted server-side, so there is nothing to poll. Saying so
     // beats inventing a status the caller might act on.
@@ -1241,6 +1407,27 @@ export class PrivyWalletProvider implements WalletProvider {
         providerTransferId,
         status: 'pending_user_signature',
       };
+    }
+
+    if (/^[0-9a-fA-F]{64}$/.test(providerTransferId)) {
+      const endpoints = horizonEndpoints();
+      for (const base of endpoints) {
+        try {
+          const res = await fetch(`${base}/transactions/${providerTransferId}`);
+          if (res.ok) {
+            const data: any = await res.json().catch(() => null);
+            if (data && typeof data.successful === 'boolean') {
+              return {
+                provider: this.name,
+                providerTransferId,
+                status: data.successful ? 'confirmed' : 'failed',
+                txHash: providerTransferId,
+                rawProviderPayload: data,
+              };
+            }
+          }
+        } catch {}
+      }
     }
 
     const raw = await privyRequest<any>(`/transactions/${encodeURIComponent(providerTransferId)}`)

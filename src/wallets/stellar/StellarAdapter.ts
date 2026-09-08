@@ -59,6 +59,7 @@ export class StellarAdapter implements IChainAdapter {
     if (!wallet) throw new Error(`Could not resolve Stellar wallet for user: ${params.fromUserId}`);
 
     const transfer = await provider.createTransfer({
+      userId: params.fromUserId,
       providerWalletId: wallet.providerWalletId,
       providerCustomerId: wallet.customerId,
       chain: 'stellar',

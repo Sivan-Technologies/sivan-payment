@@ -89,7 +89,7 @@ export const balanceTransferControlsSchema = z.object({
 
 export const createBalanceTransferSchema = z.object({
   asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum']),
+  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron']),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
@@ -962,6 +962,7 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
    */
   const provider = getWalletProvider(wallet.provider ?? (await resolveActiveWalletProvider()));
   const result = await provider.createTransfer({
+    userId,
     providerWalletId: wallet.providerWalletId,
     providerCustomerId: wallet.customerId,
     asset: transfer.asset as any,

@@ -116,6 +116,7 @@ export interface CreateWalletInput {
  * auto-converts to the user's verified bank account.
  */
 export interface WalletTransferInput {
+  userId?: string;
   providerWalletId: string;
   providerCustomerId?: string;
   asset: WalletAsset;
