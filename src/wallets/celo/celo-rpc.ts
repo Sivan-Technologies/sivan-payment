@@ -42,7 +42,7 @@ export async function celoRpc<T = unknown>(method: string, params: unknown[], op
   for (const endpoint of endpoints) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), 3500);
 
       let res: Response;
       try {

@@ -251,6 +251,27 @@ export async function confirmBalanceTransfers(): Promise<ConfirmationOutcome> {
     }
 
     /**
+     * CELO: the transaction hash is verified directly against Celo RPC.
+     */
+    if (transfer.network === 'celo') {
+      const hash = transfer.txHash || transfer.providerTransferId;
+      if (hash && hash.startsWith('0x') && hash.length === 66) {
+        try {
+          const { celoRpc } = await import('../wallets/celo/celo-rpc.js');
+          const receipt: any = await celoRpc('eth_getTransactionReceipt', [hash], { production });
+          if (receipt) {
+            if (receipt.status === '0x1') verdict = 'confirmed';
+            else if (receipt.status === '0x0') verdict = 'failed';
+            evidence = `celo:${hash}`;
+            if (!transfer.txHash) transfer.txHash = hash;
+          }
+        } catch {
+          // RPC unreachable
+        }
+      }
+    }
+
+    /**
      * Otherwise ask the provider. An EVM sponsored transfer has only a
      * user-operation hash until a bundler includes it, and Privy is the one
      * that can map that back to a transaction.

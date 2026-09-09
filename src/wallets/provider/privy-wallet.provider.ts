@@ -1301,19 +1301,15 @@ export class PrivyWalletProvider implements WalletProvider {
     const rpcOpts = { production };
 
     // -------------------------------------------------------------------
-    // Step 1a: resolve the transfer calldata (recipient + optional fee sweep)
+    // Step 1a: resolve the transfer calldata
+    // EOA transfers directly invoke USDC.transfer(recipient, amount).
+    // Multicall3 cannot be used for EOA transfers because Multicall3.aggregate3
+    // executes as msg.sender == Multicall3, which holds zero tokens and reverts.
     // -------------------------------------------------------------------
-    const feeWallet =
-      env.SIVAN_CELO_FEE_WALLET?.trim() ||
-      env.SIVAN_FEE_WALLET_CELO?.trim() ||
-      process.env.SIVAN_CELO_FEE_WALLET?.trim();
-
     const payload = buildCeloTransferPayload({
       tokenAddress: token,
       recipientAddress: input.toAddress,
       amount: input.amount,
-      feeAmount: input.feeAmount,
-      feeWallet: feeWallet || undefined,
       decimals: decimalsFor(input.asset),
     });
 
