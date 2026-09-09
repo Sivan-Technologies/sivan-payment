@@ -110,7 +110,7 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   },
   celo: {
     mainnet: 'eip155:42220',
-    testnet: 'eip155:44787',
+    testnet: 'eip155:11142220',
   },
   bsc: {
     mainnet: 'eip155:56',
