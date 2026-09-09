@@ -105,6 +105,7 @@ export interface TransferFeeConfig {
   newRecipientUsd: number;
 }
 
+
 export interface TransferFeeQuote {
   /** What the user typed. */
   amount: string;
@@ -145,6 +146,50 @@ export const DEFAULT_TRANSFER_FEE: TransferFeeConfig = {
   maximumUsd: 1,
   newRecipientUsd: 0.3,
 };
+
+/**
+ * NETWORK-SPECIFIC FEE CURVE RESOLVER.
+ *
+ * Celo (CIP-64 fee abstraction) and Stellar (Soroban / Classic) have sub-cent
+ * native gas costs, so Sivan can afford a lower floor and cap than the
+ * standard EVM path without eroding margin.
+ *
+ * Standard EVM rail  (Base, BSC, Ethereum): floor $0.25, cap $1.00
+ * High-efficiency rail (Celo, Stellar):      floor $0.10, cap $0.75
+ *
+ * The new-recipient surcharge is also network-specific:
+ *   - Stellar:  $0.15 (trustline account reserve, real on-chain cost)
+ *   - Celo:     $0.00 (ERC-20 does not require account creation)
+ *   - Default:  $0.30 (Solana ATA rent sponsorship)
+ *
+ * Pure, stateless — no database, no clock, no environment — so every caller
+ * runs identical arithmetic and tests are deterministic.
+ */
+export function resolveNetworkFeeConfig(network?: string): TransferFeeConfig {
+  const n = (network ?? '').toLowerCase().trim();
+
+  if (n === 'celo') {
+    return {
+      percent: 0.5,
+      minimumUsd: 0.10,
+      maximumUsd: 0.75,
+      newRecipientUsd: 0.0,
+    };
+  }
+
+  if (n === 'stellar') {
+    return {
+      percent: 0.5,
+      minimumUsd: 0.10,
+      maximumUsd: 0.75,
+      newRecipientUsd: 0.15,
+    };
+  }
+
+  // Standard EVM fallback: Base, BSC, Solana, Ethereum, Polygon, Arbitrum, etc.
+  return { ...DEFAULT_TRANSFER_FEE };
+}
+
 
 /**
  * Price one transfer.

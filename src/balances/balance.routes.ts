@@ -311,7 +311,7 @@ export async function balanceRoutes(app: FastifyInstance) {
     };
     const parsed = Number(amount);
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      return { data: await quoteTransfer(0) };
+      return { data: await quoteTransfer(0, { network: String(network ?? '') }) };
     }
 
     /**
@@ -322,8 +322,15 @@ export async function balanceRoutes(app: FastifyInstance) {
      * the base fee and the UI says the surcharge "may apply"; with one it is
      * exact. The transfer path re-checks regardless, so a stale or absent
      * quote can never decide what is actually charged.
+     *
+     * Stellar trustlines are checked identically to Solana ATAs: if the
+     * recipient does not hold the asset's trustline, the surcharge applies.
+     * The check is skipped here (Stellar RPC round trip is deferred to the
+     * transfer path) and the UI shows "may apply" the same way it does for
+     * Solana when no destination address is supplied.
      */
-    const createsRecipientAccount = destinationAddress && String(network).toLowerCase() === 'solana'
+    const networkStr = String(network ?? '').toLowerCase();
+    const createsRecipientAccount = destinationAddress && networkStr === 'solana'
       ? await recipientNeedsTokenAccount({
           recipientAddress: String(destinationAddress),
           asset: String(asset ?? 'usdc'),
@@ -331,7 +338,7 @@ export async function balanceRoutes(app: FastifyInstance) {
         })
       : false;
 
-    return { data: await quoteTransfer(parsed, { createsRecipientAccount }) };
+    return { data: await quoteTransfer(parsed, { createsRecipientAccount, network: networkStr }) };
   });
 
   app.get('/api/users/:userId/balance/deposits', async (request) => {

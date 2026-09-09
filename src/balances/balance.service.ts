@@ -44,7 +44,7 @@ import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
-import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, type TransferFeeConfig } from './transfer-fee-policy.js';
+import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, resolveNetworkFeeConfig, type TransferFeeConfig } from './transfer-fee-policy.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
 import { evaluateGasLimits } from './gas-usage.service.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
@@ -330,6 +330,11 @@ export async function getBalanceTransferControls() {
  * Falls back to the defaults if the settings cannot be read, rather than
  * throwing or charging nothing: a fee tab that is briefly unavailable must not
  * silently make every transfer free.
+ *
+ * @deprecated Use quoteTransfer(amount, { network }) instead.
+ * This function returns the global admin config only and does not apply
+ * per-network tiered curves (Celo: $0.10/$0.75, Stellar: $0.10/$0.75).
+ * quoteTransfer() merges both sources correctly.
  */
 export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
   const fees = await getAdminFeeSettings().catch(() => undefined);
@@ -342,7 +347,16 @@ export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
 }
 
 /**
- * Price a transfer against the live admin configuration.
+ * Price a transfer against the live admin configuration, merged with the
+ * per-network tiered fee curve.
+ *
+ * The admin panel stores the GLOBAL overrides (percent, floor, cap). On Celo
+ * and Stellar, the network resolver supplies a LOWER base curve first, then
+ * any admin override is applied on top if it has been explicitly set.
+ * This means:
+ *   - Fresh deployment (no admin override): Celo/Stellar get $0.10/$0.75
+ *   - Admin lowers the global floor to $0.05: every network inherits $0.05
+ *   - Admin does not touch the fee tab: networks keep their own curve
  *
  * `createsRecipientAccount` is supplied by the caller because determining it
  * needs an RPC round trip to check whether the recipient already holds the
@@ -350,8 +364,36 @@ export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
  * quotes the base fee and the UI shows the surcharge as conditional; the
  * transfer path resolves it for real before charging.
  */
-export async function quoteTransfer(amount: number, options: { createsRecipientAccount?: boolean } = {}) {
-  return quoteTransferFee(amount, await getTransferFeeConfig(), options);
+export async function quoteTransfer(
+  amount: number,
+  options: { createsRecipientAccount?: boolean; network?: string } = {}
+) {
+  const { network, ...feeOptions } = options;
+
+  // Start with the per-network base curve (Celo/Stellar = $0.10/$0.75,
+  // all others = $0.25/$1.00).
+  const networkBase = resolveNetworkFeeConfig(network);
+
+  // Fetch any admin overrides. Falls back gracefully if the settings store
+  // is momentarily unavailable, rather than making every transfer free.
+  const adminFees = await getAdminFeeSettings().catch(() => undefined);
+
+  const n = (network || '').toLowerCase().trim();
+  const isMicroRail = n === 'celo' || n === 'stellar';
+
+  // Merge: admin overrides replace network defaults dynamically.
+  const config: TransferFeeConfig = {
+    percent:        adminFees?.transferFeePercent        ?? networkBase.percent,
+    minimumUsd:     isMicroRail
+      ? (adminFees?.microRailFeeMinimumUsd ?? networkBase.minimumUsd)
+      : (adminFees?.transferFeeMinimumUsd  ?? networkBase.minimumUsd),
+    maximumUsd:     isMicroRail
+      ? (adminFees?.microRailFeeMaximumUsd ?? networkBase.maximumUsd)
+      : (adminFees?.transferFeeMaximumUsd  ?? networkBase.maximumUsd),
+    newRecipientUsd: adminFees?.transferFeeNewRecipientUsd ?? networkBase.newRecipientUsd,
+  };
+
+  return quoteTransferFee(amount, config, feeOptions);
 }
 
 export async function updateBalanceTransferControls(input: z.infer<typeof balanceTransferControlsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
@@ -708,7 +750,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     throw badRequest(gasDecision.reason ?? 'This transfer exceeds your current daily limit.');
   }
 
-  const quote = await quoteTransfer(input.amount, { createsRecipientAccount });
+  const quote = await quoteTransfer(input.amount, { createsRecipientAccount, network: input.network });
 
   const transfer: TransferMetadata = {
     transferId: id('btx'),

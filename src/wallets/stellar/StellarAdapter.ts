@@ -68,12 +68,12 @@ export class StellarAdapter implements IChainAdapter {
       toAddress: params.toAddress,
       idempotencyKey: params.idempotencyKey,
       reference: params.idempotencyKey,
+      feeAmount: params.feeAmount,
     });
 
     return {
       txHash: transfer.txHash || transfer.providerTransferId,
       network: 'stellar',
-      feePaid: '0.00000 XLM (Sponsored by Sivan)',
       timestamp: new Date().toISOString(),
     };
   }

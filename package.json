@@ -177,6 +177,8 @@
     "test:ci-coverage": "tsx scripts/test-ci-coverage.ts",
     "test:lint-hooks": "tsx scripts/test-lint-hooks.ts",
     "test:transfer-fee-policy": "tsx scripts/test-transfer-fee-policy.ts",
+    "test:tiered-fee": "tsx scripts/test-tiered-fee-celo-stellar.ts",
+    "test:e2e-celo-stellar": "tsx scripts/test-e2e-celo-and-stellar-transfers.ts",
     "test:transfer-fee-ledger": "DATABASE_PROVIDER=json BRIDGE_MOCK_MODE=true EMAIL_PROVIDER=console DATABASE_FILE=.data/test-transfer-fee-ledger.json tsx scripts/test-transfer-fee-ledger.ts",
     "test:transfer-fee-e2e": "tsx scripts/test-transfer-fee-e2e.ts",
     "test:wallet-error-honesty": "PRIVY_APP_ID= PRIVY_APP_SECRET= tsx scripts/test-wallet-error-honesty.ts",

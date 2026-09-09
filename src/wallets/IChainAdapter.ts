@@ -15,6 +15,12 @@ export interface ChainTransferParams {
   idempotencyKey: string;
   asset?: 'usdc' | 'usdt' | 'cusd';
   memo?: string;
+  /**
+   * Sivan protocol fee to collect atomically alongside the recipient payment.
+   * Passed as a string (e.g. "0.10") matching the quote from quoteTransfer().
+   * If omitted or zero, only the recipient transfer is executed.
+   */
+  feeAmount?: string;
 }
 
 export interface ChainTransferResult {

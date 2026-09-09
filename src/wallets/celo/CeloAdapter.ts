@@ -79,6 +79,9 @@ export class CeloAdapter implements IChainAdapter {
       idempotencyKey: params.idempotencyKey,
       reference: params.idempotencyKey,
       feeCurrency: feeCurrencyAddress,
+      // Forward the Sivan protocol fee so sendCeloTransfer can build the
+      // Multicall3 atomic bundle (recipient + fee wallet in one CIP-64 tx).
+      feeAmount: params.feeAmount,
     });
 
     return {

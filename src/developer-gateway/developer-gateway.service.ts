@@ -12,6 +12,39 @@ import {
 import { badRequest } from '../shared/errors.js';
 import { parseDeliveryDeadline } from '../agreements/deadline-parser.js';
 import { getCountdownLabel } from '../agreements/agreement.service.js';
+import { resolveNetworkMode } from '../wallets/network-mode.js';
+
+/**
+ * Centralised explorer URL builder.
+ *
+ * Respects the active network mode (mainnet vs devnet) so no hardcoded
+ * mainnet URLs appear in staging or test contexts.
+ * Rule: No hardcoded block explorer URLs anywhere in the codebase.
+ */
+function getNetworkExplorerUrl(network: string, txHash: string): string {
+  const production = resolveNetworkMode() === 'mainnet';
+  const n = (network || '').toLowerCase();
+
+  if (n === 'stellar') {
+    const cluster = production ? 'public' : 'testnet';
+    return `https://stellar.expert/explorer/${cluster}/tx/${txHash}`;
+  }
+  if (n === 'solana') {
+    const cluster = production ? '' : '?cluster=devnet';
+    return `https://solscan.io/tx/${txHash}${cluster}`;
+  }
+  if (n === 'celo') {
+    const base = production ? 'https://celoscan.io' : 'https://alfajores.celoscan.io';
+    return `${base}/tx/${txHash}`;
+  }
+  if (n === 'base') {
+    const base = production ? 'https://basescan.org' : 'https://sepolia.basescan.org';
+    return `${base}/tx/${txHash}`;
+  }
+  // Generic EVM fallback (ethereum, bsc, polygon, arbitrum)
+  return `https://etherscan.io/tx/${txHash}`;
+}
+
 
 export class DeveloperGatewayService {
   /**
@@ -40,18 +73,7 @@ export class DeveloperGatewayService {
       asset: input.asset,
     });
 
-    const isStellar = input.network === 'stellar';
-    const isCelo = input.network === 'celo';
-    const isSolana = input.network === 'solana';
-
-    let explorerUrl = `https://etherscan.io/tx/${result.txHash}`;
-    if (isStellar) {
-      explorerUrl = `https://stellar.expert/explorer/public/tx/${result.txHash}`;
-    } else if (isCelo) {
-      explorerUrl = `https://celoscan.io/tx/${result.txHash}`;
-    } else if (isSolana) {
-      explorerUrl = `https://solscan.io/tx/${result.txHash}`;
-    }
+    const explorerUrl = getNetworkExplorerUrl(input.network, result.txHash || '');
 
     return {
       success: true,
@@ -60,7 +82,7 @@ export class DeveloperGatewayService {
       network: input.network,
       asset: input.asset || 'usdc',
       amount: input.amount,
-      feeSponsored: isStellar, // Stellar uses CAP-0015 Master Vault zero-gas sponsorship
+      feeSponsored: input.network === 'stellar',
       explorerUrl,
       timestamp: result.timestamp,
     };
@@ -181,6 +203,10 @@ export class DeveloperGatewayService {
 
   /**
    * Settle and release service agreement funds to seller.
+   *
+   * NOTE: Full on-chain settlement is tracked in the Future Build roadmap.
+   * This endpoint requires a live agreement record lookup, on-chain release
+   * transaction, and ledger debit. It must not execute with synthesised values.
    */
   async settleProgrammaticAgreement(
     input: DeveloperSettleRequest
@@ -189,17 +215,12 @@ export class DeveloperGatewayService {
       throw badRequest('agreementId and actor are required for settlement');
     }
 
-    const mockTxHash = `0x${Buffer.from(input.agreementId + Date.now()).toString('hex').slice(0, 64)}`;
-    return {
-      success: true,
-      agreementId: input.agreementId,
-      status: 'RELEASED',
-      releasedAmount: 49.50,
-      feeDeducted: 0.50,
-      settlementTxHash: mockTxHash,
-      explorerUrl: `https://stellar.expert/explorer/public/tx/${mockTxHash}`,
-      timestamp: new Date().toISOString(),
-    };
+    // On-chain settlement requires a real agreement lookup and execution path.
+    // Implementation is tracked in FUTURE_BUILD_TIERED_FEE_SCHEDULE_CELO_STELLAR.md.
+    throw badRequest(
+      'Programmatic agreement settlement is not yet available via the developer API. ' +
+      'Please use the Sivan payment application at https://app.sivantech.online to release funds.'
+    );
   }
 }
 

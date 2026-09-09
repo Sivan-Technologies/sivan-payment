@@ -17,7 +17,7 @@ export interface FeeSponsorshipConfig {
 
 export function getFeeSponsorshipConfig(): FeeSponsorshipConfig {
   return {
-    sponsorAccountId: (process.env.STELLAR_SPONSOR_ACCOUNT_ID || process.env.STELLAR_MASTER_VAULT_ACCOUNT_ID || 'GBHXINKN3FWPV4XLJ532R44GBOF5LE6QXIY7BYS3OF4PSOEWPTMJMB64').trim(),
+    sponsorAccountId: (process.env.STELLAR_SPONSOR_ACCOUNT_ID || process.env.STELLAR_MASTER_VAULT_ACCOUNT_ID || '').trim(),
     sponsorSecretKey: (process.env.STELLAR_SPONSOR_SECRET_KEY || process.env.STELLAR_MASTER_VAULT_SECRET_KEY || '').trim() || undefined,
     maxBaseFeeStroops: parseInt(process.env.STELLAR_MAX_FEE_STROOPS || '1000', 10),
     sponsoredReservesEnabled: process.env.STELLAR_SPONSORED_RESERVES === 'true' || true,
