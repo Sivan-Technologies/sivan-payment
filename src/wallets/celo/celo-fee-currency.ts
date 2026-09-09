@@ -42,17 +42,17 @@ const CELO_USDT_FEE_ADAPTER_MAINNET = '0x0e2a3e05bc9a16f5292a6170456a710cb89c6f7
 const CELO_CUSD_MAINNET = '0x765DE816845861e75A25fCA122bb6898B8B1282a';
 
 // ---------------------------------------------------------------------------
-// Testnet adapter addresses (Celo Sepolia, chain ID 44787)
+// Testnet adapter addresses (Celo Sepolia, chain ID 11142220)
 // ---------------------------------------------------------------------------
 
 /** USDC fee-currency adapter — Celo Sepolia testnet */
-const CELO_USDC_FEE_ADAPTER_TESTNET = '0x4A6b0f90597e7429Ce8400fC0E2745Add343df8';
+const CELO_USDC_FEE_ADAPTER_TESTNET = '0xbf1441Ea57f43f35f713431001f35742c88071c7';
 
 /** USDT fee-currency adapter — Celo Sepolia testnet */
-const CELO_USDT_FEE_ADAPTER_TESTNET = '0x13dB491dE69Ba363687BCaF2B024f7D5781B680e';
+const CELO_USDT_FEE_ADAPTER_TESTNET = '0xe19447B12cb0d0220B2a501D8382be2f61CcF92a';
 
-/** cUSD (USDm) — Celo Sepolia testnet, no adapter needed */
-const CELO_CUSD_TESTNET = '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1';
+/** cUSD (USDm) — Celo Sepolia testnet */
+const CELO_CUSD_TESTNET = '0xEF4d55D6dE8e8d73232827Cd1e9b2F2dBb45bC80';
 
 // ---------------------------------------------------------------------------
 // ERC-20 token addresses used for balance checks (not fee currency)
@@ -68,7 +68,7 @@ const CELO_USDC_TOKEN_TESTNET = '0x01C5C0122039549AD1493B8220cABEdD739BC44E';
 const CELO_USDT_TOKEN_MAINNET = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e';
 
 /** Raw USDT token address on Celo Sepolia — for balance checking only */
-const CELO_USDT_TOKEN_TESTNET = '0x479F7A4E28C9e0b0d3E9e31AB7Bc4Fd958c7C9E';
+const CELO_USDT_TOKEN_TESTNET = '0xd077A400968890Eacc75cdc901F0356c943e4fDb';
 
 // ---------------------------------------------------------------------------
 // Public registry — all addresses resolved per environment
@@ -82,8 +82,11 @@ export interface CeloFeeCurrencyRegistry {
   usdtToken: string;
 }
 
-export function getCeloFeeCurrencyRegistry(): CeloFeeCurrencyRegistry {
-  const isMainnet = resolveNetworkMode() === 'mainnet';
+export function getCeloFeeCurrencyRegistry(options?: { production?: boolean }): CeloFeeCurrencyRegistry {
+  const isMainnet = typeof options?.production === 'boolean'
+    ? options.production
+    : resolveNetworkMode() === 'mainnet';
+
   return {
     usdcAdapter: isMainnet ? CELO_USDC_FEE_ADAPTER_MAINNET : CELO_USDC_FEE_ADAPTER_TESTNET,
     usdtAdapter: isMainnet ? CELO_USDT_FEE_ADAPTER_MAINNET : CELO_USDT_FEE_ADAPTER_TESTNET,
@@ -99,14 +102,18 @@ export function getCeloFeeCurrencyRegistry(): CeloFeeCurrencyRegistry {
 
 const ERC20_BALANCE_OF_SELECTOR = '0x70a08231'; // balanceOf(address)
 
-async function fetchErc20Balance(tokenAddress: string, walletAddress: string): Promise<bigint> {
+async function fetchErc20Balance(
+  tokenAddress: string,
+  walletAddress: string,
+  options?: { production?: boolean }
+): Promise<bigint> {
   try {
     const paddedAddress = walletAddress.slice(2).toLowerCase().padStart(64, '0');
     const data = ERC20_BALANCE_OF_SELECTOR + paddedAddress;
     const result = await celoRpc<string>('eth_call', [
       { to: tokenAddress, data },
       'latest',
-    ]);
+    ], options);
     return result && result !== '0x' ? BigInt(result) : 0n;
   } catch {
     return 0n;
@@ -130,25 +137,29 @@ export interface FeeCurrencyResolution {
  * (~0.0001 USDC equivalent) so the token choice is invisible to the user.
  *
  * @param walletAddress - The user's Celo wallet address (0x...)
+ * @param options - Network mode override (production / testnet)
  * @throws If the wallet holds no supported stablecoin at all
  */
-export async function resolveCeloFeeCurrency(walletAddress: string): Promise<FeeCurrencyResolution> {
-  const registry = getCeloFeeCurrencyRegistry();
+export async function resolveCeloFeeCurrency(
+  walletAddress: string,
+  options?: { production?: boolean }
+): Promise<FeeCurrencyResolution> {
+  const registry = getCeloFeeCurrencyRegistry(options);
 
   // Priority 1: USDC
-  const usdcBalance = await fetchErc20Balance(registry.usdcToken, walletAddress);
+  const usdcBalance = await fetchErc20Balance(registry.usdcToken, walletAddress, options);
   if (usdcBalance > 0n) {
     return { feeCurrencyAddress: registry.usdcAdapter, paidIn: 'usdc' };
   }
 
   // Priority 2: USDT
-  const usdtBalance = await fetchErc20Balance(registry.usdtToken, walletAddress);
+  const usdtBalance = await fetchErc20Balance(registry.usdtToken, walletAddress, options);
   if (usdtBalance > 0n) {
     return { feeCurrencyAddress: registry.usdtAdapter, paidIn: 'usdt' };
   }
 
   // Priority 3: cUSD fallback — nearly every Celo wallet carries some
-  const cusdBalance = await fetchErc20Balance(registry.cusd, walletAddress);
+  const cusdBalance = await fetchErc20Balance(registry.cusd, walletAddress, options);
   if (cusdBalance > 0n) {
     return { feeCurrencyAddress: registry.cusd, paidIn: 'cusd' };
   }

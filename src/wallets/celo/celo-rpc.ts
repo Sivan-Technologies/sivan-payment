@@ -23,7 +23,6 @@ const PUBLIC_MAINNET_ENDPOINTS = [
 const PUBLIC_TESTNET_ENDPOINTS = [
   'https://forno.celo-sepolia.celo-testnet.org',
   'https://celo-sepolia.drpc.org',
-  'https://sepolia-rpc.celo.org',
 ];
 
 export function celoRpcEndpoints(options?: { production?: boolean }): string[] {

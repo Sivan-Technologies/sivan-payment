@@ -1341,11 +1341,11 @@ export class PrivyWalletProvider implements WalletProvider {
     if (!feeCurrency) {
       try {
         const { resolveCeloFeeCurrency } = await import('../celo/celo-fee-currency.js');
-        const resolved = await resolveCeloFeeCurrency(senderAddress);
+        const resolved = await resolveCeloFeeCurrency(senderAddress, rpcOpts);
         feeCurrency = resolved.feeCurrencyAddress;
       } catch {
         const { getCeloFeeCurrencyRegistry } = await import('../celo/celo-fee-currency.js');
-        feeCurrency = getCeloFeeCurrencyRegistry().usdcAdapter;
+        feeCurrency = getCeloFeeCurrencyRegistry(rpcOpts).usdcAdapter;
       }
     }
 
@@ -1355,18 +1355,18 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const [nonceHex, gasPriceHex] = await Promise.all([
       celoRpc<string>('eth_getTransactionCount', [senderAddress, 'pending'], rpcOpts),
-      celoRpc<string>('eth_gasPrice', [], rpcOpts),
+      celoRpc<string>('eth_gasPrice', [feeCurrency], rpcOpts).catch(() => celoRpc<string>('eth_gasPrice', [], rpcOpts)),
     ]);
 
     const nonce = BigInt(nonceHex);
-    // Use a 20% tip above the current gas price, capped for safety.
+    // Celo eth_gasPrice(feeCurrency) returns the base price in that fee token.
+    // Add a 30% buffer + priority tip to guarantee it exceeds any node base fee floor.
     const baseGasPrice  = BigInt(gasPriceHex);
-    const maxPriority   = 1_000_000_000n;                        // 1 Gwei tip
-    const maxFee        = baseGasPrice + maxPriority;            // base + tip
+    const maxPriority   = 2_000_000_000n;                        // 2 Gwei tip
+    const maxFee        = (baseGasPrice * 13n / 10n) + maxPriority;
 
-    // Safe gas limit for ERC-20 transfer with feeCurrency. estimateGas is
-    // skipped to avoid an extra RPC round-trip; 120k covers all known paths.
-    const gasLimit = 120_000n;
+    // Safe gas limit for ERC-20 transfer with feeCurrency adapter overhead (~50k extra)
+    const gasLimit = 250_000n;
 
     // -------------------------------------------------------------------
     // Step 1d: build the CIP-64 signing hash
@@ -1386,10 +1386,13 @@ export class PrivyWalletProvider implements WalletProvider {
     const signingHash = buildCip64SigningHash(cip64Params);
 
     // -------------------------------------------------------------------
-    // Step 2: Privy raw_sign — Privy signs the hash, keys never leave HSM
+    // Step 2: Privy secp256k1_sign — Privy signs the hash inside HSM
     // -------------------------------------------------------------------
-    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/raw_sign`;
-    const rawSignBody = { hash: signingHash };
+    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const rawSignBody = {
+      method: 'secp256k1_sign',
+      params: { hash: signingHash },
+    };
     const { appId } = credentials();
 
     const rawSignResponse = await fetch(rawSignUrl, {
@@ -1411,12 +1414,12 @@ export class PrivyWalletProvider implements WalletProvider {
     const rawSignResult: any = await rawSignResponse.json().catch(() => ({}));
     if (!rawSignResponse.ok) {
       const msg = String(rawSignResult?.error ?? rawSignResult?.message ?? `HTTP ${rawSignResponse.status}`);
-      throw new Error(`Privy Celo raw_sign: ${msg}`);
+      throw new Error(`Privy Celo secp256k1_sign: ${msg}`);
     }
 
     const privySignature: string = rawSignResult?.data?.signature ?? rawSignResult?.signature;
     if (!privySignature) {
-      throw new Error('Privy Celo raw_sign: response did not contain a signature field.');
+      throw new Error('Privy Celo secp256k1_sign: response did not contain a signature field.');
     }
 
     // -------------------------------------------------------------------
