@@ -9,6 +9,8 @@ import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
 import { buildCeloTransferPayload } from '../celo/celo-tx-builder.js';
+import { buildCip64SigningHash, buildCip64SignedRawTx, CELO_MAINNET_CHAIN_ID, CELO_SEPOLIA_CHAIN_ID } from '../celo/cip64-serializer.js';
+import { celoRpc } from '../celo/celo-rpc.js';
 import type { WalletProvider } from './wallet-provider.js';
 import {
   Keypair as StellarKeypairSdk,
@@ -1256,12 +1258,35 @@ export class PrivyWalletProvider implements WalletProvider {
   }
 
   /**
-   * Execute an on-chain transfer on Celo with native fee abstraction (CIP-64).
+   * Execute an on-chain Celo USDC/USDT/cUSD transfer using Celo native fee
+   * abstraction (CIP-64 / Type 0x7b transactions).
    *
-   * Sivan fee collection: if SIVAN_CELO_FEE_WALLET is configured and input.feeAmount > 0,
-   * recipient settlement and fee collection are bundled atomically via Multicall3.
+   * WHY THIS EXISTS — THE PRIVY SCHEMA PROBLEM
    *
-   * Gas is deducted from the user's stablecoin balance (USDC, USDT, or cUSD) via feeCurrency.
+   * Privy's high-level RPC endpoint (`eth_sendTransaction`) validates all
+   * transaction parameters against a strict EIP-1559 Zod schema. Celo's custom
+   * `feeCurrency` field is not in the EIP-1559 spec, so Privy rejects it:
+   *   "Unrecognized key(s) in object: 'feeCurrency'"
+   * Without feeCurrency the node requires native CELO for gas, which Sivan
+   * users do not hold.
+   *
+   * THE FIX — THREE STEPS, PRIVY STILL HOLDS THE KEYS
+   *
+   * 1. Build the CIP-64 transaction locally (Sivan's server). Compute the
+   *    keccak256 hash of the 0x7b-prefixed RLP envelope.
+   *
+   * 2. Call Privy's low-level `raw_sign` endpoint with that hash. Privy signs
+   *    it with the wallet's secp256k1 key inside its HSM and returns r, s, v.
+   *    No schema validation happens — Privy only sees a 32-byte hash.
+   *
+   * 3. Attach the signature to the CIP-64 envelope and broadcast the raw
+   *    transaction directly to the Celo node via eth_sendRawTransaction.
+   *    The node honours `feeCurrency` and deducts gas from USDC/USDT/cUSD.
+   *    Zero native CELO required in the user's wallet.
+   *
+   * Sivan fee collection: if SIVAN_CELO_FEE_WALLET is set and feeAmount > 0,
+   * buildCeloTransferPayload bundles the recipient transfer and the fee sweep
+   * atomically via Multicall3 in the same transaction.
    */
   private async sendCeloTransfer(
     input: WalletTransferInput,
@@ -1270,11 +1295,14 @@ export class PrivyWalletProvider implements WalletProvider {
   ): Promise<WalletTransfer> {
     const production = isProduction(input.networkMode);
     const token = erc20TokenAddress('celo', input.asset, production);
+    if (!token) throw forbidden(`No ${input.asset.toUpperCase()} contract known for Celo.`);
 
-    if (!token) {
-      throw forbidden(`No ${input.asset.toUpperCase()} contract known for Celo.`);
-    }
+    const chainId = production ? CELO_MAINNET_CHAIN_ID : CELO_SEPOLIA_CHAIN_ID;
+    const rpcOpts = { production };
 
+    // -------------------------------------------------------------------
+    // Step 1a: resolve the transfer calldata (recipient + optional fee sweep)
+    // -------------------------------------------------------------------
     const feeWallet =
       env.SIVAN_CELO_FEE_WALLET?.trim() ||
       env.SIVAN_FEE_WALLET_CELO?.trim() ||
@@ -1289,63 +1317,123 @@ export class PrivyWalletProvider implements WalletProvider {
       decimals: decimalsFor(input.asset),
     });
 
-    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    // -------------------------------------------------------------------
+    // Step 1b: resolve the SENDER address (needed for nonce and fee checks)
+    // -------------------------------------------------------------------
+    const walletRow = await db.findWalletByProviderWalletId(input.providerWalletId).catch(() => undefined);
+    let senderAddress = walletRow?.address;
+    if (!senderAddress) {
+      const pWallet = await this.getWallet(input.providerWalletId).catch(() => undefined);
+      senderAddress = pWallet?.address;
+    }
 
-    const body = {
-      method: 'eth_sendTransaction',
-      caip2,
-      params: {
-        transaction: {
-          to: payload.to,
-          data: payload.data,
-          value: payload.value,
-          ...(input.feeCurrency ? { feeCurrency: input.feeCurrency } : {}),
-        },
-      },
+    if (!senderAddress) {
+      throw forbidden(
+        `Celo CIP-64: could not resolve sender address for wallet ${input.providerWalletId}. ` +
+        'The wallet must exist in the database or Privy before a transfer can be signed.'
+      );
+    }
+
+    // -------------------------------------------------------------------
+    // Step 1c: resolve feeCurrency adapter (USDC > USDT > cUSD priority)
+    // -------------------------------------------------------------------
+    let feeCurrency = input.feeCurrency?.trim();
+    if (!feeCurrency) {
+      try {
+        const { resolveCeloFeeCurrency } = await import('../celo/celo-fee-currency.js');
+        const resolved = await resolveCeloFeeCurrency(senderAddress);
+        feeCurrency = resolved.feeCurrencyAddress;
+      } catch {
+        const { getCeloFeeCurrencyRegistry } = await import('../celo/celo-fee-currency.js');
+        feeCurrency = getCeloFeeCurrencyRegistry().usdcAdapter;
+      }
+    }
+
+    // -------------------------------------------------------------------
+    // Step 1d: fetch nonce and gas parameters from Celo RPC
+    // -------------------------------------------------------------------
+
+    const [nonceHex, gasPriceHex] = await Promise.all([
+      celoRpc<string>('eth_getTransactionCount', [senderAddress, 'pending'], rpcOpts),
+      celoRpc<string>('eth_gasPrice', [], rpcOpts),
+    ]);
+
+    const nonce = BigInt(nonceHex);
+    // Use a 20% tip above the current gas price, capped for safety.
+    const baseGasPrice  = BigInt(gasPriceHex);
+    const maxPriority   = 1_000_000_000n;                        // 1 Gwei tip
+    const maxFee        = baseGasPrice + maxPriority;            // base + tip
+
+    // Safe gas limit for ERC-20 transfer with feeCurrency. estimateGas is
+    // skipped to avoid an extra RPC round-trip; 120k covers all known paths.
+    const gasLimit = 120_000n;
+
+    // -------------------------------------------------------------------
+    // Step 1d: build the CIP-64 signing hash
+    // -------------------------------------------------------------------
+    const cip64Params = {
+      chainId,
+      nonce,
+      maxPriorityFeePerGas: maxPriority,
+      maxFeePerGas: maxFee,
+      gasLimit,
+      to: payload.to,
+      value: 0n,
+      data: payload.data,
+      feeCurrency,
     };
 
+    const signingHash = buildCip64SigningHash(cip64Params);
+
+    // -------------------------------------------------------------------
+    // Step 2: Privy raw_sign — Privy signs the hash, keys never leave HSM
+    // -------------------------------------------------------------------
+    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/raw_sign`;
+    const rawSignBody = { hash: signingHash };
     const { appId } = credentials();
-    const response = await fetch(url, {
+
+    const rawSignResponse = await fetch(rawSignUrl, {
       method: 'POST',
       headers: {
         ...headers(input.idempotencyKey),
         'privy-authorization-signature': authorizationSignature({
           method: 'POST',
-          url,
-          body,
+          url: rawSignUrl,
+          body: rawSignBody,
           appId,
           privateKeyPem: signingKey,
           idempotencyKey: input.idempotencyKey,
         }),
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(rawSignBody),
     });
 
-    const result: any = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
-      if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
-        throw forbidden(
-          `Gas sponsorship is not available for ${caip2}. Celo uses native fee abstraction (feeCurrency) to deduct gas from stablecoins.`
-        );
-      }
-      throw new Error(`Privy Celo: ${message}`);
+    const rawSignResult: any = await rawSignResponse.json().catch(() => ({}));
+    if (!rawSignResponse.ok) {
+      const msg = String(rawSignResult?.error ?? rawSignResult?.message ?? `HTTP ${rawSignResponse.status}`);
+      throw new Error(`Privy Celo raw_sign: ${msg}`);
     }
+
+    const privySignature: string = rawSignResult?.data?.signature ?? rawSignResult?.signature;
+    if (!privySignature) {
+      throw new Error('Privy Celo raw_sign: response did not contain a signature field.');
+    }
+
+    // -------------------------------------------------------------------
+    // Step 3: assemble signed CIP-64 raw tx and broadcast to Celo RPC
+    // -------------------------------------------------------------------
+    const rawTx = buildCip64SignedRawTx(cip64Params, privySignature);
+
+    const txHash = await celoRpc<string>('eth_sendRawTransaction', [rawTx], rpcOpts);
 
     return {
       provider: this.name,
-      providerTransferId:
-        result?.data?.transaction_id ||
-        result?.transaction_id ||
-        result?.data?.user_operation_hash ||
-        result?.data?.hash ||
-        `privy_celo_${crypto.randomUUID()}`,
+      providerTransferId: txHash ?? `privy_celo_cip64_${crypto.randomUUID()}`,
       status: 'submitted',
-      txHash: result?.data?.hash || result?.hash || undefined,
-      userOperationHash: result?.data?.user_operation_hash || undefined,
+      txHash: txHash || undefined,
+      userOperationHash: undefined,
       sponsored: false,
-      rawProviderPayload: result,
+      rawProviderPayload: { chainId: chainId.toString(), txHash, feeCurrency, senderAddress },
     };
   }
 
