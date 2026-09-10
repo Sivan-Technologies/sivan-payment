@@ -13,7 +13,7 @@ export interface ChainTransferParams {
   toAddress: string;
   amountUsdc: number;
   idempotencyKey: string;
-  asset?: 'usdc' | 'usdt' | 'cusd';
+  asset?: 'usdc' | 'usdt' | 'cusd' | 'cngn';
   memo?: string;
   /**
    * Sivan protocol fee to collect atomically alongside the recipient payment.

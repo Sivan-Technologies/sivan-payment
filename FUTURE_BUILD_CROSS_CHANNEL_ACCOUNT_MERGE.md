@@ -4,6 +4,7 @@
 This specification defines the automated architecture for merging split identities, multi-chain non-custodial wallets, and universal KYC verification when a user creates an account on Telegram or WhatsApp first, and later creates an account on the Web Dashboard using different credentials (or vice versa).
 
 Document Version: 1.2.0
+Status: ⏳ QUEUED FOR POST-LAUNCH PHASE 2 (Cross-Channel Identity Merge)
 Author: Samson Micheal, Founder & CEO (Abuja, Nigeria)
 Platform: Sivan Ai / Sivan Payment Ai
 

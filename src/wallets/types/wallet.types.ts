@@ -30,7 +30,7 @@ export type WalletProviderName = 'mock' | 'bridge' | 'privy';
  */
 export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb';
 
-export type WalletAsset = 'usdc' | 'usdt' | 'xlm' | 'cusd' | 'celo';
+export type WalletAsset = 'usdc' | 'usdt' | 'xlm' | 'cusd' | 'celo' | 'cngn';
 
 export type WalletStatus =
   | 'provisioning'

@@ -1,4 +1,22 @@
 import { encodeErc20Transfer } from '../provider/privy-wallet.provider.js';
+import { toDataSuffix, fromDataSuffix } from '@celo/attribution-tags';
+export { toDataSuffix, fromDataSuffix };
+
+/**
+ * Official Sivan AI Hackathon Attribution Tag on Celo Mainnet.
+ * Cryptographically derived from Sivan-Technologies/Sivan and registered
+ * with Celo Builders for the Agents at Work Hackathon.
+ */
+export const SIVAN_CELO_ATTRIBUTION_TAG = 'celo_bafcc2e56bd7';
+
+/**
+ * Appends the ERC-8021 attribution suffix to Celo transaction calldata.
+ */
+export function attachCeloAttributionTag(calldata: string, tag: string = SIVAN_CELO_ATTRIBUTION_TAG): string {
+  if (!tag) return calldata;
+  const suffix = toDataSuffix(tag).slice(2);
+  return `${calldata}${suffix}`;
+}
 
 /**
  * Canonical Multicall3 contract deployed on Celo Mainnet (42220) and Celo Sepolia (44787).
@@ -75,10 +93,12 @@ export function buildCeloTransferPayload(options: {
   feeAmount?: string;
   feeWallet?: string;
   decimals?: number;
+  attributionTag?: string | null;
 }): CeloTransferPlan {
   const decimals = options.decimals ?? 6;
   const rawFee = options.feeAmount ? parseFloat(options.feeAmount) : 0;
   const rawTotal = parseFloat(options.amount);
+  const tag = options.attributionTag === null ? '' : (options.attributionTag ?? SIVAN_CELO_ATTRIBUTION_TAG);
 
   const hasFee = rawFee > 0 && Boolean(options.feeWallet?.trim());
 
@@ -96,7 +116,7 @@ export function buildCeloTransferPayload(options: {
 
     return {
       to: MULTICALL3_ADDRESS,
-      data: multicallData,
+      data: tag ? attachCeloAttributionTag(multicallData, tag) : multicallData,
       value: '0x0',
       isMulticall: true,
       netAmount,
@@ -108,7 +128,7 @@ export function buildCeloTransferPayload(options: {
   const data = encodeErc20Transfer(options.recipientAddress, options.amount, decimals);
   return {
     to: options.tokenAddress,
-    data,
+    data: tag ? attachCeloAttributionTag(data, tag) : data,
     value: '0x0',
     isMulticall: false,
     netAmount: options.amount,

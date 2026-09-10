@@ -1,4 +1,4 @@
-import { celoRpc } from './celo-rpc.js';
+import { celoRpc, CELO_CNGN_MAINNET } from './celo-rpc.js';
 import { resolveNetworkMode } from '../network-mode.js';
 
 /**
@@ -80,6 +80,8 @@ export interface CeloFeeCurrencyRegistry {
   cusd: string;
   usdcToken: string;
   usdtToken: string;
+  /** cNGN token address for balance awareness (not a fee currency itself) */
+  cngnToken: string;
 }
 
 export function getCeloFeeCurrencyRegistry(options?: { production?: boolean }): CeloFeeCurrencyRegistry {
@@ -93,6 +95,7 @@ export function getCeloFeeCurrencyRegistry(options?: { production?: boolean }): 
     cusd:        isMainnet ? CELO_CUSD_MAINNET             : CELO_CUSD_TESTNET,
     usdcToken:   isMainnet ? CELO_USDC_TOKEN_MAINNET       : CELO_USDC_TOKEN_TESTNET,
     usdtToken:   isMainnet ? CELO_USDT_TOKEN_MAINNET       : CELO_USDT_TOKEN_TESTNET,
+    cngnToken:   isMainnet ? CELO_CNGN_MAINNET             : CELO_CNGN_MAINNET,
   };
 }
 
@@ -118,6 +121,19 @@ async function fetchErc20Balance(
   } catch {
     return 0n;
   }
+}
+
+/**
+ * Fetches the raw on-chain cNGN balance for a given wallet address.
+ * Returns the balance as a bigint in the smallest unit (6 decimals).
+ * Used by CeloAdapter.getBalance('cngn') since wallet providers may not index cNGN.
+ */
+export async function fetchCngnBalance(
+  walletAddress: string,
+  options?: { production?: boolean }
+): Promise<bigint> {
+  const registry = getCeloFeeCurrencyRegistry(options);
+  return fetchErc20Balance(registry.cngnToken, walletAddress, options);
 }
 
 // ---------------------------------------------------------------------------

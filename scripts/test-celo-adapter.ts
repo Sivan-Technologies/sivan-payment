@@ -132,6 +132,63 @@ async function runCeloAdapterTests() {
     assert.ok(registry.cusd.startsWith('0x'));
   });
 
+  test('verifies Celo ERC-8021 attribution tag attaches to calldata and decodes', async () => {
+    const { fromDataSuffix } = await import('@celo/attribution-tags');
+    const singlePayload = buildCeloTransferPayload({
+      tokenAddress: CELO_USDC_MAINNET,
+      recipientAddress: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
+      amount: '5.000000',
+      decimals: 6,
+    });
+    const decoded = fromDataSuffix(singlePayload.data as any);
+    assert.ok(decoded, 'Attribution tag suffix must be present on payload calldata');
+    assert.equal(decoded.codes[0], 'celo_bafcc2e56bd7');
+  });
+
+  console.log('\n══ 5. cNGN Token Contract & Integration ══');
+
+  const { CELO_CNGN_MAINNET, CELO_CNGN_DECIMALS } = await import('../src/wallets/celo/celo-rpc.js');
+
+  test('verifies cNGN on Celo mainnet constant', () => {
+    assert.equal(CELO_CNGN_MAINNET, '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f');
+  });
+
+  test('verifies cNGN uses 6 decimals (matching USDC)', () => {
+    assert.equal(CELO_CNGN_DECIMALS, 6);
+  });
+
+  test('verifies fee currency registry includes cNGN token address', () => {
+    const registry = getCeloFeeCurrencyRegistry();
+    assert.ok(registry.cngnToken, 'cngnToken must be present in registry');
+    assert.equal(registry.cngnToken, '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f');
+  });
+
+  test('builds cNGN transfer payload with attribution tag', () => {
+    const cngnPayload = buildCeloTransferPayload({
+      tokenAddress: CELO_CNGN_MAINNET,
+      recipientAddress: '0x2222222222222222222222222222222222222222',
+      amount: '50000.000000',
+      decimals: CELO_CNGN_DECIMALS,
+    });
+    assert.equal(cngnPayload.isMulticall, false);
+    assert.equal(cngnPayload.to, CELO_CNGN_MAINNET);
+    assert.ok(cngnPayload.data.startsWith('0xa9059cbb'), 'Must be ERC-20 transfer selector');
+    assert.equal(cngnPayload.netAmount, '50000.000000');
+  });
+
+  test('cNGN transfer payload contains attribution tag suffix', async () => {
+    const { fromDataSuffix } = await import('@celo/attribution-tags');
+    const cngnPayload = buildCeloTransferPayload({
+      tokenAddress: CELO_CNGN_MAINNET,
+      recipientAddress: '0x2222222222222222222222222222222222222222',
+      amount: '7000.000000',
+      decimals: CELO_CNGN_DECIMALS,
+    });
+    const decoded = fromDataSuffix(cngnPayload.data as any);
+    assert.ok(decoded, 'cNGN payload must have attribution suffix');
+    assert.equal(decoded.codes[0], 'celo_bafcc2e56bd7');
+  });
+
   console.log('\n==================================================');
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);
   console.log('==================================================\n');

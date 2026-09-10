@@ -1,6 +1,6 @@
 import { IChainAdapter, ChainTransferParams, ChainTransferResult } from '../IChainAdapter.js';
-import { isCeloHealthy } from './celo-rpc.js';
-import { resolveCeloFeeCurrency } from './celo-fee-currency.js';
+import { isCeloHealthy, CELO_CNGN_MAINNET, CELO_CNGN_DECIMALS } from './celo-rpc.js';
+import { resolveCeloFeeCurrency, getCeloFeeCurrencyRegistry, fetchCngnBalance } from './celo-fee-currency.js';
 import { validateAddressForChain } from '../address-validation.js';
 import { getWalletProvider } from '../provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallet-controls.service.js';
@@ -39,8 +39,17 @@ export class CeloAdapter implements IChainAdapter {
   }
 
   async getBalance(userId: string, asset = 'usdc'): Promise<number> {
-    const provider = getWalletProvider(await resolveActiveWalletProvider());
     const wallet = await db.findUserWallet(userId, 'celo');
+
+    // cNGN balance: query on-chain directly since wallet providers may not index cNGN
+    if (asset.toLowerCase() === 'cngn') {
+      if (!wallet?.address) return 0;
+      const rawBalance = await fetchCngnBalance(wallet.address);
+      // cNGN uses 6 decimals
+      return Number(rawBalance) / 1e6;
+    }
+
+    const provider = getWalletProvider(await resolveActiveWalletProvider());
     if (!wallet?.providerWalletId) return 0;
     const balances = await provider.getBalances(
       wallet.providerWalletId,
@@ -73,7 +82,9 @@ export class CeloAdapter implements IChainAdapter {
       providerWalletId: wallet.providerWalletId,
       providerCustomerId: wallet.customerId,
       chain: 'celo',
-      asset: (params.asset || 'usdc') as any,
+      asset: (params.asset || 'usdc'),
+      // When transferring cNGN, override the token address to the cNGN contract
+      ...(params.asset?.toLowerCase() === 'cngn' ? { tokenAddress: CELO_CNGN_MAINNET, decimals: CELO_CNGN_DECIMALS } : {}),
       amount: String(params.amountUsdc),
       toAddress: params.toAddress,
       idempotencyKey: params.idempotencyKey,

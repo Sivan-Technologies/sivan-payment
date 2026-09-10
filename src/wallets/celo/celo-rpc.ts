@@ -14,6 +14,15 @@ export const CELO_CUSD_MAINNET = '0x765DE816845861e75A25fCA122bb6898B8B1282a';
 export const CELO_CUSD_SEPOLIA = '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1';
 export const CELO_CUSD_ALFAJORES = CELO_CUSD_SEPOLIA;
 
+/**
+ * cNGN (Compliant Nigerian Naira) on Celo Mainnet.
+ * Issued by cNGN Ltd — regulated on-chain NGN representation.
+ * Decimals: 6 (identical to USDC).
+ * No testnet deployment available; mainnet-only.
+ */
+export const CELO_CNGN_MAINNET = '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f';
+export const CELO_CNGN_DECIMALS = 6;
+
 const PUBLIC_MAINNET_ENDPOINTS = [
   'https://forno.celo.org',
   'https://celo.drpc.org',
