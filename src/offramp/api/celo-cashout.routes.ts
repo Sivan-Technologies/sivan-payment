@@ -5,6 +5,7 @@ import {
   executeRedemption,
   getRedemptionStatus,
 } from '../../wallets/celo/textile-fx.service.js';
+import { listNgnBanks, resolveNgnBankAccount } from '../../ngn/service/ngn-banks.service.js';
 
 interface CashoutQuoteQuery {
   token?: string;
@@ -212,5 +213,57 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         deliveredVia: 'NIBSS / NIP',
       },
     });
+  });
+
+  /**
+   * GET /api/v1/cashout/banks
+   * Dynamic single source of truth for Nigerian banks directory.
+   */
+  app.get('/api/v1/cashout/banks', async (_request, reply: FastifyReply) => {
+    try {
+      const banks = await listNgnBanks('ngn');
+      return reply.send({
+        status: 'ok',
+        data: banks.map(b => ({
+          code: b.id,
+          name: b.name,
+          id: b.id,
+          logoUrl: b.logoUrl,
+        })),
+      });
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message || 'Failed to fetch banks' });
+    }
+  });
+
+  /**
+   * POST /api/v1/cashout/resolve-account
+   * Dynamically verifies destination NUBAN account number against active banking provider.
+   */
+  app.post('/api/v1/cashout/resolve-account', async (request: FastifyRequest<{ Body: { accountNumber: string; bankCode: string } }>, reply: FastifyReply) => {
+    try {
+      const { accountNumber, bankCode } = request.body || {};
+      if (!accountNumber || accountNumber.length !== 10) {
+        return reply.code(400).send({ error: 'Valid 10-digit NUBAN account number is required' });
+      }
+      if (!bankCode) {
+        return reply.code(400).send({ error: 'Bank code is required' });
+      }
+
+      const res = await resolveNgnBankAccount(bankCode, accountNumber, 'ngn');
+      return reply.send({
+        status: 'ok',
+        valid: true,
+        accountName: res.accountName,
+        accountNumber: res.accountNumber,
+        bankName: res.bankName,
+      });
+    } catch (err: any) {
+      return reply.code(400).send({
+        status: 'error',
+        valid: false,
+        error: err.message || 'Could not verify account details',
+      });
+    }
   });
 }
