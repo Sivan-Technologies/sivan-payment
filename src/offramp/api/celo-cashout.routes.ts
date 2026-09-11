@@ -269,4 +269,84 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
       });
     }
   });
+
+  /**
+   * GET /api/v1/agreement/limits
+   * Exposes canonical Sivan system Service Agreement limits and fee configuration.
+   */
+  app.get('/api/v1/agreement/limits', async (_request, reply: FastifyReply) => {
+    return reply.send({
+      status: 'ok',
+      source: 'sivan_system_agreement_limits',
+      minNairaAmount: 5000,
+      maxNairaAmount: 5000000,
+      minUsdcAmount: 5,
+      maxUsdcAmount: 5000,
+      usdcFeePercent: 3.0,
+      usdcFeeFixed: 0.50,
+      nairaFeePercent: 2.5,
+      nairaFeeFixed: 50,
+      nairaFeeTiers: [
+        { max: 10000, fee: 500 },
+        { max: 20000, fee: 900 },
+        { max: 25000, fee: 1000 },
+        { max: 50000, rate: 3.75 },
+        { max: null, rate: 3.5 },
+      ],
+    });
+  });
+
+  /**
+   * GET /api/v1/agreement/fee
+   * Calculates official Sivan system Service Agreement fee directly from core rules.
+   */
+  app.get('/api/v1/agreement/fee', async (request: FastifyRequest<{ Querystring: { currency?: string; amount?: string | number } }>, reply: FastifyReply) => {
+    const currency = (request.query.currency || 'USDC').toUpperCase();
+    const amount = parseFloat(String(request.query.amount || '10'));
+
+    if (isNaN(amount) || amount <= 0) {
+      return reply.code(400).send({ error: 'Invalid agreement amount. Must be greater than 0.' });
+    }
+
+    const isNaira = currency === 'CNGN' || currency === 'NGN' || currency === 'NAIRA';
+    let fee = 0;
+    let formula = '';
+
+    if (isNaira) {
+      if (amount <= 10000) {
+        fee = 500;
+        formula = 'Tier 1: Flat ₦500';
+      } else if (amount <= 20000) {
+        fee = 900;
+        formula = 'Tier 2: Flat ₦900';
+      } else if (amount <= 25000) {
+        fee = 1000;
+        formula = 'Tier 3: Flat ₦1,000';
+      } else if (amount <= 50000) {
+        fee = Math.round(amount * 0.0375);
+        formula = 'Tier 4: 3.75%';
+      } else {
+        fee = Math.round(amount * 0.035);
+        formula = 'Tier 5: 3.50%';
+      }
+    } else {
+      const percentRate = 0.03; // 3.0%
+      const fixedFee = 0.50; // $0.50
+      fee = parseFloat((amount * percentRate + fixedFee).toFixed(2));
+      formula = '3.0% + $0.50 fixed';
+    }
+
+    const netAmount = Math.max(0, parseFloat((amount - fee).toFixed(2)));
+
+    return reply.send({
+      status: 'ok',
+      source: 'sivan_system_agreement_engine',
+      currency,
+      amount,
+      protocolFee: fee,
+      netAmount,
+      feeFormula: formula,
+    });
+  });
 }
+
