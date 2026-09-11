@@ -4,8 +4,9 @@ import {
   requestFirmQuote,
   executeRedemption,
   getRedemptionStatus,
+  listTextileBanks,
+  resolveTextileBankAccount,
 } from '../../wallets/celo/textile-fx.service.js';
-import { listNgnBanks, resolveNgnBankAccount } from '../../ngn/service/ngn-banks.service.js';
 
 interface CashoutQuoteQuery {
   token?: string;
@@ -217,52 +218,54 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
 
   /**
    * GET /api/v1/cashout/banks
-   * Dynamic single source of truth for Nigerian banks directory.
+   * Official Textile FX API v2 Ramp bank directory.
    */
   app.get('/api/v1/cashout/banks', async (_request, reply: FastifyReply) => {
     try {
-      const banks = await listNgnBanks('ngn');
+      const banks = await listTextileBanks('busha');
       return reply.send({
         status: 'ok',
+        source: 'textile_credit_ramp_v2',
         data: banks.map(b => ({
-          code: b.id,
+          code: b.code,
           name: b.name,
-          id: b.id,
-          logoUrl: b.logoUrl,
+          id: b.code,
         })),
       });
     } catch (err: any) {
-      return reply.code(500).send({ error: err.message || 'Failed to fetch banks' });
+      return reply.code(500).send({ error: err.message || 'Failed to fetch banks from Textile' });
     }
   });
 
   /**
    * POST /api/v1/cashout/resolve-account
-   * Dynamically verifies destination NUBAN account number against active banking provider.
+   * Official Textile FX API v2 Ramp account resolution.
+   * POST /v2/ramp/banks/resolve
    */
   app.post('/api/v1/cashout/resolve-account', async (request: FastifyRequest<{ Body: { accountNumber: string; bankCode: string } }>, reply: FastifyReply) => {
     try {
       const { accountNumber, bankCode } = request.body || {};
-      if (!accountNumber || accountNumber.length !== 10) {
-        return reply.code(400).send({ error: 'Valid 10-digit NUBAN account number is required' });
+      if (!accountNumber || accountNumber.length < 6 || accountNumber.length > 12) {
+        return reply.code(400).send({ error: 'Valid account number is required (6-12 digits)' });
       }
       if (!bankCode) {
         return reply.code(400).send({ error: 'Bank code is required' });
       }
 
-      const res = await resolveNgnBankAccount(bankCode, accountNumber, 'ngn');
+      const res = await resolveTextileBankAccount(accountNumber, bankCode, 'busha');
       return reply.send({
         status: 'ok',
-        valid: true,
+        valid: res.valid,
+        source: 'textile_credit_ramp_v2',
         accountName: res.accountName,
         accountNumber: res.accountNumber,
-        bankName: res.bankName,
+        bankCode: res.bankCode,
       });
     } catch (err: any) {
       return reply.code(400).send({
         status: 'error',
         valid: false,
-        error: err.message || 'Could not verify account details',
+        error: err.message || 'Could not verify account details with Textile',
       });
     }
   });
