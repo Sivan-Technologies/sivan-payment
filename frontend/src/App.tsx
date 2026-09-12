@@ -841,8 +841,10 @@ export default function App() {
           if (previous.withdrawal?.status === live.status) return previous;
           return {
             ...previous,
+            fundingSource: previous.fundingSource,
             withdrawal: {
               ...previous.withdrawal,
+              fundingSource: previous.fundingSource ?? (previous.withdrawal as any)?.fundingSource,
               status: live.status,
               destinationTxHash: live.destinationTxHash ?? previous.withdrawal?.destinationTxHash,
               transactionTimeline: normalizeTimeline(live, {
@@ -2321,6 +2323,7 @@ export default function App() {
         sourceAmount: value.sourceAmount,
         destinationAmount: value.destinationAmount,
         feeAmount: value.feeAmount,
+        fundingSource: review.fundingSource,
         /**
          * THE NAIRA RAIL SENDS AN ARRAY, THE CARD EXPECTS AN OBJECT.
          *
@@ -2342,7 +2345,7 @@ export default function App() {
          * two rails, so the render layer keeps seeing one contract.
          */
         transactionTimeline: normalizeTimeline(value, review),
-      } as WithdrawalRecord,
+      } as unknown as WithdrawalRecord,
       deposit: {
         address: depositAddress,
         // The ASSET being sent, not the naira being received. Getting this
@@ -3098,6 +3101,14 @@ export default function App() {
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
             ngnAvailable={(ngnNetworks?.offramp.length ?? 0) > 0}
+            onClose={() => {
+              setDepositResult(null);
+              goToView('overview');
+            }}
+            onReset={() => {
+              setDepositResult(null);
+              setWithdrawalReview(null);
+            }}
           />
         )}
 
