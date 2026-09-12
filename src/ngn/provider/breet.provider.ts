@@ -534,7 +534,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
 
     if (!canWithdraw(sivanNetwork, asset)) {
       throw forbidden(
-        `Breet cannot send ${token} on ${sivanNetwork}. Supported for on-ramp: Solana, Ethereum, Tron, BSC` +
+        `Breet cannot send ${token} on ${sivanNetwork}. Supported for on-ramp: Solana, Base, Ethereum, Tron, BSC` +
           (asset === 'usdt' ? ', TON.' : ' (USDC is not available on TON).')
       );
     }
@@ -631,7 +631,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     if (!canDeposit(sivanNetwork, asset)) {
       throw forbidden(
         `Breet cannot receive ${asset.toUpperCase()} on ${sivanNetwork}. ` +
-          'Supported: USDC on Solana, Ethereum, Base, Arbitrum, Polygon; ' +
+          'Supported: USDC on Solana, Ethereum, Base, BSC, Arbitrum, Polygon; ' +
           'USDT on Solana, Ethereum, Tron, BSC, Polygon, TON.'
       );
     }

@@ -195,6 +195,7 @@ export default function App() {
   const [ngnNetwork, setNgnNetwork] = useState('');
   const [ngnAsset, setNgnAsset] = useState<'usdc' | 'usdt'>('usdc');
   const ngnAssetUserChosen = useRef(false);
+  const ngnNetworkUserChosen = useRef(false);
 
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
@@ -1175,15 +1176,48 @@ export default function App() {
    * selection stays empty and the form says so - reintroducing a literal here
    * would recreate the exact bug this replaces.
    */
+  const ngnNetworkBalances = useMemo(() => {
+    const map = new Map<string, number>();
+    if (unifiedBalance?.wallets) {
+      for (const w of unifiedBalance.wallets) {
+        const b = w.balances?.find((item) => String(item.asset).toLowerCase() === ngnAsset.toLowerCase());
+        const amt = b ? parseFloat(b.amount || '0') : 0;
+        const chainKey = w.chain.toLowerCase() === 'bnb' ? 'bsc' : w.chain.toLowerCase();
+        const current = map.get(chainKey) || 0;
+        map.set(chainKey, current + amt);
+      }
+    }
+    return map;
+  }, [unifiedBalance, ngnAsset]);
+
+  const ngnNetworkOptionsWithBalances = useMemo(() => {
+    const rawOptions = ngnNetworks?.offramp ?? [];
+    return rawOptions.map((opt) => {
+      const chainKey = opt.network.toLowerCase() === 'bnb' ? 'bsc' : opt.network.toLowerCase();
+      const bal = ngnNetworkBalances.get(chainKey) ?? 0;
+      return {
+        ...opt,
+        balance: bal,
+      };
+    });
+  }, [ngnNetworks, ngnNetworkBalances]);
+
   useEffect(() => {
-    const options = ngnNetworks?.offramp ?? [];
+    const options = ngnNetworkOptionsWithBalances;
     if (!options.length) {
       if (ngnNetwork) setNgnNetwork('');
       return;
     }
-    if (options.some((option) => option.network === ngnNetwork)) return;
-    setNgnNetwork(options[0].network);
-  }, [ngnNetworks, ngnNetwork]);
+
+    const current = options.find((option) => option.network === ngnNetwork);
+    const sorted = options.slice().sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+    const bestWithMin = sorted.find((opt) => (opt.balance ?? 0) >= (opt.minimumDepositUsd ?? 0) && (opt.balance ?? 0) > 0);
+    const best = bestWithMin || ((sorted[0]?.balance ?? 0) > 0 ? sorted[0] : options[0]);
+
+    if (!current || !ngnNetworkUserChosen.current) {
+      setNgnNetwork(best.network);
+    }
+  }, [ngnNetworkOptionsWithBalances, ngnNetwork]);
 
 
   // Wallets are fetched separately from loadUserData because they depend on an
@@ -2994,11 +3028,15 @@ export default function App() {
              * enabled and what Breet can settle, so there is nothing to
              * filter here - filtering again is how a second opinion appears.
              */
-            ngnNetworkOptions={ngnNetworks?.offramp ?? []}
-            onNgnNetworkChange={setNgnNetwork}
+            ngnNetworkOptions={ngnNetworkOptionsWithBalances}
+            onNgnNetworkChange={(net) => {
+              ngnNetworkUserChosen.current = true;
+              setNgnNetwork(net);
+            }}
             ngnAsset={ngnAsset}
             onNgnAssetChange={(asset) => {
               ngnAssetUserChosen.current = true;
+              ngnNetworkUserChosen.current = false;
               setNgnAsset(asset);
             }}
             withdrawAssetOptions={withdrawAssetOptions}

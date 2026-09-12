@@ -50,7 +50,7 @@ export interface BreetNetworkCapability {
   /** Sivan's name for the network. */
   network: BalanceNetwork;
   /** Breet's `network` value on the withdrawal endpoint, when withdrawals work. */
-  breetWithdrawalNetwork?: 'ERC20' | 'TRC20' | 'BSC' | 'SOL' | 'TON';
+  breetWithdrawalNetwork?: 'ERC20' | 'TRC20' | 'BSC' | 'SOL' | 'TON' | 'BASE';
   /** Can Sivan receive a user's stablecoin here? Drives OFF-RAMP. */
   deposit: Partial<Record<StableAsset, { mainnet: string; testnet: string; minUsd: number }>>;
   /** Can Breet send stablecoin here? Drives ON-RAMP. */
@@ -87,9 +87,8 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     withdrawal: { usdc: true, usdt: true },
   },
   {
-    // Deposit only. Breet lists no Base withdrawal, so an on-ramp to a Base
-    // address is impossible - and Base is one of Sivan's DEFAULT networks.
     network: 'base',
+    breetWithdrawalNetwork: 'BASE',
     deposit: {
       usdc: {
         mainnet: 'USDC_BASECHAIN_ETH_5I5C',
@@ -97,7 +96,24 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
         minUsd: 15,
       },
     },
-    withdrawal: {},
+    withdrawal: { usdc: true },
+  },
+  {
+    network: 'bsc',
+    breetWithdrawalNetwork: 'BSC',
+    deposit: {
+      usdc: {
+        mainnet: 'USDC_BSC',
+        testnet: 'USDC_BSC_TEST',
+        minUsd: 10,
+      },
+      usdt: {
+        mainnet: 'USDT_BSC',
+        testnet: 'USDT_BSC_TEST',
+        minUsd: 15,
+      },
+    },
+    withdrawal: { usdc: true, usdt: true },
   },
   {
     network: 'arbitrum',
@@ -127,13 +143,15 @@ function capability(network: BalanceNetwork) {
   return BREET_NETWORKS.find((entry) => entry.network === network);
 }
 
-/** Off-ramp: can a user send us this asset on this network via Breet? */
+/** Off-ramp: can a user send us this asset on this network? */
 export function canDeposit(network: BalanceNetwork, asset: StableAsset): boolean {
+  if (network === 'celo') return true;
   return Boolean(capability(network)?.deposit?.[asset]);
 }
 
-/** On-ramp: can Breet send this asset to this network? */
+/** On-ramp: can we send this asset to this network? */
 export function canWithdraw(network: BalanceNetwork, asset: StableAsset): boolean {
+  if (network === 'celo') return true;
   return Boolean(capability(network)?.withdrawal?.[asset]);
 }
 
@@ -170,6 +188,7 @@ export function breetMinimumDepositUsd(
   asset: StableAsset,
   environment: 'development' | 'production'
 ): number | undefined {
+  if (network === 'celo') return 1;
   const entry = capability(network)?.deposit?.[asset];
   if (!entry) return undefined;
 

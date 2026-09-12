@@ -18,6 +18,7 @@
     "test:identifyorg-live": "tsx scripts/test-identifyorg-live-contract.ts",
     "test:nin-level2": "tsx scripts/test-nin-grants-level2.ts",
     "test:fee-invariants": "tsx scripts/test-fee-and-schema-invariants.ts",
+    "test:four-chains": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-chains.json tsx scripts/test-four-chains-offramp.ts",
     "e2e:local": "tsx scripts/e2e-local.ts",
     "bridge:smoke": "tsx scripts/bridge-smoke.ts",
     "db:migrate": "tsx scripts/db-migrate.ts",

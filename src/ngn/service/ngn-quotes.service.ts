@@ -21,8 +21,8 @@ import type { NgnControlsRecord, NgnProviderName, NgnQuoteInput, NgnQuoteRecord 
 export const createNgnQuoteSchema = z.object({
   userId: z.string().min(1),
   direction: z.enum(['onramp', 'offramp']),
-  sourceCurrency: z.enum(['ngn', 'usdc', 'usdt']),
-  destinationCurrency: z.enum(['ngn', 'usdc', 'usdt']),
+  sourceCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd']),
+  destinationCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd']),
   sourceAmount: z.string().min(1),
   /**
    * Which chain the crypto leg moves on.
@@ -180,8 +180,9 @@ async function requireSivanVerified(userId: string, input: NgnQuoteInput, provid
 }
 
 function validateCurrencyPair(input: NgnQuoteInput) {
-  if (input.direction === 'onramp' && (input.sourceCurrency !== 'ngn' || !['usdc', 'usdt'].includes(input.destinationCurrency))) throw badRequest('NGN on-ramp must quote NGN to USDC/USDT.');
-  if (input.direction === 'offramp' && (!['usdc', 'usdt'].includes(input.sourceCurrency) || input.destinationCurrency !== 'ngn')) throw badRequest('NGN off-ramp must quote USDC/USDT to NGN.');
+  const allowedCrypto = ['usdc', 'usdt', 'cngn', 'cusd'];
+  if (input.direction === 'onramp' && (input.sourceCurrency !== 'ngn' || !allowedCrypto.includes(input.destinationCurrency))) throw badRequest('NGN on-ramp must quote NGN to USDC/USDT/cNGN.');
+  if (input.direction === 'offramp' && (!allowedCrypto.includes(input.sourceCurrency) || input.destinationCurrency !== 'ngn')) throw badRequest('NGN off-ramp must quote USDC/USDT/cNGN to NGN.');
   const amount = Number(input.sourceAmount);
   if (!Number.isFinite(amount) || amount <= 0) throw badRequest('Invalid source amount.');
 }
@@ -197,7 +198,8 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     input.direction === 'offramp' &&
     revenueMode === 'sivan_fee_wallet' &&
     requestedNetwork &&
-    requestedNetwork !== 'solana'
+    requestedNetwork !== 'solana' &&
+    requestedNetwork !== 'celo'
   ) {
     revenueMode = 'breet_markup';
   }
@@ -265,13 +267,18 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     }
   }
 
-  const provider = getNgnProvider(controls.activeProvider);
+  const isCeloRail =
+    String(input.network ?? '').toLowerCase() === 'celo' ||
+    String(input.sourceCurrency ?? '').toLowerCase() === 'cngn' ||
+    String(input.sourceCurrency ?? '').toLowerCase() === 'cusd';
+  const providerName = isCeloRail ? 'textile' : controls.activeProvider;
+  const provider = getNgnProvider(providerName);
   let breetMarkupPercentForQuote = 0;
   let breetMarkupKnown = true;
   let breetMarkupSource: string = 'provider';
   if (
     input.direction === 'offramp' &&
-    controls.activeProvider === 'breet' &&
+    providerName === 'breet' &&
     provider.getBreetMarkupPercent
   ) {
     /**

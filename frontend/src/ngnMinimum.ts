@@ -112,6 +112,8 @@ export function offrampClears(input: OfframpFloorInput & { amountUsd: number }):
 export const TYPICAL_GAS_USD: Record<string, number> = {
   solana: 0.001,
   base: 0.02,
+  bsc: 0.03,
+  celo: 0.001,
   ethereum: 5,
   arbitrum: 0.05,
   polygon: 0.01,

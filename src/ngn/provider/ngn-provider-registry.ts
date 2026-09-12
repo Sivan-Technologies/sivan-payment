@@ -5,6 +5,7 @@ import { MockNgnProvider } from './mock-ngn.provider.js';
 import { NombaNgnProvider } from './nomba.provider.js';
 import { PajNgnProvider } from './paj.provider.js';
 import { BreetNgnProvider } from './breet.provider.js';
+import { TextileNgnProvider } from './textile.provider.js';
 import type { NgnProviderName } from '../types/ngn.types.js';
 import type { NgnProviderAdapter } from './ngn-provider.js';
 
@@ -23,5 +24,6 @@ export function getNgnProvider(name: NgnProviderName = env.NGN_PROVIDER as NgnPr
   if (name === 'nomba') return new NombaNgnProvider();
   if (name === 'paj') return new PajNgnProvider();
   if (name === 'breet') return new BreetNgnProvider();
+  if (name === 'textile') return new TextileNgnProvider();
   return new MockNgnProvider();
 }

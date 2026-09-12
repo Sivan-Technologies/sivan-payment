@@ -16,6 +16,8 @@
 // Configuration
 // ---------------------------------------------------------------------------
 
+import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
+
 const RAW_API_URL = process.env.TEXTILE_CREDIT_API_URL || 'https://api.textilecredit.com/v2';
 const TEXTILE_RAMP_BASE = RAW_API_URL.endsWith('/ramp') 
   ? RAW_API_URL 
@@ -28,8 +30,18 @@ const DEFAULT_PROVIDER = 'busha';
 /** Quote cache TTL in milliseconds (30 seconds) */
 const QUOTE_CACHE_TTL_MS = 30_000;
 
-/** Sivan protocol fee in basis points (1 bps = 0.01%, 100 bps = 1%) */
-const SIVAN_TAKER_FEE_BPS = 100;
+export async function getEffectiveOfframpFeePercent(): Promise<number> {
+  try {
+    const settings = await getAdminFeeSettings();
+    const ngnPercent = Number(settings?.ngnOfframpFeePercent ?? 0);
+    if (Number.isFinite(ngnPercent) && ngnPercent > 0) return ngnPercent;
+    const generalPercent = Number(settings?.offrampFeePercent ?? 0);
+    if (Number.isFinite(generalPercent) && generalPercent > 0) return generalPercent;
+  } catch {
+    // Settings unreadable: fallback safely
+  }
+  return 1.0;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -262,12 +274,13 @@ export async function getTextileFxQuote(
   amount: number
 ): Promise<TextileFxQuote> {
   const isCngn = direction === 'cngn_to_usdc' || direction === 'cngn_to_ngn';
+  const feePercent = await getEffectiveOfframpFeePercent();
 
   // cNGN has strict 1:1 parity with physical Nigerian Naira
   if (isCngn) {
     const rate = 1.0;
     const gross = amount * rate;
-    const sivanFee = Math.round(gross * (SIVAN_TAKER_FEE_BPS / 10_000) * 100) / 100;
+    const sivanFee = Math.round(gross * (feePercent / 100) * 100) / 100;
     const netOutput = Math.round((gross - sivanFee) * 100) / 100;
     const now = new Date();
 
@@ -294,23 +307,46 @@ export async function getTextileFxQuote(
     return { ...cached.quote, cached: true };
   }
 
-  let liveRate = 1326.4;
+  let liveRate: number | undefined;
+
+  // 1. Primary institutional market oracle (Binance orderbook rate for USDT/NGN)
   try {
-    const cgRes = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=usd-coin,tether&vs_currencies=ngn',
-      { signal: AbortSignal.timeout(3000) }
+    const bRes = await fetch(
+      'https://api.binance.com/api/v3/ticker/price?symbol=USDTNGN',
+      { signal: AbortSignal.timeout(5000) }
     );
-    if (cgRes.ok) {
-      const data = await cgRes.json();
-      const queried = data['usd-coin']?.ngn || data.tether?.ngn;
-      if (typeof queried === 'number' && queried > 0) {
-        liveRate = Math.round(queried * 100) / 100;
+    if (bRes.ok) {
+      const data: any = await bRes.json();
+      const p = Number(data?.price);
+      if (Number.isFinite(p) && p > 0) {
+        liveRate = Math.round(p * 100) / 100;
       }
     }
-  } catch (err) {}
+  } catch {}
+
+  // 2. Secondary live market oracle (CoinGecko USD/NGN stablecoin rate)
+  if (!liveRate) {
+    try {
+      const cgRes = await fetch(
+        'https://api.coingecko.com/api/v3/simple/price?ids=usd-coin,tether&vs_currencies=ngn',
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (cgRes.ok) {
+        const data: any = await cgRes.json();
+        const queried = data?.['usd-coin']?.ngn || data?.tether?.ngn;
+        if (typeof queried === 'number' && queried > 0) {
+          liveRate = Math.round(queried * 100) / 100;
+        }
+      }
+    } catch {}
+  }
+
+  if (!liveRate || !Number.isFinite(liveRate) || liveRate <= 0) {
+    throw new Error('Live FX market rate is currently unavailable for Celo. Please retry.');
+  }
 
   const grossOutput = Math.round(amount * liveRate * 100) / 100;
-  const sivanFee = Math.round(grossOutput * (SIVAN_TAKER_FEE_BPS / 10_000) * 100) / 100;
+  const sivanFee = Math.round(grossOutput * (feePercent / 100) * 100) / 100;
   const netOutput = Math.round((grossOutput - sivanFee) * 100) / 100;
   const nowDate = new Date();
 

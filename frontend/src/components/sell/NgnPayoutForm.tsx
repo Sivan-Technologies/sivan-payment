@@ -165,7 +165,7 @@ export function NgnPayoutForm({
    * USDC on Base was quoted, shown a minimum, and handed a Solana deposit
    * address - the wrong chain, silently, with funds sent to it unrecoverable.
    */
-  networkOptions: Array<{ network: string; minimumDepositUsd?: number; gasEstimateUsd?: number; label?: string }>;
+  networkOptions: Array<{ network: string; minimumDepositUsd?: number; gasEstimateUsd?: number; label?: string; balance?: number }>;
 
   onNetworkChange?: (network: string) => void;
   asset: 'usdc' | 'usdt';
@@ -306,15 +306,49 @@ export function NgnPayoutForm({
    * The server composes this list from two sources (admin's enabled networks
    * and what the provider settles), so a repeat is possible; a duplicate key
    * would break React's reconciliation of the buttons below.
+   *
+   * UX rule for balance funding:
+   * Networks with zero balance or below minimum withdrawal are filtered out
+   * so the user only sees actionable networks. The network with the highest
+   * balance is auto-sorted to the top.
+   * If funding externally, all supported networks remain available.
    */
   const options = useMemo(() => {
     const seen = new Set<string>();
-    return (networkOptions ?? []).filter((option) => {
+    const unique = (networkOptions ?? []).filter((option) => {
       if (!option?.network || seen.has(option.network)) return false;
       seen.add(option.network);
       return true;
     });
-  }, [networkOptions]);
+
+    if (fundingSource === 'balance') {
+      const eligible = unique.filter((opt) => {
+        const bal = opt.balance ?? 0;
+        const min = opt.minimumDepositUsd ?? 0;
+        return bal > 0 && bal >= min;
+      });
+
+      if (eligible.length > 0) {
+        return eligible.sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+      }
+
+      const withAnyBalance = unique.filter((opt) => (opt.balance ?? 0) > 0);
+      if (withAnyBalance.length > 0) {
+        return withAnyBalance.sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+      }
+
+      return unique;
+    }
+
+    return unique.slice().sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+  }, [networkOptions, fundingSource]);
+
+  useEffect(() => {
+    if (!options.length) return;
+    if (!options.some((opt) => opt.network === network)) {
+      onNetworkChange?.(options[0].network);
+    }
+  }, [options, network, onNetworkChange]);
 
 
   useEffect(() => {
@@ -921,7 +955,14 @@ export function NgnPayoutForm({
                       onNetworkChange?.(option.network);
                     }}
                   />
-                  <span>{networkLabel(option.network)}</span>
+                  <span>
+                    {networkLabel(option.network)}
+                    {option.balance !== undefined && option.balance > 0 ? (
+                      <span className="network-balance-badge" style={{ marginLeft: 6, fontSize: '0.82em', opacity: 0.85 }}>
+                        ({option.balance.toLocaleString(undefined, { maximumFractionDigits: 2 })} {asset.toUpperCase()})
+                      </span>
+                    ) : null}
+                  </span>
                 </label>
               ))}
             </div>
@@ -940,7 +981,12 @@ export function NgnPayoutForm({
             </span>
           </fieldset>
         ) : network ? (
-          <p className="field-hint">Withdrawing {asset.toUpperCase()} on {networkLabel(network)}.</p>
+          <p className="field-hint">
+            Withdrawing {asset.toUpperCase()} on {networkLabel(network)}
+            {options[0]?.balance !== undefined && options[0].balance > 0
+              ? ` (${options[0].balance.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${asset.toUpperCase()} available)`
+              : ''}.
+          </p>
         ) : (
           /* No chain resolved yet. Quoting now would price against nothing,
              so the button below stays disabled until this settles. */

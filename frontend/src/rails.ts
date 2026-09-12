@@ -134,6 +134,8 @@ export interface NgnNetworkOption {
   gasEstimateUsd?: number;
   /** Display name, e.g. 'BNB Smart Chain' for the slug 'bsc'. */
   label?: string;
+  /** Current spendable balance for this asset on this specific network. */
+  balance?: number;
 }
 
 

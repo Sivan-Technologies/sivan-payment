@@ -195,7 +195,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
    * `ngnNetwork = 'solana'` default was a second opinion about the same
    * question, and it disagreed with this one for anybody not on Solana.
    */
-  ngnNetworkOptions?: Array<{ network: string; minimumDepositUsd?: number }>;
+  ngnNetworkOptions?: Array<{ network: string; minimumDepositUsd?: number; gasEstimateUsd?: number; label?: string; balance?: number }>;
   onNgnNetworkChange?: (network: string) => void;
   ngnAsset?: 'usdc' | 'usdt';
   onNgnAssetChange?: (asset: 'usdc' | 'usdt') => void;
