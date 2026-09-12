@@ -445,6 +445,7 @@ export interface DepositResponse {
     chain: string;
     currency: string;
   };
+  fundingSource?: 'balance' | 'external';
 }
 
 

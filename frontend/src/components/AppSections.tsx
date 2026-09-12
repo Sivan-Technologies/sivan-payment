@@ -1995,7 +1995,54 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
   // '' rather than undefined so the .includes() and === comparisons below stay
   // total without each one needing its own guard.
   const withdrawalStatus = withdrawal?.status ?? '';
+  const isBalanceFunded = result.fundingSource === 'balance'
+    || (result.withdrawal as any)?.fundingSource === 'balance'
+    || (withdrawalStatus === 'settlement_processing' || withdrawalStatus === 'payout_processing');
 
+  // When paying directly from Sivan balance, the server automatically sweeps funds.
+  // Showing a QR code or deposit address causes friction and confuses the user into thinking
+  // they have to manually send crypto again. We auto-hide the deposit address in balance mode.
+  if (isBalanceFunded) {
+    return (
+      <article className="deposit-card live-deposit-card">
+        <p className="eyebrow">Step 3</p>
+        <h3>Withdrawal in progress</h3>
+        <p className="muted">
+          Your withdrawal is being processed directly from your Sivan balance. We have initiated the transfer of {depositCurrency} on {depositChain || 'the network'}, and the payout is being dispatched to your bank account. No manual deposit is needed.
+        </p>
+
+        <div className="balance-funded-badge" style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '10px 16px',
+          borderRadius: '12px',
+          background: 'rgba(34, 197, 94, 0.12)',
+          border: '1px solid rgba(34, 197, 94, 0.25)',
+          color: '#16a34a',
+          fontWeight: 600,
+          fontSize: '0.92em',
+          marginBottom: '20px',
+        }}>
+          <span style={{ fontSize: '1.2em' }}>✓</span> Paid from Sivan balance • Automatic settlement active
+        </div>
+
+        <div className="details-box">
+          <Kv label="Reference" value={withdrawal?.id ? shortRef(withdrawal.id) : undefined} />
+          <Kv label="Paid from balance" value={withdrawal?.sourceAmount ? `${withdrawal.sourceAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : undefined} />
+          <Kv label="You receive" value={withdrawal?.destinationAmount ? `${Number(withdrawal.destinationAmount).toLocaleString()} ${String(withdrawal.destinationCurrency ?? '').toUpperCase()}` : undefined} />
+          <Kv label="Fee" value={withdrawal?.feeAmount ? `${withdrawal.feeAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : withdrawal?.feePercent ? `${withdrawal.feePercent}%` : undefined} />
+          <Kv label="Status" value={withdrawal?.status ? friendlyStatus(withdrawal.status) : undefined} />
+        </div>
+
+        {withdrawal?.transactionTimeline ? <InlineTransactionTimeline timeline={withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
+          <TimelineItem done title="Debited from balance" body="Funds moved from your Sivan wallet." />
+          <TimelineItem active={withdrawalStatus === 'settlement_processing' || withdrawalStatus === 'payout_processing'} done={withdrawalStatus === 'completed'} title="Convert and payout" body="Sivan and rail liquidate crypto and send fiat to your bank account." />
+          <TimelineItem done={withdrawalStatus === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
+        </div>}
+      </article>
+    );
+  }
 
   // No address means there is nothing actionable to show, but the withdrawal
   // still exists - so point the user at their history rather than at nothing.

@@ -2297,7 +2297,12 @@ export default function App() {
     const value = raw as Record<string, any>;
 
     // Bridge already answers in the shape the card wants.
-    if (value.deposit && value.withdrawal) return value as DepositResponse;
+    if (value.deposit && value.withdrawal) {
+      return {
+        ...(value as DepositResponse),
+        fundingSource: review.fundingSource,
+      };
+    }
 
     // Breet answers flat. Rebuild the contract from the fields it does send,
     // falling back to what the user just confirmed on the review screen -
@@ -2345,6 +2350,7 @@ export default function App() {
         currency: value.sourceCurrency ?? review.sourceCurrency,
         chain: value.network ?? review.sourceChain,
       },
+      fundingSource: review.fundingSource,
     };
   }
 
@@ -2415,9 +2421,13 @@ export default function App() {
        * leaving the user staring at an error toast while their withdrawal had
        * actually succeeded.
        */
-      notify(rail === 'breet'
-        ? 'Deposit address created. Send only the selected asset and network - naira lands in your bank once it confirms.'
-        : 'Deposit address created. Send only the selected asset and network.');
+      notify(withdrawalReview.fundingSource === 'balance'
+        ? (rail === 'breet'
+          ? 'Withdrawal processing. Paid directly from your balance - naira lands in your bank once confirmed.'
+          : 'Withdrawal processing. Paid directly from your balance.')
+        : (rail === 'breet'
+          ? 'Deposit address created. Send only the selected asset and network - naira lands in your bank once it confirms.'
+          : 'Deposit address created. Send only the selected asset and network.'));
 
       // Fire and forget: if this fails, the user keeps the success state above.
       void loadUserData().catch(() => undefined);
