@@ -1178,17 +1178,29 @@ export default function App() {
    */
   const ngnNetworkBalances = useMemo(() => {
     const map = new Map<string, number>();
-    if (unifiedBalance?.wallets) {
-      for (const w of unifiedBalance.wallets) {
-        const b = w.balances?.find((item) => String(item.asset).toLowerCase() === ngnAsset.toLowerCase());
-        const amt = b ? parseFloat(b.amount || '0') : 0;
-        const chainKey = w.chain.toLowerCase() === 'bnb' ? 'bsc' : w.chain.toLowerCase();
-        const current = map.get(chainKey) || 0;
-        map.set(chainKey, current + amt);
+    const allWallets = [
+      ...(unifiedBalance?.wallets || []),
+      ...(userWallets || [])
+    ];
+    for (const w of allWallets) {
+      if (!w) continue;
+      const rawChain = String(w.chain || '').toLowerCase();
+      const chainKey = rawChain === 'bnb' ? 'bsc' : rawChain;
+      if (!chainKey) continue;
+      if (Array.isArray(w.balances)) {
+        for (const b of w.balances) {
+          if (!b) continue;
+          if (String(b.asset || '').toLowerCase() === ngnAsset.toLowerCase()) {
+            const parsed = typeof b.amount === 'number' ? b.amount : parseFloat(String(b.amount || '0'));
+            const amt = Number.isFinite(parsed) ? parsed : 0;
+            const current = map.get(chainKey) || 0;
+            map.set(chainKey, Math.max(current, amt));
+          }
+        }
       }
     }
     return map;
-  }, [unifiedBalance, ngnAsset]);
+  }, [unifiedBalance, userWallets, ngnAsset]);
 
   const ngnNetworkOptionsWithBalances = useMemo(() => {
     const rawOptions = ngnNetworks?.offramp ?? [];
@@ -1201,6 +1213,23 @@ export default function App() {
       };
     });
   }, [ngnNetworks, ngnNetworkBalances]);
+
+  const selectedNetworkSpendable = useMemo(() => {
+    if (!ngnNetwork) return undefined;
+    const chainKey = ngnNetwork.toLowerCase() === 'bnb' ? 'bsc' : ngnNetwork.toLowerCase();
+    const opt = ngnNetworkOptionsWithBalances.find((o) => o.network.toLowerCase() === chainKey);
+    if (opt && typeof opt.balance === 'number') {
+      return opt.balance;
+    }
+    const bal = ngnNetworkBalances.get(chainKey);
+    if (typeof bal === 'number') {
+      return bal;
+    }
+    if (unifiedBalance) {
+      return 0;
+    }
+    return undefined;
+  }, [ngnNetwork, ngnNetworkOptionsWithBalances, ngnNetworkBalances, unifiedBalance]);
 
   useEffect(() => {
     const options = ngnNetworkOptionsWithBalances;
@@ -3048,7 +3077,7 @@ export default function App() {
              * could not be reached. The form distinguishes all three states,
              * because "we could not check" is not "you have nothing".
              */
-            ngnSpendable={selectedNgnSpendable}
+            ngnSpendable={selectedNetworkSpendable !== undefined ? selectedNetworkSpendable : selectedNgnSpendable}
             ngnWindowDays={verificationSummary?.windowDays}
             /* From GET /api/ngn/networks, which this screen already awaits.
                Undefined until it answers, which reads as OFF - the withdraw
