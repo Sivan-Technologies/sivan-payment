@@ -12,6 +12,7 @@ import {
 import { badRequest } from '../shared/errors.js';
 import { parseDeliveryDeadline } from '../agreements/deadline-parser.js';
 import { getCountdownLabel } from '../agreements/agreement.service.js';
+import { quoteServiceAgreementFee } from '../agreements/agreement-fee-policy.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 
 /**
@@ -183,6 +184,8 @@ export class DeveloperGatewayService {
       updatedAt: new Date().toISOString(),
     };
 
+    const feeQuote = quoteServiceAgreementFee(input.amount, selectedNetwork, 'buyer');
+
     return {
       success: true,
       agreementId,
@@ -193,6 +196,13 @@ export class DeveloperGatewayService {
       paymentInstruction: {
         depositAddress,
         memo: `Sivan Deal: ${agreementId}`,
+      },
+      fee: {
+        feeAmount: feeQuote.feeAmount,
+        feePercent: feeQuote.feePercent,
+        feePayer: 'buyer',
+        buyerTotalPayable: feeQuote.buyerTotalPayable,
+        sellerNetAmount: feeQuote.sellerNetAmount,
       },
       createdAt: new Date().toISOString(),
       deadlineDays,

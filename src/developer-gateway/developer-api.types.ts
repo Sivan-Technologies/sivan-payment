@@ -64,6 +64,14 @@ export interface DeveloperAgreementResponse {
   deliveryDueAt: string | null;
   /** Live countdown badge label for the chat card. */
   countdownLabel: string;
+  /** Sivan Service Agreement Platform Fee breakdown */
+  fee?: {
+    feeAmount: number;
+    feePercent: number;
+    feePayer: string;
+    buyerTotalPayable: number;
+    sellerNetAmount: number;
+  };
 }
 
 export interface DeveloperSettleRequest {

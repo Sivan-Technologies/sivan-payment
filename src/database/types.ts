@@ -1126,6 +1126,12 @@ export interface ServiceAgreementRecord {
   releaseTxHash?: string | null;
   vaultAddress?: string | null;
   channel?: string;
+  feeAmountUsdc?: number;
+  feePercent?: number;
+  feePayer?: 'buyer' | 'seller' | 'split';
+  buyerTotalPayableUsdc?: number;
+  sellerNetAmountUsdc?: number;
+  feeTxHash?: string | null;
   createdAt: string;
   updatedAt: string;
 }

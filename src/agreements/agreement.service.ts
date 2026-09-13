@@ -23,6 +23,7 @@ import { createBalanceLedgerEntry } from '../balances/balance.service.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { ensureUserWallet } from '../wallets/user-wallet.service.js';
+import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain } from '../database/types.js';
 
 // ─── Input shapes ────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ export interface CreateAgreementInput {
   network: WalletChain;
   /** Optional override: bypass NL extraction and set deadline_days directly. */
   deadlineDays?: number;
+  feePayer?: FeePayer;
   channel?: string;
 }
 
@@ -90,11 +92,30 @@ export function getCountdownLabel(agreement: ServiceAgreementRecord, now = new D
   return `🔴 Overdue by ${overdueDays} day${overdueDays === 1 ? '' : 's'}`;
 }
 
+/**
+ * Resolves Sivan's protocol fee collection wallet for service agreements per network.
+ */
+export function getSivanServiceAgreementFeeWallet(network: string): string {
+  const n = (network || '').toLowerCase().trim();
+  if (n === 'solana') {
+    return process.env.SIVAN_FEE_WALLET_SOLANA?.trim() || '';
+  }
+  if (n === 'stellar') {
+    return process.env.SIVAN_FEE_WALLET_STELLAR?.trim() || process.env.STELLAR_DISTRIBUTION_PUBLIC_KEY?.trim() || '';
+  }
+  if (n === 'celo') {
+    return process.env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_CELO_FEE_WALLET?.trim() || '';
+  }
+  // Base, BSC, and general EVM
+  return process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || process.env.EVM_VAULT_ADDRESS?.trim() || process.env.EVM_SETTLEMENT_ROUTER_ADDRESS?.trim() || '';
+}
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 /**
  * Create a new agreement record. Extracts deadline_days from the description
  * via natural language parsing unless the caller provides an explicit override.
+ * Dynamically prices and attaches the Sivan Service Agreement Fee.
  */
 export async function createAgreement(
   input: CreateAgreementInput
@@ -107,6 +128,9 @@ export async function createAgreement(
 
   const parseResult = parseDeliveryDeadline(input.description || '');
   const deadlineDays = input.deadlineDays ?? parseResult.deadlineDays;
+
+  const feePayer: FeePayer = input.feePayer || 'buyer';
+  const feeQuote = quoteServiceAgreementFee(input.amountUsdc, input.network, feePayer);
 
   const now = nowIso();
   const agreement: ServiceAgreementRecord = {
@@ -130,6 +154,12 @@ export async function createAgreement(
     releaseTxHash: null,
     vaultAddress: null,
     channel: input.channel || 'web',
+    feeAmountUsdc: feeQuote.feeAmount,
+    feePercent: feeQuote.feePercent,
+    feePayer,
+    buyerTotalPayableUsdc: feeQuote.buyerTotalPayable,
+    sellerNetAmountUsdc: feeQuote.sellerNetAmount,
+    feeTxHash: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -140,7 +170,7 @@ export async function createAgreement(
 
 /**
  * Mark an agreement as funded and compute the delivery due timestamp.
- * Executes on-chain transfer to vault if buyer wallet is configured.
+ * Executes on-chain transfer to vault including the Sivan service agreement fee.
  * delivery_due_at = now + deadlineDays calendar days.
  */
 export async function fundAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
@@ -152,6 +182,13 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
 
   const now = new Date();
   const dueAt = new Date(now.getTime() + existing.deadlineDays * 24 * 60 * 60 * 1000);
+
+  const feeQuote = quoteServiceAgreementFee(
+    existing.amountUsdc,
+    existing.network,
+    existing.feePayer || 'buyer'
+  );
+  const payableAmount = existing.buyerTotalPayableUsdc ?? feeQuote.buyerTotalPayable;
 
   let fundingTxHash: string | null = null;
   let vaultAddress: string | null = null;
@@ -175,7 +212,7 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
         providerCustomerId: buyerWallet.customerId,
         asset: ((existing.currency || 'usdc').toLowerCase() as any),
         chain: (existing.network || 'solana') as any,
-        amount: String(existing.amountUsdc),
+        amount: String(payableAmount),
         toAddress: vaultAddress || buyerWallet.address,
         idempotencyKey: `fund_agr_${existing.id}`,
         reference: existing.id,
@@ -194,6 +231,11 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
     deliveryDueAt: dueAt.toISOString(),
     fundingTxHash: fundingTxHash || existing.fundingTxHash || null,
     vaultAddress: vaultAddress || existing.vaultAddress || null,
+    feeAmountUsdc: existing.feeAmountUsdc ?? feeQuote.feeAmount,
+    feePercent: existing.feePercent ?? feeQuote.feePercent,
+    feePayer: existing.feePayer ?? feeQuote.feePayer,
+    buyerTotalPayableUsdc: payableAmount,
+    sellerNetAmountUsdc: existing.sellerNetAmountUsdc ?? feeQuote.sellerNetAmount,
     updatedAt: now.toISOString(),
   };
 
@@ -204,12 +246,12 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
       {
         userId: existing.buyerUserId,
         asset: ((existing.currency || 'usdc').toLowerCase() as any),
-        amount: String(existing.amountUsdc),
+        amount: String(payableAmount),
         kind: 'hold',
         status: 'held',
         sourceType: 'service_agreement',
         sourceId: existing.id,
-        description: `Hold ${existing.amountUsdc} ${(existing.currency || 'USDC').toUpperCase()} locked into Service Agreement (${existing.title})`
+        description: `Hold ${payableAmount} ${(existing.currency || 'USDC').toUpperCase()} locked into Service Agreement (${existing.title})`
       },
       { actorType: 'user', actorId: existing.buyerUserId }
     );
@@ -272,7 +314,18 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   }
 
   const now = nowIso();
+  const feeQuote = quoteServiceAgreementFee(
+    existing.amountUsdc,
+    existing.network,
+    existing.feePayer || 'buyer'
+  );
+  const sellerNetAmount = existing.sellerNetAmountUsdc ?? feeQuote.sellerNetAmount;
+  const feeAmount = existing.feeAmountUsdc ?? feeQuote.feeAmount;
+  const payableAmount = existing.buyerTotalPayableUsdc ?? feeQuote.buyerTotalPayable;
+  const feeWallet = getSivanServiceAgreementFeeWallet(existing.network || 'solana');
+
   let releaseTxHash: string | null = null;
+  let feeTxHash: string | null = null;
 
   try {
     const sellerWallet = await ensureUserWallet(existing.sellerUserId, existing.network || 'solana');
@@ -281,18 +334,38 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
       const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
       const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet.provider ?? activeProviderName);
 
-      const transferResult = await provider.createTransfer({
+      // 1. Transfer net settlement amount to contractor/seller
+      const netTransferResult = await provider.createTransfer({
         providerWalletId: buyerWallet?.providerWalletId || sellerWallet.providerWalletId,
         providerCustomerId: buyerWallet?.customerId || sellerWallet.customerId,
         asset: ((existing.currency || 'usdc').toLowerCase() as any),
         chain: (existing.network || 'solana') as any,
-        amount: String(existing.amountUsdc),
+        amount: String(sellerNetAmount),
         toAddress: sellerWallet.address,
-        idempotencyKey: `rel_agr_${existing.id}`,
+        idempotencyKey: `rel_agr_${existing.id}_seller`,
         reference: existing.id,
       });
 
-      releaseTxHash = (transferResult as any).transactionHash || (transferResult as any).txHash || (transferResult as any).providerTransferId || null;
+      releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
+
+      // 2. Transfer Sivan Service Agreement Platform Fee to Sivan fee collection wallet
+      if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== sellerWallet.address.toLowerCase()) {
+        try {
+          const feeTransferResult = await provider.createTransfer({
+            providerWalletId: buyerWallet?.providerWalletId || sellerWallet.providerWalletId,
+            providerCustomerId: buyerWallet?.customerId || sellerWallet.customerId,
+            asset: ((existing.currency || 'usdc').toLowerCase() as any),
+            chain: (existing.network || 'solana') as any,
+            amount: String(feeAmount),
+            toAddress: feeWallet,
+            idempotencyKey: `rel_agr_${existing.id}_fee`,
+            reference: `fee_${existing.id}`,
+          });
+          feeTxHash = (feeTransferResult as any).transactionHash || (feeTransferResult as any).txHash || (feeTransferResult as any).providerTransferId || null;
+        } catch (feeErr) {
+          console.warn('[agreement.release] On-chain fee transfer note:', feeErr);
+        }
+      }
     }
   } catch (onChainErr) {
     console.warn('[agreement.release] On-chain release note:', onChainErr);
@@ -303,23 +376,27 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
     status: 'released',
     releasedAt: now,
     releaseTxHash: releaseTxHash || existing.releaseTxHash || null,
+    feeTxHash: feeTxHash || existing.feeTxHash || null,
+    sellerNetAmountUsdc: sellerNetAmount,
+    buyerTotalPayableUsdc: payableAmount,
+    feeAmountUsdc: feeAmount,
     updatedAt: now,
   };
 
   await db.updateServiceAgreement(updated);
 
   try {
-    // 1. Debit hold from buyer - records settlement of the hold
+    // Debit hold from buyer - records full settlement breakdown of held funds
     await createBalanceLedgerEntry(
       {
         userId: existing.buyerUserId,
         asset: ((existing.currency || 'usdc').toLowerCase() as any),
-        amount: String(existing.amountUsdc),
+        amount: String(payableAmount),
         kind: 'debit_transfer',
         status: 'completed',
         sourceType: 'service_agreement',
         sourceId: existing.id,
-        description: `Debit ${existing.amountUsdc} ${(existing.currency || 'USDC').toUpperCase()} released for Service Agreement (${existing.title})`
+        description: `Debit ${payableAmount} ${(existing.currency || 'USDC').toUpperCase()} released for Service Agreement (${existing.title}) [Contractor: ${sellerNetAmount}, Platform Fee: ${feeAmount}]`
       },
       { actorType: 'system', actorId: 'agreement_release' }
     );

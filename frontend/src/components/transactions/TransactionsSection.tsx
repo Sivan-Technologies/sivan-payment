@@ -408,22 +408,58 @@ function ServiceAgreementActionBox({
   serviceAgreements,
   api,
   onRefresh,
+  networkMode,
 }: {
   activityRow: ActivityRow;
   serviceAgreements?: ServiceAgreementsSummary;
   api?: any;
   onRefresh?: () => void;
+  networkMode?: 'mainnet' | 'testnet';
 }) {
   const [loading, setLoading] = useState(false);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const deal = serviceAgreements?.deals?.find((d) => d.escrowId === activityRow.id) || (activityRow.raw as any);
+  const deal = serviceAgreements?.deals?.find((d) => d.escrowId === activityRow.id || d.id === activityRow.id) || (activityRow.raw as any);
   const isSeller = deal?.role === 'seller' || activityRow.direction === 'in';
   const isBuyer = deal?.role === 'buyer' || activityRow.direction === 'out';
   const status = String(deal?.status || activityRow.status || '').toUpperCase();
-  const agreementId = deal?.escrowId || activityRow.id;
+  const agreementId = deal?.escrowId || deal?.id || activityRow.id;
+
+  const amount = Number(deal?.amountUsdc ?? deal?.amount ?? activityRow.amount ?? 0);
+  const currency = String(deal?.currency || activityRow.asset || 'USDC').toUpperCase();
+  const feeAmount = Number(deal?.feeAmountUsdc ?? (currency === 'USDC' ? (deal?.feeAmount ?? (amount * 0.01 < 0.5 ? 0.5 : amount * 0.01)) : 0));
+  const feePayer = deal?.feePayer || 'buyer';
+  const buyerTotal = Number(deal?.buyerTotalPayableUsdc ?? (feePayer === 'buyer' ? amount + feeAmount : feePayer === 'split' ? amount + (feeAmount / 2) : amount));
+  const sellerNet = Number(deal?.sellerNetAmountUsdc ?? (feePayer === 'seller' ? Math.max(0, amount - feeAmount) : feePayer === 'split' ? Math.max(0, amount - (feeAmount / 2)) : amount));
+
+  const network = String(deal?.network || activityRow.network || 'solana').toLowerCase();
+  const isMainnet = networkMode === 'mainnet';
+
+  const getExplorerTxUrl = (txHash: string) => {
+    if (network === 'stellar') {
+      return isMainnet
+        ? `https://stellar.expert/explorer/public/tx/${txHash}`
+        : `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+    }
+    if (network === 'celo') {
+      return isMainnet
+        ? `https://celoscan.io/tx/${txHash}`
+        : `https://alfajores.celoscan.io/tx/${txHash}`;
+    }
+    if (network === 'base') {
+      return isMainnet
+        ? `https://basescan.org/tx/${txHash}`
+        : `https://sepolia.basescan.org/tx/${txHash}`;
+    }
+    if (network === 'bsc' || network === 'bnb') {
+      return isMainnet
+        ? `https://bscscan.com/tx/${txHash}`
+        : `https://testnet.bscscan.com/tx/${txHash}`;
+    }
+    return `https://solscan.io/tx/${txHash}?cluster=${isMainnet ? 'mainnet' : 'devnet'}`;
+  };
 
   const handleDeliver = async () => {
     if (!api || !agreementId) return;
@@ -495,13 +531,28 @@ function ServiceAgreementActionBox({
 
   return (
     <div style={{ marginTop: '14px', padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
         <strong style={{ fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8' }}>
           Your Role: {isBuyer ? 'Client / Buyer' : 'Contractor / Seller'}
         </strong>
         <span style={{ fontSize: '12px', color: '#38bdf8' }}>
           {status === 'FUNDED' ? '🔒 Locked in Vault' : status === 'DELIVERED' ? '📦 Deliverables Submitted' : status === 'RELEASED' ? '✓ Settlement Complete' : status === 'PENDING_PAYMENT' ? '⏳ Awaiting Funding' : status === 'PENDING_ACCEPTANCE' ? '⏳ Pending Acceptance' : status === 'CANCELLED' ? '✕ Cancelled' : status}
         </span>
+      </div>
+
+      <div style={{ marginTop: '8px', marginBottom: '12px', padding: '10px 12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center' }}>
+        <div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>Milestone</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc' }}>{amount.toFixed(2)} {currency}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>Sivan Fee ({feePayer})</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#38bdf8' }}>{feeAmount.toFixed(2)} {currency}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>{isBuyer ? 'Total to Pay' : 'Net Settlement'}</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#4ade80' }}>{(isBuyer ? buyerTotal : sellerNet).toFixed(2)} {currency}</div>
+        </div>
       </div>
 
       {actionSuccess && (
@@ -590,30 +641,41 @@ function ServiceAgreementActionBox({
         </p>
       )}
 
-      {(deal?.fundingTxHash || deal?.releaseTxHash || deal?.txHash) && (
+      {(deal?.fundingTxHash || deal?.releaseTxHash || deal?.feeTxHash || deal?.txHash) && (
         <div style={{ marginTop: '12px', padding: '10px 12px', background: 'rgba(56,189,248,0.06)', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.2)' }}>
           <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginBottom: '6px' }}>
-            Blockchain Transaction Proof
+            Blockchain Settlement Receipts ({networkLabel(network)})
           </div>
           {deal.fundingTxHash && (
             <a
-              href={`https://solscan.io/tx/${deal.fundingTxHash}?cluster=devnet`}
+              href={getExplorerTxUrl(deal.fundingTxHash)}
               target="_blank"
               rel="noopener noreferrer"
               style={{ fontSize: '12px', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '4px' }}
             >
-              <span>🔒 Vault Funding Solscan Receipt</span>
+              <span>🔒 Vault Funding Receipt</span>
               <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
             </a>
           )}
           {deal.releaseTxHash && (
             <a
-              href={`https://solscan.io/tx/${deal.releaseTxHash}?cluster=devnet`}
+              href={getExplorerTxUrl(deal.releaseTxHash)}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '12px', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}
+              style={{ fontSize: '12px', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '4px' }}
             >
-              <span>✓ Settlement Release Solscan Receipt</span>
+              <span>✓ Contractor Settlement Release Receipt</span>
+              <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
+            </a>
+          )}
+          {deal.feeTxHash && (
+            <a
+              href={getExplorerTxUrl(deal.feeTxHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '12px', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}
+            >
+              <span>🧾 Sivan Platform Fee Receipt</span>
               <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
             </a>
           )}
@@ -724,7 +786,7 @@ function TransactionTimelinePanel({
         <Kv label="When" value={new Date(activityRow.createdAt).toLocaleString()} />
         {onChain && <Kv label="Settlement proof" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Locked in Solana Vault' : 'Confirmed'} />}
       </div>
-      {isAgreement && <ServiceAgreementActionBox activityRow={activityRow} serviceAgreements={serviceAgreements} api={api} onRefresh={onRefresh} />}
+      {isAgreement && <ServiceAgreementActionBox activityRow={activityRow} serviceAgreements={serviceAgreements} api={api} onRefresh={onRefresh} networkMode={networkMode} />}
       {link
         ? <a className="secondary-btn small explorer-link" href={link.url} target="_blank" rel="noreferrer" style={{ marginTop: '10px' }}>
             {chainMark && <NetworkLogo chain={chainMark} size={14} />}

@@ -261,7 +261,8 @@ export class McpServerEngine {
           estimatedNgn: Number(args.amountUsd) * 1550,
           destinationBankCode: args.bankCode,
           destinationAccountNumber: args.accountNumber,
-          settlementWindowSeconds: 3,
+          settlementWindowSeconds: 90,
+          settlementWindowEstimate: '1 to 2 minutes via NIP rails',
           channel: 'NIP_INSTANT_DIRECT',
         };
       }

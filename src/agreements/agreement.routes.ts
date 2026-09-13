@@ -9,6 +9,7 @@ import {
   getAgreement,
   getCountdownLabel,
 } from './agreement.service.js';
+import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import type { WalletChain } from '../database/types.js';
 
@@ -21,9 +22,32 @@ interface CreateAgreementBody {
   currency?: string;
   network: WalletChain;
   deadlineDays?: number;
+  feePayer?: FeePayer;
+  channel?: string;
 }
 
 export async function agreementRoutes(app: FastifyInstance) {
+  /**
+   * GET /api/agreements/quote
+   * Live preview of Sivan Service Agreement Platform Fee and net payout breakdown.
+   */
+  app.get<{
+    Querystring: {
+      amount: string;
+      network?: string;
+      feePayer?: FeePayer;
+    };
+  }>('/api/agreements/quote', async (req, reply) => {
+    const amount = parseFloat(req.query.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw badRequest('amount query parameter must be a positive number');
+    }
+    const network = req.query.network || 'solana';
+    const feePayer = req.query.feePayer || 'buyer';
+    const quote = quoteServiceAgreementFee(amount, network, feePayer);
+    return reply.code(200).send(quote);
+  });
+
   /**
    * POST /api/agreements
    * Create a new service agreement. Deadline is extracted from description
@@ -44,6 +68,8 @@ export async function agreementRoutes(app: FastifyInstance) {
       currency: body.currency,
       network: body.network,
       deadlineDays: body.deadlineDays,
+      feePayer: body.feePayer,
+      channel: body.channel,
     });
 
     return reply.code(201).send({
