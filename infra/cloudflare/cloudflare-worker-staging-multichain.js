@@ -13,18 +13,18 @@
 // ==============================================================================
 
 // ─── DYNAMIC UPSTREAM RESOLVER ───────────────────────────────────────────────
-// Sourced dynamically from Cloudflare Worker env bindings to avoid hardcoded URLs
+// Sourced strictly and dynamically from Cloudflare Worker env bindings.
+// No hardcoded or fallback URLs are allowed in the code per workspace rules.
 function resolveUpstreams(env = {}) {
   return {
-    escrowPrimary: env.UPSTREAM_ESCROW_API || env.ESCROW_API_URL || "https://sivan-escrow-agent-test-gb84.onrender.com",
-    escrowFallback: env.UPSTREAM_ESCROW_FALLBACK || env.ESCROW_FALLBACK_API_URL || "https://sivan-escrow-agent-test-gb84.onrender.com",
-    payments: env.UPSTREAM_PAYMENTS_API || env.PAYMENTS_API_URL || "https://sivan-payments-api-test.onrender.com",
-    telegram: env.UPSTREAM_TELEGRAM_API || env.TELEGRAM_API_URL || "https://sivan-telegram-service-bh32.onrender.com",
-    whatsapp: env.UPSTREAM_WHATSAPP_API || env.WHATSAPP_API_URL || "https://sivan-whatsapp-bot-test.onrender.com",
-    fraud: env.UPSTREAM_FRAUD_ENGINE || env.FRAUD_ENGINE_URL || "https://sivan-fraud-engine-staging.onrender.com",
-    frontend: env.UPSTREAM_FRONTEND_APP || env.FRONTEND_APP_URL || "https://sivan-payments-user-test.onrender.com",
-    auth: env.UPSTREAM_AUTH || env.AUTH_API_URL || "https://telegram-admin-auth-z3e8.onrender.com",
-    ai: env.UPSTREAM_SIVAN_AI || env.SIVAN_AI_URL || "https://ai.sivantech.online",
+    escrow: env.UPSTREAM_ESCROW_API || env.ESCROW_API_URL,
+    payments: env.UPSTREAM_PAYMENTS_API || env.PAYMENTS_API_URL,
+    telegram: env.UPSTREAM_TELEGRAM_API || env.TELEGRAM_API_URL,
+    whatsapp: env.UPSTREAM_WHATSAPP_API || env.WHATSAPP_API_URL,
+    fraud: env.UPSTREAM_FRAUD_ENGINE || env.FRAUD_ENGINE_URL,
+    frontend: env.UPSTREAM_FRONTEND_APP || env.FRONTEND_APP_URL,
+    auth: env.UPSTREAM_AUTH || env.AUTH_API_URL,
+    ai: env.UPSTREAM_SIVAN_AI || env.SIVAN_AI_URL,
   };
 }
 
@@ -65,18 +65,20 @@ function getCorsHeaders(request) {
     Vary: "Origin",
   };
 
-  if (origin && isAllowedOrigin(origin)) {
+  if (isAllowedOrigin(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Access-Control-Allow-Credentials"] = "true";
+  } else {
+    headers["Access-Control-Allow-Origin"] = "*";
   }
 
   return headers;
 }
 
 function applyCors(response, request) {
-  const cors = getCorsHeaders(request);
   const newHeaders = new Headers(response.headers);
-  for (const [key, value] of Object.entries(cors)) {
+  const corsHeaders = getCorsHeaders(request);
+  for (const [key, value] of Object.entries(corsHeaders)) {
     newHeaders.set(key, value);
   }
   return new Response(response.body, {
@@ -86,22 +88,23 @@ function applyCors(response, request) {
   });
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchWithTimeout(url, options, timeoutMs = UPSTREAM_TIMEOUT_MS) {
+async function fetchWithTimeout(resource, options = {}) {
+  const { timeout = UPSTREAM_TIMEOUT_MS } = options;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const id = setTimeout(() => controller.abort(), timeout);
+
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(timeoutId);
+    const response = await fetch(resource, {
+      ...options,
+      signal: controller.signal,
+    });
     return response;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
+  } finally {
+    clearTimeout(id);
   }
 }
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ─── GATEWAY REQUEST DISPATCHER ──────────────────────────────────────────────
 export default {
@@ -125,7 +128,6 @@ export default {
     const isApiHost = url.hostname.startsWith("api-staging") || url.hostname.startsWith("api.");
 
     let targetUpstream = upstreams.frontend;
-    let fallbackUpstream = null;
     let targetPath = pathname;
     let serviceName = "frontend";
 
@@ -147,8 +149,7 @@ export default {
       pathname === "/api/users/pair-whatsapp" ||
       pathname.startsWith("/api/paystack")
     ) {
-      targetUpstream = upstreams.escrowPrimary;
-      fallbackUpstream = upstreams.escrowFallback;
+      targetUpstream = upstreams.escrow;
       targetPath = pathname;
       serviceName = "escrow-api";
     } else if (pathname.startsWith("/api/telegram") || pathname.startsWith("/webhooks/telegram") || pathname === "/api/notify" || pathname.startsWith("/api/notify/telegram")) {
@@ -172,21 +173,42 @@ export default {
       targetPath = pathname.replace(/^\/api\/payment/, "") || "/";
       serviceName = "payments-api";
     } else if (isApiHost) {
-      // Entire api-staging.sivantech.online domain routes to Payments Backend
       targetUpstream = upstreams.payments;
       targetPath = pathname;
       serviceName = "payments-api-host";
     } else if (pathname.startsWith("/api/")) {
-      // Direct API call on web frontend domain -> Payments Backend
       targetUpstream = upstreams.payments;
       targetPath = pathname;
       serviceName = "payments-api-fallback";
     } else {
-      // Frontend static assets & SPA routes (/pin-pad, /claim, /agreements, etc.)
       targetUpstream = upstreams.frontend;
       targetPath = pathname;
       serviceName = "frontend-spa";
     }
+
+    if (!targetUpstream) {
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: "CONFIG_ERROR",
+            message: `Gateway upstream for service "${serviceName}" is not configured in environment variables.`,
+            requestId,
+            path: pathname,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+            ...getCorsHeaders(request),
+          },
+        }
+      );
+    }
+
+    // Build target destination URL
+    const targetUrl = new URL(targetPath + url.search, targetUpstream);
 
     // Clone headers and inject tracing
     const upstreamHeaders = new Headers(request.headers);
@@ -208,39 +230,27 @@ export default {
     const isRetryable = RETRYABLE_METHODS.has(request.method);
     const maxAttempts = isRetryable ? MAX_ATTEMPTS : 1;
 
-    const upstreamCandidates = [targetUpstream];
-    if (fallbackUpstream && fallbackUpstream !== targetUpstream) {
-      upstreamCandidates.push(fallbackUpstream);
-    }
-
     let lastError = null;
 
-    for (const upstream of upstreamCandidates) {
-      const targetUrl = new URL(targetPath + url.search, upstream);
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          const upstreamResponse = await fetchWithTimeout(targetUrl.toString(), fetchOptions);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const upstreamResponse = await fetchWithTimeout(targetUrl.toString(), fetchOptions);
 
-          // If backend returned 502/503 on a retryable GET, retry once or failover
-          if (isRetryable && [502, 503, 504].includes(upstreamResponse.status)) {
-            if (attempt < maxAttempts) {
-              await sleep(RETRY_DELAY_MS);
-              continue;
-            }
-            break;
-          }
+        if (isRetryable && [502, 503, 504].includes(upstreamResponse.status) && attempt < maxAttempts) {
+          await sleep(RETRY_DELAY_MS);
+          continue;
+        }
 
-          return applyCors(upstreamResponse, request);
-        } catch (err) {
-          lastError = err;
-          if (attempt < maxAttempts) {
-            await sleep(RETRY_DELAY_MS);
-          }
+        return applyCors(upstreamResponse, request);
+      } catch (err) {
+        lastError = err;
+        if (attempt < maxAttempts) {
+          await sleep(RETRY_DELAY_MS);
         }
       }
     }
 
-    // Fallback response if upstream is unreachable
+    // Response if upstream is unreachable
     console.error(`[${requestId}] [${serviceName}] Gateway error:`, lastError?.message || "Unknown error");
 
     const errorPayload = {

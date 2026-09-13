@@ -929,84 +929,52 @@ export async function identityRoutes(app: FastifyInstance) {
   });
 
   /**
-   * Direct proxy fallback for /api/users/escrows
+   * Direct proxy for /api/users/escrows
    */
   app.get('/api/users/escrows', async (request, reply) => {
     const configuredUrl = env.ESCROW_AGENT_URL;
-    const primaryUrl = configuredUrl;
-    const fallbackUrl = process.env.CORE_FALLBACK_API_URL || process.env.CORE_API_BASE_URL;
+    if (!configuredUrl) {
+      return reply.code(503).send({ error: { message: 'ESCROW_AGENT_URL environment variable is required but not configured' } });
+    }
     const coreSecret = process.env.CORE_API_SECRET ?? '';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/users/escrows${query ? `?${query}` : ''}`;
 
-    const tryFetch = async (targetBase: string) => {
-      const url = `${targetBase.replace(/\/$/, '')}/api/users/escrows${query ? `?${query}` : ''}`;
+    try {
       const res = await fetch(url, {
         headers: {
           'x-core-api-key': coreSecret,
         },
       });
-      if (!res.ok && res.status >= 500) {
-        throw new Error(`Upstream returned ${res.status}`);
-      }
-      return res;
-    };
-
-    try {
-      const res = await tryFetch(primaryUrl);
       const data = await res.json();
       return reply.code(res.status).send(data);
-    } catch (primaryErr: any) {
-      if (!fallbackUrl || fallbackUrl === primaryUrl) {
-        return reply.code(502).send({ error: { message: primaryErr?.message || 'Escrow API unavailable' } });
-      }
-      try {
-        const res = await tryFetch(fallbackUrl);
-        const data = await res.json();
-        return reply.code(res.status).send(data);
-      } catch (fallbackErr: any) {
-        return reply.code(502).send({ error: { message: fallbackErr?.message || primaryErr?.message || 'Escrow API unavailable' } });
-      }
+    } catch (err: any) {
+      return reply.code(502).send({ error: { message: err?.message || 'Service Agreement API unreachable' } });
     }
   });
 
   /**
-   * Direct proxy fallback for /api/users/profile
+   * Direct proxy for /api/users/profile
    */
   app.get('/api/users/profile', async (request, reply) => {
     const configuredUrl = env.ESCROW_AGENT_URL;
-    const primaryUrl = configuredUrl;
-    const fallbackUrl = process.env.CORE_FALLBACK_API_URL || process.env.CORE_API_BASE_URL;
+    if (!configuredUrl) {
+      return reply.code(503).send({ error: { message: 'ESCROW_AGENT_URL environment variable is required but not configured' } });
+    }
     const coreSecret = process.env.CORE_API_SECRET ?? '';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/users/profile${query ? `?${query}` : ''}`;
 
-    const tryFetch = async (targetBase: string) => {
-      const url = `${targetBase.replace(/\/$/, '')}/api/users/profile${query ? `?${query}` : ''}`;
+    try {
       const res = await fetch(url, {
         headers: {
           'x-core-api-key': coreSecret,
         },
       });
-      if (!res.ok && res.status >= 500) {
-        throw new Error(`Upstream returned ${res.status}`);
-      }
-      return res;
-    };
-
-    try {
-      const res = await tryFetch(primaryUrl);
       const data = await res.json();
       return reply.code(res.status).send(data);
-    } catch (primaryErr: any) {
-      if (!fallbackUrl || fallbackUrl === primaryUrl) {
-        return reply.code(502).send({ error: { message: primaryErr?.message || 'Escrow API unavailable' } });
-      }
-      try {
-        const res = await tryFetch(fallbackUrl);
-        const data = await res.json();
-        return reply.code(res.status).send(data);
-      } catch (fallbackErr: any) {
-        return reply.code(502).send({ error: { message: fallbackErr?.message || primaryErr?.message || 'Escrow API unavailable' } });
-      }
+    } catch (err: any) {
+      return reply.code(502).send({ error: { message: err?.message || 'Service Agreement API unreachable' } });
     }
   });
 }
