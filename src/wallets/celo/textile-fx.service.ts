@@ -308,15 +308,29 @@ export async function getTextileFxQuote(
   }
 
 // Institutional market benchmark fallback (NGN/USDC)
-let lastKnownLiveRate = 1518.40;
+// Dynamically configurable via CELO_DEFAULT_FX_RATE or TEXTILE_DEFAULT_FX_RATE
+let lastKnownLiveRate = Number(process.env.CELO_DEFAULT_FX_RATE || process.env.TEXTILE_DEFAULT_FX_RATE) || 1518.40;
+
+async function fetchWithHardTimeout(url: string, ms = 2000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await Promise.race([
+      fetch(url, { signal: controller.signal }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms))
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
   let liveRate: number | undefined;
 
   // 1. Primary institutional market oracle (Binance orderbook rate for USDT/NGN)
   try {
-    const bRes = await fetch(
+    const bRes = await fetchWithHardTimeout(
       'https://api.binance.com/api/v3/ticker/price?symbol=USDTNGN',
-      { signal: AbortSignal.timeout(2500) }
+      2000
     );
     if (bRes.ok) {
       const data: any = await bRes.json();
@@ -331,9 +345,9 @@ let lastKnownLiveRate = 1518.40;
   // 2. Secondary live market oracle (CoinGecko USD/NGN stablecoin rate)
   if (!liveRate) {
     try {
-      const cgRes = await fetch(
+      const cgRes = await fetchWithHardTimeout(
         'https://api.coingecko.com/api/v3/simple/price?ids=usd-coin,tether&vs_currencies=ngn',
-        { signal: AbortSignal.timeout(2500) }
+        2000
       );
       if (cgRes.ok) {
         const data: any = await cgRes.json();
