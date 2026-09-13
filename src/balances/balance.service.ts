@@ -445,7 +445,8 @@ export async function getUserBalance(userId: string) {
   const entries = await listUserBalanceLedger(userId);
   const byAsset: Record<string, { asset: string; pending: number; available: number; held: number; spent: number; totalCredited: number }> = {};
   const ensure = (asset: string) => byAsset[asset] ||= { asset, pending: 0, available: 0, held: 0, spent: 0, totalCredited: 0 };
-  for (const entry of entries) {
+  const chronologicalEntries = [...entries].reverse();
+  for (const entry of chronologicalEntries) {
     const row = ensure(entry.asset);
     const value = amount(entry.amount);
     if (entry.kind === 'credit_available' || entry.kind === 'adjustment') {
@@ -455,12 +456,18 @@ export async function getUserBalance(userId: string) {
       row.totalCredited += Math.max(value, 0);
     }
     if (entry.kind === 'hold') { row.available -= value; row.held += value; }
-    if (entry.kind === 'hold_release') { row.available += value; row.held -= value; }
-    if (entry.kind === 'debit_transfer') { row.held -= value; row.spent += value; }
-    // Identical arithmetic to debit_transfer. The distinction is in the RECORD,
-    // not the balance: the user's money is gone either way, but only this entry
-    // is Sivan's revenue.
-    if (entry.kind === 'fee') { row.held -= value; row.spent += value; }
+    if (entry.kind === 'hold_release') {
+      row.available += value;
+      const releaseFromHeld = Math.min(Math.max(0, row.held), value);
+      const releaseFromSpent = value - releaseFromHeld;
+      row.held -= releaseFromHeld;
+      row.spent = Math.max(0, row.spent - releaseFromSpent);
+    }
+    if (entry.kind === 'debit_transfer' || entry.kind === 'fee') {
+      const debitFromHeld = Math.min(Math.max(0, row.held), value);
+      row.held -= debitFromHeld;
+      row.spent += value;
+    }
   }
   return {
     userId,
