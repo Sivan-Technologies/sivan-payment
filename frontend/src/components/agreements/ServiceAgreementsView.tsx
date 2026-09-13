@@ -436,8 +436,8 @@ export function ServiceAgreementsView({
                         <span style={{ fontFamily: 'var(--mono)' }}>{dealId}</span> • {(deal.network || 'solana').toUpperCase()} • {deal.role || (isBuyer ? 'Buyer' : 'Seller')}
                       </small>
                     </div>
-                    <div className="activity-amount">
-                      <strong className="amount" style={{ color: '#16856d' }}>
+                    <div className="activity-figures agreement-figures">
+                      <strong className="agreement-amount">
                         {deal.amount} {deal.currency || 'USDC'}
                       </strong>
                       <span className={`badge ${statusClass(deal.status)}`}>
