@@ -190,7 +190,7 @@ async function main() {
     const baseBody: any = await baseTransferRes.json();
     assert.equal(baseBody.success, true);
     assert.equal(baseBody.network, 'base');
-    assert.ok(baseBody.explorerUrl.includes('etherscan.io'));
+    assert.ok(baseBody.explorerUrl.includes('basescan.org'));
     recordPass('executes programmatic Base EVM transfer');
 
     // 7. Programmatic Service Agreement Creation
@@ -217,7 +217,7 @@ async function main() {
     assert.ok(agreementBody.paymentInstruction.depositAddress);
     recordPass('creates programmatic service agreement on Stellar');
 
-    // 6. Programmatic Settlement
+    // 6. Programmatic Settlement Boundary
     const settleRes = await fetch(`${baseUrl}/api/v1/developer/settle`, {
       method: 'POST',
       headers: {
@@ -230,11 +230,10 @@ async function main() {
         releaseNotes: 'Agent verified task quality',
       }),
     });
-    assert.equal(settleRes.status, 200);
+    assert.equal(settleRes.status, 400);
     const settleBody: any = await settleRes.json();
-    assert.equal(settleBody.success, true);
-    assert.equal(settleBody.status, 'RELEASED');
-    recordPass('settles service agreement with fee deduction receipt');
+    assert.ok(settleBody.message?.includes('not yet available via the developer API') || settleBody.error?.message?.includes('not yet available via the developer API') || settleBody.error?.includes('not yet available via the developer API'));
+    recordPass('enforces honest settlement boundary directing users to payment application');
 
     // 7. Unified Spendable Balance Query
     console.log('\n══ 5. Unified Agent Treasury Balance Query ══');
