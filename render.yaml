@@ -357,6 +357,11 @@ services:
         value: "1.0"
       - key: SIVAN_NGN_MINIMUM_FEE_NGN
         value: "0"
+      # ---- Textile Credit, the Celo NGN rail ----
+      - key: TEXTILE_CREDIT_API_URL
+        sync: false
+      - key: TEXTILE_CREDIT_API_KEY
+        sync: false
       # ---- Privy embedded wallets ----
       # Present so the adapter can authenticate, but WALLET_PROVIDER above is
       # still 'bridge'. Privy wallets are user-owned: Sivan cannot sign for
@@ -657,6 +662,11 @@ services:
         value: "1.0"
       - key: SIVAN_NGN_MINIMUM_FEE_NGN
         value: "0"
+      # ---- Textile Credit, the Celo NGN rail ----
+      - key: TEXTILE_CREDIT_API_URL
+        sync: false
+      - key: TEXTILE_CREDIT_API_KEY
+        sync: false
       # ---- Privy embedded wallets ----
       # WALLET_PROVIDER above remains 'bridge'. These are present so the Privy
       # adapter can authenticate when it is switched on; they do not switch it
