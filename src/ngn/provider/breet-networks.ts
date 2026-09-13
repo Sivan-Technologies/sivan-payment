@@ -62,8 +62,8 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     network: 'solana',
     breetWithdrawalNetwork: 'SOL',
     deposit: {
-      usdc: { mainnet: 'SOL_USDC_PTHX', testnet: 'SOL_USDC_JKVK', minUsd: 15 },
-      usdt: { mainnet: 'SOL_USDT_EWAY', testnet: 'USDT_B7ZDHS8D_TOR7', minUsd: 15 },
+      usdc: { mainnet: 'SOL_USDC_PTHX', testnet: 'SOL_USDC_JKVK', minUsd: 15.7 },
+      usdt: { mainnet: 'SOL_USDT_EWAY', testnet: 'USDT_B7ZDHS8D_TOR7', minUsd: 15.7 },
     },
     withdrawal: { usdc: true, usdt: true },
   },
@@ -93,7 +93,7 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
       usdc: {
         mainnet: 'USDC_BASECHAIN_ETH_5I5C',
         testnet: 'USDC_BASECHAIN_ETH_TEST5_8SH8',
-        minUsd: 15,
+        minUsd: 15.7,
       },
     },
     withdrawal: { usdc: true },
@@ -105,12 +105,12 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
       usdc: {
         mainnet: 'USDC_BSC',
         testnet: 'USDC_BSC_TEST',
-        minUsd: 10,
+        minUsd: 15.7,
       },
       usdt: {
         mainnet: 'USDT_BSC',
         testnet: 'USDT_BSC_TEST',
-        minUsd: 15,
+        minUsd: 15.7,
       },
     },
     withdrawal: { usdc: true, usdt: true },
@@ -191,6 +191,9 @@ export function breetMinimumDepositUsd(
   if (network === 'celo') return 1;
   const entry = capability(network)?.deposit?.[asset];
   if (!entry) return undefined;
+
+  const envMin = Number(process.env.BREET_MINIMUM_WITHDRAW_USD || process.env.BREET_MIN_USD);
+  if (Number.isFinite(envMin) && envMin > 0) return envMin;
 
   // LIVE VALUE FIRST. This function used to return `entry.minUsd` (hardcoded
   // 15 everywhere) in production and a flat 1 in development. Both were wrong:

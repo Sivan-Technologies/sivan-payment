@@ -58,10 +58,10 @@ async function run() {
   check('solana label is Solana', networkDisplayLabel('solana') === 'Solana');
 
   const solanaUsdcFloor = breetMinimumDepositUsd('solana', 'usdc', 'production');
-  check('solana USDC minimum is 15 USD', solanaUsdcFloor === 15);
+  check('solana USDC minimum is 15.7 USD', solanaUsdcFloor === 15.7);
 
   const solanaUsdtFloor = breetMinimumDepositUsd('solana', 'usdt', 'production');
-  check('solana USDT minimum is 15 USD', solanaUsdtFloor === 15);
+  check('solana USDT minimum is 15.7 USD', solanaUsdtFloor === 15.7);
 
   // ---------------------------------------------------------------------------
   // 2. BASE RAIL (USDC)
@@ -74,7 +74,7 @@ async function run() {
   check('base label is Base', networkDisplayLabel('base') === 'Base');
 
   const baseUsdcFloor = breetMinimumDepositUsd('base', 'usdc', 'production');
-  check('base USDC minimum is 15 USD', baseUsdcFloor === 15);
+  check('base USDC minimum is 15.7 USD', baseUsdcFloor === 15.7);
 
   // ---------------------------------------------------------------------------
   // 3. BSC (BNB SMART CHAIN) RAIL (USDC & USDT)
@@ -88,10 +88,10 @@ async function run() {
   check('bsc label is BNB Smart Chain', networkDisplayLabel('bsc') === 'BNB Smart Chain');
 
   const bscUsdcFloor = breetMinimumDepositUsd('bsc', 'usdc', 'production');
-  check('bsc USDC minimum is 10 USD', bscUsdcFloor === 10);
+  check('bsc USDC minimum is 15.7 USD', bscUsdcFloor === 15.7);
 
   const bscUsdtFloor = breetMinimumDepositUsd('bsc', 'usdt', 'production');
-  check('bsc USDT minimum is 15 USD', bscUsdtFloor === 15);
+  check('bsc USDT minimum is 15.7 USD', bscUsdtFloor === 15.7);
 
   // ---------------------------------------------------------------------------
   // 4. CELO RAIL (USDC & cNGN via Textile Credit FX)

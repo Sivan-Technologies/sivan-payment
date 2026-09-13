@@ -153,8 +153,8 @@ console.log('\nMINIMUMS ARE PER ASSET, NOT GLOBAL');
   check('ethereum usdc mainnet minimum is 15',
     breetMinimumDepositUsd('ethereum' as any, 'usdc', 'production') === 15,
     String(breetMinimumDepositUsd('ethereum' as any, 'usdc', 'production')));
-  check('solana usdt mainnet minimum is 15',
-    breetMinimumDepositUsd('solana' as any, 'usdt', 'production') === 15);
+  check('solana usdt mainnet minimum is 15.7',
+    breetMinimumDepositUsd('solana' as any, 'usdt', 'production') === 15.7);
   check('tron usdt is higher at 20',
     breetMinimumDepositUsd('tron' as any, 'usdt', 'production') === 20,
     String(breetMinimumDepositUsd('tron' as any, 'usdt', 'production')));
