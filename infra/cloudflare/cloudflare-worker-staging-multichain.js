@@ -12,17 +12,21 @@
 //   - Full CORS, WebAuthn headers, and resilient retry logic
 // ==============================================================================
 
-// ─── UPSTREAM CONFIGURATION ──────────────────────────────────────────────────
-// Update these endpoints with your active staging services
-const UPSTREAM_ESCROW_API = "https://sivan-escrow-agent-test.onrender.com";
-const UPSTREAM_PAYMENTS_API = "https://sivan-payments-api-test.onrender.com";
-const UPSTREAM_TELEGRAM_API = "https://sivan-telegram-service-bh32.onrender.com";
-const UPSTREAM_WHATSAPP_API = "https://sivan-whatsapp-bot-test.onrender.com";
-const UPSTREAM_FRAUD_ENGINE = "https://sivan-fraud-engine-staging.onrender.com";
-const UPSTREAM_FRONTEND_APP = "https://sivan-payments-user-test.onrender.com";
-const UPSTREAM_AUTH = "https://telegram-admin-auth-z3e8.onrender.com";
-
-const UPSTREAM_SIVAN_AI = "https://ai.sivantech.online";
+// ─── DYNAMIC UPSTREAM RESOLVER ───────────────────────────────────────────────
+// Sourced dynamically from Cloudflare Worker env bindings to avoid hardcoded URLs
+function resolveUpstreams(env = {}) {
+  return {
+    escrowPrimary: env.UPSTREAM_ESCROW_API || env.ESCROW_API_URL || "https://sivan-escrow-agent-test-gb84.onrender.com",
+    escrowFallback: env.UPSTREAM_ESCROW_FALLBACK || env.ESCROW_FALLBACK_API_URL || "https://sivan-escrow-agent-test-gb84.onrender.com",
+    payments: env.UPSTREAM_PAYMENTS_API || env.PAYMENTS_API_URL || "https://sivan-payments-api-test.onrender.com",
+    telegram: env.UPSTREAM_TELEGRAM_API || env.TELEGRAM_API_URL || "https://sivan-telegram-service-bh32.onrender.com",
+    whatsapp: env.UPSTREAM_WHATSAPP_API || env.WHATSAPP_API_URL || "https://sivan-whatsapp-bot-test.onrender.com",
+    fraud: env.UPSTREAM_FRAUD_ENGINE || env.FRAUD_ENGINE_URL || "https://sivan-fraud-engine-staging.onrender.com",
+    frontend: env.UPSTREAM_FRONTEND_APP || env.FRONTEND_APP_URL || "https://sivan-payments-user-test.onrender.com",
+    auth: env.UPSTREAM_AUTH || env.AUTH_API_URL || "https://telegram-admin-auth-z3e8.onrender.com",
+    ai: env.UPSTREAM_SIVAN_AI || env.SIVAN_AI_URL || "https://ai.sivantech.online",
+  };
+}
 
 // ─── CORS WHITELIST ──────────────────────────────────────────────────────────
 const ALLOWED_ORIGIN_PATTERNS = [
@@ -116,20 +120,22 @@ export default {
 
     const url = new URL(request.url);
     const pathname = url.pathname;
+    const upstreams = resolveUpstreams(env);
 
     const isApiHost = url.hostname.startsWith("api-staging") || url.hostname.startsWith("api.");
 
-    let targetUpstream = UPSTREAM_FRONTEND_APP;
+    let targetUpstream = upstreams.frontend;
+    let fallbackUpstream = null;
     let targetPath = pathname;
     let serviceName = "frontend";
 
     // 2. Intelligent Route Matching
     if (pathname.startsWith("/api/v1/fraud")) {
-      targetUpstream = UPSTREAM_FRAUD_ENGINE;
+      targetUpstream = upstreams.fraud;
       targetPath = pathname;
       serviceName = "fraud-engine";
     } else if (pathname.startsWith("/mcp")) {
-      targetUpstream = UPSTREAM_PAYMENTS_API;
+      targetUpstream = upstreams.payments;
       targetPath = pathname;
       serviceName = "mcp-gateway";
     } else if (
@@ -141,48 +147,46 @@ export default {
       pathname === "/api/users/pair-whatsapp" ||
       pathname.startsWith("/api/paystack")
     ) {
-      targetUpstream = UPSTREAM_ESCROW_API;
+      targetUpstream = upstreams.escrowPrimary;
+      fallbackUpstream = upstreams.escrowFallback;
       targetPath = pathname;
       serviceName = "escrow-api";
     } else if (pathname.startsWith("/api/telegram") || pathname.startsWith("/webhooks/telegram") || pathname === "/api/notify" || pathname.startsWith("/api/notify/telegram")) {
-      targetUpstream = UPSTREAM_TELEGRAM_API;
+      targetUpstream = upstreams.telegram;
       targetPath = pathname.startsWith("/api/telegram") ? (pathname.replace(/^\/api\/telegram/, "") || "/") : (pathname.startsWith("/api/notify/telegram") ? "/api/notify" : pathname);
       serviceName = "telegram-service";
     } else if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/webhooks/whatsapp") || pathname.startsWith("/webhooks/twilio") || pathname.startsWith("/webhooks/meta")) {
-      targetUpstream = UPSTREAM_WHATSAPP_API;
+      targetUpstream = upstreams.whatsapp;
       targetPath = pathname.startsWith("/api/whatsapp") ? (pathname.replace(/^\/api\/whatsapp/, "") || "/") : pathname;
       serviceName = "whatsapp-service";
     } else if (pathname.startsWith("/api/admin-auth")) {
-      targetUpstream = UPSTREAM_AUTH;
+      targetUpstream = upstreams.auth;
       targetPath = pathname.replace(/^\/api\/admin-auth/, "") || "/";
       serviceName = "admin-auth";
     } else if (pathname.startsWith("/api/sivan-ai") || pathname.startsWith("/api/ai")) {
-      targetUpstream = UPSTREAM_SIVAN_AI;
+      targetUpstream = upstreams.ai;
       targetPath = pathname.startsWith("/api/sivan-ai") ? (pathname.replace(/^\/api\/sivan-ai/, "") || "/") : pathname;
       serviceName = "sivan-ai";
     } else if (pathname.startsWith("/api/payment")) {
-      targetUpstream = UPSTREAM_PAYMENTS_API;
+      targetUpstream = upstreams.payments;
       targetPath = pathname.replace(/^\/api\/payment/, "") || "/";
       serviceName = "payments-api";
     } else if (isApiHost) {
       // Entire api-staging.sivantech.online domain routes to Payments Backend
-      targetUpstream = UPSTREAM_PAYMENTS_API;
+      targetUpstream = upstreams.payments;
       targetPath = pathname;
       serviceName = "payments-api-host";
     } else if (pathname.startsWith("/api/")) {
       // Direct API call on web frontend domain -> Payments Backend
-      targetUpstream = UPSTREAM_PAYMENTS_API;
+      targetUpstream = upstreams.payments;
       targetPath = pathname;
       serviceName = "payments-api-fallback";
     } else {
       // Frontend static assets & SPA routes (/pin-pad, /claim, /agreements, etc.)
-      targetUpstream = UPSTREAM_FRONTEND_APP;
+      targetUpstream = upstreams.frontend;
       targetPath = pathname;
       serviceName = "frontend-spa";
     }
-
-    // Build target destination URL
-    const targetUrl = new URL(targetPath + url.search, targetUpstream);
 
     // Clone headers and inject tracing
     const upstreamHeaders = new Headers(request.headers);
@@ -204,23 +208,34 @@ export default {
     const isRetryable = RETRYABLE_METHODS.has(request.method);
     const maxAttempts = isRetryable ? MAX_ATTEMPTS : 1;
 
+    const upstreamCandidates = [targetUpstream];
+    if (fallbackUpstream && fallbackUpstream !== targetUpstream) {
+      upstreamCandidates.push(fallbackUpstream);
+    }
+
     let lastError = null;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const upstreamResponse = await fetchWithTimeout(targetUrl.toString(), fetchOptions);
+    for (const upstream of upstreamCandidates) {
+      const targetUrl = new URL(targetPath + url.search, upstream);
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const upstreamResponse = await fetchWithTimeout(targetUrl.toString(), fetchOptions);
 
-        // If backend returned 502/503 on a retryable GET, retry once
-        if (isRetryable && [502, 503, 504].includes(upstreamResponse.status) && attempt < maxAttempts) {
-          await sleep(RETRY_DELAY_MS);
-          continue;
-        }
+          // If backend returned 502/503 on a retryable GET, retry once or failover
+          if (isRetryable && [502, 503, 504].includes(upstreamResponse.status)) {
+            if (attempt < maxAttempts) {
+              await sleep(RETRY_DELAY_MS);
+              continue;
+            }
+            break;
+          }
 
-        return applyCors(upstreamResponse, request);
-      } catch (err) {
-        lastError = err;
-        if (attempt < maxAttempts) {
-          await sleep(RETRY_DELAY_MS);
+          return applyCors(upstreamResponse, request);
+        } catch (err) {
+          lastError = err;
+          if (attempt < maxAttempts) {
+            await sleep(RETRY_DELAY_MS);
+          }
         }
       }
     }

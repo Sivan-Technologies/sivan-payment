@@ -934,7 +934,7 @@ export async function identityRoutes(app: FastifyInstance) {
   app.get('/api/users/escrows', async (request, reply) => {
     const configuredUrl = env.ESCROW_AGENT_URL;
     const primaryUrl = configuredUrl;
-    const fallbackUrl = process.env.CORE_API_BASE_URL;
+    const fallbackUrl = process.env.CORE_FALLBACK_API_URL || process.env.CORE_API_BASE_URL;
     const coreSecret = process.env.CORE_API_SECRET ?? '';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
 
@@ -956,7 +956,7 @@ export async function identityRoutes(app: FastifyInstance) {
       const data = await res.json();
       return reply.code(res.status).send(data);
     } catch (primaryErr: any) {
-      if (!fallbackUrl) {
+      if (!fallbackUrl || fallbackUrl === primaryUrl) {
         return reply.code(502).send({ error: { message: primaryErr?.message || 'Escrow API unavailable' } });
       }
       try {
@@ -975,7 +975,7 @@ export async function identityRoutes(app: FastifyInstance) {
   app.get('/api/users/profile', async (request, reply) => {
     const configuredUrl = env.ESCROW_AGENT_URL;
     const primaryUrl = configuredUrl;
-    const fallbackUrl = process.env.CORE_API_BASE_URL;
+    const fallbackUrl = process.env.CORE_FALLBACK_API_URL || process.env.CORE_API_BASE_URL;
     const coreSecret = process.env.CORE_API_SECRET ?? '';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
 
@@ -997,7 +997,7 @@ export async function identityRoutes(app: FastifyInstance) {
       const data = await res.json();
       return reply.code(res.status).send(data);
     } catch (primaryErr: any) {
-      if (!fallbackUrl) {
+      if (!fallbackUrl || fallbackUrl === primaryUrl) {
         return reply.code(502).send({ error: { message: primaryErr?.message || 'Escrow API unavailable' } });
       }
       try {
