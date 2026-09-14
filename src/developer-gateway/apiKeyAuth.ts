@@ -8,11 +8,17 @@ export interface DeveloperAuthContext {
   developerName: string;
 }
 
-const VALID_DEV_KEYS = new Set([
-  'sk_test_sivan_developer_default',
-  'sk_live_sivan_agent_master',
-  process.env.SIVAN_DEV_API_KEY || 'sk_test_sivan_dev_sandbox',
-]);
+function getValidDevKeys(): Set<string> {
+  const keys = new Set<string>();
+  if (process.env.SIVAN_DEV_API_KEY) {
+    keys.add(process.env.SIVAN_DEV_API_KEY);
+  }
+  if (env.APP_ENV !== 'production') {
+    keys.add('sk_test_sivan_developer_default');
+    keys.add('sk_test_sivan_dev_sandbox');
+  }
+  return keys;
+}
 
 /**
  * Fastify preHandler to authenticate external developers and AI agents.
@@ -32,7 +38,11 @@ export async function requireDeveloperApiKey(
   }
 
   // Check key validity
-  const isRecognized = apiKey.startsWith('sk_test_') || apiKey.startsWith('sk_live_') || VALID_DEV_KEYS.has(apiKey);
+  const validKeys = getValidDevKeys();
+  const isRecognized =
+    (env.APP_ENV !== 'production' && apiKey.startsWith('sk_test_')) ||
+    validKeys.has(apiKey) ||
+    (Boolean(process.env.SIVAN_DEV_API_KEY) && apiKey === process.env.SIVAN_DEV_API_KEY);
   if (!isRecognized) {
     throw unauthorized('Invalid Sivan developer API key provided.');
   }
