@@ -365,6 +365,20 @@ export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
  * quotes the base fee and the UI shows the surcharge as conditional; the
  * transfer path resolves it for real before charging.
  */
+export function resolveTransferFeeWallet(network: string): string {
+  const n = (network || '').toLowerCase().trim();
+  if (n === 'solana') {
+    return process.env.SIVAN_FEE_WALLET_SOLANA?.trim() || env.SIVAN_FEE_WALLET_SOLANA?.trim() || '';
+  }
+  if (n === 'stellar') {
+    return process.env.SIVAN_FEE_WALLET_STELLAR?.trim() || env.SIVAN_FEE_WALLET_STELLAR?.trim() || '';
+  }
+  if (n === 'celo') {
+    return process.env.SIVAN_FEE_WALLET_CELO?.trim() || env.SIVAN_FEE_WALLET_CELO?.trim() || '';
+  }
+  return process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
+}
+
 export async function quoteTransfer(
   amount: number,
   options: { createsRecipientAccount?: boolean; network?: string } = {}
@@ -394,7 +408,11 @@ export async function quoteTransfer(
     newRecipientUsd: adminFees?.transferFeeNewRecipientUsd ?? networkBase.newRecipientUsd,
   };
 
-  return quoteTransferFee(amount, config, feeOptions);
+  const quote = quoteTransferFee(amount, config, feeOptions);
+  return {
+    ...quote,
+    feeWallet: resolveTransferFeeWallet(network || ''),
+  };
 }
 
 export async function updateBalanceTransferControls(input: z.infer<typeof balanceTransferControlsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {

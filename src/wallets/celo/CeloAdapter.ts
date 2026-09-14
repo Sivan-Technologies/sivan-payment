@@ -90,6 +90,7 @@ export class CeloAdapter implements IChainAdapter {
       idempotencyKey: params.idempotencyKey,
       reference: params.idempotencyKey,
       feeCurrency: feeCurrencyAddress,
+      feeAmount: params.feeAmount,
     });
 
     return {

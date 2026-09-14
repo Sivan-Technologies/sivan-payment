@@ -25,6 +25,10 @@ export interface DeveloperTransferResponse {
   network: WalletChain;
   asset: string;
   amount: number;
+  fee?: number;
+  netAmount?: number;
+  feeWallet?: string;
+  feeTxHash?: string;
   feeSponsored: boolean;
   explorerUrl: string;
   timestamp: string;

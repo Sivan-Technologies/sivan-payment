@@ -69,6 +69,7 @@ export class SolanaAdapter implements IChainAdapter {
       toAddress: params.toAddress,
       idempotencyKey: params.idempotencyKey,
       reference: params.idempotencyKey,
+      feeAmount: params.feeAmount,
     });
 
     return {

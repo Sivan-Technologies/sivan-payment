@@ -1,5 +1,6 @@
 import { getChainAdapter } from '../wallets/chain-adapter-registry.js';
 import { getSpendable, getUnifiedBalance } from '../balances/unified-balance.service.js';
+import { quoteTransfer } from '../balances/balance.service.js';
 import {
   DeveloperTransferRequest,
   DeveloperTransferResponse,
@@ -42,11 +43,16 @@ export class DeveloperGatewayService {
       throw badRequest(`Destination address is invalid for network ${input.network}: ${input.destinationAddress}`);
     }
 
+    const feeQuote = await quoteTransfer(Number(input.amount), { network: input.network });
+    const feeNum = Number(feeQuote.fee ?? 0);
+    const netAmount = Number(feeQuote.netAmount ?? input.amount);
+
     const key = idempotencyKey || `dev_tx_${input.userId}_${Date.now()}`;
     const result = await adapter.transfer({
       fromUserId: input.userId,
       toAddress: input.destinationAddress,
-      amountUsdc: input.amount,
+      amountUsdc: netAmount,
+      feeAmount: feeNum > 0 ? String(feeNum) : undefined,
       idempotencyKey: key,
       asset: input.asset,
     });
@@ -60,6 +66,9 @@ export class DeveloperGatewayService {
       network: input.network,
       asset: input.asset || 'usdc',
       amount: input.amount,
+      fee: feeNum,
+      netAmount,
+      feeWallet: feeQuote.feeWallet,
       feeSponsored: input.network === 'stellar',
       explorerUrl,
       timestamp: result.timestamp,
