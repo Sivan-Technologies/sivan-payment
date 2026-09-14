@@ -304,7 +304,7 @@ export function buildActivityFeed(sources: ActivitySources): ActivityRow[] {
       state: activityState(b.status),
       createdAt: b.createdAt,
       providerReference: b.txHash || b.userOperationHash || b.transferId,
-      network: (b as any).network === 'sivan_p2p' ? undefined : b.network,
+      network: isP2p ? 'sivan_p2p' : b.network,
       raw: b,
     });
   }

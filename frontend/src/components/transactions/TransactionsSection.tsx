@@ -755,17 +755,18 @@ function TransactionTimelinePanel({
   if (!transaction?.timeline && activityRow) {
     const deal = serviceAgreements?.deals?.find((d) => d.escrowId === activityRow.id || d.id === activityRow.id) || (activityRow.raw as any);
     const isAgreement = activityRow.label.startsWith('Agreement:') || Boolean((activityRow.raw as any)?.escrowId) || Boolean(deal?.escrowId);
+    const isP2p = activityRow.kind === 'balance_transfer' && (activityRow.network === 'sivan_p2p' || (activityRow.raw as any)?.network === 'sivan_p2p' || activityRow.label.includes('P2P'));
     const link = explorerLink({
       network: activityRow.network,
       txHash: activityRow.providerReference,
       networkMode,
     });
     const chainMark = logoChainFor(activityRow.network);
-    const onChain = Boolean(activityRow.network);
+    const onChain = Boolean(activityRow.network) && activityRow.network !== 'sivan_p2p';
     return <aside className="transaction-timeline-card">
       <div className="timeline-card-head">
         <div>
-          <p className="eyebrow">{isAgreement ? 'Service Agreement' : 'Transaction'}</p>
+          <p className="eyebrow">{isAgreement ? 'Service Agreement' : isP2p ? 'P2P Direct Transfer' : 'Transaction'}</p>
           <h3>{activityRow.label}</h3>
           <small>{activityRow.statusLabel}</small>
         </div>
@@ -776,7 +777,7 @@ function TransactionTimelinePanel({
         <Kv label="Agreement / Request ID" value={activityRow.id} />
         <Kv label="Amount" value={`${activityRow.amount} ${activityRow.currency}`} />
         <Kv label="Asset" value={activityRow.asset ?? activityRow.currency} />
-        {isAgreement && (
+        {(isAgreement || Boolean((activityRow.raw as any)?.channel)) && (
           <Kv
             label="Origin Channel"
             value={
@@ -790,9 +791,10 @@ function TransactionTimelinePanel({
             }
           />
         )}
-        <Kv label="Network" value={onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
+        <Kv label="Network" value={isP2p ? 'Sivan Instant P2P' : onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
         <Kv label="When" value={new Date(activityRow.createdAt).toLocaleString()} />
         {onChain && <Kv label="Settlement proof" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Locked in Solana Vault' : 'Confirmed'} />}
+        {isP2p && <Kv label="Settlement proof" value="Instant Internal Ledger" />}
       </div>
       {isAgreement && <ServiceAgreementActionBox activityRow={activityRow} serviceAgreements={serviceAgreements} api={api} onRefresh={onRefresh} networkMode={networkMode} />}
       {link

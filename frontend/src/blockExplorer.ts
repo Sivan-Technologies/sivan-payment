@@ -191,6 +191,8 @@ export function networkLabel(chain?: string): string {
     arbitrum: 'Arbitrum',
     avalanche_c_chain: 'Avalanche',
     tron: 'Tron',
+    sivan_p2p: 'Sivan Instant P2P',
+    p2p: 'Sivan Instant P2P',
   };
   // Unknown chains still get their underscores removed and a capital, so a new
   // network reads as a name rather than as a database column.
