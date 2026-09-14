@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord, WalletDepositRecord, ServiceAgreementsSummary } from '../../types';
 import { buildActivityFeed, filterActivity, searchActivity, type ActivityRow } from '../../activityFeed';
 import { ActivityRowItem } from '../activity/ActivityRowItem';
-import { explorerLink, networkLabel, shortHash } from '../../blockExplorer';
+import { explorerLink, getNetworkExplorer, networkLabel, shortHash } from '../../blockExplorer';
 import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
 import { useAskSivan, AssistantThread, followUpsFor, MAX_SESSION_MESSAGES, MAX_DAILY_MESSAGES, type AssistantContext } from '../support/askSivan';
 import { ConfirmModal } from '../ConfirmModal';
@@ -446,27 +446,7 @@ function ServiceAgreementActionBox({
   const isMainnet = networkMode === 'mainnet';
 
   const getExplorerTxUrl = (txHash: string) => {
-    if (network === 'stellar') {
-      return isMainnet
-        ? `https://stellar.expert/explorer/public/tx/${txHash}`
-        : `https://stellar.expert/explorer/testnet/tx/${txHash}`;
-    }
-    if (network === 'celo') {
-      return isMainnet
-        ? `https://celoscan.io/tx/${txHash}`
-        : `https://alfajores.celoscan.io/tx/${txHash}`;
-    }
-    if (network === 'base') {
-      return isMainnet
-        ? `https://basescan.org/tx/${txHash}`
-        : `https://sepolia.basescan.org/tx/${txHash}`;
-    }
-    if (network === 'bsc' || network === 'bnb') {
-      return isMainnet
-        ? `https://bscscan.com/tx/${txHash}`
-        : `https://testnet.bscscan.com/tx/${txHash}`;
-    }
-    return `https://solscan.io/tx/${txHash}?cluster=${isMainnet ? 'mainnet' : 'devnet'}`;
+    return getNetworkExplorer(network, txHash, undefined, isMainnet ? 'mainnet' : 'devnet').url;
   };
 
   const handleDeliver = async () => {

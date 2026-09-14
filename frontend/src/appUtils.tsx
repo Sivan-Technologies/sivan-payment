@@ -219,7 +219,7 @@ export function normalizeFrontendApiBase(value: string) {
   try {
     const parsed = new URL(clean);
     const host = parsed.hostname.toLowerCase();
-    if (host === 'api.sivantech.online' || host === 'test-sivan.sivantech.online') {
+    if (host === 'api.sivantech.online' || host === 'test-sivan.sivantech.online' || host === 'api-staging.sivantech.online') {
       return `${parsed.origin}/api/payment`;
     }
     if (host === 'payment.sivantech.online') {
@@ -229,12 +229,12 @@ export function normalizeFrontendApiBase(value: string) {
       return 'https://api.sivantech.online/api/payment';
     }
     if (host.includes('sivan-payments-api-test')) {
-      return 'https://test-sivan.sivantech.online/api/payment';
+      return 'https://api-staging.sivantech.online/api/payment';
     }
   } catch {
     // Keep local/relative values unchanged.
   }
-  return clean || 'http://localhost:3000';
+  return clean || (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://api-staging.sivantech.online/api/payment');
 }
 
 export function buildApiUrl(apiBase: string, path: string): string {

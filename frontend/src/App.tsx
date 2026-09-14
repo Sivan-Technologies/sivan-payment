@@ -53,7 +53,7 @@ export default function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
-  const apiBase = useMemo(() => normalizeFrontendApiBase(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'), []);
+  const apiBase = useMemo(() => normalizeFrontendApiBase(import.meta.env.VITE_API_BASE_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://api-staging.sivantech.online')), []);
   const appEnv = import.meta.env.VITE_APP_ENV || 'local';
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);

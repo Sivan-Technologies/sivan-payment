@@ -14,36 +14,13 @@ import { parseDeliveryDeadline } from '../agreements/deadline-parser.js';
 import { getCountdownLabel } from '../agreements/agreement.service.js';
 import { quoteServiceAgreementFee } from '../agreements/agreement-fee-policy.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
+import { getNetworkExplorer } from '../utils/explorers.js';
 
 /**
- * Centralised explorer URL builder.
- *
- * Respects the active network mode (mainnet vs devnet) so no hardcoded
- * mainnet URLs appear in staging or test contexts.
- * Rule: No hardcoded block explorer URLs anywhere in the codebase.
+ * Centralised explorer URL builder routing through getNetworkExplorer().
  */
 function getNetworkExplorerUrl(network: string, txHash: string): string {
-  const production = resolveNetworkMode() === 'mainnet';
-  const n = (network || '').toLowerCase();
-
-  if (n === 'stellar') {
-    const cluster = production ? 'public' : 'testnet';
-    return `https://stellar.expert/explorer/${cluster}/tx/${txHash}`;
-  }
-  if (n === 'solana') {
-    const cluster = production ? '' : '?cluster=devnet';
-    return `https://solscan.io/tx/${txHash}${cluster}`;
-  }
-  if (n === 'celo') {
-    const base = production ? 'https://celoscan.io' : 'https://alfajores.celoscan.io';
-    return `${base}/tx/${txHash}`;
-  }
-  if (n === 'base') {
-    const base = production ? 'https://basescan.org' : 'https://sepolia.basescan.org';
-    return `${base}/tx/${txHash}`;
-  }
-  // Generic EVM fallback (ethereum, bsc, polygon, arbitrum)
-  return `https://etherscan.io/tx/${txHash}`;
+  return getNetworkExplorer(network, txHash).url;
 }
 
 
