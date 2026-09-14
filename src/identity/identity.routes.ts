@@ -226,8 +226,8 @@ export async function identityRoutes(app: FastifyInstance) {
     let externalDeals: any[] = [];
     if (isLinked) {
       const defaultEscrowUrl = env.APP_ENV === 'production'
-        ? 'https://sivan-escrow-agent-live.onrender.com'
-        : 'https://sivan-escrow-agent-test.onrender.com';
+        ? 'https://api.sivantech.online'
+        : 'https://api-staging.sivantech.online';
       const escrowAgentUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
       const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
 
@@ -936,8 +936,8 @@ export async function identityRoutes(app: FastifyInstance) {
    */
   app.get('/api/users/escrows', async (request, reply) => {
     const defaultEscrowUrl = env.APP_ENV === 'production'
-      ? 'https://sivan-escrow-agent-live.onrender.com'
-      : 'https://sivan-escrow-agent-test.onrender.com';
+      ? 'https://api.sivantech.online'
+      : 'https://api-staging.sivantech.online';
     const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
     const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
@@ -961,8 +961,8 @@ export async function identityRoutes(app: FastifyInstance) {
    */
   app.get('/api/users/profile', async (request, reply) => {
     const defaultEscrowUrl = env.APP_ENV === 'production'
-      ? 'https://sivan-escrow-agent-live.onrender.com'
-      : 'https://sivan-escrow-agent-test.onrender.com';
+      ? 'https://api.sivantech.online'
+      : 'https://api-staging.sivantech.online';
     const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
     const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
