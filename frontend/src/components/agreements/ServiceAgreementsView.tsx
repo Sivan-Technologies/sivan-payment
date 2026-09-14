@@ -105,6 +105,7 @@ export function ServiceAgreementsView({
   const [deliverables, setDeliverables] = useState('');
   const [milestones, setMilestones] = useState('2');
   const [network, setNetwork] = useState('solana');
+  const [deadlineDays, setDeadlineDays] = useState('2');
 
   const deals = useMemo(() => {
     return serviceAgreements?.deals || [];
@@ -258,7 +259,7 @@ export function ServiceAgreementsView({
           amountUsdc: Number(amount),
           currency: 'USDC',
           network,
-          deadlineDays: 7
+          deadlineDays: Number(deadlineDays) || 2
         })
       });
 
@@ -634,17 +635,35 @@ export function ServiceAgreementsView({
 
                 <div>
                   <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
-                    Milestone Count
+                    Delivery Deadline
                   </label>
                   <select
-                    value={milestones}
-                    onChange={(e) => setMilestones(e.target.value)}
+                    value={deadlineDays}
+                    onChange={(e) => setDeadlineDays(e.target.value)}
                   >
-                    <option value="1">1 Milestone (Full)</option>
-                    <option value="2">2 Milestones (50% / 50%)</option>
-                    <option value="3">3 Milestones</option>
+                    <option value="1">24 Hours (1 Day)</option>
+                    <option value="2">48 Hours (2 Days)</option>
+                    <option value="3">72 Hours (3 Days)</option>
+                    <option value="5">5 Days (Business Week)</option>
+                    <option value="7">7 Days (1 Week)</option>
+                    <option value="14">14 Days (2 Weeks)</option>
+                    <option value="30">30 Days (1 Month)</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
+                  Milestone Count
+                </label>
+                <select
+                  value={milestones}
+                  onChange={(e) => setMilestones(e.target.value)}
+                >
+                  <option value="1">1 Milestone (Full)</option>
+                  <option value="2">2 Milestones (50% / 50%)</option>
+                  <option value="3">3 Milestones</option>
+                </select>
               </div>
 
               <div>
