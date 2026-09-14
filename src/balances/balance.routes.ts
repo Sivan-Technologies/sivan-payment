@@ -346,6 +346,7 @@ export async function balanceRoutes(app: FastifyInstance) {
     return { data: await listUserDeposits(userId) };
   });
 
+  app.get('/api/balance/controls', async () => ({ data: await getBalanceTransferControls() }));
   app.get('/api/admin/balance/controls', async () => ({ data: await getBalanceTransferControls() }));
 
   app.put('/api/admin/balance/controls', async (request) => {
