@@ -74,7 +74,7 @@ services:
         value: max-age=31536000; includeSubDomains
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://sivan-payments-api-live-cgqi.onrender.com
+        value: https://api.sivantech.online
       - key: VITE_APP_ENV
         value: live
       - key: VITE_SENTRY_DSN
@@ -154,9 +154,8 @@ services:
       # misconfigured - the request never arrives, so there is nothing in the
       # API logs to find.
       #
-      # Comma-separated, no trailing slash, scheme included. Render assigns
-      # onrender.com subdomains from the service names above; update these if a
-      # custom domain is added.
+      # Comma-separated, no trailing slash, scheme included. Staging and production
+      # origins route through official custom domains (staging.sivantech.online / api-staging.sivantech.online).
       #
       # NOT '*': the browser sends the user's JWT on these requests.
       # BOTH deployments are live: Vercel (from frontend/vercel.json, which
@@ -169,7 +168,7 @@ services:
       # frontends against one API means a fix deployed to one is invisible on
       # the other, and users will be on whichever link they were sent.
       - key: CORS_ORIGIN
-        value: https://staging.sivantech.online,https://api-staging.sivantech.online,https://sivan-payments-user-test-vuzt.onrender.com,https://sivan-payments-user-test.onrender.com,https://sivan-payments-user-test.vercel.app,http://localhost:5173
+        value: https://staging.sivantech.online,https://api-staging.sivantech.online,https://sivan-payments-user-test.vercel.app,http://localhost:5173
       - key: CUSTOMER_APP_URL
         value: https://staging.sivantech.online
       - key: ESCROW_AGENT_URL
@@ -183,9 +182,9 @@ services:
       - key: WEBAUTHN_RP_ID
         value: sivantech.online
       - key: WEBAUTHN_ORIGIN
-        value: https://staging.sivantech.online,https://sivan-payments-user-test-vuzt.onrender.com,https://sivan-payments-user-test.onrender.com
+        value: https://staging.sivantech.online
       - key: FRAUD_ENGINE_URL
-        value: https://sivan-fraud-engine-staging.onrender.com
+        value: https://api-staging.sivantech.online
       - key: STELLAR_NETWORK
         value: testnet
       - key: CELO_RPC_URL
@@ -477,11 +476,11 @@ services:
         # CORS at launch - with no server error, just a silent failure in the
         # console. CUSTOMER_APP_URL has defaulted to it since env.ts was
         # written; the allow-list never caught up.
-        value: https://app.sivantech.online,https://sivan-payments-user-live.onrender.com,https://sivan-payments-user-live.vercel.app
+        value: https://app.sivantech.online,https://sivan-payments-user-live.vercel.app
       - key: CUSTOMER_APP_URL
         value: https://app.sivantech.online
       - key: ESCROW_AGENT_URL
-        value: https://sivan-escrow-agent-live.onrender.com
+        value: https://api.sivantech.online
       - key: CORE_API_BASE_URL
         value: https://api.sivantech.online
       - key: TELEGRAM_MINIAPP_URL
