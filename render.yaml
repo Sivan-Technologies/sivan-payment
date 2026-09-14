@@ -173,7 +173,7 @@ services:
       - key: CUSTOMER_APP_URL
         value: https://staging.sivantech.online
       - key: ESCROW_AGENT_URL
-        value: https://sivan-escrow-agent-test-gb84.onrender.com
+        value: https://api-staging.sivantech.online
       - key: CORE_API_SECRET
         sync: false
       - key: CORE_API_BASE_URL
