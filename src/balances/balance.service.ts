@@ -1494,6 +1494,44 @@ export async function executeP2pTransfer(
     console.warn('[p2p.telegram_notify] Notification error:', err);
   }
 
+  try {
+    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || (env.APP_ENV === 'production' ? 'https://api.sivantech.online/api/whatsapp' : 'https://api-staging.sivantech.online/api/whatsapp');
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (rawWaUrl && secret) {
+      void (async () => {
+        try {
+          let targetPhone = recipient.whatsappNumber;
+          if (!targetPhone) {
+            const links = await db.listCustomerIdentityLinks();
+            const activeWa = links
+              .filter((l) => l.paymentUserId === recipient.id && l.status === 'linked' && Boolean(l.whatsappNumber))
+              .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+            targetPhone = activeWa[0]?.whatsappNumber;
+          }
+          if (targetPhone) {
+            const waText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
+            const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+            await fetch(waNotifyUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+              },
+              body: JSON.stringify({
+                to: targetPhone,
+                message: waText,
+              }),
+            });
+          }
+        } catch (waErr) {
+          console.warn('[p2p.whatsapp_notify] Notification dispatch error:', waErr);
+        }
+      })();
+    }
+  } catch (err) {
+    console.warn('[p2p.whatsapp_notify] Notification error:', err);
+  }
+
   return {
     transferId,
     amount: input.amount,
