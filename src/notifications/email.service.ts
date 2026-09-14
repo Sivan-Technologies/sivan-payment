@@ -158,3 +158,38 @@ export function buildVirtualAccountAssignedEmail(account: VirtualAccountRecord) 
   });
   return { subject, text, html };
 }
+
+export function buildP2pReceivedEmail(input: {
+  recipientName: string;
+  senderName: string;
+  amount: number;
+  asset: string;
+  transferId: string;
+}) {
+  const amountStr = `${input.amount.toFixed(2)} ${input.asset.toUpperCase()}`;
+  const subject = `You received ${amountStr} from ${input.senderName}`;
+  const text =
+    `Hi ${input.recipientName},\n\n` +
+    `You have received an instant P2P transfer of ${amountStr} from ${input.senderName} on Sivan.\n\n` +
+    `Transfer ID: ${input.transferId}\n` +
+    `Status: Completed (Delivered Instantly)\n\n` +
+    `The funds are immediately available in your Sivan spendable balance.\n\n` +
+    `View your balance: ${appUrl('/dashboard')}\n\n` +
+    `Sivan`;
+  const html = brandShell({
+    eyebrow: 'Instant P2P Transfer',
+    title: `You received ${amountStr}`,
+    intro: `${input.senderName} just sent ${amountStr} directly to your Sivan account balance.`,
+    badge: 'Delivered Instantly',
+    rows: [
+      { label: 'Amount', value: amountStr },
+      { label: 'Sender', value: input.senderName },
+      { label: 'Transfer ID', value: input.transferId },
+      { label: 'Status', value: 'Completed' },
+    ],
+    ctaLabel: 'View Your Balance',
+    ctaUrl: appUrl('/dashboard'),
+    note: 'These funds are credited to your Sivan spendable balance and can be transferred, sent on-chain, or withdrawn to a bank account anytime.'
+  });
+  return { subject, text, html };
+}

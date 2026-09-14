@@ -330,6 +330,11 @@ function DepositInstruction({ transaction, onCancel }: { transaction: CustomerTr
 function activitySummaryExplanation(row: ActivityRow): string {
   const network = row.network ? networkLabel(row.network) : 'the network';
   if (row.kind === 'balance_transfer') {
+    if (row.label?.includes('P2P')) {
+      return row.direction === 'in'
+        ? 'Instant P2P transfer credited directly to your Sivan balance.'
+        : 'Instant P2P transfer delivered directly to recipient Sivan balance.';
+    }
     if (row.state === 'success') return `Sent on ${network}. The recipient has the funds and the transaction is confirmed on chain.`;
     if (row.state === 'failed') return `This send did not go through, and the amount was returned to your balance. Nothing left your wallet.`;
     return `Submitted to ${network} and waiting for confirmation. Your balance already reflects it, and it cannot be reversed once broadcast.`;

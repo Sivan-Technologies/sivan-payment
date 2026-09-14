@@ -48,6 +48,7 @@ import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, reso
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
 import { evaluateGasLimits } from './gas-usage.service.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
+import { buildP2pReceivedEmail, sendEmail } from '../notifications/email.service.js';
 
 export type BalanceAsset = 'usdc' | 'usdt';
 /**
@@ -478,10 +479,28 @@ export async function getUserBalance(userId: string) {
 }
 
 export async function listUserBalanceTransfers(userId: string) {
-  return (await transferLogs())
+  const onchainTransfers = (await transferLogs())
     .map((item) => ({ ...item.transfer, createdAt: item.transfer.createdAt || item.log.createdAt }))
-    .filter((transfer) => transfer.userId === userId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .filter((transfer) => transfer.userId === userId);
+
+  const ledger = await listUserBalanceLedger(userId);
+  const p2pEntries: TransferMetadata[] = ledger
+    .filter((entry) => entry.sourceType === 'p2p_transfer')
+    .map((entry) => ({
+      transferId: entry.sourceId || entry.entryId,
+      userId,
+      amount: Number(entry.amount),
+      asset: (entry.asset || 'usdc').toUpperCase(),
+      status: 'completed',
+      network: 'sivan_p2p',
+      destinationAddress: entry.destinationAddress || (entry.kind === 'credit_available' ? 'Incoming P2P' : 'Outgoing P2P'),
+      fee: 0,
+      createdAt: entry.createdAt,
+      direction: entry.kind === 'credit_available' ? 'in' : 'out',
+      note: entry.description,
+    } as any));
+
+  return [...onchainTransfers, ...p2pEntries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /**
@@ -1416,6 +1435,64 @@ export async function executeP2pTransfer(
       fee: 0,
     },
   });
+
+  // Dispatch non-blocking recipient notifications
+  const recipientDisplayName = (recipient as any).name || (recipient as any).fullName || recipient.username || 'Sivan User';
+  const senderDisplayName = sender.username ? `@${sender.username}` : ((sender as any).name || (sender as any).fullName || 'A Sivan User');
+
+  if (recipient.email) {
+    try {
+      const emailMsg = buildP2pReceivedEmail({
+        recipientName: recipientDisplayName,
+        senderName: senderDisplayName,
+        amount: input.amount,
+        asset: input.asset,
+        transferId,
+      });
+      void sendEmail({
+        to: recipient.email,
+        subject: emailMsg.subject,
+        text: emailMsg.text,
+        html: emailMsg.html,
+      }).catch((err) => console.warn('[p2p.email_notify] Email notification failed:', err));
+    } catch (err) {
+      console.warn('[p2p.email_notify] Failed to build email notification:', err);
+    }
+  }
+
+  try {
+    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (notifyUrl && secret) {
+      void (async () => {
+        try {
+          const links = await db.listCustomerIdentityLinks();
+          const activeLinks = links
+            .filter((l) => l.paymentUserId === recipient.id && l.status === 'linked' && Boolean(l.telegramUserId))
+            .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+          const tgLink = activeLinks[0];
+          if (tgLink?.telegramUserId) {
+            const tgText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
+            await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+              },
+              body: JSON.stringify({
+                telegramId: tgLink.telegramUserId,
+                message: tgText,
+              }),
+            });
+          }
+        } catch (tgErr) {
+          console.warn('[p2p.telegram_notify] Notification dispatch error:', tgErr);
+        }
+      })();
+    }
+  } catch (err) {
+    console.warn('[p2p.telegram_notify] Notification error:', err);
+  }
 
   return {
     transferId,
