@@ -212,7 +212,11 @@ export async function getWalletControlsView() {
      * should be visible in the hub rather than discovered from a ledger.
      */
     collectTransferFeeOnChain: controls.collectTransferFeeOnChain ?? true,
-    feeWalletConfigured: Boolean(env.SIVAN_FEE_WALLET_SOLANA?.trim()),
+    feeWalletConfigured: Boolean(
+      env.SIVAN_FEE_WALLET_SOLANA?.trim() ||
+      env.SIVAN_FEE_WALLET_CELO?.trim() ||
+      env.SIVAN_FEE_WALLET_STELLAR?.trim()
+    ),
     availableProviders: PROVIDERS.filter(
       (name) => !(name === 'mock' && env.APP_ENV === 'production')
     ),

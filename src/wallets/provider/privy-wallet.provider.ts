@@ -1425,6 +1425,80 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const txHash = await celoRpc<string>('eth_sendRawTransaction', [rawTx], rpcOpts);
 
+    // -------------------------------------------------------------------
+    // Step 4: Collect Sivan Protocol Fee on-chain if feeAmount > 0 and feeWallet configured
+    // -------------------------------------------------------------------
+    let feeTxHash: string | undefined;
+    const feeWallet = env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_FEE_WALLET_CELO?.trim();
+    const feeAmountNum = Number(input.feeAmount ?? 0);
+
+    if (feeWallet && feeAmountNum > 0 && feeWallet.toLowerCase() !== senderAddress.toLowerCase()) {
+      try {
+        const collectionOn = await import('../wallet-controls.service.js')
+          .then((mod) => mod.getWalletControls())
+          .then((controls) => controls?.collectTransferFeeOnChain !== false)
+          .catch(() => false);
+
+        if (collectionOn) {
+          const feePayload = buildCeloTransferPayload({
+            tokenAddress: token,
+            recipientAddress: feeWallet,
+            amount: String(input.feeAmount),
+            decimals: decimalsFor(input.asset),
+          });
+
+          const feeCip64Params = {
+            chainId,
+            nonce: nonce + 1n,
+            maxPriorityFeePerGas: maxPriority,
+            maxFeePerGas: maxFee,
+            gasLimit,
+            to: feePayload.to,
+            value: 0n,
+            data: feePayload.data,
+            feeCurrency,
+          };
+
+          const feeSigningHash = buildCip64SigningHash(feeCip64Params);
+          const feeIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}_fee` : undefined;
+
+          const feeSignBody = {
+            method: 'secp256k1_sign',
+            params: { hash: feeSigningHash },
+          };
+
+          const feeSignResponse = await fetch(rawSignUrl, {
+            method: 'POST',
+            headers: {
+              ...headers(feeIdempotencyKey),
+              'privy-authorization-signature': authorizationSignature({
+                method: 'POST',
+                url: rawSignUrl,
+                body: feeSignBody,
+                appId,
+                privateKeyPem: signingKey,
+                idempotencyKey: feeIdempotencyKey,
+              }),
+            },
+            body: JSON.stringify(feeSignBody),
+          });
+
+          const feeSignResult: any = await feeSignResponse.json().catch(() => ({}));
+          if (feeSignResponse.ok) {
+            const feePrivySignature: string = feeSignResult?.data?.signature ?? feeSignResult?.signature;
+            if (feePrivySignature) {
+              const feeRawTx = buildCip64SignedRawTx(feeCip64Params, feePrivySignature);
+              feeTxHash = await celoRpc<string>('eth_sendRawTransaction', [feeRawTx], rpcOpts);
+            }
+          } else {
+            console.warn('[privy.sendCeloTransfer] Fee sign note:', feeSignResult?.error ?? feeSignResult?.message);
+          }
+        }
+      } catch (feeErr) {
+        console.warn('[privy.sendCeloTransfer] On-chain Celo protocol fee transfer note:', feeErr);
+      }
+    }
+
     return {
       provider: this.name,
       providerTransferId: txHash ?? `privy_celo_cip64_${crypto.randomUUID()}`,
@@ -1432,7 +1506,7 @@ export class PrivyWalletProvider implements WalletProvider {
       txHash: txHash || undefined,
       userOperationHash: undefined,
       sponsored: false,
-      rawProviderPayload: { chainId: chainId.toString(), txHash, feeCurrency, senderAddress },
+      rawProviderPayload: { chainId: chainId.toString(), txHash, feeTxHash, feeCurrency, senderAddress },
     };
   }
 
