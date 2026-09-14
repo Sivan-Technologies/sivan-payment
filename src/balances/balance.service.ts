@@ -467,12 +467,21 @@ export async function getUserBalance(userId: string) {
     if (entry.kind === 'debit_transfer' || entry.kind === 'fee') {
       const debitFromHeld = Math.min(Math.max(0, row.held), value);
       row.held -= debitFromHeld;
+      const unheldDebit = value - debitFromHeld;
+      row.available -= unheldDebit;
       row.spent += value;
     }
   }
   return {
     userId,
-    balances: Object.values(byAsset).map((row) => ({ ...row, pending: money(row.pending), available: money(Math.max(row.available, 0)), held: money(Math.max(row.held, 0)), spent: money(row.spent), totalCredited: money(row.totalCredited) })),
+    balances: Object.values(byAsset).map((row) => ({
+      ...row,
+      pending: money(row.pending),
+      available: money(row.available),
+      held: money(Math.max(row.held, 0)),
+      spent: money(row.spent),
+      totalCredited: money(row.totalCredited)
+    })),
     ledger: entries,
     updatedAt: nowIso()
   };

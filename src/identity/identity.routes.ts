@@ -905,10 +905,10 @@ export async function identityRoutes(app: FastifyInstance) {
   });
 
   /**
-   * Universal recipient target resolver (@username, +phone, or userId) for instant P2P transfers.
+   * Universal recipient target resolver (@username, +phone, or userId) for instant P2P transfers and multi-chain resolution.
    */
   app.get('/api/identity/resolve-target', async (request, reply) => {
-    const { target } = request.query as { target?: string };
+    const { target, chain } = request.query as { target?: string; chain?: string };
     if (!target || typeof target !== 'string') {
       return reply.code(400).send({ error: { message: 'Missing target query parameter' } });
     }
@@ -918,6 +918,23 @@ export async function identityRoutes(app: FastifyInstance) {
       return { data: { found: false, target } };
     }
 
+    let targetAddress: string | undefined;
+    const requestedChain = chain ? String(chain).trim().toLowerCase() : undefined;
+
+    if (requestedChain) {
+      try {
+        const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+        const wallet = await ensureUserWallet(user.id, requestedChain as any);
+        if (wallet?.address) {
+          targetAddress = wallet.address;
+        }
+      } catch (err) {
+        console.warn('[resolve-target.wallet_error]', err);
+      }
+    }
+
+    const userWallets = await db.listUserWallets(user.id).catch(() => []);
+
     return {
       data: {
         found: true,
@@ -926,6 +943,9 @@ export async function identityRoutes(app: FastifyInstance) {
           username: user.username,
           displayName: (user as any).name || (user as any).fullName || user.username || (user as any).telegramUsername || user.whatsappNumber || 'Sivan User',
           phone: user.whatsappNumber,
+          targetAddress,
+          chain: requestedChain,
+          wallets: userWallets.map((w) => ({ chain: w.chain, address: w.address })),
         },
       },
     };
