@@ -428,11 +428,12 @@ export async function cancelAgreement(agreementId: string): Promise<ServiceAgree
 
   if (existing.status === 'funded' || existing.status === 'in_delivery' || existing.status === 'delivered') {
     try {
+      const releaseAmount = existing.buyerTotalPayableUsdc ?? existing.amountUsdc;
       await createBalanceLedgerEntry(
         {
           userId: existing.buyerUserId,
           asset: ((existing.currency || 'usdc').toLowerCase() as any),
-          amount: String(existing.amountUsdc),
+          amount: String(releaseAmount),
           kind: 'hold_release',
           status: 'available',
           sourceType: 'service_agreement',

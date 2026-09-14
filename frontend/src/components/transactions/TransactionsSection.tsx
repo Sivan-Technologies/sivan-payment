@@ -348,6 +348,9 @@ function activitySummaryExplanation(row: ActivityRow): string {
       ? 'This bank deposit has settled into your balance.'
       : 'This bank deposit has arrived and is being settled into your balance.';
   }
+  if (row.state === 'failed' || (row as any).status === 'cancelled') {
+    return 'This transaction was cancelled or did not complete. Funds remain in or were returned to your balance.';
+  }
   return row.state === 'success' ? 'This transaction is complete.' : 'This transaction is still in progress.';
 }
 
