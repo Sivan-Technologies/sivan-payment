@@ -225,8 +225,11 @@ export async function identityRoutes(app: FastifyInstance) {
 
     let externalDeals: any[] = [];
     if (isLinked) {
-      const escrowAgentUrl = env.ESCROW_AGENT_URL;
-      const coreSecret = process.env.CORE_API_SECRET;
+      const defaultEscrowUrl = env.APP_ENV === 'production'
+        ? 'https://sivan-escrow-agent-live.onrender.com'
+        : 'https://sivan-escrow-agent-test.onrender.com';
+      const escrowAgentUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
+      const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
 
       const params: string[] = ['limit=50'];
       if (linkedEscrowUserId) {
@@ -932,11 +935,11 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy for /api/users/escrows
    */
   app.get('/api/users/escrows', async (request, reply) => {
-    const configuredUrl = env.ESCROW_AGENT_URL;
-    if (!configuredUrl) {
-      return reply.code(503).send({ error: { message: 'ESCROW_AGENT_URL environment variable is required but not configured' } });
-    }
-    const coreSecret = process.env.CORE_API_SECRET ?? '';
+    const defaultEscrowUrl = env.APP_ENV === 'production'
+      ? 'https://sivan-escrow-agent-live.onrender.com'
+      : 'https://sivan-escrow-agent-test.onrender.com';
+    const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
+    const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
     const url = `${configuredUrl.replace(/\/$/, '')}/api/users/escrows${query ? `?${query}` : ''}`;
 
@@ -957,11 +960,11 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy for /api/users/profile
    */
   app.get('/api/users/profile', async (request, reply) => {
-    const configuredUrl = env.ESCROW_AGENT_URL;
-    if (!configuredUrl) {
-      return reply.code(503).send({ error: { message: 'ESCROW_AGENT_URL environment variable is required but not configured' } });
-    }
-    const coreSecret = process.env.CORE_API_SECRET ?? '';
+    const defaultEscrowUrl = env.APP_ENV === 'production'
+      ? 'https://sivan-escrow-agent-live.onrender.com'
+      : 'https://sivan-escrow-agent-test.onrender.com';
+    const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
+    const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
     const url = `${configuredUrl.replace(/\/$/, '')}/api/users/profile${query ? `?${query}` : ''}`;
 
