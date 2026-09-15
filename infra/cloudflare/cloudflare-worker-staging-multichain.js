@@ -141,6 +141,7 @@ export default {
       targetPath = pathname;
       serviceName = "mcp-gateway";
     } else if (
+      pathname.startsWith("/api/admin/escrow") ||
       pathname.startsWith("/api/escrow") ||
       pathname.startsWith("/api/users/escrows") ||
       pathname === "/api/users/profile" ||
@@ -150,7 +151,9 @@ export default {
       pathname.startsWith("/api/paystack")
     ) {
       targetUpstream = upstreams.escrow;
-      targetPath = pathname;
+      targetPath = pathname.startsWith("/api/admin/escrow")
+        ? (pathname.replace(/^\/api\/admin\/escrow/, "") || "/")
+        : pathname;
       serviceName = "escrow-api";
     } else if (pathname.startsWith("/api/telegram") || pathname.startsWith("/webhooks/telegram") || pathname === "/api/notify" || pathname.startsWith("/api/notify/telegram")) {
       targetUpstream = upstreams.telegram;
