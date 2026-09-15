@@ -3,12 +3,63 @@ import type { ServiceAgreementsSummary, ServiceAgreementDeal, UserRecord, Servic
 import { AgreementCountdownBadge } from './AgreementCountdownBadge';
 import { explorerLink, shortHash } from '../../blockExplorer';
 
+const HANDLE_NUDGE_DISMISSED_KEY = 'sivan_web_handle_nudge_dismissed_at';
+const HANDLE_NUDGE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function isHandleNudgeDismissed(): boolean {
+  try {
+    const ts = localStorage.getItem(HANDLE_NUDGE_DISMISSED_KEY);
+    return !!ts && Date.now() - Number(ts) < HANDLE_NUDGE_TTL_MS;
+  } catch { return false; }
+}
+
+function HandleNudgeBanner({ onGoToSettings, onDismiss }: { onGoToSettings?: () => void; onDismiss: () => void }) {
+  return (
+    <div
+      role="status"
+      style={{
+        display: 'flex', alignItems: 'center', gap: '12px',
+        background: 'linear-gradient(135deg, rgba(52,211,153,0.08), rgba(16,185,129,0.03))',
+        border: '1px solid rgba(52,211,153,0.25)',
+        borderRadius: '14px', padding: '11px 14px', marginBottom: '18px',
+        position: 'relative', overflow: 'hidden',
+      }}
+    >
+      {/* left accent bar */}
+      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: 'linear-gradient(to bottom, #34d399, #10b981)', borderRadius: '3px 0 0 3px' }} />
+      {/* icon */}
+      <div style={{ flexShrink: 0, width: 36, height: 36, background: 'rgba(52,211,153,0.10)', border: '1px solid rgba(52,211,153,0.22)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, marginLeft: 4 }}>🏷️</div>
+      {/* text */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#22c55e', marginBottom: 2 }}>Complete your profile — add a @handle</div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted, #8892a4)', lineHeight: 1.4 }}>A @handle lets counterparties tag you in deals by name across Web, MiniPay, and WhatsApp.</div>
+      </div>
+      {/* CTA */}
+      {onGoToSettings && (
+        <button
+          onClick={onGoToSettings}
+          style={{ flexShrink: 0, background: 'linear-gradient(135deg,#10b981,#34d399)', border: 'none', borderRadius: 10, color: '#fff', fontSize: 12, fontWeight: 700, padding: '7px 14px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+        >
+          Set handle
+        </button>
+      )}
+      {/* dismiss */}
+      <button
+        onClick={onDismiss}
+        title="Dismiss"
+        style={{ flexShrink: 0, background: 'none', border: 'none', color: 'var(--text-muted,#8892a4)', fontSize: 15, cursor: 'pointer', padding: '2px 4px', opacity: 0.6 }}
+      >✕</button>
+    </div>
+  );
+}
+
 interface ServiceAgreementsViewProps {
   user?: UserRecord | null;
   serviceAgreements?: ServiceAgreementsSummary;
   api: <T>(path: string, options?: RequestInit) => Promise<T>;
   onRefresh: () => Promise<void> | void;
   onGoToTransactions?: () => void;
+  onGoToSettings?: () => void;
 }
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) {
@@ -45,6 +96,15 @@ function getChannelBadge(channel?: string) {
       bg: 'rgba(37, 211, 102, 0.12)',
       color: '#25d366',
       border: 'rgba(37, 211, 102, 0.3)',
+    };
+  }
+  if (ch === 'minipay' || ch === 'mini_pay' || ch === 'celo_minipay') {
+    return {
+      label: 'MiniPay',
+      icon: '💚',
+      bg: 'rgba(52, 211, 153, 0.12)',
+      color: '#34d399',
+      border: 'rgba(52, 211, 153, 0.3)',
     };
   }
   if (ch === 'agent' || ch === 'ai' || ch === 'webmcp' || ch === 'mcp') {
@@ -88,7 +148,8 @@ export function ServiceAgreementsView({
   serviceAgreements,
   api,
   onRefresh,
-  onGoToTransactions
+  onGoToTransactions,
+  onGoToSettings,
 }: ServiceAgreementsViewProps) {
   const [filter, setFilter] = useState<'all' | 'active' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -98,6 +159,14 @@ export function ServiceAgreementsView({
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
+  const [handleNudgeDismissed, setHandleNudgeDismissed] = useState(() => isHandleNudgeDismissed());
+
+  const showHandleNudge = !handleNudgeDismissed && !!user && !user.username;
+
+  const dismissHandleNudge = () => {
+    try { localStorage.setItem(HANDLE_NUDGE_DISMISSED_KEY, String(Date.now())); } catch {}
+    setHandleNudgeDismissed(true);
+  };
 
   // Draft form state
   const [counterparty, setCounterparty] = useState('');
@@ -318,6 +387,13 @@ export function ServiceAgreementsView({
           <small className="kpi-trend muted">Web + Telegram</small>
         </article>
       </div>
+
+      {showHandleNudge && (
+        <HandleNudgeBanner
+          onGoToSettings={onGoToSettings ? () => { onGoToSettings(); } : undefined}
+          onDismiss={dismissHandleNudge}
+        />
+      )}
 
       {errorBanner && (
         <div className="toast-banner danger" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderRadius: '14px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444' }}>

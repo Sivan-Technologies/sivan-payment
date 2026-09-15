@@ -3125,6 +3125,7 @@ export default function App() {
             api={api}
             onRefresh={loadUserData}
             onGoToTransactions={() => goToView('history')}
+            onGoToSettings={() => { setSettingsInitialTab('profile'); goToView('settings'); }}
           />
         )}
 

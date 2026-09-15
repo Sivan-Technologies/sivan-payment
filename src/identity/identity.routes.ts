@@ -188,7 +188,18 @@ export async function identityRoutes(app: FastifyInstance) {
       handle
     ].filter(Boolean) as string[];
 
-    // 1. Fetch native Service Agreements from database for this user (dual-lookup by ID, email, handle, telegram)
+    // Also include all linked wallet addresses so agreements stored against a
+    // wallet address (e.g. Celo 0x..., Stellar G...) are visible to the owner.
+    try {
+      const userWallets = await db.listUserWallets(userId);
+      for (const w of userWallets) {
+        if (w.address) aliases.push(w.address);
+      }
+    } catch (walletErr) {
+      console.warn('[Service Agreements] Could not load user wallets for alias expansion:', walletErr);
+    }
+
+    // 1. Fetch native Service Agreements from database for this user (dual-lookup by ID, email, handle, telegram, wallet)
     let nativeDeals: any[] = [];
     try {
       const agreements = await (db as any).listServiceAgreementsByUserId(aliases);
