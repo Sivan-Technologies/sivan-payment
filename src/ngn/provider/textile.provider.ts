@@ -8,7 +8,7 @@ function unavailable(): never {
 
 export class TextileNgnProvider implements NgnProviderAdapter {
   name: NgnProviderName = 'textile';
-  async createQuote(_input: NgnQuoteInput): Promise<Partial<NgnQuoteRecord>> { return unavailable(); }
+  async createQuote(_input: NgnQuoteInput): Promise<Pick<NgnQuoteRecord, 'provider' | 'providerQuoteId' | 'sourceAmount' | 'destinationAmount' | 'rate' | 'feeAmount' | 'metadata'>> { return unavailable(); }
   async createOnrampTransfer(_quote: NgnQuoteRecord): Promise<Partial<NgnTransferRecord>> { return unavailable(); }
   async createOfframpTransfer(_quote: NgnQuoteRecord): Promise<Partial<NgnTransferRecord>> { return unavailable(); }
   async getTransfer(_id: string): Promise<Partial<NgnTransferRecord>> { return unavailable(); }
