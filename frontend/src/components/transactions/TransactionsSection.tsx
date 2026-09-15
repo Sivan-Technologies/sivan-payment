@@ -773,7 +773,7 @@ function TransactionTimelinePanel({
         )}
         <Kv label="Network" value={isP2p ? 'Sivan Instant P2P' : onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
         <Kv label="When" value={new Date(activityRow.createdAt).toLocaleString()} />
-        {onChain && <Kv label="Settlement proof" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Locked in Solana Vault' : 'Confirmed'} />}
+        {onChain && <Kv label="Settlement proof" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? `Locked in ${networkLabel(activityRow.network)} Vault` : 'Confirmed'} />}
         {isP2p && <Kv label="Settlement proof" value="Instant Internal Ledger" />}
       </div>
       {isAgreement && <ServiceAgreementActionBox activityRow={activityRow} serviceAgreements={serviceAgreements} api={api} onRefresh={onRefresh} networkMode={networkMode} />}
