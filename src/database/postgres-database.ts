@@ -2164,7 +2164,14 @@ export class PostgresDatabase {
           (id, buyer_user_id, seller_user_id, title, description, amount_usdc, currency, network,
            status, deadline_days, delivery_due_at, reminder_6h_sent, overdue_notice_sent,
            funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, channel, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         ON CONFLICT (id) DO UPDATE SET
+           status=EXCLUDED.status,
+           deadline_days=EXCLUDED.deadline_days,
+           delivery_due_at=COALESCE(EXCLUDED.delivery_due_at, payments_service_agreements.delivery_due_at),
+           funded_at=COALESCE(EXCLUDED.funded_at, payments_service_agreements.funded_at),
+           funding_tx_hash=COALESCE(EXCLUDED.funding_tx_hash, payments_service_agreements.funding_tx_hash),
+           updated_at=EXCLUDED.updated_at`,
         [
           record.id, record.buyerUserId, record.sellerUserId, record.title, record.description,
           record.amountUsdc, record.currency, record.network, record.status, record.deadlineDays,

@@ -1414,6 +1414,11 @@ export class JsonDatabase {
   async insertServiceAgreement(record: ServiceAgreementRecord): Promise<ServiceAgreementRecord> {
     return this.mutate((data) => {
       data.serviceAgreements = data.serviceAgreements ?? [];
+      const idx = data.serviceAgreements.findIndex((a) => a.id === record.id);
+      if (idx >= 0) {
+        data.serviceAgreements[idx] = { ...data.serviceAgreements[idx], ...record };
+        return data.serviceAgreements[idx];
+      }
       data.serviceAgreements.push(record);
       return record;
     });

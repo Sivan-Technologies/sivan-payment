@@ -29,8 +29,11 @@ import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain } from
 // ─── Input shapes ────────────────────────────────────────────────────────────
 
 export interface CreateAgreementInput {
+  id?: string;
   buyerUserId: string;
   sellerUserId: string;
+  buyerWalletAddress?: string;
+  sellerWalletAddress?: string;
   title: string;
   description: string;
   amountUsdc: number;
@@ -40,6 +43,8 @@ export interface CreateAgreementInput {
   deadlineDays?: number;
   feePayer?: FeePayer;
   channel?: string;
+  fundingTxHash?: string;
+  attributionTag?: string;
 }
 
 // ─── Countdown label ─────────────────────────────────────────────────────────
@@ -133,8 +138,28 @@ export async function createAgreement(
   const feeQuote = quoteServiceAgreementFee(input.amountUsdc, input.network, feePayer);
 
   const now = nowIso();
+  const isPreFunded = Boolean(input.fundingTxHash);
+  const dueAt = isPreFunded && deadlineDays
+    ? new Date(Date.now() + deadlineDays * 24 * 60 * 60 * 1000).toISOString()
+    : null;
+
+  if (input.id) {
+    const existing = await db.findServiceAgreementById(input.id);
+    if (existing) {
+      if (input.fundingTxHash && (existing.status === 'pending_payment' || (existing.status as any) === 'pending_funding')) {
+        existing.status = 'funded';
+        existing.fundingTxHash = input.fundingTxHash;
+        existing.fundedAt = now;
+        existing.deliveryDueAt = dueAt || new Date(Date.now() + (existing.deadlineDays || 1) * 24 * 60 * 60 * 1000).toISOString();
+        existing.updatedAt = now;
+        await db.updateServiceAgreement(existing);
+      }
+      return existing;
+    }
+  }
+
   const agreement: ServiceAgreementRecord = {
-    id: generateId('agr'),
+    id: input.id || generateId('agr'),
     buyerUserId: input.buyerUserId,
     sellerUserId: input.sellerUserId,
     title: input.title,
@@ -142,15 +167,15 @@ export async function createAgreement(
     amountUsdc: input.amountUsdc,
     currency: input.currency || 'usdc',
     network: input.network,
-    status: 'pending_payment',
+    status: isPreFunded ? 'funded' : 'pending_payment',
     deadlineDays,
-    deliveryDueAt: null,
+    deliveryDueAt: dueAt,
     reminder6hSent: false,
     overdueNoticeSent: false,
-    fundedAt: null,
+    fundedAt: isPreFunded ? now : null,
     deliveredAt: null,
     releasedAt: null,
-    fundingTxHash: null,
+    fundingTxHash: input.fundingTxHash || null,
     releaseTxHash: null,
     vaultAddress: null,
     channel: input.channel || 'web',
@@ -173,10 +198,19 @@ export async function createAgreement(
  * Executes on-chain transfer to vault including the Sivan service agreement fee.
  * delivery_due_at = now + deadlineDays calendar days.
  */
-export async function fundAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
+export async function fundAgreement(agreementId: string, externalTxHash?: string): Promise<ServiceAgreementRecord> {
   const existing = await db.findServiceAgreementById(agreementId);
   if (!existing) throw notFound(`Service agreement ${agreementId}`);
-  if (existing.status !== 'pending_payment') {
+
+  if (existing.status === 'funded') {
+    if (externalTxHash && !existing.fundingTxHash) {
+      existing.fundingTxHash = externalTxHash;
+      await db.updateServiceAgreement(existing);
+    }
+    return existing;
+  }
+
+  if (existing.status !== 'pending_payment' && (existing.status as any) !== 'pending_funding') {
     throw badRequest(`Agreement ${agreementId} is already ${existing.status}; cannot fund`);
   }
 
@@ -190,38 +224,40 @@ export async function fundAgreement(agreementId: string): Promise<ServiceAgreeme
   );
   const payableAmount = existing.buyerTotalPayableUsdc ?? feeQuote.buyerTotalPayable;
 
-  let fundingTxHash: string | null = null;
+  let fundingTxHash: string | null = externalTxHash || null;
   let vaultAddress: string | null = null;
 
-  try {
-    const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
-    if (buyerWallet) {
-      const activeProviderName = await resolveActiveWalletProvider();
-      const network = (existing.network || 'solana').toLowerCase();
-      if (network === 'stellar' || buyerWallet.chain === 'stellar') {
-        vaultAddress = process.env.STELLAR_VAULT_ADDRESS || process.env.STELLAR_DISTRIBUTION_PUBLIC_KEY || buyerWallet.address;
-      } else if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(network) || buyerWallet.address.startsWith('0x')) {
-        vaultAddress = process.env.EVM_VAULT_ADDRESS || process.env.EVM_SETTLEMENT_ROUTER_ADDRESS || buyerWallet.address;
-      } else {
-        vaultAddress = process.env.SOLANA_VAULT_ADDRESS || process.env.SAP_AGENT_PUBLIC_KEY || buyerWallet.address;
+  if (!fundingTxHash) {
+    try {
+      const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+      if (buyerWallet) {
+        const activeProviderName = await resolveActiveWalletProvider();
+        const network = (existing.network || 'solana').toLowerCase();
+        if (network === 'stellar' || buyerWallet.chain === 'stellar') {
+          vaultAddress = process.env.STELLAR_VAULT_ADDRESS || process.env.STELLAR_DISTRIBUTION_PUBLIC_KEY || buyerWallet.address;
+        } else if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(network) || buyerWallet.address.startsWith('0x')) {
+          vaultAddress = process.env.EVM_VAULT_ADDRESS || process.env.EVM_SETTLEMENT_ROUTER_ADDRESS || buyerWallet.address;
+        } else {
+          vaultAddress = process.env.SOLANA_VAULT_ADDRESS || process.env.SAP_AGENT_PUBLIC_KEY || buyerWallet.address;
+        }
+
+        const provider = getWalletProvider(buyerWallet.provider ?? activeProviderName);
+        const transferResult = await provider.createTransfer({
+          providerWalletId: buyerWallet.providerWalletId,
+          providerCustomerId: buyerWallet.customerId,
+          asset: ((existing.currency || 'usdc').toLowerCase() as any),
+          chain: (existing.network || 'solana') as any,
+          amount: String(payableAmount),
+          toAddress: vaultAddress || buyerWallet.address,
+          idempotencyKey: `fund_agr_${existing.id}`,
+          reference: existing.id,
+        });
+
+        fundingTxHash = (transferResult as any).transactionHash || (transferResult as any).txHash || (transferResult as any).providerTransferId || null;
       }
-
-      const provider = getWalletProvider(buyerWallet.provider ?? activeProviderName);
-      const transferResult = await provider.createTransfer({
-        providerWalletId: buyerWallet.providerWalletId,
-        providerCustomerId: buyerWallet.customerId,
-        asset: ((existing.currency || 'usdc').toLowerCase() as any),
-        chain: (existing.network || 'solana') as any,
-        amount: String(payableAmount),
-        toAddress: vaultAddress || buyerWallet.address,
-        idempotencyKey: `fund_agr_${existing.id}`,
-        reference: existing.id,
-      });
-
-      fundingTxHash = (transferResult as any).transactionHash || (transferResult as any).txHash || (transferResult as any).providerTransferId || null;
+    } catch (onChainErr) {
+      console.warn('[agreement.fund] On-chain fund note:', onChainErr);
     }
-  } catch (onChainErr) {
-    console.warn('[agreement.fund] On-chain fund note:', onChainErr);
   }
 
   const updated: ServiceAgreementRecord = {
@@ -454,5 +490,15 @@ export async function cancelAgreement(agreementId: string): Promise<ServiceAgree
  * Get a single agreement by id. Returns null if not found.
  */
 export async function getAgreement(agreementId: string): Promise<ServiceAgreementRecord | null> {
-  return db.findServiceAgreementById(agreementId);
+  const record = await db.findServiceAgreementById(agreementId);
+  if (record && record.fundingTxHash && (record.status === 'pending_payment' || (record.status as any) === 'pending_funding')) {
+    record.status = 'funded';
+    record.fundedAt = record.fundedAt || record.createdAt || nowIso();
+    if (!record.deliveryDueAt && record.deadlineDays) {
+      record.deliveryDueAt = new Date(new Date(record.fundedAt).getTime() + record.deadlineDays * 24 * 60 * 60 * 1000).toISOString();
+    }
+    record.updatedAt = nowIso();
+    await db.updateServiceAgreement(record);
+  }
+  return record;
 }

@@ -206,6 +206,10 @@ export async function identityRoutes(app: FastifyInstance) {
       const aliasSet = new Set(aliases.map((a) => String(a).toLowerCase().trim()));
       nativeDeals = (agreements || []).map((a: any) => {
         const isBuyer = aliasSet.has(String(a.buyerUserId || '').toLowerCase().trim());
+        const rawStatus = String(a.status || '').toLowerCase();
+        const effectiveStatus = (a.fundingTxHash && (rawStatus === 'pending_payment' || rawStatus === 'pending_funding'))
+          ? 'FUNDED'
+          : (a.status || 'PENDING').toUpperCase();
         return {
           id: a.id,
           escrowId: a.id,
@@ -214,7 +218,7 @@ export async function identityRoutes(app: FastifyInstance) {
           amount: String(a.amountUsdc),
           amountUsdc: Number(a.amountUsdc || 0),
           currency: a.currency || 'USDC',
-          status: (a.status || 'PENDING').toUpperCase(),
+          status: effectiveStatus,
           createdAt: a.createdAt,
           network: a.network,
           buyerUserId: a.buyerUserId,

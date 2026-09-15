@@ -14,8 +14,11 @@ import { badRequest, notFound } from '../shared/errors.js';
 import type { WalletChain } from '../database/types.js';
 
 interface CreateAgreementBody {
+  id?: string;
   buyerUserId: string;
   sellerUserId: string;
+  buyerWalletAddress?: string;
+  sellerWalletAddress?: string;
   title: string;
   description?: string;
   amountUsdc: number;
@@ -24,6 +27,8 @@ interface CreateAgreementBody {
   deadlineDays?: number;
   feePayer?: FeePayer;
   channel?: string;
+  fundingTxHash?: string;
+  attributionTag?: string;
 }
 
 export async function agreementRoutes(app: FastifyInstance) {
@@ -60,8 +65,11 @@ export async function agreementRoutes(app: FastifyInstance) {
     }
 
     const agreement = await createAgreement({
+      id: body.id,
       buyerUserId: body.buyerUserId,
       sellerUserId: body.sellerUserId,
+      buyerWalletAddress: body.buyerWalletAddress,
+      sellerWalletAddress: body.sellerWalletAddress,
       title: body.title,
       description: body.description || '',
       amountUsdc: body.amountUsdc,
@@ -70,6 +78,8 @@ export async function agreementRoutes(app: FastifyInstance) {
       deadlineDays: body.deadlineDays,
       feePayer: body.feePayer,
       channel: body.channel,
+      fundingTxHash: body.fundingTxHash,
+      attributionTag: body.attributionTag,
     });
 
     return reply.code(201).send({
@@ -95,8 +105,8 @@ export async function agreementRoutes(app: FastifyInstance) {
    * POST /api/agreements/:id/fund
    * Mark the agreement as funded and compute delivery_due_at.
    */
-  app.post<{ Params: { id: string } }>('/api/agreements/:id/fund', async (req, reply) => {
-    const agreement = await fundAgreement(req.params.id);
+  app.post<{ Params: { id: string }; Body?: { fundingTxHash?: string } }>('/api/agreements/:id/fund', async (req, reply) => {
+    const agreement = await fundAgreement(req.params.id, req.body?.fundingTxHash);
     return reply.code(200).send({
       ...agreement,
       countdownLabel: getCountdownLabel(agreement),
