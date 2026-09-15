@@ -31,6 +31,7 @@ import { agreementRoutes } from '../agreements/agreement.routes.js';
 import { passkeyRoutes } from '../identity/passkey.routes.js';
 import { fraudSecurityRoutes } from '../security/fraud.routes.js';
 import { celoCashoutRoutes } from '../offramp/api/celo-cashout.routes.js';
+import { textileBuyRoutes } from '../offramp/api/textile-buy.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -108,4 +109,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await passkeyRoutes(app);
   await fraudSecurityRoutes(app);
   await celoCashoutRoutes(app);
+  await textileBuyRoutes(app);
 }
