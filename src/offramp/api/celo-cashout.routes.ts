@@ -25,7 +25,13 @@ interface CashoutExecuteBody {
   senderAddress?: string;
 }
 
-const SETTLEMENT_WALLET = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc';
+function getSettlementWallet(): string {
+  const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || process.env.SIVAN_CELO_AGENT_ADDRESS;
+  if (!addr) {
+    throw new Error('TEXTILE_CELO_DEPOSIT_ADDRESS or SIVAN_CELO_AGENT_ADDRESS environment variable must be configured');
+  }
+  return addr;
+}
 
 export async function celoCashoutRoutes(app: FastifyInstance) {
   /**
@@ -57,7 +63,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
             sivanFeeNgn: firmQuote.sivanFeeNgn,
             netNgn: firmQuote.netNgn,
             quoteId: firmQuote.quoteId,
-            depositAddress: SETTLEMENT_WALLET,
+            depositAddress: getSettlementWallet(),
             validForSeconds: firmQuote.validForSeconds,
             expiresAt: firmQuote.expiresAt,
           });
@@ -82,7 +88,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           grossNgn,
           sivanFeeNgn,
           netNgn,
-          depositAddress: SETTLEMENT_WALLET,
+          depositAddress: getSettlementWallet(),
           eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
         });
       }
@@ -99,7 +105,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           grossNgn: fxQuote.outputAmount,
           sivanFeeNgn: fxQuote.sivanFee,
           netNgn: fxQuote.netOutput,
-          depositAddress: SETTLEMENT_WALLET,
+          depositAddress: getSettlementWallet(),
           quotedAt: fxQuote.quotedAt,
           expiresAt: fxQuote.expiresAt,
           eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
@@ -120,7 +126,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           grossNgn,
           sivanFeeNgn,
           netNgn,
-          depositAddress: SETTLEMENT_WALLET,
+          depositAddress: getSettlementWallet(),
           eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
         });
       }
@@ -378,7 +384,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           protocolFee: 0,
           minimumReceived: amount,
           source: '1:1 Direct',
-          depositAddress: SETTLEMENT_WALLET,
+          depositAddress: getSettlementWallet(),
         });
       }
 
@@ -442,7 +448,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
               sellToken:  sellInfo.address,
               buyToken:   buyInfo.address,
               sellAmount: sellAmountAtomic,
-              taker:      SETTLEMENT_WALLET,
+              taker:      getSettlementWallet(),
             }),
             signal: AbortSignal.timeout(4000),
           }).catch(() => null);
@@ -503,7 +509,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         minimumReceived: parseFloat((outputAmount * 0.995).toFixed(6)),
         source,
         chainId,
-        depositAddress: SETTLEMENT_WALLET,
+        depositAddress: getSettlementWallet(),
       });
     } catch (err: any) {
       return reply.code(500).send({ error: err.message || 'Swap quote failed' });

@@ -1522,7 +1522,7 @@ export async function executeP2pTransfer(
   }
 
   try {
-    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || (env.APP_ENV === 'production' ? 'https://api.sivantech.online/api/whatsapp' : 'https://api-staging.sivantech.online/api/whatsapp');
+    const rawWaUrl = env.WHATSAPP_NOTIFICATION_URL || process.env.WHATSAPP_NOTIFICATION_URL;
     const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
     if (rawWaUrl && secret) {
       void (async () => {

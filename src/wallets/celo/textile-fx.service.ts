@@ -416,42 +416,15 @@ export async function createTextileRampTransfer(
     ...(IS_SANDBOX ? { sandbox: true } : {}),
   };
 
-  try {
-    const res = await rampFetch<{ transfer: any; claimToken: string }>('/transfers', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+  const res = await rampFetch<{ transfer: any; claimToken: string }>('/transfers', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 
-    if (res?.transfer) {
-      return res;
-    }
-  } catch (err: any) {
-    console.warn('[Textile Ramp] Direct POST /transfers error:', err.message);
+  if (!res?.transfer) {
+    throw new Error('Textile Ramp did not return valid transfer details');
   }
-
-  // Autonomous fallback payload structure
-  const fakeId = `cm_${Date.now().toString(36)}`;
-  return {
-    transfer: {
-      id: fakeId,
-      provider: DEFAULT_PROVIDER,
-      side: params.side,
-      fiat: 'NGN',
-      token: params.token || 'CNGN',
-      chainId: params.chainId || 42220,
-      sourceAmount: String(params.amount),
-      targetAmount: params.expectedTargetAmount || String(params.amount),
-      status: 'AWAITING_FUNDS',
-      payIn: {
-        type: 'address',
-        address: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc', // Sivan AI Celo Agent Address
-        network: 'CELO',
-      },
-      payout: params.payout,
-      createdAt: new Date().toISOString(),
-    },
-    claimToken: `claim_${fakeId}`,
-  };
+  return res;
 }
 
 /**
@@ -503,7 +476,7 @@ export async function requestFirmQuote(
     bankCode,
     validForSeconds: 60,
     expiresAt: quote.expiresAt,
-    depositAddress: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
+    depositAddress: process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || process.env.SIVAN_CELO_AGENT_ADDRESS || '',
   };
 }
 

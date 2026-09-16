@@ -240,11 +240,8 @@ export async function identityRoutes(app: FastifyInstance) {
 
     let externalDeals: any[] = [];
     if (isLinked) {
-      const defaultEscrowUrl = env.APP_ENV === 'production'
-        ? 'https://api.sivantech.online'
-        : 'https://api-staging.sivantech.online';
-      const escrowAgentUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
-      const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
+      const escrowAgentUrl = env.CORE_API_BASE_URL || env.ESCROW_AGENT_URL;
+      const coreSecret = process.env.CORE_API_SECRET;
 
       const params: string[] = ['limit=50'];
       if (linkedEscrowUserId) {
@@ -970,20 +967,21 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy for /api/users/escrows
    */
   app.get('/api/users/escrows', async (request, reply) => {
-    const defaultEscrowUrl = env.APP_ENV === 'production'
-      ? 'https://api.sivantech.online'
-      : 'https://api-staging.sivantech.online';
-    const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
-    const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
+    const configuredUrl = env.CORE_API_BASE_URL || env.ESCROW_AGENT_URL;
+    if (!configuredUrl) {
+      return reply.code(503).send({ error: { message: 'CORE_API_BASE_URL is not configured' } });
+    }
+    const coreSecret = process.env.CORE_API_SECRET;
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
     const url = `${configuredUrl.replace(/\/$/, '')}/api/users/escrows${query ? `?${query}` : ''}`;
 
+    const headers: Record<string, string> = {};
+    if (coreSecret) {
+      headers['x-core-api-key'] = coreSecret;
+    }
+
     try {
-      const res = await fetch(url, {
-        headers: {
-          'x-core-api-key': coreSecret,
-        },
-      });
+      const res = await fetch(url, { headers });
       const data = await res.json();
       return reply.code(res.status).send(data);
     } catch (err: any) {
@@ -995,20 +993,21 @@ export async function identityRoutes(app: FastifyInstance) {
    * Direct proxy for /api/users/profile
    */
   app.get('/api/users/profile', async (request, reply) => {
-    const defaultEscrowUrl = env.APP_ENV === 'production'
-      ? 'https://api.sivantech.online'
-      : 'https://api-staging.sivantech.online';
-    const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
-    const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
+    const configuredUrl = env.CORE_API_BASE_URL || env.ESCROW_AGENT_URL;
+    if (!configuredUrl) {
+      return reply.code(503).send({ error: { message: 'CORE_API_BASE_URL is not configured' } });
+    }
+    const coreSecret = process.env.CORE_API_SECRET;
     const query = new URLSearchParams(request.query as Record<string, string>).toString();
     const url = `${configuredUrl.replace(/\/$/, '')}/api/users/profile${query ? `?${query}` : ''}`;
 
+    const headers: Record<string, string> = {};
+    if (coreSecret) {
+      headers['x-core-api-key'] = coreSecret;
+    }
+
     try {
-      const res = await fetch(url, {
-        headers: {
-          'x-core-api-key': coreSecret,
-        },
-      });
+      const res = await fetch(url, { headers });
       const data = await res.json();
       return reply.code(res.status).send(data);
     } catch (err: any) {
