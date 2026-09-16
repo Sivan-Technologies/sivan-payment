@@ -176,7 +176,7 @@ export type WithdrawAssetOption = {
   chainUnavailable?: boolean;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, ngnThirdPartyPayoutsEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, onClose, onReset, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, ngnThirdPartyPayoutsEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
 
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
@@ -195,7 +195,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
    * `ngnNetwork = 'solana'` default was a second opinion about the same
    * question, and it disagreed with this one for anybody not on Solana.
    */
-  ngnNetworkOptions?: Array<{ network: string; minimumDepositUsd?: number }>;
+  ngnNetworkOptions?: Array<{ network: string; minimumDepositUsd?: number; gasEstimateUsd?: number; label?: string; balance?: number }>;
   onNgnNetworkChange?: (network: string) => void;
   ngnAsset?: 'usdc' | 'usdt';
   onNgnAssetChange?: (asset: 'usdc' | 'usdt') => void;
@@ -234,6 +234,8 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onCancelReview: () => void;
   onConfirm: () => void;
+  onClose?: () => void;
+  onReset?: () => void;
 }) {
   const hasEnabledBank = accounts.some((account) => enabledControls.some((control) => control.currency === account.currency));
   const step = depositResult ? 3 : withdrawalReview ? 2 : 1;
@@ -285,7 +287,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             // user spend" across both rails.
             : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} assetOptions={withdrawAssetOptions} externalFundingEnabled={ngnExternalFundingEnabled} fundingSource={bridgeFunding} onFundingSourceChange={setBridgeFunding} />}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} ngnFeePercent={ngnFeePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
-          {step === 3 && <DepositCard result={depositResult} />}
+          {step === 3 && <DepositCard result={depositResult} onClose={onClose} onReset={onReset} />}
         </div>
         <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} balanceFunded={balanceFunded} />
       </div>
@@ -391,7 +393,7 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
               disabled,
             };
           })} /></label>
-          <label>Deposit network<CustomSelect name="sourceChain" defaultValue={enabledNetworks[0]?.network || 'base'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label>
+          <label>Deposit network<CustomSelect name="sourceChain" defaultValue={enabledNetworks.find((network) => network.isDefault)?.network || enabledNetworks[0]?.network || 'solana'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label>
         </div>
 
         {/* Same choice, same words, same default as the naira rail. Two
@@ -1956,9 +1958,20 @@ function BankList({ accounts }: { accounts: ExternalAccountRecord[] }) {
   return <div className="list">{accounts.map((account) => <div className="list-item" key={account.id}><strong>{account.bankName || 'Bank account'} • {account.currency.toUpperCase()}</strong><Badge status={account.status}>{friendlyStatus(account.status)}</Badge><small>{account.paymentRail.replaceAll('_', ' ')} · ****{account.accountLast4 || '----'}</small></div>)}</div>;
 }
 
-function DepositCard({ result }: { result: DepositResponse | null }) {
+function DepositCard({
+  result,
+  onClose,
+  onReset,
+}: {
+  result: DepositResponse | null;
+  onClose?: () => void;
+  onReset?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
+  const [redirectCountdown, setRedirectCountdown] = useState<number | null>(null);
+
   if (!result) return <article className="deposit-card"><p className="eyebrow">Deposit address</p><h3>Ready when you are</h3><p className="muted">Create a withdrawal to receive a deposit address. You will review the asset, network, fee, and payout currency before sending.</p></article>;
+
   const copyDepositAddress = () => {
     if (!result.deposit?.address) return;
     navigator.clipboard?.writeText(result.deposit.address);
@@ -1966,79 +1979,320 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
     setTimeout(() => setCopied(false), 2200);
   };
 
-  /**
-   * NEVER CRASH THE PAGE OVER A MISSING FIELD ON THIS SCREEN.
-   *
-   * This card renders AFTER the money has already moved. `result.deposit`
-   * was read straight through - `result.deposit.currency.toUpperCase()` - and
-   * the naira rail returns no `deposit` object at all, so every NGN
-   * withdrawal threw here and took the whole app down with it. The user had
-   * been charged and got a black screen; the deposit address they needed in
-   * order to complete the send was in the response that crashed.
-   *
-   * App.tsx now normalises both rails so this should always be populated.
-   * The guard stays anyway, because the cost of being wrong is asymmetric:
-   * a missing chain label is a degraded card, a thrown error is a lost
-   * address.
-   */
   const depositAddress = result.deposit?.address;
   const depositCurrency = result.deposit?.currency?.toUpperCase();
-  /**
-   * networkLabel(), not the raw string. The chain arrives as a database value
-   * - 'solana', 'avalanche_c_chain' - and rendering it straight gave
-   * "Send only USDC on solana" on the one screen where a user is deciding
-   * where to send real money. The same helper already fixes this on the
-   * activity rows; a safety warning deserves it at least as much.
-   */
   const depositChain = result.deposit?.chain ? networkLabel(result.deposit.chain) : undefined;
   const withdrawal = result.withdrawal;
-  // '' rather than undefined so the .includes() and === comparisons below stay
-  // total without each one needing its own guard.
   const withdrawalStatus = withdrawal?.status ?? '';
 
+  // Auto-close and auto-redirect timer:
+  // 1) Instant 10-second redirect countdown when status completes
+  // 2) 15-minute fallback session timeout (redirects to Dashboard)
+  useEffect(() => {
+    if (!onClose) return;
+
+    if (withdrawalStatus === 'completed') {
+      setRedirectCountdown(10);
+      const interval = setInterval(() => {
+        setRedirectCountdown((prev) => {
+          if (prev === null || prev <= 1) {
+            clearInterval(interval);
+            onClose();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+
+    // 15-minute fallback auto-close timer (900,000 ms)
+    const fifteenMinTimer = setTimeout(() => {
+      onClose();
+    }, 15 * 60 * 1000);
+
+    return () => clearTimeout(fifteenMinTimer);
+  }, [withdrawalStatus, onClose]);
+
+  // HARDENED AUTO-HIDE CONDITION:
+  // Unless the user explicitly selected 'external' funding ("I'll send crypto myself"),
+  // any withdrawal in Sivan is funded directly from the user's Sivan balance.
+  // The deposit address, QR code, and manual transfer warnings are permanently excluded
+  // from rendering from the very first frame.
+  const isExplicitExternal = result.fundingSource === 'external'
+    || (result.withdrawal as any)?.fundingSource === 'external';
+  const isBalanceFunded = !isExplicitExternal;
+
+  if (isBalanceFunded) {
+    return (
+      <article className="deposit-card live-deposit-card">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+          <div>
+            <p className="eyebrow">Step 3</p>
+            <h3>Withdrawal in progress</h3>
+          </div>
+          {onClose && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onClose}
+              title="Close and return to dashboard"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+                borderRadius: '8px',
+                cursor: 'pointer',
+                border: '1px solid var(--border, rgba(255, 255, 255, 0.12))'
+              }}
+            >
+              ✕ Done
+            </button>
+          )}
+        </div>
+
+        <p className="muted">
+          Your withdrawal is being processed directly from your Sivan balance. We have initiated the transfer of {depositCurrency} on {depositChain || 'the network'}, and the payout is being dispatched to your bank account. No manual deposit is needed.
+        </p>
+
+        <div className="balance-funded-badge" style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '10px 16px',
+          borderRadius: '12px',
+          background: 'rgba(34, 197, 94, 0.12)',
+          border: '1px solid rgba(34, 197, 94, 0.25)',
+          color: '#16a34a',
+          fontWeight: 600,
+          fontSize: '0.92em',
+          marginBottom: '20px',
+        }}>
+          <span style={{ fontSize: '1.2em' }}>✓</span> Paid from Sivan balance • Automatic settlement active
+        </div>
+
+        {redirectCountdown !== null && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 16px',
+            marginBottom: '16px',
+            borderRadius: '10px',
+            background: 'rgba(59, 130, 246, 0.12)',
+            border: '1px solid rgba(59, 130, 246, 0.25)',
+            color: '#60a5fa',
+            fontSize: '0.9em',
+            fontWeight: 500
+          }}>
+            <span>Bank payout completed! Returning to dashboard in {redirectCountdown}s...</span>
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#93c5fd',
+                  textDecoration: 'underline',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  padding: 0
+                }}
+              >
+                Return now
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="details-box">
+          <Kv label="Reference" value={withdrawal?.id ? shortRef(withdrawal.id) : undefined} />
+          <Kv label="Paid from balance" value={withdrawal?.sourceAmount ? `${withdrawal.sourceAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : undefined} />
+          <Kv label="You receive" value={withdrawal?.destinationAmount ? `${Number(withdrawal.destinationAmount).toLocaleString()} ${String(withdrawal.destinationCurrency ?? '').toUpperCase()}` : undefined} />
+          <Kv label="Fee" value={withdrawal?.feeAmount ? `${withdrawal.feeAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : withdrawal?.feePercent ? `${withdrawal.feePercent}%` : undefined} />
+          <Kv label="Status" value={withdrawal?.status ? friendlyStatus(withdrawal.status) : undefined} />
+        </div>
+
+        {withdrawal?.transactionTimeline ? <InlineTransactionTimeline timeline={withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
+          <TimelineItem done title="Debited from balance" body="Funds moved from your Sivan wallet." />
+          <TimelineItem active={withdrawalStatus === 'settlement_processing' || withdrawalStatus === 'payout_processing'} done={withdrawalStatus === 'completed'} title="Convert and payout" body="Sivan and rail liquidate crypto and send fiat to your bank account." />
+          <TimelineItem done={withdrawalStatus === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
+        </div>}
+
+        <div className="deposit-card-actions" style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '12px',
+          marginTop: '28px',
+          paddingTop: '20px',
+          borderTop: '1px solid var(--border, rgba(255, 255, 255, 0.08))'
+        }}>
+          {onClose && (
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={onClose}
+              style={{ minWidth: '200px' }}
+            >
+              Done / Back to Dashboard
+            </button>
+          )}
+          {onReset && (
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={onReset}
+              style={{ minWidth: '200px' }}
+            >
+              Start another withdrawal
+            </button>
+          )}
+        </div>
+      </article>
+    );
+  }
 
   // No address means there is nothing actionable to show, but the withdrawal
   // still exists - so point the user at their history rather than at nothing.
   if (!depositAddress) {
     return (
       <article className="deposit-card live-deposit-card">
-        <p className="eyebrow">Step 3</p>
-        <h3>Withdrawal created</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+          <div>
+            <p className="eyebrow">Step 3</p>
+            <h3>Withdrawal created</h3>
+          </div>
+          {onClose && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={onClose}
+              title="Close and return to dashboard"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '6px 14px',
+                fontSize: '0.88rem',
+                fontWeight: 600,
+                borderRadius: '8px',
+                cursor: 'pointer',
+                border: '1px solid var(--border, rgba(255, 255, 255, 0.12))'
+              }}
+            >
+              ✕ Done
+            </button>
+          )}
+        </div>
         <p className="muted">Your withdrawal was created, but we could not load the deposit address. Open Transactions to view it - your funds are safe and nothing needs to be resubmitted.</p>
         {result.withdrawal?.id ? <div className="details-box"><Kv label="Reference" value={shortRef(result.withdrawal.id)} /></div> : null}
+        <div className="deposit-card-actions" style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '12px',
+          marginTop: '28px',
+          paddingTop: '20px',
+          borderTop: '1px solid var(--border, rgba(255, 255, 255, 0.08))'
+        }}>
+          {onClose && (
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={onClose}
+              style={{ minWidth: '200px' }}
+            >
+              Done / Back to Dashboard
+            </button>
+          )}
+          {onReset && (
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={onReset}
+              style={{ minWidth: '200px' }}
+            >
+              Start another withdrawal
+            </button>
+          )}
+        </div>
       </article>
     );
   }
 
   return (
     <article className="deposit-card live-deposit-card">
-      <p className="eyebrow">Step 3</p>
-      <h3>Deposit address created</h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+        <div>
+          <p className="eyebrow">Step 3</p>
+          <h3>Deposit address created</h3>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={onClose}
+            title="Close and return to dashboard"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '6px 14px',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              borderRadius: '8px',
+              cursor: 'pointer',
+              border: '1px solid var(--border, rgba(255, 255, 255, 0.12))'
+            }}
+          >
+            ✕ Done
+          </button>
+        )}
+      </div>
       <p className="muted">
         {depositCurrency && depositChain
           ? <>Send only {depositCurrency} on {depositChain}. </>
           : <>Send only the asset and network you selected. </>}
         Sending any other token, or using the wrong network, can permanently lose your funds and may not be recoverable. <a href={legalLinks.risk} target="_blank" rel="noreferrer">Read Risk Disclosure</a>.
       </p>
+      {redirectCountdown !== null && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 16px',
+          marginBottom: '16px',
+          borderRadius: '10px',
+          background: 'rgba(59, 130, 246, 0.12)',
+          border: '1px solid rgba(59, 130, 246, 0.25)',
+          color: '#60a5fa',
+          fontSize: '0.9em',
+          fontWeight: 500
+        }}>
+          <span>Bank payout completed! Returning to dashboard in {redirectCountdown}s...</span>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#93c5fd',
+                textDecoration: 'underline',
+                fontWeight: 600,
+                cursor: 'pointer',
+                padding: 0
+              }}
+            >
+              Return now
+            </button>
+          )}
+        </div>
+      )}
       <div className="qr-wrap premium-qr"><img src={qrUrl(depositAddress)} alt="Deposit address QR code" /><div><span className="address-label">Deposit address</span><div className="deposit-address clickable-address" title="Click or tap to copy address" onClick={copyDepositAddress} style={{ cursor: 'pointer' }}>{depositAddress}</div><button className="secondary-btn" onClick={copyDepositAddress}>{copied ? '✓ Copied to clipboard' : 'Copy address'}</button></div></div>
-      {/* Kv already renders '—' for null/undefined, so every value below is
-          passed through rather than read into. `withdrawal` itself is
-          optional-chained for the same reason the block above is: this screen
-          runs after the money moved and must never be the thing that throws. */}
-      {/*
-        FEE READ FROM BOTH RAILS, AND THE AMOUNT SHOWN AT ALL.
-
-        This read only `feePercent`, which Bridge sends and the naira rail
-        does not - so every NGN withdrawal rendered "FEE —" on the one screen
-        that exists to confirm what the user is paying. Breet sends
-        `feeAmount` (an absolute figure in the source asset), so both are
-        read and the absolute number wins when present, because it is the
-        one the user can check against their own arithmetic.
-
-        "You receive" was missing entirely. It is the single number a person
-        actually cares about on a withdrawal confirmation, and it was in the
-        response the whole time.
-      */}
       <div className="details-box"><Kv label="Reference" value={withdrawal?.id ? shortRef(withdrawal.id) : undefined} /><Kv label="You send" value={withdrawal?.sourceAmount ? `${withdrawal.sourceAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : undefined} /><Kv label="You receive" value={withdrawal?.destinationAmount ? `${Number(withdrawal.destinationAmount).toLocaleString()} ${String(withdrawal.destinationCurrency ?? '').toUpperCase()}` : undefined} /><Kv label="Fee" value={withdrawal?.feeAmount ? `${withdrawal.feeAmount} ${String(withdrawal.sourceCurrency ?? '').toUpperCase()}` : withdrawal?.feePercent ? `${withdrawal.feePercent}%` : undefined} /><Kv label="Status" value={withdrawal?.status ? friendlyStatus(withdrawal.status) : undefined} /></div>
       {withdrawal?.transactionTimeline ? <InlineTransactionTimeline timeline={withdrawal.transactionTimeline} /> : <div className="tracking-timeline">
         <TimelineItem done title="Address created" body="A unique provider-backed deposit address is ready." />
@@ -2046,6 +2300,35 @@ function DepositCard({ result }: { result: DepositResponse | null }) {
         <TimelineItem active={['deposit_received', 'payout_processing'].includes(withdrawalStatus)} done={withdrawalStatus === 'completed'} title="Convert and payout" body="Sivan detects the deposit, liquidates, and sends fiat to your bank." />
         <TimelineItem done={withdrawalStatus === 'completed'} title="Completed" body="Bank payout completed once provider status confirms." />
       </div>}
+      <div className="deposit-card-actions" style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '12px',
+        marginTop: '28px',
+        paddingTop: '20px',
+        borderTop: '1px solid var(--border, rgba(255, 255, 255, 0.08))'
+      }}>
+        {onClose && (
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={onClose}
+            style={{ minWidth: '200px' }}
+          >
+            Done / Back to Dashboard
+          </button>
+        )}
+        {onReset && (
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={onReset}
+            style={{ minWidth: '200px' }}
+          >
+            Start another withdrawal
+          </button>
+        )}
+      </div>
     </article>
   );
 }

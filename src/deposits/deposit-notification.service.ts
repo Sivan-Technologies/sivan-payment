@@ -124,12 +124,85 @@ export interface NotifyOutcome {
 }
 
 /**
+ * Deliver Telegram deposit notification if user has linked Telegram.
+ */
+export async function notifyTelegramDeposit(userId: string, deposit: WalletDepositRecord): Promise<void> {
+  try {
+    // Ignore synthetic or test users during background sweeps
+    if (
+      userId.startsWith('usr_dev_') ||
+      userId.startsWith('usr_test_') ||
+      userId.includes('mock') ||
+      userId.includes('test_agent') ||
+      userId.includes('buyer_test') ||
+      userId.includes('seller_test')
+    ) {
+      return;
+    }
+
+    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    if (!notifyUrl) {
+      console.warn('[deposit-notification] TELEGRAM_NOTIFICATION_URL is not set — skipping Telegram deposit notification.');
+      return;
+    }
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (!secret) {
+      console.warn('[deposit-notification] NOTIFICATION_SECRET is not set — skipping Telegram deposit notification.');
+      return;
+    }
+
+    const links = await db.listCustomerIdentityLinks();
+    const activeLinks = links
+      .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
+      .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+
+    const telegramLink = activeLinks[0];
+    if (!telegramLink?.telegramUserId) return;
+
+    // Verify this Telegram ID has not been superseded by a newer link to a different user
+    const allLinksForTg = links
+      .filter((l) => l.telegramUserId === telegramLink.telegramUserId && l.status === 'linked')
+      .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+
+    if (allLinksForTg.length > 0 && allLinksForTg[0].paymentUserId !== userId) {
+      return;
+    }
+
+    const prefs = await db.getUserPreferencesRecord(userId);
+    if (prefs && prefs.telegramNotificationsEnabled === false) return;
+
+    const user = await db.findUserById(userId);
+    const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
+
+    const amount = `${deposit.amount} ${deposit.asset}`;
+    const network = humanNetwork(deposit.chain);
+    const text = deposit.status === 'confirmed'
+      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
+
+    await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-notify-secret': secret,
+      },
+      body: JSON.stringify({
+        telegramId: telegramLink.telegramUserId,
+        message: text,
+      }),
+    });
+  } catch {
+    // Non-blocking notification enhancement
+  }
+}
+
+/**
  * Deliver everything owed.
  *
  * In-app delivery needs no work here: the activity feed reads the deposit rows
  * directly, so a deposit is visible the instant it is recorded, whether or not
- * an email ever goes out. This loop is the email channel only. WhatsApp and
- * Telegram slot in beside sendEmail without touching detection or the feed.
+ * an email ever goes out. Email and Telegram notifications dispatch beside each
+ * other without touching detection or the feed.
  */
 export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> {
   const outcome: NotifyOutcome = { considered: 0, sent: 0, skipped: 0, failed: 0 };
@@ -139,22 +212,18 @@ export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> 
 
   for (const deposit of owed) {
     const user = await db.findUserById(deposit.userId);
-    /**
-     * No email address is not a failure to retry.
-     *
-     * A WhatsApp-first user may genuinely have no email. Claim the row anyway,
-     * so the notifier does not re-examine it on every tick forever. The feed
-     * row is already showing them the deposit; email is one channel of several.
-     */
-    if (!user?.email) {
-      await db.markWalletDepositNotified(deposit.id, nowIso());
-      outcome.skipped += 1;
-      continue;
-    }
 
     // CLAIM BEFORE SENDING. See the header.
     const claimed = await db.markWalletDepositNotified(deposit.id, nowIso());
     if (!claimed) {
+      outcome.skipped += 1;
+      continue;
+    }
+
+    // Deliver Telegram notification if linked & enabled
+    void notifyTelegramDeposit(deposit.userId, deposit);
+
+    if (!user?.email) {
       outcome.skipped += 1;
       continue;
     }
@@ -164,14 +233,6 @@ export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> 
       await sendEmail({ to: user.email, subject: message.subject, text: message.text, html: message.html });
       outcome.sent += 1;
     } catch {
-      /**
-       * The claim is NOT rolled back on a send failure.
-       *
-       * Un-claiming would retry, and a provider that fails after actually
-       * delivering - a timeout on the response, say - would then send twice.
-       * The deposit is recorded and visible in the app regardless; a failed
-       * email is logged by the caller and is not worth risking a duplicate.
-       */
       outcome.failed += 1;
     }
   }

@@ -28,9 +28,9 @@ export type WalletProviderName = 'mock' | 'bridge' | 'privy';
  * Wallets support and what Sivan enables in payment controls.
  * See CHAIN_ASSET_SUPPORT in src/controls/payment-controls.service.ts.
  */
-export type WalletChain = 'solana' | 'base' | 'ethereum';
+export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb';
 
-export type WalletAsset = 'usdc' | 'usdt';
+export type WalletAsset = 'usdc' | 'usdt' | 'xlm' | 'cusd' | 'celo' | 'cngn';
 
 export type WalletStatus =
   | 'provisioning'
@@ -116,6 +116,7 @@ export interface CreateWalletInput {
  * auto-converts to the user's verified bank account.
  */
 export interface WalletTransferInput {
+  userId?: string;
   providerWalletId: string;
   providerCustomerId?: string;
   asset: WalletAsset;
@@ -144,6 +145,21 @@ export interface WalletTransferInput {
    * merely been asked for it.
    */
   networkMode?: NetworkMode;
+  /**
+   * Celo native fee abstraction: the ERC-20 adapter address to pay gas in.
+   *
+   * When set on a Celo transfer, the Privy provider includes this as
+   * `feeCurrency` in the transaction params. The Celo node then deducts gas
+   * from the user's USDC, USDT, or cUSD balance instead of requiring CELO.
+   *
+   * Resolved by resolveCeloFeeCurrency() in celo-fee-currency.ts, which checks
+   * the wallet's stablecoin balances in priority order (USDC → USDT → cUSD)
+   * and returns the correct adapter address for the current environment.
+   *
+   * Ignored by every provider and chain except the Celo EVM path in
+   * privy-wallet.provider.ts. Base, BSC, Solana, and Stellar never see it.
+   */
+  feeCurrency?: string;
 }
 
 

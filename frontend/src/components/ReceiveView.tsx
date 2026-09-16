@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { qrDataUri } from '../qrCode';
 import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
-import type { AssetControl, NetworkControl, UserWalletRecord } from '../types';
+import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } from '../types';
 
 /**
  * Receive (deposit) screen.
@@ -36,8 +36,8 @@ const CHAIN_ASSETS: Record<ReceiveChain, ReceiveAsset[]> = {
   solana: ['usdc', 'usdt'],
   ethereum: ['usdc', 'usdt'],
   base: ['usdc'],
-  stellar: ['usdc'],
-  celo: ['usdc'],
+  stellar: ['usdc', 'usdt'],
+  celo: ['usdc', 'usdt'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
   bsc: ['usdc', 'usdt'],
@@ -55,7 +55,7 @@ const CHAIN_META: Record<ReceiveChain, {
     label: 'Solana',
     short: 'SOL',
     addressFormat: 'Starts with letters and numbers (base58)',
-    confirmations: 'Usually under a minute',
+    confirmations: 'Usually 10–30 seconds',
     accent: '#9945FF',
     note: 'Lowest fees. Recommended for most deposits.',
   },
@@ -137,6 +137,7 @@ function truncateMiddle(value: string, lead = 10, tail = 8) {
 
 export function ReceiveView({
   wallets,
+  unifiedBalance,
   enabledAssets,
   enabledNetworks,
   isVerified,
@@ -148,6 +149,7 @@ export function ReceiveView({
   onRefresh,
 }: {
   wallets: WalletRecord[];
+  unifiedBalance?: UnifiedBalance | null;
   enabledAssets: AssetControl[];
   enabledNetworks: NetworkControl[];
   isVerified: boolean;
@@ -170,6 +172,14 @@ export function ReceiveView({
     return filtered.length > 0 ? Array.from(new Set([...filtered, ...supported])) : supported;
   }, [enabledNetworks]);
 
+  const defaultChain = useMemo(() => {
+    const configured = enabledNetworks?.find((n) => n.enabled && n.isDefault)?.network as ReceiveChain | undefined;
+    if (configured && availableChains.includes(configured)) {
+      return configured;
+    }
+    return availableChains[0] ?? null;
+  }, [enabledNetworks, availableChains]);
+
   /**
    * NETWORKS PRESENTED AS DISTINCT CHOICES.
    *
@@ -177,6 +187,7 @@ export function ReceiveView({
    * are presented as individual options so users can deposit instantly without high gas fees.
    */
   const chainFamilies = useMemo(() => {
+    const activeDefault = defaultChain || 'solana';
     const families: Array<{
       key: string;
       label: string;
@@ -190,7 +201,7 @@ export function ReceiveView({
         label: 'Solana',
         note: 'Its own base58 address. Fastest and lowest fees for most deposits.',
         accent: CHAIN_META.solana.accent,
-        recommended: true,
+        recommended: activeDefault === 'solana',
         chains: ['solana'],
       },
       {
@@ -198,6 +209,7 @@ export function ReceiveView({
         label: 'Base',
         note: 'Fast L2 EVM network with low fees. Shares 0x address format.',
         accent: CHAIN_META.base.accent,
+        recommended: activeDefault === 'base',
         chains: ['base'],
       },
       {
@@ -205,6 +217,7 @@ export function ReceiveView({
         label: 'BNB Chain',
         note: 'BNB Smart Chain (BEP-20). Ultra-low fees for USDC & USDT.',
         accent: CHAIN_META.bsc.accent,
+        recommended: activeDefault === 'bsc' || (activeDefault as string) === 'bnb',
         chains: ['bsc'],
       },
       {
@@ -212,6 +225,7 @@ export function ReceiveView({
         label: 'Stellar',
         note: 'Dedicated G... address. Ultra-fast sub-cent cross-border settlement.',
         accent: CHAIN_META.stellar.accent,
+        recommended: activeDefault === 'stellar',
         chains: ['stellar'],
       },
       {
@@ -219,20 +233,39 @@ export function ReceiveView({
         label: 'Celo',
         note: 'Mobile-first fast EVM network with near-zero gas.',
         accent: CHAIN_META.celo.accent,
+        recommended: activeDefault === 'celo',
         chains: ['celo'],
       },
     ];
     return families
       .map((family) => ({ ...family, chains: family.chains.filter((c) => availableChains.includes(c)) }))
-      .filter((family) => family.chains.length > 0);
-  }, [availableChains]);
+      .filter((family) => family.chains.length > 0)
+      .sort((a, b) => {
+        if (a.recommended && !b.recommended) return -1;
+        if (!a.recommended && b.recommended) return 1;
+        return 0;
+      });
+  }, [availableChains, defaultChain]);
 
-  const [chain, setChain] = useState<ReceiveChain | null>(availableChains[0] ?? null);
+  const [chain, setChain] = useState<ReceiveChain | null>(() => defaultChain);
   const [copied, setCopied] = useState(false);
+  const userManuallySelectedRef = useRef<boolean>(false);
+  const prevDefaultChainRef = useRef<ReceiveChain | null>(defaultChain);
 
   useEffect(() => {
-    if (!chain && availableChains.length) setChain(availableChains[0]);
-  }, [availableChains, chain]);
+    if (!defaultChain) return;
+    // When the default network changes from the server (e.g. admin switched to Stellar or Celo),
+    // immediately synchronize and prioritize the newly configured default.
+    if (prevDefaultChainRef.current !== defaultChain) {
+      prevDefaultChainRef.current = defaultChain;
+      userManuallySelectedRef.current = false;
+      setChain(defaultChain);
+      return;
+    }
+    if (!chain || !availableChains.includes(chain)) {
+      setChain(defaultChain);
+    }
+  }, [defaultChain, availableChains, chain]);
 
   // Switching chain clears the "Copied" flag: it referred to the previous
   // network's address, and leaving it up would suggest the new one is already
@@ -241,10 +274,15 @@ export function ReceiveView({
     setCopied(false);
   }, [chain]);
 
+  const handleRefresh = () => {
+    userManuallySelectedRef.current = false;
+    onRefresh();
+  };
+
   if (!walletsEnabled) {
     return (
       <section className="app-page receive-page">
-        <PageHead onRefresh={onRefresh} />
+        <PageHead onRefresh={handleRefresh} />
         <article className="receive-panel">
           <div className="receive-empty">
             <h3>Deposits are not available yet</h3>
@@ -304,26 +342,8 @@ export function ReceiveView({
    * name-matched a NUBAN is verified by that route and must keep working
    * exactly as before.
    */
-  if (!isVerified) {
-    return (
-      <section className="app-page receive-page">
-        <PageHead onRefresh={onRefresh} />
-        <article className="receive-panel">
-          <div className="receive-empty">
-            <h3>Verify your identity first</h3>
-            <p className="muted">
-              Deposit addresses are issued after verification. This protects your funds and is required by our regulated partners.
-            </p>
-            {/* Adding a name-matched payout account is one of the two ways to
-                clear this, so the route stays offered here. */}
-            {!hasPayoutAccount && onAddBank && (
-              <button className="secondary-btn" onClick={onAddBank}>Add payout account →</button>
-            )}
-          </div>
-        </article>
-      </section>
-    );
-  }
+  // Level 0 users can view their multi-chain deposit addresses immediately.
+  // Bank verification is requested when initiating a fiat withdrawal or off-ramp.
 
   if (!availableChains.length) {
     return (
@@ -398,6 +418,45 @@ export function ReceiveView({
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
 
+  const directChainWallet = openWallets.find((w) => w.chain === activeChain);
+  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain === activeChain);
+  const unifiedWallet = directUnified ?? (unifiedBalance?.wallets || []).find(
+    (w) => w.address && wallet?.address && w.address.toLowerCase() === wallet.address.toLowerCase()
+  );
+
+  const activeBalances = useMemo(() => {
+    // 1. Direct wallet for the selected chain
+    if (directChainWallet?.balances && directChainWallet.balances.length > 0) {
+      return directChainWallet.balances.filter((b) => !b.chain || b.chain === activeChain);
+    }
+    // 2. Direct unified entry for the selected chain
+    if (directUnified?.balances && directUnified.balances.length > 0) {
+      return directUnified.balances.filter((b) => !b.chain || b.chain === activeChain);
+    }
+    // 3. Fallback to matched wallet if it contains balances for this chain
+    if (wallet?.balances && wallet.balances.length > 0) {
+      const matching = wallet.balances.filter((b) => b.chain === activeChain);
+      if (matching.length > 0) return matching;
+    }
+    if (unifiedWallet?.balances && unifiedWallet.balances.length > 0) {
+      const matching = unifiedWallet.balances.filter((b) => b.chain === activeChain);
+      if (matching.length > 0) return matching;
+    }
+    return directChainWallet?.balances ?? directUnified?.balances ?? wallet?.balances;
+  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, activeChain]);
+
+  const lastDispatchedBalanceRef = useRef<string>('');
+  useEffect(() => {
+    if (!activeBalances || activeBalances.length === 0) return;
+    const balanceKey = `${activeChain}:${activeBalances.map((b) => `${b.asset}:${b.amount}`).join(',')}`;
+    if (lastDispatchedBalanceRef.current && lastDispatchedBalanceRef.current !== balanceKey) {
+      lastDispatchedBalanceRef.current = balanceKey;
+      window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
+    } else if (!lastDispatchedBalanceRef.current) {
+      lastDispatchedBalanceRef.current = balanceKey;
+    }
+  }, [activeBalances, activeChain]);
+
   // Assets enabled globally but unavailable on this specific chain. Naming
   // them prevents the "why can't I see USDT?" support ticket.
   const unavailableHere = enabledAssets
@@ -413,7 +472,7 @@ export function ReceiveView({
 
   return (
     <section className="app-page receive-page">
-      <PageHead onRefresh={onRefresh} />
+      <PageHead onRefresh={handleRefresh} />
 
       <article className="receive-panel">
         <div className="receive-chain-head">
@@ -453,7 +512,10 @@ export function ReceiveView({
                 className={`receive-family-card${selected ? ' selected' : ''}`}
                 style={selected ? { borderColor: family.accent } : undefined}
                 aria-pressed={selected}
-                onClick={() => setChain(family.chains[0])}
+                onClick={() => {
+                  userManuallySelectedRef.current = true;
+                  setChain(family.chains[0]);
+                }}
               >
                 <span className="receive-family-top">
                   {/* The mark, not a coloured dot. Every dot was the same
@@ -502,7 +564,10 @@ export function ReceiveView({
                   style={option === activeChain
                     ? { borderColor: CHAIN_META[option].accent, color: CHAIN_META[option].accent }
                     : undefined}
-                  onClick={() => setChain(option)}
+                  onClick={() => {
+                    userManuallySelectedRef.current = true;
+                    setChain(option);
+                  }}
                 >
                   <NetworkLogo chain={option} size={16} />
                   {CHAIN_META[option].label}
@@ -658,20 +723,20 @@ export function ReceiveView({
               */}
               <div className="receive-balances">
                 <p className="eyebrow">Current balance</p>
-                {wallet.balancesUnavailable ? (
+                {wallet.balancesUnavailable && !unifiedWallet?.balances ? (
                   <p className="muted receive-balance-note">
                     Balance temporarily unavailable. Your funds are safe and the address above
                     still works. Try refreshing in a moment.
                   </p>
-                ) : !wallet.balances ? (
+                ) : !activeBalances ? (
                   <p className="muted receive-balance-note">Loading…</p>
-                ) : wallet.balances.length === 0 ? (
+                ) : activeBalances.length === 0 ? (
                   <p className="muted receive-balance-note">
                     Nothing received yet. Deposits appear here once confirmed on {meta.label}.
                   </p>
                 ) : (
                   <div className="receive-balance-row">
-                    {wallet.balances.map((balance) => (
+                    {activeBalances.map((balance) => (
                       <div className="receive-balance" key={`${balance.asset}-${balance.chain}`}>
                         <strong>{balance.amount}</strong>
                         <small>{balance.asset.toUpperCase()}</small>

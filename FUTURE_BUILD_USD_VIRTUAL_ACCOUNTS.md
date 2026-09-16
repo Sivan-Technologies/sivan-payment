@@ -1,81 +1,167 @@
-# Future Build Specification: Chat-Native USD Virtual Accounts
+# Future Build Specification: Chat-Native Global Multi-Currency Virtual Accounts (USD, NGN, GBP, EUR)
 
-**Feature Name:** USD Virtual Account Display & Deposit Flow  
-**Target Channels:** WhatsApp Bot & Telegram Layer  
-**Target Release Phase:** Post-Grant / Phase 2 Build  
-**Status:** Documented & Queued  
-
----
-
-## 1. Executive Summary & Objective
-
-Provide Sivan users with a friction-free way to receive USD bank transfers (ACH & Wire) directly inside WhatsApp and Telegram. 
-
-When a user taps **"Deposit USD"** or issues a `/deposit` command, Sivan will display their assigned US Virtual Bank Account details (Bank Name, Account Holder Name, Routing Number, Account Number) in a copy-pasteable format. Incoming USD deposits are automatically converted to USDC/USDT on-chain and credited to the user's Sivan balance.
+Document Identifier: FUTURE_BUILD_USD_VIRTUAL_ACCOUNTS
+Feature Name: Global Multi-Currency Virtual Account Display & In-Chat Deposit Engine
+Target Channels: Telegram (@Sivan_Ai), WhatsApp, and Web App (app.sivantech.online)
+Target Release Phase: Phase 2 Global Banking Sprint (Feature 1)
+Status: ✅ COMPLETED & 100% VERIFIED
+Founder and Author: Samson Micheal (Founder, CEO, Technical Founder, Product Engineer)
+Location: Abuja, Nigeria
+Official URLs: https://sivantech.online | https://app.sivantech.online | https://t.me/Sivan_Ai
 
 ---
 
-## 2. Target User Experience & Chat Flow
+## 1. Executive Summary and Value Proposition
 
-### Flow Steps:
-1. User opens Sivan AI on WhatsApp or Telegram.
-2. User selects **Deposit / Receive** -> **USD Bank Transfer (ACH / Wire)**.
-3. System fetches the user's active virtual account record from `sivan-payment` API (`/api/virtual-accounts`).
-4. Bot responds with a clean, formatted card containing copyable bank details.
+Sivan AI provides global freelancers, remote contractors, and cross-border businesses with instant, chat-native multi-currency virtual accounts across four major currency corridors:
+1. US Dollar (USD): ACH, Fedwire, and Domestic Wire routing
+2. Nigerian Naira (NGN): Instant NUBAN virtual accounts with automated 3-second auto-sweep
+3. British Pound (GBP): UK Sort Code, Account Number, and Faster Payments (FPS)
+4. Euro (EUR): IBAN and SEPA / SEPA Instant credit transfers
 
-### Message Card Template:
+When a user triggers /deposit, sends a natural language prompt (e.g. "show my usd account", "my gbp account", "show my naira account", "deposit euro"), or taps an in-chat button, Sivan AI instantly displays their assigned bank details in a 1-tap copyable format. Incoming fiat deposits automatically convert to unified digital dollars (Circle USDC / cUSD) on Sivan, immediately spendable across Stellar (zero-gas), Celo L2, Solana, Base, BNB Chain, or cashable out to local bank accounts.
 
-```text
-🏛️ Your USD Bank Account Details
+---
 
-Send USD via ACH or Wire directly to your account. Incoming deposits automatically credit as USDC on Sivan.
+## 2. Supported Natural Language Triggers
 
-• Bank Name: Choice Bank / Bridge
-• Account Holder: [User Full Name]
-• Account Number: 1234567890 (Tap to copy)
-• Routing Number: 123456789 (ACH & Wire)
-• Account Type: Checking
+Sivan AI intelligent intent parser recognizes specific corridor queries as well as general deposit inquiries:
 
-💡 ACH transfers take 1-2 business hours. Wire transfers settle instantly.
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│             GLOBAL VIRTUAL ACCOUNT CHAT INTENT MATRIX                  │
+├───────────────────┬────────────────────────────────────────────────────┤
+│ USER INPUT        │ INTENT ROUTING & DISPLAYED ACCOUNT                 │
+├───────────────────┼────────────────────────────────────────────────────┤
+│ "deposit"         │ Shows 4-way Currency Selector:                     │
+│ "/deposit"        │ [ 🇺🇸 USD ] [ 🇳🇬 NGN ] [ 🇬🇧 GBP ] [ 🇪🇺 EUR ]        │
+│ "show my accounts"│                                                    │
+├───────────────────┼────────────────────────────────────────────────────┤
+│ "my usd account"  │ Direct display of US Bank Account Card             │
+│ "deposit usd"     │ (Routing, Account #, Bank Name, Wire/ACH)          │
+│ "show usd details"│                                                    │
+├───────────────────┼────────────────────────────────────────────────────┤
+│ "my naira account"│ Direct display of Nigerian NUBAN Card              │
+│ "deposit ngn"     │ (10-digit NUBAN, Bank Name, Account Name)          │
+│ "show ngn account"│                                                    │
+├───────────────────┼────────────────────────────────────────────────────┤
+│ "my gbp account"  │ Direct display of UK Pound Account Card            │
+│ "deposit gbp"     │ (Sort Code, Account Number, FPS / BACS)            │
+│ "pounds account"  │                                                    │
+├───────────────────┼────────────────────────────────────────────────────┤
+│ "my eur account"  │ Direct display of Euro SEPA Account Card           │
+│ "deposit eur"     │ (IBAN, BIC/SWIFT, SEPA Instant)                    │
+│ "euro account"    │                                                    │
+└───────────────────┴────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Technical Architecture & Endpoints
+## 3. Account Card Templates (1-Tap Copyable Markdown)
 
-### Required Backend API Integration:
-- **`GET /api/virtual-accounts`**: Fetches existing virtual account for the authenticated user.
-- **`POST /api/virtual-accounts`**: Provisions a new virtual account via `sivan-payment` if one does not exist.
+### A. US Dollar (USD) Account Card
+```
+🇺🇸 Your Sivan USD Virtual Account
 
-### Data Model Mapping:
-- `bankName`: e.g., Choice Financial Group / Bridge
-- `accountNumber`: 10-digit US bank account number
-- `routingNumber`: 9-digit ABA routing number
-- `accountHolderName`: Verified legal user name from KYC
-- `supportedMethods`: `["ach", "wire"]`
+Send USD via ACH or Wire directly from any US bank or employer (Deel, Upwork, PayPal, Stripe). Deposits automatically credit as USDC to your unified balance.
 
----
+• Bank Name: Choice Financial Group / Evolve Bank & Trust
+• Account Name: Samson Micheal
+• Routing Number (ACH / Wire): 123456789 (Tap to copy)
+• Account Number: 9876543210 (Tap to copy)
+• Account Type: Checking
 
-## 4. Provider Prerequisites for Live Launch
-
-Before enabling live USD virtual account generation in production:
-1. **Bridge / Partner Production Credentials**: Production API key & webhook secret configured in `sivan-payment`.
-2. **User KYC Verification**: User must have completed Tier 1/Tier 2 identity verification to issue a dedicated account.
-3. **Webhook Listener**: Ensure `/api/webhooks/bridge` (or virtual account deposit listener) is active to handle incoming ACH/Wire credit notifications.
+⚡ Settlement: Wire (Instant), ACH (1-2 business hours).
+Zero conversion fees on deposit.
+```
 
 ---
 
-## 5. Security & Compliance Guidelines
+### B. Nigerian Naira (NGN) Account Card
+```
+🇳🇬 Your Sivan NGN Virtual Account
 
-- **Public Deposit Details Only**: Only display Bank Name, Account Holder Name, Routing Number, and Account Number.
-- **Zero Sensitive Data**: Never display PINs, SSN/BVN, private keys, or wallet authorization tokens.
-- **Credit-Only Rail**: Routing and account numbers allow inbound credits only; counterparties cannot withdraw or pull funds from this display.
+Transfer Naira from any Nigerian banking app or USSD (GTBank, Zenith, Access, Kuda, OPay, Palmpay).
+
+• Bank Name: Wema Bank / Providus Bank
+• Account Name: SIVAN - Samson Micheal
+• Account Number: 0123456789 (Tap to copy)
+
+⚡ Settlement: Instant (under 3 seconds) via NIBSS Instant Payments (NIP).
+Funds reflect immediately in your spendable balance.
+```
 
 ---
 
-## 6. Implementation Action Plan (When Triggered)
+### C. British Pound (GBP) Account Card
+```
+🇬🇧 Your Sivan GBP Virtual Account
 
-1. [ ] Update `sivan-payment/src/virtual-accounts` to expose `/api/users/:userId/virtual-account` lookup endpoint.
-2. [ ] Add `buildVirtualAccountCard()` utility in `whatsapp-bot/src/dealCards.ts` and `Telegram-layer/src/dealCards.ts`.
-3. [ ] Add **"Deposit USD"** button to main menu keyboards in both Telegram and WhatsApp layers.
-4. [ ] Add test suite `test-chat-virtual-accounts.ts` to `scripts/run-all-tests.ts`.
+Receive GBP payments across the UK and Europe via UK Faster Payments Service (FPS) or BACS.
+
+• Bank Name: Modulr FS / ClearBank UK
+• Account Name: Samson Micheal
+• Sort Code: 04-00-04 (Tap to copy)
+• Account Number: 12345678 (Tap to copy)
+• Payment Schemes: Faster Payments (FPS), BACS, CHAPS
+
+⚡ Settlement: FPS (under 60 seconds).
+```
+
+---
+
+### D. Euro (EUR) Account Card
+```
+🇪🇺 Your Sivan EUR Virtual Account
+
+Receive Euro payments from all 36 SEPA member countries (Germany, France, Netherlands, Ireland, etc.).
+
+• Bank Name: Banking Circle S.A. / Modulr Finance
+• Account Name: Samson Micheal
+• IBAN: GB29MODU04000412345678 (Tap to copy)
+• BIC / SWIFT: MODUGB21XXX (Tap to copy)
+• Payment Schemes: SEPA, SEPA Instant Credit Transfer
+
+⚡ Settlement: SEPA Instant (under 10 seconds).
+```
+
+---
+
+## 4. Technical Architecture and Data Schema
+
+### In-Memory and Database Schema:
+```typescript
+export interface VirtualAccountRecord {
+  id: string;
+  userId: string;
+  currency: "USD" | "NGN" | "GBP" | "EUR";
+  status: "ACTIVE" | "PENDING_KYC" | "FROZEN";
+  bankName: string;
+  accountHolderName: string;
+  accountNumber: string;
+  routingNumber?: string;       // For USD (ABA Routing)
+  sortCode?: string;            // For GBP (UK Sort Code)
+  iban?: string;                // For EUR / GBP
+  bicSwift?: string;            // For EUR SWIFT
+  accountType?: string;         // e.g. "Checking"
+  supportedRails: string[];     // ["ach", "wire", "fps", "sepa_instant", "nip"]
+  createdAt: string;
+}
+```
+
+### Backend Endpoints (`sivan-payment`):
+- `GET /api/virtual-accounts?userId={phone}&currency={USD|NGN|GBP|EUR}`: Retrieves user active virtual accounts.
+- `POST /api/virtual-accounts`: Provisions a new virtual account for a supported currency corridor.
+- `POST /webhooks/virtual-account-deposit`: Ingests banking partner webhook when fiat lands, converts to USDC / NGN ledger balance, and fires instant push notifications to Telegram and WhatsApp.
+
+---
+
+## 5. Security & Progressive KYC Tiers
+
+- NGN Virtual Account: Available at Level 0 (Phone number registration, up to ₦500,000/month).
+- USD, GBP, EUR Virtual Accounts: Available at Level 1 / Level 2 (Passive identity verification or BVN/ID check) to comply with international cross-border AML/CFT banking regulations.
+
+---
+
+Sivan Technologies · Universal Multi-Chain Settlement Infrastructure
+Abuja, Nigeria · https://sivantech.online

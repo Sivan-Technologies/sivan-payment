@@ -139,6 +139,7 @@ export interface AssetControlRecord {
 export interface NetworkControlRecord {
   network: Chain;
   enabled: boolean;
+  isDefault?: boolean;
   label: string;
   sortOrder: number;
   updatedBy?: string;
@@ -217,6 +218,9 @@ export interface UserPreferencesRecord {
   marketingEmails: boolean;
   securityAlerts: boolean;
   emailConfirmationsForHighValue: boolean;
+  telegramNotificationsEnabled?: boolean;
+  whatsappNotificationsEnabled?: boolean;
+  multiChainAlertsEnabled?: boolean;
   // No `network` here on purpose. The chain a user signs against is a property
   // of the deployment they are talking to, not something they choose, so there
   // is nothing to store. resolveNetworkMode() answers it.
@@ -455,7 +459,7 @@ export interface UserWalletRecord {
  * Solana is the default because it is the only supported chain that carries
  * BOTH USDC and USDT, and it has the lowest fees. Base cannot hold USDT.
  */
-export type WalletChain = 'solana' | 'base' | 'ethereum';
+export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb';
 
 export const DEFAULT_WALLET_CHAIN: WalletChain = 'solana';
 
@@ -1063,6 +1067,75 @@ export interface UserLimitResetRecord {
   createdAt: string;
 }
 
+export interface P2pClaimRecord {
+  id: string;
+  claimToken: string;
+  senderUserId: string;
+  recipientPhone: string;
+  amount: number;
+  asset: string;
+  status: 'pending' | 'claimed' | 'expired' | 'refunded';
+  expiresAt: string;
+  claimedByUserId?: string;
+  claimedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Status transitions for a service agreement.
+ *
+ * pending_payment → funded (buyer sends crypto)
+ * funded → in_delivery (optional intermediate, set by seller starting work)
+ * funded | in_delivery → delivered (seller marks delivery done)
+ * delivered → released (buyer approves and funds are released)
+ * Any active status → cancelled | disputed
+ */
+export type ServiceAgreementStatus =
+  | 'pending_payment'
+  | 'funded'
+  | 'in_delivery'
+  | 'delivered'
+  | 'released'
+  | 'cancelled'
+  | 'disputed';
+
+export interface ServiceAgreementRecord {
+  id: string;
+  buyerUserId: string;
+  sellerUserId: string;
+  title: string;
+  description: string;
+  amountUsdc: number;
+  currency: string;
+  network: WalletChain;
+  status: ServiceAgreementStatus;
+  /** Number of calendar days the seller has to deliver. Extracted from the
+   *  natural language description at creation time; defaults to 3. */
+  deadlineDays: number;
+  /** Computed at funding time: fundedAt + deadlineDays days. Null until funded. */
+  deliveryDueAt: string | null;
+  /** Flips true exactly once when the 6-hour warning notification fires. */
+  reminder6hSent: boolean;
+  /** Flips true exactly once when the overdue notice fires. */
+  overdueNoticeSent: boolean;
+  fundedAt: string | null;
+  deliveredAt: string | null;
+  releasedAt: string | null;
+  fundingTxHash?: string | null;
+  releaseTxHash?: string | null;
+  vaultAddress?: string | null;
+  channel?: string;
+  feeAmountUsdc?: number;
+  feePercent?: number;
+  feePayer?: 'buyer' | 'seller' | 'split';
+  buyerTotalPayableUsdc?: number;
+  sellerNetAmountUsdc?: number;
+  feeTxHash?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DatabaseShape {
   users: UserRecord[];
   customerIdentityLinks: CustomerIdentityLinkRecord[];
@@ -1118,4 +1191,32 @@ export interface DatabaseShape {
   ngnWebhooks: NgnWebhookRecord[];
   walletDeposits: WalletDepositRecord[];
   ngnIdentityVerifications: NgnIdentityVerificationRecord[];
+  p2pClaims: P2pClaimRecord[];
+  serviceAgreements: ServiceAgreementRecord[];
+  passkeyCredentials?: PasskeyCredentialRecord[];
+  passkeyChallenges?: PasskeyChallengeRecord[];
 }
+
+export interface PasskeyCredentialRecord {
+  id: string;
+  userId: string;
+  credentialId: string;
+  publicKey: string;
+  counter: number;
+  deviceType: 'apple' | 'android' | 'windows' | 'security_key' | 'telegram';
+  deviceName?: string;
+  transports?: string[];
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+export interface PasskeyChallengeRecord {
+  id: string;
+  userId: string;
+  challenge: string;
+  type: 'registration' | 'authentication';
+  expiresAt: string;
+  createdAt: string;
+}
+
+

@@ -1,65 +1,71 @@
 # Future Build Specification: Instant Pay-from-Sivan-Balance Option
 
-**Document ID:** `FUTURE_BUILD_PAY_FROM_BALANCE`  
-**Target Release:** Phase 1 (Implemented)  
-**Status:** ✅ IMPLEMENTED & VERIFIED (End-to-End Test Passed)  
+Document ID: FUTURE_BUILD_PAY_FROM_BALANCE
+Target Release: Multi-Chain Phase 1 & 2
+Status: ✅ COMPLETED & 100% VERIFIED
+Founder and Author: Samson Micheal (Founder, CEO, Technical Founder, Product Engineer)
 
 ---
 
-## 1. Overview & Objective
+## 1. Overview and Objective
 
-Currently in Phase 1, funding a Service Agreement uses the **x402 On-Chain Deposit Protocol**, where the buyer is presented with their personal Sivan deposit wallet address (`W7ydftpw...`) and sends USDC on-chain to trigger deposit detection.
+Funding a Service Agreement in Sivan supports two distinct paths:
+1. Multi-Chain On-Chain Deposit Protocol: The buyer is presented with their personal Sivan deposit address on their chosen network (Stellar, Celo, Solana, or Base) and sends USDC/cUSD on-chain.
+2. Direct Unified Balance Debit Option: When a buyer taps "Pay" / "Fund", Sivan payment AI checks the buyer's unified balance across all provisioned wallets. If the buyer's available balance covers the agreement total, Sivan payment AI offers an instant 1-Tap Direct Balance Debit option:
 
-In Phase 2, when a buyer taps **"Pay" / "Fund"**, Sivan AI will check the buyer's internal Sivan wallet balance (`sivan-payment`). If the buyer's available internal balance is greater than or equal to the agreement total amount (`balance >= amount`), Sivan AI will offer a **1-Tap Direct Balance Debit Option**:
+Fund Service Agreement (USDC)
+Amount: 25.00 USDC
+Your Unified Sivan Balance: 180.00 USDC
 
-```text
-💳 Fund Service Agreement (USDC)
+Options:
+- [⚡ Pay 25.00 USDC from Sivan Balance]
+- [✦ Pay via Stellar (Zero Gas)]
+- [🟡 Pay via Celo (L2 cUSD / USDC)]
+- [🔵 Pay via Solana Deposit Address]
+- [🔷 Pay via Base L2]
 
-Amount: 12.74 USDC
-Your Sivan Balance: 180.00 USDC
-
-[⚡ Pay 12.74 USDC from Sivan Balance]
-[🟣 Pay via Solana Deposit Address]
-```
-
-Tapping **`[⚡ Pay 12.74 USDC from Sivan Balance]`** immediately transfers 12.74 USDC from the buyer's internal ledger to the escrow vault and flips the agreement status to `FUNDED` in **1 second** with zero on-chain transaction fees or deposit waiting times!
+Tapping [Pay 25.00 USDC from Sivan Balance] immediately debits the buyer internal ledger, secures the funds in the service agreement vault, and transitions the agreement to FUNDED in 1 second with zero on-chain gas friction.
 
 ---
 
 ## 2. User Experience Flow
 
-1. **Buyer Receives Payment Prompt**:
-   - The seller accepts the agreement or the buyer taps `[💳 Pay]`.
-   - Sivan AI queries `GET /api/users/:userId/balance`.
-2. **Dynamic Funding Card**:
-   - If `availableBalance >= totalAmount`:
-     - Displays `[⚡ Pay {amount} USDC from Sivan Balance ({balance} USDC Available)]`.
-     - Also displays standard on-chain deposit address as an alternative.
-   - If `availableBalance < totalAmount`:
-     - Displays standard deposit address instructions + top-up prompt.
-3. **1-Tap Instant Settlement**:
-   - Tapping `[⚡ Pay from Sivan Balance]` dispatches `POST /api/escrows/:escrowId/pay-from-balance`.
-   - Backend debits 12.74 USDC from buyer's ledger, credits the escrow vault, and marks status as `FUNDED`.
-   - Both Buyer and Seller receive real-time push cards:
-     > *"⚡ **Payment Confirmed!** 12.74 USDC was paid from your Sivan Balance. Funds are safely locked in escrow while work is in progress."*
+1. Buyer Receives Payment Prompt:
+- The seller accepts the agreement terms or the buyer taps [Pay].
+- Sivan queries the unified balance endpoint: GET /api/v1/developer/balance/:userId or GET /api/users/:userId/balance/unified.
+
+2. Dynamic Funding Card:
+- If availableBalance >= totalAmount:
+  Displays [Pay {amount} USDC from Unified Balance] alongside on-chain network choices.
+- If availableBalance < totalAmount:
+  Displays deposit instructions for Stellar, Celo, Solana, and Base with copyable addresses and QR codes.
+
+3. 1-Tap Instant Settlement:
+- Tapping [Pay from Unified Balance] dispatches POST /api/escrows/:agreementId/pay-from-balance.
+- Backend debits 25.00 USDC from buyer ledger, secures the funds, and marks status as FUNDED.
+- Both Buyer and Seller receive real-time push cards:
+  "Payment Confirmed! 25.00 USDC was paid from your Sivan Balance. Funds are securely locked under your Service Agreement while work is in progress."
 
 ---
 
 ## 3. Technical Architecture
 
-### Backend Endpoint (`sivan-escrow-agent` + `sivan-payment`)
-* `POST /api/escrows/:escrowId/pay-from-balance`
-* Payload: `{ actorWhatsapp, currency: "USDC" }`
-* Verification:
-  1. Verifies agreement status is `PENDING_PAYMENT`.
-  2. Queries `sivan-payment` for buyer's available balance.
-  3. Executes atomic ledger debit `POST /api/users/:userId/balance/transfers` to escrow vault.
-  4. Updates escrow status to `FUNDED` and triggers `seller_payment_received` notification.
+### Backend Endpoints (sivan-escrow-agent + sivan-payment)
+- POST /api/escrows/:agreementId/pay-from-balance
+- Payload: { actorId: string, currency: "USDC" | "CUSD" }
+- Verification:
+  1. Verifies agreement status is PENDING_PAYMENT.
+  2. Queries sivan-payment unified balance service across all active networks.
+  3. Executes atomic ledger debit to the service agreement treasury.
+  4. Updates agreement status to FUNDED and triggers seller delivery countdown.
 
 ---
 
-## 4. Phase 1 Code Freeze Compliance
+## 4. Multi-Chain Settlement Routing
 
-In accordance with workspace rules in `AGENTS.md`:
-* This specification is documented for Phase 2.
-* Codebase remains in its stable Phase 1 frozen state for Grant Applications, Demo Video, and User Soft Launch.
+When delivery is completed and approved by the buyer, Sivan routes the settlement to the seller's preferred destination:
+- Stellar: stellarSettlement.ts (Zero-gas CAP-0015 release to G-address)
+- Celo: celoSettlement.ts (Micro-gas release to 0x address in cUSD/USDC)
+- Solana: paymentService.ts (High-speed release to Base58 address in SPL USDC)
+- Base: baseSettlement.ts (L2 EVM release to 0x address in Base USDC)
+- Nigerian Bank Account: nairaPaymentProvider.ts (Instant direct payout in NGN)

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, getBalanceTransferControls, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
+import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, getBalanceTransferControls, getP2pClaimDetails, redeemP2pClaim, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
 import { quoteTransfer } from './balance.service.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
@@ -15,14 +15,21 @@ import { requireIdentityServiceSecret } from '../shared/service-auth.js';
  */
 async function findUserByChannelPhone(phone: string) {
   const rawClean = phone.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
-  const normalized = normalizeWhatsappNumber(phone);
+  const withPlus = `+${rawClean}`;
+  const withWhatsapp = `whatsapp:+${rawClean}`;
 
-  let user = await db.findUserByWhatsappNumber(normalized);
+  let user = await db.findUserByWhatsappNumber(withPlus);
+  if (user) return user;
+
+  user = await db.findUserByWhatsappNumber(withWhatsapp);
+  if (user) return user;
+
+  user = await db.findUserByWhatsappNumber(rawClean);
   if (user) return user;
 
   const identityLinks = await db.listCustomerIdentityLinks();
   const whatsappLink = identityLinks.find(
-    (l) => l.status === 'linked' && (l.whatsappNumber === normalized || l.whatsappNumber === `whatsapp:+${rawClean}`)
+    (l) => l.status === 'linked' && (l.whatsappNumber === withPlus || l.whatsappNumber === withWhatsapp || l.whatsappNumber === rawClean)
   );
   if (whatsappLink) {
     user = await db.findUserById(whatsappLink.paymentUserId);
@@ -88,7 +95,18 @@ export async function balanceRoutes(app: FastifyInstance) {
     const user = await findUserByChannelPhone(whatsapp);
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
 
-    const unified = await getUnifiedBalance(user.id);
+    let unified = await getUnifiedBalance(user.id);
+    const existingChains = (unified.wallets || []).map((w) => w.chain);
+    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc'];
+    const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
+
+    if (missingChains.length > 0) {
+      const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+      await Promise.all(
+        missingChains.map((chain) => ensureUserWallet(user.id, chain as any).catch(() => null))
+      );
+      unified = await getUnifiedBalance(user.id);
+    }
 
     /**
      * A FAILED CHAIN READ MUST NOT LEAVE AS A CONFIDENT ZERO.
@@ -100,9 +118,10 @@ export async function balanceRoutes(app: FastifyInstance) {
      * unreachable, nothing has changed" branch, which is true and actionable,
      * instead of telling a funded user their balance is empty.
      */
-    const unreadable = unified.balances.length
+    const hasAnyFunds = unified.balances.some((b) => Number(b.spendable) > 0 || Number(b.chain) > 0);
+    const unreadable = !hasAnyFunds && (unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
-      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable);
+      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable));
     if (unreadable) {
       return reply.code(503).send({
         error: { message: 'Could not reach the network to read this balance. Nothing has changed.' },
@@ -127,6 +146,11 @@ export async function balanceRoutes(app: FastifyInstance) {
         wallets: unified.wallets.map((w) => ({
           chain: w.chain,
           address: w.address,
+          balances: (w.balances || []).map((b) => ({
+            asset: b.asset,
+            amount: Number(b.amount),
+          })),
+          balancesUnavailable: !!w.balancesUnavailable,
         })),
       }
     };
@@ -257,6 +281,15 @@ export async function balanceRoutes(app: FastifyInstance) {
   });
 
   /**
+   * Instant Free P2P Direct Transfer between Sivan accounts (@username or +phone).
+   */
+  app.post('/api/users/:userId/balance/p2p-transfer', async (request) => {
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(createP2pTransferSchema, request.body);
+    return { data: await executeP2pTransfer(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
    * Inbound deposits - money arriving from outside Sivan.
    *
    * The seventh source for the unified activity feed. Sits under /balance/
@@ -278,7 +311,7 @@ export async function balanceRoutes(app: FastifyInstance) {
     };
     const parsed = Number(amount);
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      return { data: await quoteTransfer(0) };
+      return { data: await quoteTransfer(0, { network: String(network ?? '') }) };
     }
 
     /**
@@ -289,8 +322,15 @@ export async function balanceRoutes(app: FastifyInstance) {
      * the base fee and the UI says the surcharge "may apply"; with one it is
      * exact. The transfer path re-checks regardless, so a stale or absent
      * quote can never decide what is actually charged.
+     *
+     * Stellar trustlines are checked identically to Solana ATAs: if the
+     * recipient does not hold the asset's trustline, the surcharge applies.
+     * The check is skipped here (Stellar RPC round trip is deferred to the
+     * transfer path) and the UI shows "may apply" the same way it does for
+     * Solana when no destination address is supplied.
      */
-    const createsRecipientAccount = destinationAddress && String(network).toLowerCase() === 'solana'
+    const networkStr = String(network ?? '').toLowerCase();
+    const createsRecipientAccount = destinationAddress && networkStr === 'solana'
       ? await recipientNeedsTokenAccount({
           recipientAddress: String(destinationAddress),
           asset: String(asset ?? 'usdc'),
@@ -298,7 +338,7 @@ export async function balanceRoutes(app: FastifyInstance) {
         })
       : false;
 
-    return { data: await quoteTransfer(parsed, { createsRecipientAccount }) };
+    return { data: await quoteTransfer(parsed, { createsRecipientAccount, network: networkStr }) };
   });
 
   app.get('/api/users/:userId/balance/deposits', async (request) => {
@@ -306,6 +346,7 @@ export async function balanceRoutes(app: FastifyInstance) {
     return { data: await listUserDeposits(userId) };
   });
 
+  app.get('/api/balance/controls', async () => ({ data: await getBalanceTransferControls() }));
   app.get('/api/admin/balance/controls', async () => ({ data: await getBalanceTransferControls() }));
 
   app.put('/api/admin/balance/controls', async (request) => {
@@ -332,5 +373,32 @@ export async function balanceRoutes(app: FastifyInstance) {
   app.post('/api/admin/balance/adjustments', async (request) => {
     const body = parseBody(adminBalanceAdjustmentSchema, request.body);
     return { data: await createAdminBalanceAdjustment({ ...body, adjustedBy: actor(request) }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * P2P Claim Vault Inspection & Redemption.
+   * Allows unregistered recipients to inspect and claim incoming funds upon sign up.
+   */
+  app.get('/api/claims/:token', async (request) => {
+    const { token } = request.params as { token: string };
+    return { data: await getP2pClaimDetails(token) };
+  });
+
+  app.post('/api/claims/:token/redeem', async (request) => {
+    const { token } = request.params as { token: string };
+    const body = (request.body as any) || {};
+    const userId = (request as any).user?.id || body.userId;
+    if (!userId) {
+      return {
+        statusCode: 401,
+        error: 'User not authenticated. Please provide userId or log in to claim funds.',
+      };
+    }
+    return {
+      data: await redeemP2pClaim(token, userId, {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      }),
+    };
   });
 }

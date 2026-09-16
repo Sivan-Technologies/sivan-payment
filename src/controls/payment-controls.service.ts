@@ -76,15 +76,15 @@ export const DEFAULT_ASSET_CONTROLS: AssetControlRecord[] = [
  * disabled.
  */
 export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
-  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'base', enabled: true, label: 'Base', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'bsc', enabled: true, label: 'BNB Chain', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'stellar', enabled: true, label: 'Stellar', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'celo', enabled: true, label: 'Celo', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'ethereum', enabled: false, label: 'Ethereum', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 70, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 80, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'avalanche_c_chain', enabled: false, label: 'Avalanche C-Chain', sortOrder: 90, updatedBy: 'system', updatedAt: nowIso() }
+  { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
 ];
 
 export const updatePaymentControlsSchema = z.object({
@@ -92,10 +92,6 @@ export const updatePaymentControlsSchema = z.object({
     customerType: z.enum(['individual', 'business']),
     enabled: z.boolean()
   })).optional(),
-  // 'ngn' accepted here so the admin hub can toggle the naira payout rail.
-  // NOT added to virtualAccounts below: Bridge issues those and it has no
-  // naira virtual account, so accepting 'ngn' there would let an operator
-  // enable something that does not exist.
   payoutCurrencies: z.array(z.object({
     currency: z.enum(['usd', 'gbp', 'eur', 'ngn']),
     enabled: z.boolean()
@@ -110,8 +106,10 @@ export const updatePaymentControlsSchema = z.object({
   })).optional(),
   sourceNetworks: z.array(z.object({
     network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']),
-    enabled: z.boolean()
+    enabled: z.boolean(),
+    isDefault: z.boolean().optional()
   })).optional(),
+  defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']).optional(),
   // Legacy support for older admin frontend payloads.
   controls: z.array(z.object({
     currency: z.enum(['usd', 'gbp', 'eur', 'ngn']),
@@ -125,6 +123,7 @@ export interface OfframpControlsResponse {
   virtualAccounts: VirtualAccountControlRecord[];
   sourceAssets: AssetControlRecord[];
   sourceNetworks: NetworkControlRecord[];
+  defaultNetwork: string;
   /**
    * Whether cross-border supplier payouts are open for business.
    *
@@ -216,6 +215,16 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
   const existingVirtualAccounts = data.virtualAccountControls ?? [];
   const existingNetworks = data.networkControls ?? [];
 
+  const sourceNetworks = DEFAULT_NETWORK_CONTROLS.map((defaultControl) => ({
+    ...defaultControl,
+    ...(existingNetworks.find((item) => item.network === defaultControl.network) ?? {})
+  })).sort((a, b) => a.sortOrder - b.sortOrder);
+
+  const defaultNetwork =
+    sourceNetworks.find((n) => n.enabled && n.isDefault)?.network ??
+    sourceNetworks.find((n) => n.enabled)?.network ??
+    'solana';
+
   return {
     customerTypes: DEFAULT_CUSTOMER_TYPE_CONTROLS.map((defaultControl) => ({
       ...defaultControl,
@@ -234,39 +243,14 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
       ...(existingAssets.find((item) => item.asset === defaultControl.asset) ?? {})
     })),
     supplierPayoutsEnabled: supplierControls ? supplierControls.supplierPaymentsEnabled !== false : true,
-    /**
-     * THE ADMIN TOGGLE WINS, NOT THE ENVIRONMENT VARIABLE.
-     *
-     * My first version read process.env.BALANCE_TRANSFERS_ENABLED directly,
-     * under a comment claiming it was "the same source the enforcement path
-     * reads". It was not, and I only found that by reading
-     * getBalanceTransferControls() to the end.
-     *
-     * That function treats env as a FALLBACK and then spreads
-     * `...(saved ?? {})` over it, so whatever an operator last saved in
-     * Admin -> Controls -> "Transfers from settled USDC" overrides the
-     * variable entirely. Reading env here would have reproduced the very bug
-     * this field exists to fix, inverted: an admin enables transfers, the
-     * enforcement path allows them, and the send form still says "temporarily
-     * paused" because it consulted a variable nobody had touched.
-     *
-     * Delegating to the real function is the only arrangement where the two
-     * cannot drift. false on failure, because showing a disabled feature as
-     * available is what produced the original report.
-     */
     transfersEnabled: Boolean(balanceControls?.transfersEnabled),
-    // Zero means "not set", in which case the NGN rail falls back to the
-    // Bridge percentage - mirroring applySivanMargin exactly, so the number
-    // shown is the number charged.
     ngnOfframpFeePercent: String(
       Number(feeSettings?.ngnOfframpFeePercent ?? 0) > 0
         ? feeSettings?.ngnOfframpFeePercent
         : feeSettings?.offrampFeePercent ?? 0
     ),
-    sourceNetworks: DEFAULT_NETWORK_CONTROLS.map((defaultControl) => ({
-      ...defaultControl,
-      ...(existingNetworks.find((item) => item.network === defaultControl.network) ?? {})
-    })).sort((a, b) => a.sortOrder - b.sortOrder),
+    sourceNetworks,
+    defaultNetwork,
     displayFx: displayFxRates()
   };
 }
@@ -320,7 +304,7 @@ export const CHAIN_ASSET_SUPPORT: Record<string, SourceCurrency[]> = {
   bnb: ['usdc', 'usdt'],
   solana: ['usdc', 'usdt'],
   stellar: ['usdc'],
-  celo: ['usdc'],
+  celo: ['usdc', 'usdt'],
   ethereum: ['usdc', 'usdt'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
@@ -356,7 +340,22 @@ export async function requireAssetSupportedOnChain(asset: SourceCurrency, networ
   }
 }
 
-export async function requireSourceNetworkEnabled(network: Chain) {
+export async function requireNetworkSupport(network: string, asset: SourceCurrency) {
+  const controls = await listPaymentControls();
+  const control = controls.sourceNetworks.find((item) => item.network === network);
+  if (!control?.enabled) {
+    throw badRequest(`${control?.label ?? network} network deposits are currently unavailable`);
+  }
+
+  const supportedAssets = CHAIN_ASSET_SUPPORT[network.toLowerCase()] ?? ['usdc'];
+  if (!supportedAssets.includes(asset.toLowerCase() as SourceCurrency)) {
+    throw badRequest(`${asset.toUpperCase()} is not supported on ${control.label ?? network}`);
+  }
+
+  return control;
+}
+
+export async function requireSourceNetworkEnabled(network: string) {
   const controls = await listPaymentControls();
   const control = controls.sourceNetworks.find((item) => item.network === network);
   if (!control?.enabled) {
@@ -391,9 +390,44 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
     const patch = assetPatch.find((item) => item.asset === control.asset);
     return patch ? { ...control, enabled: patch.enabled, updatedBy: actorId, updatedAt: now } : control;
   });
-  const sourceNetworks = current.sourceNetworks.map((control) => {
+
+  let explicitDefault = input.defaultNetwork?.toLowerCase();
+  const patchWithDefault = networkPatch.find((item) => item.isDefault === true);
+  if (patchWithDefault) {
+    explicitDefault = patchWithDefault.network.toLowerCase();
+  }
+
+  const updatedNetworks = current.sourceNetworks.map((control) => {
     const patch = networkPatch.find((item) => item.network === control.network);
-    return patch ? { ...control, enabled: patch.enabled, updatedBy: actorId, updatedAt: now } : control;
+    const enabled = patch !== undefined ? patch.enabled : control.enabled;
+    const isDefault = explicitDefault
+      ? control.network.toLowerCase() === explicitDefault
+      : patch?.isDefault !== undefined
+      ? patch.isDefault
+      : control.isDefault ?? false;
+    return {
+      ...control,
+      enabled,
+      isDefault,
+      updatedBy: actorId,
+      updatedAt: now
+    };
+  });
+
+  const hasActiveDefault = updatedNetworks.some((n) => n.enabled && n.isDefault);
+  const sourceNetworks = updatedNetworks.map((n) => {
+    if (!hasActiveDefault) {
+      const firstEnabled = updatedNetworks.find((item) => item.enabled);
+      return {
+        ...n,
+        isDefault: firstEnabled ? n.network === firstEnabled.network : false
+      };
+    }
+    const activeDefaultNetwork = updatedNetworks.find((item) => item.enabled && item.isDefault)?.network;
+    return {
+      ...n,
+      isDefault: n.network === activeDefaultNetwork
+    };
   });
 
   if (!customerTypes.some((control) => control.enabled)) {
@@ -411,6 +445,8 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
 
   await db.updatePaymentControlsSnapshot({ customerTypes, payoutCurrencies, virtualAccounts, sourceAssets, sourceNetworks });
 
+  const defaultNetwork = sourceNetworks.find((n) => n.isDefault)?.network ?? 'solana';
+
   await createAuditLog({
     actorType: 'admin',
     actorId,
@@ -422,9 +458,10 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
       payoutCurrencies: payoutCurrencies.map(({ currency, enabled }) => ({ currency, enabled })),
       virtualAccounts: virtualAccounts.map(({ currency, enabled }) => ({ currency, enabled })),
       sourceAssets: sourceAssets.map(({ asset, enabled }) => ({ asset, enabled })),
-      sourceNetworks: sourceNetworks.map(({ network, enabled }) => ({ network, enabled }))
+      sourceNetworks: sourceNetworks.map(({ network, enabled, isDefault }) => ({ network, enabled, isDefault })),
+      defaultNetwork
     }
   });
 
-  return { customerTypes, payoutCurrencies, virtualAccounts, sourceAssets, sourceNetworks };
+  return { customerTypes, payoutCurrencies, virtualAccounts, sourceAssets, sourceNetworks, defaultNetwork };
 }

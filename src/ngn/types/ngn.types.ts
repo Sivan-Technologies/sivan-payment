@@ -1,4 +1,4 @@
-export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' | 'breet';
+export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' | 'breet' | 'textile';
 export type NgnDirection = 'onramp' | 'offramp';
 export type NgnOfframpRevenueMode = 'sivan_fee_wallet' | 'breet_markup' | 'disabled';
 export type NgnQuoteStatus = 'quote_created' | 'quote_accepted' | 'expired' | 'failed';
@@ -245,8 +245,8 @@ export interface NgnQuoteRecord {
   customerId?: string;
   direction: NgnDirection;
   provider: NgnProviderName;
-  sourceCurrency: 'ngn' | 'usdc' | 'usdt';
-  destinationCurrency: 'ngn' | 'usdc' | 'usdt';
+  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
+  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
   sourceAmount: string;
   destinationAmount: string;
   rate: string;
@@ -266,8 +266,8 @@ export interface NgnTransferRecord {
   customerId?: string;
   direction: NgnDirection;
   provider: NgnProviderName;
-  sourceCurrency: 'ngn' | 'usdc' | 'usdt';
-  destinationCurrency: 'ngn' | 'usdc' | 'usdt';
+  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
+  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
   sourceAmount: string;
   destinationAmount: string;
   rate: string;
@@ -310,8 +310,8 @@ export interface NgnQuoteInput {
   userId: string;
   customerId?: string;
   direction: NgnDirection;
-  sourceCurrency: 'ngn' | 'usdc' | 'usdt';
-  destinationCurrency: 'ngn' | 'usdc' | 'usdt';
+  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
+  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
   sourceAmount: string;
   /**
    * The chain the crypto leg moves on.

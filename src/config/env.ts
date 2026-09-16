@@ -33,7 +33,7 @@ const envSchema = z.object({
   CUSTOMER_APP_URL: z.string().url().optional().default('https://app.sivantech.online'),
   CORS_ORIGIN: z.string().default('*'),
   LOG_LEVEL: z.string().default('info'),
-  ESCROW_AGENT_URL: z.string().optional().default('http://127.0.0.1:4000'),
+  ESCROW_AGENT_URL: z.string().url().optional(),
   SENTRY_DSN: z.string().optional().default(''),
   SENTRY_ENVIRONMENT: z.string().optional().default(''),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
@@ -151,6 +151,9 @@ const envSchema = z.object({
    * outcome is uncollected revenue, never a misdirected transfer.
    */
   SIVAN_FEE_WALLET_SOLANA: z.string().optional().default(''),
+  SIVAN_FEE_WALLET_STELLAR: z.string().optional().default(''),
+  SIVAN_FEE_WALLET_CELO: z.string().optional().default(''),
+  SIVAN_CELO_FEE_WALLET: z.string().optional().default(''),
   SOLANA_RPC_URL: z.string().url().optional(),
   SOLANA_RPC_FALLBACK_URL: z.string().url().optional(),
   /**
@@ -166,6 +169,12 @@ const envSchema = z.object({
   BASE_RPC_FALLBACK_URL: z.string().url().optional(),
   ETHEREUM_RPC_URL: z.string().url().optional(),
   ETHEREUM_RPC_FALLBACK_URL: z.string().url().optional(),
+  STELLAR_HORIZON_URL: z.string().url().optional(),
+  STELLAR_SPONSOR_ACCOUNT_ID: z.string().optional(),
+  STELLAR_SPONSOR_SECRET_KEY: z.string().optional(),
+  STELLAR_MAX_FEE_STROOPS: z.coerce.number().optional().default(1000),
+  STELLAR_SPONSORED_RESERVES: z.coerce.boolean().optional().default(true),
+  BALANCE_TRANSFERS_ENABLED: z.coerce.boolean().default(true),
   WEBHOOK_MAX_AGE_MS: positiveIntFromEnv.default(10 * 60 * 1000),
   /**
    * 1.25%, not 0.
@@ -408,6 +417,15 @@ const envSchema = z.object({
    * user actually watches, and waiting longer saves no chain reads.
    */
   DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(45),
+  /**
+   * How often the service agreement deadline sweeper runs, in seconds. 0 disables.
+   *
+   * Checks funded/in_delivery agreements for approaching or missed deadlines and
+   * dispatches proactive notifications (6-hour warning to seller; overdue notice
+   * to both buyer and seller). 300s (5 minutes) is fine-grained enough to catch
+   * the 6-hour window well in advance while not generating noise under load.
+   */
+  DEADLINE_SWEEP_SECONDS: z.coerce.number().int().nonnegative().default(300),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),
@@ -428,7 +446,7 @@ const envSchema = z.object({
   BREET_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
   PAJ_RAMP_BASE_URL: z.string().url().optional().default('https://api-staging.paj.cash'),
   PAJ_RAMP_API_KEY: z.string().optional().default(''),
-  PAJ_RAMP_WEBHOOK_URL: z.string().url().optional().default('https://api.sivantech.online/api/payment/api/webhooks/paj'),
+  PAJ_RAMP_WEBHOOK_URL: z.string().url().optional(),
   PAJ_RAMP_DEFAULT_CURRENCY: z.string().default('NGN'),
   PAJ_RAMP_DEFAULT_CHAIN: z.enum(['SOLANA', 'MONAD']).default('SOLANA'),
   PAJ_RAMP_USDC_MINT: z.string().optional().default(''),

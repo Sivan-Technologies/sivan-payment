@@ -43,17 +43,21 @@ export interface ExplorerLink {
  */
 const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: string }> = {
   base: { mainnet: 'https://basescan.org', testnet: 'https://sepolia.basescan.org', label: 'Basescan' },
+  bsc: { mainnet: 'https://bscscan.com', testnet: 'https://testnet.bscscan.com', label: 'BscScan' },
+  bnb: { mainnet: 'https://bscscan.com', testnet: 'https://testnet.bscscan.com', label: 'BscScan' },
+  celo: { mainnet: 'https://celoscan.io', testnet: 'https://celo-alfajores.blockscout.com', label: 'Celoscan' },
   ethereum: { mainnet: 'https://etherscan.io', testnet: 'https://sepolia.etherscan.io', label: 'Etherscan' },
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
   avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
   avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
-  celo: { mainnet: 'https://celoscan.io', testnet: 'https://celo-alfajores.blockscout.com', label: 'Celoscan' },
 };
 
 /** CAIP-ish chain ids jiffyscan uses for user operations. */
 const USEROP_CHAIN: Record<string, { mainnet: string; testnet: string }> = {
   base: { mainnet: 'base', testnet: 'base-sepolia' },
+  bsc: { mainnet: 'bsc', testnet: 'bsc-testnet' },
+  celo: { mainnet: 'celo', testnet: 'celo-alfajores' },
   ethereum: { mainnet: 'mainnet', testnet: 'sepolia' },
   polygon: { mainnet: 'matic', testnet: 'amoy' },
   arbitrum: { mainnet: 'arbitrum-one', testnet: 'arbitrum-sepolia' },
@@ -96,6 +100,16 @@ export function explorerLink(input: ExplorerInput): ExplorerLink | undefined {
     return {
       url: `https://solscan.io/tx/${encodeURIComponent(hash)}${cluster}`,
       label: 'Solscan',
+      testnet,
+    };
+  }
+
+  if (network === 'stellar') {
+    if (!hash) return undefined;
+    const host = testnet ? 'https://stellar.expert/explorer/testnet' : 'https://stellar.expert/explorer/public';
+    return {
+      url: `${host}/tx/${encodeURIComponent(hash)}`,
+      label: 'StellarExpert',
       testnet,
     };
   }
@@ -166,15 +180,82 @@ export function shortHash(value?: string): string {
 export function networkLabel(chain?: string): string {
   const key = String(chain ?? '').trim().toLowerCase();
   const map: Record<string, string> = {
-    base: 'Base',
-    ethereum: 'Ethereum',
     solana: 'Solana',
+    base: 'Base',
+    bsc: 'BNB Chain',
+    bnb: 'BNB Chain',
+    stellar: 'Stellar',
+    celo: 'Celo',
+    ethereum: 'Ethereum',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
     avalanche_c_chain: 'Avalanche',
     tron: 'Tron',
+    sivan_p2p: 'Sivan Instant P2P',
+    p2p: 'Sivan Instant P2P',
   };
   // Unknown chains still get their underscores removed and a capital, so a new
   // network reads as a name rather than as a database column.
   return map[key] ?? key.replaceAll('_', ' ').replace(/^\w/, (c) => c.toUpperCase());
+}
+
+export interface NetworkExplorerResult {
+  name: string;
+  url: string;
+}
+
+/**
+ * Centralized explorer resolver ensuring automatic Devnet/Mainnet cluster switching
+ * across Celo (CeloScan), Stellar (Stellar Expert), Solana (Solscan), and Base (Basescan).
+ */
+export function getNetworkExplorer(
+  networkInput?: string,
+  txHash?: string,
+  destinationAddress?: string,
+  modeInput?: string
+): NetworkExplorerResult {
+  const net = (networkInput || 'solana').toLowerCase().trim();
+  const rawTxHash = txHash?.trim();
+  const rawAddr = destinationAddress?.trim();
+
+  const isMainnet = modeInput ? (modeInput.toLowerCase() === 'mainnet' || modeInput.toLowerCase() === 'live') : false;
+
+  if (net.includes('base')) {
+    const baseDomain = isMainnet ? 'https://basescan.org' : 'https://sepolia.basescan.org';
+    const url = rawTxHash ? `${baseDomain}/tx/${rawTxHash}` : rawAddr ? `${baseDomain}/address/${rawAddr}` : baseDomain;
+    return { name: 'Basescan Explorer', url };
+  }
+
+  if (net.includes('celo')) {
+    const celoDomain = isMainnet ? 'https://celoscan.io' : 'https://sepolia.celoscan.io';
+    const url = rawTxHash ? `${celoDomain}/tx/${rawTxHash}` : rawAddr ? `${celoDomain}/address/${rawAddr}` : celoDomain;
+    return { name: 'Celo Explorer', url };
+  }
+
+  if (net.includes('stellar')) {
+    const stellarDomain = isMainnet ? 'https://stellar.expert/explorer/public' : 'https://stellar.expert/explorer/testnet';
+    const url = rawTxHash ? `${stellarDomain}/tx/${rawTxHash}` : rawAddr ? `${stellarDomain}/account/${rawAddr}` : stellarDomain;
+    return { name: 'StellarExpert Explorer', url };
+  }
+
+  if (net.includes('bsc') || net.includes('bnb')) {
+    const bscDomain = isMainnet ? 'https://bscscan.com' : 'https://testnet.bscscan.com';
+    const url = rawTxHash ? `${bscDomain}/tx/${rawTxHash}` : rawAddr ? `${bscDomain}/address/${rawAddr}` : bscDomain;
+    return { name: 'BscScan Explorer', url };
+  }
+
+  if (net.includes('eth') || net.includes('ethereum')) {
+    const ethDomain = isMainnet ? 'https://etherscan.io' : 'https://sepolia.etherscan.io';
+    const url = rawTxHash ? `${ethDomain}/tx/${rawTxHash}` : rawAddr ? `${ethDomain}/address/${rawAddr}` : ethDomain;
+    return { name: 'Etherscan Explorer', url };
+  }
+
+  // Default: Solana
+  const clusterQuery = isMainnet ? '' : '?cluster=devnet';
+  const url = rawTxHash
+    ? `https://solscan.io/tx/${rawTxHash}${clusterQuery}`
+    : rawAddr
+    ? `https://solscan.io/account/${rawAddr}${clusterQuery}`
+    : `https://solscan.io${clusterQuery}`;
+  return { name: 'Solscan Explorer', url };
 }

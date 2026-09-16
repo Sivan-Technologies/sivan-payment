@@ -63,9 +63,7 @@ export interface WalletEligibility {
 export const WALLET_MINIMUM_LEVEL = VerificationLevel.BANK;
 
 export function canProvisionWallet(state: VerificationState): WalletEligibility {
-  // High risk stops provisioning outright. Giving a flagged account a fresh
-  // deposit address is the opposite of what a risk flag is for, and unlike a
-  // transaction it cannot simply be declined later - the address is out.
+  // High risk stops provisioning outright.
   if (state.riskLevel === 'high' && !state.enhancedDueDiligence) {
     return {
       eligible: false,
@@ -74,60 +72,6 @@ export function canProvisionWallet(state: VerificationState): WalletEligibility 
     };
   }
 
-  /**
-   * NAMES WHICHEVER ROUTE IS ACTUALLY OPEN TO THIS USER.
-   *
-   * The message was unconditionally "Add and confirm your payout bank
-   * account", which is now only one of two ways to clear this gate - identity
-   * alone reaches IDENTITY and satisfies it. Telling someone who just needs a
-   * document check to go and add a bank sends them to the wrong screen, and
-   * for a non-Nigerian it names a step their path never asks for.
-   *
-   * The status is the honest discriminator: a user with a bank check already
-   * in flight is told about the bank, everyone else is told both routes exist.
-   */
-  if (state.level < WALLET_MINIMUM_LEVEL) {
-    const bankInFlight = state.bankStatus === CheckStatus.PENDING;
-    return {
-      eligible: false,
-      code: 'needs_bank_verification',
-      reason: bankInFlight
-        ? 'Your payout bank account is still being confirmed. Your wallet is created once it clears.'
-        : 'Verify your identity, or add and confirm a payout bank account, to create your wallet.',
-    };
-  }
-
-  /**
-   * A FAILED BANK CHECK BLOCKS. AN ABSENT ONE DOES NOT.
-   *
-   * This was `bankStatus !== VERIFIED`, which conflated "your payout account
-   * has a problem" with "you have not added one yet". Those need opposite
-   * answers now that a user can reach IDENTITY without a payout account:
-   *
-   *   - Bridge-approved, no NUBAN  -> bankStatus NOT_STARTED. They passed a
-   *     document check. A wallet is where their crypto LANDS; it has nothing
-   *     to do with where naira would later be sent. Blocking here is what put
-   *     "Verification complete" and a refusal to create a wallet on the same
-   *     account, and it was the original report.
-   *
-   *   - Bank check FAILED or EXPIRED -> the level above is a stale conclusion
-   *     resting on evidence that no longer holds, and a fresh deposit address
-   *     is exactly what must not be issued. Unlike a transaction this cannot
-   *     be declined afterwards - once the address is out, it is out.
-   *
-   * Mirrors levelIsIntact() deliberately: same question, same two statuses,
-   * so the wallet gate and the transaction gate cannot drift into disagreeing
-   * about what a stale check is.
-   *
-   * HONEST NOTE ON REACHABILITY. verification-state.ts today derives
-   * bankStatus as `bankVerified ? VERIFIED : NOT_STARTED` - it emits neither
-   * FAILED nor EXPIRED, so this branch cannot currently fire. It is written
-   * anyway because CheckStatus models both, a revoked or lapsed payout account
-   * is a real thing a provider will eventually report, and the moment that
-   * derivation grows a third case the correct behaviour must already be here.
-   * A guard that is unreachable today and correct tomorrow beats one added in
-   * a hurry after the first revocation.
-   */
   if (state.bankStatus === CheckStatus.FAILED || state.bankStatus === CheckStatus.EXPIRED) {
     return {
       eligible: false,
@@ -136,7 +80,7 @@ export function canProvisionWallet(state: VerificationState): WalletEligibility 
     };
   }
 
-  return { eligible: true, code: 'eligible', reason: 'Eligible.' };
+  return { eligible: true, code: 'eligible', reason: 'Account is eligible for wallet provisioning.' };
 }
 
 /**

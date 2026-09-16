@@ -23,6 +23,7 @@ import type {
   SourceCurrency,
   SupplierPayoutCurrency,
   SupplierRecord,
+  P2pClaimRecord,
   SupplierPaymentRecord,
   SupplierControlsRecord,
   UserRecord,
@@ -51,7 +52,10 @@ import type {
   CustomerIdentityLinkRecord,
   IdentityPairingTokenRecord,
   WithdrawalPinRecord,
-  WithdrawalStepUpTokenRecord
+  WithdrawalStepUpTokenRecord,
+  ServiceAgreementRecord,
+  PasskeyCredentialRecord,
+  PasskeyChallengeRecord,
 } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -149,10 +153,11 @@ function numberString(value: unknown): string | undefined {
   return raw.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 
-function splitName(fullName: string) {
-  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+function splitName(fullName?: string | null) {
+  const safe = String(fullName || '').trim();
+  const parts = safe ? safe.split(/\s+/).filter(Boolean) : [];
   return {
-    firstName: parts[0] || fullName || 'Sivan',
+    firstName: parts[0] || 'Sivan',
     lastName: parts.slice(1).join(' ') || null
   };
 }
@@ -393,7 +398,9 @@ export class PostgresDatabase {
         aceToolCalls: aceToolCalls.rows.map(mapAceToolCall),
         aceSupportResolutions: aceSupportResolutions.rows.map(mapAceSupportResolution),
         supportTickets: supportTickets.rows.map(mapSupportTicket),
-        supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage)
+        supportTicketMessages: supportTicketMessages.rows.map(mapSupportTicketMessage),
+        p2pClaims: [],
+        serviceAgreements: [],
       };
     } finally {
       client.release();
@@ -552,6 +559,88 @@ export class PostgresDatabase {
       const result = await client.query('select * from users where telegram_user_id=$1 limit 1', [telegramUserId]);
       return result.rows[0] ? mapUser(result.rows[0]) : undefined;
     } finally { client.release(); }
+  }
+
+  async findUserByTarget(target: string) {
+    const clean = String(target || '').trim();
+    if (!clean) return undefined;
+    const client = await this.pool.connect();
+    try {
+      let res = await client.query('select * from users where user_id=$1 limit 1', [clean]);
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      const username = clean.replace(/^@/, '');
+      res = await client.query('select * from users where lower(username)=lower($1) or lower(telegram_username)=lower($1) limit 1', [username]);
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      const digitsOnly = clean.replace(/\D/g, '');
+      res = await client.query('select * from users where whatsapp_number=$1 or whatsapp_number=$2 limit 1', [clean, `+${digitsOnly}`]);
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
+      return res.rows[0] ? mapUser(res.rows[0]) : undefined;
+    } finally { client.release(); }
+  }
+
+  async saveP2pClaim(claim: P2pClaimRecord): Promise<P2pClaimRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `insert into payments_p2p_claims (id, claim_token, sender_user_id, recipient_phone, amount, asset, status, expires_at, claimed_by_user_id, claimed_at, created_at, updated_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         on conflict (id) do update set
+           status = excluded.status,
+           claimed_by_user_id = excluded.claimed_by_user_id,
+           claimed_at = excluded.claimed_at,
+           updated_at = excluded.updated_at`,
+        [
+          claim.id,
+          claim.claimToken,
+          claim.senderUserId,
+          claim.recipientPhone,
+          claim.amount,
+          claim.asset,
+          claim.status,
+          claim.expiresAt,
+          claim.claimedByUserId ?? null,
+          claim.claimedAt ?? null,
+          claim.createdAt,
+          claim.updatedAt,
+        ]
+      ).catch(() => null);
+      return claim;
+    } finally {
+      client.release();
+    }
+  }
+
+  async findP2pClaimByToken(token: string): Promise<P2pClaimRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const res = await optionalQuery(
+        client,
+        `select * from payments_p2p_claims where claim_token = $1 limit 1`,
+        [token]
+      );
+      if (!res.rows[0]) return null;
+      const row = res.rows[0];
+      return {
+        id: row.id,
+        claimToken: row.claim_token,
+        senderUserId: row.sender_user_id,
+        recipientPhone: row.recipient_phone,
+        amount: Number(row.amount),
+        asset: row.asset,
+        status: row.status,
+        expiresAt: iso(row.expires_at),
+        claimedByUserId: str(row.claimed_by_user_id),
+        claimedAt: row.claimed_at ? iso(row.claimed_at) : undefined,
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+      };
+    } finally {
+      client.release();
+    }
   }
 
   /**
@@ -1567,7 +1656,7 @@ export class PostgresDatabase {
            (id, user_id, payments_customer_id, provider, provider_wallet_id, chain, address, status, custodial, delegated_signing_enabled, delegated_signer_id, raw, created_at, updated_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now(), now())
          on conflict (user_id, chain) where status <> 'closed'
-         do update set updated_at = now()
+         do update set address = excluded.address, provider_wallet_id = excluded.provider_wallet_id, raw = excluded.raw, updated_at = now()
          returning *`,
         [record.id, record.userId, record.customerId, record.provider, record.providerWalletId,
          record.chain, record.address, record.status, record.custodial,
@@ -2063,9 +2152,327 @@ export class PostgresDatabase {
       client.release();
     }
   }
+
+  // ── Service Agreements ──────────────────────────────────────────────────
+
+  async insertServiceAgreement(record: ServiceAgreementRecord): Promise<ServiceAgreementRecord> {
+    const client = await this.pool.connect();
+    try {
+      await ensureServiceAgreementsSchema(client);
+      await client.query(
+        `INSERT INTO payments_service_agreements
+          (id, buyer_user_id, seller_user_id, title, description, amount_usdc, currency, network,
+           status, deadline_days, delivery_due_at, reminder_6h_sent, overdue_notice_sent,
+           funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, channel, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         ON CONFLICT (id) DO UPDATE SET
+           status=EXCLUDED.status,
+           deadline_days=EXCLUDED.deadline_days,
+           delivery_due_at=COALESCE(EXCLUDED.delivery_due_at, payments_service_agreements.delivery_due_at),
+           funded_at=COALESCE(EXCLUDED.funded_at, payments_service_agreements.funded_at),
+           funding_tx_hash=COALESCE(EXCLUDED.funding_tx_hash, payments_service_agreements.funding_tx_hash),
+           updated_at=EXCLUDED.updated_at`,
+        [
+          record.id, record.buyerUserId, record.sellerUserId, record.title, record.description,
+          record.amountUsdc, record.currency, record.network, record.status, record.deadlineDays,
+          record.deliveryDueAt ?? null, record.reminder6hSent, record.overdueNoticeSent,
+          record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
+          record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
+          record.channel || 'web',
+          record.createdAt, record.updatedAt,
+        ]
+      );
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateServiceAgreement(record: ServiceAgreementRecord): Promise<ServiceAgreementRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `UPDATE payments_service_agreements SET
+           status=$2, deadline_days=$3, delivery_due_at=$4,
+           reminder_6h_sent=$5, overdue_notice_sent=$6,
+           funded_at=$7, delivered_at=$8, released_at=$9,
+           funding_tx_hash=$10, release_tx_hash=$11, vault_address=$12, channel=$13, updated_at=$14
+         WHERE id=$1`,
+        [
+          record.id, record.status, record.deadlineDays, record.deliveryDueAt ?? null,
+          record.reminder6hSent, record.overdueNoticeSent,
+          record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
+          record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
+          record.channel || 'web',
+          record.updatedAt,
+        ]
+      );
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async findServiceAgreementById(id: string): Promise<ServiceAgreementRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT * FROM payments_service_agreements WHERE id=$1',
+        [id]
+      );
+      return result.rows[0] ? mapServiceAgreement(result.rows[0]) : null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const rawList = Array.isArray(userIdOrAliases) ? userIdOrAliases.filter(Boolean) : [userIdOrAliases].filter(Boolean);
+      if (rawList.length === 0) return [];
+      const lowerAliases = Array.from(new Set(rawList.map((a) => String(a).toLowerCase().trim())));
+
+      const result = await client.query(
+        'SELECT * FROM payments_service_agreements WHERE LOWER(buyer_user_id) = ANY($1) OR LOWER(seller_user_id) = ANY($1) ORDER BY created_at DESC',
+        [lowerAliases]
+      );
+      return result.rows.map(mapServiceAgreement);
+    } finally {
+      client.release();
+    }
+  }
+
+  async listActiveAgreementsForDeadlineSweep(limit = 100): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT * FROM payments_service_agreements
+         WHERE status IN ('funded', 'in_delivery') AND delivery_due_at IS NOT NULL
+         ORDER BY delivery_due_at ASC
+         LIMIT $1`,
+        [limit]
+      );
+      return result.rows.map(mapServiceAgreement);
+    } finally {
+      client.release();
+    }
+  }
+
+  async markAgreementReminder6hSent(id: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `UPDATE payments_service_agreements
+         SET reminder_6h_sent=true, updated_at=NOW()
+         WHERE id=$1 AND reminder_6h_sent=false
+         RETURNING id`,
+        [id]
+      );
+      return result.rowCount != null && result.rowCount > 0;
+    } finally {
+      client.release();
+    }
+  }
+
+  async markAgreementOverdueNoticeSent(id: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `UPDATE payments_service_agreements
+         SET overdue_notice_sent=true, updated_at=NOW()
+         WHERE id=$1 AND overdue_notice_sent=false
+         RETURNING id`,
+        [id]
+      );
+      return result.rowCount != null && result.rowCount > 0;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listPasskeyCredentials(userId: string): Promise<PasskeyCredentialRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_passkey_credentials WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+      return result.rows.map((r) => ({
+        id: r.id,
+        userId: r.user_id,
+        credentialId: r.credential_id,
+        publicKey: r.public_key,
+        counter: r.counter || 0,
+        deviceType: r.device_type || 'apple',
+        deviceName: r.device_name,
+        transports: r.transports,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        lastUsedAt: r.last_used_at?.toISOString?.() || r.last_used_at,
+      }));
+    } catch {
+      return [];
+    } finally {
+      client.release();
+    }
+  }
+
+  async findPasskeyCredentialById(credentialId: string): Promise<PasskeyCredentialRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_passkey_credentials WHERE credential_id = $1 LIMIT 1', [credentialId]);
+      if (!result.rows.length) return undefined;
+      const r = result.rows[0];
+      return {
+        id: r.id,
+        userId: r.user_id,
+        credentialId: r.credential_id,
+        publicKey: r.public_key,
+        counter: r.counter || 0,
+        deviceType: r.device_type || 'apple',
+        deviceName: r.device_name,
+        transports: r.transports,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+        lastUsedAt: r.last_used_at?.toISOString?.() || r.last_used_at,
+      };
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async upsertPasskeyCredential(record: PasskeyCredentialRecord): Promise<PasskeyCredentialRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_passkey_credentials (id, user_id, credential_id, public_key, counter, device_type, device_name, transports, created_at, last_used_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (credential_id) DO UPDATE SET
+           counter = EXCLUDED.counter,
+           last_used_at = EXCLUDED.last_used_at`,
+        [record.id, record.userId, record.credentialId, record.publicKey, record.counter, record.deviceType, record.deviceName, record.transports, record.createdAt, record.lastUsedAt]
+      );
+      return record;
+    } catch {
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deletePasskeyCredential(credentialId: string): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('DELETE FROM payments_passkey_credentials WHERE credential_id = $1', [credentialId]);
+      return result.rowCount != null && result.rowCount > 0;
+    } catch {
+      return false;
+    } finally {
+      client.release();
+    }
+  }
+
+  async savePasskeyChallenge(record: PasskeyChallengeRecord): Promise<PasskeyChallengeRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_passkey_challenges (id, user_id, challenge, type, expires_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (id) DO NOTHING`,
+        [record.id, record.userId, record.challenge, record.type, record.expiresAt, record.createdAt]
+      );
+      return record;
+    } catch {
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async findPasskeyChallenge(userId: string, challenge: string): Promise<PasskeyChallengeRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT * FROM payments_passkey_challenges WHERE user_id = $1 AND challenge = $2 AND expires_at > NOW() LIMIT 1',
+        [userId, challenge]
+      );
+      if (!result.rows.length) return undefined;
+      const r = result.rows[0];
+      return {
+        id: r.id,
+        userId: r.user_id,
+        challenge: r.challenge,
+        type: r.type,
+        expiresAt: r.expires_at?.toISOString?.() || r.expires_at,
+        createdAt: r.created_at?.toISOString?.() || r.created_at,
+      };
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deletePasskeyChallenge(id: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('DELETE FROM payments_passkey_challenges WHERE id = $1', [id]);
+    } catch {
+      // Ignored
+    } finally {
+      client.release();
+    }
+  }
 }
 
 
+
+
+let serviceAgreementsSchemaMigrated = false;
+async function ensureServiceAgreementsSchema(client: pg.PoolClient) {
+  if (serviceAgreementsSchemaMigrated) return;
+  try {
+    await client.query(`
+      ALTER TABLE payments_service_agreements
+      ADD COLUMN IF NOT EXISTS funding_tx_hash TEXT,
+      ADD COLUMN IF NOT EXISTS release_tx_hash TEXT,
+      ADD COLUMN IF NOT EXISTS vault_address TEXT,
+      ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'web';
+
+      ALTER TABLE payments_service_agreements
+      DROP CONSTRAINT IF EXISTS payments_service_agreements_buyer_user_id_fkey,
+      DROP CONSTRAINT IF EXISTS payments_service_agreements_seller_user_id_fkey;
+    `);
+    serviceAgreementsSchemaMigrated = true;
+  } catch (err) {
+    console.warn('[postgres.migration.service_agreements]', err);
+  }
+}
+
+function mapServiceAgreement(row: any): ServiceAgreementRecord {
+  return {
+    id: row.id,
+    buyerUserId: row.buyer_user_id,
+    sellerUserId: row.seller_user_id,
+    title: row.title,
+    description: row.description ?? '',
+    amountUsdc: Number(row.amount_usdc),
+    currency: row.currency,
+    network: row.network,
+    status: row.status,
+    deadlineDays: row.deadline_days,
+    deliveryDueAt: row.delivery_due_at ? new Date(row.delivery_due_at).toISOString() : null,
+    reminder6hSent: Boolean(row.reminder_6h_sent),
+    overdueNoticeSent: Boolean(row.overdue_notice_sent),
+    fundedAt: row.funded_at ? new Date(row.funded_at).toISOString() : null,
+    deliveredAt: row.delivered_at ? new Date(row.delivered_at).toISOString() : null,
+    releasedAt: row.released_at ? new Date(row.released_at).toISOString() : null,
+    fundingTxHash: row.funding_tx_hash ?? null,
+    releaseTxHash: row.release_tx_hash ?? null,
+    vaultAddress: row.vault_address ?? null,
+    channel: row.channel || 'web',
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
 
 function mapLegalAcceptance(row: any): LegalAcceptanceRecord {
   return {
@@ -2101,14 +2508,17 @@ function mapUserPreferences(row: any): UserPreferencesRecord {
     marketingEmails: row.marketing_emails,
     securityAlerts: row.security_alerts,
     emailConfirmationsForHighValue: row.email_confirmations_for_high_value,
+    telegramNotificationsEnabled: row.telegram_notifications_enabled ?? true,
+    whatsappNotificationsEnabled: row.whatsapp_notifications_enabled ?? false,
+    multiChainAlertsEnabled: row.multi_chain_alerts_enabled ?? true,
     updatedAt: iso(row.updated_at)
   };
 }
 
 async function upsertUserPreferences(client: pg.PoolClient, item: UserPreferencesRecord) {
   await client.query(
-    `insert into payments_user_preferences (user_id, default_fiat_currency, language, transaction_updates, marketing_emails, security_alerts, email_confirmations_for_high_value, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
+    `insert into payments_user_preferences (user_id, default_fiat_currency, language, transaction_updates, marketing_emails, security_alerts, email_confirmations_for_high_value, telegram_notifications_enabled, whatsapp_notifications_enabled, multi_chain_alerts_enabled, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      on conflict (user_id) do update set
        default_fiat_currency=excluded.default_fiat_currency,
        language=excluded.language,
@@ -2116,8 +2526,23 @@ async function upsertUserPreferences(client: pg.PoolClient, item: UserPreference
        marketing_emails=excluded.marketing_emails,
        security_alerts=excluded.security_alerts,
        email_confirmations_for_high_value=excluded.email_confirmations_for_high_value,
+       telegram_notifications_enabled=excluded.telegram_notifications_enabled,
+       whatsapp_notifications_enabled=excluded.whatsapp_notifications_enabled,
+       multi_chain_alerts_enabled=excluded.multi_chain_alerts_enabled,
        updated_at=excluded.updated_at`,
-    [item.userId, item.defaultFiatCurrency, item.language, item.transactionUpdates, item.marketingEmails, item.securityAlerts, item.emailConfirmationsForHighValue, item.updatedAt]
+    [
+      item.userId,
+      item.defaultFiatCurrency,
+      item.language,
+      item.transactionUpdates,
+      item.marketingEmails,
+      item.securityAlerts,
+      item.emailConfirmationsForHighValue,
+      item.telegramNotificationsEnabled ?? true,
+      item.whatsappNotificationsEnabled ?? false,
+      item.multiChainAlertsEnabled ?? true,
+      item.updatedAt
+    ]
   );
 }
 
@@ -3365,6 +3790,7 @@ function mapNetworkControl(row: any): NetworkControlRecord {
   return {
     network: row.network,
     enabled: row.enabled,
+    isDefault: Boolean(row.is_default),
     label: row.label,
     sortOrder: Number(row.sort_order ?? 100),
     updatedBy: str(row.updated_by),
@@ -3387,15 +3813,16 @@ async function upsertAssetControl(client: pg.PoolClient, item: AssetControlRecor
 
 async function upsertNetworkControl(client: pg.PoolClient, item: NetworkControlRecord) {
   await client.query(
-    `insert into payments_network_controls (network, enabled, label, sort_order, updated_by, updated_at)
-     values ($1,$2,$3,$4,$5,$6)
+    `insert into payments_network_controls (network, enabled, is_default, label, sort_order, updated_by, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7)
      on conflict (network) do update set
        enabled=excluded.enabled,
+       is_default=excluded.is_default,
        label=excluded.label,
        sort_order=excluded.sort_order,
        updated_by=excluded.updated_by,
        updated_at=excluded.updated_at`,
-    [item.network, item.enabled, item.label, item.sortOrder, item.updatedBy, item.updatedAt]
+    [item.network, item.enabled, Boolean(item.isDefault), item.label, item.sortOrder, item.updatedBy, item.updatedAt]
   );
 }
 

@@ -3,17 +3,20 @@ import { env } from '../config/env.js';
 import { parseBody } from '../shared/validation.js';
 import { forbidden, notFound } from '../shared/errors.js';
 import { db } from '../database/json-database.js';
-import { requireIdentityServiceSecret } from '../shared/service-auth.js';
+import { requireIdentityServiceSecret, isIdentityServiceAuthorized } from '../shared/service-auth.js';
 import { verificationPlanFor } from '../kyc/service/verification-path.js';
 import { getVerificationSummary } from '../kyc/service/verification-summary.service.js';
 import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
 import { getUnifiedBalance } from '../balances/unified-balance.service.js';
+import { id, nowIso } from '../shared/id.js';
 import {
+  activeLinkForTelegram,
   cancelTelegramLink,
   cancelWhatsappLink,
   getIdentityStatus,
   redeemIdentityLinkSchema,
   lookupTelegramIdentity,
+  lookupPhoneIdentity,
   redeemTelegramLink,
   redeemTelegramLinkSchema,
   redeemWhatsappLink,
@@ -22,16 +25,28 @@ import {
   unlinkTelegramIdentity,
   unlinkWhatsappIdentity,
 } from './identity.service.js';
+import { verifyUserJwt } from '../auth/jwt.js';
 import {
   hasWithdrawalPin,
   setWithdrawalPin,
   setWithdrawalPinSchema,
   verifyWithdrawalPin,
   verifyWithdrawalPinSchema,
+  verifyTmaPinStepUp,
+  evaluatePinRequirement,
 } from './withdrawal-pin.service.js';
 
-function getAuthUserId(request: any) {
-  return request.authUser?.sub as string | undefined;
+function getAuthUserId(request: any): string | undefined {
+  if (request.authUser?.sub) return request.authUser.sub;
+  const header = request.headers?.authorization;
+  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+  if (token) {
+    try {
+      const payload = verifyUserJwt(token);
+      return payload.sub;
+    } catch {}
+  }
+  return undefined;
 }
 
 /**
@@ -102,10 +117,22 @@ export async function identityRoutes(app: FastifyInstance) {
    * number resolved through the admin-overridable limit table, never
    * hardcoded. An admin moving a ceiling changes this response immediately.
    */
-  app.get('/api/users/:userId/verification-summary', async (request) => {
+  app.get('/api/users/:userId/verification-summary', async (request, reply) => {
     const { userId } = request.params as { userId: string };
-    ensureOwnUser(request, userId);
-    return { data: await getVerificationSummary(userId) };
+    const isService = isIdentityServiceAuthorized(request);
+    let resolvedUserId = userId;
+    if (isService) {
+      if (userId.startsWith('+') || /^\d{10,14}$/.test(userId) || userId.startsWith('whatsapp:')) {
+        const rawClean = userId.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+        const user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) || (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) || (await db.findUserByWhatsappNumber(rawClean));
+        if (user) resolvedUserId = user.id;
+      }
+    } else {
+      ensureOwnUser(request, userId);
+    }
+    const summary = await getVerificationSummary(resolvedUserId);
+    if (!summary) return reply.code(404).send({ error: { message: 'User not found' } });
+    return { data: summary };
   });
 
   /**
@@ -133,36 +160,184 @@ export async function identityRoutes(app: FastifyInstance) {
   app.get('/api/users/me/service-agreements', async (request) => {
     const userId = getAuthUserId(request);
     if (!userId) return { data: { linked: false, deals: [] } };
+
+    const user = await db.findUserById(userId);
+    const userEmail = (user?.email || '').toLowerCase().trim();
+    const handle = userEmail ? userEmail.split('@')[0] : '';
     const status = await getIdentityStatus(userId);
-    const whatsappNumber = status?.link?.whatsappNumber;
-    const isLinked = Boolean(whatsappNumber || status?.channels?.telegram?.linked);
+    const whatsappNumber = status?.link?.whatsappNumber || status?.channels?.whatsapp?.link?.whatsappNumber || user?.whatsappNumber || (user as any)?.phone;
+    const telegramLink = status?.channels?.telegram?.link;
+    const telegramUserId = telegramLink?.telegramUserId || user?.telegramUserId;
+    const telegramUsername = telegramLink?.telegramUsername || user?.telegramUsername;
+    const cleanTgUsername = telegramUsername ? telegramUsername.replace(/^@/, '') : '';
+    const linkedEscrowUserId = telegramLink?.escrowUserId || status?.link?.escrowUserId;
 
-    if (!isLinked) {
-      return { data: { linked: false, deals: [] } };
-    }
+    const aliases = [
+      userId,
+      user?.id,
+      user?.email,
+      userEmail,
+      user?.fullName,
+      user?.username,
+      whatsappNumber,
+      telegramUserId ? String(telegramUserId) : '',
+      telegramUsername,
+      cleanTgUsername ? `@${cleanTgUsername}` : '',
+      cleanTgUsername,
+      handle ? `@${handle}` : '',
+      handle
+    ].filter(Boolean) as string[];
 
-    const escrowAgentUrl = env.ESCROW_AGENT_URL || 'http://127.0.0.1:4000';
-    const coreSecret = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
-
-    let url = `${escrowAgentUrl}/api/users/escrows?limit=50`;
-    if (whatsappNumber) {
-      url += `&actorWhatsapp=${encodeURIComponent(whatsappNumber)}`;
-    }
-
+    // Also include all linked wallet addresses so agreements stored against a
+    // wallet address (e.g. Celo 0x..., Stellar G...) are visible to the owner.
     try {
-      const res = await fetch(url, {
-        headers: {
-          'x-core-api-key': coreSecret,
-        },
-      });
-      if (!res.ok) {
-        return { data: { linked: true, deals: [] } };
+      const userWallets = await db.listUserWallets(userId);
+      for (const w of userWallets) {
+        if (w.address) aliases.push(w.address);
       }
-      const json: any = await res.json();
-      return { data: { linked: true, deals: json.deals || [] } };
-    } catch (err: any) {
-      return { data: { linked: true, deals: [] } };
+    } catch (walletErr) {
+      console.warn('[Service Agreements] Could not load user wallets for alias expansion:', walletErr);
     }
+
+    // 1. Fetch native Service Agreements from database for this user (dual-lookup by ID, email, handle, telegram, wallet)
+    let nativeDeals: any[] = [];
+    try {
+      const agreements = await (db as any).listServiceAgreementsByUserId(aliases);
+      const aliasSet = new Set(aliases.map((a) => String(a).toLowerCase().trim()));
+      nativeDeals = (agreements || []).map((a: any) => {
+        const isBuyer = aliasSet.has(String(a.buyerUserId || '').toLowerCase().trim());
+        const rawStatus = String(a.status || '').toLowerCase();
+        const effectiveStatus = (a.fundingTxHash && (rawStatus === 'pending_payment' || rawStatus === 'pending_funding'))
+          ? 'FUNDED'
+          : (a.status || 'PENDING').toUpperCase();
+        return {
+          id: a.id,
+          escrowId: a.id,
+          title: a.title,
+          role: isBuyer ? 'buyer' : 'seller',
+          amount: String(a.amountUsdc),
+          amountUsdc: Number(a.amountUsdc || 0),
+          currency: a.currency || 'USDC',
+          status: effectiveStatus,
+          createdAt: a.createdAt,
+          network: a.network,
+          buyerUserId: a.buyerUserId,
+          sellerUserId: a.sellerUserId,
+          deadlineDays: a.deadlineDays,
+          deliveryDueAt: a.deliveryDueAt,
+          fundingTxHash: a.fundingTxHash,
+          releaseTxHash: a.releaseTxHash,
+          vaultAddress: a.vaultAddress,
+          channel: a.channel || 'web',
+        };
+      });
+    } catch (e) {
+      console.warn('[Service Agreements] Native lookup note:', e);
+    }
+
+    // 2. Fetch external Telegram / WhatsApp linked deals if linked or available
+    const isLinked = Boolean(whatsappNumber || telegramUserId || status?.channels?.telegram?.linked || linkedEscrowUserId || userEmail);
+
+    let externalDeals: any[] = [];
+    if (isLinked) {
+      const defaultEscrowUrl = env.APP_ENV === 'production'
+        ? 'https://api.sivantech.online'
+        : 'https://api-staging.sivantech.online';
+      const escrowAgentUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
+      const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
+
+      const params: string[] = ['limit=50'];
+      if (linkedEscrowUserId) {
+        params.push(`actorUserId=${encodeURIComponent(linkedEscrowUserId)}`);
+      }
+      if (whatsappNumber) {
+        params.push(`actorWhatsapp=${encodeURIComponent(whatsappNumber)}`);
+      }
+      if (telegramUserId) {
+        params.push(`actorTelegramId=${encodeURIComponent(telegramUserId)}`);
+      }
+      if (cleanTgUsername) {
+        params.push(`actorTelegramUsername=${encodeURIComponent(cleanTgUsername)}`);
+      }
+      if (userEmail) {
+        params.push(`actorEmail=${encodeURIComponent(userEmail)}`);
+      }
+      if (!linkedEscrowUserId && !whatsappNumber && !telegramUserId && !userEmail) {
+        params.push(`actorUserId=${encodeURIComponent(userId)}`);
+      }
+
+      const url = `${escrowAgentUrl}/api/users/escrows?${params.join('&')}`;
+
+      if (!escrowAgentUrl || !coreSecret) {
+        console.warn('[identity] ESCROW_AGENT_URL or CORE_API_SECRET not set — skipping external deals fetch.');
+      } else {
+        try {
+          const res = await fetch(url, {
+            headers: {
+              'x-core-api-key': coreSecret,
+            },
+            signal: AbortSignal.timeout(3500),
+          });
+          if (res.ok) {
+            const json: any = await res.json();
+            externalDeals = (json.deals || []).map((d: any) => {
+              const escrow = d.escrow || d;
+              const channel = escrow.createdByChannel === 'whatsapp_dm' || escrow.createdByChannel === 'whatsapp_group'
+                ? 'whatsapp'
+                : (escrow.createdByChannel === 'telegram' || d.channel === 'telegram' || Boolean(telegramUserId))
+                ? 'telegram'
+                : (d.channel || (telegramLink ? 'telegram' : whatsappNumber ? 'whatsapp' : 'web'));
+
+              const rawRole = d.participant?.role || d.role;
+              const isBuyer = rawRole === 'buyer' || (escrow.buyerUserId && (escrow.buyerUserId === userId || escrow.buyerUserId === linkedEscrowUserId));
+
+              return {
+                id: escrow.escrowId || escrow.id || d.escrowId || d.id,
+                escrowId: escrow.escrowId || escrow.id || d.escrowId || d.id,
+                title: escrow.purpose || escrow.title || d.title || d.description || 'Service Agreement',
+                role: isBuyer ? 'buyer' : 'seller',
+                amount: String(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || '0'),
+                amountUsdc: Number(escrow.amountUsdc || escrow.amount || d.amountUsdc || d.amount || 0),
+                currency: escrow.currency || d.currency || 'USDC',
+                network: escrow.network || d.network || 'solana',
+                status: String(escrow.status || d.status || 'PENDING').toUpperCase(),
+                createdAt: escrow.createdAt || d.createdAt || new Date().toISOString(),
+                channel,
+                buyerUserId: escrow.buyerUserId || d.buyerUserId,
+                sellerUserId: escrow.sellerUserId || d.sellerUserId,
+                deadlineDays: escrow.deadlineDays || d.deadlineDays,
+                deliveryDueAt: escrow.deliveryDueAt || d.deliveryDueAt,
+                fundingTxHash: escrow.fundingTxHash || d.fundingTxHash,
+                releaseTxHash: escrow.releaseTxHash || d.releaseTxHash,
+                vaultAddress: escrow.vaultAddress || d.vaultAddress,
+              };
+            });
+          }
+        } catch (err: any) {
+          console.warn('[Service Agreements] External lookup note:', err?.message || err);
+        }
+      }
+    }
+
+    // Merge & Deduplicate by ID
+    const dealMap = new Map<string, any>();
+    for (const d of [...nativeDeals, ...externalDeals]) {
+      const key = d.escrowId || d.id;
+      if (key) {
+        dealMap.set(key, { ...d, id: key, escrowId: key });
+      }
+    }
+
+    const allDeals = Array.from(dealMap.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+
+    return {
+      data: {
+        linked: isLinked || nativeDeals.length > 0,
+        deals: allDeals
+      }
+    };
   });
 
   app.post('/api/users/me/identity/link-whatsapp/start', async (request) => {
@@ -261,6 +436,15 @@ export async function identityRoutes(app: FastifyInstance) {
   });
 
   /**
+   * Resolve a phone number to its Sivan identity (including Telegram user ID).
+   */
+  app.get('/api/identity/phone/:phone', async (request) => {
+    requireIdentityServiceSecret(request);
+    const { phone } = request.params as { phone: string };
+    return { data: await lookupPhoneIdentity(phone) };
+  });
+
+  /**
    * Disconnect this Telegram account from its Sivan identity, from chat.
    *
    * Unlinking already existed for the WEB session (unlink-telegram above, which
@@ -296,6 +480,227 @@ export async function identityRoutes(app: FastifyInstance) {
       userAgent: request.headers['user-agent'],
     });
     return { data: { linked: false as const, unlinked: true as const } };
+  });
+
+  /**
+   * Directly link or update the phone number for a Telegram user from chat.
+   */
+  app.post('/api/identity/telegram/:telegramUserId/phone', async (request, reply) => {
+    requireIdentityServiceSecret(request);
+    const { telegramUserId } = request.params as { telegramUserId: string };
+    const body = (request.body || {}) as any;
+    const rawPhone = String(body.phone || body.whatsappNumber || '').trim();
+    if (!rawPhone) {
+      return reply.code(400).send({ error: 'phone is required' });
+    }
+    const cleanPhone = rawPhone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    const normalized = `+${cleanPhone}`;
+    const cleanId = telegramUserId.trim();
+
+    const link = await activeLinkForTelegram(cleanId);
+    let user: any = null;
+
+    if (link) {
+      user = await db.findUserById(link.paymentUserId);
+    }
+    if (!user) {
+      user = await db.findUserByTelegramUserId(cleanId);
+    }
+    if (!user) {
+      user = await db.findUserByWhatsappNumber(normalized);
+    }
+
+    const fullName = body.fullName || (body.firstName ? `${body.firstName} ${body.lastName || ''}`.trim() : user?.fullName) || 'Sivan User';
+    const email = body.email ? String(body.email).trim().toLowerCase() : (user?.email || `${cleanPhone}@sivantech.online`);
+    const now = nowIso();
+
+    if (!user) {
+      user = await db.findUserByEmail(email);
+    }
+
+    if (!user) {
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email,
+        fullName,
+        whatsappNumber: normalized,
+        telegramUserId: cleanId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      user = await db.updateUserRecord({
+        ...user,
+        email,
+        fullName: user.fullName || fullName,
+        whatsappNumber: normalized,
+        telegramUserId: cleanId,
+        updatedAt: now,
+      });
+    }
+
+    const links = await db.listCustomerIdentityLinks();
+    const existingLink = links.find((item) => item.paymentUserId === user.id && item.channel === 'telegram')
+      || links.find((item) => item.telegramUserId === cleanId);
+
+    await db.upsertCustomerIdentityLinkRecord({
+      id: existingLink?.id || id('identity'),
+      paymentUserId: user.id,
+      email: user.email,
+      channel: 'telegram',
+      telegramUserId: cleanId,
+      whatsappNumber: normalized,
+      status: 'linked',
+      linkedAt: now,
+      createdAt: existingLink?.createdAt || now,
+      updatedAt: now,
+    }).catch((err) => console.warn('[identity] upsert link warning:', err));
+
+    return {
+      data: {
+        linked: true as const,
+        paymentUserId: user.id,
+        whatsappNumber: normalized,
+        fullName: user.fullName,
+        email: user.email,
+        canTransact: true,
+      },
+    };
+  });
+
+  /**
+   * Compatibility endpoint for user profile registration.
+   */
+  app.post('/api/users/profile', async (request, reply) => {
+    const body = (request.body || {}) as any;
+    const rawPhone = String(body.whatsappNumber || body.phone || '').trim();
+    if (!rawPhone) {
+      return reply.code(400).send({ error: 'whatsappNumber is required' });
+    }
+    const cleanPhone = rawPhone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    const normalized = `+${cleanPhone}`;
+    const cleanTelegramId = body.telegramId ? String(body.telegramId).trim() : undefined;
+
+    let user = await db.findUserByWhatsappNumber(normalized);
+    if (!user) {
+      user = await db.findUserByWhatsappNumber(`whatsapp:${normalized}`);
+    }
+    if (!user && cleanTelegramId) {
+      user = await db.findUserByTelegramUserId(cleanTelegramId);
+    }
+
+    const email = body.email ? String(body.email).trim().toLowerCase() : (user?.email || `${cleanPhone}@sivantech.online`);
+    if (!user) {
+      user = await db.findUserByEmail(email);
+    }
+
+    const firstName = body.firstName || 'Sivan User';
+    const lastName = body.lastName || '';
+    const fullName = `${firstName} ${lastName}`.trim();
+    const now = nowIso();
+
+    if (!user) {
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email,
+        fullName,
+        whatsappNumber: normalized,
+        telegramUserId: cleanTelegramId,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      user = await db.updateUserRecord({
+        ...user,
+        email,
+        fullName: user.fullName || fullName,
+        whatsappNumber: normalized,
+        telegramUserId: cleanTelegramId || user.telegramUserId,
+        updatedAt: now,
+      });
+    }
+
+    if (cleanTelegramId) {
+      const links = await db.listCustomerIdentityLinks();
+      const existingLink = links.find((item) => item.paymentUserId === user.id && item.channel === 'telegram')
+        || links.find((item) => item.telegramUserId === cleanTelegramId);
+
+      await db.upsertCustomerIdentityLinkRecord({
+        id: existingLink?.id || id('identity'),
+        paymentUserId: user.id,
+        email: user.email,
+        channel: 'telegram',
+        telegramUserId: cleanTelegramId,
+        whatsappNumber: normalized,
+        status: 'linked',
+        linkedAt: now,
+        createdAt: existingLink?.createdAt || now,
+        updatedAt: now,
+      }).catch((err) => console.warn('[identity] upsert link warning:', err));
+    }
+
+    return { success: true, user, data: user };
+  });
+
+  /**
+   * Reset / wipe a test user completely for end-to-end testing.
+   */
+  app.post('/api/identity/reset-test-user', async (request, reply) => {
+    requireIdentityServiceSecret(request);
+    const body = (request.body || {}) as any;
+    const rawPhone = String(body.phone || body.whatsappNumber || '').trim();
+    const cleanPhone = rawPhone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    const cleanTelegramId = String(body.telegramUserId || body.telegramId || '').trim();
+
+    let unlinkedTelegram = false;
+    let unlinkedPhone = false;
+    let wipedUserId: string | null = null;
+
+    if (cleanTelegramId) {
+      const link = await activeLinkForTelegram(cleanTelegramId);
+      if (link) {
+        await unlinkTelegramIdentity(link.paymentUserId, {
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+        });
+        unlinkedTelegram = true;
+      }
+    }
+
+    if (cleanPhone) {
+      const withPlus = `+${cleanPhone}`;
+      const user = (await db.findUserByWhatsappNumber(withPlus))
+        || (await db.findUserByWhatsappNumber(`whatsapp:${withPlus}`))
+        || (await db.findUserByWhatsappNumber(cleanPhone))
+        || (await db.findUserByEmail(`${cleanPhone}@sivantech.online`));
+      if (user) {
+        wipedUserId = user.id;
+        const links = await db.listCustomerIdentityLinks();
+        for (const l of links) {
+          if (l.paymentUserId === user.id || l.whatsappNumber === withPlus || l.telegramUserId === cleanTelegramId) {
+            await db.upsertCustomerIdentityLinkRecord({ ...l, status: 'unlinked', updatedAt: nowIso() });
+          }
+        }
+        await db.updateUserRecord({
+          ...user,
+          email: `reset_${user.id}_${Date.now()}@sivantech.online`,
+          whatsappNumber: undefined,
+          telegramUserId: undefined,
+          updatedAt: nowIso(),
+        });
+        unlinkedPhone = true;
+      }
+    }
+
+    return {
+      data: {
+        success: true,
+        reset: true,
+        unlinkedTelegram,
+        unlinkedPhone,
+        wipedUserId,
+      },
+    };
   });
 
 
@@ -380,13 +785,69 @@ export async function identityRoutes(app: FastifyInstance) {
    */
   app.post('/api/identity/withdrawal-pin-status', async (request) => {
     requireIdentityServiceSecret(request);
-    // Picked from the verify schema rather than redeclared, so the two routes
-    // parse and normalise channel/identity identically. Declared separately,
-    // one could trim where the other does not, and the bot would be told a PIN
-    // exists for an identity that verify-pin then resolves to nobody.
     const body = parseBody(verifyWithdrawalPinSchema.pick({ channel: true, identity: true }), request.body);
     const userId = await resolveChatIdentity(body.channel, body.identity);
     return { data: { hasPin: userId ? await hasWithdrawalPin(userId) : false } };
+  });
+
+  /**
+   * Telegram Mini-App (TMA) & Web Keypad Step-Up PIN Verification.
+   * Authenticates PIN for high-value transactions ($50+) and returns a single-use step-up token.
+   */
+  app.post('/api/identity/pin/verify-step-up', async (request, reply) => {
+    const { userId, pin, amount, currency, destinationRef, channel } = (request.body || {}) as any;
+    if (!userId || !pin || !amount || !currency || !destinationRef) {
+      return reply.code(400).send({
+        error: { message: 'Missing required parameters (userId, pin, amount, currency, destinationRef)' },
+      });
+    }
+
+    try {
+      const result = await verifyTmaPinStepUp(
+        {
+          userId: String(userId),
+          pin: String(pin),
+          amount: String(amount),
+          currency: String(currency),
+          destinationRef: String(destinationRef),
+          channel: channel || 'telegram',
+        },
+        { ipAddress: request.ip }
+      );
+      return { data: result };
+    } catch (err: any) {
+      return reply.code(err.statusCode || 400).send({
+        error: {
+          message: err.message || 'PIN verification failed',
+          code: err.details?.code || 'PIN_VERIFICATION_FAILED',
+          details: err.details,
+        },
+      });
+    }
+  });
+
+  /**
+   * Evaluates the $50 Tiered Risk Threshold for transfers and milestone releases.
+   */
+  app.post('/api/identity/pin/evaluate-threshold', async (request) => {
+    const { amount, currency } = (request.body || {}) as { amount?: number; currency?: string };
+    const result = evaluatePinRequirement(Number(amount || 0), currency || 'USDC');
+    return { data: result };
+  });
+
+  /**
+   * Returns system-wide PIN and threshold policies.
+   */
+  app.get('/api/identity/pin/policy', async () => {
+    return {
+      data: {
+        thresholdUsd: 50.0,
+        thresholdNgn: 50000,
+        maxFailedAttempts: 5,
+        lockoutMinutes: 30,
+        stepUpTokenTtlSeconds: 120,
+      },
+    };
   });
 
   /**
@@ -400,14 +861,32 @@ export async function identityRoutes(app: FastifyInstance) {
    */
   app.post('/api/identity/balance-status', async (request, reply) => {
     requireIdentityServiceSecret(request);
-    const body = parseBody(verifyWithdrawalPinSchema.pick({ channel: true, identity: true }), request.body);
-    const userId = await resolveChatIdentity(body.channel, body.identity);
+    const rawBody = (request.body || {}) as any;
+    const channel = rawBody.channel || (rawBody.telegramUserId ? 'telegram' : 'whatsapp');
+    const identity = rawBody.identity || rawBody.telegramUserId || rawBody.whatsappNumber || '';
+    if (!identity) {
+      return reply.code(400).send({ error: { code: 'bad_request', message: 'identity or telegramUserId required' } });
+    }
+    const userId = await resolveChatIdentity(channel, String(identity));
     if (!userId) return reply.code(404).send({ error: { message: 'Chat identity is not linked to a Sivan Payment account.' } });
 
-    const unified = await getUnifiedBalance(userId);
-    const unreadable = unified.balances.length
+    let unified = await getUnifiedBalance(userId);
+    const existingChains = (unified.wallets || []).map((w) => w.chain);
+    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc'];
+    const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
+
+    if (missingChains.length > 0) {
+      const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+      await Promise.all(
+        missingChains.map((chain) => ensureUserWallet(userId, chain as any).catch(() => null))
+      );
+      unified = await getUnifiedBalance(userId);
+    }
+
+    const hasAnyFunds = unified.balances.some((b) => Number(b.spendable) > 0 || Number(b.chain) > 0);
+    const unreadable = !hasAnyFunds && (unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
-      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable);
+      : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable));
     if (unreadable) {
       return reply.code(503).send({
         error: { message: 'Could not reach the network to read this balance. Nothing has changed.' },
@@ -430,8 +909,110 @@ export async function identityRoutes(app: FastifyInstance) {
         wallets: unified.wallets.map((w) => ({
           chain: w.chain,
           address: w.address,
+          balances: (w.balances || []).map((b) => ({
+            asset: b.asset,
+            amount: Number(b.amount),
+          })),
+          balancesUnavailable: !!w.balancesUnavailable,
         })),
       },
     };
+  });
+
+  /**
+   * Universal recipient target resolver (@username, +phone, or userId) for instant P2P transfers and multi-chain resolution.
+   */
+  app.get('/api/identity/resolve-target', async (request, reply) => {
+    const { target, chain } = request.query as { target?: string; chain?: string };
+    if (!target || typeof target !== 'string') {
+      return reply.code(400).send({ error: { message: 'Missing target query parameter' } });
+    }
+
+    const user = await db.findUserByTarget(target);
+    if (!user) {
+      return { data: { found: false, target } };
+    }
+
+    let targetAddress: string | undefined;
+    const requestedChain = chain ? String(chain).trim().toLowerCase() : undefined;
+
+    if (requestedChain) {
+      try {
+        const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+        const wallet = await ensureUserWallet(user.id, requestedChain as any);
+        if (wallet?.address) {
+          targetAddress = wallet.address;
+        }
+      } catch (err) {
+        console.warn('[resolve-target.wallet_error]', err);
+      }
+    }
+
+    const userWallets = await db.listUserWallets(user.id).catch(() => []);
+
+    return {
+      data: {
+        found: true,
+        user: {
+          userId: user.id,
+          username: user.username,
+          displayName: (user as any).name || (user as any).fullName || user.username || (user as any).telegramUsername || user.whatsappNumber || 'Sivan User',
+          phone: user.whatsappNumber,
+          targetAddress,
+          chain: requestedChain,
+          wallets: userWallets.map((w) => ({ chain: w.chain, address: w.address })),
+        },
+      },
+    };
+  });
+
+  /**
+   * Direct proxy for /api/users/escrows
+   */
+  app.get('/api/users/escrows', async (request, reply) => {
+    const defaultEscrowUrl = env.APP_ENV === 'production'
+      ? 'https://api.sivantech.online'
+      : 'https://api-staging.sivantech.online';
+    const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
+    const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
+    const query = new URLSearchParams(request.query as Record<string, string>).toString();
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/users/escrows${query ? `?${query}` : ''}`;
+
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'x-core-api-key': coreSecret,
+        },
+      });
+      const data = await res.json();
+      return reply.code(res.status).send(data);
+    } catch (err: any) {
+      return reply.code(502).send({ error: { message: err?.message || 'Service Agreement API unreachable' } });
+    }
+  });
+
+  /**
+   * Direct proxy for /api/users/profile
+   */
+  app.get('/api/users/profile', async (request, reply) => {
+    const defaultEscrowUrl = env.APP_ENV === 'production'
+      ? 'https://api.sivantech.online'
+      : 'https://api-staging.sivantech.online';
+    const configuredUrl = env.ESCROW_AGENT_URL || defaultEscrowUrl;
+    const coreSecret = process.env.CORE_API_SECRET || 'sivan_core_test_secret';
+    const query = new URLSearchParams(request.query as Record<string, string>).toString();
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/users/profile${query ? `?${query}` : ''}`;
+
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'x-core-api-key': coreSecret,
+        },
+      });
+      const data = await res.json();
+      return reply.code(res.status).send(data);
+    } catch (err: any) {
+      return reply.code(502).send({ error: { message: err?.message || 'Service Agreement API unreachable' } });
+    }
   });
 }

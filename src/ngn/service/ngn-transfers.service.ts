@@ -466,7 +466,7 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const fees = (transfer.metadata as any)?.quoteMetadata?.fees ?? {};
   const revenueMode = String(fees?.revenueMode ?? 'sivan_fee_wallet');
-  const sivanFeeAmount = revenueMode === 'sivan_fee_wallet'
+  const sivanFeeAmount = revenueMode === 'sivan_fee_wallet' && network === 'solana'
     ? Math.max(0, Number(fees?.sivanMarginAsset ?? fees?.sivanMargin ?? 0))
     : 0;
   const amountToRail = Math.max(0, amount - sivanFeeAmount);

@@ -39,6 +39,9 @@ async function main() {
     assert(defaults.data.transactionUpdates === true, 'transaction updates enabled by default');
     assert(defaults.data.marketingEmails === false, 'marketing emails disabled by default');
     assert(defaults.data.securityAlerts === true, 'security alerts enabled by default');
+    assert(defaults.data.telegramNotificationsEnabled === true, 'telegram notifications enabled by default (free and instant)');
+    assert(defaults.data.whatsappNotificationsEnabled === false, 'whatsapp notifications disabled by default (cost-optimized)');
+    assert(defaults.data.multiChainAlertsEnabled === true, 'multi-chain settlement alerts enabled by default');
 
     const updated: any = await request('PUT', `/api/users/${user.id}/preferences`, {
       language: 'en-GB',
@@ -46,17 +49,25 @@ async function main() {
       transactionUpdates: false,
       marketingEmails: true,
       securityAlerts: true,
-      emailConfirmationsForHighValue: true
+      emailConfirmationsForHighValue: true,
+      telegramNotificationsEnabled: false,
+      whatsappNotificationsEnabled: true,
+      multiChainAlertsEnabled: true
     });
     assert(updated.data.language === 'en-GB', 'language preference updates');
     assert(updated.data.defaultFiatCurrency === 'gbp', 'default fiat preference updates');
     assert(updated.data.transactionUpdates === false, 'transaction update preference saves off');
     assert(updated.data.marketingEmails === true, 'marketing email preference saves on');
     assert(updated.data.emailConfirmationsForHighValue === true, 'high-value confirmation preference saves on');
+    assert(updated.data.telegramNotificationsEnabled === false, 'telegram notification preference saves off');
+    assert(updated.data.whatsappNotificationsEnabled === true, 'whatsapp notification preference saves on');
 
     const fetched: any = await request('GET', `/api/users/${user.id}/preferences`);
     assert(fetched.data.language === 'en-GB', 'updated preferences persist after reload');
     assert(fetched.data.marketingEmails === true, 'marketing setting persists after reload');
+    assert(fetched.data.telegramNotificationsEnabled === false, 'telegram setting persists after reload');
+    assert(fetched.data.whatsappNotificationsEnabled === true, 'whatsapp setting persists after reload');
+    assert(fetched.data.multiChainAlertsEnabled === true, 'multichain setting persists after reload');
 
     await app.close();
     console.log('\n✅ User preferences E2E passed');

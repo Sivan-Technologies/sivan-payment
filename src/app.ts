@@ -303,11 +303,24 @@ export async function buildApp() {
   app.addHook('preHandler', async (request, reply) => {
     if (isFastHealthRequest(request.method, request.url)) return;
     const body = request.body as Record<string, unknown> | undefined;
+    const authHeader = request.headers.authorization;
+    let tokenUser: string | undefined;
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      try {
+        const payload = verifyUserJwt(authHeader.slice(7));
+        tokenUser = payload?.sub;
+      } catch {
+        // Ignore decode error for rate limit lookup
+      }
+    }
+    const reqUser = (request as any).user?.id || (request as any).user?.userId || tokenUser || (typeof body?.userId === 'string' ? body.userId : undefined) || (typeof body?.buyerUserId === 'string' ? body.buyerUserId : undefined);
+
     const decision = checkRateLimit({
       ip: request.ip,
       method: request.method,
       url: request.url,
-      email: typeof body?.email === 'string' ? body.email : undefined
+      email: typeof body?.email === 'string' ? body.email : undefined,
+      userId: typeof reqUser === 'string' ? reqUser : undefined
     });
 
     if (!decision) return;
@@ -731,7 +744,7 @@ function requiresUserAuth(method: string, url: string): boolean {
    * The failure mode of getting it wrong is a user who must re-link, not a user
    * whose funds moved.
    */
-  if (method === 'POST' && url.startsWith('/api/identity/telegram/') && url.endsWith('/unlink')) return false;
+  if (method === 'POST' && url.startsWith('/api/identity/telegram/') && (url.endsWith('/unlink') || url.endsWith('/phone'))) return false;
 
 
   /**
@@ -750,9 +763,10 @@ function requiresUserAuth(method: string, url: string): boolean {
    */
   if (method === 'GET' && url.startsWith('/api/users/whatsapp-balance')) return false;
   if (url.startsWith('/api/users/whatsapp-payout-account')) return false;
+  if (method === 'GET' && url.includes('/verification-summary')) return false;
   if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
   if (url.startsWith('/api/ngn/offramp/orders')) return false;
-  if (method === 'POST' && url === '/api/users') return false;
+  if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile' || url === '/api/identity/reset-test-user')) return false;
 
   if (url === '/api/customers') return true;
 
@@ -765,6 +779,7 @@ function requiresUserAuth(method: string, url: string): boolean {
     /^\/api\/ngn/,
     /^\/api\/support\/tickets/,
     /^\/api\/users\/me\/identity/,
+    /^\/api\/users\/me\/service-agreements/,
     /**
      * Setting or changing the withdrawal PIN. This is the route that
      * establishes the secret every chat withdrawal is later checked against,

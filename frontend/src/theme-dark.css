@@ -2548,6 +2548,9 @@
 [data-theme="dark"] .activity-amount.in {
   color: #018ee8;
 }
+[data-theme="dark"] .agreement-amount {
+  color: #2ed59e;
+}
 [data-theme="dark"] .activity-status {
   background: rgba(255,255,255,.05);
   border: 1px solid rgba(255,255,255,.08);

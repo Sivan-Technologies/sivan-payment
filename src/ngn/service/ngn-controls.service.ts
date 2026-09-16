@@ -66,7 +66,7 @@ export async function getNgnControls() {
     ...defaults,
     ...found,
     onrampEnabled: found.onrampEnabled ?? true,
-    offrampEnabled: found.offrampEnabled ?? true,
+    offrampEnabled: env.NGN_OFFRAMP_REVENUE_MODE === 'disabled' ? false : (found.offrampEnabled === false && (env.BREET_ENV ?? 'development') !== 'production' ? true : (found.offrampEnabled ?? true)),
     offrampRevenueMode: found.offrampRevenueMode ?? defaults.offrampRevenueMode,
     /**
      * FAILS CLOSED, and pinned here rather than left to the spread.

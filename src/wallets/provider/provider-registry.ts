@@ -98,7 +98,7 @@ export function getWalletProvider(
     return new BridgeWalletProvider();
   }
 
-  if (normalized === 'privy') {
+  if (normalized === 'privy' || normalized === 'stellar' || normalized === 'stellar_native') {
     // Non-custodial: the user owns the key, Sivan holds neither funds nor
     // keys. Transfers therefore return pending_user_signature rather than
     // submitting server-side - see privy-wallet.provider.ts.

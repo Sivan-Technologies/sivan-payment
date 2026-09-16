@@ -289,20 +289,22 @@ export function buildActivityFeed(sources: ActivitySources): ActivityRow[] {
    * would misdescribe it.
    */
   for (const b of sources.balanceTransfers ?? []) {
+    const isP2p = (b as any).network === 'sivan_p2p' || (b as any).direction === 'in';
+    const isIncoming = (b as any).direction === 'in';
     rows.push({
       id: b.transferId,
       kind: 'balance_transfer',
-      direction: 'internal',
-      label: 'Send crypto',
-      amount: b.amount,
+      direction: isP2p ? (isIncoming ? 'in' : 'out') : 'internal',
+      label: isP2p ? (isIncoming ? 'P2P transfer received' : 'P2P transfer sent') : 'Send crypto',
+      amount: String(b.amount),
       currency: upper(b.asset) || 'USDC',
       asset: upper(b.asset) || 'USDC',
       status: b.status,
       statusLabel: activityStatusLabel(b.status),
       state: activityState(b.status),
       createdAt: b.createdAt,
-      providerReference: b.txHash || b.userOperationHash,
-      network: b.network,
+      providerReference: b.txHash || b.userOperationHash || b.transferId,
+      network: isP2p ? 'sivan_p2p' : b.network,
       raw: b,
     });
   }

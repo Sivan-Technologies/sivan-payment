@@ -8,6 +8,7 @@ export const views: Array<{ key: ViewKey; icon: string; label: string }> = [
   { key: 'transfer', icon: '⇆', label: 'Send & transfer' },
   { key: 'withdraw', icon: '↗', label: 'Withdraw' },
   { key: 'history', icon: '◷', label: 'Transactions' },
+  { key: 'agreements', icon: '📜', label: 'Service agreements' },
   { key: 'banks', icon: '▭', label: 'Payment methods' },
   { key: 'virtualAccounts', icon: '▥', label: 'Virtual account' },
   { key: 'kyc', icon: '◈', label: 'Identity verification' },
@@ -30,6 +31,7 @@ export const pathByView: Record<ViewKey, string> = {
   receive: '/receive',
   transfer: '/transfer',
   history: '/withdrawals',
+  agreements: '/agreements',
   banks: '/bank-accounts',
   virtualAccounts: '/virtual-account',
   kyc: '/verification',
@@ -47,13 +49,14 @@ export function viewFromPath(pathname: string): ViewKey {
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/receive' || clean === '/deposit' || clean === '/app/receive') return 'receive';
   if (clean === '/withdrawals' || clean === '/history' || clean === '/app/transactions') return 'history';
+  if (clean === '/agreements' || clean === '/service-agreements' || clean === '/app/agreements') return 'agreements';
   if (clean === '/bank-accounts' || clean === '/banks' || clean === '/app/payment-methods') return 'banks';
   if (clean === '/virtual-account' || clean === '/virtual-accounts' || clean === '/receiving-accounts' || clean === '/app/virtual-account') return 'virtualAccounts';
   if (clean === '/verification' || clean === '/verification-complete' || clean === '/app/verification') return 'kyc';
   if (clean === '/settings' || clean === '/app/settings') return 'settings';
   if (clean === '/help' || clean === '/support' || clean === '/app/support') return 'help';
   if (clean === '/email-recovery/confirm' || clean === '/recover-email') return 'emailRecovery';
-  if (clean === '/signup' || clean === '/login') return 'signup';
+  if (clean === '/signup' || clean === '/login' || clean === '/signin') return 'signup';
   return 'landing';
 }
 
@@ -194,12 +197,15 @@ export const fallbackSourceAssets: AssetControl[] = [
  * the one network Breet carries no stablecoin on, in either direction.
  */
 export const fallbackSourceNetworks: NetworkControl[] = [
-  { network: 'solana', enabled: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
-  { network: 'base', enabled: true, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
-  { network: 'ethereum', enabled: true, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
-  { network: 'polygon', enabled: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
-  { network: 'arbitrum', enabled: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
-  { network: 'avalanche_c_chain', enabled: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
+  { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
+  { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
+  { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
+  { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
+  { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
+  { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
+  { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
+  { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
 export const fallbackVirtualAccounts: VirtualAccountControl[] = [
@@ -213,7 +219,7 @@ export function normalizeFrontendApiBase(value: string) {
   try {
     const parsed = new URL(clean);
     const host = parsed.hostname.toLowerCase();
-    if (host === 'api.sivantech.online' || host === 'test-sivan.sivantech.online') {
+    if (host === 'api.sivantech.online' || host === 'test-sivan.sivantech.online' || host === 'api-staging.sivantech.online') {
       return `${parsed.origin}/api/payment`;
     }
     if (host === 'payment.sivantech.online') {
@@ -223,12 +229,12 @@ export function normalizeFrontendApiBase(value: string) {
       return 'https://api.sivantech.online/api/payment';
     }
     if (host.includes('sivan-payments-api-test')) {
-      return 'https://test-sivan.sivantech.online/api/payment';
+      return 'https://api-staging.sivantech.online/api/payment';
     }
   } catch {
     // Keep local/relative values unchanged.
   }
-  return clean || 'http://localhost:3000';
+  return clean || (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://api-staging.sivantech.online/api/payment');
 }
 
 export function buildApiUrl(apiBase: string, path: string): string {
@@ -250,6 +256,7 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
       virtualAccounts: fallbackVirtualAccounts,
       sourceAssets: fallbackSourceAssets,
       sourceNetworks: fallbackSourceNetworks,
+      defaultNetwork: 'solana',
       supplierPayoutsEnabled: true
       // No displayFx on the legacy array shape - there is nowhere for it to
       // have come from. Consumers fall back to naira, which is what the
@@ -262,6 +269,7 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
     virtualAccounts: data?.virtualAccounts ?? fallbackVirtualAccounts,
     sourceAssets: data?.sourceAssets ?? fallbackSourceAssets,
     sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks,
+    defaultNetwork: data?.defaultNetwork ?? data?.sourceNetworks?.find((n) => n.enabled && n.isDefault)?.network ?? 'solana',
     /**
      * DEFAULTS TO TRUE, and the direction matters.
      *

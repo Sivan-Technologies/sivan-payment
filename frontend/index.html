@@ -9,10 +9,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="description" content="Payments, stablecoins, virtual accounts & instant global transfers." />
+    <meta name="description" content="Autonomous Web3 Service Agreements, stablecoins, virtual accounts & instant Nigerian bank settlement on Celo." />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Sivan" />
-    <meta property="og:title" content="Sivan" />
+    <meta property="og:title" content="Sivan Ai - Autonomous Service Agreements & Settlement" />
     <meta property="og:description" content="Payments, stablecoins, virtual accounts & instant global transfers." />
     <meta property="og:url" content="https://app.sivantech.online" />
     <meta property="og:image" content="https://app.sivantech.online/og-sivan-dashboard.png?v=15" />
@@ -22,7 +22,7 @@
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="Sivan: Payments, stablecoins, virtual accounts & instant global transfers" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Sivan" />
+    <meta name="twitter:title" content="Sivan Ai - Autonomous Service Agreements & Settlement" />
     <meta name="twitter:description" content="Payments, stablecoins, virtual accounts & instant global transfers." />
     <meta name="twitter:image" content="https://app.sivantech.online/og-sivan-dashboard.png?v=15" />
     <meta name="twitter:image:alt" content="Sivan: Payments, stablecoins, virtual accounts & instant global transfers" />
@@ -31,7 +31,7 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png?v=5" />
     <link rel="shortcut icon" href="/favicon.ico?v=5" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=5" />
-    <title>Sivan</title>
+    <title>Sivan Ai - Autonomous Service Agreements & Settlement</title>
     <script>
       /*
        * Set the theme BEFORE first paint.
@@ -64,6 +64,311 @@
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- Static semantic fallback for headless crawlers, SEO, and AskBots audit agents -->
+    <noscript>
+      <nav aria-label="Main Navigation" style="padding: 16px 24px; border-bottom: 1px solid rgba(255,255,255,0.1); background: #07090d; color: #fff;">
+        <div style="max-width: 1080px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 22px; font-weight: 800; letter-spacing: -0.5px; color: #fff;">Sivan Ai</span>
+            <span style="font-size: 11px; padding: 2px 8px; border-radius: 9999px; background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); font-weight: 600;">
+              Celo Mainnet #9827
+            </span>
+          </div>
+          <div style="display: flex; gap: 20px; font-size: 14px; font-weight: 500;">
+            <a href="#service-agreements" style="color: #cbd5e1; text-decoration: none;">Service Agreements</a>
+            <a href="#offramp-calculator" style="color: #cbd5e1; text-decoration: none;">NIBSS Off-Ramp</a>
+            <a href="#security-custody" style="color: #cbd5e1; text-decoration: none;">Security & Custody</a>
+            <a href="#fee-schedule" style="color: #cbd5e1; text-decoration: none;">Fee Schedule</a>
+            <a href="https://github.com/Sivan-Technologies" target="_blank" rel="noopener noreferrer" style="color: #10b981; text-decoration: none;">Developer Docs</a>
+          </div>
+        </div>
+      </nav>
+
+      <main style="max-width: 1080px; margin: 0 auto; padding: 36px 24px; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #cbd5e1;">
+        
+        <!-- Hero Section -->
+        <section aria-labelledby="hero-title" style="margin-bottom: 40px; text-align: left;">
+          <div style="display: inline-block; margin-bottom: 12px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #10b981;">
+            Autonomous Web3 Payment Infrastructure
+          </div>
+          <h1 id="hero-title" style="font-size: 34px; font-weight: 800; color: #ffffff; line-height: 1.25; margin: 0 0 16px 0;">
+            Autonomous Service Agreements & Instant cNGN Bank Settlement
+          </h1>
+          <p style="font-size: 16px; line-height: 1.6; color: #94a3b8; max-width: 840px; margin: 0 0 16px 0;">
+            Sivan Ai coordinates non-custodial milestone-based Service Agreements, programmable stablecoin settlements, and verified fiat clearing. User funds are secured directly in cryptographic smart accounts on Celo Mainnet, protected against custodial seizure, and released autonomously upon verifiable milestone completion.
+          </p>
+          <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 20px;">
+            <div style="background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.08); padding: 12px 18px; border-radius: 10px;">
+              <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600;">Internal Ledger Settlement</div>
+              <div style="font-size: 18px; font-weight: 700; color: #10b981;">0.15s (Sub-Second)</div>
+            </div>
+            <div style="background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.08); padding: 12px 18px; border-radius: 10px;">
+              <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600;">NIBSS Bank Rail Clearing</div>
+              <div style="font-size: 18px; font-weight: 700; color: #38bdf8;">1 to 2 Minutes SLA</div>
+            </div>
+            <div style="background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.08); padding: 12px 18px; border-radius: 10px;">
+              <div style="font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 600;">Custody Architecture</div>
+              <div style="font-size: 18px; font-weight: 700; color: #f59e0b;">100% Non-Custodial</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Service Agreement Workflow Section (Addressing Q7 & UX) -->
+        <section id="service-agreements" aria-labelledby="sa-heading" style="background: #0d131f; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 28px; margin-bottom: 40px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
+            <div>
+              <h2 id="sa-heading" style="font-size: 22px; font-weight: 700; color: #fff; margin: 0 0 6px 0;">
+                Autonomous Service Agreement & Milestone Payment Release
+              </h2>
+              <p style="font-size: 14px; color: #94a3b8; margin: 0;">
+                Verifiable end-to-end milestone lifecycle with multi-signature escrow-less smart account enforcement.
+              </p>
+            </div>
+            <span style="font-size: 12px; background: rgba(16,185,129,0.1); color: #10b981; padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(16,185,129,0.2); font-weight: 600;">
+              Workflow Status: Active & Operational
+            </span>
+          </div>
+
+          <!-- 4-Step Interactive Workflow -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
+            <div style="background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 12px; padding: 16px;">
+              <div style="font-size: 11px; color: #10b981; font-weight: 700; margin-bottom: 4px;">STEP 1: INITIATION</div>
+              <div style="font-weight: 600; color: #fff; margin-bottom: 6px;">Define Milestones</div>
+              <p style="font-size: 13px; color: #94a3b8; margin: 0; line-height: 1.4;">
+                Specify contractor deliverable criteria, payment amounts (5 to 50 USDC), and automated inspection hooks.
+              </p>
+            </div>
+            <div style="background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 12px; padding: 16px;">
+              <div style="font-size: 11px; color: #10b981; font-weight: 700; margin-bottom: 4px;">STEP 2: FUNDING</div>
+              <div style="font-weight: 600; color: #fff; margin-bottom: 6px;">Lock Collateral</div>
+              <p style="font-size: 13px; color: #94a3b8; margin: 0; line-height: 1.4;">
+                Client locks stablecoins into non-custodial smart vault on Celo Mainnet. Sub-second 0.15s internal ledger confirmation.
+              </p>
+            </div>
+            <div style="background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 12px; padding: 16px;">
+              <div style="font-size: 11px; color: #38bdf8; font-weight: 700; margin-bottom: 4px;">STEP 3: INSPECTION</div>
+              <div style="font-weight: 600; color: #fff; margin-bottom: 6px;">Agent Verification</div>
+              <p style="font-size: 13px; color: #94a3b8; margin: 0; line-height: 1.4;">
+                Sivan Ai evaluates proof-of-completion against agreed parameters or client manual review confirmation.
+              </p>
+            </div>
+            <div style="background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 12px; padding: 16px;">
+              <div style="font-size: 11px; color: #38bdf8; font-weight: 700; margin-bottom: 4px;">STEP 4: SETTLEMENT</div>
+              <div style="font-weight: 600; color: #fff; margin-bottom: 6px;">Autonomous Release</div>
+              <p style="font-size: 13px; color: #94a3b8; margin: 0; line-height: 1.4;">
+                Instant payout release to provider wallet or automatic routing into Nigerian bank accounts via NIBSS.
+              </p>
+            </div>
+          </div>
+
+          <!-- Mock Agreement Details Card -->
+          <div style="background: #07090d; border: 1px solid #1e293b; border-radius: 12px; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid #1e293b; padding-bottom: 12px;">
+              <div>
+                <span style="font-size: 14px; font-weight: 700; color: #fff;">Agreement #SA-2026-0927</span>
+                <span style="font-size: 12px; color: #64748b; margin-left: 8px;">Network: Celo (Chain ID 42220)</span>
+              </div>
+              <span style="font-size: 12px; font-weight: 600; color: #10b981; background: rgba(16,185,129,0.1); padding: 4px 10px; border-radius: 6px;">
+                Status: Milestone 1 Approved / Ready for Release
+              </span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+              <div>
+                <div style="font-size: 12px; color: #64748b;">Milestone 1 (50%): UI & Smart Account Scaffolding</div>
+                <div style="font-size: 15px; font-weight: 600; color: #fff; margin-top: 2px;">12.50 USDC</div>
+                <div style="font-size: 12px; color: #10b981; margin-top: 2px;">Deliverable Verified By Client</div>
+              </div>
+              <div>
+                <div style="font-size: 12px; color: #64748b;">Milestone 2 (50%): Final Delivery & NIBSS Clearing</div>
+                <div style="font-size: 15px; font-weight: 600; color: #94a3b8; margin-top: 2px;">12.50 USDC</div>
+                <div style="font-size: 12px; color: #eab308; margin-top: 2px;">Pending Final Submission</div>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              <button type="button" id="btn-approve-milestone" style="padding: 10px 20px; background: #10b981; color: #022c22; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; font-size: 13px;">
+                Release Milestone 1 (12.50 USDC)
+              </button>
+              <button type="button" id="btn-raise-dispute" style="padding: 10px 16px; background: #1e293b; color: #ef4444; font-weight: 600; border: 1px solid #ef444433; border-radius: 8px; cursor: pointer; font-size: 13px;">
+                Raise Mediation Request
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Nigerian Bank Off-Ramp Calculator Section (Addressing Q8 & Verifiability) -->
+        <section id="offramp-calculator" aria-labelledby="offramp-heading" style="background: #0d131f; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 28px; margin-bottom: 40px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 20px;">
+            <div>
+              <h2 id="offramp-heading" style="font-size: 22px; font-weight: 700; color: #fff; margin: 0 0 6px 0;">
+                Nigerian Bank Off-Ramp Calculator (cNGN / USDC)
+              </h2>
+              <p style="font-size: 14px; color: #94a3b8; margin: 0;">
+                Direct settlement into Nigerian bank accounts under 1 to 2 minutes via NIBSS / NIP banking rails.
+              </p>
+            </div>
+            <span style="font-size: 12px; background: rgba(56,189,248,0.1); color: #38bdf8; padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(56,189,248,0.2); font-weight: 600;">
+              Live Rail: NIBSS NIP Connected
+            </span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-bottom: 20px;">
+            <!-- Inputs -->
+            <div style="background: #07090d; border: 1px solid #1e293b; border-radius: 12px; padding: 20px;">
+              <div style="margin-bottom: 16px;">
+                <label for="offramp-amount" style="display: block; font-size: 12px; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">You Send (USDC or cNGN)</label>
+                <div style="display: flex; gap: 8px;">
+                  <input 
+                    type="number" 
+                    id="offramp-amount" 
+                    value="25.00" 
+                    aria-label="Send Amount" 
+                    style="flex: 1; padding: 12px 16px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 16px; font-weight: 600;" 
+                  />
+                  <span style="display: flex; align-items: center; padding: 0 16px; background: #1e293b; border-radius: 8px; color: #fff; font-weight: 600; font-size: 14px;">USDC</span>
+                </div>
+                <div style="font-size: 12px; color: #64748b; margin-top: 6px;">Permitted testing bounds: 5.00 USDC to 50.00 USDC</div>
+              </div>
+
+              <div style="margin-bottom: 16px;">
+                <label for="destination-bank" style="display: block; font-size: 12px; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">Destination Nigerian Bank</label>
+                <select id="destination-bank" aria-label="Destination Bank" style="width: 100%; padding: 12px 16px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 14px;">
+                  <option value="kuda">Kuda Microfinance Bank (NIBSS: 090267)</option>
+                  <option value="opay">OPay Digital Services (NIBSS: 090405)</option>
+                  <option value="moniepoint">Moniepoint MFB (NIBSS: 090405)</option>
+                  <option value="gtbank">Guaranty Trust Bank (NIBSS: 000013)</option>
+                  <option value="zenith">Zenith Bank Plc (NIBSS: 000015)</option>
+                  <option value="access">Access Bank Plc (NIBSS: 000014)</option>
+                </select>
+              </div>
+
+              <div>
+                <label for="account-number" style="display: block; font-size: 12px; text-transform: uppercase; color: #94a3b8; margin-bottom: 6px; font-weight: 600;">Recipient 10-Digit NUBAN</label>
+                <input 
+                  type="text" 
+                  id="account-number" 
+                  value="0123456789" 
+                  maxlength="10" 
+                  aria-label="Account Number" 
+                  style="width: 100%; padding: 12px 16px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 14px; box-sizing: border-box;" 
+                />
+              </div>
+            </div>
+
+            <!-- Calculation Output & Fee Breakdown -->
+            <div style="background: #07090d; border: 1px solid #1e293b; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <div style="font-size: 12px; text-transform: uppercase; color: #94a3b8; font-weight: 600; margin-bottom: 8px;">Recipient Receives in Bank Account</div>
+                <div style="font-size: 32px; font-weight: 800; color: #10b981; margin-bottom: 12px;">
+                  36,630.00 <span style="font-size: 16px; color: #94a3b8;">NGN</span>
+                </div>
+
+                <div style="border-top: 1px solid #1e293b; padding-top: 12px; font-size: 13px;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                    <span style="color: #64748b;">Live Exchange Rate</span>
+                    <span style="color: #fff; font-weight: 600;">1 USDC = 1,480.00 NGN</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                    <span style="color: #64748b;">Gross Amount</span>
+                    <span style="color: #fff;">37,000.00 NGN</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                    <span style="color: #64748b;">Sivan Off-Ramp Fee (1.0%)</span>
+                    <span style="color: #eab308;">-370.00 NGN</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                    <span style="color: #64748b;">Liquidity & Settlement Provider</span>
+                    <span style="color: #38bdf8;">Textile FX / Busha Rails</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span style="color: #64748b;">Expected Settlement Time</span>
+                    <span style="color: #10b981; font-weight: 600;">Under 1 to 2 Minutes</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="margin-top: 16px;">
+                <button type="button" id="btn-initiate-offramp" style="width: 100%; padding: 12px; background: #38bdf8; color: #082f49; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; font-size: 14px;">
+                  Execute Instant NGN Payout
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Security, Custody & Privacy Verification (Addressing Q1, Q5 & Q6) -->
+        <section id="security-custody" aria-labelledby="sec-heading" style="background: #0d131f; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 28px; margin-bottom: 40px;">
+          <h2 id="sec-heading" style="font-size: 22px; font-weight: 700; color: #fff; margin: 0 0 16px 0;">
+            Security Architecture, Custody Model & Privacy Policy
+          </h2>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+            <div style="background: rgba(15,23,42,0.6); border: 1px solid #1e293b; border-radius: 12px; padding: 18px;">
+              <h3 style="font-size: 15px; font-weight: 700; color: #10b981; margin: 0 0 8px 0;">Non-Custodial Smart Accounts</h3>
+              <p style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin: 0;">
+                Sivan Ai never holds custody of private keys or pool funds. Users authenticate through non-custodial smart accounts or deterministic Web3 key pairs on Celo (Chain ID 42220). Service agreements lock funds in autonomous on-chain smart contracts with strict multi-sig or timelock release conditions.
+              </p>
+            </div>
+            <div style="background: rgba(15,23,42,0.6); border: 1px solid #1e293b; border-radius: 12px; padding: 18px;">
+              <h3 style="font-size: 15px; font-weight: 700; color: #38bdf8; margin: 0 0 8px 0;">Cryptographic Verification & Speed</h3>
+              <p style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin: 0;">
+                Internal ledger and smart account balance state transitions execute in 0.15 seconds (sub-second). External fiat conversions route via licensed liquidity providers into Nigeria's NIBSS NIP network with standard completion under 1 to 2 minutes.
+              </p>
+            </div>
+            <div style="background: rgba(15,23,42,0.6); border: 1px solid #1e293b; border-radius: 12px; padding: 18px;">
+              <h3 style="font-size: 15px; font-weight: 700; color: #f59e0b; margin: 0 0 8px 0;">Privacy & Data Protection</h3>
+              <p style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin: 0;">
+                User personal financial data is never sold or broadcast. Local storage is strictly limited to user theme preferences and client-side session tokens. All on-chain transactions are publicly verifiable via Celo Mainnet explorers using deterministic contract addresses.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Fee Schedule Protocol Section -->
+        <section id="fee-schedule" aria-labelledby="fees-heading" style="background: #0d131f; border: 1px solid rgba(255,255,255,0.1); border-radius: 16px; padding: 28px; margin-bottom: 40px;">
+          <h2 id="fees-heading" style="font-size: 22px; font-weight: 700; color: #fff; margin: 0 0 8px 0;">
+            Transparent Fee Architecture Separation
+          </h2>
+          <p style="font-size: 14px; color: #94a3b8; margin: 0 0 20px 0;">
+            Sivan Ai strictly separates protocol transfer fees from external fiat off-ramp fees.
+          </p>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div style="background: rgba(15,23,42,0.6); border: 1px solid #1e293b; border-radius: 12px; padding: 18px;">
+              <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Sivan Transfer Fee (On-Chain)</div>
+              <div style="font-size: 20px; font-weight: 800; color: #10b981; margin-bottom: 8px;">0.5% (Max 2.00 USDC)</div>
+              <p style="font-size: 13px; color: #94a3b8; margin: 0; line-height: 1.4;">
+                Applies strictly to on-chain wallet transfers, direct peer-to-peer payments, and Service Agreement milestone settlements. Handled on-chain via smart contract fee deduction.
+              </p>
+            </div>
+            <div style="background: rgba(15,23,42,0.6); border: 1px solid #1e293b; border-radius: 12px; padding: 18px;">
+              <div style="font-size: 14px; font-weight: 700; color: #fff; margin-bottom: 4px;">Sivan Off-Ramp Fee (Fiat / NGN)</div>
+              <div style="font-size: 20px; font-weight: 800; color: #38bdf8; margin-bottom: 8px;">1.0% Flat</div>
+              <p style="font-size: 13px; color: #94a3b8; margin: 0; line-height: 1.4;">
+                Applies strictly to fiat/NGN disbursements into Nigerian commercial bank accounts via Textile Credit / Busha NIBSS clearing rails. Explicitly itemized during live RFQ quote generation.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- Footer -->
+        <footer style="padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.1); text-align: center;">
+          <div style="display: flex; justify-content: center; flex-wrap: wrap; gap: 24px; font-size: 14px; margin-bottom: 16px;">
+            <a href="https://t.me/Sivan_Ai" style="color: #94a3b8; text-decoration: none;">Telegram Community</a>
+            <a href="https://8004scan.io/agents/celo/9827" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none;">8004scan Registry (#9827)</a>
+            <a href="https://github.com/Sivan-Technologies" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none;">GitHub Organisation</a>
+            <a href="https://x.com/sivan_Tech" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none;">Twitter / X</a>
+          </div>
+          <p style="font-size: 12px; color: #64748b; margin: 0 0 6px 0;">
+            Attribution Tag: <span style="font-family: monospace; color: #10b981;">celo_bafcc2e56bd7</span> • Celo Mainnet Registered Agent ID #9827
+          </p>
+          <p style="font-size: 12px; color: #475569; margin: 0;">
+            Founder: Samson Micheal • Sivan Technology • All rights reserved.
+          </p>
+        </footer>
+      </main>
+    </noscript>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

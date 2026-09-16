@@ -25,6 +25,10 @@ export function forbidden(message: string, details?: unknown): AppError {
   return new AppError(403, message, 'forbidden', details);
 }
 
+export function unauthorized(message = 'Unauthorized', details?: unknown): AppError {
+  return new AppError(401, message, 'unauthorized', details);
+}
+
 /**
  * The caller is being throttled by an application-level control, as opposed to
  * the per-IP limiter in shared/rate-limit.ts.

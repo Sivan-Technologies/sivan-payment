@@ -1,4 +1,5 @@
 import { env } from '../../config/env.js';
+import { resolveNetworkMode } from '../network-mode.js';
 
 /**
  * Solana chain reads, with a fallback endpoint.
@@ -44,7 +45,7 @@ export interface SolanaRpcOptions {
  * a failure while adding no resilience.
  */
 export function solanaRpcEndpoints(options: SolanaRpcOptions = {}): string[] {
-  const production = options.production ?? env.APP_ENV === 'production';
+  const production = options.production ?? (resolveNetworkMode() === 'mainnet');
   const publicEndpoint = production ? PUBLIC_MAINNET : PUBLIC_DEVNET;
 
   const ordered = [env.SOLANA_RPC_URL, env.SOLANA_RPC_FALLBACK_URL, publicEndpoint]

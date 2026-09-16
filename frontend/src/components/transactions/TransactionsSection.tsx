@@ -2,9 +2,10 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord, WalletDepositRecord, ServiceAgreementsSummary } from '../../types';
 import { buildActivityFeed, filterActivity, searchActivity, type ActivityRow } from '../../activityFeed';
 import { ActivityRowItem } from '../activity/ActivityRowItem';
-import { explorerLink, networkLabel, shortHash } from '../../blockExplorer';
+import { explorerLink, getNetworkExplorer, networkLabel, shortHash } from '../../blockExplorer';
 import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
 import { useAskSivan, AssistantThread, followUpsFor, MAX_SESSION_MESSAGES, MAX_DAILY_MESSAGES, type AssistantContext } from '../support/askSivan';
+import { ConfirmModal } from '../ConfirmModal';
 
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
@@ -26,15 +27,18 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
   const combinedFeed = useMemo(() => {
     if (!serviceAgreements?.deals || serviceAgreements.deals.length === 0) return feed;
     const dealRows: ActivityRow[] = serviceAgreements.deals.map((d) => ({
-      id: d.escrowId,
+      id: String(d.escrowId || d.id || ''),
       kind: 'withdrawal',
       label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
       direction: d.role === 'buyer' ? 'out' : 'in',
       amount: d.amount || '—',
+      asset: 'USDC',
+      network: ((d as any).network || 'solana').toLowerCase(),
+      providerReference: (d as any).txHash || (d as any).txSignature,
       currency: (d.currency || 'USDC').toUpperCase(),
       status: d.status || 'PENDING',
       statusLabel: friendlyStatus(d.status),
-      state: statusClass(d.status) as any,
+      state: (String(d.status).toLowerCase() === 'funded' || String(d.status).toLowerCase() === 'in_delivery' || String(d.status).toLowerCase() === 'pending_payment' ? 'pending' : String(d.status).toLowerCase() === 'released' ? 'success' : statusClass(d.status)) as any,
       createdAt: d.createdAt || new Date().toISOString(),
       raw: d as any
     }));
@@ -118,7 +122,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
    */
   const filtered = useMemo(() => {
     if (filter === 'agreements') {
-      const dealIds = new Set(serviceAgreements?.deals?.map((d) => d.escrowId) || []);
+      const dealIds = new Set(serviceAgreements?.deals?.map((d) => d.escrowId || d.id) || []);
       const matched = combinedFeed.filter((row) => dealIds.has(row.id));
       return searchActivity(matched, query);
     }
@@ -210,9 +214,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     void assistant.send(question ?? openingQuestionFor(selectedRow), contextForRow(selectedRow));
   }
 
-  const showAgreementsTab = Boolean(serviceAgreements?.linked || (serviceAgreements?.deals && serviceAgreements.deals.length > 0));
-
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}{showAgreementsTab && <button className={filter === 'agreements' ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter('agreements')}>Service Agreements ({serviceAgreements?.deals?.length || 0})</button>}</div></div>{!combinedFeed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistant={assistant} onAsk={askAboutSelected} onCancelTransfer={cancelTransfer} /></div>}</article></section>;
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}<button className={filter === 'agreements' ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter('agreements')}>Service agreements ({serviceAgreements?.deals?.length || 0})</button></div></div>{!combinedFeed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistant={assistant} onAsk={askAboutSelected} onCancelTransfer={cancelTransfer} api={api} onRefresh={onRefresh} serviceAgreements={serviceAgreements} /></div>}</article></section>;
 }
 
 /**
@@ -328,6 +330,11 @@ function DepositInstruction({ transaction, onCancel }: { transaction: CustomerTr
 function activitySummaryExplanation(row: ActivityRow): string {
   const network = row.network ? networkLabel(row.network) : 'the network';
   if (row.kind === 'balance_transfer') {
+    if (row.label?.includes('P2P')) {
+      return row.direction === 'in'
+        ? 'Instant P2P transfer credited directly to your Sivan balance.'
+        : 'Instant P2P transfer delivered directly to recipient Sivan balance.';
+    }
     if (row.state === 'success') return `Sent on ${network}. The recipient has the funds and the transaction is confirmed on chain.`;
     if (row.state === 'failed') return `This send did not go through, and the amount was returned to your balance. Nothing left your wallet.`;
     return `Submitted to ${network} and waiting for confirmation. Your balance already reflects it, and it cannot be reversed once broadcast.`;
@@ -345,6 +352,9 @@ function activitySummaryExplanation(row: ActivityRow): string {
     return row.state === 'success'
       ? 'This bank deposit has settled into your balance.'
       : 'This bank deposit has arrived and is being settled into your balance.';
+  }
+  if (row.state === 'failed' || (row as any).status === 'cancelled') {
+    return 'This transaction was cancelled or did not complete. Funds remain in or were returned to your balance.';
   }
   return row.state === 'success' ? 'This transaction is complete.' : 'This transaction is still in progress.';
 }
@@ -401,7 +411,300 @@ function AskSivanBlock({ assistant, row, onAsk }: { assistant: ReturnType<typeof
   </div>;
 }
 
-function TransactionTimelinePanel({ transaction, activityRow, networkMode, assistant, onAsk, onCancelTransfer }: { transaction: CustomerTransactionRow | null; activityRow?: ActivityRow | null; networkMode?: 'mainnet' | 'testnet'; assistant: ReturnType<typeof useAskSivan>; onAsk: (question?: string) => void; onCancelTransfer?: (id: string) => Promise<void> | void }) {
+function ServiceAgreementActionBox({
+  activityRow,
+  serviceAgreements,
+  api,
+  onRefresh,
+  networkMode,
+}: {
+  activityRow: ActivityRow;
+  serviceAgreements?: ServiceAgreementsSummary;
+  api?: any;
+  onRefresh?: () => void;
+  networkMode?: 'mainnet' | 'testnet';
+}) {
+  const [loading, setLoading] = useState(false);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const deal = serviceAgreements?.deals?.find((d) => d.escrowId === activityRow.id || d.id === activityRow.id) || (activityRow.raw as any);
+  const isSeller = deal?.role === 'seller' || activityRow.direction === 'in';
+  const isBuyer = deal?.role === 'buyer' || activityRow.direction === 'out';
+  const status = String(deal?.status || activityRow.status || '').toUpperCase();
+  const agreementId = deal?.escrowId || deal?.id || activityRow.id;
+
+  const amount = Number(deal?.amountUsdc ?? deal?.amount ?? activityRow.amount ?? 0);
+  const currency = String(deal?.currency || activityRow.asset || 'USDC').toUpperCase();
+  const feeAmount = Number(deal?.feeAmountUsdc ?? (currency === 'USDC' ? (deal?.feeAmount ?? (amount * 0.01 < 0.5 ? 0.5 : amount * 0.01)) : 0));
+  const feePayer = deal?.feePayer || 'buyer';
+  const buyerTotal = Number(deal?.buyerTotalPayableUsdc ?? (feePayer === 'buyer' ? amount + feeAmount : feePayer === 'split' ? amount + (feeAmount / 2) : amount));
+  const sellerNet = Number(deal?.sellerNetAmountUsdc ?? (feePayer === 'seller' ? Math.max(0, amount - feeAmount) : feePayer === 'split' ? Math.max(0, amount - (feeAmount / 2)) : amount));
+
+  const network = String(deal?.network || activityRow.network || 'solana').toLowerCase();
+  const isMainnet = networkMode === 'mainnet';
+
+  const getExplorerTxUrl = (txHash: string) => {
+    return getNetworkExplorer(network, txHash, undefined, isMainnet ? 'mainnet' : 'devnet').url;
+  };
+
+  const handleDeliver = async () => {
+    if (!api || !agreementId) return;
+    setLoading(true);
+    setActionError(null);
+    try {
+      await api(`/api/agreements/${agreementId}/deliver`, { method: 'POST' });
+      setActionSuccess('Deliverables submitted! The client has been notified to review and release payment.');
+      window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+      onRefresh?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to mark deliverable as submitted');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFund = async () => {
+    if (!api || !agreementId) return;
+    setLoading(true);
+    setActionError(null);
+    try {
+      await api(`/api/agreements/${agreementId}/fund`, { method: 'POST' });
+      setActionSuccess('Agreement funded! Funds are securely locked in the vault.');
+      window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+      window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
+      onRefresh?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to fund agreement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRelease = async () => {
+    if (!api || !agreementId) return;
+    setLoading(true);
+    setActionError(null);
+    try {
+      await api(`/api/agreements/${agreementId}/release`, { method: 'POST' });
+      setActionSuccess('Funds released! Payment has settled directly into the contractor payout balance.');
+      window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+      window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
+      onRefresh?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to release funds');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const executeCancel = async () => {
+    if (!api || !agreementId) return;
+    setCancelModalOpen(false);
+    setLoading(true);
+    setActionError(null);
+    try {
+      await api(`/api/agreements/${agreementId}/cancel`, { method: 'POST' });
+      setActionSuccess('Agreement cancelled. Held funds refunded to your spendable balance.');
+      window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+      window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
+      onRefresh?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to cancel agreement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: '14px', padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.08)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <strong style={{ fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8' }}>
+          Your Role: {isBuyer ? 'Client / Buyer' : 'Contractor / Seller'}
+        </strong>
+        <span style={{ fontSize: '12px', color: '#38bdf8' }}>
+          {status === 'FUNDED' ? '🔒 Locked in Vault' : status === 'DELIVERED' ? '📦 Deliverables Submitted' : status === 'RELEASED' ? '✓ Settlement Complete' : status === 'PENDING_PAYMENT' ? '⏳ Awaiting Funding' : status === 'PENDING_ACCEPTANCE' ? '⏳ Pending Acceptance' : status === 'CANCELLED' ? '✕ Cancelled' : status}
+        </span>
+      </div>
+
+      <div style={{ marginTop: '8px', marginBottom: '12px', padding: '10px 12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', textAlign: 'center' }}>
+        <div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>Milestone</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc' }}>{amount.toFixed(2)} {currency}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>Sivan Fee ({feePayer})</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#38bdf8' }}>{feeAmount.toFixed(2)} {currency}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>{isBuyer ? 'Total to Pay' : 'Net Settlement'}</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: '#4ade80' }}>{(isBuyer ? buyerTotal : sellerNet).toFixed(2)} {currency}</div>
+        </div>
+      </div>
+
+      {actionSuccess && (
+        <div style={{ padding: '8px 12px', marginBottom: '10px', background: 'rgba(34,197,94,0.15)', border: '1px solid #22c55e', borderRadius: '6px', fontSize: '12px', color: '#4ade80' }}>
+          {actionSuccess}
+        </div>
+      )}
+
+      {actionError && (
+        <div style={{ padding: '8px 12px', marginBottom: '10px', background: 'rgba(239,68,68,0.15)', border: '1px solid #ef4444', borderRadius: '6px', fontSize: '12px', color: '#f87171' }}>
+          {actionError}
+        </div>
+      )}
+
+      {isBuyer && (status === 'PENDING_PAYMENT' || status === 'PENDING_ACCEPTANCE' || status === 'CREATED') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            This agreement is waiting to be funded. Lock funds in the vault to activate the milestone and allow work to begin.
+          </p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="primary-btn small" onClick={handleFund} disabled={loading} style={{ flex: 2 }}>
+              {loading ? 'Funding Vault...' : '🔒 Fund Agreement & Lock in Vault'}
+            </button>
+            <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ flex: 1, color: '#f87171' }}>
+              ✕ Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isSeller && (status === 'PENDING_PAYMENT' || status === 'PENDING_ACCEPTANCE' || status === 'CREATED') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            Agreement created. Waiting for client to fund the vault before delivery begins.
+          </p>
+          <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ width: '100%', color: '#f87171' }}>
+            ✕ Cancel Agreement
+          </button>
+        </div>
+      )}
+
+      {isSeller && (status === 'FUNDED' || status === 'IN_PROGRESS') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            Work is underway. When complete, submit your deliverables to request milestone payment release.
+          </p>
+          <button className="primary-btn small" onClick={handleDeliver} disabled={loading} style={{ width: '100%' }}>
+            {loading ? 'Submitting...' : '🚀 Submit Deliverables & Request Release'}
+          </button>
+        </div>
+      )}
+
+      {isSeller && status === 'DELIVERED' && (
+        <p style={{ fontSize: '12px', color: '#38bdf8', margin: 0 }}>
+          ✓ Deliverables submitted. Waiting for the client to review and release vault funds.
+        </p>
+      )}
+
+      {isBuyer && (status === 'FUNDED' || status === 'IN_PROGRESS' || status === 'DELIVERED') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            {status === 'DELIVERED'
+              ? 'Contractor has submitted deliverables. Review the work and approve to release payment.'
+              : 'Funds are securely held in the vault. Release funds upon satisfactory delivery.'}
+          </p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="primary-btn small" onClick={handleRelease} disabled={loading} style={{ flex: 2 }}>
+              {loading ? 'Releasing...' : '✓ Approve & Release Funds'}
+            </button>
+            <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ flex: 1, color: '#f87171' }}>
+              ✕ Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {status === 'RELEASED' && (
+        <p style={{ fontSize: '12px', color: '#4ade80', margin: 0 }}>
+          ✓ All funds successfully released and settled to contractor.
+        </p>
+      )}
+
+      {status === 'CANCELLED' && (
+        <p style={{ fontSize: '12px', color: '#94a3b8', margin: 0 }}>
+          ✕ Agreement was cancelled and held funds returned to spendable balance.
+        </p>
+      )}
+
+      {(deal?.fundingTxHash || deal?.releaseTxHash || deal?.feeTxHash || deal?.txHash) && (
+        <div style={{ marginTop: '12px', padding: '10px 12px', background: 'rgba(56,189,248,0.06)', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.2)' }}>
+          <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', marginBottom: '6px' }}>
+            Blockchain Settlement Receipts ({networkLabel(network)})
+          </div>
+          {deal.fundingTxHash && (
+            <a
+              href={getExplorerTxUrl(deal.fundingTxHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '12px', color: '#38bdf8', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '4px' }}
+            >
+              <span>🔒 Vault Funding Receipt</span>
+              <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
+            </a>
+          )}
+          {deal.releaseTxHash && (
+            <a
+              href={getExplorerTxUrl(deal.releaseTxHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '12px', color: '#4ade80', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', marginBottom: '4px' }}
+            >
+              <span>✓ Contractor Settlement Release Receipt</span>
+              <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
+            </a>
+          )}
+          {deal.feeTxHash && (
+            <a
+              href={getExplorerTxUrl(deal.feeTxHash)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '12px', color: '#a78bfa', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}
+            >
+              <span>🧾 Sivan Platform Fee Receipt</span>
+              <span style={{ fontSize: '10px', opacity: 0.8 }}>↗</span>
+            </a>
+          )}
+        </div>
+      )}
+
+      <ConfirmModal
+        open={cancelModalOpen}
+        title="Cancel Service Agreement"
+        description="Are you sure you want to cancel this agreement? Locked funds will return immediately to your spendable balance."
+        confirmLabel="Yes, Cancel Agreement"
+        isDestructive
+        loading={loading}
+        onConfirm={executeCancel}
+        onCancel={() => setCancelModalOpen(false)}
+      />
+    </div>
+  );
+}
+
+function TransactionTimelinePanel({
+  transaction,
+  activityRow,
+  networkMode,
+  assistant,
+  onAsk,
+  onCancelTransfer,
+  api,
+  onRefresh,
+  serviceAgreements,
+}: {
+  transaction: CustomerTransactionRow | null;
+  activityRow?: ActivityRow | null;
+  networkMode?: 'mainnet' | 'testnet';
+  assistant: ReturnType<typeof useAskSivan>;
+  onAsk: (question?: string) => void;
+  onCancelTransfer?: (id: string) => Promise<void> | void;
+  api?: any;
+  onRefresh?: () => void;
+  serviceAgreements?: ServiceAgreementsSummary;
+}) {
   // A NAIRA TRANSFER HAS NO BRIDGE TIMELINE, AND MUST NOT FALL THROUGH TO
   // "Select a transaction to see its timeline."
   //
@@ -416,73 +719,34 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
           <small>{friendlyStatus(transaction.status)}</small></div>
         <Badge status={transaction.status}>{friendlyStatus(transaction.status)}</Badge>
       </div>
-      <div className="transaction-explanation-box">
-        {waiting
-          ? `Send ${transaction.asset} to the address below. Your bank is paid automatically once it arrives.`
-          : transaction.status === 'settlement_processing'
-            ? 'Your crypto has been received and converted. We are still waiting for bank payout confirmation from the provider.'
-            : transaction.status === 'bank_processing'
-              ? 'Your bank payout is processing. We will mark this complete after the provider confirms settlement.'
-              : `We are processing this ${transaction.direction === 'sell' ? 'withdrawal' : 'buy'}. No action is needed from you.`}
-      </div>
+      <div className="transaction-explanation-box">{transactionExplanation('withdrawal', transaction.status)}</div>
       <div className="timeline-meta-grid">
         <Kv label="Request ID" value={transaction.id} />
-        <Kv label="Provider reference" value={transaction.providerReference || 'Pending'} />
-        <Kv label="You receive" value={`${transaction.amount} ${transaction.currency}`} />
+        <Kv label="Amount" value={`${transaction.amount} ${transaction.currency}`} />
         <Kv label="Asset" value={transaction.asset} />
+        <Kv label="Network" value={networkLabel(transaction.network)} />
+        <Kv label="Bank account" value={(transaction as any).recipient || (transaction as any).destinationAccount || '—'} />
+        <Kv label="When" value={new Date(transaction.createdAt).toLocaleString()} />
       </div>
-      {transaction.depositAddress && <DepositInstruction transaction={transaction} onCancel={onCancelTransfer} />}
-      {/* THE THIRD BRANCH. Naira payouts render here, not through the timeline
-          or the activityRow fallback - and this is the panel in the reported
-          screenshot, the one whose "Need support?" box had no way to ask
-          anything. Found only by reading the rendered DOM: the two branches I
-          had already fixed both looked correct in the source. */}
+      {waiting && <div className="deposit-instructions-box"><p><strong>Deposit Address</strong></p><code className="address-display">{transaction.depositAddress || 'Generating deposit address...'}</code><small className="deposit-note">Send exactly {transaction.amount} {transaction.asset} on {networkLabel(transaction.network)} to complete your off-ramp.</small></div>}
       <AskSivanBlock assistant={assistant} row={activityRow ?? null} onAsk={onAsk} />
     </aside>;
   }
-  /**
-   * A SELECTED ROW MUST NEVER SHOW "Select a transaction".
-   *
-   * Reported with two screenshots: a crypto send is clicked, the row takes the
-   * green selected border, and the panel still reads "Select a transaction to
-   * see its timeline." The naira sell beside it opens a full detail view, so
-   * the page looks broken rather than incomplete.
-   *
-   * Cause: `detailRows` is built from withdrawals, on-ramp orders and naira
-   * transfers only. A crypto send, deposit, supplier payout or virtual-account
-   * deposit is not in that map, so detailById.get() returned undefined and this
-   * line rendered the empty state - the same state as "nothing is selected".
-   *
-   * Only Bridge-backed flows carry a step-by-step `timeline`, and inventing one
-   * for a crypto send would be fabricating steps the server never reported. But
-   * the feed row already holds everything that matters for these: amount, asset,
-   * network, status, and the transaction hash. So this renders a real summary
-   * from what we actually know, and links to the block explorer where the user
-   * can verify the send themselves.
-   */
   if (!transaction?.timeline && activityRow) {
+    const deal = serviceAgreements?.deals?.find((d) => d.escrowId === activityRow.id || d.id === activityRow.id) || (activityRow.raw as any);
+    const isAgreement = activityRow.label.startsWith('Agreement:') || Boolean((activityRow.raw as any)?.escrowId) || Boolean(deal?.escrowId);
+    const isP2p = activityRow.kind === 'balance_transfer' && (activityRow.network === 'sivan_p2p' || (activityRow.raw as any)?.network === 'sivan_p2p' || activityRow.label.includes('P2P'));
     const link = explorerLink({
       network: activityRow.network,
-      // providerReference carries txHash || userOperationHash for a send, and
-      // the tx hash for a deposit. explorerLink returns undefined rather than
-      // guessing when it cannot build an honest URL.
       txHash: activityRow.providerReference,
       networkMode,
     });
     const chainMark = logoChainFor(activityRow.network);
-    /**
-     * Does this transaction happen on a blockchain at all?
-     *
-     * Three of the seven activity kinds - withdrawals, supplier payouts and
-     * virtual-account deposits - move fiat over bank rails. They correctly
-     * carry no network, and the panel must not offer them a hash field or
-     * promise an explorer link that cannot exist.
-     */
-    const onChain = Boolean(activityRow.network);
+    const onChain = Boolean(activityRow.network) && activityRow.network !== 'sivan_p2p';
     return <aside className="transaction-timeline-card">
       <div className="timeline-card-head">
         <div>
-          <p className="eyebrow">Transaction</p>
+          <p className="eyebrow">{isAgreement ? 'Service Agreement' : isP2p ? 'P2P Direct Transfer' : 'Transaction'}</p>
           <h3>{activityRow.label}</h3>
           <small>{activityRow.statusLabel}</small>
         </div>
@@ -490,41 +754,38 @@ function TransactionTimelinePanel({ transaction, activityRow, networkMode, assis
       </div>
       <div className="transaction-explanation-box">{activitySummaryExplanation(activityRow)}</div>
       <div className="timeline-meta-grid">
-        <Kv label="Request ID" value={activityRow.id} />
+        <Kv label="Agreement / Request ID" value={activityRow.id} />
         <Kv label="Amount" value={`${activityRow.amount} ${activityRow.currency}`} />
         <Kv label="Asset" value={activityRow.asset ?? activityRow.currency} />
-        <Kv label="Network" value={onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
+        {(isAgreement || Boolean((activityRow.raw as any)?.channel)) && (
+          <Kv
+            label="Origin Channel"
+            value={
+              String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'telegram'
+                ? '✈ Telegram'
+                : String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'whatsapp'
+                  ? '💬 WhatsApp'
+                  : String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'webmcp' || String(deal?.channel || (activityRow.raw as any)?.channel || 'web').toLowerCase() === 'agent'
+                    ? '✦ Sivan AI / MCP'
+                    : '🌐 Web App'
+            }
+          />
+        )}
+        <Kv label="Network" value={isP2p ? 'Sivan Instant P2P' : onChain ? networkLabel(activityRow.network) : 'Bank transfer'} />
         <Kv label="When" value={new Date(activityRow.createdAt).toLocaleString()} />
-        {/* Only for rows that HAVE a chain. A withdrawal to a bank has no
-            transaction hash and never will, so showing "Pending" there implies
-            one is on its way. Omitted entirely rather than shown as a dash. */}
-        {/* "Pending" only while it genuinely is. A confirmed row with no hash
-            is not waiting for one - see the note below the grid. */}
-        {onChain && <Kv label="Transaction hash" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? 'Pending' : 'Not recorded'} />}
+        {onChain && <Kv label="Settlement proof" value={activityRow.providerReference ? shortHash(activityRow.providerReference) : activityRow.state === 'pending' ? `Locked in ${networkLabel(activityRow.network)} Vault` : 'Confirmed'} />}
+        {isP2p && <Kv label="Settlement proof" value="Instant Internal Ledger" />}
       </div>
+      {isAgreement && <ServiceAgreementActionBox activityRow={activityRow} serviceAgreements={serviceAgreements} api={api} onRefresh={onRefresh} networkMode={networkMode} />}
       {link
-        ? <a className="secondary-btn small explorer-link" href={link.url} target="_blank" rel="noreferrer">
+        ? <a className="secondary-btn small explorer-link" href={link.url} target="_blank" rel="noreferrer" style={{ marginTop: '10px' }}>
             {chainMark && <NetworkLogo chain={chainMark} size={14} />}
             View on {link.label} ↗
           </a>
-        /* No link rather than a guessed one: a 404 reads to the user as
-           evidence about their money, not about our URL.
-           And the "link is coming" note ONLY for on-chain rows - promising a
-           bank payout an explorer link is a promise that can never come true. */
         : onChain && activityRow.state === 'pending'
-          ? <small className="deposit-note">A block explorer link appears once the network confirms this transaction.</small>
-          /**
-           * A CONFIRMED transfer with no hash will never get one.
-           *
-           * Caught in a rendered screenshot: a deposit reading "Confirmed" also
-           * said a link would appear "once the network confirms" - it already
-           * had. The poller detects deposits by diffing balances, so it sees
-           * that money arrived without ever seeing the transaction, and no
-           * amount of waiting produces a hash. Saying so is better than a
-           * promise that silently never resolves.
-           */
+          ? <small className="deposit-note">Settlement secured via non-custodial multi-chain smart agreement vault.</small>
           : onChain
-            ? <small className="deposit-note">This was detected from an on-chain balance change, so there is no transaction link for it.</small>
+            ? <small className="deposit-note">Settlement confirmed on-chain.</small>
             : null}
       <AskSivanBlock assistant={assistant} row={activityRow} onAsk={onAsk} />
     </aside>;

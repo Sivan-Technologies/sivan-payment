@@ -7,6 +7,7 @@ import { scanForDeposits } from './deposits/deposit-detection.service.js';
 import { notifyPendingDeposits } from './deposits/deposit-notification.service.js';
 import { confirmDeposits } from './deposits/deposit-confirmation.service.js';
 import { isTransientPostgresError } from './database/postgres-database.js';
+import { sweepDeadlineAlerts } from './agreements/deadline-sweeper.service.js';
 
 initMonitoring();
 
@@ -282,6 +283,45 @@ if (env.DEPOSIT_NOTIFY_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'deposit notifier failed');
       captureError(error as Error, { source: 'deposit_notifier' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * SERVICE AGREEMENT DEADLINES GO UNNOTIFIED WITHOUT THIS.
+ *
+ * Sellers approaching their delivery window and buyers whose deliveries have
+ * gone overdue receive no proactive notification unless this loop fires.
+ * The 6-hour warning is the last actionable signal a seller gets before a
+ * buyer can open a dispute; the overdue notice is what tells the buyer they
+ * can extend or cancel. Neither sends itself.
+ *
+ * Same shape and same safety rules as every other background loop here:
+ * started outside buildApp() so tests do not spawn timers, every failure
+ * swallowed and logged, unref'd, one run at boot.
+ */
+if (env.DEADLINE_SWEEP_SECONDS > 0) {
+  const intervalMs = env.DEADLINE_SWEEP_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await sweepDeadlineAlerts();
+      if (outcome.sent6h > 0) {
+        app.log.info({ sent: outcome.sent6h }, 'deadline 6-hour warnings dispatched');
+      }
+      if (outcome.sentOverdue > 0) {
+        app.log.info({ sent: outcome.sentOverdue }, 'agreement overdue notices dispatched');
+      }
+      if (outcome.failed > 0) {
+        app.log.error(
+          { failed: outcome.failed },
+          'deadline alert notifications failed; sentinel flags already set, alerts will not retry'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'deadline sweeper failed');
+      captureError(error as Error, { source: 'deadline_sweeper' });
     }
   };
   setInterval(tick, intervalMs).unref();

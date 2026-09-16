@@ -4,6 +4,7 @@ import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { listAllBalanceTransfers } from './balance.service.js';
 import { solanaRpc } from '../wallets/solana/solana-rpc.js';
+import { horizonEndpoints } from '../wallets/stellar/stellar-rpc.js';
 import { env } from '../config/env.js';
 import { nowIso } from '../shared/id.js';
 
@@ -96,6 +97,39 @@ async function solanaSignatureOutcome(
       : 'unknown';
   } catch {
     // An RPC outage is not evidence of failure. Leave the transfer alone.
+    return 'unknown';
+  }
+}
+
+/**
+ * Ask Stellar Horizon whether a transaction hash landed on ledger.
+ */
+async function stellarTransactionOutcome(
+  hash: string,
+  production: boolean
+): Promise<'confirmed' | 'failed' | 'unknown'> {
+  if (!hash || !/^[0-9a-fA-F]{64}$/.test(hash)) return 'unknown';
+  try {
+    const endpoints = horizonEndpoints({ production });
+    for (const base of endpoints) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 6000);
+      try {
+        const res = await fetch(`${base}/transactions/${hash}`, { signal: controller.signal });
+        if (res.status === 404) return 'unknown';
+        if (!res.ok) continue;
+        const data: any = await res.json().catch(() => null);
+        if (data && typeof data.successful === 'boolean') {
+          return data.successful ? 'confirmed' : 'failed';
+        }
+      } catch {
+        continue;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return 'unknown';
+  } catch {
     return 'unknown';
   }
 }
@@ -202,6 +236,39 @@ export async function confirmBalanceTransfers(): Promise<ConfirmationOutcome> {
      */
     if (transfer.network === 'solana' && !signature) {
       evidence = 'solana:signature_missing';
+    }
+
+    /**
+     * STELLAR: the transaction hash is verified directly against Horizon.
+     */
+    if (transfer.network === 'stellar') {
+      const hash = transfer.txHash || transfer.providerTransferId;
+      if (hash) {
+        verdict = await stellarTransactionOutcome(hash, production);
+        evidence = `stellar:${hash}`;
+        if (verdict === 'confirmed' && !transfer.txHash) transfer.txHash = hash;
+      }
+    }
+
+    /**
+     * CELO: the transaction hash is verified directly against Celo RPC.
+     */
+    if (transfer.network === 'celo') {
+      const hash = transfer.txHash || transfer.providerTransferId;
+      if (hash && hash.startsWith('0x') && hash.length === 66) {
+        try {
+          const { celoRpc } = await import('../wallets/celo/celo-rpc.js');
+          const receipt: any = await celoRpc('eth_getTransactionReceipt', [hash], { production });
+          if (receipt) {
+            if (receipt.status === '0x1') verdict = 'confirmed';
+            else if (receipt.status === '0x0') verdict = 'failed';
+            evidence = `celo:${hash}`;
+            if (!transfer.txHash) transfer.txHash = hash;
+          }
+        } catch {
+          // RPC unreachable
+        }
+      }
     }
 
     /**

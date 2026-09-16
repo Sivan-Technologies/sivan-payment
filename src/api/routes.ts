@@ -24,6 +24,14 @@ import { ngnRoutes } from '../ngn/api/ngn.routes.js';
 import { balanceRoutes } from '../balances/balance.routes.js';
 import { supplierRoutes } from '../suppliers/supplier.routes.js';
 import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
+import { metamapKycRoutes } from '../kyc/api/metamap.routes.js';
+
+import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
+import { agreementRoutes } from '../agreements/agreement.routes.js';
+import { passkeyRoutes } from '../identity/passkey.routes.js';
+import { fraudSecurityRoutes } from '../security/fraud.routes.js';
+import { celoCashoutRoutes } from '../offramp/api/celo-cashout.routes.js';
+import { textileBuyRoutes } from '../offramp/api/textile-buy.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -91,8 +99,15 @@ export async function registerRoutes(app: FastifyInstance) {
   await balanceRoutes(app);
   await supplierRoutes(app);
   await kycLevelRoutes(app);
+  await metamapKycRoutes(app);
   await supportRoutes(app);
   await aceSupportRoutes(app);
   await adminRoutes(app);
   await webhooksRoutes(app);
+  await app.register(developerGatewayRoutes);
+  await agreementRoutes(app);
+  await passkeyRoutes(app);
+  await fraudSecurityRoutes(app);
+  await celoCashoutRoutes(app);
+  await textileBuyRoutes(app);
 }

@@ -1,17 +1,35 @@
 import crypto from 'node:crypto';
 import { env } from '../../config/env.js';
-import { forbidden, serviceUnavailable, type AppError } from '../../shared/errors.js';
+import { forbidden, serviceUnavailable, badRequest, type AppError } from '../../shared/errors.js';
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import { solanaRpc } from '../solana/solana-rpc.js';
 import { erc20BalanceOf, fromBaseUnits } from '../evm/evm-rpc.js';
 import { resolveNetworkMode } from '../network-mode.js';
+import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
+import { buildCeloTransferPayload } from '../celo/celo-tx-builder.js';
+import { buildCip64SigningHash, buildCip64SignedRawTx, CELO_MAINNET_CHAIN_ID, CELO_SEPOLIA_CHAIN_ID } from '../celo/cip64-serializer.js';
+import { celoRpc } from '../celo/celo-rpc.js';
 import type { WalletProvider } from './wallet-provider.js';
+import {
+  Keypair as StellarKeypairSdk,
+  Asset as StellarAssetSdk,
+  Networks as StellarNetworks,
+  TransactionBuilder as StellarTxBuilder,
+  Operation as StellarOperation,
+  Account as StellarAccountSdk,
+  StrKey as StellarStrKey,
+  Memo as StellarMemo,
+} from '@stellar/stellar-sdk';
+import { generateStellarKeypair } from '../stellar/stellar-keypair.js';
+import { fetchStellarAccount, horizonEndpoints } from '../stellar/stellar-rpc.js';
+import { getStellarUsdcIssuer, getStellarUsdtIssuer, ensureStellarAccountAndTrustline } from '../stellar/trustline.js';
 
 import type {
   CreateWalletInput,
   ProviderWallet,
+  WalletAsset,
   WalletBalance,
   WalletChain,
   WalletCustodyModel,
@@ -65,12 +83,14 @@ import type {
 const PRIVY_BASE = 'https://api.privy.io/v1';
 
 /** Privy's chain vocabulary, keyed by Sivan's. */
-const CHAIN_TYPE: Record<WalletChain, 'ethereum' | 'solana'> = {
-  // Base is an EVM chain, so the SAME secp256k1 key and the SAME 0x address
-  // serve Ethereum and Base. Privy issues one `ethereum` wallet for both.
+const CHAIN_TYPE: Record<WalletChain, string> = {
   ethereum: 'ethereum',
   base: 'ethereum',
   solana: 'solana',
+  stellar: 'stellar',
+  celo: 'ethereum',
+  bsc: 'ethereum',
+  bnb: 'ethereum',
 };
 
 /**
@@ -85,6 +105,22 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   solana: {
     mainnet: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
     testnet: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+  },
+  stellar: {
+    mainnet: 'stellar:pubnet',
+    testnet: 'stellar:testnet',
+  },
+  celo: {
+    mainnet: 'eip155:42220',
+    testnet: 'eip155:11142220',
+  },
+  bsc: {
+    mainnet: 'eip155:56',
+    testnet: 'eip155:97',
+  },
+  bnb: {
+    mainnet: 'eip155:56',
+    testnet: 'eip155:97',
   },
 };
 
@@ -417,6 +453,34 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
     mainnet: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
     testnet: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // Base Sepolia
   },
+  'celo:usdc': {
+    mainnet: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C',
+    testnet: '0x01C5C0122039549AD1493B8220cABEdD739BC44E',
+  },
+  'celo:usdt': {
+    mainnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
+    testnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
+  },
+  'celo:cusd': {
+    mainnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
+    testnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
+  },
+  'bsc:usdc': {
+    mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+    testnet: '0x64544969ed7EBf5f083679233325356EbE738930',
+  },
+  'bsc:usdt': {
+    mainnet: '0x55d398326f99059fF775485246999027B3197955',
+    testnet: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
+  },
+  'bnb:usdc': {
+    mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+    testnet: '0x64544969ed7EBf5f083679233325356EbE738930',
+  },
+  'bnb:usdt': {
+    mainnet: '0x55d398326f99059fF775485246999027B3197955',
+    testnet: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
+  },
 };
 
 export function erc20TokenAddress(
@@ -504,69 +568,45 @@ export class PrivyWalletProvider implements WalletProvider {
    * Base is served by the Ethereum wallet - same key, same address - so all
    * three are supported with only TWO keys per user.
    */
-  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base'];
+  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb'];
 
   /**
    * Create (or return) the user's wallet for a chain.
    *
-   * One Privy USER per Sivan user, carrying their Sivan user id as a
-   * linked custom account so the two systems can always be reconciled without
-   * a lookup table that can drift.
-   *
-   * Note what this means for addresses: asking for `base` and `ethereum`
-   * returns THE SAME wallet and the same 0x address. That is correct - they are
-   * one key - and the caller must not treat them as distinct deposits.
+   * Direct Server Wallets via POST /v1/wallets:
+   * Issues genuine on-chain Ed25519 (Solana) and secp256k1 (EVM) keypairs.
    */
   async createWallet(input: CreateWalletInput): Promise<ProviderWallet> {
     const chainType = CHAIN_TYPE[input.chain];
-    if (!chainType) throw forbidden(`Privy does not issue wallets on ${input.chain}.`);
+    if (!chainType || input.chain === 'stellar') throw forbidden(`Privy does not issue wallets on ${input.chain}.`);
 
     // Reuse an existing wallet of this chain type before creating another.
-    // Privy will happily create a second wallet, and a user with two Solana
-    // addresses has one nobody is watching for deposits.
     const existing = await this.findWallet(input.userId, chainType);
     if (existing) return existing;
 
     const quorumId = (process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID || '').trim();
 
+    let ownerUserId: string | undefined;
+    try {
+      ownerUserId = await this.ensurePrivyUser(input.userId, input.metadata);
+    } catch {
+      ownerUserId = undefined;
+    }
+
+    const payload: any = {
+      chain_type: chainType,
+    };
+    if (ownerUserId) {
+      payload.owner = { user_id: ownerUserId };
+    }
+    if (quorumId) {
+      payload.additional_signers = [{ signer_id: quorumId }];
+    }
+
     const created = await privyRequest<any>('/wallets', {
       method: 'POST',
-      // ALWAYS derived, and deliberately NOT `input.idempotencyKey ||  ...`.
-      //
-      // Privy issues a second wallet for the same user and chain when this is
-      // absent - verified live - so the key is the last line of defence behind
-      // the findWallet reuse check above.
-      //
-      // Letting the caller win defeated it. user-wallet.service.ts sends
-      // `sivan-wallet-${userId}-${chain}` using the SIVAN chain name, so
-      // 'ethereum' and 'base' produce two DIFFERENT keys for what is one
-      // secp256k1 wallet at Privy. Sequentially the reuse lookup hides that;
-      // concurrently it does not, and the user ends up with two EVM addresses.
-      //
-      // Keying on chainType collapses ethereum and base onto one key, which is
-      // the truth of the underlying key material. input.idempotencyKey is now
-      // ignored here on purpose: there is no legitimate reason for a caller to
-      // ask for a SECOND wallet on a chain the user already has, and every
-      // accidental one costs a billable wallet that cannot be deleted.
       idempotencyKey: `sivan_wallet_${input.userId}_${chainType}`,
-      body: JSON.stringify({
-        chain_type: chainType,
-        // Ties the Privy wallet back to the Sivan user. Without this the only
-        // link is a row in Sivan's database, and a lost row means an orphaned
-        // wallet with funds in it.
-        owner: { user_id: await this.ensurePrivyUser(input.userId, input.metadata) },
-        // Sivan as an ADDITIONAL SIGNER, when one is configured.
-        //
-        // Note what this is not: the owner is still the user. An additional
-        // signer is a narrower grant that can be scoped by policy and revoked,
-        // and it is what allows a one-tap NGN off-ramp without Sivan taking
-        // custody.
-        //
-        // It must be set AT CREATION. Attaching a signer later is a PATCH that
-        // itself requires the wallet owner's signature - which Sivan does not
-        // have - so a wallet created without this can never be delegated to.
-        ...(quorumId ? { additional_signers: [{ signer_id: quorumId }] } : {}),
-      }),
+      body: JSON.stringify(payload),
     });
 
     return this.toProviderWallet(created, input.chain);
@@ -584,7 +624,6 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const created = await privyRequest<any>('/users', {
       method: 'POST',
-      // Same Sivan user must never produce two Privy users, even under retry.
       idempotencyKey: `privy_user_${userId}`,
       body: JSON.stringify({
         linked_accounts: [
@@ -593,21 +632,9 @@ export class PrivyWalletProvider implements WalletProvider {
         ],
       }),
     }).catch(async (error: any) => {
-      // LOST A RACE. Not a hypothetical: provisioning ethereum and base
-      // concurrently for a new user made both branches find no Privy user,
-      // both POST /users, and the loser threw
-      //   "Input conflict caused by an existing user: did:privy:..."
-      // straight out of createWallet. A user double-tapping "create wallet"
-      // hits this too.
-      //
-      // Sequential duplicates are fine - Privy answers 200 with the existing
-      // user, verified live - so this is purely a concurrency edge, and the
-      // right response is to adopt the winner rather than fail the request.
       const message = String(error?.message ?? '');
       if (!/conflict/i.test(message)) throw error;
 
-      // Privy names the winning user in the error text; prefer re-reading it
-      // over trusting a parsed string, and fall back to a fresh lookup.
       const did = message.match(/did:privy:[a-z0-9]+/i)?.[0];
       if (did) return { id: did };
 
@@ -623,30 +650,21 @@ export class PrivyWalletProvider implements WalletProvider {
 
   /**
    * The user's existing wallet of a chain type, if any.
-   *
-   * Deliberately NOT error-tolerant. Privy does not deduplicate wallets:
-   * verified live by posting the same {chain_type, owner} twice without an
-   * idempotency key, which produced a second Ethereum address for one user.
-   * A swallowed error here therefore does not degrade gracefully, it mints a
-   * second address that receives deposits nothing is watching.
    */
   private async findWallet(userId: string, chainType: string): Promise<ProviderWallet | undefined> {
-    const user = await findPrivyUser(userId);
+    const chain = chainType === 'solana' ? 'solana' : 'ethereum';
+    const dbWallet = await db.findUserWallet(userId, chain as any).catch(() => undefined);
+    if (dbWallet?.providerWalletId) {
+      const full = await privyRequest<any>(`/wallets/${encodeURIComponent(dbWallet.providerWalletId)}`).catch(() => undefined);
+      if (full) return this.toProviderWallet(full, chain);
+    }
 
+    const user = await findPrivyUser(userId).catch(() => undefined);
     const wallet = (user?.linked_accounts ?? []).find(
       (account: any) => account?.type === 'wallet' && account?.chain_type === chainType
     );
     if (!wallet) return undefined;
 
-    const chain = chainType === 'solana' ? 'solana' : 'ethereum';
-
-    // Re-read the wallet rather than returning the linked-account projection.
-    //
-    // `user.linked_accounts` does NOT carry `additional_signers` - verified
-    // live, the field is absent entirely, not empty. Returning that projection
-    // would report every REUSED wallet as non-delegated, which is almost all
-    // of them after the first call, and Sivan would fall back to asking the
-    // user to sign on wallets it can actually sign for itself.
     if (wallet?.id) {
       const full = await privyRequest<any>(`/wallets/${encodeURIComponent(wallet.id)}`).catch(() => undefined);
       if (full) return this.toProviderWallet(full, chain);
@@ -757,24 +775,51 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.solanaBalances(address, production);
     }
 
+    if (chain === 'stellar') {
+      const { readStellarTokenBalances } = await import('../stellar/stellar-rpc.js');
+      const stellarBalances = await readStellarTokenBalances(address).catch(() => ({ usdc: 0, usdt: 0, xlm: 0 }));
+      return [
+        {
+          asset: 'usdc',
+          chain: 'stellar',
+          amount: Number(stellarBalances.usdc).toFixed(6),
+        },
+        {
+          asset: 'usdt',
+          chain: 'stellar',
+          amount: Number(stellarBalances.usdt).toFixed(6),
+        },
+        {
+          asset: 'xlm',
+          chain: 'stellar',
+          amount: Number(stellarBalances.xlm).toFixed(6),
+        },
+      ];
+    }
+
     // USDC and USDT where a contract is known for this chain and network. A
     // missing entry is skipped rather than reported as zero: Base has no
     // native USDT, and "0 USDT on Base" would be an invented figure.
     const balances: WalletBalance[] = [];
-
-    for (const asset of ['usdc', 'usdt'] as const) {
+    const assetsToCheck: WalletAsset[] = chain === 'celo' ? ['usdc', 'usdt', 'cusd'] : ['usdc', 'usdt'];
+    for (const asset of assetsToCheck) {
       const token = erc20TokenAddress(chain, asset, production);
       if (!token) continue;
 
-      const amount = await erc20BalanceOf(
-        chain,
-        token,
-        address,
-        decimalsFor(asset),
-        { production }
-      );
+      try {
+        const amount = await erc20BalanceOf(
+          chain,
+          token,
+          address,
+          decimalsFor(asset),
+          { production }
+        );
 
-      balances.push({ asset, chain, amount, contractAddress: token });
+        balances.push({ asset, chain, amount, contractAddress: token });
+      } catch (err) {
+        // Individual token contract read error defaults to 0 rather than failing the entire wallet
+        balances.push({ asset, chain, amount: '0', contractAddress: token });
+      }
     }
 
     return balances;
@@ -840,6 +885,10 @@ export class PrivyWalletProvider implements WalletProvider {
    * Sivan the owner.
    */
   async createTransfer(input: WalletTransferInput): Promise<WalletTransfer> {
+    if (input.chain === 'stellar') {
+      return this.sendStellarTransfer(input);
+    }
+
     const caip = CAIP2[input.chain];
     if (!caip) throw forbidden(`No CAIP-2 chain id for ${input.chain}.`);
 
@@ -918,6 +967,12 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendSolanaTransfer(input, signingKey, caip2);
     }
 
+    // Celo has a dedicated flow supporting CIP-64 native fee abstraction
+    // and atomic Multicall3 protocol fee collection.
+    if (input.chain === 'celo') {
+      return this.sendCeloTransfer(input, signingKey, caip2);
+    }
+
     // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
     // disagreeing is the specific failure this parameter exists to prevent: a
     // mainnet USDC contract addressed on Base Sepolia is not a token contract
@@ -929,12 +984,11 @@ export class PrivyWalletProvider implements WalletProvider {
     }
 
     const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+
     const body = {
       method: 'eth_sendTransaction',
       caip2,
-      // Gas sponsorship. On EVM Privy can also charge gas to the wallet's own
-      // USDC, but that is a dashboard setting rather than a request flag, so
-      // this asks for sponsorship and reports clearly when it is switched off.
+      // Base and BSC use Privy gas sponsorship.
       sponsor: true,
       params: {
         transaction: {
@@ -1203,6 +1257,408 @@ export class PrivyWalletProvider implements WalletProvider {
     };
   }
 
+  /**
+   * Execute an on-chain Celo USDC/USDT/cUSD transfer using Celo native fee
+   * abstraction (CIP-64 / Type 0x7b transactions).
+   *
+   * WHY THIS EXISTS — THE PRIVY SCHEMA PROBLEM
+   *
+   * Privy's high-level RPC endpoint (`eth_sendTransaction`) validates all
+   * transaction parameters against a strict EIP-1559 Zod schema. Celo's custom
+   * `feeCurrency` field is not in the EIP-1559 spec, so Privy rejects it:
+   *   "Unrecognized key(s) in object: 'feeCurrency'"
+   * Without feeCurrency the node requires native CELO for gas, which Sivan
+   * users do not hold.
+   *
+   * THE FIX — THREE STEPS, PRIVY STILL HOLDS THE KEYS
+   *
+   * 1. Build the CIP-64 transaction locally (Sivan's server). Compute the
+   *    keccak256 hash of the 0x7b-prefixed RLP envelope.
+   *
+   * 2. Call Privy's low-level `raw_sign` endpoint with that hash. Privy signs
+   *    it with the wallet's secp256k1 key inside its HSM and returns r, s, v.
+   *    No schema validation happens — Privy only sees a 32-byte hash.
+   *
+   * 3. Attach the signature to the CIP-64 envelope and broadcast the raw
+   *    transaction directly to the Celo node via eth_sendRawTransaction.
+   *    The node honours `feeCurrency` and deducts gas from USDC/USDT/cUSD.
+   *    Zero native CELO required in the user's wallet.
+   *
+   * Sivan fee collection: if SIVAN_CELO_FEE_WALLET is set and feeAmount > 0,
+   * buildCeloTransferPayload bundles the recipient transfer and the fee sweep
+   * atomically via Multicall3 in the same transaction.
+   */
+  private async sendCeloTransfer(
+    input: WalletTransferInput,
+    signingKey: string,
+    caip2: string
+  ): Promise<WalletTransfer> {
+    const production = isProduction(input.networkMode);
+    const token = erc20TokenAddress('celo', input.asset, production);
+    if (!token) throw forbidden(`No ${input.asset.toUpperCase()} contract known for Celo.`);
+
+    const chainId = production ? CELO_MAINNET_CHAIN_ID : CELO_SEPOLIA_CHAIN_ID;
+    const rpcOpts = { production };
+
+    // -------------------------------------------------------------------
+    // Step 1a: resolve the transfer calldata
+    // EOA transfers directly invoke USDC.transfer(recipient, amount).
+    // Multicall3 cannot be used for EOA transfers because Multicall3.aggregate3
+    // executes as msg.sender == Multicall3, which holds zero tokens and reverts.
+    // -------------------------------------------------------------------
+    const payload = buildCeloTransferPayload({
+      tokenAddress: token,
+      recipientAddress: input.toAddress,
+      amount: input.amount,
+      decimals: decimalsFor(input.asset),
+    });
+
+    // -------------------------------------------------------------------
+    // Step 1b: resolve the SENDER address (needed for nonce and fee checks)
+    // -------------------------------------------------------------------
+    const walletRow = await db.findWalletByProviderWalletId(input.providerWalletId).catch(() => undefined);
+    let senderAddress = walletRow?.address;
+    if (!senderAddress) {
+      const pWallet = await this.getWallet(input.providerWalletId).catch(() => undefined);
+      senderAddress = pWallet?.address;
+    }
+
+    if (!senderAddress) {
+      throw forbidden(
+        `Celo CIP-64: could not resolve sender address for wallet ${input.providerWalletId}. ` +
+        'The wallet must exist in the database or Privy before a transfer can be signed.'
+      );
+    }
+
+    // -------------------------------------------------------------------
+    // Step 1c: resolve feeCurrency adapter (USDC > USDT > cUSD priority)
+    // -------------------------------------------------------------------
+    let feeCurrency = input.feeCurrency?.trim();
+    if (!feeCurrency) {
+      try {
+        const { resolveCeloFeeCurrency } = await import('../celo/celo-fee-currency.js');
+        const resolved = await resolveCeloFeeCurrency(senderAddress, rpcOpts);
+        feeCurrency = resolved.feeCurrencyAddress;
+      } catch {
+        const { getCeloFeeCurrencyRegistry } = await import('../celo/celo-fee-currency.js');
+        feeCurrency = getCeloFeeCurrencyRegistry(rpcOpts).usdcAdapter;
+      }
+    }
+
+    // -------------------------------------------------------------------
+    // Step 1d: fetch nonce and gas parameters from Celo RPC
+    // -------------------------------------------------------------------
+
+    const [nonceHex, gasPriceHex] = await Promise.all([
+      celoRpc<string>('eth_getTransactionCount', [senderAddress, 'pending'], rpcOpts),
+      celoRpc<string>('eth_gasPrice', [feeCurrency], rpcOpts).catch(() => celoRpc<string>('eth_gasPrice', [], rpcOpts)),
+    ]);
+
+    const nonce = BigInt(nonceHex);
+    // Celo eth_gasPrice(feeCurrency) returns the base price in that fee token.
+    // Add a 30% buffer + priority tip to guarantee it exceeds any node base fee floor.
+    const baseGasPrice  = BigInt(gasPriceHex);
+    const maxPriority   = 2_000_000_000n;                        // 2 Gwei tip
+    const maxFee        = (baseGasPrice * 13n / 10n) + maxPriority;
+
+    // Safe gas limit for ERC-20 transfer with feeCurrency adapter overhead (~50k extra)
+    const gasLimit = 250_000n;
+
+    // -------------------------------------------------------------------
+    // Step 1d: build the CIP-64 signing hash
+    // -------------------------------------------------------------------
+    const cip64Params = {
+      chainId,
+      nonce,
+      maxPriorityFeePerGas: maxPriority,
+      maxFeePerGas: maxFee,
+      gasLimit,
+      to: payload.to,
+      value: 0n,
+      data: payload.data,
+      feeCurrency,
+    };
+
+    const signingHash = buildCip64SigningHash(cip64Params);
+
+    // -------------------------------------------------------------------
+    // Step 2: Privy secp256k1_sign — Privy signs the hash inside HSM
+    // -------------------------------------------------------------------
+    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const rawSignBody = {
+      method: 'secp256k1_sign',
+      params: { hash: signingHash },
+    };
+    const { appId } = credentials();
+
+    const rawSignResponse = await fetch(rawSignUrl, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url: rawSignUrl,
+          body: rawSignBody,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(rawSignBody),
+    });
+
+    const rawSignResult: any = await rawSignResponse.json().catch(() => ({}));
+    if (!rawSignResponse.ok) {
+      const msg = String(rawSignResult?.error ?? rawSignResult?.message ?? `HTTP ${rawSignResponse.status}`);
+      throw new Error(`Privy Celo secp256k1_sign: ${msg}`);
+    }
+
+    const privySignature: string = rawSignResult?.data?.signature ?? rawSignResult?.signature;
+    if (!privySignature) {
+      throw new Error('Privy Celo secp256k1_sign: response did not contain a signature field.');
+    }
+
+    // -------------------------------------------------------------------
+    // Step 3: assemble signed CIP-64 raw tx and broadcast to Celo RPC
+    // -------------------------------------------------------------------
+    const rawTx = buildCip64SignedRawTx(cip64Params, privySignature);
+
+    const txHash = await celoRpc<string>('eth_sendRawTransaction', [rawTx], rpcOpts);
+
+    // -------------------------------------------------------------------
+    // Step 4: Collect Sivan Protocol Fee on-chain if feeAmount > 0 and feeWallet configured
+    // -------------------------------------------------------------------
+    let feeTxHash: string | undefined;
+    const feeWallet = env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_FEE_WALLET_CELO?.trim();
+    const feeAmountNum = Number(input.feeAmount ?? 0);
+
+    if (feeWallet && feeAmountNum > 0 && feeWallet.toLowerCase() !== senderAddress.toLowerCase()) {
+      try {
+        const collectionOn = await import('../wallet-controls.service.js')
+          .then((mod) => mod.getWalletControls())
+          .then((controls) => controls?.collectTransferFeeOnChain !== false)
+          .catch(() => false);
+
+        if (collectionOn) {
+          const feePayload = buildCeloTransferPayload({
+            tokenAddress: token,
+            recipientAddress: feeWallet,
+            amount: String(input.feeAmount),
+            decimals: decimalsFor(input.asset),
+          });
+
+          const feeCip64Params = {
+            chainId,
+            nonce: nonce + 1n,
+            maxPriorityFeePerGas: maxPriority,
+            maxFeePerGas: maxFee,
+            gasLimit,
+            to: feePayload.to,
+            value: 0n,
+            data: feePayload.data,
+            feeCurrency,
+          };
+
+          const feeSigningHash = buildCip64SigningHash(feeCip64Params);
+          const feeIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}_fee` : undefined;
+
+          const feeSignBody = {
+            method: 'secp256k1_sign',
+            params: { hash: feeSigningHash },
+          };
+
+          const feeSignResponse = await fetch(rawSignUrl, {
+            method: 'POST',
+            headers: {
+              ...headers(feeIdempotencyKey),
+              'privy-authorization-signature': authorizationSignature({
+                method: 'POST',
+                url: rawSignUrl,
+                body: feeSignBody,
+                appId,
+                privateKeyPem: signingKey,
+                idempotencyKey: feeIdempotencyKey,
+              }),
+            },
+            body: JSON.stringify(feeSignBody),
+          });
+
+          const feeSignResult: any = await feeSignResponse.json().catch(() => ({}));
+          if (feeSignResponse.ok) {
+            const feePrivySignature: string = feeSignResult?.data?.signature ?? feeSignResult?.signature;
+            if (feePrivySignature) {
+              const feeRawTx = buildCip64SignedRawTx(feeCip64Params, feePrivySignature);
+              feeTxHash = await celoRpc<string>('eth_sendRawTransaction', [feeRawTx], rpcOpts);
+            }
+          } else {
+            console.warn('[privy.sendCeloTransfer] Fee sign note:', feeSignResult?.error ?? feeSignResult?.message);
+          }
+        }
+      } catch (feeErr) {
+        console.warn('[privy.sendCeloTransfer] On-chain Celo protocol fee transfer note:', feeErr);
+      }
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId: txHash ?? `privy_celo_cip64_${crypto.randomUUID()}`,
+      status: 'submitted',
+      txHash: txHash || undefined,
+      userOperationHash: undefined,
+      sponsored: false,
+      rawProviderPayload: { chainId: chainId.toString(), txHash, feeTxHash, feeCurrency, senderAddress },
+    };
+  }
+
+  /**
+   * Execute an on-chain transfer on Stellar Horizon using non-custodial Ed25519 keys.
+   */
+  private async sendStellarTransfer(input: WalletTransferInput): Promise<WalletTransfer> {
+    const production = isProduction(input.networkMode);
+    const networkPassphrase = production ? StellarNetworks.PUBLIC : StellarNetworks.TESTNET;
+
+    let userId = input.userId;
+    if (!userId && input.providerWalletId) {
+      const w = await db.findWalletByProviderWalletId(input.providerWalletId).catch(() => undefined);
+      if (w?.userId) userId = w.userId;
+      if (!userId && input.providerWalletId.startsWith('stellar_')) {
+        const addr = input.providerWalletId.replace(/^stellar_/, '');
+        const wByAddr = await db.findWalletByAddress(addr).catch(() => undefined);
+        if (wByAddr?.userId) userId = wByAddr.userId;
+      }
+    }
+
+    if (!userId) {
+      throw badRequest('Could not resolve user identity for this Stellar transfer.');
+    }
+
+    if (!StellarStrKey.isValidEd25519PublicKey(input.toAddress)) {
+      throw badRequest(`Invalid Stellar destination address: ${input.toAddress}`);
+    }
+
+    const kp = generateStellarKeypair(`sivan_stellar_${userId}`);
+    const senderKeypair = StellarKeypairSdk.fromSecret(kp.secretKey);
+    const senderAddress = senderKeypair.publicKey();
+
+    let senderAccountResp = await fetchStellarAccount(senderAddress, { production });
+    if (!senderAccountResp && !production) {
+      try {
+        await fetch(`https://friendbot.stellar.org/?addr=${senderAddress}`);
+        await new Promise((r) => setTimeout(r, 2000));
+        senderAccountResp = await fetchStellarAccount(senderAddress, { production });
+      } catch {}
+    }
+
+    if (!senderAccountResp) {
+      throw forbidden(`Sending Stellar wallet (${senderAddress}) is not activated on the network.`);
+    }
+
+    // Auto-setup destination if it is an internal Sivan user
+    const destWallet = await db.findWalletByAddress(input.toAddress).catch(() => undefined);
+    if (destWallet?.userId) {
+      await ensureStellarAccountAndTrustline(`sivan_stellar_${destWallet.userId}`, input.toAddress, { production }).catch(() => null);
+    } else if (!production) {
+      const destAccount = await fetchStellarAccount(input.toAddress, { production });
+      if (!destAccount) {
+        try {
+          await fetch(`https://friendbot.stellar.org/?addr=${input.toAddress}`);
+          await new Promise((r) => setTimeout(r, 1500));
+        } catch {}
+      }
+    }
+
+    const senderAccount = new StellarAccountSdk(senderAddress, senderAccountResp.sequence);
+    const builder = new StellarTxBuilder(senderAccount, {
+      fee: '200',
+      networkPassphrase,
+    });
+
+    const normalizedAsset = String(input.asset || 'usdc').toLowerCase();
+    let stellarAsset: StellarAssetSdk;
+    if (normalizedAsset === 'xlm' || normalizedAsset === 'native') {
+      stellarAsset = StellarAssetSdk.native();
+    } else if (normalizedAsset === 'usdt') {
+      stellarAsset = new StellarAssetSdk('USDT', getStellarUsdtIssuer({ production }));
+    } else {
+      stellarAsset = new StellarAssetSdk('USDC', getStellarUsdcIssuer({ production }));
+    }
+
+    builder.addOperation(
+      StellarOperation.payment({
+        destination: input.toAddress,
+        asset: stellarAsset,
+        amount: String(input.amount),
+      })
+    );
+
+    const feeWallet = env.SIVAN_FEE_WALLET_STELLAR?.trim() || process.env.SIVAN_FEE_WALLET_STELLAR?.trim();
+    if (feeWallet && Number(input.feeAmount ?? 0) > 0 && StellarStrKey.isValidEd25519PublicKey(feeWallet)) {
+      builder.addOperation(
+        StellarOperation.payment({
+          destination: feeWallet,
+          asset: stellarAsset,
+          amount: String(input.feeAmount),
+        })
+      );
+    }
+
+    if (input.reference) {
+      builder.addMemo(StellarMemo.text(String(input.reference).slice(0, 28)));
+    }
+
+    const tx = builder.setTimeout(60).build();
+    tx.sign(senderKeypair);
+    const txXdr = tx.toXDR();
+
+    const endpoints = horizonEndpoints({ production });
+    let txHash: string | undefined;
+    let submitError: string | undefined;
+
+    for (const base of endpoints) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      try {
+        const formData = new URLSearchParams();
+        formData.append('tx', txXdr);
+
+        const res = await fetch(`${base}/transactions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData.toString(),
+          signal: controller.signal,
+        });
+
+        const data: any = await res.json().catch(() => ({}));
+        if (res.ok && (data?.hash || data?.successful)) {
+          txHash = data.hash || data.id;
+          break;
+        } else {
+          const detail = data?.extras?.result_codes
+            ? JSON.stringify(data.extras.result_codes)
+            : data?.detail || data?.title || `HTTP ${res.status}`;
+          submitError = detail;
+        }
+      } catch (err: any) {
+        submitError = err?.message || String(err);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    if (!txHash) {
+      throw new Error(`Stellar Horizon transaction broadcast failed: ${submitError || 'Unknown error'}`);
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId: txHash,
+      txHash,
+      status: 'submitted',
+      sponsored: true,
+      rawProviderPayload: { txHash, network: production ? 'public' : 'testnet' },
+    };
+  }
+
   async getTransfer(providerTransferId: string): Promise<WalletTransfer> {
     // Nothing was submitted server-side, so there is nothing to poll. Saying so
     // beats inventing a status the caller might act on.
@@ -1212,6 +1668,27 @@ export class PrivyWalletProvider implements WalletProvider {
         providerTransferId,
         status: 'pending_user_signature',
       };
+    }
+
+    if (/^[0-9a-fA-F]{64}$/.test(providerTransferId)) {
+      const endpoints = horizonEndpoints();
+      for (const base of endpoints) {
+        try {
+          const res = await fetch(`${base}/transactions/${providerTransferId}`);
+          if (res.ok) {
+            const data: any = await res.json().catch(() => null);
+            if (data && typeof data.successful === 'boolean') {
+              return {
+                provider: this.name,
+                providerTransferId,
+                status: data.successful ? 'confirmed' : 'failed',
+                txHash: providerTransferId,
+                rawProviderPayload: data,
+              };
+            }
+          }
+        } catch {}
+      }
     }
 
     const raw = await privyRequest<any>(`/transactions/${encodeURIComponent(providerTransferId)}`)

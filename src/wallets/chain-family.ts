@@ -24,34 +24,30 @@
  * So: never match a wallet by one literal chain name. Match by FAMILY.
  */
 
-export type ChainFamily = 'evm' | 'solana';
+export type ChainFamily = 'evm' | 'solana' | 'stellar';
 
 /** Sivan chain names that share one secp256k1 key and one 0x address. */
-export const EVM_CHAINS = ['ethereum', 'base'] as const;
+export const EVM_CHAINS = ['ethereum', 'base', 'celo', 'bsc', 'bnb'] as const;
 
 export function chainFamily(chain: string): ChainFamily {
-  return String(chain).toLowerCase() === 'solana' ? 'solana' : 'evm';
+  const normalized = String(chain).toLowerCase().trim();
+  if (normalized === 'solana') return 'solana';
+  if (normalized === 'stellar') return 'stellar';
+  return 'evm';
 }
 
 /**
  * Every network a stored wallet row can actually sign for.
- *
- * REPLACES walletsToProvision().find(entry => entry.chain === wallet.chain)
- * in unified-balance.service.ts, which returned undefined for a row stored as
- * 'base' - walletsToProvision only lists 'ethereum' and 'solana'. The balance
- * reader therefore never looked at Ethereum for a Base-filed wallet, and never
- * looked at Base for an Ethereum-filed one. Which of those two blind spots you
- * hit was pure luck of provisioning order.
  */
 export function networksServedByWallet(walletChain: string): string[] {
-  return chainFamily(walletChain) === 'solana' ? ['solana'] : [...EVM_CHAINS];
+  const family = chainFamily(walletChain);
+  if (family === 'solana') return ['solana'];
+  if (family === 'stellar') return ['stellar'];
+  return [...EVM_CHAINS];
 }
 
 /**
  * Can this stored wallet sign a transfer on this network?
- *
- * The question every send path should ask, instead of guessing a chain string
- * and hoping the row was filed under the same one.
  */
 export function walletServesNetwork(walletChain: string, network: string): boolean {
   return chainFamily(walletChain) === chainFamily(network);

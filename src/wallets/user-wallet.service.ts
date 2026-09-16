@@ -2,7 +2,7 @@ import { db } from '../database/json-database.js';
 import { canProvisionWallet } from './wallet-eligibility.js';
 import { getVerificationState } from '../kyc/service/verification-state.js';
 import { isApprovedKycStatus } from '../kyc/types/verification.types.js';
-import { DEFAULT_WALLET_CHAIN, type UserWalletRecord, type WalletChain } from '../database/types.js';
+import { DEFAULT_WALLET_CHAIN, type UserWalletRecord, type WalletChain, type UserRecord } from '../database/types.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { createAuditLog } from '../audit/audit.service.js';
@@ -56,8 +56,21 @@ export function assetsForChain(chain: WalletChain): Array<'usdc' | 'usdt'> {
  */
 async function requireWalletEligibility(userId: string, providerName: string) {
   const data = await db.read();
-  const user = data.users.find((item) => item.id === userId);
-  if (!user) throw notFound('User');
+  let user: UserRecord | undefined = data.users.find((item) => item.id === userId);
+  if (!user) {
+    const link = (data.customerIdentityLinks || []).find((l) => l.paymentUserId === userId);
+    user = await db.insertUserRecord({
+      id: userId,
+      email: link?.email || `${userId}@sivan.user`,
+      fullName: link?.email?.split('@')[0] || `${userId}`,
+      telegramUserId: link?.telegramUserId,
+      whatsappNumber: link?.whatsappNumber,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    }).catch(async () => {
+      return (await db.findUserById(userId)) || { id: userId, email: `${userId}@sivan.user`, fullName: `${userId}`, createdAt: nowIso(), updatedAt: nowIso() };
+    });
+  }
 
   const state = await getVerificationState(userId);
   const eligibility = canProvisionWallet(state);
@@ -146,21 +159,54 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const existing = await db.findUserWallet(userId, chain);
   if (existing) return existing;
 
+  if (chain === 'stellar') {
+    const { generateStellarAddress } = await import('./stellar/stellar-keypair.js');
+    const { ensureStellarAccountAndTrustline } = await import('./stellar/trustline.js');
+    const address = generateStellarAddress('sivan_stellar_' + userId);
+    const now = nowIso();
+    const record: UserWalletRecord = {
+      id: id('uw'),
+      userId,
+      provider: 'stellar_native',
+      providerWalletId: `stellar_${address}`,
+      chain: 'stellar',
+      address,
+      status: 'active',
+      custodial: false,
+      delegatedSigningEnabled: true,
+      raw: { address, chain: 'stellar', trustlineActive: true },
+      createdAt: now,
+      updatedAt: now,
+    };
+    const saved = await db.insertUserWallet(record);
+    ensureStellarAccountAndTrustline('sivan_stellar_' + userId, address).catch((err) => {
+      console.warn('[user-wallet.stellar_trustline_bg_error]', err);
+    });
+    return saved;
+  }
+
+  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC)
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(chain)) {
+    const evmWallet = await db.findUserWallet(userId, 'base')
+      || await db.findUserWallet(userId, 'ethereum')
+      || await db.findUserWallet(userId, 'celo')
+      || await db.findUserWallet(userId, 'bsc');
+    if (evmWallet) {
+      return {
+        ...evmWallet,
+        chain,
+      };
+    }
+  }
+
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const { customer } = await requireWalletEligibility(userId, provider.name);
 
-  if (!provider.supportedChains.includes(chain)) {
-    throw badRequest(`${chain} wallets are not supported by the current provider`);
-  }
-
+  const targetChain = chain === 'solana' ? 'solana' : 'ethereum';
   const providerWallet = await provider.createWallet({
     userId,
     providerCustomerId: customer?.providerCustomerId,
-    chain,
-    // Deliberately deterministic, NOT shared/id.ts idempotencyKey() which
-    // appends a random UUID. A retry must reuse the same key so the provider
-    // returns the existing wallet instead of provisioning (and billing for)
-    // a second one.
+    chain: targetChain as WalletChain,
     idempotencyKey: `sivan-wallet-${userId}-${chain}`,
   });
 
@@ -171,12 +217,10 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     customerId: customer?.id,
     provider: providerWallet.provider,
     providerWalletId: providerWallet.providerWalletId,
-    chain: providerWallet.chain,
+    chain,
     address: providerWallet.address,
     status: providerWallet.status,
     custodial: providerWallet.custodyModel === 'custodial',
-    // Recorded from what the provider actually returned. Immutable at Privy,
-    // so this is a permanent property of the wallet, not of the provider.
     delegatedSigningEnabled: providerWallet.delegatedSigningEnabled ?? false,
     delegatedSignerId: providerWallet.delegatedSignerId,
     raw: providerWallet.rawProviderPayload,
@@ -205,8 +249,41 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   return saved;
 }
 
+import { networksServedByWallet, walletServesNetwork } from './chain-family.js';
+
 export async function listUserWallets(userId: string): Promise<UserWalletRecord[]> {
-  return db.listUserWallets(userId);
+  const stored = await db.listUserWallets(userId);
+  if (!stored.length) return stored;
+
+  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
+  const expanded: UserWalletRecord[] = [];
+
+  for (const chain of activeRails) {
+    const direct = stored.find((w) => w.chain === chain);
+    if (direct) {
+      expanded.push(direct);
+    } else {
+      const familyMatch = stored.find((w) => walletServesNetwork(w.chain, chain));
+      if (familyMatch) {
+        expanded.push({
+          ...familyMatch,
+          id: `${familyMatch.id}_${chain}`,
+          chain,
+          providerWalletId: familyMatch.providerWalletId,
+          address: familyMatch.address,
+        });
+      }
+    }
+  }
+
+  // Preserve any other stored wallets (e.g. legacy chains)
+  for (const w of stored) {
+    if (!expanded.some((e) => e.chain === w.chain && e.address === w.address)) {
+      expanded.push(w);
+    }
+  }
+
+  return expanded;
 }
 
 /**
@@ -217,10 +294,27 @@ export async function listUserWallets(userId: string): Promise<UserWalletRecord[
  * bug where our books and the provider's disagree.
  */
 export async function getUserWalletWithBalances(userId: string, chain: WalletChain = DEFAULT_CHAIN) {
-  const wallet = await db.findUserWallet(userId, chain);
+  let wallet = await db.findUserWallet(userId, chain);
+  if (!wallet) {
+    const all = await db.listUserWallets(userId);
+    const familyMatch = all.find((w) => walletServesNetwork(w.chain, chain));
+    if (familyMatch) {
+      wallet = {
+        ...familyMatch,
+        id: `${familyMatch.id}_${chain}`,
+        chain,
+      };
+    }
+  }
   if (!wallet) return null;
 
-  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  if (wallet.chain === 'stellar') {
+    const { ensureStellarAccountAndTrustline } = await import('./stellar/trustline.js');
+    ensureStellarAccountAndTrustline('sivan_stellar_' + userId, wallet.address).catch(() => null);
+  }
+
+  const activeProviderName = await resolveActiveWalletProvider();
+  const provider = getWalletProvider(wallet.provider ?? activeProviderName);
 
   // undefined means "could not load", [] means "loaded, and it is genuinely
   // zero". Collapsing the two would show a confirmed $0.00 to a user whose
@@ -228,16 +322,18 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   let balances: Array<{ asset: string; chain: string; amount: string }> | undefined;
   let balancesUnavailable = false;
   try {
-    // address and chain are passed because Privy cannot answer without them -
-    // it is a key manager, not an indexer, so the balance is read from an RPC
-    // against this specific address on this specific network. Bridge and Mock
-    // ignore the extra arguments.
-    balances = await provider.getBalances(
-      wallet.providerWalletId,
-      wallet.customerId,
-      wallet.address,
-      wallet.chain
-    );
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Timeout fetching balances for ${chain}`)), 2500);
+    });
+    balances = await Promise.race([
+      provider.getBalances(
+        wallet.providerWalletId,
+        wallet.customerId,
+        wallet.address,
+        chain
+      ),
+      timeoutPromise,
+    ]);
   } catch (error) {
     // A provider outage must not blank the deposit address. The user can still
     // receive funds; only the balance figure is unavailable.
@@ -247,7 +343,7 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
     // unavailable" reports needs to know which endpoint failed and why.
     console.warn('[wallet.balances_unavailable]', {
       userId,
-      chain: wallet.chain,
+      chain,
       provider: provider.name,
       reason: error instanceof Error ? error.message : String(error),
     });
@@ -257,9 +353,10 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
 
   return {
     ...wallet,
+    chain,
     balances,
     balancesUnavailable,
-    acceptedAssets: assetsForChain(wallet.chain),
+    acceptedAssets: assetsForChain(chain),
   };
 }
 

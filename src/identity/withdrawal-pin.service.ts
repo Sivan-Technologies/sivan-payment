@@ -450,3 +450,130 @@ export async function consumeStepUpToken(input: {
 
   return { userId: record.userId, channel: record.channel as IdentityChannel };
 }
+
+/**
+ * The $50 Tiered Risk Threshold Policy Helper.
+ *
+ * Micro-transactions (< $50.00 USDC or < 50,000 NGN): Instant 1-tap, zero PIN.
+ * High-value transactions (>= $50.00 USDC or >= 50,000 NGN): Mandatory PIN challenge.
+ */
+export function evaluatePinRequirement(amount: number, currency = 'USDC'): {
+  requiresPin: boolean;
+  thresholdAmount: number;
+  thresholdCurrency: string;
+} {
+  const cur = currency.trim().toUpperCase();
+  if (cur === 'NGN' || cur === 'NAIRA') {
+    const thresholdAmount = 50000;
+    return {
+      requiresPin: Number(amount) >= thresholdAmount,
+      thresholdAmount,
+      thresholdCurrency: 'NGN',
+    };
+  }
+  const thresholdAmount = 50.0;
+  return {
+    requiresPin: Number(amount) >= thresholdAmount,
+    thresholdAmount,
+    thresholdCurrency: 'USDC',
+  };
+}
+
+/**
+ * Direct Telegram Mini-App (TMA) PIN verification.
+ * Verifies PIN for a known userId and mints a single-use step-up token.
+ */
+export async function verifyTmaPinStepUp(
+  input: {
+    userId: string;
+    pin: string;
+    amount: string;
+    currency: string;
+    destinationRef: string;
+    channel?: IdentityChannel;
+  },
+  context: { ipAddress?: string } = {}
+) {
+  const { userId, pin, amount, currency, destinationRef, channel = 'telegram' } = input;
+  const record = await pinForUser(userId);
+  if (!record) throw badRequest('Set a transaction PIN before confirming high-value transfers.', { code: 'PIN_NOT_SET' });
+
+  const now = Date.now();
+  if (record.lockedUntil && Date.parse(record.lockedUntil) > now) {
+    throw forbidden('Too many incorrect PIN attempts. Try again later, or reset your PIN on the web.', {
+      code: 'PIN_LOCKED',
+      retryAt: record.lockedUntil,
+    });
+  }
+  if (record.withdrawalsHeldUntil && Date.parse(record.withdrawalsHeldUntil) > now) {
+    throw forbidden('Transactions are paused because your PIN changed recently. This clears automatically.', {
+      code: 'PIN_HELD',
+      clearsAt: record.withdrawalsHeldUntil,
+    });
+  }
+
+  const candidate = hashPin(userId, pin, record.pinSalt);
+  if (!secureEqual(candidate.pinHash, record.pinHash)) {
+    const failedAttempts = (record.failedAttempts ?? 0) + 1;
+    const lockedUntil =
+      failedAttempts >= MAX_FAILED_ATTEMPTS
+        ? new Date(now + LOCKOUT_MINUTES * 60 * 1000).toISOString()
+        : record.lockedUntil;
+    await db.upsertWithdrawalPinRecord({ ...record, failedAttempts, lockedUntil, updatedAt: nowIso() });
+    await createAuditLog({
+      actorType: 'user',
+      actorId: userId,
+      action: 'transaction_pin.verify_failed',
+      resourceType: 'transaction_pin',
+      resourceId: userId,
+      ipAddress: context.ipAddress,
+      metadata: { channel, failedAttempts, locked: Boolean(lockedUntil) },
+    });
+    throw forbidden('That PIN is not correct.', {
+      code: 'PIN_INVALID',
+      attemptsRemaining: Math.max(0, MAX_FAILED_ATTEMPTS - failedAttempts),
+    });
+  }
+
+  // Clear counter on success
+  await db.upsertWithdrawalPinRecord({ ...record, failedAttempts: 0, lockedUntil: undefined, updatedAt: nowIso() });
+
+  const token = crypto.randomBytes(32).toString('base64url');
+  const stepUp: WithdrawalStepUpTokenRecord = {
+    id: `wsu_${crypto.randomUUID()}`,
+    userId,
+    tokenHash: tokenHash(token),
+    bindingHash: bindingHash({
+      userId,
+      amount,
+      currency,
+      destinationRef,
+    }),
+    channel,
+    amountText: canonicalAmount(amount),
+    currency: currency.trim().toUpperCase(),
+    destinationRef: destinationRef.trim(),
+    usedAt: undefined,
+    expiresAt: new Date(now + STEP_UP_TOKEN_TTL_SECONDS * 1000).toISOString(),
+    createdAt: nowIso(),
+  };
+  await db.upsertWithdrawalStepUpTokenRecord(stepUp);
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: userId,
+    action: 'transaction_pin.verified_tma',
+    resourceType: 'withdrawal_step_up_token',
+    resourceId: stepUp.id,
+    ipAddress: context.ipAddress,
+    metadata: { channel, currency: stepUp.currency, amount: stepUp.amountText },
+  });
+
+  return {
+    success: true,
+    stepUpToken: token,
+    expiresAt: stepUp.expiresAt,
+    userId,
+  };
+}
+

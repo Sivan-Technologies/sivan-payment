@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { validateAddressForChain, type AddressChain } from '../wallets/address-validation.js';
+import { env } from '../config/env.js';
 
 /**
  * DUPLICATE TRANSFER DEDUP WINDOW.
@@ -38,15 +39,16 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
-import { getSpendable } from './unified-balance.service.js';
+import { getSpendable, getUnifiedBalance } from './unified-balance.service.js';
 import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { getAdminFeeSettings } from '../admin/admin-fees.service.js';
-import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, type TransferFeeConfig } from './transfer-fee-policy.js';
+import { DEFAULT_TRANSFER_FEE, DEFAULT_TRANSFER_MIN_SEND, quoteTransferFee, resolveNetworkFeeConfig, type TransferFeeConfig } from './transfer-fee-policy.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
 import { evaluateGasLimits } from './gas-usage.service.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
+import { buildP2pReceivedEmail, sendEmail } from '../notifications/email.service.js';
 
 export type BalanceAsset = 'usdc' | 'usdt';
 /**
@@ -57,7 +59,7 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -75,18 +77,20 @@ export type BalanceLedgerKind = 'credit_pending' | 'credit_available' | 'debit_t
 export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing' | 'completed' | 'rejected' | 'failed';
 
 export const balanceTransferControlsSchema = z.object({
-  transfersEnabled: z.boolean().default(false),
-  minimumSendAmount: z.coerce.number().positive().default(10),
+  transfersEnabled: z.boolean().default(true),
+  p2pTransfersEnabled: z.boolean().default(true),
+  minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['base', 'solana', 'ethereum']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum']),
+  p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
 });
 
 export const createBalanceTransferSchema = z.object({
   asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum']),
+  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron']),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
@@ -297,50 +301,11 @@ export async function getBalanceTransferControls() {
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
   return {
-    transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED === 'true',
+    transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    // Defaults chosen against what BOTH Breet and the wallet layer can service.
-    //
-    //   solana / ethereum  - work in both directions at Breet, and Privy issues
-    //                        keys for both (ed25519 for Solana, secp256k1 EVM)
-    //   base               - off-ramp only; Breet publishes no Base withdrawal,
-    //                        but the EVM key already covers the address
-    //
-    // NOT enabled, each for a different reason:
-    //
-    //   tron              - Breet handles it fine, but Privy's documented chains
-    //                       are EVM, Solana, Bitcoin and Stellar. Tron uses its
-    //                       own address encoding and account model, so an EVM
-    //                       key does not yield a Tron address. Enabling it would
-    //                       mean a second wallet provider purely for one chain,
-    //                       which defeats having a single wallet layer. Kept in
-    //                       the Breet map so it is one line to enable if Privy
-    //                       adds support.
-    //   avalanche_c_chain - Breet supports AVAX the coin but no USDC or USDT on
-    //                       that chain, either direction.
-    /**
-     * ETHEREUM IS DISABLED FOR TRANSFERS, and this is an economic decision
-     * rather than a technical one - the EVM key serves it perfectly well.
-     *
-     * Sivan sponsors gas. Modelled against real 2026 costs (Solana ~$0.0005,
-     * Base ~$0.01, Ethereum L1 ~$3) and the 0.5%/$0.10/$1.00 fee curve:
-     *
-     *     amount    fee     solana     base     ethereum
-     *     $10       $0.10   +0.100     +0.090   -2.900
-     *     $100      $0.50   +0.499     +0.490   -2.500
-     *     $500      $1.00   +1.000     +0.990   -2.000
-     *
-     * Ethereum loses money on EVERY transfer at EVERY size, because a $1 cap
-     * cannot cover $2-5 of L1 gas. Break-even at 0.5% needs a $600 transfer and
-     * the cap prevents ever reaching it. Raising the cap to $5 would make a $10
-     * Ethereum send cost half the amount, which is worse than not offering it.
-     *
-     * Base and Solana serve the identical purpose at roughly 1/300th the cost,
-     * and Base is already the default. Re-enable only alongside an
-     * Ethereum-specific cap, or when L1 gas makes it viable.
-     */
-    supportedNetworks: ['base', 'solana'] as BalanceNetwork[],
+    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum'] as BalanceNetwork[],
+    p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
@@ -366,6 +331,11 @@ export async function getBalanceTransferControls() {
  * Falls back to the defaults if the settings cannot be read, rather than
  * throwing or charging nothing: a fee tab that is briefly unavailable must not
  * silently make every transfer free.
+ *
+ * @deprecated Use quoteTransfer(amount, { network }) instead.
+ * This function returns the global admin config only and does not apply
+ * per-network tiered curves (Celo: $0.10/$0.75, Stellar: $0.10/$0.75).
+ * quoteTransfer() merges both sources correctly.
  */
 export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
   const fees = await getAdminFeeSettings().catch(() => undefined);
@@ -378,7 +348,16 @@ export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
 }
 
 /**
- * Price a transfer against the live admin configuration.
+ * Price a transfer against the live admin configuration, merged with the
+ * per-network tiered fee curve.
+ *
+ * The admin panel stores the GLOBAL overrides (percent, floor, cap). On Celo
+ * and Stellar, the network resolver supplies a LOWER base curve first, then
+ * any admin override is applied on top if it has been explicitly set.
+ * This means:
+ *   - Fresh deployment (no admin override): Celo/Stellar get $0.10/$0.75
+ *   - Admin lowers the global floor to $0.05: every network inherits $0.05
+ *   - Admin does not touch the fee tab: networks keep their own curve
  *
  * `createsRecipientAccount` is supplied by the caller because determining it
  * needs an RPC round trip to check whether the recipient already holds the
@@ -386,8 +365,54 @@ export async function getTransferFeeConfig(): Promise<TransferFeeConfig> {
  * quotes the base fee and the UI shows the surcharge as conditional; the
  * transfer path resolves it for real before charging.
  */
-export async function quoteTransfer(amount: number, options: { createsRecipientAccount?: boolean } = {}) {
-  return quoteTransferFee(amount, await getTransferFeeConfig(), options);
+export function resolveTransferFeeWallet(network: string): string {
+  const n = (network || '').toLowerCase().trim();
+  if (n === 'solana') {
+    return process.env.SIVAN_FEE_WALLET_SOLANA?.trim() || env.SIVAN_FEE_WALLET_SOLANA?.trim() || '';
+  }
+  if (n === 'stellar') {
+    return process.env.SIVAN_FEE_WALLET_STELLAR?.trim() || env.SIVAN_FEE_WALLET_STELLAR?.trim() || '';
+  }
+  if (n === 'celo') {
+    return process.env.SIVAN_FEE_WALLET_CELO?.trim() || env.SIVAN_FEE_WALLET_CELO?.trim() || '';
+  }
+  return process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
+}
+
+export async function quoteTransfer(
+  amount: number,
+  options: { createsRecipientAccount?: boolean; network?: string } = {}
+) {
+  const { network, ...feeOptions } = options;
+
+  // Start with the per-network base curve (Celo/Stellar = $0.10/$0.75,
+  // all others = $0.25/$1.00).
+  const networkBase = resolveNetworkFeeConfig(network);
+
+  // Fetch any admin overrides. Falls back gracefully if the settings store
+  // is momentarily unavailable, rather than making every transfer free.
+  const adminFees = await getAdminFeeSettings().catch(() => undefined);
+
+  const n = (network || '').toLowerCase().trim();
+  const isMicroRail = n === 'celo' || n === 'stellar';
+
+  // Merge: admin overrides replace network defaults dynamically.
+  const config: TransferFeeConfig = {
+    percent:        adminFees?.transferFeePercent        ?? networkBase.percent,
+    minimumUsd:     isMicroRail
+      ? (adminFees?.microRailFeeMinimumUsd ?? networkBase.minimumUsd)
+      : (adminFees?.transferFeeMinimumUsd  ?? networkBase.minimumUsd),
+    maximumUsd:     isMicroRail
+      ? (adminFees?.microRailFeeMaximumUsd ?? networkBase.maximumUsd)
+      : (adminFees?.transferFeeMaximumUsd  ?? networkBase.maximumUsd),
+    newRecipientUsd: adminFees?.transferFeeNewRecipientUsd ?? networkBase.newRecipientUsd,
+  };
+
+  const quote = quoteTransferFee(amount, config, feeOptions);
+  return {
+    ...quote,
+    feeWallet: resolveTransferFeeWallet(network || ''),
+  };
 }
 
 export async function updateBalanceTransferControls(input: z.infer<typeof balanceTransferControlsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
@@ -439,32 +464,70 @@ export async function getUserBalance(userId: string) {
   const entries = await listUserBalanceLedger(userId);
   const byAsset: Record<string, { asset: string; pending: number; available: number; held: number; spent: number; totalCredited: number }> = {};
   const ensure = (asset: string) => byAsset[asset] ||= { asset, pending: 0, available: 0, held: 0, spent: 0, totalCredited: 0 };
-  for (const entry of entries) {
+  const chronologicalEntries = [...entries].reverse();
+  for (const entry of chronologicalEntries) {
     const row = ensure(entry.asset);
     const value = amount(entry.amount);
-    if (entry.kind === 'credit_pending') row.pending += value;
-    if (entry.kind === 'credit_available' || entry.kind === 'adjustment') { row.available += value; row.totalCredited += Math.max(value, 0); }
+    if (entry.kind === 'credit_available' || entry.kind === 'adjustment') {
+      if (entry.sourceType !== 'service_agreement') {
+        row.available += value;
+      }
+      row.totalCredited += Math.max(value, 0);
+    }
     if (entry.kind === 'hold') { row.available -= value; row.held += value; }
-    if (entry.kind === 'hold_release') { row.available += value; row.held -= value; }
-    if (entry.kind === 'debit_transfer') { row.held -= value; row.spent += value; }
-    // Identical arithmetic to debit_transfer. The distinction is in the RECORD,
-    // not the balance: the user's money is gone either way, but only this entry
-    // is Sivan's revenue.
-    if (entry.kind === 'fee') { row.held -= value; row.spent += value; }
+    if (entry.kind === 'hold_release') {
+      row.available += value;
+      const releaseFromHeld = Math.min(Math.max(0, row.held), value);
+      const releaseFromSpent = value - releaseFromHeld;
+      row.held -= releaseFromHeld;
+      row.spent = Math.max(0, row.spent - releaseFromSpent);
+    }
+    if (entry.kind === 'debit_transfer' || entry.kind === 'fee') {
+      const debitFromHeld = Math.min(Math.max(0, row.held), value);
+      row.held -= debitFromHeld;
+      const unheldDebit = value - debitFromHeld;
+      row.available -= unheldDebit;
+      row.spent += value;
+    }
   }
   return {
     userId,
-    balances: Object.values(byAsset).map((row) => ({ ...row, pending: money(row.pending), available: money(Math.max(row.available, 0)), held: money(Math.max(row.held, 0)), spent: money(row.spent), totalCredited: money(row.totalCredited) })),
+    balances: Object.values(byAsset).map((row) => ({
+      ...row,
+      pending: money(row.pending),
+      available: money(row.available),
+      held: money(Math.max(row.held, 0)),
+      spent: money(row.spent),
+      totalCredited: money(row.totalCredited)
+    })),
     ledger: entries,
     updatedAt: nowIso()
   };
 }
 
 export async function listUserBalanceTransfers(userId: string) {
-  return (await transferLogs())
+  const onchainTransfers = (await transferLogs())
     .map((item) => ({ ...item.transfer, createdAt: item.transfer.createdAt || item.log.createdAt }))
-    .filter((transfer) => transfer.userId === userId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .filter((transfer) => transfer.userId === userId);
+
+  const ledger = await listUserBalanceLedger(userId);
+  const p2pEntries: TransferMetadata[] = ledger
+    .filter((entry) => entry.sourceType === 'p2p_transfer')
+    .map((entry) => ({
+      transferId: entry.sourceId || entry.entryId,
+      userId,
+      amount: Number(entry.amount),
+      asset: (entry.asset || 'usdc').toUpperCase(),
+      status: 'completed',
+      network: 'sivan_p2p',
+      destinationAddress: entry.destinationAddress || (entry.kind === 'credit_available' ? 'Incoming P2P' : 'Outgoing P2P'),
+      fee: 0,
+      createdAt: entry.createdAt,
+      direction: entry.kind === 'credit_available' ? 'in' : 'out',
+      note: entry.description,
+    } as any));
+
+  return [...onchainTransfers, ...p2pEntries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /**
@@ -740,7 +803,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     throw badRequest(gasDecision.reason ?? 'This transfer exceeds your current daily limit.');
   }
 
-  const quote = await quoteTransfer(input.amount, { createsRecipientAccount });
+  const quote = await quoteTransfer(input.amount, { createsRecipientAccount, network: input.network });
 
   const transfer: TransferMetadata = {
     transferId: id('btx'),
@@ -949,7 +1012,8 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     if (funded) wallet = funded;
   }
 
-  const walletChain = chainFamily(transfer.network) === 'solana' ? 'solana' : 'ethereum';
+  const family = chainFamily(transfer.network);
+  const walletChain = family === 'solana' ? 'solana' : family === 'stellar' ? 'stellar' : 'ethereum';
   if (!wallet) {
     /**
      * NO WALLET IS NOT AN ERROR - IT IS A DIFFERENT CUSTODY STORY.
@@ -993,6 +1057,7 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
    */
   const provider = getWalletProvider(wallet.provider ?? (await resolveActiveWalletProvider()));
   const result = await provider.createTransfer({
+    userId,
     providerWalletId: wallet.providerWalletId,
     providerCustomerId: wallet.customerId,
     asset: transfer.asset as any,
@@ -1211,4 +1276,447 @@ export async function createAdminBalanceAdjustment(input: z.infer<typeof adminBa
   const entry = await createBalanceLedgerEntry({ userId: input.userId, asset: input.asset, amount: money(input.amount), kind: 'adjustment', status: input.status === 'available' ? 'available' : 'pending', sourceType: 'admin_adjustment', sourceId: id('adj'), description: input.reason }, { actorType: 'admin', actorId: input.adjustedBy });
   await createAuditLog({ actorType: 'admin', actorId: input.adjustedBy, action: 'balance.adjustment_created', resourceType: 'balance_ledger_entry', resourceId: entry.entryId, severity: 'warning', ipAddress: context.ipAddress, userAgent: context.userAgent, metadata: { ...entry, reason: input.reason } });
   return entry;
+}
+
+export const createP2pTransferSchema = z.object({
+  asset: z.enum(['usdc', 'usdt']).default('usdc'),
+  amount: z.coerce.number().positive(),
+  recipientTarget: z.string().min(1).max(160),
+  note: z.string().max(500).optional(),
+});
+
+export async function executeP2pTransfer(
+  senderUserId: string,
+  input: z.infer<typeof createP2pTransferSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const sender = await db.findUserById(senderUserId);
+  if (!sender) throw notFound('Sender User');
+
+  const controls = await getBalanceTransferControls().catch(() => null);
+  if (controls && controls.p2pTransfersEnabled === false) {
+    throw badRequest('P2P transfers are temporarily paused by administration for maintenance. Please try again shortly.');
+  }
+
+  const minAmount = controls?.minimumSendAmount ?? 1;
+  if (input.amount < minAmount) {
+    throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
+  }
+
+  const cleanTarget = input.recipientTarget.trim();
+  const recipient = await db.findUserByTarget(cleanTarget);
+
+  // Check sender spendable balance
+  const unified = await getUnifiedBalance(senderUserId);
+  const assetEntry = unified.balances.find((b) => b.asset === input.asset) ?? unified.balances[0];
+  const spendable = Number(assetEntry?.spendable ?? 0);
+
+  if (spendable < input.amount) {
+    throw badRequest(`Insufficient spendable balance. Available: ${spendable} ${input.asset.toUpperCase()}, Requested: ${input.amount} ${input.asset.toUpperCase()}`);
+  }
+
+  const isPhoneTarget = cleanTarget.startsWith('+') || /^\d{7,15}$/.test(cleanTarget);
+
+  // If recipient not yet registered, create a 7-day secure claim vault
+  if (!recipient) {
+    if (!isPhoneTarget) {
+      throw notFound(`Recipient '${cleanTarget}' is not registered on Sivan. To invite a new user, send to their phone number.`);
+    }
+
+    const controls = await getBalanceTransferControls().catch(() => null);
+    const expiryDays = Number(controls?.p2pClaimExpiryDays || 7);
+    const claimId = `clm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const claimToken = `siv_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString();
+    const appUrl = (env.CUSTOMER_APP_URL || 'https://app.sivantech.online').replace(/\/$/, '');
+    const claimUrl = `${appUrl}/claim?token=${claimToken}`;
+    const amountStr = input.amount.toFixed(2);
+
+    await createBalanceLedgerEntry(
+      {
+        userId: senderUserId,
+        asset: input.asset,
+        amount: amountStr,
+        kind: 'hold',
+        status: 'held',
+        sourceType: 'p2p_claim',
+        sourceId: claimId,
+        description: `Held for P2P claim by ${cleanTarget}`,
+        destinationAddress: cleanTarget,
+        transferId: claimId,
+      },
+      { actorType: 'user', actorId: senderUserId }
+    );
+
+    await db.saveP2pClaim({
+      id: claimId,
+      claimToken,
+      senderUserId,
+      recipientPhone: cleanTarget,
+      amount: input.amount,
+      asset: input.asset,
+      status: 'pending',
+      expiresAt,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    });
+
+    await createAuditLog({
+      actorType: 'user',
+      actorId: senderUserId,
+      action: 'balance.p2p_claim_created',
+      resourceType: 'p2p_claim',
+      resourceId: claimId,
+      severity: 'info',
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      metadata: {
+        claimId,
+        senderUserId,
+        recipientPhone: cleanTarget,
+        amount: input.amount,
+        asset: input.asset,
+        expiryDays,
+        expiresAt,
+      },
+    });
+
+    return {
+      claimId,
+      claimToken,
+      claimUrl,
+      expiresAt,
+      expiryDays,
+      isClaim: true,
+      amount: input.amount,
+      asset: input.asset,
+      fee: 0,
+      netAmount: input.amount,
+      status: 'pending_claim',
+      recipientPhone: cleanTarget,
+      sender: {
+        userId: sender.id,
+        username: sender.username,
+        displayName: (sender as any).name || (sender as any).fullName || sender.username || sender.whatsappNumber,
+      },
+      createdAt: nowIso(),
+    };
+  }
+
+  if (recipient.id === senderUserId) {
+    throw badRequest('You cannot send a P2P transfer to yourself');
+  }
+
+  const transferId = `p2p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const amountStr = input.amount.toFixed(2);
+
+  // 1. Debit sender ledger
+  await createBalanceLedgerEntry(
+    {
+      userId: senderUserId,
+      asset: input.asset,
+      amount: amountStr,
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: 'p2p_transfer',
+      sourceId: transferId,
+      description: `P2P transfer to ${recipient.username || (recipient as any).name || (recipient as any).fullName || recipient.whatsappNumber || recipient.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'user', actorId: senderUserId }
+  );
+
+  // 2. Credit recipient ledger
+  await createBalanceLedgerEntry(
+    {
+      userId: recipient.id,
+      asset: input.asset,
+      amount: amountStr,
+      kind: 'credit_available',
+      status: 'available',
+      sourceType: 'p2p_transfer',
+      sourceId: transferId,
+      description: `P2P transfer from ${sender.username || (sender as any).name || (sender as any).fullName || sender.whatsappNumber || sender.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'system', actorId: 'p2p_engine' }
+  );
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: senderUserId,
+    action: 'balance.p2p_transfer_completed',
+    resourceType: 'p2p_transfer',
+    resourceId: transferId,
+    severity: 'info',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: {
+      transferId,
+      senderUserId,
+      recipientUserId: recipient.id,
+      amount: input.amount,
+      asset: input.asset,
+      fee: 0,
+    },
+  });
+
+  // Dispatch non-blocking recipient notifications
+  const recipientDisplayName = (recipient as any).name || (recipient as any).fullName || recipient.username || 'Sivan User';
+  const senderDisplayName = sender.username ? `@${sender.username}` : ((sender as any).name || (sender as any).fullName || 'A Sivan User');
+
+  if (recipient.email) {
+    try {
+      const emailMsg = buildP2pReceivedEmail({
+        recipientName: recipientDisplayName,
+        senderName: senderDisplayName,
+        amount: input.amount,
+        asset: input.asset,
+        transferId,
+      });
+      void sendEmail({
+        to: recipient.email,
+        subject: emailMsg.subject,
+        text: emailMsg.text,
+        html: emailMsg.html,
+      }).catch((err) => console.warn('[p2p.email_notify] Email notification failed:', err));
+    } catch (err) {
+      console.warn('[p2p.email_notify] Failed to build email notification:', err);
+    }
+  }
+
+  try {
+    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (notifyUrl && secret) {
+      void (async () => {
+        try {
+          const links = await db.listCustomerIdentityLinks();
+          const activeLinks = links
+            .filter((l) => l.paymentUserId === recipient.id && l.status === 'linked' && Boolean(l.telegramUserId))
+            .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+          const tgLink = activeLinks[0];
+          if (tgLink?.telegramUserId) {
+            const tgText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
+            await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+              },
+              body: JSON.stringify({
+                telegramId: tgLink.telegramUserId,
+                message: tgText,
+              }),
+            });
+          }
+        } catch (tgErr) {
+          console.warn('[p2p.telegram_notify] Notification dispatch error:', tgErr);
+        }
+      })();
+    }
+  } catch (err) {
+    console.warn('[p2p.telegram_notify] Notification error:', err);
+  }
+
+  try {
+    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || (env.APP_ENV === 'production' ? 'https://api.sivantech.online/api/whatsapp' : 'https://api-staging.sivantech.online/api/whatsapp');
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (rawWaUrl && secret) {
+      void (async () => {
+        try {
+          let targetPhone = recipient.whatsappNumber;
+          if (!targetPhone) {
+            const links = await db.listCustomerIdentityLinks();
+            const activeWa = links
+              .filter((l) => l.paymentUserId === recipient.id && l.status === 'linked' && Boolean(l.whatsappNumber))
+              .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+            targetPhone = activeWa[0]?.whatsappNumber;
+          }
+          if (targetPhone) {
+            const waText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
+            const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+            await fetch(waNotifyUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+              },
+              body: JSON.stringify({
+                to: targetPhone,
+                message: waText,
+              }),
+            });
+          }
+        } catch (waErr) {
+          console.warn('[p2p.whatsapp_notify] Notification dispatch error:', waErr);
+        }
+      })();
+    }
+  } catch (err) {
+    console.warn('[p2p.whatsapp_notify] Notification error:', err);
+  }
+
+  return {
+    transferId,
+    amount: input.amount,
+    asset: input.asset,
+    fee: 0,
+    netAmount: input.amount,
+    status: 'completed',
+    sender: {
+      userId: sender.id,
+      username: sender.username,
+      displayName: (sender as any).name || (sender as any).fullName || sender.username || sender.whatsappNumber,
+    },
+    recipient: {
+      userId: recipient.id,
+      username: recipient.username,
+      displayName: (recipient as any).name || (recipient as any).fullName || recipient.username || (recipient as any).telegramUsername || recipient.whatsappNumber,
+      phone: recipient.whatsappNumber,
+    },
+    createdAt: nowIso(),
+  };
+}
+
+export async function getP2pClaimDetails(token: string) {
+  const claim = await db.findP2pClaimByToken(token);
+  if (!claim) throw notFound('Claim not found or expired');
+
+  const sender = await db.findUserById(claim.senderUserId);
+  const senderName = sender?.username ? `@${sender.username}` : ((sender as any)?.name || (sender as any)?.fullName || 'Sivan User');
+  const isExpired = new Date(claim.expiresAt).getTime() < Date.now();
+
+  return {
+    claimId: claim.id,
+    amount: claim.amount,
+    asset: claim.asset,
+    status: isExpired ? 'expired' : claim.status,
+    expiresAt: claim.expiresAt,
+    senderName,
+    recipientPhone: claim.recipientPhone,
+    isExpired,
+  };
+}
+
+export async function redeemP2pClaim(
+  token: string,
+  recipientUserId: string,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const claim = await db.findP2pClaimByToken(token);
+  if (!claim) throw notFound('Claim not found');
+  if (claim.status !== 'pending') throw badRequest(`Claim is already ${claim.status}`);
+  if (new Date(claim.expiresAt).getTime() < Date.now()) {
+    claim.status = 'expired';
+    await db.saveP2pClaim(claim);
+    throw badRequest('This claim has expired and funds were returned to sender');
+  }
+
+  const recipient = await db.findUserById(recipientUserId);
+  if (!recipient) throw notFound('Recipient user account');
+  if (recipient.id === claim.senderUserId) {
+    throw badRequest('You cannot claim your own transfer');
+  }
+
+  const sender = await db.findUserById(claim.senderUserId);
+  const amountStr = claim.amount.toFixed(2);
+  const transferId = `p2p_claim_${claim.id}`;
+
+  // 1. Release hold & debit sender
+  await createBalanceLedgerEntry(
+    {
+      userId: claim.senderUserId,
+      asset: claim.asset as BalanceAsset,
+      amount: amountStr,
+      kind: 'hold_release',
+      status: 'available',
+      sourceType: 'p2p_claim_redeemed',
+      sourceId: transferId,
+      description: `Released hold for claimed transfer ${claim.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'system', actorId: 'p2p_claim_engine' }
+  );
+
+  await createBalanceLedgerEntry(
+    {
+      userId: claim.senderUserId,
+      asset: claim.asset as BalanceAsset,
+      amount: amountStr,
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: 'p2p_claim_redeemed',
+      sourceId: transferId,
+      description: `P2P claim redeemed by ${recipient.username || (recipient as any).name || (recipient as any).fullName || recipient.id}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'user', actorId: claim.senderUserId }
+  );
+
+  // 2. Credit recipient
+  await createBalanceLedgerEntry(
+    {
+      userId: recipient.id,
+      asset: claim.asset as BalanceAsset,
+      amount: amountStr,
+      kind: 'credit_available',
+      status: 'available',
+      sourceType: 'p2p_claim_redeemed',
+      sourceId: transferId,
+      description: `Claimed P2P transfer from ${sender?.username || (sender as any)?.name || (sender as any)?.fullName || claim.senderUserId}`,
+      destinationAddress: recipient.id,
+      transferId,
+    },
+    { actorType: 'system', actorId: 'p2p_claim_engine' }
+  );
+
+  // 3. Mark claim as claimed
+  claim.status = 'claimed';
+  claim.claimedByUserId = recipient.id;
+  claim.claimedAt = nowIso();
+  claim.updatedAt = nowIso();
+  await db.saveP2pClaim(claim);
+
+  // 4. Auto-link phone number to recipient user profile if missing
+  if (!recipient.whatsappNumber && claim.recipientPhone) {
+    await db.updateUserRecord({
+      ...recipient,
+      whatsappNumber: claim.recipientPhone,
+      updatedAt: nowIso(),
+    });
+  }
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: recipientUserId,
+    action: 'balance.p2p_claim_redeemed',
+    resourceType: 'p2p_claim',
+    resourceId: claim.id,
+    severity: 'info',
+    ipAddress: context.ipAddress,
+    userAgent: context.userAgent,
+    metadata: {
+      claimId: claim.id,
+      senderUserId: claim.senderUserId,
+      recipientUserId: recipient.id,
+      amount: claim.amount,
+      asset: claim.asset,
+    },
+  });
+
+  return {
+    success: true,
+    status: 'claimed',
+    amount: claim.amount,
+    asset: claim.asset,
+    claimId: claim.id,
+    senderName: sender?.username ? `@${sender.username}` : ((sender as any)?.name || (sender as any)?.fullName || 'Sivan User'),
+    creditedToUserId: recipient.id,
+    claimedAt: claim.claimedAt,
+  };
 }

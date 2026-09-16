@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import type { UnifiedBalance, BalanceSummary, BalanceTransferRecord, CustomerRecord, ExternalAccountRecord, IdentityStatus, OnrampOrderRecord, SupplierPaymentRecord, SupplierRecord, SupportTicketRecord, UserPreferencesRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, VerificationSummary, WithdrawalRecord, NgnTransferRecord, WalletDepositRecord, ServiceAgreementsSummary } from '../types';
 
 export function usePaymentDataLoader(input: {
@@ -41,64 +41,106 @@ export function usePaymentDataLoader(input: {
   setWalletDeposits: (value: WalletDepositRecord[]) => void;
 }) {
   const { userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setServiceAgreements, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers, setWalletDeposits } = input;
+  const inFlightPromiseRef = useRef<Promise<void> | null>(null);
+
   return useCallback(async () => {
     if (!userId || !authToken) return;
+    if (inFlightPromiseRef.current) return inFlightPromiseRef.current;
 
-    void (async () => {
+    inFlightPromiseRef.current = (async () => {
       try {
-        const summary = await api<VerificationSummary>(`/api/users/${userId}/verification-summary`);
-        setVerificationSummary(summary);
-      } catch {
-        setVerificationSummary(null);
+        void (async () => {
+          try {
+            const summary = await api<VerificationSummary>(`/api/users/${userId}/verification-summary`);
+            setVerificationSummary(summary);
+          } catch {
+            setVerificationSummary(null);
+          } finally {
+            setVerificationSummaryLoaded(true);
+          }
+        })();
+
+        // 1. Primary Core Group: Balances, Virtual Accounts, External Accounts, Customer & Service Agreements
+        const [customerResult, accountsResult, balanceResult, unifiedBalanceResult, virtualAccountsResult, serviceAgreementsResult] = await Promise.allSettled([
+          api<CustomerRecord>(`/api/customers/${userId}`),
+          api<ExternalAccountRecord[]>(`/api/users/${userId}/external-accounts`),
+          api<BalanceSummary>(`/api/users/${userId}/balance`),
+          api<UnifiedBalance>(`/api/users/${userId}/balance/unified`),
+          api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions?: VirtualAccountTransactionRecord[]; events?: any[] }>(`/api/users/${userId}/virtual-accounts`),
+          api<{ data: ServiceAgreementsSummary }>('/api/users/me/service-agreements')
+        ]);
+
+        if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
+        if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
+        if (balanceResult.status === 'fulfilled') {
+          setBalance(balanceResult.value);
+          try { localStorage.setItem('sivan.balance', JSON.stringify(balanceResult.value)); } catch {}
+        }
+        if (unifiedBalanceResult.status === 'fulfilled') {
+          setUnifiedBalance(unifiedBalanceResult.value);
+          try { localStorage.setItem('sivan.unifiedBalance', JSON.stringify(unifiedBalanceResult.value)); } catch {}
+        }
+        if (virtualAccountsResult.status === 'fulfilled') {
+          setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []);
+          setVirtualAccounts(virtualAccountsResult.value.accounts ?? []);
+          setVirtualAccountTransactions(virtualAccountsResult.value.transactions ?? []);
+        }
+        if (serviceAgreementsResult.status === 'fulfilled' && setServiceAgreements) {
+          const resVal: any = serviceAgreementsResult.value;
+          const dataVal = resVal?.data || resVal;
+          setServiceAgreements(dataVal || { linked: false, deals: [] });
+        }
+
+        // 2. Secondary Transactions & Activity Group: Withdrawals, Deposits, Transfers, Orders
+        const [withdrawalsResult, onrampOrdersResult, balanceTransfersResult, ngnTransfersResult, walletDepositsResult] = await Promise.allSettled([
+          api<WithdrawalRecord[]>(`/api/users/${userId}/withdrawals`),
+          api<OnrampOrderRecord[]>(`/api/users/${userId}/onramp-orders`),
+          api<BalanceTransferRecord[]>(`/api/users/${userId}/balance/transfers`),
+          api<NgnTransferRecord[]>(`/api/users/${userId}/ngn-transfers`),
+          api<WalletDepositRecord[]>(`/api/users/${userId}/balance/deposits`)
+        ]);
+
+        if (withdrawalsResult.status === 'fulfilled') {
+          const v: any = withdrawalsResult.value;
+          setWithdrawals(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (onrampOrdersResult.status === 'fulfilled') {
+          const v: any = onrampOrdersResult.value;
+          setOnrampOrders(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (balanceTransfersResult.status === 'fulfilled') {
+          const v: any = balanceTransfersResult.value;
+          setBalanceTransfers(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (ngnTransfersResult.status === 'fulfilled') {
+          const v: any = ngnTransfersResult.value;
+          setNgnTransfers(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+        if (walletDepositsResult.status === 'fulfilled') {
+          const v: any = walletDepositsResult.value;
+          setWalletDeposits(Array.isArray(v) ? v : (Array.isArray(v?.data) ? v.data : []));
+        }
+
+        // 3. Auxiliary & Preferences Group: Suppliers, Support, Preferences, Identity, 2FA
+        const [suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult] = await Promise.allSettled([
+          api<SupplierRecord[]>(`/api/users/${userId}/suppliers`),
+          api<SupplierPaymentRecord[]>(`/api/users/${userId}/supplier-payments`),
+          api<SupportTicketRecord[]>(`/api/users/${userId}/support/tickets`),
+          api<UserPreferencesRecord>(`/api/users/${userId}/preferences`),
+          api<IdentityStatus>('/api/users/me/identity'),
+          api<any>(`/api/users/${userId}/2fa`)
+        ]);
+
+        if (suppliersResult.status === 'fulfilled') setSuppliers(suppliersResult.value);
+        if (supplierPaymentsResult.status === 'fulfilled') setSupplierPayments(supplierPaymentsResult.value);
+        if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
+        if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
+        if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
+        if (twoFactorResult.status === 'fulfilled') setTwoFactorStatus(twoFactorResult.value);
       } finally {
-        setVerificationSummaryLoaded(true);
+        inFlightPromiseRef.current = null;
       }
     })();
-
-    const [customerResult, accountsResult, withdrawalsResult, onrampOrdersResult, virtualAccountsResult, balanceResult, unifiedBalanceResult, balanceTransfersResult, suppliersResult, supplierPaymentsResult, supportTicketsResult, preferencesResult, identityResult, twoFactorResult, ngnTransfersResult, walletDepositsResult, serviceAgreementsResult] = await Promise.allSettled([
-      api<CustomerRecord>(`/api/customers/${userId}`),
-      api<ExternalAccountRecord[]>(`/api/users/${userId}/external-accounts`),
-      api<WithdrawalRecord[]>(`/api/users/${userId}/withdrawals`),
-      api<OnrampOrderRecord[]>(`/api/users/${userId}/onramp-orders`),
-      api<{ requests: VirtualAccountRequestRecord[]; accounts: VirtualAccountRecord[]; transactions?: VirtualAccountTransactionRecord[]; events?: any[] }>(`/api/users/${userId}/virtual-accounts`),
-      api<BalanceSummary>(`/api/users/${userId}/balance`),
-      // The ONE number every screen shows: chain + ledger credits - holds.
-      // /balance above stays for the ledger journal view only.
-      api<UnifiedBalance>(`/api/users/${userId}/balance/unified`),
-      api<BalanceTransferRecord[]>(`/api/users/${userId}/balance/transfers`),
-      api<SupplierRecord[]>(`/api/users/${userId}/suppliers`),
-      api<SupplierPaymentRecord[]>(`/api/users/${userId}/supplier-payments`),
-      api<SupportTicketRecord[]>(`/api/users/${userId}/support/tickets`),
-      api<UserPreferencesRecord>(`/api/users/${userId}/preferences`),
-      api<IdentityStatus>('/api/users/me/identity'),
-      api<any>(`/api/users/${userId}/2fa`),
-      api<NgnTransferRecord[]>(`/api/users/${userId}/ngn-transfers`),
-      // Inbound deposits - the seventh activity source. allSettled, like every
-      // sibling here, so a 404 from a backend that predates migration 042
-      // costs this one list and not the whole dashboard.
-      api<WalletDepositRecord[]>(`/api/users/${userId}/balance/deposits`),
-      api<{ data: ServiceAgreementsSummary }>('/api/users/me/service-agreements')
-    ]);
-    if (customerResult.status === 'fulfilled') setCustomer(customerResult.value);
-    if (accountsResult.status === 'fulfilled') setAccounts(accountsResult.value);
-    if (withdrawalsResult.status === 'fulfilled') setWithdrawals(withdrawalsResult.value);
-    if (onrampOrdersResult.status === 'fulfilled') setOnrampOrders(onrampOrdersResult.value);
-    if (virtualAccountsResult.status === 'fulfilled') { setVirtualAccountRequests(virtualAccountsResult.value.requests ?? []); setVirtualAccounts(virtualAccountsResult.value.accounts ?? []); setVirtualAccountTransactions(virtualAccountsResult.value.transactions ?? []); }
-    if (balanceResult.status === 'fulfilled') setBalance(balanceResult.value);
-    if (unifiedBalanceResult.status === 'fulfilled') setUnifiedBalance(unifiedBalanceResult.value);
-    if (balanceTransfersResult.status === 'fulfilled') setBalanceTransfers(balanceTransfersResult.value);
-    if (suppliersResult.status === 'fulfilled') setSuppliers(suppliersResult.value);
-    if (supplierPaymentsResult.status === 'fulfilled') setSupplierPayments(supplierPaymentsResult.value);
-    if (supportTicketsResult.status === 'fulfilled') setSupportTickets(supportTicketsResult.value);
-    if (preferencesResult.status === 'fulfilled') setUserPreferences(preferencesResult.value);
-    if (identityResult.status === 'fulfilled') setIdentityStatus(identityResult.value);
-    if (twoFactorResult.status === 'fulfilled') setTwoFactorStatus(twoFactorResult.value);
-    if (ngnTransfersResult.status === 'fulfilled') setNgnTransfers(Array.isArray(ngnTransfersResult.value) ? ngnTransfersResult.value : []);
-    if (walletDepositsResult.status === 'fulfilled') setWalletDeposits(Array.isArray(walletDepositsResult.value) ? walletDepositsResult.value : []);
-    if (serviceAgreementsResult.status === 'fulfilled' && setServiceAgreements) {
-      const resVal: any = serviceAgreementsResult.value;
-      const dataVal = resVal?.data || resVal;
-      setServiceAgreements(dataVal || { linked: false, deals: [] });
-    }
+    return inFlightPromiseRef.current;
   }, [userId, authToken, api, setCustomer, setAccounts, setWithdrawals, setOnrampOrders, setVirtualAccountRequests, setVirtualAccounts, setVirtualAccountTransactions, setBalance, setUnifiedBalance, setBalanceTransfers, setSuppliers, setSupplierPayments, setSupportTickets, setUserPreferences, setIdentityStatus, setServiceAgreements, setTwoFactorStatus, setVerificationSummary, setVerificationSummaryLoaded, setNgnTransfers, setWalletDeposits]);
 }

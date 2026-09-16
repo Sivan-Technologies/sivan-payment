@@ -123,10 +123,22 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
   const wallets = await db.listAllOpenWallets();
   if (!wallets.length) return outcome;
 
-  const provider = getWalletProvider(await resolveActiveWalletProvider());
+  const activeProviderName = await resolveActiveWalletProvider();
+  const providerCache = new Map<string, ReturnType<typeof getWalletProvider>>();
+  const providerFor = (w: { provider?: string }) => {
+    const name = w.provider ?? activeProviderName;
+    let resolved = providerCache.get(name);
+    if (!resolved) {
+      resolved = getWalletProvider(name);
+      providerCache.set(name, resolved);
+    }
+    return resolved;
+  };
+
   const windowStart = new Date().toISOString();
 
   for (const wallet of wallets) {
+    const provider = providerFor(wallet);
     // Every network this one key can receive on, not just the filed chain.
     const networks = networksServedByWallet(wallet.chain);
 
@@ -170,10 +182,37 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
         // Always update the baseline, whatever we decide below.
         lastSeen.set(key, current);
 
-        // First sighting establishes a baseline and asserts nothing. Without
-        // this, every wallet's entire existing balance would be announced as a
-        // deposit on the first tick after a deploy.
-        if (previous === undefined) continue;
+        // First sighting establishes a baseline. In production, if there is an existing on-chain balance
+        // that has not yet been recorded as a deposit, record the unrecorded delta safely with a dynamic idempotency key.
+        if (previous === undefined) {
+          if (process.env.ALLOW_MOCK_WALLETS !== 'true' && current >= MIN_DEPOSIT) {
+            const existing = await db.listWalletDeposits(wallet.userId);
+            const recordedTotal = existing
+              .filter((d) => d.chain.toLowerCase() === network.toLowerCase() && d.asset.toUpperCase() === asset.toUpperCase())
+              .reduce((sum, d) => sum + num(d.amount), 0);
+
+            const unrecorded = current - recordedTotal;
+            if (unrecorded >= MIN_DEPOSIT) {
+              const result = await recordDeposit({
+                userId: wallet.userId,
+                walletId: wallet.id,
+                address: wallet.address,
+                chain: network,
+                asset,
+                amount: money(unrecorded),
+                detectionSource: 'balance_poll',
+                idempotencyKeyOverride: `${network}:${wallet.address.toLowerCase()}:${asset}:baseline_sync_${money(recordedTotal)}_${money(current)}`,
+                rawPayload: { current: money(current), recordedTotal: money(recordedTotal), detector: 'baseline_sync' }
+              });
+
+              if (result.created) {
+                outcome.depositsRecorded += 1;
+                outcome.recorded.push({ userId: wallet.userId, asset, amount: money(unrecorded), chain: network });
+              }
+            }
+          }
+          continue;
+        }
 
         const delta = current - previous;
         // Only increases. A decrease is a withdrawal, already recorded as a

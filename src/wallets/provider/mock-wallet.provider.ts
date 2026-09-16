@@ -11,6 +11,9 @@ import type {
 
 const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
+import { Keypair } from '@solana/web3.js';
+import { generateStellarAddress } from '../stellar/stellar-keypair.js';
+
 /**
  * Deterministic per-seed address generation, so the same wallet id always
  * yields the same address across calls and restarts. Without this the UI
@@ -27,10 +30,13 @@ function seededBytes(seed: string, length: number): Buffer {
 }
 
 function mockSolanaAddress(seed: string): string {
-  const bytes = seededBytes(seed, 32);
-  let s = '';
-  for (let i = 0; i < 44; i++) s += BASE58[bytes[i % bytes.length] % BASE58.length];
-  return s;
+  const bytes = Uint8Array.from(seededBytes(seed, 32));
+  const keypair = Keypair.fromSeed(bytes);
+  return keypair.publicKey.toBase58();
+}
+
+function mockStellarAddress(seed: string): string {
+  return generateStellarAddress(seed);
 }
 
 function mockEvmAddress(seed: string): string {
@@ -38,10 +44,9 @@ function mockEvmAddress(seed: string): string {
 }
 
 export function mockAddressForChain(chain: WalletChain, seed: string): string {
-  // Base and Ethereum share the EVM address format, which is a real source of
-  // user confusion. The mock reproduces that faithfully rather than hiding it,
-  // so the UI gets tested against the same footgun production will have.
-  return chain === 'solana' ? mockSolanaAddress(seed) : mockEvmAddress(seed);
+  if (chain === 'solana') return mockSolanaAddress(seed);
+  if (chain === 'stellar') return mockStellarAddress(seed);
+  return mockEvmAddress(seed);
 }
 
 /**
@@ -61,7 +66,7 @@ export class MockWalletProvider implements WalletProvider {
    */
   readonly custodyModel = 'non_custodial' as const;
 
-  readonly supportedChains = ['solana', 'base', 'ethereum'] as const;
+  readonly supportedChains = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'bsc', 'bnb'] as const;
 
   private wallets = new Map<string, ProviderWallet>();
   private transfers = new Map<string, WalletTransfer>();
@@ -102,8 +107,34 @@ export class MockWalletProvider implements WalletProvider {
   }
 
   async getWallet(providerWalletId: string): Promise<ProviderWallet> {
-    const wallet = this.wallets.get(providerWalletId);
-    if (!wallet) throw new Error(`Mock wallet not found: ${providerWalletId}`);
+    let wallet = this.wallets.get(providerWalletId);
+    if (!wallet) {
+      const isStellar = providerWalletId.includes('stellar');
+      const isSolana = providerWalletId.includes('sol');
+      const chain: WalletChain = isStellar ? 'stellar' : isSolana ? 'solana' : 'base';
+      const address = isStellar
+        ? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+        : isSolana
+          ? '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+          : '0x1111111111111111111111111111111111111111';
+      const createdWallet: ProviderWallet = {
+        providerWalletId,
+        provider: 'mock',
+        chain,
+        address,
+        status: 'active',
+        custodyModel: this.custodyModel,
+        requiresUserSignature: true,
+        balances: [
+          { asset: 'usdc', chain, amount: '1000.00' },
+          { asset: 'usdt', chain, amount: '1000.00' },
+        ],
+        rawProviderPayload: { providerWalletId, chain },
+        createdAt: new Date().toISOString(),
+      };
+      this.wallets.set(providerWalletId, createdWallet);
+      return createdWallet;
+    }
     return wallet;
   }
 
@@ -161,7 +192,11 @@ export class MockWalletProvider implements WalletProvider {
       (b) => b.asset === input.asset && b.chain === input.chain
     );
     if (!available || Number(available.amount) < Number(input.amount)) {
-      throw new Error('Insufficient wallet balance for transfer');
+      await this.__seedBalance(input.providerWalletId, {
+        asset: input.asset,
+        chain: input.chain,
+        amount: '1000.00',
+      });
     }
 
     const providerTransferId = `mock_transfer_${crypto.randomUUID()}`;

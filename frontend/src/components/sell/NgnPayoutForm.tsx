@@ -93,12 +93,15 @@ function networkLabel(network: string): string {
   const labels: Record<string, string> = {
     solana: 'Solana',
     base: 'Base',
+    bsc: 'BNB Chain',
+    bnb: 'BNB Chain',
+    stellar: 'Stellar',
+    celo: 'Celo',
     ethereum: 'Ethereum',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
     optimism: 'Optimism',
     avalanche: 'Avalanche',
-    bsc: 'BNB Smart Chain',
     tron: 'Tron',
   };
   return labels[network] ?? (network ? network.charAt(0).toUpperCase() + network.slice(1) : '');
@@ -162,7 +165,7 @@ export function NgnPayoutForm({
    * USDC on Base was quoted, shown a minimum, and handed a Solana deposit
    * address - the wrong chain, silently, with funds sent to it unrecoverable.
    */
-  networkOptions: Array<{ network: string; minimumDepositUsd?: number; gasEstimateUsd?: number; label?: string }>;
+  networkOptions: Array<{ network: string; minimumDepositUsd?: number; gasEstimateUsd?: number; label?: string; balance?: number }>;
 
   onNetworkChange?: (network: string) => void;
   asset: 'usdc' | 'usdt';
@@ -303,15 +306,49 @@ export function NgnPayoutForm({
    * The server composes this list from two sources (admin's enabled networks
    * and what the provider settles), so a repeat is possible; a duplicate key
    * would break React's reconciliation of the buttons below.
+   *
+   * UX rule for balance funding:
+   * Networks with zero balance or below minimum withdrawal are filtered out
+   * so the user only sees actionable networks. The network with the highest
+   * balance is auto-sorted to the top.
+   * If funding externally, all supported networks remain available.
    */
   const options = useMemo(() => {
     const seen = new Set<string>();
-    return (networkOptions ?? []).filter((option) => {
+    const unique = (networkOptions ?? []).filter((option) => {
       if (!option?.network || seen.has(option.network)) return false;
       seen.add(option.network);
       return true;
     });
-  }, [networkOptions]);
+
+    if (fundingSource === 'balance') {
+      const eligible = unique.filter((opt) => {
+        const bal = opt.balance ?? 0;
+        const min = opt.minimumDepositUsd ?? 0;
+        return bal > 0 && bal >= min;
+      });
+
+      if (eligible.length > 0) {
+        return eligible.sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+      }
+
+      const withAnyBalance = unique.filter((opt) => (opt.balance ?? 0) > 0);
+      if (withAnyBalance.length > 0) {
+        return withAnyBalance.sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+      }
+
+      return unique;
+    }
+
+    return unique.slice().sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+  }, [networkOptions, fundingSource]);
+
+  useEffect(() => {
+    if (!options.length) return;
+    if (!options.some((opt) => opt.network === network)) {
+      onNetworkChange?.(options[0].network);
+    }
+  }, [options, network, onNetworkChange]);
 
 
   useEffect(() => {
@@ -536,9 +573,19 @@ export function NgnPayoutForm({
    * actually known - an unread balance (null) or one still loading (undefined)
    * must not manufacture a shortfall, because the server is the authority and
    * a false block here stops a legitimate withdrawal.
+   *
+   * Scoped to what the user actually holds ON THE SELECTED CHAIN, not the total
+   * aggregate across all chains.
    */
-  const balanceKnown = fundingSource === 'balance' && typeof spendable === 'number';
-  const shortfallUsd = balanceKnown && amountUsd > spendable! ? amountUsd - spendable! : 0;
+  const currentNetworkOption = options.find((opt) => opt.network.toLowerCase() === network.toLowerCase())
+    ?? (networkOptions ?? []).find((opt) => opt.network.toLowerCase() === network.toLowerCase());
+
+  const selectedChainSpendable = typeof currentNetworkOption?.balance === 'number'
+    ? currentNetworkOption.balance
+    : spendable;
+
+  const balanceKnown = fundingSource === 'balance' && typeof selectedChainSpendable === 'number';
+  const shortfallUsd = balanceKnown && amountUsd > selectedChainSpendable! ? amountUsd - selectedChainSpendable! : 0;
   const overBalance = shortfallUsd > 0;
 
   const usd = (value: number) => value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -581,18 +628,10 @@ export function NgnPayoutForm({
      */
     if (overBalance) {
       return setError(
-        `You have ${usd(spendable!)} ${asset.toUpperCase()} available to withdraw. ` +
+        `You have ${usd(selectedChainSpendable!)} ${asset.toUpperCase()} available to withdraw on ${networkLabel(network)}. ` +
         (canFundExternally
-          ? `Lower the amount, or choose "I'll send crypto myself" to send from another wallet.`
-          /**
-           * THE ADVICE MUST MATCH THE BUTTONS ON SCREEN.
-           *
-           * With manual funding hidden behind the admin flag, naming that
-           * button points the user at a control they cannot see - which reads
-           * as the app being broken. Caught by grepping the BUILT bundle for
-           * the button text, not from the source diff.
-           */
-          : `Lower the amount to continue.`)
+          ? `Lower the amount, switch to a network where you hold ${asset.toUpperCase()}, or choose "I'll send crypto myself".`
+          : `Lower the amount, or switch to a network holding your ${asset.toUpperCase()}.`)
       );
     }
 
@@ -918,7 +957,14 @@ export function NgnPayoutForm({
                       onNetworkChange?.(option.network);
                     }}
                   />
-                  <span>{networkLabel(option.network)}</span>
+                  <span>
+                    {networkLabel(option.network)}
+                    {typeof option.balance === 'number' ? (
+                      <span className="network-balance-badge" style={{ marginLeft: 6, fontSize: '0.82em', opacity: 0.85 }}>
+                        ({option.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {asset.toUpperCase()})
+                      </span>
+                    ) : null}
+                  </span>
                 </label>
               ))}
             </div>
@@ -937,7 +983,12 @@ export function NgnPayoutForm({
             </span>
           </fieldset>
         ) : network ? (
-          <p className="field-hint">Withdrawing {asset.toUpperCase()} on {networkLabel(network)}.</p>
+          <p className="field-hint">
+            Withdrawing {asset.toUpperCase()} on {networkLabel(network)}
+            {options[0]?.balance !== undefined && options[0].balance > 0
+              ? ` (${options[0].balance.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${asset.toUpperCase()} available)`
+              : ''}.
+          </p>
         ) : (
           /* No chain resolved yet. Quoting now would price against nothing,
              so the button below stays disabled until this settles. */
@@ -1172,11 +1223,11 @@ export function NgnPayoutForm({
               {/* Only when selling from a balance we have actually read.
                   A Max button that fills in a number we are not sure of is
                   worse than no Max button. */}
-              {balanceKnown && spendable! > 0 && (
+              {balanceKnown && selectedChainSpendable! > 0 && (
                 <button
                   type="button"
                   className="ghost-btn small"
-                  onClick={() => { setAmount(String(spendable)); setQuote(null); setError(''); }}
+                  onClick={() => { setAmount(String(selectedChainSpendable)); setQuote(null); setError(''); }}
                 >
                   Max
                 </button>
@@ -1186,16 +1237,16 @@ export function NgnPayoutForm({
                 place it changes what someone types. */}
             {fundingSource === 'balance' && (
               <span className="field-hint">
-                {spendable === undefined
+                {selectedChainSpendable === undefined
                   ? 'Checking your balance…'
-                  : spendable === null
+                  : selectedChainSpendable === null
                     ? 'We could not read your balance right now. You can still continue.'
-                    : `${usd(spendable)} ${asset.toUpperCase()} available to withdraw.`}
+                    : `${usd(selectedChainSpendable)} ${asset.toUpperCase()} available to withdraw${network ? ` on ${networkLabel(network)}` : ''}.`}
               </span>
             )}
             {overBalance && (
               <span className="field-hint danger">
-                That is {usd(shortfallUsd)} {asset.toUpperCase()} more than you have available.
+                That is {usd(shortfallUsd)} {asset.toUpperCase()} more than you have available${network ? ` on ${networkLabel(network)}` : ''}.
               </span>
             )}
             {floorVerdict && !floorVerdict.clears && (

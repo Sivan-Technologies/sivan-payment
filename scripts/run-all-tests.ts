@@ -108,6 +108,100 @@ const TEST_SUITES: TestSuite[] = [
       BRIDGE_MOCK_MODE: 'true',
     },
   },
+  {
+    name: 'Multi-Chain Stellar Adapter & Protocols',
+    command: 'tsx scripts/test-stellar-adapter.ts',
+  },
+  {
+    name: 'Multi-Chain Celo Adapter & Protocols',
+    command: 'tsx scripts/test-celo-adapter.ts',
+  },
+  {
+    name: 'Multi-Chain BNB Chain (BSC) Adapter & Protocols',
+    command: 'tsx scripts/test-bsc-adapter.ts',
+  },
+  {
+    name: 'Multi-Chain Developer Gateway & Agent API',
+    command: 'tsx scripts/test-developer-gateway.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-developer-gateway.json',
+      EMAIL_PROVIDER: 'console',
+      BRIDGE_MOCK_MODE: 'true',
+      WALLET_PROVIDER: 'mock',
+    },
+  },
+  {
+    name: 'P2P Direct Transfer & Universal Target Resolver',
+    command: 'tsx scripts/test-p2p-transfer.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-p2p-transfer.json',
+      EMAIL_PROVIDER: 'console',
+      BRIDGE_MOCK_MODE: 'true',
+      ADMIN_API_KEY: 'test-admin-key',
+    },
+  },
+  {
+    name: 'Service Agreement Deadline Tracking',
+    command: 'tsx scripts/test-service-agreements.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-service-agreements.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'Model Context Protocol (MCP) & A2A Gateway',
+    command: 'tsx scripts/test-mcp-server.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-mcp-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'Transaction PIN & Telegram Mini-App (TMA) Keypad',
+    command: 'tsx scripts/test-transaction-pin-tma.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-tma-pin-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'WebAuthn Passkeys & Biometric Security',
+    command: 'tsx scripts/test-passkey-biometrics.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-passkey-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
+  {
+    name: 'Machine Learning Fraud Engine & Risk Scoring',
+    command: 'tsx scripts/test-fraud-engine-integration.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-fraud-suite.json',
+      EMAIL_PROVIDER: 'console',
+      SUPPORT_UPLOAD_PROVIDER: 'mock',
+      BRIDGE_MOCK_MODE: 'true',
+      DEADLINE_SWEEP_SECONDS: '0',
+    },
+  },
 ];
 
 function runMasterTestRunner() {

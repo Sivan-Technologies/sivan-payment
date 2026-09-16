@@ -1,4 +1,4 @@
-import { FormEvent, useRef, useState, useEffect } from 'react';
+import { FormEvent, useRef, useState, useEffect, useMemo } from 'react';
 import type { AssetControl, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NetworkControl, OnrampOrderRecord, PaymentControl, SupplierPaymentRecord, SupplierRecord, SupplierFeeQuoteResponse } from '../../types';
 import { InlineTransactionTimeline } from '../transactions/TransactionsSection';
 import { explorerLink, explorerReference, shortHash } from '../../blockExplorer';
@@ -162,7 +162,7 @@ export function BuyCryptoView({ hasUser, isVerified, bridgeBlockedReason, onVeri
               `isVerified`, got the full form, filled it in, and was refused by
               the server after an 18-second wait with a gateway timeout. */}
               <p>{!hasUser ? 'Create your account before buying stablecoins.' : bridgeBlockedReason ?? 'Complete verification before buying stablecoins.'}</p>
-              <button className="primary-btn" onClick={!hasUser ? onContinue : bridgeBlockedReason ? onVerifyWithId : onContinue}>{!hasUser ? 'Get started →' : bridgeBlockedReason ? 'Verify with ID →' : 'Verify account →'}</button></div> : <form onSubmit={onSubmit} className="form premium-form"><div className="quote-box large"><div><small>You pay</small><input name="amount" className="quote-amount-input" value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} /><small>Min 20 · Max 50,000</small></div><div><CustomSelect name="sourceCurrency" defaultValue={bridgeControls[0]?.currency || 'usd'} options={bridgeControls.map((control) => ({ value: control.currency, label: control.currency.toUpperCase(), helper: control.currency === 'usd' ? 'Wire & ACH (Active)' : control.currency === 'eur' ? 'SEPA (Active)' : control.currency === 'gbp' ? 'Faster Payments (Active)' : 'Coming soon' }))} /></div></div><div className="quote-swap">↓</div><div className="quote-box large"><div><small>You get</small><strong>{receive.toFixed(4)}</strong></div><div><CustomSelect name="destinationCurrency" defaultValue="usdc" options={assetOptions} /></div></div><label>Destination network<CustomSelect name="destinationChain" defaultValue={enabledNetworks[0]?.network || 'base'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Receiving wallet address<input name="destinationAddress" placeholder="Wallet address you control" required /></label><div className="quote-fees"><div><span>Rate</span><strong>1 fiat ≈ 1 stablecoin</strong></div><div><span>Fee ({feePercent}%)</span><strong className="danger">−${fee.toFixed(2)}</strong></div><div><span>Arrival</span><strong>Minutes after payment clears</strong></div><div><span>Payment method</span><strong>Bank transfer</strong></div></div><div className="verification-note">Your payment instructions are generated after you create the order. Send the exact amount and reference.</div><button className="primary-btn" disabled={loading || !bridgeControls.length || !enabledAssets.length || !enabledNetworks.length}>{loading ? 'Creating order...' : 'Create buy order →'}</button></form>}{latestOrder && <OnrampInstructions order={latestOrder} />}</article><aside className="side-info-stack"><article className="panel"><h3>How this works</h3><ol className="ordered-steps"><li className="active">We generate a unique payment reference for your order.</li><li>Send the exact fiat amount to our licensed partner.</li><li>We detect payment and send crypto to your wallet.</li></ol></article><article className="security-card"><div className="security-icon">◈</div><div><h3>Secure & non-custodial</h3><p>Payments are processed by licensed partners. Funds are only held briefly during settlement.</p></div></article><article className="panel"><h3>Need help?</h3><p className="muted">Issues with a transfer, wrong network, or delayed payout? Our support team is on hand.</p><button className="secondary-btn" onClick={onSupport}>Contact support ↗</button></article></aside></div></section>;
+              <button className="primary-btn" onClick={!hasUser ? onContinue : bridgeBlockedReason ? onVerifyWithId : onContinue}>{!hasUser ? 'Get started →' : bridgeBlockedReason ? 'Verify with ID →' : 'Verify account →'}</button></div> : <form onSubmit={onSubmit} className="form premium-form"><div className="quote-box large"><div><small>You pay</small><input name="amount" className="quote-amount-input" value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ''))} /><small>Min 20 · Max 50,000</small></div><div><CustomSelect name="sourceCurrency" defaultValue={bridgeControls[0]?.currency || 'usd'} options={bridgeControls.map((control) => ({ value: control.currency, label: control.currency.toUpperCase(), helper: control.currency === 'usd' ? 'Wire & ACH (Active)' : control.currency === 'eur' ? 'SEPA (Active)' : control.currency === 'gbp' ? 'Faster Payments (Active)' : 'Coming soon' }))} /></div></div><div className="quote-swap">↓</div><div className="quote-box large"><div><small>You get</small><strong>{receive.toFixed(4)}</strong></div><div><CustomSelect name="destinationCurrency" defaultValue="usdc" options={assetOptions} /></div></div><label>Destination network<CustomSelect name="destinationChain" defaultValue={enabledNetworks.find((network) => network.isDefault)?.network || enabledNetworks[0]?.network || 'solana'} options={enabledNetworks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Receiving wallet address<input name="destinationAddress" placeholder="Wallet address you control" required /></label><div className="quote-fees"><div><span>Rate</span><strong>1 fiat ≈ 1 stablecoin</strong></div><div><span>Fee ({feePercent}%)</span><strong className="danger">−${fee.toFixed(2)}</strong></div><div><span>Arrival</span><strong>Minutes after payment clears</strong></div><div><span>Payment method</span><strong>Bank transfer</strong></div></div><div className="verification-note">Your payment instructions are generated after you create the order. Send the exact amount and reference.</div><button className="primary-btn" disabled={loading || !bridgeControls.length || !enabledAssets.length || !enabledNetworks.length}>{loading ? 'Creating order...' : 'Create buy order →'}</button></form>}{latestOrder && <OnrampInstructions order={latestOrder} />}</article><aside className="side-info-stack"><article className="panel"><h3>How this works</h3><ol className="ordered-steps"><li className="active">We generate a unique payment reference for your order.</li><li>Send the exact fiat amount to our licensed partner.</li><li>We detect payment and send crypto to your wallet.</li></ol></article><article className="security-card"><div className="security-icon">◈</div><div><h3>Secure & non-custodial</h3><p>Payments are processed by licensed partners. Funds are only held briefly during settlement.</p></div></article><article className="panel"><h3>Need help?</h3><p className="muted">Issues with a transfer, wrong network, or delayed payout? Our support team is on hand.</p><button className="secondary-btn" onClick={onSupport}>Contact support ↗</button></article></aside></div></section>;
 }
 
 function OnrampInstructions({ order }: { order: OnrampOrderRecord }) {
@@ -623,6 +623,69 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
    * asset; this component threw that away and looked up one hardcoded key.
    */
   const selectedAssetKey = String(sendAsset || '').toLowerCase();
+  const SUPPORTED_TRANSFER_NETWORKS = ['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo'];
+  const networks = useMemo(() => {
+    const list = (enabledNetworks ?? []).filter(
+      (n) => n.enabled && SUPPORTED_TRANSFER_NETWORKS.includes(n.network.toLowerCase())
+    );
+    if (list.length > 0) return list;
+    return [
+      { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
+      { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
+      { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
+      { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
+      { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
+    ];
+  }, [enabledNetworks]);
+
+  const networkBalances = useMemo(() => {
+    const map = new Map<string, number>();
+    if (unifiedBalance?.wallets) {
+      for (const w of unifiedBalance.wallets) {
+        const b = w.balances?.find((item) => String(item.asset).toLowerCase() === selectedAssetKey);
+        const amt = b ? parseFloat(b.amount || '0') : 0;
+        const current = map.get(w.chain.toLowerCase()) || 0;
+        map.set(w.chain.toLowerCase(), current + amt);
+      }
+    }
+    return map;
+  }, [unifiedBalance, selectedAssetKey]);
+
+  const bestNetwork = useMemo(() => {
+    let topChain = '';
+    let maxAmount = -1;
+    for (const [chain, amt] of networkBalances.entries()) {
+      if (amt > maxAmount) {
+        maxAmount = amt;
+        topChain = chain;
+      }
+    }
+    if (maxAmount > 0 && topChain) {
+      const match = networks.find((n) => n.network.toLowerCase() === topChain.toLowerCase());
+      if (match) return match.network;
+    }
+    return networks.find((n) => n.network === 'solana')?.network || networks[0]?.network || 'solana';
+  }, [networkBalances, networks]);
+
+  const [sendNetwork, setSendNetwork] = useState<string>(bestNetwork);
+
+  useEffect(() => {
+    if (bestNetwork) {
+      setSendNetwork(bestNetwork);
+    }
+  }, [bestNetwork]);
+
+  const networkOptions = useMemo(() => {
+    return networks.map((n) => {
+      const bal = networkBalances.get(n.network.toLowerCase()) || 0;
+      return {
+        value: n.network,
+        label: n.label,
+        helper: bal > 0 ? `${bal.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${(sendAsset || 'usdc').toUpperCase()} available` : undefined
+      };
+    });
+  }, [networks, networkBalances, sendAsset]);
+
   const unified = unifiedBalance?.balances.find(
     (item) => String(item.asset).toLowerCase() === selectedAssetKey
   );
@@ -710,7 +773,6 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
     .filter((item) => item.amount > 0);
   /** True when the chain read failed - NOT the same as a zero balance. */
   const chainUnavailable = Boolean(unified?.chainUnavailable);
-  const networks = enabledNetworks.filter((network) => ['base', 'solana', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum'].includes(network.network));
   const approvedSuppliers = suppliers.filter((supplier) => supplier.status === 'approved');
   const supplierCurrencyLabel = { gbp: 'GBP · Faster Payments', usd: 'USD · ACH/Wire', eur: 'EUR · SEPA', mxn: 'MXN · SPEI', brl: 'BRL · PIX' }[supplierCurrency];
   return <section className="app-page transfer-premium"><PageHero title="Send & transfer" subtitle={supplierPayoutsEnabled ? 'Send settled stablecoins to wallets or pay suppliers through Sivan’s provider routing. Sivan does not hold a live USD fiat balance for you.' : 'Send settled stablecoins to wallets on a supported network. Sivan does not hold a live USD fiat balance for you.'} action={<button className="primary-btn small" onClick={() => void onRefresh()}>Refresh balance</button>} />
@@ -743,7 +805,7 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
           before anything they could actually do. The thing you came here to
           do now leads, the balance it spends from sits under it, and history
           - the least urgent - comes last. */}
-      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer {assetLabelUpper} to a wallet</h3>{!hasUser || !isVerified ? <div className="empty-state"><p>{hasUser ? 'Complete verification before transferring crypto.' : 'Create your account before transferring crypto.'}</p><button className="primary-btn" onClick={onContinue}>{hasUser ? 'Verify account →' : 'Get started →'}</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" value={sendAsset} defaultValue={sendableAssetOptions[0]?.asset || 'usdc'} onChange={setSendAsset} options={sendableAssetOptions.map((item) => ({ value: item.asset, label: assetLabel(item) }))} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" defaultValue={networks[0]?.network || 'base'} options={networks.map((network) => ({ value: network.network, label: network.label }))} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label>{/* THE SECOND SENTENCE POINTS AT A ROUTE THAT MAY NOT EXIST.
+      {activeRoute === 'crypto' && <article className="panel form-panel transfer-form-card"><p className="eyebrow">Send crypto from settled balance</p><h3>Transfer {assetLabelUpper} to a wallet</h3>{!hasUser ? <div className="empty-state"><p>Create your account before transferring crypto.</p><button className="primary-btn" onClick={onContinue}>Get started →</button></div> : <form className="form premium-form" onSubmit={handleReview}><label>Asset<CustomSelect name="asset" value={sendAsset} defaultValue={sendableAssetOptions[0]?.asset || 'usdc'} onChange={setSendAsset} options={sendableAssetOptions.map((item) => ({ value: item.asset, label: assetLabel(item) }))} /></label><label>Amount<input name="amount" inputMode="decimal" placeholder="20" required /></label><label>Destination network<CustomSelect name="network" value={sendNetwork} onChange={setSendNetwork} defaultValue={bestNetwork} options={networkOptions} /></label><label>Destination wallet<input name="destinationAddress" placeholder="Wallet address you control" required /></label><label>Note optional<input name="note" placeholder="Internal note" /></label>{/* THE SECOND SENTENCE POINTS AT A ROUTE THAT MAY NOT EXIST.
  
      Caught in a screenshot with supplier payouts switched off: the crypto
      form still told users to "use the Pay supplier route", which was no

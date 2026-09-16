@@ -161,6 +161,17 @@ export const feeSettingsSchema = z.object({
    */
   transferFeeMaximumUsd: z.coerce.number().min(0).max(10_000).default(DEFAULT_TRANSFER_FEE.maximumUsd),
   /**
+   * Micro-rail (Celo & Stellar) minimum fee floor, USD.
+   * Default $0.10. Celo (CIP-64) and Stellar (CAP-0015) have sub-cent gas,
+   * allowing a lower floor for everyday micro-transactions ($5 to $50) with >99% margin.
+   */
+  microRailFeeMinimumUsd: z.coerce.number().min(0).max(100).default(0.10),
+  /**
+   * Micro-rail (Celo & Stellar) maximum fee cap, USD.
+   * Default $0.75.
+   */
+  microRailFeeMaximumUsd: z.coerce.number().min(0).max(10_000).default(0.75),
+  /**
    * Smallest transfer a user may send.
    *
    * Lives in the FEE TAB, beside the curve it has to agree with: the minimum is
@@ -342,6 +353,8 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     transferFeePercent: DEFAULT_TRANSFER_FEE.percent,
     transferFeeMinimumUsd: DEFAULT_TRANSFER_FEE.minimumUsd,
     transferFeeMaximumUsd: DEFAULT_TRANSFER_FEE.maximumUsd,
+    microRailFeeMinimumUsd: 0.10,
+    microRailFeeMaximumUsd: 0.75,
     transferMinimumSendAmount: Number(process.env.BALANCE_TRANSFER_MIN_AMOUNT || DEFAULT_TRANSFER_MIN_SEND),
     transferFeeNewRecipientUsd: DEFAULT_TRANSFER_FEE.newRecipientUsd,
     supplierFeeTiers: DEFAULT_SUPPLIER_FEE.tiers,

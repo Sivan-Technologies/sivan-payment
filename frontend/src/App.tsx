@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import type { VerificationSummary, UserWalletRecord, CustomerRecord, DepositResponse, ExternalAccountRecord, AssetControl, FeePolicy, NetworkControl, OfframpControls, PaymentControl, SystemStatus, UserRecord, ViewKey, WithdrawalRecord, OnrampOrderRecord, SupportTicketRecord, UserPreferencesRecord, IdentityStatus, TransactionTimeline, VirtualAccountControl, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord, SupplierRecord, SupplierPaymentRecord, BalanceSummary, UnifiedBalance, BalanceTransferRecord, NgnTransferRecord, WalletDepositRecord, TransactionTimelineStep, ServiceAgreementsSummary } from './types';
 import { ReceiveView } from './components/ReceiveView';
 import { BuyCryptoView, DashboardAccountNotice, DashboardSetupPanel, DashboardTransactions, EmailRecoveryConfirmView, IncidentBanner, KycOutcomeNotice, KpiCard, LandingPage, NotificationCenter, OtpInput, OffRampWizard, PaymentMethodsView, PublicSidebarCta, SettingsView, SupportView, TransactionsView, TransferCryptoView, TwoFactorRecommendationCard, UserAvatar, VerificationPage, VirtualAccountsView } from './components/AppSections';
-import { buildActivityFeed } from './activityFeed';
+import { buildActivityFeed, type ActivityRow } from './activityFeed';
 import { inProgressKpi, limitKpi, stableUsdBalanceKpi } from './dashboardKpis';
 import { resolveDisplayCurrency } from './displayCurrency';
 import { buildApiUrl, fallbackCustomerTypes, fallbackSourceAssets, fallbackSourceNetworks, fallbackVirtualAccounts, friendlyStatus, getForm, isRetryableHttpStatus, isRetryableNetworkError, kycOutcomeMessage, legalLinks, legalVersions, normalizeFrontendApiBase, normalizeOfframpControls, userFacingMessage, pathByView, publicViews, readStorage, shortRef, sleep, timeAgo, viewFromPath, views } from './appUtils';
@@ -20,6 +20,9 @@ import { useSessionActivity } from './hooks/useAuth';
 import { usePaymentDataLoader } from './hooks/usePaymentData';
 import { useTheme } from './hooks/useTheme';
 import { ThemeToggle } from './components/ThemeToggle';
+import { PinPadModal } from './components/tma/PinPadModal';
+import { ConfirmModal } from './components/ConfirmModal';
+import { ServiceAgreementsView } from './components/agreements/ServiceAgreementsView';
 
 /**
  * Server-enforced gap between OTP emails, mirrored here so the countdown tells
@@ -50,13 +53,16 @@ export default function App() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<'profile' | 'security' | 'notifications' | 'preferences'>('profile');
-  const apiBase = useMemo(() => normalizeFrontendApiBase(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'), []);
+  const apiBase = useMemo(() => normalizeFrontendApiBase(import.meta.env.VITE_API_BASE_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3000' : 'https://api-staging.sivantech.online')), []);
   const appEnv = import.meta.env.VITE_APP_ENV || 'local';
   const isLiveEnv = appEnv === 'live' || appEnv === 'production';
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem('sivan.authToken') || '');
   const [twoFactorPromptDismissedUntil, setTwoFactorPromptDismissedUntil] = useState(() => Number(localStorage.getItem('sivan.2faPromptDismissedUntil') || 0));
-  const [authTab, setAuthTab] = useState<'signup' | 'signin'>('signup');
+  const [authTab, setAuthTab] = useState<'signup' | 'signin'>(() => {
+    const path = typeof window !== 'undefined' ? window.location.pathname.toLowerCase() : '';
+    return path.includes('signin') || path.includes('login') ? 'signin' : 'signup';
+  });
   const [pendingEmail, setPendingEmail] = useState('');
   const [pendingFullName, setPendingFullName] = useState('');
   const [devCode, setDevCode] = useState<string | undefined>();
@@ -67,12 +73,26 @@ export default function App() {
   const [accounts, setAccounts] = useState<ExternalAccountRecord[]>(() => readStorage<ExternalAccountRecord[]>('sivan.accounts', []));
   const [withdrawals, setWithdrawals] = useState<WithdrawalRecord[]>([]);
   const [onrampOrders, setOnrampOrders] = useState<OnrampOrderRecord[]>([]);
-  const [userWallets, setUserWallets] = useState<UserWalletRecord[]>([]);
+  const [userWallets, setUserWallets] = useState<UserWalletRecord[]>(() => {
+    try {
+      const cached = localStorage.getItem('sivan.userWallets');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [virtualAccountRequests, setVirtualAccountRequests] = useState<VirtualAccountRequestRecord[]>([]);
   const [virtualAccounts, setVirtualAccounts] = useState<VirtualAccountRecord[]>([]);
   const [virtualAccountTransactions, setVirtualAccountTransactions] = useState<VirtualAccountTransactionRecord[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicketRecord[]>([]);
-  const [balance, setBalance] = useState<BalanceSummary | null>(null);
+  const [balance, setBalance] = useState<BalanceSummary | null>(() => {
+    try {
+      const cached = localStorage.getItem('sivan.balance');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   /**
    * THE ONE BALANCE. chain + ledger credits - holds, from the server.
    *
@@ -81,7 +101,14 @@ export default function App() {
    * a ledger that nothing credits from an on-chain deposit. Two sources, one
    * of which could not see the user's actual money.
    */
-  const [unifiedBalance, setUnifiedBalance] = useState<UnifiedBalance | null>(null);
+  const [unifiedBalance, setUnifiedBalance] = useState<UnifiedBalance | null>(() => {
+    try {
+      const cached = localStorage.getItem('sivan.unifiedBalance');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
   const [balanceTransfers, setBalanceTransfers] = useState<BalanceTransferRecord[]>([]);
   // Inbound deposits - money arriving from outside Sivan, the seventh feed source.
   const [walletDeposits, setWalletDeposits] = useState<WalletDepositRecord[]>([]);
@@ -103,6 +130,17 @@ export default function App() {
    */
   const [telegramPairingCode, setTelegramPairingCode] = useState('');
   const [telegramPairingExpiresAt, setTelegramPairingExpiresAt] = useState('');
+  const [unlinkModal, setUnlinkModal] = useState<{
+    open: boolean;
+    channel: 'whatsapp' | 'telegram';
+    title: string;
+    description: string;
+  }>({
+    open: false,
+    channel: 'whatsapp',
+    title: '',
+    description: ''
+  });
 
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
   const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: [], sourceNetworks: [], supplierPayoutsEnabled: true });
@@ -157,6 +195,7 @@ export default function App() {
   const [ngnNetwork, setNgnNetwork] = useState('');
   const [ngnAsset, setNgnAsset] = useState<'usdc' | 'usdt'>('usdc');
   const ngnAssetUserChosen = useRef(false);
+  const ngnNetworkUserChosen = useRef(false);
 
   const [otpCode, setOtpCode] = useState('');
   const [pendingTwoFactorToken, setPendingTwoFactorToken] = useState('');
@@ -228,6 +267,9 @@ export default function App() {
   // tables; the Transactions page only read the Bridge ones, so a naira sell
   // was invisible to the person who had just created it.
   const [ngnTransfers, setNgnTransfers] = useState<NgnTransferRecord[]>([]);
+  const [claimToken, setClaimToken] = useState(() => new URLSearchParams(window.location.search).get('token') || '');
+  const [claimInfo, setClaimInfo] = useState<{ amount: number; asset: string; senderName: string; status: string; recipientPhone?: string } | null>(null);
+  const [claiming, setClaiming] = useState(false);
 
   const pageTitle = useMemo(() => view === 'landing' ? 'Sivan Payments' : view === 'emailRecovery' ? 'Email recovery' : views.find((item) => item.key === view)?.label ?? 'Home', [view]);
   const primaryAccount = accounts[0];
@@ -289,6 +331,7 @@ export default function App() {
   const nextStepView: ViewKey = !hasUser ? 'signup' : !isVerified ? 'kyc' : !hasBank ? 'banks' : 'withdraw';
   const nextStepLabel = !hasUser ? 'Create account' : !isVerified ? 'Verify identity' : !hasBank ? 'Add bank account' : 'Withdraw stablecoins';
   const environmentLabel = appEnv === 'test' ? '⚠ Test environment: no real money moves' : isLiveEnv ? '● Live' : 'Local environment';
+  const onNavigateRefreshRef = useRef<((nextView: ViewKey) => void) | null>(null);
   const goToView = (nextView: ViewKey) => {
     setView(nextView);
     setMobileMenuOpen(false);
@@ -296,6 +339,7 @@ export default function App() {
     setNotificationOpen(false);
     const nextPath = pathByView[nextView] ?? '/dashboard';
     if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath);
+    onNavigateRefreshRef.current?.(nextView);
   };
 
   const goToSettingsSecurity = () => {
@@ -315,13 +359,21 @@ export default function App() {
     if (nextView === 'signin') {
       setAuthTab('signin');
       resetPendingEmail();
-      goToView('signup');
+      setView('signup');
+      setMobileMenuOpen(false);
+      setUserMenuOpen(false);
+      setNotificationOpen(false);
+      if (window.location.pathname !== '/signin') window.history.pushState({}, '', '/signin');
       return;
     }
     if (nextView === 'signup') {
       setAuthTab('signup');
       resetPendingEmail();
-      goToView('signup');
+      setView('signup');
+      setMobileMenuOpen(false);
+      setUserMenuOpen(false);
+      setNotificationOpen(false);
+      if (window.location.pathname !== '/signup') window.history.pushState({}, '', '/signup');
       return;
     }
     goToView('help');
@@ -330,9 +382,7 @@ export default function App() {
   const enabledControls = (paymentControls.payoutCurrencies ?? []).filter((control) => control.enabled);
   const enabledAssets = (paymentControls.sourceAssets ?? []).filter((control) => control.enabled);
   const enabledNetworks = (paymentControls.sourceNetworks ?? []).filter((control) => control.enabled);
-
-
-  const { notifications, readNotificationIds, unreadNotifications, notificationDotClass, markNotificationRead, markAllNotificationsRead } = useNotifications({ systemStatus, customer, hasBank, hasUser, user, twoFactorEnabled: Boolean(twoFactorStatus?.enabled), onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets });
+  const { notifications, readNotificationIds, unreadNotifications, notificationDotClass, markNotificationRead, markAllNotificationsRead } = useNotifications({ systemStatus, customer, hasBank, hasUser, user, twoFactorEnabled: Boolean(twoFactorStatus?.enabled), onrampOrders, withdrawals, balanceTransfers, supplierPayments, virtualAccountTransactions, supportTickets, serviceAgreements });
   const resendSeconds = Math.max(0, Math.ceil((resendAvailableAt - timeNow) / 1000));
   const verificationRedirectUri = useMemo(() => `${window.location.origin}/verification-complete`, []);
   const verificationUrl = customer?.hostedKycLink || customer?.kycLink;
@@ -363,12 +413,6 @@ export default function App() {
    *
    * Only three states are worth interrupting someone for:
    *
-   *   kyc_incomplete    they started and something is outstanding
-   *   kyc_under_review  submitted, waiting - so "verify" would be wrong
-   *   rejected/failed   it did not work and they can retry
-   *
-   * And NONE of them if their own path is already complete: a Nigerian who
-   * verified by bank check has everything Sivan asks of them, and an abandoned
    * Bridge attempt on top of that is not a problem to solve on the dashboard.
    * It still shows on /verification, where they went looking for it.
    */
@@ -408,10 +452,31 @@ export default function App() {
    * records against 0 rows on the reporter's live account. All six sources are
    * already loaded here; only two were being handed on.
    */
-  const activityFeed = useMemo(
-    () => buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits }),
-    [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits]
-  );
+  const activityFeed = useMemo(() => {
+    const baseFeed = buildActivityFeed({ withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits });
+    if (!serviceAgreements?.deals || serviceAgreements.deals.length === 0) return baseFeed;
+    const dealRows: ActivityRow[] = serviceAgreements.deals.map((d: any) => ({
+      id: d.escrowId || d.id,
+      kind: 'withdrawal',
+      label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
+      direction: d.role === 'buyer' ? 'out' : 'in',
+      amount: d.amount || '—',
+      asset: 'USDC',
+      network: ((d as any).network || 'solana').toLowerCase(),
+      providerReference: (d as any).txHash || (d as any).txSignature,
+      currency: (d.currency || 'USDC').toUpperCase(),
+      status: d.status || 'PENDING',
+      statusLabel: friendlyStatus(d.status),
+      state: (String(d.status).toLowerCase() === 'funded' || String(d.status).toLowerCase() === 'in_delivery' || String(d.status).toLowerCase() === 'pending_payment' ? 'pending' : String(d.status).toLowerCase() === 'released' ? 'success' : 'failed') as any,
+      createdAt: d.createdAt || new Date().toISOString(),
+      raw: d as any
+    }));
+    const map = new Map<string, ActivityRow>();
+    for (const r of [...dealRows, ...baseFeed]) {
+      map.set(r.id, r);
+    }
+    return Array.from(map.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }, [withdrawals, onrampOrders, ngnTransfers, balanceTransfers, supplierPayments, virtualAccountTransactions, walletDeposits, serviceAgreements]);
   /**
    * Which row the Transactions page should open on, set when a dashboard row
    * is clicked. A dashboard row is a POINTER to the real detail view, not a
@@ -508,7 +573,7 @@ export default function App() {
   const showTwoFactorRecommendation = Boolean(isVerified && !twoFactorStatus?.enabled && Date.now() > twoFactorPromptDismissedUntil);
 
   const primaryAssetLabel = enabledAssets.map((asset) => asset.label).join(', ') || 'USDC';
-  const primaryNetworkLabel = enabledNetworks.slice(0, 3).map((network) => network.label).join(', ') || 'Solana';
+  const primaryNetworkLabel = enabledNetworks.map((network) => network.label).join(', ') || 'Solana, Base, BNB Chain, Stellar, Celo';
 
   const clearLocalSession = useCallback(() => {
     setAuthToken('');
@@ -542,6 +607,9 @@ export default function App() {
     localStorage.removeItem('sivan.user');
     localStorage.removeItem('sivan.customer');
     localStorage.removeItem('sivan.accounts');
+    localStorage.removeItem('sivan.balance');
+    localStorage.removeItem('sivan.unifiedBalance');
+    localStorage.removeItem('sivan.userWallets');
   }, []);
 
   const logout = useCallback((message = 'You have been signed out.') => {
@@ -631,7 +699,11 @@ export default function App() {
         const json = await response.json().catch(() => ({}));
         if (!response.ok) {
           if (canRetry && isRetryableHttpStatus(response.status) && attempt < attempts) {
-            await sleep(500 * attempt);
+            const retryAfterHeader = response.headers?.get('Retry-After');
+            const retryDelay = response.status === 429
+              ? (retryAfterHeader ? Math.min(Number(retryAfterHeader) * 1000, 5000) : 1500 * attempt)
+              : 500 * attempt;
+            await sleep(retryDelay);
             continue;
           }
           /**
@@ -769,8 +841,10 @@ export default function App() {
           if (previous.withdrawal?.status === live.status) return previous;
           return {
             ...previous,
+            fundingSource: previous.fundingSource,
             withdrawal: {
               ...previous.withdrawal,
+              fundingSource: previous.fundingSource ?? (previous.withdrawal as any)?.fundingSource,
               status: live.status,
               destinationTxHash: live.destinationTxHash ?? previous.withdrawal?.destinationTxHash,
               transactionTimeline: normalizeTimeline(live, {
@@ -894,14 +968,23 @@ export default function App() {
     }
   }, [api, authToken, notify, user?.id]);
 
-  const loadControls = useCallback(async () => {
-    const [controls, status] = await Promise.all([
-      api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks, supplierPayoutsEnabled: true })),
-      api<SystemStatus>('/api/system/status').catch(() => systemStatus)
-    ]);
-    setPaymentControls(controls);
-    setSystemStatus(status);
-    return controls;
+  const loadControlsPromiseRef = useRef<Promise<OfframpControls> | null>(null);
+  const loadControls = useCallback(async (): Promise<OfframpControls> => {
+    if (loadControlsPromiseRef.current) return loadControlsPromiseRef.current;
+    loadControlsPromiseRef.current = (async () => {
+      try {
+        const [controls, status] = await Promise.all([
+          api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks, supplierPayoutsEnabled: true })),
+          api<SystemStatus>('/api/system/status').catch(() => systemStatus)
+        ]);
+        setPaymentControls(controls);
+        setSystemStatus(status);
+        return controls;
+      } finally {
+        loadControlsPromiseRef.current = null;
+      }
+    })();
+    return loadControlsPromiseRef.current;
   }, [api]);
 
   const loadFee = useCallback(async () => {
@@ -939,18 +1022,109 @@ export default function App() {
       // balances=true costs one upstream call per wallet, because Bridge's
       // list endpoint does not include balances. Worth it here: the Receive
       // screen is where the user expects to see what has arrived.
-      const wallets = await api<UserWalletRecord[]>(`/api/users/${user.id}/wallets?balances=true`);
-      setUserWallets(Array.isArray(wallets) ? wallets : []);
+      const res = await api<any>(`/api/users/${user.id}/wallets?balances=true`);
+      const wallets = Array.isArray(res) ? res : (Array.isArray(res?.data) ? res.data : []);
+      if (wallets.length > 0) {
+        setUserWallets(wallets);
+        try {
+          localStorage.setItem('sivan.userWallets', JSON.stringify(wallets));
+        } catch {}
+      }
     } catch {
-      setUserWallets([]);
+      // Keep existing cached state on transient network error
     }
   }, [api, user?.id]);
+
+  const lastUserDataFetchRef = useRef<number>(0);
+  const throttledLoadUserData = useCallback(async (minGapMs = 6000) => {
+    if (!hasUser || !authToken) return;
+    const now = Date.now();
+    if (now - lastUserDataFetchRef.current < minGapMs) {
+      return;
+    }
+    lastUserDataFetchRef.current = now;
+    await loadUserData();
+  }, [hasUser, authToken, loadUserData]);
+
+  useEffect(() => {
+    onNavigateRefreshRef.current = (nextView: ViewKey) => {
+      void throttledLoadUserData(4000);
+      if (nextView === 'receive') {
+        void loadUserWallets();
+      }
+    };
+  }, [throttledLoadUserData, loadUserWallets]);
 
   useEffect(() => {
     void loadFee();
     void loadControls();
-    void loadUserData();
-  }, [loadFee, loadControls, loadUserData]);
+    if (hasUser) {
+      void throttledLoadUserData(0);
+    }
+  }, [hasUser, authToken, user?.id, throttledLoadUserData]);
+
+  const handleRefreshAll = useCallback(async () => {
+    lastUserDataFetchRef.current = Date.now();
+    await Promise.allSettled([loadUserData(), loadUserWallets(), loadControls()]);
+  }, [loadUserData, loadUserWallets, loadControls]);
+
+  // Production-grade live background polling: every 15s when active tab is visible
+  useEffect(() => {
+    if (!hasUser || !authToken) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        void throttledLoadUserData(10000);
+      }
+    }, 15000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void throttledLoadUserData(8000);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [hasUser, authToken, throttledLoadUserData]);
+
+  useEffect(() => {
+    if (view === 'receive') {
+      void loadControls();
+      const interval = setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          void loadControls();
+        }
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [view, loadControls]);
+
+  useEffect(() => {
+    const handleAgreementsRefresh = () => {
+      void handleRefreshAll();
+    };
+    window.addEventListener('sivan:agreements:refresh', handleAgreementsRefresh);
+    window.addEventListener('sivan:balances:refresh', handleAgreementsRefresh);
+    return () => {
+      window.removeEventListener('sivan:agreements:refresh', handleAgreementsRefresh);
+      window.removeEventListener('sivan:balances:refresh', handleAgreementsRefresh);
+    };
+  }, [handleRefreshAll]);
+
+  const activeAgreementDeal = useMemo(() => {
+    return (serviceAgreements?.deals || []).find((d: any) =>
+      ['funded', 'in_delivery', 'delivered'].includes(String(d.status || '').toLowerCase())
+    ) || null;
+  }, [serviceAgreements?.deals]);
+
+  const activeAgreementsCount = useMemo(() => {
+    return (serviceAgreements?.deals || []).filter((d: any) =>
+      ['funded', 'in_delivery', 'delivered', 'pending_funding', 'draft', 'pending'].includes(String(d.status || '').toLowerCase())
+    ).length;
+  }, [serviceAgreements?.deals]);
 
   /**
    * NETWORKS NEED A TOKEN, AND ARE ONLY FETCHED ON BUY/WITHDRAW VIEWS.
@@ -1004,22 +1178,86 @@ export default function App() {
    * selection stays empty and the form says so - reintroducing a literal here
    * would recreate the exact bug this replaces.
    */
+  const ngnNetworkBalances = useMemo(() => {
+    const map = new Map<string, number>();
+    const allWallets = [
+      ...(unifiedBalance?.wallets || []),
+      ...(userWallets || [])
+    ];
+    for (const w of allWallets) {
+      if (!w) continue;
+      const rawChain = String(w.chain || '').toLowerCase();
+      const chainKey = rawChain === 'bnb' ? 'bsc' : rawChain;
+      if (!chainKey) continue;
+      if (Array.isArray(w.balances)) {
+        for (const b of w.balances) {
+          if (!b) continue;
+          if (String(b.asset || '').toLowerCase() === ngnAsset.toLowerCase()) {
+            const parsed = typeof b.amount === 'number' ? b.amount : parseFloat(String(b.amount || '0'));
+            const amt = Number.isFinite(parsed) ? parsed : 0;
+            const current = map.get(chainKey) || 0;
+            map.set(chainKey, Math.max(current, amt));
+          }
+        }
+      }
+    }
+    return map;
+  }, [unifiedBalance, userWallets, ngnAsset]);
+
+  const ngnNetworkOptionsWithBalances = useMemo(() => {
+    const rawOptions = ngnNetworks?.offramp ?? [];
+    return rawOptions.map((opt) => {
+      const chainKey = opt.network.toLowerCase() === 'bnb' ? 'bsc' : opt.network.toLowerCase();
+      const bal = ngnNetworkBalances.get(chainKey) ?? 0;
+      return {
+        ...opt,
+        balance: bal,
+      };
+    });
+  }, [ngnNetworks, ngnNetworkBalances]);
+
+  const selectedNetworkSpendable = useMemo(() => {
+    if (!ngnNetwork) return undefined;
+    const chainKey = ngnNetwork.toLowerCase() === 'bnb' ? 'bsc' : ngnNetwork.toLowerCase();
+    const opt = ngnNetworkOptionsWithBalances.find((o) => o.network.toLowerCase() === chainKey);
+    if (opt && typeof opt.balance === 'number') {
+      return opt.balance;
+    }
+    const bal = ngnNetworkBalances.get(chainKey);
+    if (typeof bal === 'number') {
+      return bal;
+    }
+    if (unifiedBalance) {
+      return 0;
+    }
+    return undefined;
+  }, [ngnNetwork, ngnNetworkOptionsWithBalances, ngnNetworkBalances, unifiedBalance]);
+
   useEffect(() => {
-    const options = ngnNetworks?.offramp ?? [];
+    const options = ngnNetworkOptionsWithBalances;
     if (!options.length) {
       if (ngnNetwork) setNgnNetwork('');
       return;
     }
-    if (options.some((option) => option.network === ngnNetwork)) return;
-    setNgnNetwork(options[0].network);
-  }, [ngnNetworks, ngnNetwork]);
+
+    const current = options.find((option) => option.network === ngnNetwork);
+    const sorted = options.slice().sort((a, b) => (b.balance ?? 0) - (a.balance ?? 0));
+    const bestWithMin = sorted.find((opt) => (opt.balance ?? 0) >= (opt.minimumDepositUsd ?? 0) && (opt.balance ?? 0) > 0);
+    const best = bestWithMin || ((sorted[0]?.balance ?? 0) > 0 ? sorted[0] : options[0]);
+
+    if (!current || !ngnNetworkUserChosen.current) {
+      setNgnNetwork(best.network);
+    }
+  }, [ngnNetworkOptionsWithBalances, ngnNetwork]);
 
 
   // Wallets are fetched separately from loadUserData because they depend on an
-  // authenticated user and must refresh when that user changes.
+  // authenticated user and must refresh when that user changes or opens Receive view.
   useEffect(() => {
-    void loadUserWallets();
-  }, [loadUserWallets]);
+    if (hasUser && user?.id) {
+      void loadUserWallets();
+    }
+  }, [hasUser, user?.id, authToken, view, loadUserWallets]);
 
   // Applied once the server has actually told us who this user is. Keyed on
   // the summary rather than on user.country so it cannot fire against a stale
@@ -1032,15 +1270,24 @@ export default function App() {
   }, [verificationSummaryLoaded, verificationSummary]);
 
   useEffect(() => {
-    const onPopState = () => setView(viewFromPath(window.location.pathname));
+    const onPopState = () => {
+      const nextView = viewFromPath(window.location.pathname);
+      setView(nextView);
+      if (nextView === 'signup') {
+        const path = window.location.pathname.toLowerCase();
+        if (path === '/login' || path === '/signin') setAuthTab('signin');
+        if (path === '/signup') setAuthTab('signup');
+      }
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   useEffect(() => {
     if (view !== 'signup') return;
-    if (window.location.pathname === '/login') setAuthTab('signin');
-    if (window.location.pathname === '/signup') setAuthTab('signup');
+    const path = window.location.pathname.toLowerCase();
+    if (path === '/login' || path === '/signin') setAuthTab('signin');
+    if (path === '/signup') setAuthTab('signup');
   }, [view]);
 
 
@@ -1078,6 +1325,45 @@ export default function App() {
       window.removeEventListener('focus', poll);
     };
   }, [authToken, customer?.id, kycApproved, refreshKycStatus, user?.id, view]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token') || (window.location.pathname.startsWith('/claim') ? params.get('token') : '');
+    if (token) {
+      setClaimToken(token);
+      void (async () => {
+        try {
+          const res = await api<any>(`/api/claims/${encodeURIComponent(token)}`);
+          const data = res?.data ?? res;
+          if (data?.amount) {
+            setClaimInfo(data);
+          }
+        } catch {
+          // Silent fallback
+        }
+      })();
+    }
+  }, [api]);
+
+  const handleRedeemClaim = useCallback(async () => {
+    if (!claimToken || !user?.id) return;
+    setClaiming(true);
+    try {
+      await api<any>(`/api/claims/${encodeURIComponent(claimToken)}/redeem`, {
+        method: 'POST',
+        body: JSON.stringify({ userId: user.id }),
+      });
+      notify(`🎉 Successfully claimed ${claimInfo?.amount ?? 10} ${(claimInfo?.asset ?? 'usdc').toUpperCase()} from ${claimInfo?.senderName ?? 'Sivan'}!`, 'success');
+      setClaimToken('');
+      setClaimInfo(null);
+      await loadUserData();
+      goToView('overview');
+    } catch (err: any) {
+      notify(err.message || 'Could not claim transfer.', 'error');
+    } finally {
+      setClaiming(false);
+    }
+  }, [claimToken, user?.id, claimInfo, api, notify, loadUserData, goToView]);
 
 
   async function handleEmailAuthStart(event: FormEvent<HTMLFormElement>) {
@@ -1497,7 +1783,6 @@ export default function App() {
   async function handleBalanceTransfer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!user?.id) return notify('Create your account first.', 'error');
-    if (!isVerified) return notify('Please complete verification before transferring crypto.', 'error');
     setLoading(true);
     try {
       const data = getForm(event.currentTarget);
@@ -2014,7 +2299,12 @@ export default function App() {
     const value = raw as Record<string, any>;
 
     // Bridge already answers in the shape the card wants.
-    if (value.deposit && value.withdrawal) return value as DepositResponse;
+    if (value.deposit && value.withdrawal) {
+      return {
+        ...(value as DepositResponse),
+        fundingSource: review.fundingSource,
+      };
+    }
 
     // Breet answers flat. Rebuild the contract from the fields it does send,
     // falling back to what the user just confirmed on the review screen -
@@ -2033,6 +2323,7 @@ export default function App() {
         sourceAmount: value.sourceAmount,
         destinationAmount: value.destinationAmount,
         feeAmount: value.feeAmount,
+        fundingSource: review.fundingSource,
         /**
          * THE NAIRA RAIL SENDS AN ARRAY, THE CARD EXPECTS AN OBJECT.
          *
@@ -2054,7 +2345,7 @@ export default function App() {
          * two rails, so the render layer keeps seeing one contract.
          */
         transactionTimeline: normalizeTimeline(value, review),
-      } as WithdrawalRecord,
+      } as unknown as WithdrawalRecord,
       deposit: {
         address: depositAddress,
         // The ASSET being sent, not the naira being received. Getting this
@@ -2062,6 +2353,7 @@ export default function App() {
         currency: value.sourceCurrency ?? review.sourceCurrency,
         chain: value.network ?? review.sourceChain,
       },
+      fundingSource: review.fundingSource,
     };
   }
 
@@ -2132,9 +2424,13 @@ export default function App() {
        * leaving the user staring at an error toast while their withdrawal had
        * actually succeeded.
        */
-      notify(rail === 'breet'
-        ? 'Deposit address created. Send only the selected asset and network - naira lands in your bank once it confirms.'
-        : 'Deposit address created. Send only the selected asset and network.');
+      notify(withdrawalReview.fundingSource === 'balance'
+        ? (rail === 'breet'
+          ? 'Withdrawal processing. Paid directly from your balance - naira lands in your bank once confirmed.'
+          : 'Withdrawal processing. Paid directly from your balance.')
+        : (rail === 'breet'
+          ? 'Deposit address created. Send only the selected asset and network - naira lands in your bank once it confirms.'
+          : 'Deposit address created. Send only the selected asset and network.'));
 
       // Fire and forget: if this fails, the user keeps the success state above.
       void loadUserData().catch(() => undefined);
@@ -2238,20 +2534,13 @@ export default function App() {
     }
   }
 
-  async function handleUnlinkWhatsapp() {
-    setLoading(true);
-    try {
-      if (!window.confirm('Unlink this WhatsApp / Service Agreement identity from your Sivan web account?')) return;
-      await api('/api/users/me/identity/unlink-whatsapp', { method: 'POST', body: '{}' });
-      setPairingCode('');
-      setPairingExpiresAt('');
-      await loadUserData();
-      notify('WhatsApp account unlinked.');
-    } catch (error) {
-      notify((error as Error).message, 'error');
-    } finally {
-      setLoading(false);
-    }
+  function handleUnlinkWhatsapp() {
+    setUnlinkModal({
+      open: true,
+      channel: 'whatsapp',
+      title: 'Unlink WhatsApp Identity',
+      description: 'Are you sure you want to unlink your WhatsApp / Service Agreement identity from your Sivan web account?'
+    });
   }
 
   /**
@@ -2296,15 +2585,32 @@ export default function App() {
     }
   }
 
-  async function handleUnlinkTelegram() {
+  function handleUnlinkTelegram() {
+    setUnlinkModal({
+      open: true,
+      channel: 'telegram',
+      title: 'Unlink Telegram Identity',
+      description: 'Are you sure you want to unlink this Telegram account from your Sivan web account?'
+    });
+  }
+
+  async function executeUnlink() {
+    const channel = unlinkModal.channel;
+    setUnlinkModal((m) => ({ ...m, open: false }));
     setLoading(true);
     try {
-      if (!window.confirm('Unlink this Telegram account from your Sivan web account?')) return;
-      await api('/api/users/me/identity/unlink-telegram', { method: 'POST', body: '{}' });
-      setTelegramPairingCode('');
-      setTelegramPairingExpiresAt('');
+      if (channel === 'whatsapp') {
+        await api('/api/users/me/identity/unlink-whatsapp', { method: 'POST', body: '{}' });
+        setPairingCode('');
+        setPairingExpiresAt('');
+        notify('WhatsApp account unlinked.');
+      } else {
+        await api('/api/users/me/identity/unlink-telegram', { method: 'POST', body: '{}' });
+        setTelegramPairingCode('');
+        setTelegramPairingExpiresAt('');
+        notify('Telegram account unlinked.');
+      }
       await loadUserData();
-      notify('Telegram account unlinked.');
     } catch (error) {
       notify((error as Error).message, 'error');
     } finally {
@@ -2363,6 +2669,10 @@ export default function App() {
     }
   }
 
+  if (window.location.pathname === '/pin-pad' || window.location.pathname.startsWith('/pin-pad')) {
+    return <PinPadModal />;
+  }
+
   if (view === 'landing') {
     return <LandingPage
       isLiveEnv={isLiveEnv}
@@ -2392,6 +2702,11 @@ export default function App() {
           {hasUser ? views.map((item) => (
             <button key={item.key} className={`nav-item ${view === item.key ? 'active' : ''}`} onClick={() => goToView(item.key)}>
               <span>{item.icon}</span> {item.label}
+              {item.key === 'agreements' && activeAgreementsCount > 0 && (
+                <span className="nav-badge" style={{ marginLeft: 'auto', background: 'rgba(234, 179, 8, 0.15)', color: '#eab308', border: '1px solid rgba(234, 179, 8, 0.3)', borderRadius: '999px', fontSize: '11px', fontWeight: 600, padding: '1px 7px' }}>
+                  {activeAgreementsCount}
+                </span>
+              )}
             </button>
           )) : publicViews.map((item) => {
             const active = item.key === 'landing'
@@ -2442,6 +2757,38 @@ export default function App() {
 
         {(systemStatus.activeIncidents?.length || systemStatus.mode !== 'active') && <IncidentBanner systemStatus={systemStatus} />}
 
+        {claimInfo && (
+          <div className="incident-banner warning" style={{ background: 'linear-gradient(135deg, #10b981, #059669)', color: '#fff', padding: '16px 20px', borderRadius: '12px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '24px' }}>🎁</span>
+              <div>
+                <strong style={{ fontSize: '16px', display: 'block', color: '#fff' }}>{claimInfo.senderName} sent you {claimInfo.amount.toFixed(2)} {claimInfo.asset.toUpperCase()}!</strong>
+                <span style={{ fontSize: '13px', opacity: 0.9 }}>{user?.id ? 'Funds are ready to deposit into your Sivan balance.' : 'Sign in or create an account to claim your funds.'}</span>
+              </div>
+            </div>
+            {user?.id ? (
+              <button
+                type="button"
+                className="primary-btn"
+                style={{ background: '#fff', color: '#059669', fontWeight: 600, border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer' }}
+                disabled={claiming}
+                onClick={handleRedeemClaim}
+              >
+                {claiming ? 'Claiming…' : `Claim ${claimInfo.amount.toFixed(2)} ${claimInfo.asset.toUpperCase()}`}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary-btn"
+                style={{ background: '#fff', color: '#059669', fontWeight: 600, border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer' }}
+                onClick={() => { setAuthTab('signup'); setView('signup'); }}
+              >
+                Create Free Account to Claim
+              </button>
+            )}
+          </div>
+        )}
+
         {view === 'emailRecovery' && <EmailRecoveryConfirmView api={api} loading={loading} onConfirmed={handleEmailRecoveryConfirmed} onSignIn={handleEmailRecoverySignIn} onSupport={handleEmailRecoverySupport} />}
 
         {view === 'overview' && (
@@ -2474,6 +2821,52 @@ export default function App() {
             {bridgeNeedsAttention
               ? <KycOutcomeNotice customer={customer!} hasBank={hasBank} onContinue={() => goToView(isVerified && hasBank ? 'transfer' : nextStepView)} onSupport={() => goToView('help')} onRefresh={refreshKyc} />
               : <DashboardAccountNotice summary={verificationSummary} summaryLoaded={verificationSummaryLoaded} onVerify={() => openVerification()} onAddBank={() => goToView('banks')} onSell={() => goToView('withdraw')} displayCurrency={displayCurrency} displayFx={displayFx} />}
+
+            {activeAgreementDeal && (
+              <div
+                style={{
+                  background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.95))',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                  borderRadius: '12px',
+                  padding: '16px 20px',
+                  marginBottom: '16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+                  gap: '16px',
+                  flexWrap: 'wrap'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div style={{ fontSize: '24px', background: 'rgba(56, 189, 248, 0.15)', padding: '8px 12px', borderRadius: '10px' }}>
+                    🔒
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <strong style={{ fontSize: '15px', color: '#F8FAFC' }}>
+                        {activeAgreementDeal.role === 'seller' ? 'Active Service Agreement (Funded in Vault)' : 'Service Agreement Active in Vault'}
+                      </strong>
+                      <span style={{ fontSize: '11px', background: '#0284C7', color: '#FFF', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                        {activeAgreementDeal.amount} {activeAgreementDeal.currency || 'USDC'}
+                      </span>
+                    </div>
+                    <small style={{ color: '#94A3B8', fontSize: '13px' }}>
+                      {activeAgreementDeal.role === 'seller'
+                        ? `Client locked ${activeAgreementDeal.amount} USDC into vault for "${activeAgreementDeal.title}". Deliverable active.`
+                        : `${activeAgreementDeal.title} is locked on Solana Devnet vault. Milestone delivery in progress.`}
+                    </small>
+                  </div>
+                </div>
+                <button
+                  className="primary-btn"
+                  style={{ padding: '8px 18px', fontSize: '13px', whiteSpace: 'nowrap' }}
+                  onClick={() => goToView('history')}
+                >
+                  View in Transactions Ledger →
+                </button>
+              </div>
+            )}
 
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Withdraw</strong><small>Cash out to your bank account</small></div><em>→</em></button>
@@ -2588,8 +2981,8 @@ export default function App() {
               <h3>{pendingEmail ? 'Check your email' : authTab === 'signup' ? 'Create your Sivan account' : 'Welcome back to Sivan'}</h3>
               <p className="muted auth-lead">{pendingEmail ? 'Enter the 6-digit code we sent. This keeps your account secure without passwords.' : authTab === 'signup' ? 'Start with secure email access, then complete verification when you are ready to move money.' : 'Sign in with a one-time code. No password to remember, no seed phrase ever requested.'}</p>
               <div className="auth-tabs">
-                <button type="button" className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); }}>Create account</button>
-                <button type="button" className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); }}>Sign in</button>
+                <button type="button" className={authTab === 'signup' ? 'active' : ''} onClick={() => { setAuthTab('signup'); resetPendingEmail(); if (window.location.pathname !== '/signup') window.history.pushState({}, '', '/signup'); }}>Create account</button>
+                <button type="button" className={authTab === 'signin' ? 'active' : ''} onClick={() => { setAuthTab('signin'); resetPendingEmail(); if (window.location.pathname !== '/signin') window.history.pushState({}, '', '/signin'); }}>Sign in</button>
               </div>
               {!pendingEmail ? (
                 <form className="form auth-form-premium" onSubmit={handleEmailAuthStart}>
@@ -2677,11 +3070,15 @@ export default function App() {
              * enabled and what Breet can settle, so there is nothing to
              * filter here - filtering again is how a second opinion appears.
              */
-            ngnNetworkOptions={ngnNetworks?.offramp ?? []}
-            onNgnNetworkChange={setNgnNetwork}
+            ngnNetworkOptions={ngnNetworkOptionsWithBalances}
+            onNgnNetworkChange={(net) => {
+              ngnNetworkUserChosen.current = true;
+              setNgnNetwork(net);
+            }}
             ngnAsset={ngnAsset}
             onNgnAssetChange={(asset) => {
               ngnAssetUserChosen.current = true;
+              ngnNetworkUserChosen.current = false;
               setNgnAsset(asset);
             }}
             withdrawAssetOptions={withdrawAssetOptions}
@@ -2693,7 +3090,7 @@ export default function App() {
              * could not be reached. The form distinguishes all three states,
              * because "we could not check" is not "you have nothing".
              */
-            ngnSpendable={selectedNgnSpendable}
+            ngnSpendable={selectedNetworkSpendable !== undefined ? selectedNetworkSpendable : selectedNgnSpendable}
             ngnWindowDays={verificationSummary?.windowDays}
             /* From GET /api/ngn/networks, which this screen already awaits.
                Undefined until it answers, which reads as OFF - the withdraw
@@ -2704,14 +3101,33 @@ export default function App() {
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
             ngnAvailable={(ngnNetworks?.offramp.length ?? 0) > 0}
+            onClose={() => {
+              setDepositResult(null);
+              goToView('overview');
+            }}
+            onReset={() => {
+              setDepositResult(null);
+              setWithdrawalReview(null);
+            }}
           />
         )}
 
-        {view === 'receive' && <ReceiveView wallets={userWallets} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={loadUserWallets} />}
+        {view === 'receive' && <ReceiveView wallets={userWallets} unifiedBalance={unifiedBalance} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} balanceTransfers={balanceTransfers} supplierPayments={supplierPayments} virtualAccountTransactions={virtualAccountTransactions} walletDeposits={walletDeposits} serviceAgreements={serviceAgreements} networkMode={userPreferences?.networkMode} initialSelectedId={selectedActivityId} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onRefresh={loadUserData} />}
+
+        {view === 'agreements' && (
+          <ServiceAgreementsView
+            user={user}
+            serviceAgreements={serviceAgreements}
+            api={api}
+            onRefresh={loadUserData}
+            onGoToTransactions={() => goToView('history')}
+            onGoToSettings={() => { setSettingsInitialTab('profile'); goToView('settings'); }}
+          />
+        )}
 
         {view === 'settings' && <SettingsView api={api} user={user} isVerified={isVerified} onUserUpdated={(updated) => { setUser(updated); localStorage.setItem('sivan.user', JSON.stringify(updated)); }} preferences={userPreferences} initialTab={settingsInitialTab} twoFactorStatus={twoFactorStatus} onTwoFactorStatusChanged={setTwoFactorStatus} identityStatus={identityStatus} pairingCode={pairingCode} pairingExpiresAt={pairingExpiresAt} timeNow={timeNow} onStartWhatsappLink={handleStartWhatsappLink} onCancelWhatsappLink={handleCancelWhatsappLink} onUnlinkWhatsapp={handleUnlinkWhatsapp} telegramPairingCode={telegramPairingCode} telegramPairingExpiresAt={telegramPairingExpiresAt} onStartTelegramLink={handleStartTelegramLink} onCancelTelegramLink={handleCancelTelegramLink} onUnlinkTelegram={handleUnlinkTelegram} onRefreshIdentity={loadUserData} onSavePreferences={handleSaveUserPreferences} onUpdatePreferences={handleUpdateUserPreferences} loading={loading} onLogout={() => logout('Signed out successfully.')} />}
         {view === 'help' && <SupportView hasUser={hasUser} user={user} tickets={supportTickets} withdrawals={withdrawals} onrampOrders={onrampOrders} accounts={accounts} customer={customer} api={api} onCreateTicket={handleCreateSupportTicket} onTicketsChanged={setSupportTickets} loading={loading} />}
@@ -2737,6 +3153,17 @@ export default function App() {
         requestedPath={requestedVerificationPath}
         dateOfBirth={user?.dateOfBirth}
         onDateOfBirthChange={handleDateOfBirthChange}
+      />
+
+      <ConfirmModal
+        open={unlinkModal.open}
+        title={unlinkModal.title}
+        description={unlinkModal.description}
+        confirmLabel="Unlink Identity"
+        isDestructive
+        loading={loading}
+        onConfirm={executeUnlink}
+        onCancel={() => setUnlinkModal((m) => ({ ...m, open: false }))}
       />
     </div>
   );

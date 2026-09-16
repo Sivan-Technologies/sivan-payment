@@ -39,7 +39,7 @@ function check(name: string, ok: boolean, detail = '') {
   else { fail += 1; console.log(`  FAIL ${name}${detail ? ` -> ${detail}` : ''}`); }
 }
 
-const LAUNCH = ['solana', 'base', 'ethereum'] as const;
+const LAUNCH = ['solana', 'base', 'bsc'] as const;
 
 console.log('\nALL THREE LAUNCH NETWORKS SHIP ENABLED');
 {
@@ -66,12 +66,14 @@ console.log('\nA DEAD NETWORK IS NOT ENABLED BY DEFAULT');
     !canDeposit('avalanche_c_chain' as any, 'usdt') &&
     !canWithdraw('avalanche_c_chain' as any, 'usdt'));
 
-  const enabledDefaults = DEFAULT_NETWORK_CONTROLS.filter((c) => c.enabled).map((c) => c.network);
-  check('every enabled default can do at least one direction',
-    enabledDefaults.every((n) =>
+  const breetEnabledDefaults = DEFAULT_NETWORK_CONTROLS
+    .filter((c) => c.enabled && (c.network === 'solana' || c.network === 'base' || c.network === 'bsc'))
+    .map((c) => c.network);
+  check('every Breet enabled default can do at least one direction',
+    breetEnabledDefaults.every((n) =>
       canDeposit(n as any, 'usdc') || canWithdraw(n as any, 'usdc') ||
       canDeposit(n as any, 'usdt') || canWithdraw(n as any, 'usdt')),
-    enabledDefaults.join(','));
+    breetEnabledDefaults.join(','));
 }
 
 console.log('\nETHEREUM IS A FULL CITIZEN, BOTH DIRECTIONS BOTH ASSETS');
@@ -94,34 +96,37 @@ console.log('\nSOLANA IS THE ONLY FULLY SYMMETRIC NETWORK');
   }
 }
 
-console.log('\nBASE IS OFF-RAMP ONLY, AND HAS NO USDT');
+console.log('\nBASE AND BSC EXPANDED CAPABILITIES');
 {
-  // The asymmetry that a shared network list would hide.
   check('base usdc off-ramps', canDeposit('base' as any, 'usdc'));
-  check('base usdc CANNOT on-ramp', !canWithdraw('base' as any, 'usdc'),
-    'Breet publishes no Base withdrawal');
+  check('base usdc can on-ramp', canWithdraw('base' as any, 'usdc'));
   check('base usdt does not exist in either direction',
     !canDeposit('base' as any, 'usdt') && !canWithdraw('base' as any, 'usdt'));
-  check('base usdt has no mainnet asset id',
-    breetDepositAssetId('base' as any, 'usdt', 'production') === undefined);
+
+  check('bsc usdc off-ramps', canDeposit('bsc' as any, 'usdc'));
+  check('bsc usdc on-ramps', canWithdraw('bsc' as any, 'usdc'));
+  check('bsc usdt off-ramps', canDeposit('bsc' as any, 'usdt'));
+  check('bsc usdt on-ramps', canWithdraw('bsc' as any, 'usdt'));
+  check('bsc usdc testnet id is configured', breetDepositAssetId('bsc' as any, 'usdc', 'development') === 'USDC_BSC_TEST');
+  check('bsc usdt testnet id is configured', breetDepositAssetId('bsc' as any, 'usdt', 'development') === 'USDT_BSC_TEST');
 }
 
 console.log('\nTHE TWO DIRECTION LISTS ACTUALLY DIFFER');
 {
-  const enabled = [...LAUNCH] as any[];
+  const enabled = ['solana', 'base', 'bsc', 'arbitrum'] as any[];
 
   const offUsdc = usableForOfframp(enabled, 'usdc');
   const onUsdc = usableForOnramp(enabled, 'usdc');
 
-  check('usdc off-ramp offers all three', offUsdc.length === 3, offUsdc.join(','));
-  check('usdc on-ramp drops base', !onUsdc.includes('base' as any), onUsdc.join(','));
-  check('usdc on-ramp keeps solana and ethereum',
-    onUsdc.includes('solana' as any) && onUsdc.includes('ethereum' as any), onUsdc.join(','));
+  check('usdc off-ramp offers all four', offUsdc.length === 4, offUsdc.join(','));
+  check('usdc on-ramp drops arbitrum', !onUsdc.includes('arbitrum' as any), onUsdc.join(','));
+  check('usdc on-ramp keeps solana, base, and bsc',
+    onUsdc.includes('solana' as any) && onUsdc.includes('base' as any) && onUsdc.includes('bsc' as any), onUsdc.join(','));
   check('the lists are genuinely different', offUsdc.length !== onUsdc.length);
 
   const offUsdt = usableForOfframp(enabled, 'usdt');
   check('usdt off-ramp excludes base', !offUsdt.includes('base' as any), offUsdt.join(','));
-  check('usdt off-ramp keeps solana and ethereum', offUsdt.length === 2, offUsdt.join(','));
+  check('usdt off-ramp keeps solana and bsc', offUsdt.includes('solana' as any) && offUsdt.includes('bsc' as any), offUsdt.join(','));
 }
 
 console.log('\nDISABLING A NETWORK REMOVES IT WITHOUT A DEPLOY');
@@ -148,8 +153,8 @@ console.log('\nMINIMUMS ARE PER ASSET, NOT GLOBAL');
   check('ethereum usdc mainnet minimum is 15',
     breetMinimumDepositUsd('ethereum' as any, 'usdc', 'production') === 15,
     String(breetMinimumDepositUsd('ethereum' as any, 'usdc', 'production')));
-  check('solana usdt mainnet minimum is 15',
-    breetMinimumDepositUsd('solana' as any, 'usdt', 'production') === 15);
+  check('solana usdt mainnet minimum is 15.7',
+    breetMinimumDepositUsd('solana' as any, 'usdt', 'production') === 15.7);
   check('tron usdt is higher at 20',
     breetMinimumDepositUsd('tron' as any, 'usdt', 'production') === 20,
     String(breetMinimumDepositUsd('tron' as any, 'usdt', 'production')));

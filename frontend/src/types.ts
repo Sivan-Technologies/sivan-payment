@@ -1,6 +1,6 @@
 import type { PayoutCurrency } from './rails';
 
-export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'receive' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery';
+export type ViewKey = 'landing' | 'overview' | 'withdraw' | 'buy' | 'receive' | 'transfer' | 'history' | 'banks' | 'virtualAccounts' | 'kyc' | 'settings' | 'help' | 'signup' | 'emailRecovery' | 'agreements';
 
 export interface UserRecord {
   id: string;
@@ -69,19 +69,34 @@ export interface IdentityChannelStatus {
 
 export interface ServiceAgreementDeal {
   escrowId: string;
+  id?: string;
   title: string;
+  description?: string;
   amount: string;
+  amountUsdc?: number;
   currency: string;
+  network?: string;
   role: 'buyer' | 'seller' | 'actor';
   status: string;
   statusLabel?: string;
   buyerWhatsapp?: string;
   sellerWhatsapp?: string;
+  buyerUserId?: string;
+  sellerUserId?: string;
   counterparty?: string;
+  countdownLabel?: string;
+  deliveryDueAt?: string | null;
+  fundedAt?: string | null;
+  deliveredAt?: string | null;
+  releasedAt?: string | null;
+  fundingTxHash?: string | null;
+  releaseTxHash?: string | null;
+  vaultAddress?: string | null;
   createdAt: string;
   updatedAt?: string;
   terms?: string;
   notes?: string;
+  channel?: 'web' | 'telegram' | 'webmcp';
 }
 
 export interface ServiceAgreementsSummary {
@@ -430,6 +445,7 @@ export interface DepositResponse {
     chain: string;
     currency: string;
   };
+  fundingSource?: 'balance' | 'external';
 }
 
 
@@ -472,6 +488,7 @@ export interface AssetControl {
 export interface NetworkControl {
   network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb' | string;
   enabled: boolean;
+  isDefault?: boolean;
   label: string;
   sortOrder: number;
   updatedBy?: string;
@@ -566,6 +583,7 @@ export interface OfframpControls {
   virtualAccounts: VirtualAccountControl[];
   sourceAssets: AssetControl[];
   sourceNetworks: NetworkControl[];
+  defaultNetwork?: string;
   /**
    * Whether cross-border supplier payouts are open.
    *
@@ -667,6 +685,9 @@ export interface UserPreferencesRecord {
   marketingEmails: boolean;
   securityAlerts: boolean;
   emailConfirmationsForHighValue: boolean;
+  telegramNotificationsEnabled?: boolean;
+  whatsappNotificationsEnabled?: boolean;
+  multiChainAlertsEnabled?: boolean;
   /**
    * Which network the SERVER signs against. Read-only, and not a preference -
    * it is returned by GET/PUT preferences and must never be sent back.
@@ -885,4 +906,38 @@ export interface SupplierFeeQuoteResponse {
   breakdown: Array<{ fromUsd: number; toUsd: number | null; percent: number; amountInBand: string; feeFromBand: string }>;
   explanation: string;
   windowDays: number;
+}
+
+export type ServiceAgreementStatus =
+  | 'pending_payment'
+  | 'funded'
+  | 'in_delivery'
+  | 'delivered'
+  | 'released'
+  | 'cancelled'
+  | 'disputed';
+
+export interface ServiceAgreement {
+  id: string;
+  buyerUserId: string;
+  sellerUserId: string;
+  title: string;
+  description: string;
+  amountUsdc: number;
+  currency: string;
+  network: string;
+  status: ServiceAgreementStatus;
+  /** Delivery window extracted from natural language at creation time. */
+  deadlineDays: number;
+  /** ISO timestamp of delivery deadline. Null until agreement is funded. */
+  deliveryDueAt: string | null;
+  /** Live countdown label for display in chat and dashboard cards. */
+  countdownLabel: string;
+  reminder6hSent: boolean;
+  overdueNoticeSent: boolean;
+  fundedAt: string | null;
+  deliveredAt: string | null;
+  releasedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
