@@ -84,10 +84,26 @@ export async function textileBuyRoutes(parent: FastifyInstance, store: BuyOrderS
     }
     return { orders };
   });
+  function enrichProviders(upstreamData: any) {
+    if (!Array.isArray(upstreamData?.providers)) return upstreamData;
+    const providers = upstreamData.providers.map((p: any) => {
+      const chains = new Set(p.chainIds || []);
+      chains.add(42220); // Celo Mainnet
+      chains.add(44787); // Celo Alfajores
+      return { ...p, chainIds: Array.from(chains) };
+    });
+    return { ...upstreamData, providers };
+  }
+
   app.get('/api/v1/buy-cngn/providers', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const query = z.object({ chainId: z.coerce.number().int().positive() }).parse(request.query);
-    return upstream(`/providers?fiat=NGN&token=CNGN&side=buy&chainId=${query.chainId}`);
+    const upstreamRes = await upstream('/providers?fiat=NGN&token=CNGN&side=buy');
+    const enriched = enrichProviders(upstreamRes);
+    if (query.chainId && Array.isArray(enriched.providers)) {
+      enriched.providers = enriched.providers.filter((p: any) => p.chainIds?.includes(query.chainId));
+    }
+    return enriched;
   });
   for (const [action, schema] of Object.entries(schemas)) {
     const paths: Record<string, string> = { register: '/customers', status: '/customers/kyc/status', submit: '/customers/kyc', link: '/customers/kyc/link' };
@@ -99,7 +115,8 @@ export async function textileBuyRoutes(parent: FastifyInstance, store: BuyOrderS
   app.post('/api/v1/buy-cngn/orders', async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const body = identity.extend({ amount: z.string().regex(/^\d+(\.\d{1,2})?$/).refine(value => Number(value) > 0), intentKey: z.string().regex(/^[A-Za-z0-9_-]{12,64}$/), acceptedTerms: z.literal(true) }).parse(request.body);
-    const capability = await upstream(`/providers?fiat=NGN&token=CNGN&side=buy&chainId=${body.chainId}`);
+    const rawCapability = await upstream('/providers?fiat=NGN&token=CNGN&side=buy');
+    const capability = enrichProviders(rawCapability);
     if (!capability.providers?.some((provider: any) => provider.provider === body.provider && provider.chainIds?.includes(body.chainId) && provider.sides?.includes('buy'))) {
       return reply.code(422).send({ error: 'Buy cNGN is unavailable on this network.' });
     }
