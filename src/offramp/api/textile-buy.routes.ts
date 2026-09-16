@@ -53,13 +53,13 @@ export async function textileBuyRoutes(parent: FastifyInstance, store: BuyOrderS
     return reply.code(status).send({ error: { code: 'buy_request_failed', message: status < 500 && error instanceof Error ? error.message : 'The purchase could not be checked or saved. Reopen Buy cNGN to recover the same attempt before retrying.' } });
   });
   async function upstream(path: string, body?: unknown, claim?: string) {
-    const configured = process.env.TEXTILE_CREDIT_API_URL;
-    if (!configured) throw Object.assign(new Error('Textile API is not configured'), { statusCode: 503 });
-    const base = configured.replace(/\/+$/, '').replace(/\/ramp$/, '');
-    const url = new URL(base);
+    const configured = process.env.TEXTILE_CREDIT_API_URL || 'https://api.textilecredit.com/v2';
+    const rawBase = configured.replace(/\/ramp\/?$/, '').replace(/\/v2\/?$/, '').replace(/\/+$/, '');
+    const rampBase = `${rawBase}/v2/ramp`;
+    const url = new URL(rampBase);
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw Object.assign(new Error('Invalid Textile API configuration'), { statusCode: 503 });
     let response: Response;
-    try { response = await fetch(`${base}/ramp${path}`, {
+    try { response = await fetch(`${rampBase}${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers: { 'Content-Type': 'application/json', ...(claim ? { 'X-Ramp-Claim': claim } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),

@@ -394,8 +394,9 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
       // Production keys:       Celo Mainnet (chainId 42220) - full token set
       // -----------------------------------------------------------------------
       const textileKey = process.env.TEXTILE_CREDIT_API_KEY;
-      const textileBaseUrl = (process.env.TEXTILE_CREDIT_API_URL || 'https://api.textilecredit.com/v2')
-        .replace(/\/ramp\/?$/, '').replace(/\/$/, '');
+      const configuredTextile = process.env.TEXTILE_CREDIT_API_URL || 'https://api.textilecredit.com/v2';
+      const rawTextileBase = configuredTextile.replace(/\/ramp\/?$/, '').replace(/\/v2\/?$/, '').replace(/\/+$/, '');
+      const textileBaseUrl = `${rawTextileBase}/v2`;
 
       const isTestKey = textileKey?.startsWith('tx_test_') ?? false;
 
@@ -450,19 +451,26 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
               sellAmount: sellAmountAtomic,
               taker:      getSettlementWallet(),
             }),
-            signal: AbortSignal.timeout(4000),
+            signal: AbortSignal.timeout(6000),
           }).catch(() => null);
 
           if (rfqRes && rfqRes.ok) {
             const data: any = await rfqRes.json();
             const preview = data?.data || data;
 
-            if (preview?.status === 'preview' && preview?.rateRay) {
-              // rateRay is RAY-scaled (1e27): gives buyToken atomic per sellToken atomic
-              const rawRateAtomic = Number(preview.rateRay) / RAY_DENOM;
-              // Adjust for decimal differences between tokens
-              const decimalAdj = Math.pow(10, buyInfo.decimals - sellInfo.decimals);
-              const liveRate = rawRateAtomic * decimalAdj;
+            if (preview?.status === 'preview') {
+              let liveRate = 0;
+              if (preview.buyAmount) {
+                const buyAmountHuman = Number(preview.buyAmount) / Math.pow(10, buyInfo.decimals);
+                if (buyAmountHuman > 0 && amount > 0) {
+                  liveRate = buyAmountHuman / amount;
+                }
+              }
+              if (!liveRate && preview.rateRay) {
+                const rawRateAtomic = Number(preview.rateRay) / RAY_DENOM;
+                const decimalAdj = Math.pow(10, buyInfo.decimals - sellInfo.decimals);
+                liveRate = rawRateAtomic * decimalAdj;
+              }
 
               if (liveRate > 0) {
                 rate = liveRate;
