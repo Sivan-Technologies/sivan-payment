@@ -427,15 +427,56 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
       const sellInfo = tokenMap[fromKey];
       const buyInfo  = tokenMap[toKey];
 
-      const RAY_DENOM = 1e27;
+      const isUsdStable = (tok: string) => tok === 'USDT' || tok === 'USDC' || tok === 'CUSD';
 
-      let rate = 1485.50;   // calibrated NGN/USD benchmark fallback
+      // 1:1 USD-to-USD Direct Parity (USDT <-> USDC <-> cUSD)
+      if (isUsdStable(fromKey) && isUsdStable(toKey)) {
+        return reply.send({
+          status: 'ok',
+          fromToken,
+          toToken,
+          inputAmount: amount,
+          outputAmount: amount,
+          rate: 1.0,
+          inverseRate: 1.0,
+          protocolFee: 0,
+          textileFee: 0,
+          minimumReceived: amount,
+          source: '1:1 Direct Parity',
+          chainId,
+          depositAddress: getSettlementWallet(),
+        });
+      }
+
+      // Determine corridor token addresses for Textile RFQ
+      // On Celo Mainnet, Textile's active market maker liquidity pool is strictly USDT <-> cNGN.
+      // We route USDC and cUSD via USDT (1:1 USD parity) so users get authentic live DEX market rates.
+      let rfqSellAddress = sellInfo?.address;
+      let rfqSellDecimals = sellInfo?.decimals ?? 6;
+      let rfqBuyAddress = buyInfo?.address;
+      let rfqBuyDecimals = buyInfo?.decimals ?? 6;
+
+      if (!isTestKey) {
+        if (isUsdStable(fromKey) && toKey === 'CNGN') {
+          rfqSellAddress = CELO_TOKENS.USDT.address;
+          rfqSellDecimals = CELO_TOKENS.USDT.decimals; // 6
+          rfqBuyAddress = CELO_TOKENS.CNGN.address;
+          rfqBuyDecimals = CELO_TOKENS.CNGN.decimals; // 6
+        } else if (fromKey === 'CNGN' && isUsdStable(toKey)) {
+          rfqSellAddress = CELO_TOKENS.CNGN.address;
+          rfqSellDecimals = CELO_TOKENS.CNGN.decimals; // 6
+          rfqBuyAddress = CELO_TOKENS.USDT.address;
+          rfqBuyDecimals = CELO_TOKENS.USDT.decimals; // 6
+        }
+      }
+
+      let rawOutput: number | null = null;
       let source = 'Textile Credit RFQ (calibrated)';
       let textileFeeAmount = 0;
 
-      if (textileKey && sellInfo && buyInfo) {
+      if (textileKey && rfqSellAddress && rfqBuyAddress) {
         try {
-          const sellAmountAtomic = String(Math.round(amount * Math.pow(10, sellInfo.decimals)));
+          const sellAmountAtomic = String(Math.round(amount * Math.pow(10, rfqSellDecimals)));
 
           const rfqRes = await fetch(`${textileBaseUrl}/rfq/preview`, {
             method: 'POST',
@@ -446,8 +487,8 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
             },
             body: JSON.stringify({
               chainId,
-              sellToken:  sellInfo.address,
-              buyToken:   buyInfo.address,
+              sellToken:  rfqSellAddress,
+              buyToken:   rfqBuyAddress,
               sellAmount: sellAmountAtomic,
               taker:      getSettlementWallet(),
             }),
@@ -458,25 +499,13 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
             const data: any = await rfqRes.json();
             const preview = data?.data || data;
 
-            if (preview?.status === 'preview') {
-              let liveRate = 0;
-              if (preview.buyAmount) {
-                const buyAmountHuman = Number(preview.buyAmount) / Math.pow(10, buyInfo.decimals);
-                if (buyAmountHuman > 0 && amount > 0) {
-                  liveRate = buyAmountHuman / amount;
-                }
-              }
-              if (!liveRate && preview.rateRay) {
-                const rawRateAtomic = Number(preview.rateRay) / RAY_DENOM;
-                const decimalAdj = Math.pow(10, buyInfo.decimals - sellInfo.decimals);
-                liveRate = rawRateAtomic * decimalAdj;
-              }
-
-              if (liveRate > 0) {
-                rate = liveRate;
+            if (preview?.status === 'preview' && preview.buyAmount) {
+              const buyAmountHuman = Number(preview.buyAmount) / Math.pow(10, rfqBuyDecimals);
+              if (buyAmountHuman > 0) {
+                rawOutput = buyAmountHuman;
                 source = 'Textile Credit RFQ (Live Preview)';
                 if (preview.feeAmount) {
-                  textileFeeAmount = Number(preview.feeAmount) / Math.pow(10, buyInfo.decimals);
+                  textileFeeAmount = Number(preview.feeAmount) / Math.pow(10, rfqBuyDecimals);
                 }
               }
             }
@@ -486,23 +515,21 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         }
       }
 
-      const isFromCngn = fromKey === 'CNGN';
-      const isToUsd = toKey === 'USDC' || toKey === 'USDT' || toKey === 'CUSD';
-
-      // Direction-aware output calculation
-      // cNGN → stablecoin: rate is NGN/USD, so output = amount / rate
-      // stablecoin → cNGN: rate is NGN/USD, so output = amount * rate
-      let rawOutput: number;
-      if (isFromCngn && isToUsd) {
-        rawOutput = amount / rate;
-      } else {
-        rawOutput = amount * rate;
+      // If Textile RFQ unavailable, calculate benchmark fallback
+      if (rawOutput === null) {
+        const calibratedBenchmarkRate = 1485.50; // benchmark NGN/USD
+        if (fromKey === 'CNGN' && isUsdStable(toKey)) {
+          rawOutput = amount / calibratedBenchmarkRate;
+        } else {
+          rawOutput = amount * calibratedBenchmarkRate;
+        }
+        source = 'Textile Credit RFQ (calibrated)';
       }
 
       // 0.3% Sivan protocol liquidity fee on output
       const sivanFee = rawOutput * 0.003;
       const outputAmount = Math.max(0, rawOutput - sivanFee - textileFeeAmount);
-      const effectiveRate = amount > 0 ? outputAmount / amount : rate;
+      const effectiveRate = amount > 0 ? outputAmount / amount : (rawOutput / (amount || 1));
 
       return reply.send({
         status: 'ok',
