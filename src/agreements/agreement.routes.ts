@@ -6,6 +6,7 @@ import {
   markDelivered,
   releaseAgreement,
   cancelAgreement,
+  extendAgreementDeadline,
   getAgreement,
   getCountdownLabel,
 } from './agreement.service.js';
@@ -160,4 +161,20 @@ export async function agreementRoutes(app: FastifyInstance) {
       countdownLabel: getCountdownLabel(agreement),
     });
   });
+
+  /**
+   * POST /api/agreements/:id/extend
+   * Extend an agreement's delivery deadline by additional hours.
+   */
+  app.post<{ Params: { id: string }; Body?: { additionalHours?: number } }>(
+    '/api/agreements/:id/extend',
+    async (req, reply) => {
+      const additionalHours = req.body?.additionalHours || 24;
+      const agreement = await extendAgreementDeadline(req.params.id, additionalHours);
+      return reply.code(200).send({
+        ...agreement,
+        countdownLabel: getCountdownLabel(agreement),
+      });
+    }
+  );
 }

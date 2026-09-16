@@ -487,6 +487,42 @@ export async function cancelAgreement(agreementId: string): Promise<ServiceAgree
 }
 
 /**
+ * Extend an agreement's delivery deadline by additional hours.
+ */
+export async function extendAgreementDeadline(
+  agreementId: string,
+  additionalHours: number
+): Promise<ServiceAgreementRecord> {
+  const existing = await db.findServiceAgreementById(agreementId);
+  if (!existing) throw notFound(`Service agreement ${agreementId}`);
+
+  const terminalStatuses: ServiceAgreementStatus[] = ['released', 'cancelled'];
+  if (terminalStatuses.includes(existing.status)) {
+    throw badRequest(`Agreement ${agreementId} is ${existing.status}; cannot extend deadline`);
+  }
+
+  const currentDueMs = existing.deliveryDueAt ? new Date(existing.deliveryDueAt).getTime() : Date.now();
+  const baseMs = Math.max(Date.now(), currentDueMs);
+  const newDueMs = baseMs + Math.max(1, additionalHours) * 60 * 60 * 1000;
+  const newDueIso = new Date(newDueMs).toISOString();
+
+  const additionalDays = Math.max(0.5, Math.round((additionalHours / 24) * 10) / 10);
+  const updatedDeadlineDays = Math.max(1, Math.round(existing.deadlineDays + additionalDays));
+
+  const updated: ServiceAgreementRecord = {
+    ...existing,
+    deadlineDays: updatedDeadlineDays,
+    deliveryDueAt: newDueIso,
+    overdueNoticeSent: false,
+    reminder6hSent: false,
+    updatedAt: nowIso(),
+  };
+
+  await db.updateServiceAgreement(updated);
+  return updated;
+}
+
+/**
  * Get a single agreement by id. Returns null if not found.
  */
 export async function getAgreement(agreementId: string): Promise<ServiceAgreementRecord | null> {
