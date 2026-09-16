@@ -25,11 +25,11 @@ interface CashoutExecuteBody {
   senderAddress?: string;
 }
 
-function getSettlementWallet(): string {
-  const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || process.env.SIVAN_CELO_AGENT_ADDRESS;
-  if (!addr) {
-    throw new Error('TEXTILE_CELO_DEPOSIT_ADDRESS or SIVAN_CELO_AGENT_ADDRESS environment variable must be configured');
-  }
+// Canonical Textile Swap settlement contract on Celo Mainnet (UniswapX LimitOrderReactor)
+const TEXTILE_CELO_SWAP_ROUTER = process.env.TEXTILE_SWAP_ROUTER_ADDRESS || '0xe03261c0436DB575F92F09EdDF3591E2566B7D97';
+
+function getTextileOfframpDepositAddress(): string {
+  const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || TEXTILE_CELO_SWAP_ROUTER;
   return addr;
 }
 
@@ -63,7 +63,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
             sivanFeeNgn: firmQuote.sivanFeeNgn,
             netNgn: firmQuote.netNgn,
             quoteId: firmQuote.quoteId,
-            depositAddress: getSettlementWallet(),
+            depositAddress: firmQuote.depositAddress || getTextileOfframpDepositAddress(),
             validForSeconds: firmQuote.validForSeconds,
             expiresAt: firmQuote.expiresAt,
           });
@@ -88,7 +88,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           grossNgn,
           sivanFeeNgn,
           netNgn,
-          depositAddress: getSettlementWallet(),
+          depositAddress: getTextileOfframpDepositAddress(),
           eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
         });
       }
@@ -105,7 +105,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           grossNgn: fxQuote.outputAmount,
           sivanFeeNgn: fxQuote.sivanFee,
           netNgn: fxQuote.netOutput,
-          depositAddress: getSettlementWallet(),
+          depositAddress: getTextileOfframpDepositAddress(),
           quotedAt: fxQuote.quotedAt,
           expiresAt: fxQuote.expiresAt,
           eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
@@ -126,7 +126,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           grossNgn,
           sivanFeeNgn,
           netNgn,
-          depositAddress: getSettlementWallet(),
+          depositAddress: getTextileOfframpDepositAddress(),
           eta: 'typically under 1 to 2 minutes via NIBSS / NIP',
         });
       }
@@ -362,11 +362,12 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
    * Spec: POST /v2/rfq/preview with EVM token addresses + atomic-unit sellAmount.
    * rateRay response is RAY-scaled (1e27): rate = rateRay / 1e27.
    */
-  app.get('/api/v1/cashout/swap-quote', async (request: FastifyRequest<{ Querystring: { fromToken?: string; toToken?: string; amount?: string | number } }>, reply: FastifyReply) => {
+  app.get('/api/v1/cashout/swap-quote', async (request: FastifyRequest<{ Querystring: { fromToken?: string; toToken?: string; amount?: string | number; userAddress?: string } }>, reply: FastifyReply) => {
     try {
       const fromToken = (request.query.fromToken || 'USDT').toUpperCase();
       const toToken = (request.query.toToken || 'CNGN').toUpperCase();
       const amount = parseFloat(String(request.query.amount || '10'));
+      const userTaker = request.query.userAddress || (request.headers['x-user-address'] as string) || '0x0000000000000000000000000000000000000000';
 
       if (isNaN(amount) || amount <= 0) {
         return reply.code(400).send({ error: 'Invalid swap amount.' });
@@ -384,7 +385,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           protocolFee: 0,
           minimumReceived: amount,
           source: '1:1 Direct',
-          depositAddress: getSettlementWallet(),
+          depositAddress: TEXTILE_CELO_SWAP_ROUTER,
         });
       }
 
@@ -444,7 +445,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
           minimumReceived: amount,
           source: '1:1 Direct Parity',
           chainId,
-          depositAddress: getSettlementWallet(),
+          depositAddress: TEXTILE_CELO_SWAP_ROUTER,
         });
       }
 
@@ -490,7 +491,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
               sellToken:  rfqSellAddress,
               buyToken:   rfqBuyAddress,
               sellAmount: sellAmountAtomic,
-              taker:      getSettlementWallet(),
+              taker:      userTaker,
             }),
             signal: AbortSignal.timeout(6000),
           }).catch(() => null);
@@ -544,7 +545,7 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         minimumReceived: parseFloat((outputAmount * 0.995).toFixed(6)),
         source,
         chainId,
-        depositAddress: getSettlementWallet(),
+        depositAddress: TEXTILE_CELO_SWAP_ROUTER,
       });
     } catch (err: any) {
       return reply.code(500).send({ error: err.message || 'Swap quote failed' });
