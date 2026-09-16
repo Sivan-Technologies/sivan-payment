@@ -73,8 +73,8 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         }
       }
 
-      // Default indicative RFQ quote
-      if (token === 'cNGN') {
+      // Default indicative RFQ quote: cNGN has strict 1:1 parity with physical Nigerian Naira
+      if (token === 'CNGN' || token === 'cNGN') {
         const grossNgn = amount; // 1:1 Parity
         const sivanFeeNgn = Math.round(grossNgn * 0.01 * 100) / 100;
         const netNgn = Math.round((grossNgn - sivanFeeNgn) * 100) / 100;
