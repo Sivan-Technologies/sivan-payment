@@ -465,7 +465,10 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
     const activeProviderName = await resolveActiveWalletProvider();
     const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
     const sellerWallet = await db.findUserWalletForNetwork(contractorUser.id, existing.network || 'solana');
-    const targetToAddress = contractorAddress || sellerWallet?.address;
+    const targetToAddress =
+      contractorAddress ||
+      (existing.sellerUserId?.startsWith('0x') && existing.sellerUserId.length === 42 ? existing.sellerUserId : null) ||
+      sellerWallet?.address;
 
     if (targetToAddress) {
       // Priority 1: Automated Celo on-chain relayer transfer from Sivan Agent Vault
