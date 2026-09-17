@@ -140,7 +140,7 @@ export const SIVAN_MCP_TOOLS: McpToolDefinition[] = [
   {
     name: 'sivan_fiat_bank_cashout',
     description:
-      'Executes an instant sub-3-second bank payout from spendable crypto balance directly to a verified Nigerian bank account (Naira / NGN).',
+      'Executes an instant bank payout from spendable crypto balance directly to a verified Nigerian bank account (Naira / NGN) typically under 1 to 2 minutes via NIBSS / NIP rails.',
     inputSchema: {
       type: 'object',
       properties: {
