@@ -24,6 +24,7 @@ import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { ensureUserWallet } from '../wallets/user-wallet.service.js';
 import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
+import { dispatchCeloSettlementTransfer } from '../wallets/celo/celo-settlement-relayer.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserRecord, UserWalletRecord } from '../database/types.js';
 
 // ─── Input shapes ────────────────────────────────────────────────────────────
@@ -467,21 +468,41 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
     const targetToAddress = contractorAddress || sellerWallet?.address;
 
     if (targetToAddress) {
+      // Priority 1: Automated Celo on-chain relayer transfer from Sivan Agent Vault
+      if ((existing.network === 'celo' || targetToAddress.startsWith('0x')) && targetToAddress.length === 42) {
+        try {
+          const relayerRes = await dispatchCeloSettlementTransfer({
+            toAddress: targetToAddress,
+            amount: sellerNetAmount,
+            currency: existing.currency,
+            agreementId: existing.id,
+          });
+          if (relayerRes.success && relayerRes.txHash) {
+            releaseTxHash = relayerRes.txHash;
+          }
+        } catch (relayerErr) {
+          console.warn('[agreement.release] Celo relayer note:', relayerErr);
+        }
+      }
+
       const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
 
-      // 1. Transfer net settlement amount to contractor/seller
-      const netTransferResult = await provider.createTransfer({
-        providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
-        providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
-        asset: ((existing.currency || 'usdc').toLowerCase() as any),
-        chain: (existing.network || 'solana') as any,
-        amount: String(sellerNetAmount),
-        toAddress: targetToAddress,
-        idempotencyKey: `rel_agr_${existing.id}_seller`,
-        reference: existing.id,
-      });
+      // Priority 2: Provider transfer fallback (if not already dispatched)
+      if (!releaseTxHash) {
+        // Transfer net settlement amount to contractor/seller
+        const netTransferResult = await provider.createTransfer({
+          providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
+          providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
+          asset: ((existing.currency || 'usdc').toLowerCase() as any),
+          chain: (existing.network || 'solana') as any,
+          amount: String(sellerNetAmount),
+          toAddress: targetToAddress,
+          idempotencyKey: `rel_agr_${existing.id}_seller`,
+          reference: existing.id,
+        });
 
-      releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
+        releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
+      }
 
       // 2. Transfer Sivan Service Agreement Platform Fee to Sivan fee collection wallet
       if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
@@ -602,23 +623,44 @@ export async function cancelAgreement(
       const targetAddress = buyerTargetAddress || buyerWallet?.address;
 
       if (targetAddress) {
-        const provider = getWalletProvider(buyerWallet?.provider ?? activeProviderName);
-        const refundTransferResult = await provider.createTransfer({
-          providerWalletId: buyerWallet?.providerWalletId || '',
-          providerCustomerId: buyerWallet?.customerId,
-          asset: ((existing.currency || 'usdc').toLowerCase() as any),
-          chain: (existing.network || 'celo') as any,
-          amount: String(refundAmount),
-          toAddress: targetAddress,
-          idempotencyKey: `ref_agr_${existing.id}_buyer`,
-          reference: `refund_${existing.id}`,
-        });
+        // Priority 1: Automated Celo on-chain relayer refund from Sivan Agent Vault
+        if ((existing.network === 'celo' || targetAddress.startsWith('0x')) && targetAddress.length === 42) {
+          try {
+            const relayerRes = await dispatchCeloSettlementTransfer({
+              toAddress: targetAddress,
+              amount: refundAmount,
+              currency: existing.currency,
+              agreementId: existing.id,
+              isRefund: true,
+            });
+            if (relayerRes.success && relayerRes.txHash) {
+              refundTxHash = relayerRes.txHash;
+            }
+          } catch (relayerErr) {
+            console.warn('[agreement.cancel] Celo refund relayer note:', relayerErr);
+          }
+        }
 
-        refundTxHash =
-          (refundTransferResult as any).transactionHash ||
-          (refundTransferResult as any).txHash ||
-          (refundTransferResult as any).providerTransferId ||
-          null;
+        // Priority 2: Provider transfer fallback (if not already dispatched)
+        if (!refundTxHash) {
+          const provider = getWalletProvider(buyerWallet?.provider ?? activeProviderName);
+          const refundTransferResult = await provider.createTransfer({
+            providerWalletId: buyerWallet?.providerWalletId || '',
+            providerCustomerId: buyerWallet?.customerId,
+            asset: ((existing.currency || 'usdc').toLowerCase() as any),
+            chain: (existing.network || 'celo') as any,
+            amount: String(refundAmount),
+            toAddress: targetAddress,
+            idempotencyKey: `ref_agr_${existing.id}_buyer`,
+            reference: `refund_${existing.id}`,
+          });
+
+          refundTxHash =
+            (refundTransferResult as any).transactionHash ||
+            (refundTransferResult as any).txHash ||
+            (refundTransferResult as any).providerTransferId ||
+            null;
+        }
       }
     } catch (onChainErr) {
       console.warn('[agreement.cancel] On-chain refund transfer note:', onChainErr);
