@@ -24,7 +24,7 @@ import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { ensureUserWallet } from '../wallets/user-wallet.service.js';
 import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
-import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain } from '../database/types.js';
+import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserRecord, UserWalletRecord } from '../database/types.js';
 
 // ─── Input shapes ────────────────────────────────────────────────────────────
 
@@ -339,8 +339,98 @@ export async function markDelivered(agreementId: string): Promise<ServiceAgreeme
 }
 
 /**
+ * Resolves or auto-provisions a contractor user record and their wallet.
+ * Ensures the contractor always has a valid UserRecord and UserWalletRecord in DB.
+ */
+async function resolveContractorUser(sellerTarget: string, network: string = 'celo'): Promise<{ user: UserRecord; walletAddress?: string }> {
+  const clean = String(sellerTarget || '').trim();
+  if (!clean) {
+    throw badRequest('sellerUserId is required');
+  }
+
+  // 1. Look up existing user across user_id, target, email, username
+  let user = await db.findUserById(clean);
+  if (!user) user = await db.findUserByTarget(clean);
+  if (!user && clean.includes('@') && clean.includes('.')) {
+    user = await db.findUserByEmail(clean);
+  }
+  if (!user) {
+    const finder = (db as any).findUserByUsername;
+    if (typeof finder === 'function') {
+      user = await finder.call(db, clean.replace(/^@/, ''));
+    }
+  }
+
+  const isAddress = clean.startsWith('0x') || clean.length >= 32;
+  const isEmail = clean.includes('@') && clean.includes('.');
+  const username = clean.replace(/^@/, '');
+  const userId = user ? user.id : (clean.startsWith('usr_') ? clean : (isAddress ? clean : `usr_${clean.replace(/[^a-zA-Z0-9_]/g, '')}`));
+
+  // 2. Auto-create user record if not present
+  if (!user) {
+    const email = isEmail ? clean : `${username || clean}@sivan.user`;
+    const fullName = isAddress ? `${clean.slice(0, 6)}...${clean.slice(-4)}` : username || clean;
+    const now = nowIso();
+    try {
+      user = await db.insertUserRecord({
+        id: userId,
+        email,
+        fullName,
+        username: !isAddress ? username : undefined,
+        createdAt: now,
+        updatedAt: now,
+      });
+    } catch {
+      user = (await db.findUserById(userId)) || (await db.findUserByTarget(clean)) || {
+        id: userId,
+        email,
+        fullName,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+  }
+
+  // 3. Ensure contractor wallet exists in DB for this network
+  let walletAddress: string | undefined;
+  try {
+    const existingWallet = await db.findUserWalletForNetwork(user.id, network);
+    if (existingWallet?.address) {
+      walletAddress = existingWallet.address;
+    } else if (isAddress) {
+      walletAddress = clean;
+      const now = nowIso();
+      const rawRecord: UserWalletRecord = {
+        id: generateId('uw'),
+        userId: user.id,
+        provider: 'evm_native',
+        providerWalletId: `evm_${clean}`,
+        chain: (network || 'celo') as any,
+        address: clean,
+        status: 'active',
+        custodial: false,
+        delegatedSigningEnabled: true,
+        raw: { address: clean, chain: network },
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.insertUserWallet(rawRecord).catch(() => null);
+    } else {
+      const provisioned = await ensureUserWallet(user.id, network as any).catch(() => null);
+      if (provisioned?.address) {
+        walletAddress = provisioned.address;
+      }
+    }
+  } catch (err) {
+    console.warn('[agreement.resolveContractorUser] wallet note:', err);
+  }
+
+  return { user, walletAddress: walletAddress || (isAddress ? clean : undefined) };
+}
+
+/**
  * Buyer approves delivery and releases funds.
- * Executes on-chain transfer directly to seller wallet without phantom ledger credits.
+ * Executes on-chain transfer directly to seller wallet, debits buyer hold, and credits contractor available balance.
  */
 export async function releaseAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
   const existing = await db.findServiceAgreementById(agreementId);
@@ -363,21 +453,30 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   let releaseTxHash: string | null = null;
   let feeTxHash: string | null = null;
 
+  // 1. Resolve or auto-provision the contractor / seller account and their wallet
+  const { user: contractorUser, walletAddress: contractorAddress } = await resolveContractorUser(
+    existing.sellerUserId,
+    existing.network || 'celo'
+  );
+
+  // 2. On-chain settlement transfer (if on-chain wallet / vault is active)
   try {
-    const sellerWallet = await ensureUserWallet(existing.sellerUserId, existing.network || 'solana');
-    if (sellerWallet) {
-      const activeProviderName = await resolveActiveWalletProvider();
-      const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
-      const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet.provider ?? activeProviderName);
+    const activeProviderName = await resolveActiveWalletProvider();
+    const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+    const sellerWallet = await db.findUserWalletForNetwork(contractorUser.id, existing.network || 'solana');
+    const targetToAddress = contractorAddress || sellerWallet?.address;
+
+    if (targetToAddress) {
+      const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
 
       // 1. Transfer net settlement amount to contractor/seller
       const netTransferResult = await provider.createTransfer({
-        providerWalletId: buyerWallet?.providerWalletId || sellerWallet.providerWalletId,
-        providerCustomerId: buyerWallet?.customerId || sellerWallet.customerId,
+        providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
+        providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
         asset: ((existing.currency || 'usdc').toLowerCase() as any),
         chain: (existing.network || 'solana') as any,
         amount: String(sellerNetAmount),
-        toAddress: sellerWallet.address,
+        toAddress: targetToAddress,
         idempotencyKey: `rel_agr_${existing.id}_seller`,
         reference: existing.id,
       });
@@ -385,11 +484,11 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
       releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
 
       // 2. Transfer Sivan Service Agreement Platform Fee to Sivan fee collection wallet
-      if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== sellerWallet.address.toLowerCase()) {
+      if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
         try {
           const feeTransferResult = await provider.createTransfer({
-            providerWalletId: buyerWallet?.providerWalletId || sellerWallet.providerWalletId,
-            providerCustomerId: buyerWallet?.customerId || sellerWallet.customerId,
+            providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
+            providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
             asset: ((existing.currency || 'usdc').toLowerCase() as any),
             chain: (existing.network || 'solana') as any,
             amount: String(feeAmount),
@@ -421,6 +520,7 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
 
   await db.updateServiceAgreement(updated);
 
+  // 3. Ledger settlement entries: Debit buyer held balance AND credit contractor available balance
   try {
     // Debit hold from buyer - records full settlement breakdown of held funds
     await createBalanceLedgerEntry(
@@ -433,6 +533,21 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
         sourceType: 'service_agreement',
         sourceId: existing.id,
         description: `Debit ${payableAmount} ${(existing.currency || 'USDC').toUpperCase()} released for Service Agreement (${existing.title}) [Contractor: ${sellerNetAmount}, Platform Fee: ${feeAmount}]`
+      },
+      { actorType: 'system', actorId: 'agreement_release' }
+    );
+
+    // Credit contractor available balance
+    await createBalanceLedgerEntry(
+      {
+        userId: contractorUser.id,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        amount: String(sellerNetAmount),
+        kind: 'credit_available',
+        status: 'available',
+        sourceType: 'service_agreement',
+        sourceId: existing.id,
+        description: `Credit ${sellerNetAmount} ${(existing.currency || 'USDC').toUpperCase()} from released Service Agreement (${existing.title})`
       },
       { actorType: 'system', actorId: 'agreement_release' }
     );
