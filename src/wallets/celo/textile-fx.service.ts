@@ -326,21 +326,39 @@ async function fetchWithHardTimeout(url: string, ms = 2000): Promise<Response> {
 
   let liveRate: number | undefined;
 
-  // 1. Primary institutional market oracle (Binance orderbook rate for USDT/NGN)
+  // 1. Primary market maker oracle: Textile FX official public tickers feed
   try {
-    const bRes = await fetchWithHardTimeout(
-      'https://api.binance.com/api/v3/ticker/price?symbol=USDTNGN',
-      2000
-    );
-    if (bRes.ok) {
-      const data: any = await bRes.json();
-      const p = Number(data?.price);
+    const tRes = await fetchWithHardTimeout('https://api.textilecredit.com/tickers', 2500);
+    if (tRes.ok) {
+      const tickers: any[] = await tRes.json();
+      const targetTicker = isCngn 
+        ? tickers.find(t => t.ticker_id === 'USDT_NGN' || t.ticker_id === 'USDC_NGN')
+        : tickers.find(t => t.ticker_id === 'USDC_NGN' || t.ticker_id === 'USDT_NGN');
+      const p = Number(targetTicker?.last_price || targetTicker?.bid || targetTicker?.ask);
       if (Number.isFinite(p) && p > 100) {
         liveRate = Math.round(p * 100) / 100;
         lastKnownLiveRate = liveRate;
       }
     }
   } catch {}
+
+  // 2. Secondary institutional market oracle (Binance orderbook rate for USDT/NGN)
+  if (!liveRate) {
+    try {
+      const bRes = await fetchWithHardTimeout(
+        'https://api.binance.com/api/v3/ticker/price?symbol=USDTNGN',
+        2000
+      );
+      if (bRes.ok) {
+        const data: any = await bRes.json();
+        const p = Number(data?.price);
+        if (Number.isFinite(p) && p > 100) {
+          liveRate = Math.round(p * 100) / 100;
+          lastKnownLiveRate = liveRate;
+        }
+      }
+    } catch {}
+  }
 
   // 2. Secondary live market oracle (CoinGecko USD/NGN stablecoin rate)
   if (!liveRate) {
