@@ -38,6 +38,7 @@ const envSchema = z.object({
   WHATSAPP_NOTIFICATION_URL: z.string().url().optional(),
   TEXTILE_CELO_DEPOSIT_ADDRESS: z.string().optional(),
   SIVAN_CELO_AGENT_ADDRESS: z.string().optional(),
+  CELO_AGENT_PRIVATE_KEY: z.string().optional().default(''),
   SENTRY_DSN: z.string().optional().default(''),
   SENTRY_ENVIRONMENT: z.string().optional().default(''),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),

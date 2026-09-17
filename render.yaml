@@ -189,6 +189,8 @@ services:
         value: testnet
       - key: CELO_RPC_URL
         value: https://alfajores-forno.celo-testnet.org
+      - key: CELO_AGENT_PRIVATE_KEY
+        sync: false
       - key: BASE_RPC_URL
         value: https://sepolia.base.org
       - key: BSC_RPC_URL
@@ -495,6 +497,8 @@ services:
         value: public
       - key: CELO_RPC_URL
         value: https://forno.celo.org
+      - key: CELO_AGENT_PRIVATE_KEY
+        sync: false
       - key: BASE_RPC_URL
         value: https://mainnet.base.org
       - key: BSC_RPC_URL
