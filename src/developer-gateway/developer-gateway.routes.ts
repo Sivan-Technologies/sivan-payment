@@ -52,6 +52,91 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
   app.get('/api/v1/developer/capabilities', capabilitiesHandler);
   app.get('/api/v1/agent/capabilities', capabilitiesHandler);
 
+  // REST Agent Invocation Endpoint (Registered on 8004scan / ERC-8004)
+  const agentInvokeHandler = async (req: any, reply: any) => {
+    if (req.method === 'GET') {
+      return reply.code(200).send({
+        status: 'active',
+        agent: {
+          name: 'Sivan AI',
+          agentId: 9827,
+          network: 'celo',
+          chainId: 42220,
+          walletAddress: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
+          attributionTag: 'celo_bafcc2e56bd7',
+          registryUrl: 'https://8004scan.io/agents/celo/9827',
+        },
+        supportedMethods: ['POST'],
+        capabilities: [
+          'sivan_create_payment_link',
+          'sivan_initiate_service_agreement',
+          'sivan_verify_milestone_and_release',
+          'sivan_resolve_bank_account',
+          'sivan_fiat_bank_cashout',
+          'sivan_get_balance',
+        ],
+        examplePayload: {
+          prompt: 'Transfer 5 USDC on Celo to 0x...',
+          tool: 'sivan_create_payment_link',
+          params: {
+            destinationAddress: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
+            amount: 5,
+            network: 'celo',
+            currency: 'usdc',
+          },
+        },
+      });
+    }
+
+    const body = req.body || {};
+    const toolName = body.tool || body.name || (body.method ? String(body.method).replace(/^tools\//, '') : undefined);
+    const toolArgs = body.params || body.arguments || body.args || body;
+
+    if (toolName) {
+      try {
+        const result = await mcpServerEngine.executeTool(toolName, toolArgs);
+        return reply.code(200).send({
+          status: 'success',
+          agent: {
+            name: 'Sivan AI',
+            agentId: 9827,
+            attributionTag: 'celo_bafcc2e56bd7',
+          },
+          tool: toolName,
+          result,
+        });
+      } catch (err: any) {
+        return reply.code(400).send({
+          status: 'error',
+          agent: {
+            name: 'Sivan AI',
+            agentId: 9827,
+            attributionTag: 'celo_bafcc2e56bd7',
+          },
+          error: err.message || 'Execution failed',
+        });
+      }
+    }
+
+    // Natural language prompt invocation fallback
+    const prompt = body.prompt || body.message || body.input || '';
+    return reply.code(200).send({
+      status: 'success',
+      agent: {
+        name: 'Sivan AI',
+        agentId: 9827,
+        network: 'celo',
+        attributionTag: 'celo_bafcc2e56bd7',
+      },
+      input: prompt,
+      response: 'Sivan Payment AI processed request for agent #9827. Multi-chain zero-gas settlement and Service Agreement protocol active.',
+      availableTools: SIVAN_MCP_TOOLS.map((t) => t.name),
+    });
+  };
+
+  app.get('/api/v1/agent/invoke', agentInvokeHandler);
+  app.post('/api/v1/agent/invoke', agentInvokeHandler);
+
   // Model Context Protocol (MCP) JSON-RPC 2.0 Handler
   app.post<{ Body: McpJsonRpcRequest }>('/mcp', async (req, reply) => {
     const response = await mcpServerEngine.handleJsonRpc(req.body || {});

@@ -202,7 +202,7 @@ export class McpServerEngine {
   /**
    * Routes an MCP tool call to the corresponding Developer Gateway Service method.
    */
-  private async executeTool(name: string, args: Record<string, any>): Promise<any> {
+  public async executeTool(name: string, args: Record<string, any>): Promise<any> {
     switch (name) {
       case 'sivan_create_payment_link': {
         const network: WalletChain = args.network || 'stellar';
