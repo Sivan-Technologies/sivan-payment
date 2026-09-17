@@ -73,8 +73,8 @@ export async function agreementRoutes(app: FastifyInstance) {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw badRequest('amount query parameter must be a positive number');
     }
-    const network = req.query.network || 'solana';
-    const feePayer = req.query.feePayer || 'buyer';
+    const network = req.query.network || 'celo';
+    const feePayer = req.query.feePayer || 'seller';
     const quote = quoteServiceAgreementFee(amount, network, feePayer);
     return reply.code(200).send(quote);
   });

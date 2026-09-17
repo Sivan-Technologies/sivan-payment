@@ -44,16 +44,12 @@ export const DEFAULT_AGREEMENT_FEE_CONFIG: ServiceAgreementFeeConfig = {
 };
 
 export const MICRO_RAIL_AGREEMENT_FEE_CONFIG: ServiceAgreementFeeConfig = {
-  percent: 0.75,
-  minimumUsd: 0.20,
-  maximumUsd: 25.00,
+  percent: 1.0,
+  minimumUsd: 0.50,
+  maximumUsd: 50.00,
 };
 
 export function resolveAgreementFeeConfig(network?: string): ServiceAgreementFeeConfig {
-  const n = (network ?? '').toLowerCase().trim();
-  if (n === 'celo' || n === 'stellar') {
-    return { ...MICRO_RAIL_AGREEMENT_FEE_CONFIG };
-  }
   return { ...DEFAULT_AGREEMENT_FEE_CONFIG };
 }
 
@@ -71,46 +67,38 @@ export function quoteServiceAgreementFee(
     maximumUsd: customConfig?.maximumUsd ?? baseConfig.maximumUsd,
   };
 
-  const raw = safeAmount * (config.percent / 100);
-  let fee = raw;
+  // Unified fee calculation: (amount * percent%) + fixed
+  const percentFee = safeAmount * (config.percent / 100);
+  let fee = percentFee + config.minimumUsd;
   let appliedRule: ServiceAgreementFeeQuote['appliedRule'] = 'percent';
-
-  if (config.minimumUsd > 0 && fee < config.minimumUsd) {
-    fee = config.minimumUsd;
-    appliedRule = 'minimum';
-  }
 
   if (config.maximumUsd > 0 && fee > config.maximumUsd) {
     fee = config.maximumUsd;
     appliedRule = 'maximum';
   }
 
-  // Round to 6 decimal places for stablecoin precision
-  const roundedFee = parseFloat(fee.toFixed(6));
+  // Round to 2 decimal places for standard display
+  const roundedFee = parseFloat(fee.toFixed(2));
   let buyerTotalPayable = safeAmount;
   let sellerNetAmount = safeAmount;
 
   if (feePayer === 'buyer') {
-    buyerTotalPayable = parseFloat((safeAmount + roundedFee).toFixed(6));
+    buyerTotalPayable = parseFloat((safeAmount + roundedFee).toFixed(2));
     sellerNetAmount = safeAmount;
   } else if (feePayer === 'seller') {
     buyerTotalPayable = safeAmount;
-    sellerNetAmount = Math.max(0, parseFloat((safeAmount - roundedFee).toFixed(6)));
+    sellerNetAmount = Math.max(0, parseFloat((safeAmount - roundedFee).toFixed(2)));
   } else if (feePayer === 'split') {
-    const halfFee = parseFloat((roundedFee / 2).toFixed(6));
-    buyerTotalPayable = parseFloat((safeAmount + halfFee).toFixed(6));
-    sellerNetAmount = Math.max(0, parseFloat((safeAmount - halfFee).toFixed(6)));
+    const halfFee = parseFloat((roundedFee / 2).toFixed(2));
+    buyerTotalPayable = parseFloat((safeAmount + halfFee).toFixed(2));
+    sellerNetAmount = Math.max(0, parseFloat((safeAmount - halfFee).toFixed(2)));
   }
 
   const effectivePercent = safeAmount > 0
-    ? parseFloat(((roundedFee / safeAmount) * 100).toFixed(3))
+    ? parseFloat(((roundedFee / safeAmount) * 100).toFixed(2))
     : 0;
 
-  const explanation = appliedRule === 'minimum'
-    ? `$${config.minimumUsd.toFixed(2)} Sivan service agreement platform fee minimum applied.`
-    : appliedRule === 'maximum'
-    ? `$${config.maximumUsd.toFixed(2)} Sivan service agreement platform fee cap applied.`
-    : `${config.percent}% Sivan service agreement platform fee ($${roundedFee.toFixed(2)}).`;
+  const explanation = `${config.percent}% + $${config.minimumUsd.toFixed(2)}`;
 
   return {
     amount: safeAmount,
