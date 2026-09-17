@@ -22,6 +22,15 @@ function safeKeyEquals(provided: string, expected: string): boolean {
 }
 
 function normalizeAdminAliasUrl(rawUrl = '') {
+  if (rawUrl.startsWith('/api/payment/api/')) {
+    return rawUrl.replace(/^\/api\/payment/, '');
+  }
+  if (rawUrl.startsWith('/api/payment/agreements')) {
+    return rawUrl.replace(/^\/api\/payment/, '/api');
+  }
+  if (rawUrl.startsWith('/api/payment/v1/')) {
+    return rawUrl.replace(/^\/api\/payment/, '/api');
+  }
   if (rawUrl.startsWith('/api/admin/payment/')) {
     return rawUrl.replace(/^\/api\/admin\/payment/, '/api/admin');
   }
