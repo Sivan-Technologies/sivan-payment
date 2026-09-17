@@ -113,14 +113,25 @@ export const feeSettingsSchema = z.object({
    * percentages, which is the behaviour every existing deployment already has.
    */
   ngnOnrampFeePercent: z.coerce.number().min(0).max(100).default(0),
-  ngnOfframpFeePercent: z.coerce.number().min(0).max(100).default(0),
+  ngnOfframpFeePercent: z.coerce.number().min(0).max(100).default(0.10),
   /**
-   * Minimum NGN margin per transaction, in naira.
-   *
-   * Same reasoning as the on-ramp USD floor: a percentage of a small transfer
-   * does not cover the fixed cost of processing it. Unlike Bridge's virtual
-   * accounts there is no provider restriction here, so this can be set freely.
+   * Textile Bank Dispersal Fee Controls (NIBSS/NIP).
+   * Minimum floor: 200 NGN (covers upstream bank wire charge on small cashouts).
+   * Maximum ceiling: 1,000 NGN (protects high-volume users from excessive percentage fees).
    */
+  ngnOfframpMinimumFeeNgn: z.coerce.number().min(0).max(10_000_000).default(200),
+  ngnOfframpMaximumFeeNgn: z.coerce.number().min(0).max(100_000_000).default(1000),
+  /**
+   * Sivan On-Chain DEX Swap Protocol Fee (USDT <-> cNGN / USDC <-> cNGN).
+   * Default: 0.0% (Zero platform fee, passes through 100% of Textile RFQ liquidity).
+   */
+  swapFeePercent: z.coerce.number().min(0).max(100).default(0.0),
+  minCashoutUsdc: z.coerce.number().min(0.1).max(10000).default(2.0),
+  maxCashoutUsdc: z.coerce.number().min(1.0).max(100000).default(250.0),
+  primaryOfframpProvider: z.string().default('textile'),
+  fallbackOfframpProvider: z.string().default('moove'),
+  maintenanceMode: z.boolean().default(false),
+  maintenanceReason: z.string().default('NIBSS inter-bank settlement is undergoing scheduled maintenance. Cashouts will resume shortly.'),
   ngnMinimumFeeNgn: z.coerce.number().min(0).max(10_000_000).default(0),
 
   /**
@@ -346,7 +357,16 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     // Zero means "not set": the NGN flows fall back to the Bridge percentages
     // above, preserving existing behaviour until an admin chooses otherwise.
     ngnOnrampFeePercent: Number(percent(env.SIVAN_NGN_ONRAMP_FEE_PERCENT || 0)),
-    ngnOfframpFeePercent: Number(percent(env.SIVAN_NGN_OFFRAMP_FEE_PERCENT || 0)),
+    ngnOfframpFeePercent: Number(percent(env.SIVAN_NGN_OFFRAMP_FEE_PERCENT || 0.10)),
+    ngnOfframpMinimumFeeNgn: 200,
+    ngnOfframpMaximumFeeNgn: 1000,
+    swapFeePercent: 0.0,
+    minCashoutUsdc: 2.0,
+    maxCashoutUsdc: 250.0,
+    primaryOfframpProvider: 'textile',
+    fallbackOfframpProvider: 'moove',
+    maintenanceMode: false,
+    maintenanceReason: 'NIBSS inter-bank settlement is undergoing scheduled maintenance. Cashouts will resume shortly.',
     ngnMinimumFeeNgn: Number(env.SIVAN_NGN_MINIMUM_FEE_NGN || 0),
     // Transfer fee. Defaults come from transfer-fee-policy.ts rather than being
     // repeated here, so the curve has exactly one definition.

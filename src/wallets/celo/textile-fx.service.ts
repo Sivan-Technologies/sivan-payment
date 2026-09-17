@@ -26,21 +26,30 @@ const TEXTILE_RAMP_BASE = RAW_API_URL.endsWith('/ramp')
 const TEXTILE_FALLBACK_RAMP_BASE = 'https://api.textilecredit.com/v2/ramp';
 const IS_SANDBOX = process.env.TEXTILE_SANDBOX === 'true' || RAW_API_URL.includes('sandbox');
 const DEFAULT_PROVIDER = 'busha';
-
-/** Quote cache TTL in milliseconds (30 seconds) */
 const QUOTE_CACHE_TTL_MS = 30_000;
 
-export async function getEffectiveOfframpFeePercent(): Promise<number> {
+export interface OfframpFeeConfig {
+  percent: number;
+  minFeeFloorNgn: number;
+  maxFeeCapNgn: number;
+}
+
+export async function getEffectiveOfframpFeeConfig(): Promise<OfframpFeeConfig> {
   try {
     const settings = await getAdminFeeSettings();
     const ngnPercent = Number(settings?.ngnOfframpFeePercent ?? 0);
-    if (Number.isFinite(ngnPercent) && ngnPercent > 0) return ngnPercent;
-    const generalPercent = Number(settings?.offrampFeePercent ?? 0);
-    if (Number.isFinite(generalPercent) && generalPercent > 0) return generalPercent;
+    const percent = Number.isFinite(ngnPercent) && ngnPercent > 0 ? ngnPercent : 0.10;
+    const minFeeFloorNgn = Number(settings?.ngnOfframpMinimumFeeNgn ?? 200);
+    const maxFeeCapNgn = Number(settings?.ngnOfframpMaximumFeeNgn ?? 1000);
+    return { percent, minFeeFloorNgn, maxFeeCapNgn };
   } catch {
-    // Settings unreadable: fallback safely
+    return { percent: 0.10, minFeeFloorNgn: 200, maxFeeCapNgn: 1000 };
   }
-  return 1.0;
+}
+
+export async function getEffectiveOfframpFeePercent(): Promise<number> {
+  const config = await getEffectiveOfframpFeeConfig();
+  return config.percent;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,13 +283,18 @@ export async function getTextileFxQuote(
   amount: number
 ): Promise<TextileFxQuote> {
   const isCngn = direction === 'cngn_to_usdc' || direction === 'cngn_to_ngn';
-  const feePercent = await getEffectiveOfframpFeePercent();
+  const feeConfig = await getEffectiveOfframpFeeConfig();
 
   // cNGN has strict 1:1 parity with physical Nigerian Naira
   if (isCngn) {
     const rate = 1.0;
     const gross = amount * rate;
-    const sivanFee = Math.round(gross * (feePercent / 100) * 100) / 100;
+    let rawFee = gross * (feeConfig.percent / 100);
+    let sivanFee = Math.min(Math.max(rawFee, feeConfig.minFeeFloorNgn), feeConfig.maxFeeCapNgn);
+    if (sivanFee >= gross) {
+      sivanFee = Math.round(gross * 0.05 * 100) / 100;
+    }
+    sivanFee = Math.round(sivanFee * 100) / 100;
     const netOutput = Math.round((gross - sivanFee) * 100) / 100;
     const now = new Date();
 
@@ -348,7 +362,12 @@ async function fetchWithHardTimeout(url: string, ms = 3500): Promise<Response> {
   }
 
   const grossOutput = Math.round(amount * liveRate * 100) / 100;
-  const sivanFee = Math.round(grossOutput * (feePercent / 100) * 100) / 100;
+  let rawFee = grossOutput * (feeConfig.percent / 100);
+  let sivanFee = Math.min(Math.max(rawFee, feeConfig.minFeeFloorNgn), feeConfig.maxFeeCapNgn);
+  if (sivanFee >= grossOutput) {
+    sivanFee = Math.round(grossOutput * 0.05 * 100) / 100;
+  }
+  sivanFee = Math.round(sivanFee * 100) / 100;
   const netOutput = Math.round((grossOutput - sivanFee) * 100) / 100;
   const nowDate = new Date();
 

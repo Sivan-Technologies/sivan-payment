@@ -1,12 +1,14 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import {
   getTextileFxQuote,
+  getEffectiveOfframpFeeConfig,
   requestFirmQuote,
   executeRedemption,
   getRedemptionStatus,
   listTextileBanks,
   resolveTextileBankAccount,
 } from '../../wallets/celo/textile-fx.service.js';
+import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 
 interface CashoutQuoteQuery {
   token?: string;
@@ -75,8 +77,14 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
 
       // Default indicative RFQ quote: cNGN has strict 1:1 parity with physical Nigerian Naira
       if (token === 'CNGN' || token === 'cNGN') {
+        const feeConfig = await getEffectiveOfframpFeeConfig();
         const grossNgn = amount; // 1:1 Parity
-        const sivanFeeNgn = Math.round(grossNgn * 0.01 * 100) / 100;
+        let rawFee = grossNgn * (feeConfig.percent / 100);
+        let sivanFeeNgn = Math.min(Math.max(rawFee, feeConfig.minFeeFloorNgn), feeConfig.maxFeeCapNgn);
+        if (sivanFeeNgn >= grossNgn) {
+          sivanFeeNgn = Math.round(grossNgn * 0.05 * 100) / 100;
+        }
+        sivanFeeNgn = Math.round(sivanFeeNgn * 100) / 100;
         const netNgn = Math.round((grossNgn - sivanFeeNgn) * 100) / 100;
 
         return reply.send({
@@ -527,8 +535,10 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         source = 'Textile Credit RFQ (Live)';
       }
 
-      // 0.3% Sivan protocol liquidity fee on output
-      const sivanFee = rawOutput * 0.003;
+      // Sivan On-Chain DEX Swap Protocol Fee (default: 0.0% from Admin Settings)
+      const settings = await getAdminFeeSettings().catch(() => null);
+      const swapFeePercent = Number(settings?.swapFeePercent ?? 0.0);
+      const sivanFee = rawOutput * (swapFeePercent / 100);
       const outputAmount = Math.max(0, rawOutput - sivanFee - textileFeeAmount);
       const effectiveRate = amount > 0 ? outputAmount / amount : (rawOutput / (amount || 1));
 
