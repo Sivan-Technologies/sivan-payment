@@ -26,7 +26,7 @@ interface CashoutExecuteBody {
 }
 
 // Canonical Textile Swap settlement contract on Celo Mainnet (UniswapX LimitOrderReactor)
-const TEXTILE_CELO_SWAP_ROUTER = process.env.TEXTILE_SWAP_ROUTER_ADDRESS || '0xe03261c0436DB575F92F09EdDF3591E2566B7D97';
+const TEXTILE_CELO_SWAP_ROUTER = process.env.TEXTILE_SWAP_ROUTER_ADDRESS || '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
 
 function getTextileOfframpDepositAddress(): string {
   const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || TEXTILE_CELO_SWAP_ROUTER;
