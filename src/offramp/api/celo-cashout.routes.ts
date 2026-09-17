@@ -30,9 +30,15 @@ interface CashoutExecuteBody {
 // Canonical Textile Swap settlement contract on Celo Mainnet (UniswapX LimitOrderReactor)
 const TEXTILE_CELO_SWAP_ROUTER = process.env.TEXTILE_SWAP_ROUTER_ADDRESS || '0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3';
 
+// Official Sivan Agent #9827 Celo Mainnet Treasury for Off-Ramp Liquidity Collection
+const SIVAN_CELO_OFFRAMP_VAULT = '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc';
+
 function getTextileOfframpDepositAddress(): string {
-  const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS || TEXTILE_CELO_SWAP_ROUTER;
-  return addr;
+  const addr = process.env.TEXTILE_CELO_DEPOSIT_ADDRESS;
+  if (addr && addr.toLowerCase() !== TEXTILE_CELO_SWAP_ROUTER.toLowerCase()) {
+    return addr;
+  }
+  return SIVAN_CELO_OFFRAMP_VAULT;
 }
 
 export async function celoCashoutRoutes(app: FastifyInstance) {
