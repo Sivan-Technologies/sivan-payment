@@ -22,7 +22,7 @@ export interface FeePolicy {
   type: 'percentage';
   percent: string;
   appliesTo: 'liquidation_address';
-  settlement: 'bridge_monthly_usd';
+  settlement: 'bridge_monthly_usd' | 'instant_nip_payout' | string;
   enabled: boolean;
 }
 
@@ -33,16 +33,18 @@ export interface CostPolicy {
   note: string;
 }
 
-export async function getDefaultOfframpFeePolicy(): Promise<FeePolicy> {
+export async function getDefaultOfframpFeePolicy(currency?: string): Promise<FeePolicy> {
   const settings = await getAdminFeeSettings();
-  const percent = normalizePercent(settings.offrampFeePercent);
+  const isNgn = !currency || currency.toUpperCase() === 'NGN' || currency.toUpperCase() === 'CNGN';
+  const rawPercent = isNgn ? (settings.ngnOfframpFeePercent ?? 0.10) : settings.offrampFeePercent;
+  const percent = normalizePercent(rawPercent);
   return {
-    id: 'default_offramp_fee',
-    name: 'Default Sivan off-ramp fee',
+    id: isNgn ? 'ngn_offramp_fee' : 'default_offramp_fee',
+    name: isNgn ? 'Sivan NGN off-ramp fee' : 'Default Sivan off-ramp fee',
     type: 'percentage',
     percent,
     appliesTo: 'liquidation_address',
-    settlement: 'bridge_monthly_usd',
+    settlement: isNgn ? 'instant_nip_payout' : 'bridge_monthly_usd',
     enabled: Number(percent) > 0
   };
 }

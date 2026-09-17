@@ -10,8 +10,9 @@ import {
 } from '../service/fees.service.js';
 
 export async function feesRoutes(app: FastifyInstance) {
-  app.get('/api/fees/offramp', async () => {
-    return { data: await getDefaultOfframpFeePolicy() };
+  app.get('/api/fees/offramp', async (request) => {
+    const currency = (request.query as any)?.currency;
+    return { data: await getDefaultOfframpFeePolicy(currency) };
   });
 
   app.post('/api/fees/offramp/estimate', async (request) => {
