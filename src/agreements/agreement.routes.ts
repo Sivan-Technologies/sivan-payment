@@ -14,6 +14,8 @@ import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.
 import { badRequest, notFound } from '../shared/errors.js';
 import type { WalletChain } from '../database/types.js';
 
+import { db } from '../database/json-database.js';
+
 interface CreateAgreementBody {
   id?: string;
   buyerUserId: string;
@@ -33,6 +35,29 @@ interface CreateAgreementBody {
 }
 
 export async function agreementRoutes(app: FastifyInstance) {
+  /**
+   * GET /api/agreements
+   * List agreements for a given user or wallet address.
+   */
+  app.get<{
+    Querystring: {
+      userId?: string;
+      walletAddress?: string;
+      buyerUserId?: string;
+      sellerUserId?: string;
+    };
+  }>('/api/agreements', async (req, reply) => {
+    const target = req.query.walletAddress || req.query.userId || req.query.buyerUserId || req.query.sellerUserId;
+    if (!target) {
+      return reply.code(200).send([]);
+    }
+    const list = await db.listServiceAgreementsByUserId(target);
+    const enriched = list.map((a) => ({
+      ...a,
+      countdownLabel: getCountdownLabel(a),
+    }));
+    return reply.code(200).send(enriched);
+  });
   /**
    * GET /api/agreements/quote
    * Live preview of Sivan Service Agreement Platform Fee and net payout breakdown.
