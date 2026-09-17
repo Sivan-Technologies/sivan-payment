@@ -437,10 +437,10 @@ function ServiceAgreementActionBox({
 
   const amount = Number(deal?.amountUsdc ?? deal?.amount ?? activityRow.amount ?? 0);
   const currency = String(deal?.currency || activityRow.asset || 'USDC').toUpperCase();
-  const feeAmount = Number(deal?.feeAmountUsdc ?? (currency === 'USDC' ? (deal?.feeAmount ?? (amount * 0.01 < 0.5 ? 0.5 : amount * 0.01)) : 0));
-  const feePayer = deal?.feePayer || 'buyer';
-  const buyerTotal = Number(deal?.buyerTotalPayableUsdc ?? (feePayer === 'buyer' ? amount + feeAmount : feePayer === 'split' ? amount + (feeAmount / 2) : amount));
-  const sellerNet = Number(deal?.sellerNetAmountUsdc ?? (feePayer === 'seller' ? Math.max(0, amount - feeAmount) : feePayer === 'split' ? Math.max(0, amount - (feeAmount / 2)) : amount));
+  const feeAmount = Number(deal?.feeAmountUsdc ?? deal?.feeAmount ?? (amount > 0 ? parseFloat(((amount * 0.01) + 0.50).toFixed(2)) : 0));
+  const feePayer = deal?.feePayer || 'seller';
+  const buyerTotal = Number(deal?.buyerTotalPayableUsdc ?? (feePayer === 'buyer' ? amount + feeAmount : amount));
+  const sellerNet = Number(deal?.sellerNetAmountUsdc ?? (feePayer === 'seller' ? Math.max(0, parseFloat((amount - feeAmount).toFixed(2))) : amount));
 
   const network = String(deal?.network || activityRow.network || 'solana').toLowerCase();
   const isMainnet = networkMode === 'mainnet';
@@ -534,7 +534,7 @@ function ServiceAgreementActionBox({
           <div style={{ fontSize: '13px', fontWeight: 600, color: '#f8fafc' }}>{amount.toFixed(2)} {currency}</div>
         </div>
         <div>
-          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>Sivan Fee ({feePayer})</div>
+          <div style={{ fontSize: '10px', color: '#94a3b8', textTransform: 'uppercase' }}>Sivan Platform Fee</div>
           <div style={{ fontSize: '13px', fontWeight: 600, color: '#38bdf8' }}>{feeAmount.toFixed(2)} {currency}</div>
         </div>
         <div>
