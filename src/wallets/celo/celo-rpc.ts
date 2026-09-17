@@ -36,12 +36,15 @@ const PUBLIC_TESTNET_ENDPOINTS = [
 
 export function celoRpcEndpoints(options?: { production?: boolean }): string[] {
   const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
-  const custom = (process.env.CELO_RPC_URL || '').trim();
-  const fallback = (process.env.CELO_RPC_FALLBACK_URL || '').trim();
-  const defaults = isProd ? PUBLIC_MAINNET_ENDPOINTS : PUBLIC_TESTNET_ENDPOINTS;
-
-  const ordered = [custom, fallback, ...defaults].filter(Boolean);
-  return [...new Set(ordered)];
+  
+  if (isProd) {
+    const custom = (process.env.CELO_RPC_URL || '').trim();
+    const fallback = (process.env.CELO_RPC_FALLBACK_URL || '').trim();
+    return [...new Set([custom, fallback, ...PUBLIC_MAINNET_ENDPOINTS].filter(Boolean))];
+  } else {
+    const testnetCustom = (process.env.CELO_TESTNET_RPC_URL || '').trim();
+    return [...new Set([testnetCustom, ...PUBLIC_TESTNET_ENDPOINTS].filter(Boolean))];
+  }
 }
 
 export async function celoRpc<T = unknown>(method: string, params: unknown[], options?: { production?: boolean }): Promise<T> {
