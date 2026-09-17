@@ -390,10 +390,9 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     gasSolPriceUsd: DEFAULT_GAS_CONTROLS.solPriceUsd,
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
-      { name: 'Bridge', weightPercent: 40, live: true },
-      { name: 'CoinGecko', weightPercent: 25, live: true },
-      { name: 'Kraken', weightPercent: 20, live: true },
-      { name: 'Chainlink', weightPercent: 15, live: true }
+      { name: 'Textile Credit RFQ', weightPercent: 50, live: true },
+      { name: 'Busha / NIBSS', weightPercent: 30, live: true },
+      { name: 'Celo Market Maker', weightPercent: 20, live: true }
     ],
     feeTiers: [
       { tier: 'starter', label: 'Starter (T1)', tradingFeePercent: Number(percent(onramp)), spreadPercent: 0.8, minimumFeeUsd: 1, description: 'New users, KYC L1' },
