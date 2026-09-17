@@ -1132,6 +1132,8 @@ export interface ServiceAgreementRecord {
   buyerTotalPayableUsdc?: number;
   sellerNetAmountUsdc?: number;
   feeTxHash?: string | null;
+  refundTxHash?: string | null;
+  refundSignature?: string | null;
   createdAt: string;
   updatedAt: string;
 }

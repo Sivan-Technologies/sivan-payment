@@ -154,8 +154,19 @@ export async function agreementRoutes(app: FastifyInstance) {
    * POST /api/agreements/:id/cancel
    * Cancel an agreement from any pre-release status.
    */
-  app.post<{ Params: { id: string } }>('/api/agreements/:id/cancel', async (req, reply) => {
-    const agreement = await cancelAgreement(req.params.id);
+  app.post<{
+    Params: { id: string };
+    Body?: {
+      signature?: string;
+      buyerAddress?: string;
+      reason?: string;
+    };
+  }>('/api/agreements/:id/cancel', async (req, reply) => {
+    const agreement = await cancelAgreement(req.params.id, {
+      refundSignature: req.body?.signature,
+      buyerAddress: req.body?.buyerAddress,
+      reason: req.body?.reason,
+    });
     return reply.code(200).send({
       ...agreement,
       countdownLabel: getCountdownLabel(agreement),

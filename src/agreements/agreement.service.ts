@@ -443,33 +443,94 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   return updated;
 }
 
+export interface CancelAgreementOptions {
+  refundSignature?: string;
+  buyerAddress?: string;
+  reason?: string;
+}
+
 /**
  * Cancel an agreement. Allowed from any pre-release active status.
+ * Automatically refunds locked funds back to buyer on-chain when funded.
  */
-export async function cancelAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
+export async function cancelAgreement(
+  agreementId: string,
+  options?: CancelAgreementOptions
+): Promise<ServiceAgreementRecord> {
   const existing = await db.findServiceAgreementById(agreementId);
   if (!existing) throw notFound(`Service agreement ${agreementId}`);
 
-  const terminalStatuses: ServiceAgreementStatus[] = ['released', 'cancelled', 'disputed'];
+  const terminalStatuses: ServiceAgreementStatus[] = ['released', 'cancelled'];
   if (terminalStatuses.includes(existing.status)) {
     throw badRequest(`Agreement ${agreementId} is already ${existing.status}; cannot cancel`);
+  }
+
+  const now = nowIso();
+  const refundAmount = existing.buyerTotalPayableUsdc ?? existing.amountUsdc;
+  const buyerTargetAddress =
+    options?.buyerAddress ||
+    (existing.buyerUserId?.startsWith('0x') ? existing.buyerUserId : null);
+
+  let refundTxHash: string | null = null;
+
+  // If the agreement was funded on-chain, trigger refund transfer back to buyer wallet
+  if (
+    existing.status === 'funded' ||
+    existing.status === 'in_delivery' ||
+    existing.status === 'delivered' ||
+    existing.status === 'disputed' ||
+    existing.fundingTxHash
+  ) {
+    try {
+      const activeProviderName = await resolveActiveWalletProvider();
+      const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+      const targetAddress = buyerTargetAddress || buyerWallet?.address;
+
+      if (targetAddress) {
+        const provider = getWalletProvider(buyerWallet?.provider ?? activeProviderName);
+        const refundTransferResult = await provider.createTransfer({
+          providerWalletId: buyerWallet?.providerWalletId || '',
+          providerCustomerId: buyerWallet?.customerId,
+          asset: ((existing.currency || 'usdc').toLowerCase() as any),
+          chain: (existing.network || 'celo') as any,
+          amount: String(refundAmount),
+          toAddress: targetAddress,
+          idempotencyKey: `ref_agr_${existing.id}_buyer`,
+          reference: `refund_${existing.id}`,
+        });
+
+        refundTxHash =
+          (refundTransferResult as any).transactionHash ||
+          (refundTransferResult as any).txHash ||
+          (refundTransferResult as any).providerTransferId ||
+          null;
+      }
+    } catch (onChainErr) {
+      console.warn('[agreement.cancel] On-chain refund transfer note:', onChainErr);
+    }
   }
 
   const updated: ServiceAgreementRecord = {
     ...existing,
     status: 'cancelled',
-    updatedAt: nowIso(),
+    refundTxHash: refundTxHash || options?.refundSignature || existing.refundTxHash || null,
+    refundSignature: options?.refundSignature || existing.refundSignature || null,
+    updatedAt: now,
   };
   await db.updateServiceAgreement(updated);
 
-  if (existing.status === 'funded' || existing.status === 'in_delivery' || existing.status === 'delivered') {
+  if (
+    existing.status === 'funded' ||
+    existing.status === 'in_delivery' ||
+    existing.status === 'delivered' ||
+    existing.status === 'disputed'
+  ) {
     try {
-      const releaseAmount = existing.buyerTotalPayableUsdc ?? existing.amountUsdc;
       await createBalanceLedgerEntry(
         {
           userId: existing.buyerUserId,
           asset: ((existing.currency || 'usdc').toLowerCase() as any),
-          amount: String(releaseAmount),
+          amount: String(refundAmount),
           kind: 'hold_release',
           status: 'available',
           sourceType: 'service_agreement',
