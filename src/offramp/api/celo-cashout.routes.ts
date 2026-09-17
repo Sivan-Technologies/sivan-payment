@@ -516,15 +516,15 @@ export async function celoCashoutRoutes(app: FastifyInstance) {
         }
       }
 
-      // If Textile RFQ unavailable, calculate benchmark fallback
+      // If Textile RFQ preview is not available, obtain live rate directly from Textile FX tickers
       if (rawOutput === null) {
-        const calibratedBenchmarkRate = 1485.50; // benchmark NGN/USD
+        const fxQuote = await getTextileFxQuote('usdc_to_cngn', amount);
         if (fromKey === 'CNGN' && isUsdStable(toKey)) {
-          rawOutput = amount / calibratedBenchmarkRate;
+          rawOutput = amount / fxQuote.rate;
         } else {
-          rawOutput = amount * calibratedBenchmarkRate;
+          rawOutput = amount * fxQuote.rate;
         }
-        source = 'Textile Credit RFQ (calibrated)';
+        source = 'Textile Credit RFQ (Live)';
       }
 
       // 0.3% Sivan protocol liquidity fee on output

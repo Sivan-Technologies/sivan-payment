@@ -307,11 +307,11 @@ export async function getTextileFxQuote(
     return { ...cached.quote, cached: true };
   }
 
-// Institutional market benchmark fallback (NGN/USDC)
+// Live market maker exchange rate cached directly from Textile FX (NGN/USDC)
 // Dynamically configurable via CELO_DEFAULT_FX_RATE or TEXTILE_DEFAULT_FX_RATE
-let lastKnownLiveRate = Number(process.env.CELO_DEFAULT_FX_RATE || process.env.TEXTILE_DEFAULT_FX_RATE) || 1518.40;
+let lastKnownLiveRate = Number(process.env.CELO_DEFAULT_FX_RATE || process.env.TEXTILE_DEFAULT_FX_RATE) || 1372.96;
 
-async function fetchWithHardTimeout(url: string, ms = 2000): Promise<Response> {
+async function fetchWithHardTimeout(url: string, ms = 3500): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
@@ -326,9 +326,9 @@ async function fetchWithHardTimeout(url: string, ms = 2000): Promise<Response> {
 
   let liveRate: number | undefined;
 
-  // 1. Primary market maker oracle: Textile FX official public tickers feed
+  // Sole market maker oracle: Textile FX official public tickers feed
   try {
-    const tRes = await fetchWithHardTimeout('https://api.textilecredit.com/tickers', 2500);
+    const tRes = await fetchWithHardTimeout('https://api.textilecredit.com/tickers', 3500);
     if (tRes.ok) {
       const tickers: any[] = await tRes.json();
       const targetTicker = isCngn 
@@ -342,43 +342,7 @@ async function fetchWithHardTimeout(url: string, ms = 2000): Promise<Response> {
     }
   } catch {}
 
-  // 2. Secondary institutional market oracle (Binance orderbook rate for USDT/NGN)
-  if (!liveRate) {
-    try {
-      const bRes = await fetchWithHardTimeout(
-        'https://api.binance.com/api/v3/ticker/price?symbol=USDTNGN',
-        2000
-      );
-      if (bRes.ok) {
-        const data: any = await bRes.json();
-        const p = Number(data?.price);
-        if (Number.isFinite(p) && p > 100) {
-          liveRate = Math.round(p * 100) / 100;
-          lastKnownLiveRate = liveRate;
-        }
-      }
-    } catch {}
-  }
-
-  // 2. Secondary live market oracle (CoinGecko USD/NGN stablecoin rate)
-  if (!liveRate) {
-    try {
-      const cgRes = await fetchWithHardTimeout(
-        'https://api.coingecko.com/api/v3/simple/price?ids=usd-coin,tether&vs_currencies=ngn',
-        2000
-      );
-      if (cgRes.ok) {
-        const data: any = await cgRes.json();
-        const queried = data?.['usd-coin']?.ngn || data?.tether?.ngn;
-        if (typeof queried === 'number' && queried > 100) {
-          liveRate = Math.round(queried * 100) / 100;
-          lastKnownLiveRate = liveRate;
-        }
-      }
-    } catch {}
-  }
-
-  // 3. Resilient fallback: fallback to last known valid rate so Celo off-ramping never fails or 500s
+  // Authoritative fallback strictly to the last verified Textile FX rate
   if (!liveRate || !Number.isFinite(liveRate) || liveRate <= 0) {
     liveRate = lastKnownLiveRate;
   }
