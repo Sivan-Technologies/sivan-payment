@@ -395,31 +395,17 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
   // 3. Ensure contractor wallet exists in DB for this network
   let walletAddress: string | undefined;
   try {
-    const existingWallet = await db.findUserWalletForNetwork(user.id, network);
-    if (existingWallet?.address) {
-      walletAddress = existingWallet.address;
-    } else if (isAddress) {
+    if (isAddress && clean.startsWith('0x') && clean.length === 42) {
       walletAddress = clean;
-      const now = nowIso();
-      const rawRecord: UserWalletRecord = {
-        id: generateId('uw'),
-        userId: user.id,
-        provider: 'evm_native',
-        providerWalletId: `evm_${clean}`,
-        chain: (network || 'celo') as any,
-        address: clean,
-        status: 'active',
-        custodial: false,
-        delegatedSigningEnabled: true,
-        raw: { address: clean, chain: network },
-        createdAt: now,
-        updatedAt: now,
-      };
-      await db.insertUserWallet(rawRecord).catch(() => null);
     } else {
-      const provisioned = await ensureUserWallet(user.id, network as any).catch(() => null);
-      if (provisioned?.address) {
-        walletAddress = provisioned.address;
+      const existingWallet = await db.findUserWalletForNetwork(user.id, network);
+      if (existingWallet?.address) {
+        walletAddress = existingWallet.address;
+      } else {
+        const provisioned = await ensureUserWallet(user.id, network as any).catch(() => null);
+        if (provisioned?.address) {
+          walletAddress = provisioned.address;
+        }
       }
     }
   } catch (err) {
