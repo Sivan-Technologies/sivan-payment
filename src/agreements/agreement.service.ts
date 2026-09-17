@@ -427,13 +427,14 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   }
 
   const now = nowIso();
+  const feePayer = existing.feePayer || 'seller';
   const feeQuote = quoteServiceAgreementFee(
     existing.amountUsdc,
     existing.network,
-    existing.feePayer || 'buyer'
+    feePayer
   );
-  const sellerNetAmount = existing.sellerNetAmountUsdc ?? feeQuote.sellerNetAmount;
   const feeAmount = existing.feeAmountUsdc ?? feeQuote.feeAmount;
+  const sellerNetAmount = existing.sellerNetAmountUsdc ?? (feePayer === 'seller' ? Math.max(0, parseFloat((existing.amountUsdc - feeAmount).toFixed(2))) : feeQuote.sellerNetAmount);
   const payableAmount = existing.buyerTotalPayableUsdc ?? feeQuote.buyerTotalPayable;
   const feeWallet = getSivanServiceAgreementFeeWallet(existing.network || 'solana');
 
