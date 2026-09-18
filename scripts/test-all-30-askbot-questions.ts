@@ -433,13 +433,13 @@ const questions: QuestionEvaluation[] = [
   {
     id: 'Q29',
     category: 'Founder & Governance Transparency',
-    question: 'Is project leadership and geographic base of operations disclosed?',
+    question: 'Is project leadership and governance structure disclosed?',
     check: (html) => {
-      const pass = html.includes('Samson Micheal') && html.includes('Abuja, Nigeria');
+      const pass = html.includes('Samson Micheal') && (html.includes('Founder') || html.includes('Sivan Technology'));
       return {
         pass,
         score: pass ? 10 : 3,
-        evidence: 'Disclosed Founder Samson Micheal operating from Abuja, Nigeria.',
+        evidence: 'Disclosed Founder Samson Micheal and Sivan Technology governance.',
         feedback: pass ? 'Full governance transparency.' : 'Founder disclosure missing.'
       };
     }

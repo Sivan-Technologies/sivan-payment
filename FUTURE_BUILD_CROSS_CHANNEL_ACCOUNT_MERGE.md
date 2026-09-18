@@ -5,7 +5,7 @@ This specification defines the automated architecture for merging split identiti
 
 Document Version: 1.2.0
 Status: ⏳ QUEUED FOR POST-LAUNCH PHASE 2 (Cross-Channel Identity Merge)
-Author: Samson Micheal, Founder & CEO (Abuja, Nigeria)
+Author: Samson Micheal, Founder & CEO
 Platform: Sivan Ai / Sivan Payment Ai
 
 ---
