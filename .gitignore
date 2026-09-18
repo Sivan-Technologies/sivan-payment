@@ -48,3 +48,7 @@ e2e/shots/
 # Live/sandbox credential files - never commit
 .env-*
 !.env-*.example
+
+# Scratch scripts
+scratch/
+

@@ -32,7 +32,7 @@ async function main() {
 
   const publicClient = createPublicClient({
     chain: celo,
-    transport: http('https://forno.celo.org'),
+    transport: http(process.env.CELO_RPC_URL || 'https://forno.celo.org'),
   });
 
   console.log('\nQuerying Celo Mainnet On-Chain Balances...');
