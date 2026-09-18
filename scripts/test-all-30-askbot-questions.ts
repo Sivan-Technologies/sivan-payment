@@ -469,20 +469,14 @@ async function runEvaluation() {
     targetLabel = targetArg;
     console.log(`Fetching remote target: ${targetArg}...`);
     try {
-      const resp = await fetch(targetArg, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-      });
-      html = await resp.text();
-    } catch {
-      try {
-        const { execSync } = await import('child_process');
-        html = execSync(`curl -sL "${targetArg}"`, { encoding: 'utf-8', timeout: 15000 });
-      } catch (err: any) {
-        console.error(`Failed to fetch ${targetArg}: ${err.message}`);
-        process.exit(1);
+      const { execSync } = await import('child_process');
+      html = execSync(`curl -sL --max-time 20 -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" "${targetArg}"`, { encoding: 'utf-8' });
+      if (!html || html.length < 100) {
+        throw new Error('Empty response from curl');
       }
+    } catch (err: any) {
+      console.error(`Failed to fetch ${targetArg}: ${err.message}`);
+      process.exit(1);
     }
   } else {
     const distHtmlPath = targetArg 
