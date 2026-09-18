@@ -100,7 +100,7 @@ const questions: QuestionEvaluation[] = [
     category: 'Original AskBots',
     question: 'What kinds of issues did you find?',
     check: (html) => {
-      const notEmpty = !html.includes('<div id="root"></div>') && html.includes('<main');
+      const notEmpty = html.includes('<main') && html.length > 5000;
       const noBrokenFlow = html.includes('STEP 1') && html.includes('STEP 4');
       const claimsVerified = html.includes('1,480.00 NGN') && html.includes('Textile FX / Busha Rails');
       const pass = notEmpty && noBrokenFlow && claimsVerified;
@@ -471,13 +471,18 @@ async function runEvaluation() {
     try {
       const resp = await fetch(targetArg, {
         headers: {
-          'User-Agent': 'AskBots-AuditBot/1.0 (+https://askbots.ai)'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
       });
       html = await resp.text();
-    } catch (err: any) {
-      console.error(`Failed to fetch ${targetArg}: ${err.message}`);
-      process.exit(1);
+    } catch {
+      try {
+        const { execSync } = await import('child_process');
+        html = execSync(`curl -sL "${targetArg}"`, { encoding: 'utf-8', timeout: 15000 });
+      } catch (err: any) {
+        console.error(`Failed to fetch ${targetArg}: ${err.message}`);
+        process.exit(1);
+      }
     }
   } else {
     const distHtmlPath = targetArg 
