@@ -522,6 +522,10 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
     mainnet: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
     testnet: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
   },
+  'arbitrum:usdt': {
+    mainnet: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+    testnet: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+  },
   'bsc:usdt': {
     mainnet: '0x55d398326f99059fF775485246999027B3197955',
     testnet: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
