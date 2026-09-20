@@ -126,12 +126,12 @@ async function main() {
      * wallet refuses for a legitimate reason and would hide the bug behind a
      * correct-looking rejection.
      */
-    await provider.__seedBalance(providerWallet.providerWalletId, { asset: 'usdc', chain: 'base', amount: '108' });
+    await provider.__seedBalance(providerWallet.providerWalletId, { asset: 'usdc', chain: 'base', amount: '200' });
 
     const unified = await req('GET', `/api/users/${userId}/balance/unified`);
     const usdc = unified.data.balances.find((b: any) => b.asset === 'usdc');
-    check('the unified balance sees the 108 USDC on Base', Number(usdc?.chain) === 108, JSON.stringify(usdc));
-    check('spendable matches, nothing is held yet', Number(usdc?.spendable) === 108, String(usdc?.spendable));
+    check('the unified balance sees the 200 USDC on Base', Number(usdc?.chain) === 200, JSON.stringify(usdc));
+    check('spendable matches, nothing is held yet', Number(usdc?.spendable) === 200, String(usdc?.spendable));
 
     /** The exact send from the screenshot: 10 USDC to Base. */
     const send = await req('POST', `/api/users/${userId}/balance/transfers`, {

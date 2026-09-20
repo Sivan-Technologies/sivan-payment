@@ -39,7 +39,7 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
-import { getSpendable, getUnifiedBalance } from './unified-balance.service.js';
+import { getSpendable, getUnifiedBalance, invalidateUnifiedBalanceCache } from './unified-balance.service.js';
 import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
@@ -82,7 +82,7 @@ export const balanceTransferControlsSchema = z.object({
   minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -304,7 +304,7 @@ export async function getBalanceTransferControls() {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum'] as BalanceNetwork[],
+    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum'] as BalanceNetwork[],
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
@@ -448,6 +448,9 @@ export async function createBalanceLedgerEntry(input: Omit<LedgerMetadata, 'entr
     severity: entry.kind === 'adjustment' ? 'warning' : 'info',
     metadata: entry
   });
+  if (input.userId) {
+    invalidateUnifiedBalanceCache(input.userId);
+  }
   return entry;
 }
 

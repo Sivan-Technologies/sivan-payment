@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { buildApp } from '../src/app.js';
+import { env } from '../src/config/env.js';
 
 export async function runP2pTransferTest() {
   console.log('--- Starting P2P Direct Transfer Integration Test ---');
+  const dbPath = path.isAbsolute(env.DATABASE_FILE) ? env.DATABASE_FILE : path.join(process.cwd(), env.DATABASE_FILE);
+  await fs.rm(dbPath, { force: true });
   const app = await buildApp();
 
   async function signup(name: string, username: string) {
@@ -85,6 +90,7 @@ export async function runP2pTransferTest() {
   const transferRes = await app.inject({
     method: 'POST',
     url: `/api/users/${senderUser.id}/balance/p2p-transfer`,
+    headers: { Authorization: `Bearer ${senderSignup.token}` },
     payload: {
       asset: 'usdc',
       amount: 15,
@@ -104,20 +110,24 @@ export async function runP2pTransferTest() {
   const recipBalRes = await app.inject({
     method: 'GET',
     url: `/api/users/${recipUser.id}/balance`,
+    headers: { Authorization: `Bearer ${recipSignup.token}` },
   });
   assert.equal(recipBalRes.statusCode, 200);
   const recipBal = recipBalRes.json();
-  assert.equal(Number(recipBal.data.available), 15, 'Recipient balance is 15 USDC');
+  const recipUsdc = recipBal.data.balances?.find((b: any) => b.asset === 'usdc') ?? recipBal.data;
+  assert.equal(Number(recipUsdc.available), 15, 'Recipient balance is 15 USDC');
   console.log('✅ Verified: Recipient ledger credited with 15.00 USDC');
 
   // Test 5: Verify Sender Remaining Balance is 35 USDC
   const senderBalRes = await app.inject({
     method: 'GET',
     url: `/api/users/${senderUser.id}/balance`,
+    headers: { Authorization: `Bearer ${senderSignup.token}` },
   });
   assert.equal(senderBalRes.statusCode, 200);
   const senderBal = senderBalRes.json();
-  assert.equal(Number(senderBal.data.available), 35, 'Sender balance is 35 USDC');
+  const senderUsdc = senderBal.data.balances?.find((b: any) => b.asset === 'usdc') ?? senderBal.data;
+  assert.equal(Number(senderUsdc.available), 35, 'Sender balance is 35 USDC');
   console.log('✅ Verified: Sender balance deducted by exact 15.00 USDC');
 
   // Test 6: Case B - Create P2P Claim Vault for Unregistered Phone (+14159998877)
@@ -125,6 +135,7 @@ export async function runP2pTransferTest() {
   const claimRes = await app.inject({
     method: 'POST',
     url: `/api/users/${senderUser.id}/balance/p2p-transfer`,
+    headers: { Authorization: `Bearer ${senderSignup.token}` },
     payload: {
       asset: 'usdc',
       amount: 10,
@@ -175,10 +186,12 @@ export async function runP2pTransferTest() {
   const newBalRes = await app.inject({
     method: 'GET',
     url: `/api/users/${newUser.id}/balance`,
+    headers: { Authorization: `Bearer ${newSignup.token}` },
   });
   assert.equal(newBalRes.statusCode, 200);
   const newBal = newBalRes.json();
-  assert.equal(Number(newBal.data.available), 10, 'New user balance is 10 USDC');
+  const newUsdc = newBal.data.balances?.find((b: any) => b.asset === 'usdc') ?? newBal.data;
+  assert.equal(Number(newUsdc.available), 10, 'New user balance is 10 USDC');
 
   // Verify Phone Auto-Linked to New User Profile
   const resolveNewPhoneRes = await app.inject({
@@ -194,11 +207,10 @@ export async function runP2pTransferTest() {
   console.log('🎉 ALL P2P DIRECT TRANSFER & CLAIM REDEMPTION TESTS PASSED 100% GREEN!');
 }
 
-if (import.meta.url.endsWith(process.argv[1])) {
-  runP2pTransferTest()
-    .then(() => process.exit(0))
-    .catch((err) => {
-      console.error('Test failed:', err);
-      process.exit(1);
-    });
-}
+runP2pTransferTest()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error('Test failed:', err);
+    process.exit(1);
+  });
+

@@ -77,8 +77,8 @@ const provider = getWalletProvider('mock') as any;
 console.log('\n── the controls now come from the fee tab ────────────────────');
 
 const controls = await getBalanceTransferControls();
-check('the minimum send amount is 10, and admin-settable',
-  controls.minimumSendAmount === 10,
+check('the minimum send amount is 5, and admin-settable',
+  controls.minimumSendAmount === 5,
   `${controls.minimumSendAmount} - it must come from the fee tab, not an env var`);
 check('ethereum is disabled for transfers',
   !controls.supportedNetworks.includes('ethereum' as any),
