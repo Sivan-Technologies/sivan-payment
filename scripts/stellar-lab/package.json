@@ -1,0 +1,24 @@
+{
+  "name": "@sivan/stellar-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated Stellar and MoneyGram test laboratory. Self-contained: never imports from the parent application.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "preflight": "node lib/config.js",
+    "test:cctp": "node 01_cctp_bridge_test.js",
+    "test:vault": "node 02_deterministic_vault_test.js",
+    "test:release": "node 03_x402_atomic_release_test.js",
+    "test:cashout": "node 04_moneygram_cashout_test.js",
+    "test:webhook": "node 05_webhook_verifier_test.js",
+    "demo": "node 06_full_e2e_demo_runner.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.1.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  }
+}
