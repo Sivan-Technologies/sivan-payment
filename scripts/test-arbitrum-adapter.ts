@@ -178,7 +178,7 @@ async function main() {
   // The maps are module-private, so assert through the behaviour they drive:
   // an EVM address is identical across chains, which is the property that
   // makes a wrong CAIP-2 dangerous rather than merely wrong.
-  check('mainnet and testnet CAIP-2 must differ (42161 vs 421614)', 42161 !== 421614);
+  check('mainnet and testnet CAIP-2 must differ (42161 vs 421614)', (42161 as number) !== (421614 as number));
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);

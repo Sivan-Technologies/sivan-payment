@@ -162,7 +162,7 @@ export function ReceiveView({
   onRefresh: () => void;
 }) {
   const availableChains = useMemo(() => {
-    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
+    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'stellar', 'celo'];
     if (!enabledNetworks || enabledNetworks.length === 0) {
       return supported;
     }
@@ -183,7 +183,7 @@ export function ReceiveView({
   /**
    * NETWORKS PRESENTED AS DISTINCT CHOICES.
    *
-   * All 5 ultra-low-fee networks (Solana, Base, BNB Chain, Stellar, Celo)
+   * All ultra-low-fee networks (Solana, Base, BNB Chain, Arbitrum, Stellar, Celo)
    * are presented as individual options so users can deposit instantly without high gas fees.
    */
   const chainFamilies = useMemo(() => {
@@ -219,6 +219,14 @@ export function ReceiveView({
         accent: CHAIN_META.bsc.accent,
         recommended: activeDefault === 'bsc' || (activeDefault as string) === 'bnb',
         chains: ['bsc'],
+      },
+      {
+        key: 'arbitrum',
+        label: 'Arbitrum',
+        note: 'Arbitrum One L2 EVM network. Ultra-low gas fees for USDC & USDT.',
+        accent: CHAIN_META.arbitrum.accent,
+        recommended: activeDefault === 'arbitrum',
+        chains: ['arbitrum'],
       },
       {
         key: 'stellar',
