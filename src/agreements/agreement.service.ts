@@ -328,6 +328,28 @@ export async function markDelivered(agreementId: string): Promise<ServiceAgreeme
     throw badRequest(`Agreement ${agreementId} cannot be marked delivered from ${existing.status}`);
   }
 
+  // Tiered verification protocol:
+  // Naira Service Agreements require a phone/WhatsApp anchor for local banking compliance.
+  // USDC / crypto agreements proceed frictionlessly via wallet or user ID.
+  const curr = String(existing.currency || '').toUpperCase();
+  if (curr === 'NAIRA' || curr === 'NGN') {
+    let seller = await db.findUserById(existing.sellerUserId);
+    if (!seller && existing.sellerUserId) {
+      seller = await db.findUserByTarget(existing.sellerUserId);
+    }
+    const hasPhone = Boolean(
+      seller?.whatsappNumber ||
+      (seller as any)?.phone ||
+      existing.sellerUserId?.startsWith('+') ||
+      /^\+?[0-9]{10,15}$/.test(existing.sellerUserId || '')
+    );
+    if (!hasPhone) {
+      throw badRequest(
+        'Naira Service Agreements require a verified WhatsApp phone number for compliance and local banking rail settlement.'
+      );
+    }
+  }
+
   const now = nowIso();
   const updated: ServiceAgreementRecord = {
     ...existing,

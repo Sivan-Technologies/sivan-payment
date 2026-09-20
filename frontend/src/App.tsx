@@ -2055,6 +2055,16 @@ export default function App() {
       let estimatedGasUsd: number | undefined;
 
       if (isNgnPayout) {
+        // Enforce verified WhatsApp phone number for Nigerian bank cashout & banking compliance
+        const hasPhone = Boolean(user?.whatsappNumber || (user as any)?.phone || identityStatus?.link?.whatsappNumber);
+        if (!hasPhone) {
+          notify('Bank cashouts to Nigerian accounts require a verified WhatsApp phone number for compliance and receipts.', 'error');
+          setSettingsInitialTab('profile');
+          goToView('settings');
+          setLoading(false);
+          return;
+        }
+
         const networkOption = ngnNetworks?.offramp.find((option) => option.network === data.sourceChain);
 
         /**
