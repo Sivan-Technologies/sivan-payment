@@ -418,9 +418,10 @@ export function ReceiveView({
     openWallets.find((w) => walletFamily.includes(w.chain));
 
   // The server returns acceptedAssets per wallet and is authoritative. Fall
-  // back to the local matrix before a wallet exists so the warning copy is
-  // still correct on the pre-generation screen.
-  const chainAssets = wallet?.acceptedAssets ?? CHAIN_ASSETS[activeChain];
+  // back to the local matrix before a wallet exists, or when the matched
+  // wallet is a family fallback from another EVM chain (e.g. Base), so the
+  // accepted assets and warnings reflect the active chain accurately.
+  const chainAssets = (wallet && wallet.chain === activeChain ? wallet.acceptedAssets : null) ?? CHAIN_ASSETS[activeChain];
   const assetsOnChain = chainAssets.filter((asset) =>
     enabledAssets.some((a) => a.asset === asset && a.enabled)
   );
@@ -450,7 +451,8 @@ export function ReceiveView({
       const matching = unifiedWallet.balances.filter((b) => b.chain === activeChain);
       if (matching.length > 0) return matching;
     }
-    return directChainWallet?.balances ?? directUnified?.balances ?? wallet?.balances;
+    // If no balance entries belong to this active chain, return empty so it renders the awaiting deposit state
+    return [];
   }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, activeChain]);
 
   const lastDispatchedBalanceRef = useRef<string>('');
