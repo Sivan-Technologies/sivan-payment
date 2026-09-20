@@ -459,7 +459,7 @@ export interface UserWalletRecord {
  * Solana is the default because it is the only supported chain that carries
  * BOTH USDC and USDT, and it has the lowest fees. Base cannot hold USDT.
  */
-export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb';
+export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb' | 'arbitrum';
 
 export const DEFAULT_WALLET_CHAIN: WalletChain = 'solana';
 

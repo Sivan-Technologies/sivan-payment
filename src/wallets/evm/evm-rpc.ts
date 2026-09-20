@@ -72,6 +72,14 @@ const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }>
     ],
     testnet: ['https://data-seed-prebsc-1-s1.binance.org:8545'],
   },
+  arbitrum: {
+    mainnet: [
+      'https://arb1.arbitrum.io/rpc',
+      'https://arbitrum.drpc.org',
+      'https://1rpc.io/arb',
+    ],
+    testnet: ['https://sepolia-rollup.arbitrum.io/rpc'],
+  },
 };
 
 export interface EvmRpcOptions {
@@ -96,6 +104,9 @@ export function evmRpcEndpoints(chain: WalletChain, options: EvmRpcOptions = {})
   } else if (chain === 'bsc' || chain === 'bnb') {
     configured = process.env.BSC_RPC_URL || '';
     secondary = process.env.BSC_RPC_FALLBACK_URL || '';
+  } else if (chain === 'arbitrum') {
+    configured = process.env.ARBITRUM_RPC_URL || '';
+    secondary = process.env.ARBITRUM_RPC_FALLBACK_URL || '';
   } else {
     configured = env.ETHEREUM_RPC_URL || '';
     secondary = env.ETHEREUM_RPC_FALLBACK_URL || '';

@@ -173,6 +173,15 @@ const envSchema = z.object({
   BASE_RPC_FALLBACK_URL: z.string().url().optional(),
   ETHEREUM_RPC_URL: z.string().url().optional(),
   ETHEREUM_RPC_FALLBACK_URL: z.string().url().optional(),
+  /**
+   * Arbitrum One and Arbitrum Sepolia.
+   *
+   * Optional for the same reason the others are: an unset RPC degrades to the
+   * public endpoints in evm-rpc.ts, which are rate limited and explicitly not
+   * production traffic. Set these in any real deployment.
+   */
+  ARBITRUM_RPC_URL: z.string().url().optional(),
+  ARBITRUM_RPC_FALLBACK_URL: z.string().url().optional(),
   STELLAR_HORIZON_URL: z.string().url().optional(),
   STELLAR_SPONSOR_ACCOUNT_ID: z.string().optional(),
   STELLAR_SPONSOR_SECRET_KEY: z.string().optional(),
@@ -313,6 +322,12 @@ const envSchema = z.object({
    * wallet-controls.service.ts takes precedence over this.
    */
   WALLET_PROVIDER: z.string().optional().default('mock'),
+  /**
+   * Privy API base. Optional; the provider keeps the production default when
+   * unset. Declared so a staging tenant or a proxy can be pointed at without
+   * editing source.
+   */
+  PRIVY_API_BASE_URL: z.string().url().optional(),
   PRIVY_APP_ID: z.string().optional().default(''),
   PRIVY_APP_SECRET: z.string().optional().default(''),
   /**

@@ -186,7 +186,7 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   }
 
   // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC)
-  if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(chain)) {
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum'].includes(chain)) {
     const evmWallet = await db.findUserWallet(userId, 'base')
       || await db.findUserWallet(userId, 'ethereum')
       || await db.findUserWallet(userId, 'celo')

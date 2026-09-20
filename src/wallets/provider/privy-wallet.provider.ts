@@ -80,7 +80,17 @@ import type {
  * destination and cap. That is a deliberate later step, not a default.
  */
 
-const PRIVY_BASE = 'https://api.privy.io/v1';
+/**
+ * Privy API base, from the environment.
+ *
+ * Was a hardcoded literal. A baked-in base URL cannot be pointed at a staging
+ * tenant or a proxy without editing source, and it silently keeps working when
+ * an operator believes they have redirected it, which is the failure that
+ * matters: the change looks applied and is not.
+ *
+ * The default preserves existing behaviour so nothing breaks on deploy.
+ */
+const PRIVY_BASE = (process.env.PRIVY_API_BASE_URL || env.PRIVY_API_BASE_URL || 'https://api.privy.io/v1').replace(/\/+$/, '');
 
 /** Privy's chain vocabulary, keyed by Sivan's. */
 const CHAIN_TYPE: Record<WalletChain, string> = {
@@ -91,6 +101,9 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
   celo: 'ethereum',
   bsc: 'ethereum',
   bnb: 'ethereum',
+  // Arbitrum One is an EVM rollup: standard JSON-RPC, standard secp256k1
+  // addresses. Privy needs no new key material for it.
+  arbitrum: 'ethereum',
 };
 
 /**
@@ -121,6 +134,22 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   bnb: {
     mainnet: 'eip155:56',
     testnet: 'eip155:97',
+  },
+  /**
+   * Arbitrum One and Arbitrum Sepolia.
+   *
+   * Both chain ids were read back from the live RPCs before being written
+   * here, rather than copied from documentation:
+   *   eth_chainId on arb1      -> 0xa4b1  = 42161
+   *   eth_chainId on sepolia   -> 0x66eee = 421614
+   *
+   * The distinction matters more than usual on a rollup. An EVM address is
+   * identical across both, so a transaction sent with the wrong CAIP-2 does
+   * not bounce. It succeeds, on a chain nobody is watching.
+   */
+  arbitrum: {
+    mainnet: 'eip155:42161',
+    testnet: 'eip155:421614',
   },
 };
 
@@ -469,6 +498,23 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
     mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
     testnet: '0x64544969ed7EBf5f083679233325356EbE738930',
   },
+  /**
+   * Arbitrum USDC. Both are Circle NATIVE USDC, not the bridged USDC.e.
+   *
+   * Each was read back from its own RPC with symbol() and decimals() before
+   * being written here, the same standard the Celo entries were held to:
+   *   42161  0xaf88d065e77c8cC2239327C5EDb3A432268e5831  USDC  6dp
+   *   421614 0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d  USDC  6dp
+   *
+   * Worth the check on Arbitrum specifically: USDC.e (the bridged legacy
+   * token) is still widely circulated and still answers symbol() as "USDC.e",
+   * so a copied address is easy to get wrong and the mistake only surfaces
+   * when a transfer lands in an asset the recipient cannot off-ramp.
+   */
+  'arbitrum:usdc': {
+    mainnet: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    testnet: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+  },
   'bsc:usdt': {
     mainnet: '0x55d398326f99059fF775485246999027B3197955',
     testnet: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
@@ -568,7 +614,7 @@ export class PrivyWalletProvider implements WalletProvider {
    * Base is served by the Ethereum wallet - same key, same address - so all
    * three are supported with only TWO keys per user.
    */
-  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb'];
+  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb', 'arbitrum'];
 
   /**
    * Create (or return) the user's wallet for a chain.
