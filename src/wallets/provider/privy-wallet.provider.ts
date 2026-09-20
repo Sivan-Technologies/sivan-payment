@@ -506,10 +506,17 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
    *   42161  0xaf88d065e77c8cC2239327C5EDb3A432268e5831  USDC  6dp
    *   421614 0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d  USDC  6dp
    *
-   * Worth the check on Arbitrum specifically: USDC.e (the bridged legacy
-   * token) is still widely circulated and still answers symbol() as "USDC.e",
-   * so a copied address is easy to get wrong and the mistake only surfaces
-   * when a transfer lands in an asset the recipient cannot off-ramp.
+   * Worth the check on Arbitrum specifically. The bridged legacy token
+   * USDC.e at 0xFF97...5CC8 is still widely circulated and reports symbol()
+   * as exactly "USDC", so a symbol check does NOT tell them apart. Only
+   * name() does:
+   *
+   *   native   0xaf88...5831  "USD Coin"
+   *   bridged  0xFF97...5CC8  "USD Coin (Arb1)"
+   *
+   * The two are not interchangeable: USDC.e cannot be redeemed with Circle or
+   * moved by CCTP, so a transfer into it lands in an asset the recipient
+   * cannot off-ramp, with nothing in the symbol to warn anyone.
    */
   'arbitrum:usdc': {
     mainnet: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',

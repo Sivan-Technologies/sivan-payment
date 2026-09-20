@@ -121,6 +121,10 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-bsc-adapter.ts',
   },
   {
+    name: 'Multi-Chain Arbitrum One Adapter & Protocols',
+    command: 'tsx scripts/test-arbitrum-adapter.ts',
+  },
+  {
     name: 'Multi-Chain Developer Gateway & Agent API',
     command: 'tsx scripts/test-developer-gateway.ts',
     env: {
