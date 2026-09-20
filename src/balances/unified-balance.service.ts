@@ -148,7 +148,7 @@ async function readChainBalances(userId: string) {
    * a row filed under either name and cannot degrade to an empty list.
    * We filter by activeSupportedChains to target active Phase 2 networks cleanly.
    */
-  const activeSupportedChains = new Set(['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo']);
+  const activeSupportedChains = new Set(['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo', 'arbitrum']);
   const uniqueReads = new Map<string, { wallet: (typeof active)[0]; chain: string }>();
   for (const wallet of active) {
     const chains = networksServedByWallet(wallet.chain).filter((c) => activeSupportedChains.has(c.toLowerCase()));
