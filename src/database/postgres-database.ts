@@ -176,6 +176,9 @@ export class PostgresDatabase {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS ?? 30000),
       keepAlive: true,
+      ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1')
+        ? false
+        : { rejectUnauthorized: false },
     });
     this.pool.on('error', (error) => {
       console.error('[postgres.pool.error]', error?.message || error);
