@@ -328,7 +328,7 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
     if (anyChainUnavailable) row.chainUnavailable = true;
     // Floored at zero: a hold larger than the readable balance is possible
     // mid-settlement, and a negative spendable figure is never useful to show.
-    row.spendable = row.chainUnavailable
+    row.spendable = row.chainUnavailable && num(row.chain) === 0
       ? money(Math.max(num(row.credited) - num(row.held), 0))
       : money(Math.max(num(row.chain) + num(row.credited) - num(row.held), 0));
   }
