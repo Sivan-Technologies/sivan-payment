@@ -27,6 +27,170 @@ import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.
 import { dispatchCeloSettlementTransfer } from '../wallets/celo/celo-settlement-relayer.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserRecord, UserWalletRecord } from '../database/types.js';
 
+// ─── Cross-channel cancellation notifier ─────────────────────────────────────
+
+/**
+ * Fires a real-time push notification to the counterparty (and optionally the
+ * actor) across Telegram and WhatsApp when an agreement is cancelled or
+ * declined from any channel (Web App, API, bot, etc.).
+ *
+ * Runs fire-and-forget — never throws so it cannot break the main state
+ * transition that called it.
+ *
+ * @param agreement  The already-updated (cancelled/declined) agreement record.
+ * @param actorRole  'buyer' | 'seller' — who performed the action.
+ * @param action     'cancelled' | 'declined' — for message wording.
+ * @param reason     Optional free-text reason supplied by the actor.
+ */
+async function notifyAgreementCancellation(
+  agreement: ServiceAgreementRecord,
+  actorRole: 'buyer' | 'seller',
+  action: 'cancelled' | 'declined',
+  reason?: string | null
+): Promise<void> {
+  try {
+    const telegramUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    const whatsappUrl = process.env.WHATSAPP_NOTIFICATION_URL;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+
+    if (!secret) return;
+
+    // Determine who to notify: the counterparty of whoever acted.
+    const counterpartyId =
+      actorRole === 'seller' ? agreement.buyerUserId : agreement.sellerUserId;
+    const actorId =
+      actorRole === 'seller' ? agreement.sellerUserId : agreement.buyerUserId;
+
+    const actionLabel = action === 'declined' ? 'declined' : 'cancelled';
+    const actorLabel = actorRole === 'seller' ? 'The contractor' : 'The client';
+    const emoji = action === 'declined' ? '❌' : '🚫';
+
+    const shortId = String(agreement.id).slice(-8).toUpperCase();
+    const titleSnip = (agreement.title || 'Service Agreement').slice(0, 50);
+    const reasonLine = reason ? `
+
+Reason: ${reason.trim()}` : '';
+
+    // Message shown to the counterparty
+    const counterpartyMsg =
+      `${emoji} Service Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}
+
+` +
+      `${actorLabel} has ${actionLabel} the service agreement:
+` +
+      `"${titleSnip}"` +
+      reasonLine +
+      `
+
+Ref: ${agreement.id}
+No funds have been charged.\n\nYou can start a new agreement anytime.`;
+
+    const replyKeyboard = [
+      [{ text: '📋 My Agreements', callback_data: 'action:deals' }],
+      [{ text: '💰 Portfolio Balance', callback_data: 'action:balance' }],
+      [{ text: '🏠 Main Menu', callback_data: 'action:menu' }],
+    ];
+
+    // Helper: resolve Telegram chat ID for a payment userId
+    const resolveTelegramId = async (userId: string): Promise<string | null> => {
+      if (!userId) return null;
+      const links = await db.listCustomerIdentityLinks();
+      const match = links
+        .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
+        .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+      return match[0]?.telegramUserId || null;
+    };
+
+    // Helper: resolve WhatsApp phone for a payment userId
+    const resolveWhatsAppPhone = async (userId: string): Promise<string | null> => {
+      if (!userId) return null;
+      const user = await db.findUserById(userId);
+      if (user?.whatsappNumber) return user.whatsappNumber;
+      const links = await db.listCustomerIdentityLinks();
+      const match = links
+        .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.whatsappNumber))
+        .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+      return match[0]?.whatsappNumber || null;
+    };
+
+    // Notify counterparty via Telegram
+    if (telegramUrl && counterpartyId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramId(counterpartyId);
+          if (tgId) {
+            await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({
+                telegramId: tgId,
+                message: counterpartyMsg,
+                keyboard: replyKeyboard,
+              }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram counterparty notification failed:', e);
+        }
+      })();
+    }
+
+    // Notify actor via Telegram (confirmation to the one who cancelled/declined)
+    if (telegramUrl && actorId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramId(actorId);
+          if (tgId) {
+            const actorConfirmMsg =
+              `${emoji} Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}
+
+` +
+              `You have ${actionLabel} the service agreement:
+` +
+              `"${titleSnip}"` +
+              reasonLine +
+              `
+
+Ref: ${agreement.id}`;
+            await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({
+                telegramId: tgId,
+                message: actorConfirmMsg,
+                keyboard: replyKeyboard,
+              }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram actor confirmation failed:', e);
+        }
+      })();
+    }
+
+    // Notify counterparty via WhatsApp
+    if (whatsappUrl && counterpartyId) {
+      void (async () => {
+        try {
+          const phone = await resolveWhatsAppPhone(counterpartyId);
+          if (phone) {
+            const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({ to: waPhone, message: counterpartyMsg }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] WhatsApp counterparty notification failed:', e);
+        }
+      })();
+    }
+  } catch (outerErr) {
+    console.warn('[agreement.notify] notifyAgreementCancellation outer error:', outerErr);
+  }
+}
+
 // ─── Input shapes ────────────────────────────────────────────────────────────
 
 export interface CreateAgreementInput {
@@ -288,6 +452,15 @@ export async function declineAgreement(
   };
 
   await db.updateServiceAgreement(updated);
+
+  // Fire real-time cancellation push to buyer (counterparty) and seller (actor)
+  void notifyAgreementCancellation(
+    updated,
+    'seller',
+    'declined',
+    options?.reason
+  );
+
   return updated;
 }
 
@@ -823,6 +996,14 @@ export async function cancelAgreement(
       console.warn('[agreement.cancel] Ledger hold release note:', err);
     }
   }
+
+  // Fire real-time cancellation push to seller (counterparty) and buyer (actor)
+  void notifyAgreementCancellation(
+    updated,
+    'buyer',
+    'cancelled',
+    options?.reason
+  );
 
   return updated;
 }
