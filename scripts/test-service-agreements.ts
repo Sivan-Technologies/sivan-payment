@@ -205,6 +205,7 @@ export async function runServiceAgreementTest() {
   const buyerData = await signupUser('Test Buyer', 'buyer');
   const sellerData = await signupUser('Test Seller', 'seller');
   const buyerToken = buyerData.token;
+  const sellerToken = sellerData.token;
 
   let agreementId: string;
 
