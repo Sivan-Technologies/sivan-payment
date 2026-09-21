@@ -2231,7 +2231,44 @@ export class PostgresDatabase {
     try {
       const rawList = Array.isArray(userIdOrAliases) ? userIdOrAliases.filter(Boolean) : [userIdOrAliases].filter(Boolean);
       if (rawList.length === 0) return [];
-      const lowerAliases = Array.from(new Set(rawList.map((a) => String(a).toLowerCase().trim())));
+
+      // Build an expanded alias set that normalises phone numbers and @usernames
+      // so agreements created via Telegram (which stores a raw phone like +2348…
+      // or a Telegram @handle) are visible to the same person when they log in on
+      // the web (where the phone may be stored as 2348…, 08012… or the handle
+      // without the @ prefix).
+      const expandedSet = new Set<string>();
+      for (const a of rawList) {
+        const lower = String(a).toLowerCase().trim();
+        if (!lower) continue;
+        expandedSet.add(lower);
+
+        // Phone variants: strip whatsapp: prefix, normalise +/digits
+        const stripped = lower.replace(/^whatsapp:/i, '');
+        const digitsOnly = stripped.replace(/\D/g, '');
+        if (digitsOnly.length >= 7) {
+          // +234… form
+          expandedSet.add(`+${digitsOnly}`);
+          // bare digits
+          expandedSet.add(digitsOnly);
+          // Nigerian local 0… form (drop leading country code 234)
+          if (digitsOnly.startsWith('234') && digitsOnly.length >= 12) {
+            expandedSet.add(`0${digitsOnly.slice(3)}`);
+          }
+          // If stored with whatsapp: prefix by escrow core
+          expandedSet.add(`whatsapp:+${digitsOnly}`);
+          expandedSet.add(`whatsapp:${digitsOnly}`);
+        }
+
+        // @username variants: normalise with/without leading @
+        if (lower.startsWith('@')) {
+          expandedSet.add(lower.slice(1)); // without @
+        } else if (/^[a-z0-9_]{3,32}$/.test(lower)) {
+          expandedSet.add(`@${lower}`); // with @
+        }
+      }
+
+      const lowerAliases = Array.from(expandedSet);
 
       const result = await client.query(
         'SELECT * FROM payments_service_agreements WHERE LOWER(buyer_user_id) = ANY($1) OR LOWER(seller_user_id) = ANY($1) ORDER BY created_at DESC',
