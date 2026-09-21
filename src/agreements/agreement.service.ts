@@ -37,6 +37,199 @@ import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserR
  *
  * Runs fire-and-forget — never throws so it cannot break the main state
  * transition that called it.
+/**
+ * Helper: resolve Telegram chat ID for a target identifier (payment userId, phone, telegram username, or direct telegram ID).
+ */
+async function resolveTelegramIdForAgreement(target: string): Promise<string | null> {
+  if (!target) return null;
+  const raw = String(target).trim();
+
+  // 1. Direct Telegram ID format: e.g. "tg:123456", "telegram:123456", or raw digits (6-12 digits)
+  if (raw.startsWith('tg:') || raw.startsWith('telegram:')) {
+    const parsed = raw.replace(/^(tg:|telegram:)/i, '').trim();
+    if (/^\d{6,12}$/.test(parsed)) return parsed;
+  }
+  if (/^\d{6,12}$/.test(raw)) {
+    return raw;
+  }
+
+  // 2. Check CustomerIdentityLinks in DB
+  const links = await db.listCustomerIdentityLinks();
+  const cleanTarget = raw.toLowerCase().replace(/^@/, '');
+  const digits = raw.replace(/\D/g, '');
+
+  const match = links
+    .filter((l) => {
+      if (l.status !== 'linked' || !l.telegramUserId) return false;
+      if (l.paymentUserId === raw) return true;
+      if (l.telegramUserId === raw) return true;
+      if (l.telegramUsername && l.telegramUsername.toLowerCase().replace(/^@/, '') === cleanTarget) return true;
+      if (digits && digits.length >= 10 && l.whatsappNumber) {
+        const linkDigits = l.whatsappNumber.replace(/\D/g, '');
+        if (linkDigits === digits || linkDigits.endsWith(digits) || digits.endsWith(linkDigits)) return true;
+      }
+      return false;
+    })
+    .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+
+  if (match[0]?.telegramUserId) return match[0].telegramUserId;
+
+  // 3. Check UserRecord in DB
+  const user = (await db.findUserById(raw)) ||
+               (await db.findUserByWhatsappNumber(raw)) ||
+               (await db.findUserByTarget(raw)) ||
+               (await db.findUserByUsername(cleanTarget));
+
+  if (user) {
+    if (user.telegramUserId) return user.telegramUserId;
+    const userLinks = links
+      .filter((l) => l.paymentUserId === user.id && l.status === 'linked' && Boolean(l.telegramUserId))
+      .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+    if (userLinks[0]?.telegramUserId) return userLinks[0].telegramUserId;
+  }
+
+  return null;
+}
+
+/**
+ * Helper: resolve WhatsApp phone for a target identifier.
+ */
+async function resolveWhatsAppPhoneForAgreement(target: string): Promise<string | null> {
+  if (!target) return null;
+  const raw = String(target).trim();
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length >= 10 && (raw.startsWith('+') || raw.startsWith('234') || raw.startsWith('0') || raw.startsWith('whatsapp:'))) {
+    return raw.replace(/^whatsapp:/, '');
+  }
+
+  const user = (await db.findUserById(raw)) ||
+               (await db.findUserByWhatsappNumber(raw)) ||
+               (await db.findUserByTarget(raw));
+  if (user?.whatsappNumber) return user.whatsappNumber;
+
+  const links = await db.listCustomerIdentityLinks();
+  const match = links
+    .filter((l) => (l.paymentUserId === raw || l.paymentUserId === user?.id) && l.status === 'linked' && Boolean(l.whatsappNumber))
+    .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+  return match[0]?.whatsappNumber || null;
+}
+
+/**
+ * Fire real-time notifications to the buyer when a service agreement is accepted by the contractor.
+ * Alerts buyer that agreement is now awaiting funding and provides direct Pay now / Fund buttons.
+ */
+async function notifyAgreementAccepted(
+  agreement: ServiceAgreementRecord
+): Promise<void> {
+  try {
+    const telegramUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    const whatsappUrl = process.env.WHATSAPP_NOTIFICATION_URL;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+
+    if (!secret) return;
+
+    const buyerId = agreement.buyerUserId;
+    const sellerId = agreement.sellerUserId;
+    const titleSnip = (agreement.title || 'Service Agreement').slice(0, 50);
+    const amountStr = `${agreement.amountUsdc} ${(agreement.currency || 'USDC').toUpperCase()}`;
+    const networkLabel = agreement.network
+      ? (agreement.network.charAt(0).toUpperCase() + agreement.network.slice(1))
+      : 'Solana';
+
+    const buyerMsg =
+      `✅ Service Agreement Accepted!\n\n` +
+      `The contractor has accepted your service agreement:\n` +
+      `"${titleSnip}"\n\n` +
+      `• Amount: ${amountStr}\n` +
+      `• Network: ${networkLabel}\n` +
+      `• Ref: ${agreement.id}\n\n` +
+      `Your agreement is now ready to be funded. Tap Pay now below to lock funds in the multi-chain vault and start delivery.`;
+
+    const telegramKeyboard = [
+      [{ text: '💳 Pay now', callback_data: `v1:pay:${agreement.id}` }],
+      [{ text: '🔍 View Status', callback_data: `v1:status:${agreement.id}` }],
+      [{ text: '📋 My Agreements', callback_data: 'action:deals' }],
+    ];
+
+    // 1. Notify Buyer via Telegram
+    if (telegramUrl && buyerId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramIdForAgreement(buyerId);
+          await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+            body: JSON.stringify({
+              telegramId: tgId || undefined,
+              phone: tgId ? undefined : buyerId,
+              message: buyerMsg,
+              keyboard: telegramKeyboard,
+            }),
+          });
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram buyer acceptance notification failed:', e);
+        }
+      })();
+    }
+
+    // 2. Notify Buyer via WhatsApp
+    if (whatsappUrl && buyerId) {
+      void (async () => {
+        try {
+          const phone = await resolveWhatsAppPhoneForAgreement(buyerId);
+          if (phone) {
+            const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({ to: waPhone, message: buyerMsg }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] WhatsApp buyer acceptance notification failed:', e);
+        }
+      })();
+    }
+
+    // 3. Notify Seller confirmation via Telegram
+    if (telegramUrl && sellerId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramIdForAgreement(sellerId);
+          if (tgId) {
+            const sellerConfirmMsg =
+              `✅ Agreement Accepted\n\n` +
+              `You have accepted the service agreement:\n` +
+              `"${titleSnip}"\n\n` +
+              `• Amount: ${amountStr}\n` +
+              `• Ref: ${agreement.id}\n\n` +
+              `Waiting for client to fund the vault before delivery begins.`;
+            await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({
+                telegramId: tgId,
+                message: sellerConfirmMsg,
+                keyboard: [
+                  [{ text: '🔍 View Status', callback_data: `v1:status:${agreement.id}` }],
+                  [{ text: '📋 My Agreements', callback_data: 'action:deals' }],
+                ],
+              }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram seller confirmation failed:', e);
+        }
+      })();
+    }
+  } catch (outerErr) {
+    console.warn('[agreement.notify] notifyAgreementAccepted outer error:', outerErr);
+  }
+}
+
+/**
+ * Fire real-time cancellation push notifications to both counterparty and actor
+ * via Telegram bot and WhatsApp bot.
  *
  * @param agreement  The already-updated (cancelled/declined) agreement record.
  * @param actorRole  'buyer' | 'seller' — who performed the action.
@@ -68,23 +261,15 @@ async function notifyAgreementCancellation(
 
     const shortId = String(agreement.id).slice(-8).toUpperCase();
     const titleSnip = (agreement.title || 'Service Agreement').slice(0, 50);
-    const reasonLine = reason ? `
-
-Reason: ${reason.trim()}` : '';
+    const reasonLine = reason ? `\n\nReason: ${reason.trim()}` : '';
 
     // Message shown to the counterparty
     const counterpartyMsg =
-      `${emoji} Service Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}
-
-` +
-      `${actorLabel} has ${actionLabel} the service agreement:
-` +
+      `${emoji} Service Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}\n\n` +
+      `${actorLabel} has ${actionLabel} the service agreement:\n` +
       `"${titleSnip}"` +
       reasonLine +
-      `
-
-Ref: ${agreement.id}
-No funds have been charged.\n\nYou can start a new agreement anytime.`;
+      `\n\nRef: ${agreement.id}\nNo funds have been charged.\n\nYou can start a new agreement anytime.`;
 
     const replyKeyboard = [
       [{ text: '📋 My Agreements', callback_data: 'action:deals' }],
@@ -92,44 +277,21 @@ No funds have been charged.\n\nYou can start a new agreement anytime.`;
       [{ text: '🏠 Main Menu', callback_data: 'action:menu' }],
     ];
 
-    // Helper: resolve Telegram chat ID for a payment userId
-    const resolveTelegramId = async (userId: string): Promise<string | null> => {
-      if (!userId) return null;
-      const links = await db.listCustomerIdentityLinks();
-      const match = links
-        .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
-        .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
-      return match[0]?.telegramUserId || null;
-    };
-
-    // Helper: resolve WhatsApp phone for a payment userId
-    const resolveWhatsAppPhone = async (userId: string): Promise<string | null> => {
-      if (!userId) return null;
-      const user = await db.findUserById(userId);
-      if (user?.whatsappNumber) return user.whatsappNumber;
-      const links = await db.listCustomerIdentityLinks();
-      const match = links
-        .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.whatsappNumber))
-        .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
-      return match[0]?.whatsappNumber || null;
-    };
-
     // Notify counterparty via Telegram
     if (telegramUrl && counterpartyId) {
       void (async () => {
         try {
-          const tgId = await resolveTelegramId(counterpartyId);
-          if (tgId) {
-            await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
-              body: JSON.stringify({
-                telegramId: tgId,
-                message: counterpartyMsg,
-                keyboard: replyKeyboard,
-              }),
-            });
-          }
+          const tgId = await resolveTelegramIdForAgreement(counterpartyId);
+          await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+            body: JSON.stringify({
+              telegramId: tgId || undefined,
+              phone: tgId ? undefined : counterpartyId,
+              message: counterpartyMsg,
+              keyboard: replyKeyboard,
+            }),
+          });
         } catch (e) {
           console.warn('[agreement.notify] Telegram counterparty notification failed:', e);
         }
@@ -140,19 +302,14 @@ No funds have been charged.\n\nYou can start a new agreement anytime.`;
     if (telegramUrl && actorId) {
       void (async () => {
         try {
-          const tgId = await resolveTelegramId(actorId);
+          const tgId = await resolveTelegramIdForAgreement(actorId);
           if (tgId) {
             const actorConfirmMsg =
-              `${emoji} Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}
-
-` +
-              `You have ${actionLabel} the service agreement:
-` +
+              `${emoji} Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}\n\n` +
+              `You have ${actionLabel} the service agreement:\n` +
               `"${titleSnip}"` +
               reasonLine +
-              `
-
-Ref: ${agreement.id}`;
+              `\n\nRef: ${agreement.id}`;
             await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
@@ -173,7 +330,7 @@ Ref: ${agreement.id}`;
     if (whatsappUrl && counterpartyId) {
       void (async () => {
         try {
-          const phone = await resolveWhatsAppPhone(counterpartyId);
+          const phone = await resolveWhatsAppPhoneForAgreement(counterpartyId);
           if (phone) {
             const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
             await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
@@ -442,6 +599,10 @@ export async function acceptAgreement(
   };
 
   await db.updateServiceAgreement(updated);
+
+  // Fire real-time notification to buyer on Telegram / WhatsApp that deal is accepted and ready to fund
+  void notifyAgreementAccepted(updated);
+
   return updated;
 }
 
