@@ -1489,6 +1489,22 @@ export class JsonDatabase {
   }
 
   /**
+   * Returns agreements with status 'pending_seller_acceptance' where acceptanceExpiresAt
+   * has passed. Used by the sweeper to auto-cancel unaccepted agreements.
+   */
+  async listExpiredPendingAcceptanceAgreements(now = new Date(), limit = 100): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    const nowMs = now.getTime();
+    return (data.serviceAgreements ?? [])
+      .filter((a) =>
+        a.status === 'pending_seller_acceptance' &&
+        a.acceptanceExpiresAt != null &&
+        new Date(a.acceptanceExpiresAt).getTime() <= nowMs
+      )
+      .slice(0, limit);
+  }
+
+  /**
    * Atomically claims the 6-hour reminder slot. Returns true if this call
    * was the one that flipped the flag; false if it was already true.
    *

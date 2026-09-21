@@ -64,9 +64,11 @@ export function getCountdownLabel(agreement: ServiceAgreementRecord, now = new D
   if (agreement.status === 'released') return '✅ Released';
   if (agreement.status === 'delivered') return '✅ Delivered — awaiting release';
   if (agreement.status === 'cancelled') return '❌ Cancelled';
+  if (agreement.status === 'declined') return '❌ Declined by seller';
   if (agreement.status === 'disputed') return '⚠️ In dispute';
 
   if (!agreement.deliveryDueAt) {
+    if (agreement.status === 'pending_seller_acceptance') return '⏳ Awaiting seller acceptance';
     return agreement.status === 'pending_payment'
       ? '⏳ Awaiting payment'
       : '— No deadline set';
@@ -168,7 +170,7 @@ export async function createAgreement(
     amountUsdc: input.amountUsdc,
     currency: input.currency || 'usdc',
     network: input.network,
-    status: isPreFunded ? 'funded' : 'pending_payment',
+    status: isPreFunded ? 'funded' : 'pending_seller_acceptance',
     deadlineDays,
     deliveryDueAt: dueAt,
     reminder6hSent: false,
@@ -176,6 +178,10 @@ export async function createAgreement(
     fundedAt: isPreFunded ? now : null,
     deliveredAt: null,
     releasedAt: null,
+    sellerAcceptedAt: isPreFunded ? now : null,
+    sellerDeclinedAt: null,
+    sellerDeclineReason: null,
+    acceptanceExpiresAt: isPreFunded ? null : new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
     fundingTxHash: input.fundingTxHash || null,
     releaseTxHash: null,
     vaultAddress: null,
@@ -195,6 +201,97 @@ export async function createAgreement(
 }
 
 /**
+ * Seller accepts the service agreement.
+ * Transitions status from pending_seller_acceptance to pending_payment.
+ * Buyer can now fund the agreement.
+ */
+export async function acceptAgreement(
+  agreementId: string,
+  sellerUserId?: string
+): Promise<ServiceAgreementRecord> {
+  const existing = await db.findServiceAgreementById(agreementId);
+  if (!existing) throw notFound(`Service agreement ${agreementId}`);
+
+  if (existing.status !== 'pending_seller_acceptance') {
+    throw badRequest(`Agreement ${agreementId} cannot be accepted from status ${existing.status}`);
+  }
+
+  if (sellerUserId) {
+    const cleanSeller = String(sellerUserId).trim().toLowerCase();
+    const existingSeller = String(existing.sellerUserId || '').trim().toLowerCase();
+    if (existingSeller && cleanSeller !== existingSeller) {
+      const user = await db.findUserById(cleanSeller);
+      const matchesTarget =
+        user?.email?.toLowerCase() === existingSeller ||
+        user?.username?.toLowerCase() === existingSeller ||
+        user?.whatsappNumber?.toLowerCase() === existingSeller ||
+        user?.telegramUsername?.toLowerCase() === existingSeller ||
+        (user as any)?.walletAddress?.toLowerCase() === existingSeller;
+      if (!matchesTarget) {
+        throw badRequest(`User ${sellerUserId} is not authorized to accept this agreement`);
+      }
+    }
+  }
+
+  const now = nowIso();
+  const updated: ServiceAgreementRecord = {
+    ...existing,
+    status: 'pending_payment',
+    sellerAcceptedAt: now,
+    updatedAt: now,
+  };
+
+  await db.updateServiceAgreement(updated);
+  return updated;
+}
+
+/**
+ * Seller declines the service agreement.
+ * Transitions status from pending_seller_acceptance to declined.
+ * An optional reason can be provided.
+ */
+export async function declineAgreement(
+  agreementId: string,
+  options?: { sellerUserId?: string; reason?: string }
+): Promise<ServiceAgreementRecord> {
+  const existing = await db.findServiceAgreementById(agreementId);
+  if (!existing) throw notFound(`Service agreement ${agreementId}`);
+
+  if (existing.status !== 'pending_seller_acceptance') {
+    throw badRequest(`Agreement ${agreementId} cannot be declined from status ${existing.status}`);
+  }
+
+  if (options?.sellerUserId) {
+    const cleanSeller = String(options.sellerUserId).trim().toLowerCase();
+    const existingSeller = String(existing.sellerUserId || '').trim().toLowerCase();
+    if (existingSeller && cleanSeller !== existingSeller) {
+      const user = await db.findUserById(cleanSeller);
+      const matchesTarget =
+        user?.email?.toLowerCase() === existingSeller ||
+        user?.username?.toLowerCase() === existingSeller ||
+        user?.whatsappNumber?.toLowerCase() === existingSeller ||
+        user?.telegramUsername?.toLowerCase() === existingSeller ||
+        (user as any)?.walletAddress?.toLowerCase() === existingSeller;
+      if (!matchesTarget) {
+        throw badRequest(`User ${options.sellerUserId} is not authorized to decline this agreement`);
+      }
+    }
+  }
+
+  const now = nowIso();
+  const updated: ServiceAgreementRecord = {
+    ...existing,
+    status: 'declined',
+    sellerDeclinedAt: now,
+    sellerDeclineReason: options?.reason?.trim() || null,
+    updatedAt: now,
+  };
+
+  await db.updateServiceAgreement(updated);
+  return updated;
+}
+
+/**
  * Mark an agreement as funded and compute the delivery due timestamp.
  * Executes on-chain transfer to vault including the Sivan service agreement fee.
  * delivery_due_at = now + deadlineDays calendar days.
@@ -209,6 +306,10 @@ export async function fundAgreement(agreementId: string, externalTxHash?: string
       await db.updateServiceAgreement(existing);
     }
     return existing;
+  }
+
+  if (existing.status === 'pending_seller_acceptance') {
+    throw badRequest(`Agreement ${agreementId} is awaiting seller acceptance before funding`);
   }
 
   if (existing.status !== 'pending_payment' && (existing.status as any) !== 'pending_funding') {

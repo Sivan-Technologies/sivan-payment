@@ -2296,6 +2296,24 @@ export class PostgresDatabase {
     }
   }
 
+  async listExpiredPendingAcceptanceAgreements(now = new Date(), limit = 100): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT * FROM payments_service_agreements
+         WHERE status = 'pending_seller_acceptance' AND acceptance_expires_at IS NOT NULL AND acceptance_expires_at <= $1
+         ORDER BY acceptance_expires_at ASC
+         LIMIT $2`,
+        [now.toISOString(), limit]
+      );
+      return result.rows.map(mapServiceAgreement);
+    } catch {
+      return [];
+    } finally {
+      client.release();
+    }
+  }
+
   async markAgreementReminder6hSent(id: string): Promise<boolean> {
     const client = await this.pool.connect();
     try {

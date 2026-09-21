@@ -29,11 +29,13 @@
 import { db } from '../database/json-database.js';
 import { sendEmail, buildSivanBrandedEmail } from '../notifications/email.service.js';
 import { env } from '../config/env.js';
+import { cancelAgreement } from './agreement.service.js';
 
 export interface DeadlineSweepOutcome {
   considered: number;
   sent6h: number;
   sentOverdue: number;
+  expiredCancelled: number;
   failed: number;
 }
 
@@ -122,7 +124,25 @@ export async function sweepDeadlineAlerts(
   limit = 100,
   now = new Date()
 ): Promise<DeadlineSweepOutcome> {
-  const outcome: DeadlineSweepOutcome = { considered: 0, sent6h: 0, sentOverdue: 0, failed: 0 };
+  const outcome: DeadlineSweepOutcome = { considered: 0, sent6h: 0, sentOverdue: 0, expiredCancelled: 0, failed: 0 };
+
+  // ── Auto-cancel unaccepted agreements past 48-hour acceptance window ──────
+  try {
+    const expired = await db.listExpiredPendingAcceptanceAgreements(now, limit);
+    for (const agr of expired) {
+      try {
+        await cancelAgreement(agr.id, {
+          reason: 'Agreement auto-cancelled: seller did not accept within 48 hours',
+        });
+        outcome.expiredCancelled += 1;
+      } catch (cancelErr) {
+        console.warn(`[sweepDeadlineAlerts] Failed to auto-cancel expired agreement ${agr.id}:`, cancelErr);
+        outcome.failed += 1;
+      }
+    }
+  } catch (err) {
+    console.warn('[sweepDeadlineAlerts] Failed to query expired agreements:', err);
+  }
 
   const active = await db.listActiveAgreementsForDeadlineSweep(limit);
   outcome.considered = active.length;

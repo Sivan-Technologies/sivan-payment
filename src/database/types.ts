@@ -1092,11 +1092,13 @@ export interface P2pClaimRecord {
  * Any active status → cancelled | disputed
  */
 export type ServiceAgreementStatus =
+  | 'pending_seller_acceptance'
   | 'pending_payment'
   | 'funded'
   | 'in_delivery'
   | 'delivered'
   | 'released'
+  | 'declined'
   | 'cancelled'
   | 'disputed';
 
@@ -1122,6 +1124,14 @@ export interface ServiceAgreementRecord {
   fundedAt: string | null;
   deliveredAt: string | null;
   releasedAt: string | null;
+  /** Set when seller accepts the agreement. */
+  sellerAcceptedAt?: string | null;
+  /** Set when seller declines the agreement. */
+  sellerDeclinedAt?: string | null;
+  /** Optional reason provided by seller when declining. */
+  sellerDeclineReason?: string | null;
+  /** ISO timestamp after which the agreement auto-cancels if seller has not responded. */
+  acceptanceExpiresAt?: string | null;
   fundingTxHash?: string | null;
   releaseTxHash?: string | null;
   vaultAddress?: string | null;
