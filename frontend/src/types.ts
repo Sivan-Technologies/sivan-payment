@@ -17,6 +17,7 @@ export interface UserRecord {
    */
   country?: string;
   username?: string;
+  telegramUsername?: string;
   usernameUpdatedAt?: string;
   primaryChannel?: 'email' | 'whatsapp' | 'both';
   avatarUrl?: string;

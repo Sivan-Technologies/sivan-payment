@@ -473,7 +473,7 @@ function ServiceAgreementActionBox({
       await api(`/api/agreements/${encodeURIComponent(agreementId)}/accept`, {
         method: 'POST',
         body: JSON.stringify({
-          sellerUserId: user?.id || user?.email || user?.username || deal?.sellerUserId
+          sellerUserId: deal?.sellerUserId || user?.telegramUsername || user?.email || user?.id
         })
       });
       setActionSuccess('Agreement accepted! The client has been notified to fund the vault so work can begin.');
@@ -495,7 +495,7 @@ function ServiceAgreementActionBox({
       await api(`/api/agreements/${encodeURIComponent(agreementId)}/decline`, {
         method: 'POST',
         body: JSON.stringify({
-          sellerUserId: user?.id || user?.email || user?.username || deal?.sellerUserId,
+          sellerUserId: deal?.sellerUserId || user?.telegramUsername || user?.email || user?.id,
           reason: 'Declined by seller from web dashboard'
         })
       });

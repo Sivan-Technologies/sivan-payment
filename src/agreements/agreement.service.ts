@@ -25,6 +25,7 @@ import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.
 import { ensureUserWallet } from '../wallets/user-wallet.service.js';
 import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
 import { dispatchCeloSettlementTransfer } from '../wallets/celo/celo-settlement-relayer.js';
+import { getIdentityStatus } from '../identity/identity.service.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserRecord, UserWalletRecord } from '../database/types.js';
 
 // ─── Cross-channel cancellation notifier ─────────────────────────────────────
@@ -365,6 +366,51 @@ export async function createAgreement(
 }
 
 /**
+ * Verifies whether a caller (by user ID, email, handle, telegram username, or phone)
+ * is authorized to act as the seller/contractor on an agreement.
+ * Supports cross-channel identity aliases (with or without @ prefix, email local part, etc.).
+ */
+async function checkSellerAuthorization(existingSellerId?: string, callerSellerId?: string): Promise<boolean> {
+  if (!callerSellerId) return true;
+  const cleanCaller = String(callerSellerId || '').trim().toLowerCase();
+  const existingSeller = String(existingSellerId || '').trim().toLowerCase();
+  if (!existingSeller || cleanCaller === existingSeller) return true;
+
+  const cleanExisting = existingSeller.replace(/^@/, '');
+  const cleanCallerNoAt = cleanCaller.replace(/^@/, '');
+  if (cleanCallerNoAt === cleanExisting) return true;
+
+  // Try finding user by caller ID or email or username
+  const user = (await db.findUserById(cleanCaller)) || (await db.findUserByEmail(cleanCaller));
+  if (!user) return false;
+
+  const userEmail = (user.email || '').toLowerCase().trim();
+  const emailHandle = userEmail ? userEmail.split('@')[0] : '';
+  const userTg = (user.telegramUsername || '').toLowerCase().trim().replace(/^@/, '');
+  const userWa = (user.whatsappNumber || '').replace(/\D/g, '');
+  const existingDigits = existingSeller.replace(/\D/g, '');
+
+  if (cleanExisting === user.id.toLowerCase()) return true;
+  if (cleanExisting === userEmail) return true;
+  if (cleanExisting === emailHandle) return true;
+  if (userTg && cleanExisting === userTg) return true;
+  if (user.username && cleanExisting === user.username.toLowerCase().replace(/^@/, '')) return true;
+  if ((user as any).walletAddress && cleanExisting === (user as any).walletAddress.toLowerCase()) return true;
+  if (existingDigits && userWa && (existingDigits === userWa || userWa.endsWith(existingDigits) || existingDigits.endsWith(userWa))) return true;
+
+  // Check identity link status if available
+  try {
+    const status = await getIdentityStatus(user.id);
+    const linkedTg = status?.channels?.telegram?.link?.telegramUsername?.toLowerCase().replace(/^@/, '');
+    const linkedWa = (status?.link?.whatsappNumber || status?.channels?.whatsapp?.link?.whatsappNumber || '').replace(/\D/g, '');
+    if (linkedTg && cleanExisting === linkedTg) return true;
+    if (linkedWa && existingDigits && (existingDigits === linkedWa || linkedWa.endsWith(existingDigits))) return true;
+  } catch {}
+
+  return false;
+}
+
+/**
  * Seller accepts the service agreement.
  * Transitions status from pending_seller_acceptance to pending_payment.
  * Buyer can now fund the agreement.
@@ -381,19 +427,9 @@ export async function acceptAgreement(
   }
 
   if (sellerUserId) {
-    const cleanSeller = String(sellerUserId).trim().toLowerCase();
-    const existingSeller = String(existing.sellerUserId || '').trim().toLowerCase();
-    if (existingSeller && cleanSeller !== existingSeller) {
-      const user = await db.findUserById(cleanSeller);
-      const matchesTarget =
-        user?.email?.toLowerCase() === existingSeller ||
-        user?.username?.toLowerCase() === existingSeller ||
-        user?.whatsappNumber?.toLowerCase() === existingSeller ||
-        user?.telegramUsername?.toLowerCase() === existingSeller ||
-        (user as any)?.walletAddress?.toLowerCase() === existingSeller;
-      if (!matchesTarget) {
-        throw badRequest(`User ${sellerUserId} is not authorized to accept this agreement`);
-      }
+    const authorized = await checkSellerAuthorization(existing.sellerUserId, sellerUserId);
+    if (!authorized) {
+      throw badRequest(`User ${sellerUserId} is not authorized to accept this agreement`);
     }
   }
 
@@ -426,19 +462,9 @@ export async function declineAgreement(
   }
 
   if (options?.sellerUserId) {
-    const cleanSeller = String(options.sellerUserId).trim().toLowerCase();
-    const existingSeller = String(existing.sellerUserId || '').trim().toLowerCase();
-    if (existingSeller && cleanSeller !== existingSeller) {
-      const user = await db.findUserById(cleanSeller);
-      const matchesTarget =
-        user?.email?.toLowerCase() === existingSeller ||
-        user?.username?.toLowerCase() === existingSeller ||
-        user?.whatsappNumber?.toLowerCase() === existingSeller ||
-        user?.telegramUsername?.toLowerCase() === existingSeller ||
-        (user as any)?.walletAddress?.toLowerCase() === existingSeller;
-      if (!matchesTarget) {
-        throw badRequest(`User ${options.sellerUserId} is not authorized to decline this agreement`);
-      }
+    const authorized = await checkSellerAuthorization(existing.sellerUserId, options.sellerUserId);
+    if (!authorized) {
+      throw badRequest(`User ${options.sellerUserId} is not authorized to decline this agreement`);
     }
   }
 

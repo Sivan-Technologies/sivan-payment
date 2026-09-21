@@ -264,7 +264,7 @@ export function ServiceAgreementsView({
       await api(`/api/agreements/${encodeURIComponent(agreementId)}/accept`, {
         method: 'POST',
         body: JSON.stringify({
-          sellerUserId: user?.id || user?.email || user?.username || deal.sellerUserId
+          sellerUserId: deal.sellerUserId || user?.telegramUsername || user?.email || user?.id
         })
       });
       setSuccessBanner(`Agreement ${agreementId} accepted successfully! Client notified to fund vault.`);
@@ -287,7 +287,7 @@ export function ServiceAgreementsView({
       await api(`/api/agreements/${encodeURIComponent(agreementId)}/decline`, {
         method: 'POST',
         body: JSON.stringify({
-          sellerUserId: user?.id || user?.email || user?.username || deal.sellerUserId,
+          sellerUserId: deal.sellerUserId || user?.telegramUsername || user?.email || user?.id,
           reason: 'Declined by contractor from web dashboard'
         })
       });
