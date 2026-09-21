@@ -207,8 +207,8 @@ export function ServiceAgreementsView({
   const filteredDeals = useMemo(() => {
     return deals.filter((deal) => {
       const st = String(deal.status || '').toLowerCase();
-      const isActive = ['funded', 'in_delivery', 'delivered', 'pending_payment', 'pending_funding', 'draft', 'pending'].includes(st);
-      const isCompleted = ['released', 'completed', 'cancelled', 'disputed'].includes(st);
+      const isActive = ['funded', 'in_delivery', 'delivered', 'pending_payment', 'pending_funding', 'draft', 'pending', 'pending_seller_acceptance', 'pending_acceptance'].includes(st);
+      const isCompleted = ['released', 'completed', 'cancelled', 'disputed', 'declined'].includes(st);
 
       if (filter === 'active' && !isActive) return false;
       if (filter === 'completed' && !isCompleted) return false;
@@ -249,6 +249,52 @@ export function ServiceAgreementsView({
       await onRefresh();
     } catch (e: any) {
       setErrorBanner(e?.message || 'Failed to fund agreement vault.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleAccept = async (deal: ServiceAgreementDeal) => {
+    const agreementId = deal.id || deal.escrowId;
+    if (!agreementId) return;
+    setActionLoadingId(agreementId);
+    setErrorBanner(null);
+    setSuccessBanner(null);
+    try {
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sellerUserId: user?.id || user?.email || user?.username || deal.sellerUserId
+        })
+      });
+      setSuccessBanner(`Agreement ${agreementId} accepted successfully! Client notified to fund vault.`);
+      await onRefresh();
+    } catch (e: any) {
+      setErrorBanner(e?.message || 'Failed to accept agreement.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleDecline = async (deal: ServiceAgreementDeal) => {
+    const agreementId = deal.id || deal.escrowId;
+    if (!agreementId) return;
+    if (!window.confirm('Are you sure you want to decline this Service Agreement?')) return;
+    setActionLoadingId(agreementId);
+    setErrorBanner(null);
+    setSuccessBanner(null);
+    try {
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/decline`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sellerUserId: user?.id || user?.email || user?.username || deal.sellerUserId,
+          reason: 'Declined by contractor from web dashboard'
+        })
+      });
+      setSuccessBanner(`Agreement ${agreementId} declined.`);
+      await onRefresh();
+    } catch (e: any) {
+      setErrorBanner(e?.message || 'Failed to decline agreement.');
     } finally {
       setActionLoadingId(null);
     }
@@ -563,7 +609,7 @@ export function ServiceAgreementsView({
                 status: selectedDeal.status as any,
                 deadlineDays: 7,
                 deliveryDueAt: selectedDeal.deliveryDueAt || null,
-                countdownLabel: selectedDeal.countdownLabel || (st === 'funded' ? '⏱ In Delivery' : st === 'delivered' ? '✅ Delivered' : st === 'released' ? '✅ Released' : '⏳ Awaiting payment'),
+                countdownLabel: selectedDeal.countdownLabel || (st === 'pending_seller_acceptance' || st === 'pending_acceptance' ? '⏳ Awaiting Seller Acceptance' : st === 'funded' ? '⏱ In Delivery' : st === 'delivered' ? '✅ Delivered' : st === 'released' ? '✅ Released' : st === 'declined' ? '✕ Declined' : '⏳ Awaiting payment'),
                 reminder6hSent: false,
                 overdueNoticeSent: false,
                 fundedAt: selectedDeal.fundedAt || null,
@@ -616,6 +662,48 @@ export function ServiceAgreementsView({
 
                   {/* Actions */}
                   <div className="button-row" style={{ marginTop: '16px' }}>
+                    {/* Contractor / Seller: Pending Seller Acceptance */}
+                    {(st === 'pending_seller_acceptance' || st === 'pending_acceptance') && !isBuyer && (
+                      <>
+                        <button
+                          disabled={isLoading}
+                          onClick={() => handleAccept(selectedDeal)}
+                          className="primary-btn small"
+                          style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                        >
+                          {isLoading ? 'Accepting...' : 'Accept Agreement ✓'}
+                        </button>
+                        <button
+                          disabled={isLoading}
+                          onClick={() => handleDecline(selectedDeal)}
+                          className="ghost-btn small"
+                          style={{ color: '#ef4444' }}
+                        >
+                          Decline ✕
+                        </button>
+                        <button
+                          disabled={isLoading}
+                          onClick={() => handleCancel(selectedDeal)}
+                          className="ghost-btn small"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+
+                    {/* Client / Buyer: Pending Seller Acceptance */}
+                    {(st === 'pending_seller_acceptance' || st === 'pending_acceptance') && isBuyer && (
+                      <button
+                        disabled={isLoading}
+                        onClick={() => handleCancel(selectedDeal)}
+                        className="ghost-btn small"
+                        style={{ color: '#ef4444' }}
+                      >
+                        Cancel Agreement
+                      </button>
+                    )}
+
+                    {/* Client / Buyer: Pending Payment */}
                     {(st === 'pending_payment' || st === 'pending_funding' || st === 'draft' || st === 'pending') && isBuyer && (
                       <>
                         <button
@@ -634,6 +722,18 @@ export function ServiceAgreementsView({
                           Cancel
                         </button>
                       </>
+                    )}
+
+                    {/* Contractor / Seller: Pending Payment */}
+                    {(st === 'pending_payment' || st === 'pending_funding' || st === 'draft' || st === 'pending') && !isBuyer && (
+                      <button
+                        disabled={isLoading}
+                        onClick={() => handleCancel(selectedDeal)}
+                        className="ghost-btn small"
+                        style={{ color: '#ef4444' }}
+                      >
+                        Cancel Agreement
+                      </button>
                     )}
 
                     {(st === 'funded' || st === 'in_delivery') && (

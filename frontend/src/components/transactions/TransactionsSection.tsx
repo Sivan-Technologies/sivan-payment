@@ -10,8 +10,8 @@ import { ConfirmModal } from '../ConfirmModal';
 function PageHero({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) { return <div className="page-hero"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>; }
 function Kv({ label, value }: { label: string; value?: string | number | null }) { return <div className="kv"><span>{label}</span><strong>{value ?? '—'}</strong></div>; }
 type CustomerTransactionRow = { id: string; kind: 'withdrawal' | 'onramp_order' | 'ngn_transfer'; label: string; direction: 'sell' | 'buy'; asset: string; amount: string; currency: string; status: string; createdAt: string; providerReference?: string; timeline?: TransactionTimeline; depositAddress?: string; network?: string; expiresAt?: string; cancellable?: boolean; raw: WithdrawalRecord | OnrampOrderRecord | NgnTransferRecord; };
-function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active','RELEASED','RELEASED_TO_SELLER'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected','CANCELLED','FAILED'].includes(status)) return 'danger'; return 'pending'; }
-function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment', payment_received:'Payment received', processing:'Processing', awaiting_crypto_deposit:'Waiting for your crypto', crypto_received:'Crypto received', settling:'Paying your bank', settled:'Paid to your bank', quote_created:'Quote created', flagged:'Being reviewed', expired:'Expired', PENDING_ACCEPTANCE:'Pending acceptance', PENDING_PAYMENT:'Pending payment', FUNDED:'Funded', IN_PROGRESS:'In progress', RELEASED:'Released', RELEASED_TO_SELLER:'Released' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
+function statusClass(status?: string) { if (!status) return 'pending'; if (['completed','kyc_approved','verified','active','RELEASED','RELEASED_TO_SELLER','released'].includes(status)) return 'success'; if (['failed','cancelled','kyc_rejected','CANCELLED','FAILED','declined','DECLINED'].includes(status)) return 'danger'; return 'pending'; }
+function friendlyStatus(status?: string) { const map: Record<string,string> = { created:'Started', kyc_not_started:'Not started', kyc_approved:'Verified', kyc_under_review:'Under review', kyc_incomplete:'Action required', kyc_rejected:'Verification failed', pending:'Pending', approved:'Approved', pending_deposit:'Waiting for USDC', deposit_received:'Deposit received', payout_processing:'Sending to bank', completed:'Completed', failed:'Failed', cancelled:'Cancelled', requires_action:'Action required', verified:'Verified', active:'Active', awaiting_payment:'Awaiting payment', payment_received:'Payment received', processing:'Processing', awaiting_crypto_deposit:'Waiting for your crypto', crypto_received:'Crypto received', settling:'Paying your bank', settled:'Paid to your bank', quote_created:'Quote created', flagged:'Being reviewed', expired:'Expired', pending_seller_acceptance:'Pending seller acceptance', PENDING_SELLER_ACCEPTANCE:'Pending seller acceptance', PENDING_ACCEPTANCE:'Pending acceptance', pending_acceptance:'Pending acceptance', PENDING_PAYMENT:'Pending payment', pending_payment:'Pending payment', FUNDED:'Funded', funded:'Funded', IN_PROGRESS:'In progress', in_delivery:'In delivery', delivered:'Delivered', DELIVERED:'Delivered', RELEASED:'Released', released:'Released', RELEASED_TO_SELLER:'Released', declined:'Declined', DECLINED:'Declined' }; return status ? map[status] || status.replaceAll('_',' ') : 'Not started'; }
 function Badge({ children, status }: { children: string; status?: string }) { return <span className={`badge ${statusClass(status)}`}>{children}</span>; }
 function Empty({ children }: { children: string }) { return <div className="empty-state">{children}</div>; }
 function shortRef(value?: string) { if (!value) return '—'; if (value.length <= 14) return value; return `${value.slice(0,8)}…${value.slice(-6)}`; }
@@ -26,22 +26,28 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
 
   const combinedFeed = useMemo(() => {
     if (!serviceAgreements?.deals || serviceAgreements.deals.length === 0) return feed;
-    const dealRows: ActivityRow[] = serviceAgreements.deals.map((d) => ({
-      id: String(d.escrowId || d.id || ''),
-      kind: 'withdrawal',
-      label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
-      direction: d.role === 'buyer' ? 'out' : 'in',
-      amount: d.amount || '—',
-      asset: 'USDC',
-      network: ((d as any).network || 'solana').toLowerCase(),
-      providerReference: (d as any).txHash || (d as any).txSignature,
-      currency: (d.currency || 'USDC').toUpperCase(),
-      status: d.status || 'PENDING',
-      statusLabel: friendlyStatus(d.status),
-      state: (String(d.status).toLowerCase() === 'funded' || String(d.status).toLowerCase() === 'in_delivery' || String(d.status).toLowerCase() === 'pending_payment' ? 'pending' : String(d.status).toLowerCase() === 'released' ? 'success' : statusClass(d.status)) as any,
-      createdAt: d.createdAt || new Date().toISOString(),
-      raw: d as any
-    }));
+    const dealRows: ActivityRow[] = serviceAgreements.deals.map((d) => {
+      const stLower = String(d.status || '').toLowerCase();
+      const isPendingState = ['funded', 'in_delivery', 'pending_payment', 'pending_seller_acceptance', 'pending_acceptance', 'pending'].includes(stLower);
+      const isSuccessState = ['released', 'completed'].includes(stLower);
+      const state = isPendingState ? 'pending' : isSuccessState ? 'success' : statusClass(d.status);
+      return {
+        id: String(d.escrowId || d.id || ''),
+        kind: 'withdrawal',
+        label: d.title ? `Agreement: ${d.title}` : 'Service Agreement',
+        direction: d.role === 'buyer' ? 'out' : 'in',
+        amount: d.amount || '—',
+        asset: 'USDC',
+        network: ((d as any).network || 'solana').toLowerCase(),
+        providerReference: (d as any).txHash || (d as any).txSignature,
+        currency: (d.currency || 'USDC').toUpperCase(),
+        status: d.status || 'PENDING',
+        statusLabel: friendlyStatus(d.status),
+        state: state as any,
+        createdAt: d.createdAt || new Date().toISOString(),
+        raw: d as any
+      };
+    });
     const map = new Map<string, ActivityRow>();
     for (const r of [...dealRows, ...feed]) {
       map.set(r.id, r);
@@ -214,7 +220,7 @@ export function TransactionsView({ user, api, withdrawals, onrampOrders, ngnTran
     void assistant.send(question ?? openingQuestionFor(selectedRow), contextForRow(selectedRow));
   }
 
-  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}<button className={filter === 'agreements' ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter('agreements')}>Service agreements ({serviceAgreements?.deals?.length || 0})</button></div></div>{!combinedFeed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistant={assistant} onAsk={askAboutSelected} onCancelTransfer={cancelTransfer} api={api} onRefresh={onRefresh} serviceAgreements={serviceAgreements} /></div>}</article></section>;
+  return <section className="app-page transactions-premium"><PageHero title="Transactions" subtitle="Follow every Sivan transaction from request to provider, settlement, bank or blockchain completion." action={<button className="primary-btn small" onClick={() => exportTransactions(filtered)}>Export CSV</button>} /><article className="transactions-table-card transaction-control-card"><div className="transactions-toolbar"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by request ID, provider reference, amount..." /><div>{(['all','in','out','pending'] as const).map((item) => <button key={item} className={filter === item ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter(item)}>{item === 'all' ? 'All' : item === 'in' ? 'Money in' : item === 'out' ? 'Money out' : 'In progress'}</button>)}<button className={filter === 'agreements' ? 'primary-btn small' : 'ghost-btn small'} onClick={() => setFilter('agreements')}>Service agreements ({serviceAgreements?.deals?.length || 0})</button></div></div>{!combinedFeed.length ? <div className="dashboard-empty"><p>No transactions yet.</p><div className="button-row"><button className="secondary-btn" onClick={onStart}>Make a withdrawal</button><button className="secondary-btn" onClick={onBuy}>Start buying</button></div></div> : <div className="transaction-ledger-layout"><div className="activity-list activity-list-page">{filtered.map((row) => <ActivityRowItem key={`${row.kind}:${row.id}`} row={row} selected={selectedRow?.id === row.id} onOpen={() => setSelectedId(row.id)} />)}{!filtered.length && <Empty>No transactions match your filter.</Empty>}</div><TransactionTimelinePanel transaction={selected} activityRow={selectedRow} networkMode={networkMode} assistant={assistant} onAsk={askAboutSelected} onCancelTransfer={cancelTransfer} api={api} onRefresh={onRefresh} serviceAgreements={serviceAgreements} user={user} /></div>}</article></section>;
 }
 
 /**
@@ -353,7 +359,14 @@ function activitySummaryExplanation(row: ActivityRow): string {
       ? 'This bank deposit has settled into your balance.'
       : 'This bank deposit has arrived and is being settled into your balance.';
   }
-  if (row.state === 'failed' || (row as any).status === 'cancelled') {
+  const stLower = String((row as any).status || row.state || '').toLowerCase();
+  if (stLower === 'declined') {
+    return 'This service agreement was declined by the contractor. No funds were moved.';
+  }
+  if (stLower === 'pending_seller_acceptance' || stLower === 'pending_acceptance') {
+    return 'Awaiting contractor acceptance. Work and funding proceed once the terms are accepted.';
+  }
+  if (row.state === 'failed' || (row as any).status === 'cancelled' || stLower === 'cancelled') {
     return 'This transaction was cancelled or did not complete. Funds remain in or were returned to your balance.';
   }
   return row.state === 'success' ? 'This transaction is complete.' : 'This transaction is still in progress.';
@@ -417,15 +430,18 @@ function ServiceAgreementActionBox({
   api,
   onRefresh,
   networkMode,
+  user,
 }: {
   activityRow: ActivityRow;
   serviceAgreements?: ServiceAgreementsSummary;
   api?: any;
   onRefresh?: () => void;
   networkMode?: 'mainnet' | 'testnet';
+  user?: UserRecord | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [declineModalOpen, setDeclineModalOpen] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -449,12 +465,56 @@ function ServiceAgreementActionBox({
     return getNetworkExplorer(network, txHash, undefined, isMainnet ? 'mainnet' : 'devnet').url;
   };
 
+  const handleAccept = async () => {
+    if (!api || !agreementId) return;
+    setLoading(true);
+    setActionError(null);
+    try {
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sellerUserId: user?.id || user?.email || user?.username || deal?.sellerUserId
+        })
+      });
+      setActionSuccess('Agreement accepted! The client has been notified to fund the vault so work can begin.');
+      window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+      onRefresh?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to accept agreement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const executeDecline = async () => {
+    if (!api || !agreementId) return;
+    setDeclineModalOpen(false);
+    setLoading(true);
+    setActionError(null);
+    try {
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/decline`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sellerUserId: user?.id || user?.email || user?.username || deal?.sellerUserId,
+          reason: 'Declined by seller from web dashboard'
+        })
+      });
+      setActionSuccess('Agreement declined.');
+      window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
+      onRefresh?.();
+    } catch (err: any) {
+      setActionError(err?.message || 'Failed to decline agreement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDeliver = async () => {
     if (!api || !agreementId) return;
     setLoading(true);
     setActionError(null);
     try {
-      await api(`/api/agreements/${agreementId}/deliver`, { method: 'POST' });
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/deliver`, { method: 'POST' });
       setActionSuccess('Deliverables submitted! The client has been notified to review and release payment.');
       window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
       onRefresh?.();
@@ -470,7 +530,7 @@ function ServiceAgreementActionBox({
     setLoading(true);
     setActionError(null);
     try {
-      await api(`/api/agreements/${agreementId}/fund`, { method: 'POST' });
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/fund`, { method: 'POST' });
       setActionSuccess('Agreement funded! Funds are securely locked in the vault.');
       window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
       window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
@@ -487,7 +547,7 @@ function ServiceAgreementActionBox({
     setLoading(true);
     setActionError(null);
     try {
-      await api(`/api/agreements/${agreementId}/release`, { method: 'POST' });
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/release`, { method: 'POST' });
       setActionSuccess('Funds released! Payment has settled directly into the contractor payout balance.');
       window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
       window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
@@ -505,8 +565,14 @@ function ServiceAgreementActionBox({
     setLoading(true);
     setActionError(null);
     try {
-      await api(`/api/agreements/${agreementId}/cancel`, { method: 'POST' });
-      setActionSuccess('Agreement cancelled. Held funds refunded to your spendable balance.');
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({
+          cancelledBy: isBuyer ? 'buyer' : 'seller',
+          reason: 'Cancelled from web dashboard'
+        })
+      });
+      setActionSuccess('Agreement cancelled. Held funds refunded to your spendable balance if already funded.');
       window.dispatchEvent(new CustomEvent('sivan:agreements:refresh'));
       window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
       onRefresh?.();
@@ -524,7 +590,14 @@ function ServiceAgreementActionBox({
           Your Role: {isBuyer ? 'Client / Buyer' : 'Contractor / Seller'}
         </strong>
         <span style={{ fontSize: '12px', color: '#38bdf8' }}>
-          {status === 'FUNDED' ? '🔒 Locked in Vault' : status === 'DELIVERED' ? '📦 Deliverables Submitted' : status === 'RELEASED' ? '✓ Settlement Complete' : status === 'PENDING_PAYMENT' ? '⏳ Awaiting Funding' : status === 'PENDING_ACCEPTANCE' ? '⏳ Pending Acceptance' : status === 'CANCELLED' ? '✕ Cancelled' : status}
+          {status === 'FUNDED' ? '🔒 Locked in Vault'
+            : status === 'DELIVERED' ? '📦 Deliverables Submitted'
+            : status === 'RELEASED' ? '✓ Settlement Complete'
+            : status === 'PENDING_PAYMENT' ? '⏳ Awaiting Funding'
+            : status === 'PENDING_SELLER_ACCEPTANCE' || status === 'PENDING_ACCEPTANCE' ? '⏳ Pending Seller Acceptance'
+            : status === 'DECLINED' ? '✕ Declined'
+            : status === 'CANCELLED' ? '✕ Cancelled'
+            : status}
         </span>
       </div>
 
@@ -555,10 +628,45 @@ function ServiceAgreementActionBox({
         </div>
       )}
 
-      {isBuyer && (status === 'PENDING_PAYMENT' || status === 'PENDING_ACCEPTANCE' || status === 'CREATED') && (
+      {/* Seller: Pending Acceptance */}
+      {isSeller && (status === 'PENDING_SELLER_ACCEPTANCE' || status === 'PENDING_ACCEPTANCE') && (
         <div>
           <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
-            This agreement is waiting to be funded. Lock funds in the vault to activate the milestone and allow work to begin.
+            Agreement proposed by client. Review the milestone terms and accept to proceed to funding, or decline if terms cannot be met.
+          </p>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button className="primary-btn small" onClick={handleAccept} disabled={loading} style={{ flex: 2, background: '#16a34a', borderColor: '#16a34a' }}>
+              {loading ? 'Processing...' : '✓ Accept Agreement'}
+            </button>
+            <button className="ghost-btn small" onClick={() => setDeclineModalOpen(true)} disabled={loading} style={{ flex: 1, color: '#f87171' }}>
+              ✕ Decline
+            </button>
+            <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ flex: 1, color: '#94a3b8' }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Buyer: Pending Acceptance */}
+      {isBuyer && (status === 'PENDING_SELLER_ACCEPTANCE' || status === 'PENDING_ACCEPTANCE') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            Agreement proposal sent. Waiting for contractor to review and accept before funding can proceed.
+          </p>
+          <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ width: '100%', color: '#f87171' }}>
+            ✕ Cancel Agreement
+          </button>
+        </div>
+      )}
+
+      {/* Buyer: Pending Payment / Created */}
+      {isBuyer && (status === 'PENDING_PAYMENT' || status === 'CREATED') && (
+        <div>
+          <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
+            {status === 'PENDING_PAYMENT'
+              ? 'Contractor accepted this agreement! Lock funds in the vault to activate the milestone and allow work to begin.'
+              : 'This agreement is waiting to be funded. Lock funds in the vault to activate the milestone and allow work to begin.'}
           </p>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button className="primary-btn small" onClick={handleFund} disabled={loading} style={{ flex: 2 }}>
@@ -571,10 +679,11 @@ function ServiceAgreementActionBox({
         </div>
       )}
 
-      {isSeller && (status === 'PENDING_PAYMENT' || status === 'PENDING_ACCEPTANCE' || status === 'CREATED') && (
+      {/* Seller: Pending Payment / Created */}
+      {isSeller && (status === 'PENDING_PAYMENT' || status === 'CREATED') && (
         <div>
           <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
-            Agreement created. Waiting for client to fund the vault before delivery begins.
+            Agreement accepted. Waiting for client to fund the vault before delivery begins.
           </p>
           <button className="ghost-btn small" onClick={() => setCancelModalOpen(true)} disabled={loading} style={{ width: '100%', color: '#f87171' }}>
             ✕ Cancel Agreement
@@ -582,6 +691,7 @@ function ServiceAgreementActionBox({
         </div>
       )}
 
+      {/* Seller: Funded / In Progress */}
       {isSeller && (status === 'FUNDED' || status === 'IN_PROGRESS') && (
         <div>
           <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
@@ -593,12 +703,14 @@ function ServiceAgreementActionBox({
         </div>
       )}
 
+      {/* Seller: Delivered */}
       {isSeller && status === 'DELIVERED' && (
         <p style={{ fontSize: '12px', color: '#38bdf8', margin: 0 }}>
           ✓ Deliverables submitted. Waiting for the client to review and release vault funds.
         </p>
       )}
 
+      {/* Buyer: Funded / In Progress / Delivered */}
       {isBuyer && (status === 'FUNDED' || status === 'IN_PROGRESS' || status === 'DELIVERED') && (
         <div>
           <p style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '10px' }}>
@@ -617,12 +729,24 @@ function ServiceAgreementActionBox({
         </div>
       )}
 
+      {/* Status: Released */}
       {status === 'RELEASED' && (
         <p style={{ fontSize: '12px', color: '#4ade80', margin: 0 }}>
           ✓ All funds successfully released and settled to contractor.
         </p>
       )}
 
+      {/* Status: Declined */}
+      {status === 'DECLINED' && (
+        <div style={{ padding: '8px 12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '6px' }}>
+          <p style={{ fontSize: '12px', color: '#f87171', margin: 0 }}>
+            ✕ Agreement was declined by contractor.
+            {deal?.sellerDeclineReason && <span> Reason: "{deal.sellerDeclineReason}"</span>}
+          </p>
+        </div>
+      )}
+
+      {/* Status: Cancelled */}
       {status === 'CANCELLED' && (
         <p style={{ fontSize: '12px', color: '#94a3b8', margin: 0 }}>
           ✕ Agreement was cancelled and held funds returned to spendable balance.
@@ -671,6 +795,17 @@ function ServiceAgreementActionBox({
       )}
 
       <ConfirmModal
+        open={declineModalOpen}
+        title="Decline Service Agreement"
+        description="Are you sure you want to decline this service agreement? The client will be notified that you have declined the deal."
+        confirmLabel="Yes, Decline Deal"
+        isDestructive
+        loading={loading}
+        onConfirm={executeDecline}
+        onCancel={() => setDeclineModalOpen(false)}
+      />
+
+      <ConfirmModal
         open={cancelModalOpen}
         title="Cancel Service Agreement"
         description="Are you sure you want to cancel this agreement? Locked funds will return immediately to your spendable balance."
@@ -694,6 +829,7 @@ function TransactionTimelinePanel({
   api,
   onRefresh,
   serviceAgreements,
+  user,
 }: {
   transaction: CustomerTransactionRow | null;
   activityRow?: ActivityRow | null;
@@ -704,6 +840,7 @@ function TransactionTimelinePanel({
   api?: any;
   onRefresh?: () => void;
   serviceAgreements?: ServiceAgreementsSummary;
+  user?: UserRecord | null;
 }) {
   // A NAIRA TRANSFER HAS NO BRIDGE TIMELINE, AND MUST NOT FALL THROUGH TO
   // "Select a transaction to see its timeline."
@@ -789,7 +926,7 @@ function TransactionTimelinePanel({
         )}
         {isP2p && <Kv label="Settlement proof" value="Instant Internal Ledger" />}
       </div>
-      {isAgreement && <ServiceAgreementActionBox activityRow={activityRow} serviceAgreements={serviceAgreements} api={api} onRefresh={onRefresh} networkMode={networkMode} />}
+      {isAgreement && <ServiceAgreementActionBox activityRow={activityRow} serviceAgreements={serviceAgreements} api={api} onRefresh={onRefresh} networkMode={networkMode} user={user} />}
       {link
         ? <a className="secondary-btn small explorer-link" href={link.url} target="_blank" rel="noreferrer" style={{ marginTop: '10px' }}>
             {chainMark && <NetworkLogo chain={chainMark} size={14} />}

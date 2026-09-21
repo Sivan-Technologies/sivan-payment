@@ -909,11 +909,13 @@ export interface SupplierFeeQuoteResponse {
 }
 
 export type ServiceAgreementStatus =
+  | 'pending_seller_acceptance'
   | 'pending_payment'
   | 'funded'
   | 'in_delivery'
   | 'delivered'
   | 'released'
+  | 'declined'
   | 'cancelled'
   | 'disputed';
 
