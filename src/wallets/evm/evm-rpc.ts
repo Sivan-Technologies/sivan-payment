@@ -275,3 +275,56 @@ export async function erc20BalanceOf(
 
   return fromBaseUnits(BigInt(result), decimals);
 }
+
+/**
+ * Wait for an EVM transaction receipt and verify its status.
+ *
+ * Shared guard against false success receipts, applicable to every EVM chain
+ * Sivan supports (Celo, Base, Ethereum, BSC, Arbitrum). The pattern mirrors
+ * what was fixed in celo-settlement-relayer.ts but is extracted here so it is
+ * not duplicated per chain.
+ *
+ * Outcome semantics:
+ *   confirmed  true  — receipt obtained, status === 0x1 (success)
+ *   reverted   true  — receipt obtained, status === 0x0 (included but reverted,
+ *                       no value moved — MUST NOT claim success)
+ *   timedOut   true  — polling window expired without a receipt; the tx may
+ *                       still land. Callers should return 'submitted' and let
+ *                       the background transfer-confirmation poller finish it.
+ *
+ * Celo blocks: ~5s. Base/Arbitrum: ~2s. ETH: ~12s. BSC: ~3s.
+ * The defaults (30 × 2s = 60s) are generous enough for ETH under normal load.
+ * Reduce pollAttempts when calling from a hot path that must answer quickly.
+ */
+export async function waitForEvmReceipt(
+  chain: WalletChain,
+  txHash: string,
+  options: EvmRpcOptions & { pollAttempts?: number; pollIntervalMs?: number } = {}
+): Promise<{ confirmed: boolean; reverted: boolean; timedOut: boolean }> {
+  const attempts = options.pollAttempts ?? 30;
+  const intervalMs = options.pollIntervalMs ?? 2_000;
+
+  for (let i = 0; i < attempts; i++) {
+    // Wait before each attempt (except the very first — the node may have
+    // indexed the receipt already by the time we ask).
+    if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));
+
+    let receipt: any = null;
+    try {
+      receipt = await evmRpc<any>(chain, 'eth_getTransactionReceipt', [txHash], options);
+    } catch {
+      // RPC hiccup — not evidence the tx failed; keep polling.
+      continue;
+    }
+
+    if (!receipt) continue; // Not yet included in a block.
+
+    if (receipt.status === '0x1') return { confirmed: true,  reverted: false, timedOut: false };
+    if (receipt.status === '0x0') return { confirmed: false, reverted: true,  timedOut: false };
+
+    // Unexpected status — log and keep polling rather than guessing.
+    console.warn(`[waitForEvmReceipt] Unexpected receipt status "${receipt.status}" for ${txHash} on ${chain}; continuing.`);
+  }
+
+  return { confirmed: false, reverted: false, timedOut: true };
+}
