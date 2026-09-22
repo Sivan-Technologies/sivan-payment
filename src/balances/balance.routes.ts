@@ -280,6 +280,15 @@ export async function balanceRoutes(app: FastifyInstance) {
     return { data: await listUserBalanceTransfers(userId) };
   });
 
+  /**
+   * Compatibility history endpoint for chat clients (Telegram / WhatsApp)
+   */
+  app.get('/api/balance/history', async (request, reply) => {
+    const { userId } = request.query as { userId?: string };
+    if (!userId) return reply.code(400).send({ error: 'userId query parameter required' });
+    return { data: await listUserBalanceTransfers(userId) };
+  });
+
   app.post('/api/users/:userId/balance/transfers', async (request) => {
     const { userId } = request.params as { userId: string };
     const body = parseBody(createBalanceTransferSchema, request.body);

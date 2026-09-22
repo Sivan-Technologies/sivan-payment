@@ -736,6 +736,25 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   if (spendable < input.amount) {
     throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance. You can send up to ${money(spendable)}.`);
   }
+
+  if (input.network) {
+    const networkSpendable = await getSpendable(userId, input.asset, input.network);
+    if (networkSpendable !== null && networkSpendable < input.amount) {
+      const unified = await getUnifiedBalance(userId);
+      const availableChains = (unified.wallets || [])
+        .filter((w) => (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0))
+        .map((w) => {
+          const bal = w.balances?.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
+          return `${w.chain} (${bal?.amount} ${input.asset.toUpperCase()})`;
+        })
+        .join(', ');
+      if (availableChains) {
+        throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You have ${money(networkSpendable)} on ${input.network}, but your balance is on: ${availableChains}. Please send on that network instead.`);
+      }
+      throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You can send up to ${money(networkSpendable)}.`);
+    }
+  }
+
   const now = nowIso();
   /**
    * WHEN A HUMAN MUST LOOK.

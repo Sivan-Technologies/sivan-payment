@@ -311,7 +311,12 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
    */
   for (const entry of ledger.balances) {
     const row = ensure(String(entry.asset).toLowerCase());
-    row.credited = money(num(entry.available));
+    // Only positive ledger credits (from virtual accounts or admin adjustments)
+    // represent off-chain funds in pooled custody that add to the user's chain balance.
+    // Negative ledger available caused by on-chain wallet debits (which have no ledger credit)
+    // must NEVER drag down on-chain balances that have already been debited by the blockchain consensus.
+    const pooledCredits = Math.max(0, num(entry.available));
+    row.credited = money(pooledCredits);
     row.held = money(num(entry.held));
     row.pending = money(num(entry.pending));
     row.spent = money(num(entry.spent));
@@ -350,11 +355,26 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
  * The single question every send path should ask. Returns null when the chain
  * could not be read AND the ledger holds nothing - the honest answer is "we do
  * not know", and a caller must refuse rather than assume zero or assume plenty.
+ *
+ * When network is provided, checks spendable funds available on that specific network.
  */
-export async function getSpendable(userId: string, asset: string): Promise<number | null> {
+export async function getSpendable(userId: string, asset: string, network?: string): Promise<number | null> {
   const unified = await getUnifiedBalance(userId);
   const row = unified.balances.find((item) => item.asset === asset.toLowerCase());
   if (!row) return 0;
-  if (row.chainUnavailable && num(row.credited) === 0) return null;
+
+  if (network) {
+    const net = network.toLowerCase();
+    const wallet = unified.wallets.find((w) => w.chain.toLowerCase() === net);
+    if (!wallet) return 0;
+    if (wallet.balancesUnavailable) return null;
+    const balanceEntry = (wallet.balances || []).find((b) => b.asset.toLowerCase() === asset.toLowerCase());
+    const chainAmount = balanceEntry ? num(balanceEntry.amount) : 0;
+    const pooledCredits = num(row.credited);
+    const held = num(row.held);
+    return Math.max(0, chainAmount + pooledCredits - held);
+  }
+
+  if (row.chainUnavailable && num(row.chain) === 0 && num(row.credited) === 0) return null;
   return num(row.spendable);
 }

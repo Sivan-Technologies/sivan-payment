@@ -901,27 +901,39 @@ export class PrivyWalletProvider implements WalletProvider {
       const mint = solanaMintFor(asset, production);
       if (!mint) continue;
 
-      const { result } = await solanaRpc<any>(
-        'getTokenAccountsByOwner',
-        [address, { mint }, { encoding: 'jsonParsed' }],
-        { production }
-      );
+      try {
+        const { result } = await solanaRpc<any>(
+          'getTokenAccountsByOwner',
+          [address, { mint }, { encoding: 'jsonParsed' }],
+          { production }
+        );
 
-      const accounts: any[] = result?.value ?? [];
+        const accounts: any[] = result?.value ?? [];
 
-      // Summed, not first-only. One owner can hold several accounts for the
-      // same mint, and showing only one under-reports the holding.
-      const total = accounts.reduce((sum, account) => {
-        const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
-        return sum + (raw ? BigInt(raw) : 0n);
-      }, 0n);
+        // Summed, not first-only. One owner can hold several accounts for the
+        // same mint, and showing only one under-reports the holding.
+        const total = accounts.reduce((sum, account) => {
+          const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
+          return sum + (raw ? BigInt(raw) : 0n);
+        }, 0n);
 
-      balances.push({
-        asset,
-        chain: 'solana',
-        amount: fromBaseUnits(total, 6),
-        contractAddress: mint,
-      });
+        balances.push({
+          asset,
+          chain: 'solana',
+          amount: fromBaseUnits(total, 6),
+          contractAddress: mint,
+        });
+      } catch (err: any) {
+        // A cluster-mint mismatch (e.g. devnet mint against mainnet RPC) or empty account
+        // should resolve as 0 rather than failing the entire multi-chain wallet read.
+        console.warn(`[solanaBalances] getTokenAccountsByOwner non-fatal note for ${asset}:`, err?.message || err);
+        balances.push({
+          asset,
+          chain: 'solana',
+          amount: '0.000000',
+          contractAddress: mint,
+        });
+      }
     }
 
     return balances;
