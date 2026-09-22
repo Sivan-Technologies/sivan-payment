@@ -136,11 +136,17 @@ export async function balanceRoutes(app: FastifyInstance) {
         // `spendable` is chain + credited - held: what the user may actually
         // move right now, which is the question both bots are really asking.
         available: Number(usdcEntry?.spendable ?? 0),
+        spendable: Number(usdcEntry?.spendable ?? 0),
+        held: Number(usdcEntry?.held ?? 0),
+        chainTotal: Number(usdcEntry?.chain ?? 0),
         pending: Number(usdcEntry?.pending ?? 0),
         balances: unified.balances.map((b) => ({
           asset: b.asset,
           amount: Number(b.spendable),
           available: Number(b.spendable),
+          spendable: Number(b.spendable),
+          held: Number(b.held ?? 0),
+          chain: Number(b.chain ?? 0),
           pending: Number(b.pending),
         })),
         wallets: unified.wallets.map((w) => ({
