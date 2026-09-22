@@ -603,6 +603,9 @@ export async function acceptAgreement(
   // Fire real-time notification to buyer on Telegram / WhatsApp that deal is accepted and ready to fund
   void notifyAgreementAccepted(updated);
 
+  // Sync acceptance to external escrow agent so external channels stay in sync
+  void syncEscrowAgentAcceptance(updated, sellerUserId);
+
   return updated;
 }
 
@@ -738,6 +741,9 @@ export async function fundAgreement(agreementId: string, externalTxHash?: string
   };
 
   await db.updateServiceAgreement(updated);
+
+  // Sync funding to external escrow agent so external channels stay in sync
+  void syncEscrowAgentFunding(updated);
 
   try {
     await createBalanceLedgerEntry(
@@ -1246,4 +1252,72 @@ export async function getAgreement(agreementId: string): Promise<ServiceAgreemen
     await db.updateServiceAgreement(record);
   }
   return record;
+}
+
+/**
+ * Forward acceptance to external escrow agent so Telegram & WhatsApp channels
+ * immediately transition to PENDING_PAYMENT and display the Pay now button.
+ */
+async function syncEscrowAgentAcceptance(
+  agreement: ServiceAgreementRecord,
+  sellerUserId?: string
+): Promise<void> {
+  try {
+    const configuredUrl = process.env.CORE_API_BASE_URL || process.env.ESCROW_AGENT_URL;
+    const coreSecret = process.env.CORE_API_SECRET;
+    if (!configuredUrl || !coreSecret) return;
+
+    const sellerPhone = agreement.sellerUserId || sellerUserId || '';
+    const wireIdentity = sellerPhone.startsWith('+')
+      ? `whatsapp:${sellerPhone}`
+      : sellerPhone.startsWith('whatsapp:')
+      ? sellerPhone
+      : `whatsapp:+${sellerPhone}`;
+
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/escrows/${encodeURIComponent(agreement.id)}/accept`;
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-core-api-key': coreSecret,
+      },
+      body: JSON.stringify({ actorWhatsapp: wireIdentity }),
+      signal: AbortSignal.timeout(3500),
+    });
+  } catch (err: any) {
+    console.warn('[agreement.service] syncEscrowAgentAcceptance note:', err?.message || err);
+  }
+}
+
+/**
+ * Forward funding to external escrow agent so all channels reflect payment confirmation.
+ */
+async function syncEscrowAgentFunding(
+  agreement: ServiceAgreementRecord
+): Promise<void> {
+  try {
+    const configuredUrl = process.env.CORE_API_BASE_URL || process.env.ESCROW_AGENT_URL;
+    const coreSecret = process.env.CORE_API_SECRET;
+    if (!configuredUrl || !coreSecret) return;
+
+    const buyerPhone = agreement.buyerUserId || '';
+    const wireIdentity = buyerPhone.startsWith('+')
+      ? `whatsapp:${buyerPhone}`
+      : buyerPhone.startsWith('whatsapp:')
+      ? buyerPhone
+      : `whatsapp:+${buyerPhone}`;
+
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/escrows/${encodeURIComponent(agreement.id)}/pay-from-balance`;
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-core-api-key': coreSecret,
+      },
+      body: JSON.stringify({ actorWhatsapp: wireIdentity }),
+      signal: AbortSignal.timeout(3500),
+    });
+  } catch (err: any) {
+    console.warn('[agreement.service] syncEscrowAgentFunding note:', err?.message || err);
+  }
 }
