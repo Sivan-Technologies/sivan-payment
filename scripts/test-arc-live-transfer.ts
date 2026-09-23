@@ -1,7 +1,7 @@
 /**
  * REAL-TIME ARC TESTNET LIVE ON-CHAIN TRANSFER TEST
  *
- * Wallet: 0x0f9FbE0229c04ED57a20e078174BE2Cc73F92f58
+ * Sender Account: Derived dynamically from ARC_TESTNET_PRIVATE_KEY
  * Network: Arc Testnet (Chain ID 5042002)
  * RPC: https://rpc.testnet.arc.io
  * Native Gas Asset: USDC (18 decimals)
@@ -13,11 +13,16 @@
  * - Verified on Arc Testnet via live receipts and ArcScan explorer links.
  */
 
-import { createPublicClient, createWalletClient, http, formatEther, parseEther, defineChain } from 'viem';
+import { createPublicClient, createWalletClient, http, formatEther, parseEther, defineChain, keccak256, toHex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { resolveNetworkFeeConfig, quoteTransferFee } from '../src/balances/transfer-fee-policy.js';
 import { nativeBalanceOf } from '../src/wallets/evm/evm-rpc.js';
-import { getNetworkExplorer } from '../src/wallets/explorers.js';
+import { getNetworkExplorer } from '../src/utils/explorers.js';
+
+// Deterministically derive test EVM address from user seed as per protocol rules
+function deriveDeterministicEvmAddress(seed: string): `0x${string}` {
+  return privateKeyToAccount(keccak256(toHex(seed))).address;
+}
 
 // Define Arc Testnet Chain for viem
 const arcTestnet = defineChain({
@@ -43,9 +48,19 @@ const arcTestnet = defineChain({
 
 const rawKey = (process.env.ARC_TESTNET_PRIVATE_KEY || process.env.TESTNET_PRIVATE_KEY || '').trim();
 const SENDER_KEY = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as `0x${string}`;
-const SIVAN_FEE_WALLET = (process.env.SIVAN_FEE_WALLET_ARC || process.env.SIVAN_FEE_WALLET_EVM || '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc') as `0x${string}`;
-const RECIPIENT_1 = (process.env.TESTNET_RECIPIENT_1 || '0x2170Ed0880ac9A755fd29B2688956BD959F933F8') as `0x${string}`;
-const RECIPIENT_2 = (process.env.TESTNET_RECIPIENT_2 || '0x90F79bf6EB2c4f870365E785982E1f101E93b906') as `0x${string}`;
+const SIVAN_FEE_WALLET = (
+  process.env.SIVAN_FEE_WALLET_ARC ||
+  process.env.SIVAN_FEE_WALLET_EVM ||
+  deriveDeterministicEvmAddress('sivan_protocol_fee_wallet')
+) as `0x${string}`;
+const RECIPIENT_1 = (
+  process.env.TESTNET_RECIPIENT_1 ||
+  deriveDeterministicEvmAddress('sivan_arc_test_recipient_1')
+) as `0x${string}`;
+const RECIPIENT_2 = (
+  process.env.TESTNET_RECIPIENT_2 ||
+  deriveDeterministicEvmAddress('sivan_arc_test_recipient_2')
+) as `0x${string}`;
 
 async function main() {
   if (!rawKey || rawKey === '0x') {

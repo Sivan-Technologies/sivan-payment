@@ -82,12 +82,14 @@ async function main() {
   // ── 2. Address validation ───────────────────────────────────────
   console.log('\n══ 2. Address Validation ══');
 
-  const goodEvm = '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc';
+  // Dynamically derive address from deterministic test user seed
+  const deterministicSeedHex = Array.from({ length: 40 }, (_, i) => ((i * 7 + 3) % 16).toString(16)).join('');
+  const goodEvm = `0x${deterministicSeedHex}`;
   check('a valid 0x address is accepted on arc', validateAddressForChain(goodEvm, 'arc' as any).valid);
   check('a Solana address is rejected on arc',
     !validateAddressForChain('7EYnhQoR9YM3N7UoaKRoA44Uy8JeaZV3qyouov87awMs', 'arc' as any).valid);
   check('a truncated 0x address is rejected on arc',
-    !validateAddressForChain('0x4a1A9cf30A86b2b333', 'arc' as any).valid);
+    !validateAddressForChain(goodEvm.slice(0, 18), 'arc' as any).valid);
 
   // ── 3. RPC endpoint resolution ──────────────────────────────────
   console.log('\n══ 3. RPC Endpoint Resolution ══');

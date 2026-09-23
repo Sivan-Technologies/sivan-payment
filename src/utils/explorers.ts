@@ -22,6 +22,12 @@ export function getNetworkExplorer(
   const mode = (modeInput || resolveNetworkMode() || 'testnet').toLowerCase();
   const isMainnet = mode === 'mainnet' || mode === 'live';
 
+  if (net.includes('arc')) {
+    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.io';
+    const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
+    return { name: 'ArcScan Explorer', url };
+  }
+
   if (net.includes('base')) {
     const baseDomain = isMainnet ? 'https://basescan.org' : 'https://sepolia.basescan.org';
     const url = rawTxHash ? `${baseDomain}/tx/${rawTxHash}` : rawAddr ? `${baseDomain}/address/${rawAddr}` : baseDomain;
