@@ -49,6 +49,7 @@ const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: s
   ethereum: { mainnet: 'https://etherscan.io', testnet: 'https://sepolia.etherscan.io', label: 'Etherscan' },
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
+  arc: { mainnet: 'https://explorer.arc.network', testnet: 'https://testnet.arcscan.io', label: 'Arc Explorer' },
   avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
   avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
 };
@@ -61,6 +62,7 @@ const USEROP_CHAIN: Record<string, { mainnet: string; testnet: string }> = {
   ethereum: { mainnet: 'mainnet', testnet: 'sepolia' },
   polygon: { mainnet: 'matic', testnet: 'amoy' },
   arbitrum: { mainnet: 'arbitrum-one', testnet: 'arbitrum-sepolia' },
+  arc: { mainnet: 'arc', testnet: 'arc-testnet' },
 };
 
 export interface ExplorerInput {
@@ -189,6 +191,7 @@ export function networkLabel(chain?: string): string {
     ethereum: 'Ethereum',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
+    arc: 'Arc',
     avalanche_c_chain: 'Avalanche',
     tron: 'Tron',
     sivan_p2p: 'Sivan Instant P2P',

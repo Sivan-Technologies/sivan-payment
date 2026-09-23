@@ -376,6 +376,9 @@ export function resolveTransferFeeWallet(network: string): string {
   if (n === 'celo') {
     return process.env.SIVAN_FEE_WALLET_CELO?.trim() || env.SIVAN_FEE_WALLET_CELO?.trim() || '';
   }
+  if (n === 'arc') {
+    return process.env.SIVAN_FEE_WALLET_ARC?.trim() || process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
+  }
   return process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
 }
 

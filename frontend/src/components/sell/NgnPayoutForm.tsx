@@ -100,6 +100,7 @@ function networkLabel(network: string): string {
     ethereum: 'Ethereum',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
+    arc: 'Arc',
     optimism: 'Optimism',
     avalanche: 'Avalanche',
     tron: 'Tron',

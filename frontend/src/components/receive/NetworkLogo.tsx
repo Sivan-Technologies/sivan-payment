@@ -15,14 +15,14 @@
  * confusion this screen exists to prevent.
  */
 
-export type LogoChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc';
+export type LogoChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'bsc';
 
 /**
  * Is there a real mark for this chain string?
  */
 export function logoChainFor(chain?: string): LogoChain | undefined {
   const key = String(chain ?? '').trim().toLowerCase();
-  const valid: LogoChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'polygon', 'arbitrum', 'bsc'];
+  const valid: LogoChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'polygon', 'arbitrum', 'arc', 'bsc'];
   return valid.includes(key as LogoChain) ? (key as LogoChain) : undefined;
 }
 
@@ -123,6 +123,15 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
       <svg {...common} viewBox="0 0 32 32">
         <circle cx="16" cy="16" r="15" fill="#28A0F0" />
         <path fill="#fff" d="M16 7l8 14h-4.2l-3.8-6.6-3.8 6.6H8l8-14zm0 5.2L13 18h6l-3-5.8z" />
+      </svg>
+    );
+  }
+
+  if (chain === 'arc') {
+    return (
+      <svg {...common} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#0048E5" />
+        <path fill="#fff" d="M16 8a8 8 0 0 1 8 8h-3a5 5 0 0 0-5-5V8zm-8 8a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H8zm8 8a8 8 0 0 1-8-8h3a5 5 0 0 0 5 5v3zm8-8a8 8 0 0 1-8 8v-3a5 5 0 0 0 5-5h3z" />
       </svg>
     );
   }

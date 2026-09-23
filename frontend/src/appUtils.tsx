@@ -200,6 +200,7 @@ export const fallbackSourceNetworks: NetworkControl[] = [
   { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
   { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
   { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
+  { network: 'arc', enabled: true, isDefault: false, label: 'Arc', sortOrder: 26, updatedAt: new Date().toISOString() },
   { network: 'arbitrum', enabled: true, isDefault: false, label: 'Arbitrum', sortOrder: 27, updatedAt: new Date().toISOString() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },

@@ -20,7 +20,7 @@ import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } f
  *   which is the cheapest known defence against wrong-network loss.
  */
 
-export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc';
+export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'bsc';
 export type ReceiveAsset = 'usdc' | 'usdt';
 
 /** Re-exported so callers do not need to know the record shape. */
@@ -40,6 +40,7 @@ const CHAIN_ASSETS: Record<ReceiveChain, ReceiveAsset[]> = {
   celo: ['usdc', 'usdt'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
+  arc: ['usdc'],
   bsc: ['usdc', 'usdt'],
 };
 
@@ -107,6 +108,14 @@ const CHAIN_META: Record<ReceiveChain, {
     accent: '#28A0F0',
     note: 'Arbitrum One L2 EVM network.',
   },
+  arc: {
+    label: 'Arc',
+    short: 'ARC',
+    addressFormat: 'Starts with 0x (EVM)',
+    confirmations: 'Sub-second (~0.5s)',
+    accent: '#0048E5',
+    note: 'Circle Arc Layer 1 EVM with native 18-decimal USDC and sub-second finality.',
+  },
   bsc: {
     label: 'BNB Chain',
     short: 'BNB',
@@ -162,7 +171,7 @@ export function ReceiveView({
   onRefresh: () => void;
 }) {
   const availableChains = useMemo(() => {
-    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'stellar', 'celo'];
+    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'arc', 'stellar', 'celo'];
     if (!enabledNetworks || enabledNetworks.length === 0) {
       return supported;
     }
@@ -227,6 +236,14 @@ export function ReceiveView({
         accent: CHAIN_META.arbitrum.accent,
         recommended: activeDefault === 'arbitrum',
         chains: ['arbitrum'],
+      },
+      {
+        key: 'arc',
+        label: 'Arc',
+        note: 'Circle Arc Layer 1 EVM. Native 18-decimal USDC with sub-second finality.',
+        accent: CHAIN_META.arc.accent,
+        recommended: activeDefault === 'arc',
+        chains: ['arc'],
       },
       {
         key: 'stellar',
@@ -411,7 +428,7 @@ export function ReceiveView({
       ? ['solana']
       : activeChain === 'stellar'
       ? ['stellar']
-      : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum'];
+      : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum', 'arc'];
 
   const wallet =
     openWallets.find((w) => w.chain === activeChain) ??

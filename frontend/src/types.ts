@@ -487,7 +487,7 @@ export interface AssetControl {
 }
 
 export interface NetworkControl {
-  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb' | string;
+  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'arc' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb' | string;
   enabled: boolean;
   isDefault?: boolean;
   label: string;
@@ -713,7 +713,7 @@ export interface UserPreferencesRecord {
 export interface UserWalletRecord {
   id: string;
   userId: string;
-  chain: 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc' | 'bnb' | string;
+  chain: 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'bsc' | 'bnb' | string;
   address: string;
   status: 'provisioning' | 'active' | 'suspended' | 'closed' | 'failed';
   /**

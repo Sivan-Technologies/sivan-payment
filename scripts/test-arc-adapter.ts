@@ -136,7 +136,7 @@ async function main() {
     `got ${testnetId.result} (${Number(testnetId.result)})`);
 
   check('mainnet and testnet chain ids differ',
-    ARC_MAINNET_CHAIN_ID !== ARC_TESTNET_CHAIN_ID);
+    (ARC_MAINNET_CHAIN_ID as number) !== (ARC_TESTNET_CHAIN_ID as number));
 
   const block = await rpc(ARC_MAINNET_RPC, 'eth_blockNumber');
   check('mainnet is producing blocks', Number(block.result) > 0, String(block.result));
@@ -237,7 +237,7 @@ async function main() {
   check('testnet CAIP-2 matches the live chain id',
     `eip155:${ARC_TESTNET_CHAIN_ID}` === 'eip155:5042002');
   check('mainnet and testnet CAIP-2 differ',
-    `eip155:${ARC_MAINNET_CHAIN_ID}` !== `eip155:${ARC_TESTNET_CHAIN_ID}`);
+    (`eip155:${ARC_MAINNET_CHAIN_ID}` as string) !== `eip155:${ARC_TESTNET_CHAIN_ID}`);
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);

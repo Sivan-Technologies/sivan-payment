@@ -186,6 +186,15 @@ export function resolveNetworkFeeConfig(network?: string): TransferFeeConfig {
     };
   }
 
+  if (n === 'arc') {
+    return {
+      percent: 0.5,
+      minimumUsd: 0.10,
+      maximumUsd: 0.75,
+      newRecipientUsd: 0.0,
+    };
+  }
+
   // Standard EVM fallback: Base, BSC, Solana, Ethereum, Polygon, Arbitrum, etc.
   return { ...DEFAULT_TRANSFER_FEE };
 }
