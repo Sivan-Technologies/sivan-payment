@@ -80,6 +80,20 @@ const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }>
     ],
     testnet: ['https://sepolia-rollup.arbitrum.io/rpc'],
   },
+  /**
+   * Arc. Verified by eth_chainId against each host before being listed:
+   *   rpc.mainnet.arc.io      -> 0x13b2   = 5042
+   *   rpc.testnet.arc.io      -> 0x4cef52 = 5042002
+   *   rpc.testnet.arc.network -> 0x4cef52 = 5042002
+   *
+   * Note rpc.mainnet.arc.network returns an EMPTY body and is not a working
+   * endpoint, despite appearing in several launch-week write-ups. Do not add
+   * it as a fallback: it would consume a tier and answer nothing.
+   */
+  arc: {
+    mainnet: ['https://rpc.mainnet.arc.io', 'https://rpc.arc-scan.org'],
+    testnet: ['https://rpc.testnet.arc.io', 'https://rpc.testnet.arc.network'],
+  },
 };
 
 export interface EvmRpcOptions {
@@ -107,6 +121,9 @@ export function evmRpcEndpoints(chain: WalletChain, options: EvmRpcOptions = {})
   } else if (chain === 'arbitrum') {
     configured = process.env.ARBITRUM_RPC_URL || '';
     secondary = process.env.ARBITRUM_RPC_FALLBACK_URL || '';
+  } else if (chain === 'arc') {
+    configured = process.env.ARC_RPC_URL || '';
+    secondary = process.env.ARC_RPC_FALLBACK_URL || '';
   } else {
     configured = env.ETHEREUM_RPC_URL || '';
     secondary = env.ETHEREUM_RPC_FALLBACK_URL || '';
@@ -274,6 +291,57 @@ export async function erc20BalanceOf(
   }
 
   return fromBaseUnits(BigInt(result), decimals);
+}
+
+/**
+ * NATIVE coin balance, as a decimal string.
+ *
+ * Arc is the reason this exists. On every other EVM chain Sivan supports, USDC
+ * is an ERC-20 and the read goes through erc20BalanceOf. On Arc, USDC IS the
+ * native gas token: there is no contract to call. Verified directly against
+ * rpc.mainnet.arc.io, where eth_getCode at the well-known USDC addresses from
+ * other chains returns 0x:
+ *
+ *   0xaf88d065e77c8cC2239327C5EDb3A432268e5831  (Arbitrum USDC)  -> 0x
+ *   0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  (Ethereum USDC)  -> 0x
+ *
+ * Reading an Arc USDC balance through erc20BalanceOf therefore calls a
+ * contract that is not there. It would throw rather than mislead, which is the
+ * correct failure, but it means the native path is mandatory, not an optimisation.
+ *
+ * DECIMALS. Native Arc USDC is 18dp at the protocol level, unlike the 6dp
+ * ERC-20 USDC everywhere else. Passing 6 here does not throw: it silently
+ * reports a balance 10^12 times too large. Always source this from
+ * decimalsForChainAsset(), never from the asset alone.
+ */
+export async function nativeBalanceOf(
+  chain: WalletChain,
+  holderAddress: string,
+  decimals: number,
+  options: EvmRpcOptions = {}
+): Promise<string> {
+  const holder = holderAddress.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(holder)) {
+    throw new Error(`Invalid holder address: ${holderAddress}`);
+  }
+
+  const result = await evmRpc<string>(chain, 'eth_getBalance', [holder, 'latest'], options);
+
+  if (result === null || result === undefined || result === '0x') {
+    throw new Error(`eth_getBalance returned no data for ${holder} on ${chain}.`);
+  }
+
+  return fromBaseUnits(BigInt(result), decimals);
+}
+
+/**
+ * Does this chain settle its stablecoin as the NATIVE coin rather than ERC-20?
+ *
+ * Arc only, today. Kept as a predicate rather than an inline chain === 'arc'
+ * so the next USDC-gas chain is a one-line change with one place to audit.
+ */
+export function usesNativeStablecoin(chain: WalletChain): boolean {
+  return chain === 'arc';
 }
 
 /**

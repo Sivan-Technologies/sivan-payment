@@ -125,6 +125,10 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-arbitrum-adapter.ts',
   },
   {
+    name: 'Multi-Chain Arc Adapter & Native USDC Settlement',
+    command: 'tsx scripts/test-arc-adapter.ts',
+  },
+  {
     name: 'Multi-Chain Developer Gateway & Agent API',
     command: 'tsx scripts/test-developer-gateway.ts',
     env: {

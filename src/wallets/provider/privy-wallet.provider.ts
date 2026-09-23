@@ -4,7 +4,13 @@ import { forbidden, serviceUnavailable, badRequest, type AppError } from '../../
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import { solanaRpc } from '../solana/solana-rpc.js';
-import { erc20BalanceOf, fromBaseUnits, waitForEvmReceipt } from '../evm/evm-rpc.js';
+import {
+  erc20BalanceOf,
+  nativeBalanceOf,
+  usesNativeStablecoin,
+  fromBaseUnits,
+  waitForEvmReceipt,
+} from '../evm/evm-rpc.js';
 import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
@@ -104,6 +110,9 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
   // Arbitrum One is an EVM rollup: standard JSON-RPC, standard secp256k1
   // addresses. Privy needs no new key material for it.
   arbitrum: 'ethereum',
+  // Arc is Circle's own L1: EVM-compatible, Reth execution, standard
+  // secp256k1 addresses. Privy needs no new key material for it.
+  arc: 'ethereum',
 };
 
 /**
@@ -150,6 +159,21 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   arbitrum: {
     mainnet: 'eip155:42161',
     testnet: 'eip155:421614',
+  },
+  /**
+   * Arc, Circle's stablecoin L1. Read back from each RPC before being
+   * written here:
+   *
+   *   eth_chainId on rpc.mainnet.arc.io -> 0x13b2   = 5042
+   *   eth_chainId on rpc.testnet.arc.io -> 0x4cef52 = 5042002
+   *
+   * Same hazard as Arbitrum: one secp256k1 address is valid on both, so a
+   * transaction sent with the wrong CAIP-2 does not bounce. It succeeds on a
+   * chain nobody is watching.
+   */
+  arc: {
+    mainnet: 'eip155:5042',
+    testnet: 'eip155:5042002',
   },
 };
 
@@ -550,9 +574,32 @@ export function erc20TokenAddress(
   return production ? entry.mainnet : entry.testnet;
 }
 
-/** USDC and USDT are 6-decimal tokens on every chain Sivan supports. */
+/**
+ * USDC and USDT are 6-decimal ERC-20 tokens on every chain where they ARE an
+ * ERC-20. Kept for callers that are provably ERC-20-only.
+ *
+ * Prefer decimalsForChainAsset(). This overload cannot see the chain, and Arc
+ * is the case where the chain decides the answer.
+ */
 export function decimalsFor(asset: string): number {
   return ['usdc', 'usdt'].includes(String(asset).toLowerCase()) ? 6 : 18;
+}
+
+/**
+ * Decimals for an asset ON A GIVEN CHAIN.
+ *
+ * Arc broke the assumption that USDC is always 6dp. Arc's USDC is the NATIVE
+ * gas token and is 18dp at the protocol level, so the decimal count is a
+ * property of the (chain, asset) pair, not of the asset alone.
+ *
+ * This matters more than most off-by-one bugs because it does not throw. Using
+ * 6 where 18 is correct reports a balance 10^12 times too large, and formats
+ * cleanly the whole way to the user's screen.
+ */
+export function decimalsForChainAsset(chain: WalletChain, asset: string): number {
+  const a = String(asset).toLowerCase();
+  if (usesNativeStablecoin(chain) && a === 'usdc') return 18;
+  return decimalsFor(a);
 }
 
 /**
@@ -858,6 +905,31 @@ export class PrivyWalletProvider implements WalletProvider {
     // missing entry is skipped rather than reported as zero: Base has no
     // native USDT, and "0 USDT on Base" would be an invented figure.
     const balances: WalletBalance[] = [];
+
+    /**
+     * Arc settles USDC as the NATIVE coin, so there is no ERC-20 contract to
+     * read and erc20TokenAddress() correctly returns undefined for it. Without
+     * this branch the loop below would `continue` past every asset and report
+     * an empty balance list for a funded Arc wallet.
+     *
+     * No contractAddress is set on the result: there is no contract, and
+     * inventing one would be a lie the UI would happily render as a link.
+     */
+    if (usesNativeStablecoin(chain)) {
+      try {
+        const amount = await nativeBalanceOf(
+          chain,
+          address,
+          decimalsForChainAsset(chain, 'usdc'),
+          { production }
+        );
+        balances.push({ asset: 'usdc', chain, amount });
+      } catch {
+        balances.push({ asset: 'usdc', chain, amount: '0' });
+      }
+      return balances;
+    }
+
     const assetsToCheck: WalletAsset[] = chain === 'celo' ? ['usdc', 'usdt', 'cusd'] : ['usdc', 'usdt'];
     for (const asset of assetsToCheck) {
       const token = erc20TokenAddress(chain, asset, production);
@@ -868,7 +940,7 @@ export class PrivyWalletProvider implements WalletProvider {
           chain,
           token,
           address,
-          decimalsFor(asset),
+          decimalsForChainAsset(chain, asset),
           { production }
         );
 
@@ -1042,6 +1114,31 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendCeloTransfer(input, signingKey, caip2);
     }
 
+    /**
+     * Arc sends USDC as a NATIVE value transfer, not an ERC-20 call.
+     *
+     * The generic EVM path below builds `to: <token contract>` with an
+     * encoded transfer(address,uint256) and `value: 0x0`. On Arc there is no
+     * USDC contract (eth_getCode at every well-known USDC address returns 0x),
+     * so that transaction would be sent to an address with no code. It would
+     * not revert. It would succeed as a plain value transfer of ZERO to a dead
+     * address, burn the gas, and report a hash the user could paste into an
+     * explorer and see "success" on, with nothing moved.
+     *
+     * Hence: recipient in `to`, amount in `value`, no calldata.
+     *
+     * 18 decimals, sourced from decimalsForChainAsset. Arc's native USDC is
+     * 18dp; using the ERC-20 default of 6 would send 10^12 times too little.
+     */
+    if (usesNativeStablecoin(input.chain)) {
+      if (String(input.asset).toLowerCase() !== 'usdc') {
+        throw forbidden(
+          `Arc settles in USDC only. ${String(input.asset).toUpperCase()} is not available on Arc.`
+        );
+      }
+      return this.sendNativeEvmTransfer(input, signingKey, caip2);
+    }
+
     // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
     // disagreeing is the specific failure this parameter exists to prevent: a
     // mainnet USDC contract addressed on Base Sepolia is not a token contract
@@ -1184,6 +1281,147 @@ export class PrivyWalletProvider implements WalletProvider {
       status: 'submitted',
       // Deliberately left undefined rather than '' when sponsored: there is no
       // transaction hash yet, and an empty string reads as "we have one".
+      txHash: evmTxHash,
+      userOperationHash: userOpHash,
+      sponsored: isSponsored,
+      rawProviderPayload: result,
+    };
+  }
+
+  /**
+   * Move the NATIVE coin out of an EVM wallet.
+   *
+   * Arc is the only chain that takes this path today. Its settlement asset,
+   * USDC, IS the native gas token, so a transfer is `to` plus `value` with no
+   * calldata, exactly like sending ETH on Ethereum.
+   *
+   * Kept separate from the generic EVM path rather than adding a branch inside
+   * it, because the two build fundamentally different transactions and the
+   * failure mode of confusing them is silent. The ERC-20 path sets
+   * `to: <contract>` and `value: 0x0`; run against Arc, where no USDC contract
+   * exists, that sends zero to an address with no code. It does not revert. It
+   * produces a hash that shows "success" in an explorer while moving nothing.
+   *
+   * Amount is converted with decimalsForChainAsset, which returns 18 for Arc
+   * USDC. The ERC-20 default of 6 would transfer 10^12 times too little and
+   * would also not revert.
+   */
+  private async sendNativeEvmTransfer(
+    input: WalletTransferInput,
+    signingKey: string,
+    caip2: string
+  ): Promise<WalletTransfer> {
+    const decimals = decimalsForChainAsset(input.chain, input.asset);
+    const value = '0x' + toBaseUnits(input.amount, decimals).toString(16);
+
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+
+    const body = {
+      method: 'eth_sendTransaction',
+      caip2,
+      sponsor: true,
+      params: {
+        transaction: {
+          to: input.toAddress,
+          value,
+          // No calldata. A native transfer carries none, and sending an
+          // encoded ERC-20 call here would be interpreted by a plain EOA
+          // recipient as nothing at all while still moving `value`.
+        },
+      },
+    };
+
+    const { appId } = credentials();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result: any = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
+
+      /**
+       * Arc is a new chain (mainnet opened 16 September 2026) and Privy may
+       * not have it enabled. Named explicitly because the remedy is a
+       * dashboard change, not a code change, and the raw message does not say
+       * which of the two situations applies.
+       */
+      if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
+        throw forbidden(
+          `Gas sponsorship is not available for ${caip2}. Enable it for this network in the Privy ` +
+            'dashboard, or the wallet must hold native currency to pay its own gas.'
+        );
+      }
+      if (/unsupported|unknown|not supported/i.test(message) && /chain|network|caip/i.test(message)) {
+        throw forbidden(
+          `Privy does not recognise ${caip2}. Arc support must be enabled on the Privy app before ` +
+            'transfers on this network can be signed.'
+        );
+      }
+      throw new Error(`Privy: ${message}`);
+    }
+
+    const evmTxHash: string | undefined = result?.data?.hash || result?.hash || undefined;
+    const userOpHash: string | undefined = result?.data?.user_operation_hash || undefined;
+    const isSponsored = Boolean(result?.data?.sponsorship_provider);
+
+    // Same receipt discipline as the ERC-20 path: a non-sponsored tx has a
+    // real hash now and is polled inline, so a revert is reported as a
+    // failure rather than as a receipt the user could screenshot.
+    const production = isProduction(input.networkMode);
+    if (evmTxHash && !isSponsored && /^0x[0-9a-fA-F]{64}$/.test(evmTxHash)) {
+      const receiptResult = await waitForEvmReceipt(input.chain, evmTxHash, {
+        production,
+        // Arc finalises in well under a second, so 10 attempts is already
+        // generous. Kept polling rather than assuming, because "fast chain"
+        // is not "instant node indexing".
+        pollAttempts: 10,
+        pollIntervalMs: 2_000,
+      });
+
+      if (receiptResult.reverted) {
+        console.error(
+          `[privy.sendNativeEvmTransfer] ${input.chain} tx ${evmTxHash} reverted (status 0x0). No funds transferred.`
+        );
+        throw new Error(
+          `Transaction reverted on-chain (status 0x0). No funds were transferred. txHash: ${evmTxHash}`
+        );
+      }
+
+      return {
+        provider: this.name,
+        providerTransferId:
+          result?.data?.transaction_id || result?.transaction_id || evmTxHash,
+        status: receiptResult.confirmed ? 'confirmed' : 'submitted',
+        txHash: evmTxHash,
+        userOperationHash: userOpHash,
+        sponsored: false,
+        rawProviderPayload: { ...result, confirmed: receiptResult.confirmed },
+      };
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId:
+        result?.data?.transaction_id ||
+        result?.transaction_id ||
+        result?.data?.user_operation_hash ||
+        result?.data?.hash ||
+        `privy_tx_${crypto.randomUUID()}`,
+      status: 'submitted',
       txHash: evmTxHash,
       userOperationHash: userOpHash,
       sponsored: isSponsored,
