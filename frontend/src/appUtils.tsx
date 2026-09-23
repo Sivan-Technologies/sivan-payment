@@ -149,6 +149,29 @@ export function shortRef(value?: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+/**
+ * Format crypto and fiat amounts for clean, professional display.
+ *
+ * Rules:
+ * - If integer or whole amount (e.g. 5, 20, 20.000000): displays cleanly as "5" or "20" (no trailing .00).
+ * - If fractional (e.g. 4.700000, 44.700000000000000016, 9.900000):
+ *   rounds floating point jitter to at most 2 decimal places (e.g. "44.70", "4.70", "9.90").
+ */
+export function formatAmount(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '' || value === '—') return '—';
+  const num = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isFinite(num)) return String(value);
+
+  if (Math.abs(num - Math.round(num)) < 1e-6) {
+    return Math.round(num).toLocaleString('en-US');
+  }
+
+  return num.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 export function timeAgo(value?: string, nowMs = Date.now()) {
   if (!value) return 'Now';
   const then = new Date(value).getTime();

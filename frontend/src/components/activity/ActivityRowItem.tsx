@@ -1,5 +1,6 @@
 import type { ActivityRow } from '../../activityFeed';
 import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
+import { formatAmount } from '../../appUtils';
 
 /**
  * ONE ROW, USED BY BOTH THE DASHBOARD AND THE TRANSACTIONS PAGE.
@@ -110,7 +111,7 @@ export function ActivityRowItem({ row, onOpen, selected }: { row: ActivityRow; o
         </small>
       </span>
       <span className="activity-figures">
-        <b className={`activity-amount ${row.direction}`}>{sign}{row.amount} {row.currency}</b>
+        <b className={`activity-amount ${row.direction}`}>{sign}{formatAmount(row.amount)} {row.currency}</b>
         <span className={`activity-status ${row.state}`}>{row.statusLabel}</span>
       </span>
     </>
@@ -129,7 +130,7 @@ export function ActivityRowItem({ row, onOpen, selected }: { row: ActivityRow; o
       onClick={onOpen}
       // Screen readers get the whole row as one sentence; the visual split into
       // three columns is layout, not meaning.
-      aria-label={`${row.label}, ${row.amount} ${row.currency}, ${row.statusLabel}`}
+      aria-label={`${row.label}, ${formatAmount(row.amount)} ${row.currency}, ${row.statusLabel}`}
     >
       {content}
     </button>

@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { UserRecord, WithdrawalRecord, OnrampOrderRecord, TransactionTimeline, NgnTransferRecord, BalanceTransferRecord, SupplierPaymentRecord, VirtualAccountTransactionRecord, WalletDepositRecord, ServiceAgreementsSummary } from '../../types';
 import { buildActivityFeed, filterActivity, searchActivity, type ActivityRow } from '../../activityFeed';
 import { ActivityRowItem } from '../activity/ActivityRowItem';
+import { formatAmount } from '../../appUtils';
 import { explorerLink, getNetworkExplorer, networkLabel, shortHash } from '../../blockExplorer';
 import { NetworkLogo, logoChainFor } from '../receive/NetworkLogo';
 import { useAskSivan, AssistantThread, followUpsFor, MAX_SESSION_MESSAGES, MAX_DAILY_MESSAGES, type AssistantContext } from '../support/askSivan';
@@ -859,7 +860,7 @@ function TransactionTimelinePanel({
       <div className="transaction-explanation-box">{transactionExplanation('withdrawal', transaction.status)}</div>
       <div className="timeline-meta-grid">
         <Kv label="Request ID" value={transaction.id} />
-        <Kv label="Amount" value={`${transaction.amount} ${transaction.currency}`} />
+        <Kv label="Amount" value={`${formatAmount(transaction.amount)} ${transaction.currency}`} />
         <Kv label="Asset" value={transaction.asset} />
         <Kv label="Network" value={networkLabel(transaction.network)} />
         <Kv label="Bank account" value={(transaction as any).recipient || (transaction as any).destinationAccount || '—'} />
@@ -892,7 +893,7 @@ function TransactionTimelinePanel({
       <div className="transaction-explanation-box">{activitySummaryExplanation(activityRow)}</div>
       <div className="timeline-meta-grid">
         <Kv label="Agreement / Request ID" value={activityRow.id} />
-        <Kv label="Amount" value={`${activityRow.amount} ${activityRow.currency}`} />
+        <Kv label="Amount" value={`${formatAmount(activityRow.amount)} ${activityRow.currency}`} />
         <Kv label="Asset" value={activityRow.asset ?? activityRow.currency} />
         {(isAgreement || Boolean((activityRow.raw as any)?.channel)) && (
           <Kv
@@ -962,7 +963,7 @@ function TransactionTimelinePanel({
    */
   const steps = timeline.steps ?? [];
   const currentStep = steps.find((step) => step.status === 'current') || steps.find((step) => step.status === 'failed') || steps[steps.length - 1];
-  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || transaction.amount} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><AskSivanBlock assistant={assistant} row={activityRow ?? null} onAsk={onAsk} /></aside>;
+  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${formatAmount(timeline.amount || transaction.amount)} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><AskSivanBlock assistant={assistant} row={activityRow ?? null} onAsk={onAsk} /></aside>;
 }
 
 export function InlineTransactionTimeline({ timeline }: { timeline: TransactionTimeline }) {
@@ -973,7 +974,7 @@ export function InlineTransactionTimeline({ timeline }: { timeline: TransactionT
    * creates the withdrawal.
    */
   const steps = timeline?.steps ?? [];
-  return <div className="inline-transaction-timeline"><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${timeline.amount || '—'} ${timeline.currency || ''}`} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /></div><div className="customer-timeline-list compact">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div></div>;
+  return <div className="inline-transaction-timeline"><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${formatAmount(timeline.amount)} ${timeline.currency || ''}`} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /></div><div className="customer-timeline-list compact">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div></div>;
 }
 
 function transactionExplanation(type: string, status: string) {

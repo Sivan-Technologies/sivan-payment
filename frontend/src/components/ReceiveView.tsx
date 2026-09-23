@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { qrDataUri } from '../qrCode';
 import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
+import { formatAmount } from '../appUtils';
 import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } from '../types';
 
 /**
@@ -777,7 +778,7 @@ export function ReceiveView({
                   <div className="receive-balance-row">
                     {activeBalances.map((balance) => (
                       <div className="receive-balance" key={`${balance.asset}-${balance.chain}`}>
-                        <strong>{balance.amount}</strong>
+                        <strong>{formatAmount(balance.amount)}</strong>
                         <small>{balance.asset.toUpperCase()}</small>
                       </div>
                     ))}
