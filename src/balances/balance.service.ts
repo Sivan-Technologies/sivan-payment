@@ -309,7 +309,6 @@ export async function getBalanceTransferControls() {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    supportedNetworks: mergedNetworks,
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
