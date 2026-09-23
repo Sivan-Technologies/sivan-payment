@@ -1316,14 +1316,18 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
 
-    const body = {
+    const numericChainId = Number(caip2.replace(/^eip155:/, ''));
+    const body: Record<string, unknown> = {
       method: 'eth_sendTransaction',
       caip2,
-      sponsor: true,
+      // On Arc, USDC is the native gas token. The wallet holds native USDC and
+      // pays its own gas without needing external paymasters/sponsorship.
+      // Explicitly omit sponsor: true to avoid 400 invalid_data on custom networks.
       params: {
         transaction: {
           to: input.toAddress,
           value,
+          ...(Number.isFinite(numericChainId) && numericChainId > 0 ? { chain_id: numericChainId } : {}),
           // No calldata. A native transfer carries none, and sending an
           // encoded ERC-20 call here would be interpreted by a plain EOA
           // recipient as nothing at all while still moving `value`.
@@ -1354,24 +1358,20 @@ export class PrivyWalletProvider implements WalletProvider {
       const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
 
       /**
-       * Arc is a new chain (mainnet opened 16 September 2026) and Privy may
-       * not have it enabled. Named explicitly because the remedy is a
-       * dashboard change, not a code change, and the raw message does not say
-       * which of the two situations applies.
+       * Arc is a new chain and gas sponsorship may not be configured.
+       * Keep message free of provider names so safeUserMessage preserves it.
        */
       if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
         throw forbidden(
-          `Gas sponsorship is not available for ${caip2}. Enable it for this network in the Privy ` +
-            'dashboard, or the wallet must hold native currency to pay its own gas.'
+          `Gas sponsorship is not available for ${caip2}. The wallet must hold native currency to pay its own gas.`
         );
       }
       if (/unsupported|unknown|not supported/i.test(message) && /chain|network|caip/i.test(message)) {
         throw forbidden(
-          `Privy does not recognise ${caip2}. Arc support must be enabled on the Privy app before ` +
-            'transfers on this network can be signed.'
+          `Network ${caip2} is not recognised by the signing infrastructure. Network support must be enabled before transfers on this network can be signed.`
         );
       }
-      throw new Error(`Privy: ${message}`);
+      throw new Error(`Signing failed: ${message}`);
     }
 
     const evmTxHash: string | undefined = result?.data?.hash || result?.hash || undefined;
