@@ -1,10 +1,10 @@
 import { db } from '../database/json-database.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { solanaRpc } from '../wallets/solana/solana-rpc.js';
-import { evmRpc } from '../wallets/evm/evm-rpc.js';
+import { evmRpc, usesNativeStablecoin } from '../wallets/evm/evm-rpc.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { solanaMintFor } from '../wallets/solana/spl-transfer.js';
-import { erc20TokenAddress } from '../wallets/provider/privy-wallet.provider.js';
+import { erc20TokenAddress, decimalsForChainAsset } from '../wallets/provider/privy-wallet.provider.js';
 import { nowIso } from '../shared/id.js';
 import type { WalletDepositRecord } from '../database/types.js';
 import type { WalletChain } from '../wallets/types/wallet.types.js';
@@ -246,11 +246,24 @@ async function balanceStillPresent(
     // depth. Clamp at 0 rather than underflowing a bigint into a huge number.
     const target = headNumber > BigInt(EVM_CONFIRMATIONS) ? headNumber - BigInt(EVM_CONFIRMATIONS) : 0n;
 
-    const token = erc20TokenAddress(deposit.chain as WalletChain, deposit.asset, production);
-    if (!token) return 'unknown';
-
     const holder = deposit.address.trim().toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(holder)) return 'unknown';
+
+    if (usesNativeStablecoin(deposit.chain as WalletChain)) {
+      const raw = await evmRpc<string>(
+        deposit.chain as WalletChain,
+        'eth_getBalance',
+        [holder, `0x${target.toString(16)}`],
+        { production }
+      );
+      if (!raw || raw === '0x') return 'unknown';
+      const decimals = decimalsForChainAsset(deposit.chain as WalletChain, deposit.asset);
+      const held = Number(BigInt(raw)) / 10 ** decimals;
+      return held + EPSILON >= expected ? 'confirmed' : 'unknown';
+    }
+
+    const token = erc20TokenAddress(deposit.chain as WalletChain, deposit.asset, production);
+    if (!token) return 'unknown';
 
     const data = '0x70a08231' + holder.slice(2).padStart(64, '0');
     const raw = await evmRpc<string>(
@@ -265,7 +278,8 @@ async function balanceStillPresent(
     // same condition for the same reason.
     if (!raw || raw === '0x') return 'unknown';
 
-    const held = Number(BigInt(raw)) / 1e6;
+    const decimals = decimalsForChainAsset(deposit.chain as WalletChain, deposit.asset);
+    const held = Number(BigInt(raw)) / 10 ** decimals;
     return held + EPSILON >= expected ? 'confirmed' : 'unknown';
   } catch {
     return 'unknown';

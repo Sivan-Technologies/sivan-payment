@@ -672,7 +672,7 @@ export class PrivyWalletProvider implements WalletProvider {
    * Base is served by the Ethereum wallet - same key, same address - so all
    * three are supported with only TWO keys per user.
    */
-  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb', 'arbitrum'];
+  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb', 'arbitrum', 'arc'];
 
   /**
    * Create (or return) the user's wallet for a chain.

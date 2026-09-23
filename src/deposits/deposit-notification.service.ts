@@ -110,6 +110,11 @@ export function humanNetwork(chain: string): string {
     solana: 'Solana',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
+    arc: 'Arc',
+    celo: 'Celo',
+    bsc: 'BNB Chain',
+    bnb: 'BNB Chain',
+    stellar: 'Stellar',
     avalanche_c_chain: 'Avalanche'
   };
   return map[chain] ?? chain.replaceAll('_', ' ');

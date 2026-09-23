@@ -59,7 +59,7 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -82,7 +82,7 @@ export const balanceTransferControlsSchema = z.object({
   minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -90,7 +90,7 @@ export const balanceTransferControlsSchema = z.object({
 
 export const createBalanceTransferSchema = z.object({
   asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron']),
+  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc']),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
@@ -300,15 +300,21 @@ export async function getBalanceTransferControls() {
    * one place to set it.
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
+  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc'];
+  const mergedNetworks: BalanceNetwork[] = saved?.supportedNetworks
+    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork]))
+    : defaultNetworks;
+
   return {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum'] as BalanceNetwork[],
+    supportedNetworks: mergedNetworks,
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
+    supportedNetworks: mergedNetworks,
     /**
      * AFTER the spread on purpose.
      *

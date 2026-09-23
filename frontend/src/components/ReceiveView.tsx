@@ -444,8 +444,8 @@ export function ReceiveView({
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
 
-  const directChainWallet = openWallets.find((w) => w.chain === activeChain);
-  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain === activeChain);
+  const directChainWallet = openWallets.find((w) => w.chain?.toLowerCase() === activeChain.toLowerCase());
+  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain?.toLowerCase() === activeChain.toLowerCase());
   const unifiedWallet = directUnified ?? (unifiedBalance?.wallets || []).find(
     (w) => w.address && wallet?.address && w.address.toLowerCase() === wallet.address.toLowerCase()
   );
@@ -453,24 +453,36 @@ export function ReceiveView({
   const activeBalances = useMemo(() => {
     // 1. Direct wallet for the selected chain
     if (directChainWallet?.balances && directChainWallet.balances.length > 0) {
-      return directChainWallet.balances.filter((b) => !b.chain || b.chain === activeChain);
+      const filtered = directChainWallet.balances.filter((b) => !b.chain || b.chain.toLowerCase() === activeChain.toLowerCase());
+      if (filtered.length > 0) return filtered;
     }
     // 2. Direct unified entry for the selected chain
     if (directUnified?.balances && directUnified.balances.length > 0) {
-      return directUnified.balances.filter((b) => !b.chain || b.chain === activeChain);
+      const filtered = directUnified.balances.filter((b) => !b.chain || b.chain.toLowerCase() === activeChain.toLowerCase());
+      if (filtered.length > 0) return filtered;
     }
     // 3. Fallback to matched wallet if it contains balances for this chain
     if (wallet?.balances && wallet.balances.length > 0) {
-      const matching = wallet.balances.filter((b) => b.chain === activeChain);
+      const matching = wallet.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
       if (matching.length > 0) return matching;
     }
     if (unifiedWallet?.balances && unifiedWallet.balances.length > 0) {
-      const matching = unifiedWallet.balances.filter((b) => b.chain === activeChain);
+      const matching = unifiedWallet.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
       if (matching.length > 0) return matching;
+    }
+    // 4. Any entry in unifiedBalance.wallets matching activeChain
+    for (const uw of unifiedBalance?.wallets || []) {
+      if (uw.chain?.toLowerCase() === activeChain.toLowerCase() && uw.balances && uw.balances.length > 0) {
+        return uw.balances;
+      }
+      if (uw.balances && uw.balances.length > 0) {
+        const matching = uw.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
+        if (matching.length > 0) return matching;
+      }
     }
     // If no balance entries belong to this active chain, return empty so it renders the awaiting deposit state
     return [];
-  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, activeChain]);
+  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, unifiedBalance?.wallets, activeChain]);
 
   const lastDispatchedBalanceRef = useRef<string>('');
   useEffect(() => {
