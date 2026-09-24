@@ -950,6 +950,22 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   );
 
   // 2. On-chain settlement transfer (if on-chain wallet / vault is active)
+  //
+  // GUARD: For Celo agreements we require the agent vault key upfront.
+  // If it is missing we throw immediately — before any DB write — so the
+  // buyer's UI sees an error instead of a false "Released" receipt while
+  // the contractor receives nothing.
+  const isCeloAgreement = (existing.network || '').toLowerCase() === 'celo';
+  if (isCeloAgreement) {
+    const { getCeloAgentPrivateKey } = await import('../wallets/celo/celo-settlement-relayer.js');
+    if (!getCeloAgentPrivateKey()) {
+      throw new Error(
+        'Celo settlement is not operational: CELO_AGENT_PRIVATE_KEY is not configured on this server. ' +
+        'Contact Sivan support — funds have NOT been released and no debit has occurred.'
+      );
+    }
+  }
+
   try {
     const activeProviderName = await resolveActiveWalletProvider();
     const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
@@ -959,61 +975,67 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
     if (targetToAddress) {
       // Priority 1: Automated Celo on-chain relayer transfer from Sivan Agent Vault
       if ((existing.network === 'celo' || targetToAddress.startsWith('0x')) && targetToAddress.length === 42) {
-        try {
-          const relayerRes = await dispatchCeloSettlementTransfer({
-            toAddress: targetToAddress,
-            amount: sellerNetAmount,
-            currency: existing.currency,
-            agreementId: existing.id,
-          });
-          if (relayerRes.success && relayerRes.txHash) {
-            releaseTxHash = relayerRes.txHash;
-          }
-        } catch (relayerErr) {
-          console.warn('[agreement.release] Celo relayer note:', relayerErr);
+        const relayerRes = await dispatchCeloSettlementTransfer({
+          toAddress: targetToAddress,
+          amount: sellerNetAmount,
+          currency: existing.currency,
+          agreementId: existing.id,
+        });
+        if (relayerRes.success && relayerRes.txHash) {
+          releaseTxHash = relayerRes.txHash;
+        } else if (isCeloAgreement) {
+          // For Celo agreements, a failed relayer dispatch is a hard error.
+          // Do NOT fall through to Priority 2 or mark the DB released.
+          throw new Error(
+            `Celo settlement transfer failed for agreement ${existing.id}: ${relayerRes.error || 'unknown relayer error'}. ` +
+            'No funds were transferred. Agreement status has NOT been updated.'
+          );
         }
       }
 
-      const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
-
-      // Priority 2: Provider transfer fallback (if not already dispatched)
-      if (!releaseTxHash) {
-        // Transfer net settlement amount to contractor/seller
-        const netTransferResult = await provider.createTransfer({
-          providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
-          providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
-          asset: ((existing.currency || 'usdc').toLowerCase() as any),
-          chain: (existing.network || 'solana') as any,
-          amount: String(sellerNetAmount),
-          toAddress: targetToAddress,
-          idempotencyKey: `rel_agr_${existing.id}_seller`,
-          reference: existing.id,
-        });
-
-        releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
-      }
-
-      // 2. Transfer Sivan Service Agreement Platform Fee to Sivan fee collection wallet
-      if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
-        try {
-          const feeTransferResult = await provider.createTransfer({
+      if (!isCeloAgreement) {
+        // Priority 2: Provider transfer fallback for non-Celo networks only.
+        // For Celo, we rely exclusively on the vault relayer (Priority 1 above).
+        const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
+        if (!releaseTxHash) {
+          const netTransferResult = await provider.createTransfer({
             providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
             providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
             asset: ((existing.currency || 'usdc').toLowerCase() as any),
             chain: (existing.network || 'solana') as any,
-            amount: String(feeAmount),
-            toAddress: feeWallet,
-            idempotencyKey: `rel_agr_${existing.id}_fee`,
-            reference: `fee_${existing.id}`,
+            amount: String(sellerNetAmount),
+            toAddress: targetToAddress,
+            idempotencyKey: `rel_agr_${existing.id}_seller`,
+            reference: existing.id,
           });
-          feeTxHash = (feeTransferResult as any).transactionHash || (feeTransferResult as any).txHash || (feeTransferResult as any).providerTransferId || null;
-        } catch (feeErr) {
-          console.warn('[agreement.release] On-chain fee transfer note:', feeErr);
+          releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
+        }
+
+        // Transfer Sivan Platform Fee for non-Celo networks
+        if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
+          try {
+            const provider2 = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
+            const feeTransferResult = await provider2.createTransfer({
+              providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
+              providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
+              asset: ((existing.currency || 'usdc').toLowerCase() as any),
+              chain: (existing.network || 'solana') as any,
+              amount: String(feeAmount),
+              toAddress: feeWallet,
+              idempotencyKey: `rel_agr_${existing.id}_fee`,
+              reference: `fee_${existing.id}`,
+            });
+            feeTxHash = (feeTransferResult as any).transactionHash || (feeTransferResult as any).txHash || (feeTransferResult as any).providerTransferId || null;
+          } catch (feeErr) {
+            console.warn('[agreement.release] Non-Celo fee transfer note:', feeErr);
+          }
         }
       }
     }
-  } catch (onChainErr) {
-    console.warn('[agreement.release] On-chain release note:', onChainErr);
+  } catch (onChainErr: any) {
+    // Re-throw structured settlement errors so the caller (HTTP route) returns
+    // a 400/500 to the buyer instead of silently marking the agreement released.
+    throw onChainErr;
   }
 
   const updated: ServiceAgreementRecord = {
