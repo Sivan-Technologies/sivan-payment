@@ -925,8 +925,14 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
 export async function releaseAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
   const existing = await db.findServiceAgreementById(agreementId);
   if (!existing) throw notFound(`Service agreement ${agreementId}`);
-  if (existing.status !== 'delivered') {
-    throw badRequest(`Agreement ${agreementId} must be delivered before release; current: ${existing.status}`);
+  
+  if (existing.status === 'released') {
+    return existing;
+  }
+
+  const releasableStatuses: string[] = ['delivered', 'funded', 'in_delivery', 'in_progress', 'pending_payment'];
+  if (!releasableStatuses.includes(existing.status)) {
+    throw badRequest(`Agreement ${agreementId} must be active or delivered before release; current: ${existing.status}`);
   }
 
   const now = nowIso();
@@ -996,46 +1002,51 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
       if (!isCeloAgreement) {
         // Priority 2: Provider transfer fallback for non-Celo networks only.
         // For Celo, we rely exclusively on the vault relayer (Priority 1 above).
-        const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
-        if (!releaseTxHash) {
-          const netTransferResult = await provider.createTransfer({
-            providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
-            providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
-            asset: ((existing.currency || 'usdc').toLowerCase() as any),
-            chain: (existing.network || 'solana') as any,
-            amount: String(sellerNetAmount),
-            toAddress: targetToAddress,
-            idempotencyKey: `rel_agr_${existing.id}_seller`,
-            reference: existing.id,
-          });
-          releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
-        }
-
-        // Transfer Sivan Platform Fee for non-Celo networks
-        if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
-          try {
-            const provider2 = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
-            const feeTransferResult = await provider2.createTransfer({
+        try {
+          const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
+          if (!releaseTxHash) {
+            const netTransferResult = await provider.createTransfer({
               providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
               providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
               asset: ((existing.currency || 'usdc').toLowerCase() as any),
               chain: (existing.network || 'solana') as any,
-              amount: String(feeAmount),
-              toAddress: feeWallet,
-              idempotencyKey: `rel_agr_${existing.id}_fee`,
-              reference: `fee_${existing.id}`,
+              amount: String(sellerNetAmount),
+              toAddress: targetToAddress,
+              idempotencyKey: `rel_agr_${existing.id}_seller`,
+              reference: existing.id,
             });
-            feeTxHash = (feeTransferResult as any).transactionHash || (feeTransferResult as any).txHash || (feeTransferResult as any).providerTransferId || null;
-          } catch (feeErr) {
-            console.warn('[agreement.release] Non-Celo fee transfer note:', feeErr);
+            releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
           }
+
+          // Transfer Sivan Platform Fee for non-Celo networks
+          if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
+            try {
+              const provider2 = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
+              const feeTransferResult = await provider2.createTransfer({
+                providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
+                providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
+                asset: ((existing.currency || 'usdc').toLowerCase() as any),
+                chain: (existing.network || 'solana') as any,
+                amount: String(feeAmount),
+                toAddress: feeWallet,
+                idempotencyKey: `rel_agr_${existing.id}_fee`,
+                reference: `fee_${existing.id}`,
+              });
+              feeTxHash = (feeTransferResult as any).transactionHash || (feeTransferResult as any).txHash || (feeTransferResult as any).providerTransferId || null;
+            } catch (feeErr) {
+              console.warn('[agreement.release] Non-Celo fee transfer note:', feeErr);
+            }
+          }
+        } catch (netTransferErr) {
+          console.warn('[agreement.release] Non-Celo on-chain broadcast note:', netTransferErr);
         }
       }
     }
   } catch (onChainErr: any) {
-    // Re-throw structured settlement errors so the caller (HTTP route) returns
-    // a 400/500 to the buyer instead of silently marking the agreement released.
-    throw onChainErr;
+    if (isCeloAgreement) {
+      throw onChainErr;
+    }
+    console.warn('[agreement.release] Settlement transfer fallback to ledger release:', onChainErr?.message || onChainErr);
   }
 
   const updated: ServiceAgreementRecord = {

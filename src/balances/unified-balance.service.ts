@@ -366,9 +366,8 @@ export async function getSpendable(userId: string, asset: string, network?: stri
   if (network) {
     const net = network.toLowerCase();
     const wallet = unified.wallets.find((w) => w.chain.toLowerCase() === net);
-    if (!wallet) return 0;
-    if (wallet.balancesUnavailable) return null;
-    const balanceEntry = (wallet.balances || []).find((b) => b.asset.toLowerCase() === asset.toLowerCase());
+    if (wallet && wallet.balancesUnavailable && num(row.credited) === 0) return null;
+    const balanceEntry = wallet ? (wallet.balances || []).find((b) => b.asset.toLowerCase() === asset.toLowerCase()) : undefined;
     const chainAmount = balanceEntry ? num(balanceEntry.amount) : 0;
     const pooledCredits = num(row.credited);
     const held = num(row.held);
