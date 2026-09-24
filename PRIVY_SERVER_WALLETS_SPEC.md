@@ -1,7 +1,6 @@
 # Privy Server Wallets Direct Architecture Specification
 
 Author: Samson Micheal (Founder & CEO, Sivan AI)
-Location: Abuja, Nigeria
 Date: 2026-09-02
 Environment: Staging (Solana Devnet / Base Sepolia) & Production (Solana Mainnet / Base Mainnet)
 

@@ -2,7 +2,6 @@
 
 Document Identifier: MANUAL_TESTING_CHECKLIST
 Author: Samson Micheal (Founder & CEO, Sivan Technologies)
-HQ Location: Abuja, Nigeria
 Platform Target: Telegram (@Sivan_Ai), WhatsApp, and Web (https://app.sivantech.online)
 Updated: September 2026
 
@@ -467,7 +466,7 @@ Objective: Verify 1-tap multi-chain network switching in chat, authentic on-chai
 ---
 
 Sivan Technologies Ltd · Universal Multi-Chain Settlement Infrastructure
-Abuja, Nigeria · https://sivantech.online
+Global / Remote-First · https://sivantech.online
 
 
 

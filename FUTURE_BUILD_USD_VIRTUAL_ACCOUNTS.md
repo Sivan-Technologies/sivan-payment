@@ -6,7 +6,6 @@ Target Channels: Telegram (@Sivan_Ai), WhatsApp, and Web App (app.sivantech.onli
 Target Release Phase: Phase 2 Global Banking Sprint (Feature 1)
 Status: ✅ COMPLETED & 100% VERIFIED
 Founder and Author: Samson Micheal (Founder, CEO, Technical Founder, Product Engineer)
-Location: Abuja, Nigeria
 Official URLs: https://sivantech.online | https://app.sivantech.online | https://t.me/Sivan_Ai
 
 ---
@@ -164,4 +163,4 @@ export interface VirtualAccountRecord {
 ---
 
 Sivan Technologies · Universal Multi-Chain Settlement Infrastructure
-Abuja, Nigeria · https://sivantech.online
+Global / Remote-First · https://sivantech.online
