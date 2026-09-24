@@ -581,7 +581,21 @@ export class PostgresDatabase {
       if (res.rows[0]) return mapUser(res.rows[0]);
 
       res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
-      return res.rows[0] ? mapUser(res.rows[0]) : undefined;
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      // Check payments_customer_identity_links for linked Telegram accounts or phones
+      const linkRes = await client.query(
+        `select payment_user_id from payments_customer_identity_links 
+         where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number=$3 or whatsapp_number=$4
+         order by linked_at desc nulls last limit 1`,
+        [username, clean, clean, `+${digitsOnly}`]
+      );
+      if (linkRes.rows[0]?.payment_user_id) {
+        const u = await client.query('select * from users where user_id=$1 limit 1', [linkRes.rows[0].payment_user_id]);
+        if (u.rows[0]) return mapUser(u.rows[0]);
+      }
+
+      return undefined;
     } finally { client.release(); }
   }
 

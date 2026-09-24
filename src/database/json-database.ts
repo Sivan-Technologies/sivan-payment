@@ -294,7 +294,21 @@ export class JsonDatabase {
 
     // 4. Telegram user ID match
     user = data.users.find((u) => u.telegramUserId === clean);
-    return user;
+    if (user) return user;
+
+    // 5. Customer identity links match (linked Telegram accounts, phones, usernames)
+    const links = data.customerIdentityLinks || [];
+    const matchedLink = links.find((l) =>
+      (l.telegramUsername && l.telegramUsername.toLowerCase() === username) ||
+      (l.telegramUserId && l.telegramUserId === clean) ||
+      (l.whatsappNumber && (l.whatsappNumber === clean || l.whatsappNumber === `+${digitsOnly}`))
+    );
+    if (matchedLink?.paymentUserId) {
+      user = data.users.find((u) => u.id === matchedLink.paymentUserId);
+      if (user) return user;
+    }
+
+    return undefined;
   }
 
   /**

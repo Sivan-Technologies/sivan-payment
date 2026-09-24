@@ -19,7 +19,7 @@ import { db } from '../database/json-database.js';
 import { id as generateId, nowIso } from '../shared/id.js';
 import { parseDeliveryDeadline } from './deadline-parser.js';
 import { badRequest, notFound } from '../shared/errors.js';
-import { createBalanceLedgerEntry } from '../balances/balance.service.js';
+import { createBalanceLedgerEntry, getUserBalance } from '../balances/balance.service.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { ensureUserWallet } from '../wallets/user-wallet.service.js';
@@ -838,7 +838,7 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
     throw badRequest('sellerUserId is required');
   }
 
-  // 1. Look up existing user across user_id, target, email, username
+  // 1. Look up existing user across user_id, target, email, username, customer_identity_links
   let user = await db.findUserById(clean);
   if (!user) user = await db.findUserByTarget(clean);
   if (!user && clean.includes('@') && clean.includes('.')) {
@@ -851,10 +851,30 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
     }
   }
 
+  // 1b. Identity link lookup (explicit fallback)
+  if (!user) {
+    try {
+      const links = await db.listCustomerIdentityLinks();
+      const rawUser = clean.replace(/^@/, '').toLowerCase();
+      const digitsOnly = clean.replace(/\D/g, '');
+      const matched = links.find((l) =>
+        (l.telegramUsername && l.telegramUsername.toLowerCase() === rawUser) ||
+        (l.telegramUserId && l.telegramUserId === clean) ||
+        (l.whatsappNumber && (l.whatsappNumber === clean || l.whatsappNumber === `+${digitsOnly}`))
+      );
+      if (matched?.paymentUserId) {
+        user = await db.findUserById(matched.paymentUserId);
+      }
+    } catch (linkErr) {
+      console.warn('[agreement.resolveContractorUser] identity link lookup note:', linkErr);
+    }
+  }
+
   const isAddress = clean.startsWith('0x') || clean.length >= 32;
   const isEmail = clean.includes('@') && clean.includes('.');
   const username = clean.replace(/^@/, '');
-  const userId = user ? user.id : (clean.startsWith('usr_') ? clean : (isAddress ? clean : `usr_${clean.replace(/[^a-zA-Z0-9_]/g, '')}`));
+  const shadowUserId = `usr_${clean.replace(/[^a-zA-Z0-9_]/g, '')}`;
+  const userId = user ? user.id : (clean.startsWith('usr_') ? clean : (isAddress ? clean : shadowUserId));
 
   // 2. Auto-create user record if not present
   if (!user) {
@@ -878,6 +898,47 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
         createdAt: now,
         updatedAt: now,
       };
+    }
+  } else if (user.id !== shadowUserId) {
+    // If real user was found but a shadow user record was previously credited under shadowUserId,
+    // reconcile shadow user available balance into the real user's ledger!
+    try {
+      const shadowLedger = await getUserBalance(shadowUserId).catch(() => null);
+      if (shadowLedger && shadowLedger.balances?.length) {
+        for (const bal of shadowLedger.balances) {
+          const avail = Number(bal.available || 0);
+          if (avail > 0) {
+            await createBalanceLedgerEntry(
+              {
+                userId: shadowUserId,
+                asset: bal.asset as any,
+                amount: String(avail),
+                kind: 'debit_transfer',
+                status: 'completed',
+                sourceType: 'user_reconciliation',
+                sourceId: `recon_${user.id}`,
+                description: `Reconcile balance to real user account (${user.email || user.username || user.id})`,
+              },
+              { actorType: 'system', actorId: 'balance_reconciliation' }
+            );
+            await createBalanceLedgerEntry(
+              {
+                userId: user.id,
+                asset: bal.asset as any,
+                amount: String(avail),
+                kind: 'credit_available',
+                status: 'available',
+                sourceType: 'user_reconciliation',
+                sourceId: `recon_${shadowUserId}`,
+                description: `Reconciled balance from Telegram contractor handle (${clean})`,
+              },
+              { actorType: 'system', actorId: 'balance_reconciliation' }
+            );
+          }
+        }
+      }
+    } catch (reconErr) {
+      console.warn('[agreement.resolveContractorUser] shadow balance reconciliation note:', reconErr);
     }
   }
 
