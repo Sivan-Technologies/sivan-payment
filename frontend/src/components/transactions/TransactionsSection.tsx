@@ -957,7 +957,7 @@ function TransactionTimelinePanel({
       </div>
       <div className="transaction-explanation-box">{activitySummaryExplanation(activityRow)}</div>
       <div className="timeline-meta-grid">
-        <Kv label="Agreement / Request ID" value={activityRow.id} />
+        <Kv label={isAgreement ? 'Agreement ID' : String(activityRow.kind).includes('deposit') ? 'Deposit ID' : 'Request ID'} value={activityRow.id} />
         <Kv label="Amount" value={`${formatAmount(activityRow.amount)} ${activityRow.currency}`} />
         <Kv label="Asset" value={activityRow.asset ?? activityRow.currency} />
         {(isAgreement || Boolean((activityRow.raw as any)?.channel)) && (
@@ -984,9 +984,13 @@ function TransactionTimelinePanel({
                 ? shortHash(activityRow.providerReference)
                 : deal?.fundingTxHash
                   ? shortHash(deal.fundingTxHash)
-                  : activityRow.state === 'pending' || (deal?.status && deal.status !== 'released' && deal.status !== 'cancelled')
-                    ? `Locked in ${networkLabel(deal?.network || activityRow.network || 'celo')} Vault`
-                    : 'Confirmed'
+                  : isAgreement
+                    ? (activityRow.state === 'pending' || (deal?.status && deal.status !== 'released' && deal.status !== 'cancelled')
+                        ? `Locked in ${networkLabel(deal?.network || activityRow.network || 'celo')} Vault`
+                        : 'Settled & Released')
+                    : activityRow.state === 'success' || activityRow.statusLabel === 'Confirmed'
+                      ? 'Confirmed on-chain'
+                      : 'Pending on-chain confirmation'
             }
           />
         )}
@@ -998,7 +1002,7 @@ function TransactionTimelinePanel({
             {chainMark && <NetworkLogo chain={chainMark} size={14} />}
             View on {link.label} ↗
           </a>
-        : onChain && activityRow.state === 'pending'
+        : isAgreement && onChain && activityRow.state === 'pending'
           ? <small className="deposit-note">Settlement secured via non-custodial multi-chain smart agreement vault.</small>
           : onChain
             ? <small className="deposit-note">Settlement confirmed on-chain.</small>
