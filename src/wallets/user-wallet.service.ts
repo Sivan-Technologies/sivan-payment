@@ -185,12 +185,14 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     return saved;
   }
 
-  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC)
-  if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(chain)) {
+  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC/Arbitrum/Arc)
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(chain)) {
     const evmWallet = await db.findUserWallet(userId, 'base')
       || await db.findUserWallet(userId, 'ethereum')
       || await db.findUserWallet(userId, 'celo')
-      || await db.findUserWallet(userId, 'bsc');
+      || await db.findUserWallet(userId, 'bsc')
+      || await db.findUserWallet(userId, 'arbitrum')
+      || await db.findUserWallet(userId, 'arc');
     if (evmWallet) {
       return {
         ...evmWallet,
@@ -255,7 +257,7 @@ export async function listUserWallets(userId: string): Promise<UserWalletRecord[
   const stored = await db.listUserWallets(userId);
   if (!stored.length) return stored;
 
-  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
+  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo', 'arbitrum', 'arc'];
   const expanded: UserWalletRecord[] = [];
 
   for (const chain of activeRails) {

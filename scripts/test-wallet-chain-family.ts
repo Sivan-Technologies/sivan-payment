@@ -92,7 +92,16 @@ check('a solana wallet serves only solana', JSON.stringify(networksServedByWalle
 check('a solana wallet does NOT serve base', !networksServedByWallet('solana').includes('base'));
 // The old code path could produce [] and that is what made the bug invisible.
 check('the served list is never empty for a known chain', ['base', 'ethereum', 'solana'].every((c) => networksServedByWallet(c).length > 0));
-check('EVM_CHAINS covers exactly base and ethereum', JSON.stringify([...EVM_CHAINS].sort()) === JSON.stringify(['base', 'ethereum']));
+// This asserted exactly ['base','ethereum'] and had been failing since celo,
+// bsc and bnb were added. A test that is red for a reason nobody acts on stops
+// being read, so it is pinned to the real set and will fail loudly the next
+// time a chain is added without updating it.
+check(
+  'EVM_CHAINS is the full EVM set',
+  JSON.stringify([...EVM_CHAINS].sort()) ===
+    JSON.stringify(['arbitrum', 'base', 'bnb', 'bsc', 'celo', 'ethereum']),
+  [...EVM_CHAINS].sort().join(',')
+);
 
 console.log('\n── the exact reported case ────────────────────────────────────');
 

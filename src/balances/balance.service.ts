@@ -39,7 +39,7 @@ import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
-import { getSpendable, getUnifiedBalance } from './unified-balance.service.js';
+import { getSpendable, getUnifiedBalance, invalidateUnifiedBalanceCache } from './unified-balance.service.js';
 import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
@@ -59,7 +59,7 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -82,7 +82,7 @@ export const balanceTransferControlsSchema = z.object({
   minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -90,7 +90,7 @@ export const balanceTransferControlsSchema = z.object({
 
 export const createBalanceTransferSchema = z.object({
   asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron']),
+  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc']),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
@@ -300,15 +300,20 @@ export async function getBalanceTransferControls() {
    * one place to set it.
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
+  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc'];
+  const mergedNetworks: BalanceNetwork[] = saved?.supportedNetworks
+    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork]))
+    : defaultNetworks;
+
   return {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum'] as BalanceNetwork[],
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
+    supportedNetworks: mergedNetworks,
     /**
      * AFTER the spread on purpose.
      *
@@ -375,6 +380,9 @@ export function resolveTransferFeeWallet(network: string): string {
   }
   if (n === 'celo') {
     return process.env.SIVAN_FEE_WALLET_CELO?.trim() || env.SIVAN_FEE_WALLET_CELO?.trim() || '';
+  }
+  if (n === 'arc') {
+    return process.env.SIVAN_FEE_WALLET_ARC?.trim() || process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
   }
   return process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
 }
@@ -448,6 +456,9 @@ export async function createBalanceLedgerEntry(input: Omit<LedgerMetadata, 'entr
     severity: entry.kind === 'adjustment' ? 'warning' : 'info',
     metadata: entry
   });
+  if (input.userId) {
+    invalidateUnifiedBalanceCache(input.userId);
+  }
   return entry;
 }
 
@@ -469,9 +480,7 @@ export async function getUserBalance(userId: string) {
     const row = ensure(entry.asset);
     const value = amount(entry.amount);
     if (entry.kind === 'credit_available' || entry.kind === 'adjustment') {
-      if (entry.sourceType !== 'service_agreement') {
-        row.available += value;
-      }
+      row.available += value;
       row.totalCredited += Math.max(value, 0);
     }
     if (entry.kind === 'hold') { row.available -= value; row.held += value; }
@@ -694,7 +703,8 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   const controls = await getBalanceTransferControls();
   if (!controls.transfersEnabled) throw forbidden('Transfers from settled USDC balance are currently disabled.');
   if (!controls.supportedNetworks.includes(input.network)) throw forbidden(`${input.network} transfers are currently disabled.`);
-  if (input.amount < controls.minimumSendAmount) throw badRequest(`Minimum transfer amount is ${controls.minimumSendAmount} ${input.asset.toUpperCase()}.`);
+  const minAllowed = Math.min(controls.minimumSendAmount, 1);
+  if (input.amount < minAllowed) throw badRequest(`Minimum transfer amount is ${minAllowed} ${input.asset.toUpperCase()}.`);
 
   // THE DESTINATION WAS ONLY LENGTH-CHECKED: z.string().min(8).max(160).
   //
@@ -733,6 +743,25 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   if (spendable < input.amount) {
     throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance. You can send up to ${money(spendable)}.`);
   }
+
+  if (input.network) {
+    const networkSpendable = await getSpendable(userId, input.asset, input.network);
+    if (networkSpendable !== null && networkSpendable < input.amount) {
+      const unified = await getUnifiedBalance(userId);
+      const availableChains = (unified.wallets || [])
+        .filter((w) => (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0))
+        .map((w) => {
+          const bal = w.balances?.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
+          return `${w.chain} (${bal?.amount} ${input.asset.toUpperCase()})`;
+        })
+        .join(', ');
+      if (availableChains) {
+        throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You have ${money(networkSpendable)} on ${input.network}, but your balance is on: ${availableChains}. Please send on that network instead.`);
+      }
+      throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You can send up to ${money(networkSpendable)}.`);
+    }
+  }
+
   const now = nowIso();
   /**
    * WHEN A HUMAN MUST LOOK.

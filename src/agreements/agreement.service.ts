@@ -19,13 +19,335 @@ import { db } from '../database/json-database.js';
 import { id as generateId, nowIso } from '../shared/id.js';
 import { parseDeliveryDeadline } from './deadline-parser.js';
 import { badRequest, notFound } from '../shared/errors.js';
-import { createBalanceLedgerEntry } from '../balances/balance.service.js';
+import { createBalanceLedgerEntry, getUserBalance } from '../balances/balance.service.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import { ensureUserWallet } from '../wallets/user-wallet.service.js';
 import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
 import { dispatchCeloSettlementTransfer } from '../wallets/celo/celo-settlement-relayer.js';
+import { getIdentityStatus } from '../identity/identity.service.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserRecord, UserWalletRecord } from '../database/types.js';
+
+// ─── Cross-channel cancellation notifier ─────────────────────────────────────
+
+/**
+ * Fires a real-time push notification to the counterparty (and optionally the
+ * actor) across Telegram and WhatsApp when an agreement is cancelled or
+ * declined from any channel (Web App, API, bot, etc.).
+ *
+ * Runs fire-and-forget — never throws so it cannot break the main state
+ * transition that called it.
+/**
+ * Helper: resolve Telegram chat ID for a target identifier (payment userId, phone, telegram username, or direct telegram ID).
+ */
+async function resolveTelegramIdForAgreement(target: string): Promise<string | null> {
+  if (!target) return null;
+  const raw = String(target).trim();
+
+  // 1. Direct Telegram ID format: e.g. "tg:123456", "telegram:123456", or raw digits (6-12 digits)
+  if (raw.startsWith('tg:') || raw.startsWith('telegram:')) {
+    const parsed = raw.replace(/^(tg:|telegram:)/i, '').trim();
+    if (/^\d{6,12}$/.test(parsed)) return parsed;
+  }
+  if (/^\d{6,12}$/.test(raw)) {
+    return raw;
+  }
+
+  // 2. Check CustomerIdentityLinks in DB
+  const links = await db.listCustomerIdentityLinks();
+  const cleanTarget = raw.toLowerCase().replace(/^@/, '');
+  const digits = raw.replace(/\D/g, '');
+
+  const match = links
+    .filter((l) => {
+      if (l.status !== 'linked' || !l.telegramUserId) return false;
+      if (l.paymentUserId === raw) return true;
+      if (l.telegramUserId === raw) return true;
+      if (l.telegramUsername && l.telegramUsername.toLowerCase().replace(/^@/, '') === cleanTarget) return true;
+      if (digits && digits.length >= 10 && l.whatsappNumber) {
+        const linkDigits = l.whatsappNumber.replace(/\D/g, '');
+        if (linkDigits === digits || linkDigits.endsWith(digits) || digits.endsWith(linkDigits)) return true;
+      }
+      return false;
+    })
+    .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+
+  if (match[0]?.telegramUserId) return match[0].telegramUserId;
+
+  // 3. Check UserRecord in DB
+  const user = (await db.findUserById(raw)) ||
+               (await db.findUserByWhatsappNumber(raw)) ||
+               (await db.findUserByTarget(raw)) ||
+               (await db.findUserByUsername(cleanTarget));
+
+  if (user) {
+    if (user.telegramUserId) return user.telegramUserId;
+    const userLinks = links
+      .filter((l) => l.paymentUserId === user.id && l.status === 'linked' && Boolean(l.telegramUserId))
+      .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+    if (userLinks[0]?.telegramUserId) return userLinks[0].telegramUserId;
+  }
+
+  return null;
+}
+
+/**
+ * Helper: resolve WhatsApp phone for a target identifier.
+ */
+async function resolveWhatsAppPhoneForAgreement(target: string): Promise<string | null> {
+  if (!target) return null;
+  const raw = String(target).trim();
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length >= 10 && (raw.startsWith('+') || raw.startsWith('234') || raw.startsWith('0') || raw.startsWith('whatsapp:'))) {
+    return raw.replace(/^whatsapp:/, '');
+  }
+
+  const user = (await db.findUserById(raw)) ||
+               (await db.findUserByWhatsappNumber(raw)) ||
+               (await db.findUserByTarget(raw));
+  if (user?.whatsappNumber) return user.whatsappNumber;
+
+  const links = await db.listCustomerIdentityLinks();
+  const match = links
+    .filter((l) => (l.paymentUserId === raw || l.paymentUserId === user?.id) && l.status === 'linked' && Boolean(l.whatsappNumber))
+    .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+  return match[0]?.whatsappNumber || null;
+}
+
+/**
+ * Fire real-time notifications to the buyer when a service agreement is accepted by the contractor.
+ * Alerts buyer that agreement is now awaiting funding and provides direct Pay now / Fund buttons.
+ */
+async function notifyAgreementAccepted(
+  agreement: ServiceAgreementRecord
+): Promise<void> {
+  try {
+    const telegramUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    const whatsappUrl = process.env.WHATSAPP_NOTIFICATION_URL;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+
+    if (!secret) return;
+
+    const buyerId = agreement.buyerUserId;
+    const sellerId = agreement.sellerUserId;
+    const titleSnip = (agreement.title || 'Service Agreement').slice(0, 50);
+    const amountStr = `${agreement.amountUsdc} ${(agreement.currency || 'USDC').toUpperCase()}`;
+    const networkLabel = agreement.network
+      ? (agreement.network.charAt(0).toUpperCase() + agreement.network.slice(1))
+      : 'Solana';
+
+    const buyerMsg =
+      `✅ Service Agreement Accepted!\n\n` +
+      `The contractor has accepted your service agreement:\n` +
+      `"${titleSnip}"\n\n` +
+      `• Amount: ${amountStr}\n` +
+      `• Network: ${networkLabel}\n` +
+      `• Ref: ${agreement.id}\n\n` +
+      `Your agreement is now ready to be funded. Tap Pay now below to lock funds in the multi-chain vault and start delivery.`;
+
+    const telegramKeyboard = [
+      [{ text: '💳 Pay now', callback_data: `v1:pay:${agreement.id}` }],
+      [{ text: '🔍 View Status', callback_data: `v1:status:${agreement.id}` }],
+      [{ text: '📋 My Agreements', callback_data: 'action:deals' }],
+    ];
+
+    // 1. Notify Buyer via Telegram
+    if (telegramUrl && buyerId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramIdForAgreement(buyerId);
+          await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+            body: JSON.stringify({
+              telegramId: tgId || undefined,
+              phone: tgId ? undefined : buyerId,
+              message: buyerMsg,
+              keyboard: telegramKeyboard,
+            }),
+          });
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram buyer acceptance notification failed:', e);
+        }
+      })();
+    }
+
+    // 2. Notify Buyer via WhatsApp
+    if (whatsappUrl && buyerId) {
+      void (async () => {
+        try {
+          const phone = await resolveWhatsAppPhoneForAgreement(buyerId);
+          if (phone) {
+            const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({ to: waPhone, message: buyerMsg }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] WhatsApp buyer acceptance notification failed:', e);
+        }
+      })();
+    }
+
+    // 3. Notify Seller confirmation via Telegram
+    if (telegramUrl && sellerId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramIdForAgreement(sellerId);
+          if (tgId) {
+            const sellerConfirmMsg =
+              `✅ Agreement Accepted\n\n` +
+              `You have accepted the service agreement:\n` +
+              `"${titleSnip}"\n\n` +
+              `• Amount: ${amountStr}\n` +
+              `• Ref: ${agreement.id}\n\n` +
+              `Waiting for client to fund the vault before delivery begins.`;
+            await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({
+                telegramId: tgId,
+                message: sellerConfirmMsg,
+                keyboard: [
+                  [{ text: '🔍 View Status', callback_data: `v1:status:${agreement.id}` }],
+                  [{ text: '📋 My Agreements', callback_data: 'action:deals' }],
+                ],
+              }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram seller confirmation failed:', e);
+        }
+      })();
+    }
+  } catch (outerErr) {
+    console.warn('[agreement.notify] notifyAgreementAccepted outer error:', outerErr);
+  }
+}
+
+/**
+ * Fire real-time cancellation push notifications to both counterparty and actor
+ * via Telegram bot and WhatsApp bot.
+ *
+ * @param agreement  The already-updated (cancelled/declined) agreement record.
+ * @param actorRole  'buyer' | 'seller' — who performed the action.
+ * @param action     'cancelled' | 'declined' — for message wording.
+ * @param reason     Optional free-text reason supplied by the actor.
+ */
+async function notifyAgreementCancellation(
+  agreement: ServiceAgreementRecord,
+  actorRole: 'buyer' | 'seller',
+  action: 'cancelled' | 'declined',
+  reason?: string | null
+): Promise<void> {
+  try {
+    const telegramUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    const whatsappUrl = process.env.WHATSAPP_NOTIFICATION_URL;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+
+    if (!secret) return;
+
+    // Determine who to notify: the counterparty of whoever acted.
+    const counterpartyId =
+      actorRole === 'seller' ? agreement.buyerUserId : agreement.sellerUserId;
+    const actorId =
+      actorRole === 'seller' ? agreement.sellerUserId : agreement.buyerUserId;
+
+    const actionLabel = action === 'declined' ? 'declined' : 'cancelled';
+    const actorLabel = actorRole === 'seller' ? 'The contractor' : 'The client';
+    const emoji = action === 'declined' ? '❌' : '🚫';
+
+    const shortId = String(agreement.id).slice(-8).toUpperCase();
+    const titleSnip = (agreement.title || 'Service Agreement').slice(0, 50);
+    const reasonLine = reason ? `\n\nReason: ${reason.trim()}` : '';
+
+    // Message shown to the counterparty
+    const counterpartyMsg =
+      `${emoji} Service Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}\n\n` +
+      `${actorLabel} has ${actionLabel} the service agreement:\n` +
+      `"${titleSnip}"` +
+      reasonLine +
+      `\n\nRef: ${agreement.id}\nNo funds have been charged.\n\nYou can start a new agreement anytime.`;
+
+    const replyKeyboard = [
+      [{ text: '📋 My Agreements', callback_data: 'action:deals' }],
+      [{ text: '💰 Portfolio Balance', callback_data: 'action:balance' }],
+      [{ text: '🏠 Main Menu', callback_data: 'action:menu' }],
+    ];
+
+    // Notify counterparty via Telegram
+    if (telegramUrl && counterpartyId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramIdForAgreement(counterpartyId);
+          await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+            body: JSON.stringify({
+              telegramId: tgId || undefined,
+              phone: tgId ? undefined : counterpartyId,
+              message: counterpartyMsg,
+              keyboard: replyKeyboard,
+            }),
+          });
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram counterparty notification failed:', e);
+        }
+      })();
+    }
+
+    // Notify actor via Telegram (confirmation to the one who cancelled/declined)
+    if (telegramUrl && actorId) {
+      void (async () => {
+        try {
+          const tgId = await resolveTelegramIdForAgreement(actorId);
+          if (tgId) {
+            const actorConfirmMsg =
+              `${emoji} Agreement ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}\n\n` +
+              `You have ${actionLabel} the service agreement:\n` +
+              `"${titleSnip}"` +
+              reasonLine +
+              `\n\nRef: ${agreement.id}`;
+            await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({
+                telegramId: tgId,
+                message: actorConfirmMsg,
+                keyboard: replyKeyboard,
+              }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] Telegram actor confirmation failed:', e);
+        }
+      })();
+    }
+
+    // Notify counterparty via WhatsApp
+    if (whatsappUrl && counterpartyId) {
+      void (async () => {
+        try {
+          const phone = await resolveWhatsAppPhoneForAgreement(counterpartyId);
+          if (phone) {
+            const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              body: JSON.stringify({ to: waPhone, message: counterpartyMsg }),
+            });
+          }
+        } catch (e) {
+          console.warn('[agreement.notify] WhatsApp counterparty notification failed:', e);
+        }
+      })();
+    }
+  } catch (outerErr) {
+    console.warn('[agreement.notify] notifyAgreementCancellation outer error:', outerErr);
+  }
+}
 
 // ─── Input shapes ────────────────────────────────────────────────────────────
 
@@ -64,9 +386,11 @@ export function getCountdownLabel(agreement: ServiceAgreementRecord, now = new D
   if (agreement.status === 'released') return '✅ Released';
   if (agreement.status === 'delivered') return '✅ Delivered — awaiting release';
   if (agreement.status === 'cancelled') return '❌ Cancelled';
+  if (agreement.status === 'declined') return '❌ Declined by seller';
   if (agreement.status === 'disputed') return '⚠️ In dispute';
 
   if (!agreement.deliveryDueAt) {
+    if (agreement.status === 'pending_seller_acceptance') return '⏳ Awaiting seller acceptance';
     return agreement.status === 'pending_payment'
       ? '⏳ Awaiting payment'
       : '— No deadline set';
@@ -168,7 +492,7 @@ export async function createAgreement(
     amountUsdc: input.amountUsdc,
     currency: input.currency || 'usdc',
     network: input.network,
-    status: isPreFunded ? 'funded' : 'pending_payment',
+    status: isPreFunded ? 'funded' : 'pending_seller_acceptance',
     deadlineDays,
     deliveryDueAt: dueAt,
     reminder6hSent: false,
@@ -176,6 +500,10 @@ export async function createAgreement(
     fundedAt: isPreFunded ? now : null,
     deliveredAt: null,
     releasedAt: null,
+    sellerAcceptedAt: isPreFunded ? now : null,
+    sellerDeclinedAt: null,
+    sellerDeclineReason: null,
+    acceptanceExpiresAt: isPreFunded ? null : new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
     fundingTxHash: input.fundingTxHash || null,
     releaseTxHash: null,
     vaultAddress: null,
@@ -195,6 +523,138 @@ export async function createAgreement(
 }
 
 /**
+ * Verifies whether a caller (by user ID, email, handle, telegram username, or phone)
+ * is authorized to act as the seller/contractor on an agreement.
+ * Supports cross-channel identity aliases (with or without @ prefix, email local part, etc.).
+ */
+async function checkSellerAuthorization(existingSellerId?: string, callerSellerId?: string): Promise<boolean> {
+  if (!callerSellerId) return true;
+  const cleanCaller = String(callerSellerId || '').trim().toLowerCase();
+  const existingSeller = String(existingSellerId || '').trim().toLowerCase();
+  if (!existingSeller || cleanCaller === existingSeller) return true;
+
+  const cleanExisting = existingSeller.replace(/^@/, '');
+  const cleanCallerNoAt = cleanCaller.replace(/^@/, '');
+  if (cleanCallerNoAt === cleanExisting) return true;
+
+  // Try finding user by caller ID or email or username
+  const user = (await db.findUserById(cleanCaller)) || (await db.findUserByEmail(cleanCaller));
+  if (!user) return false;
+
+  const userEmail = (user.email || '').toLowerCase().trim();
+  const emailHandle = userEmail ? userEmail.split('@')[0] : '';
+  const userTg = (user.telegramUsername || '').toLowerCase().trim().replace(/^@/, '');
+  const userWa = (user.whatsappNumber || '').replace(/\D/g, '');
+  const existingDigits = existingSeller.replace(/\D/g, '');
+
+  if (cleanExisting === user.id.toLowerCase()) return true;
+  if (cleanExisting === userEmail) return true;
+  if (cleanExisting === emailHandle) return true;
+  if (userTg && cleanExisting === userTg) return true;
+  if (user.username && cleanExisting === user.username.toLowerCase().replace(/^@/, '')) return true;
+  if ((user as any).walletAddress && cleanExisting === (user as any).walletAddress.toLowerCase()) return true;
+  if (existingDigits && userWa && (existingDigits === userWa || userWa.endsWith(existingDigits) || existingDigits.endsWith(userWa))) return true;
+
+  // Check identity link status if available
+  try {
+    const status = await getIdentityStatus(user.id);
+    const linkedTg = status?.channels?.telegram?.link?.telegramUsername?.toLowerCase().replace(/^@/, '');
+    const linkedWa = (status?.link?.whatsappNumber || status?.channels?.whatsapp?.link?.whatsappNumber || '').replace(/\D/g, '');
+    if (linkedTg && cleanExisting === linkedTg) return true;
+    if (linkedWa && existingDigits && (existingDigits === linkedWa || linkedWa.endsWith(existingDigits))) return true;
+  } catch {}
+
+  return false;
+}
+
+/**
+ * Seller accepts the service agreement.
+ * Transitions status from pending_seller_acceptance to pending_payment.
+ * Buyer can now fund the agreement.
+ */
+export async function acceptAgreement(
+  agreementId: string,
+  sellerUserId?: string
+): Promise<ServiceAgreementRecord> {
+  const existing = await db.findServiceAgreementById(agreementId);
+  if (!existing) throw notFound(`Service agreement ${agreementId}`);
+
+  if (existing.status !== 'pending_seller_acceptance') {
+    throw badRequest(`Agreement ${agreementId} cannot be accepted from status ${existing.status}`);
+  }
+
+  if (sellerUserId) {
+    const authorized = await checkSellerAuthorization(existing.sellerUserId, sellerUserId);
+    if (!authorized) {
+      throw badRequest(`User ${sellerUserId} is not authorized to accept this agreement`);
+    }
+  }
+
+  const now = nowIso();
+  const updated: ServiceAgreementRecord = {
+    ...existing,
+    status: 'pending_payment',
+    sellerAcceptedAt: now,
+    updatedAt: now,
+  };
+
+  await db.updateServiceAgreement(updated);
+
+  // Fire real-time notification to buyer on Telegram / WhatsApp that deal is accepted and ready to fund
+  void notifyAgreementAccepted(updated);
+
+  // Sync acceptance to external escrow agent so external channels stay in sync
+  void syncEscrowAgentAcceptance(updated, sellerUserId);
+
+  return updated;
+}
+
+/**
+ * Seller declines the service agreement.
+ * Transitions status from pending_seller_acceptance to declined.
+ * An optional reason can be provided.
+ */
+export async function declineAgreement(
+  agreementId: string,
+  options?: { sellerUserId?: string; reason?: string }
+): Promise<ServiceAgreementRecord> {
+  const existing = await db.findServiceAgreementById(agreementId);
+  if (!existing) throw notFound(`Service agreement ${agreementId}`);
+
+  if (existing.status !== 'pending_seller_acceptance') {
+    throw badRequest(`Agreement ${agreementId} cannot be declined from status ${existing.status}`);
+  }
+
+  if (options?.sellerUserId) {
+    const authorized = await checkSellerAuthorization(existing.sellerUserId, options.sellerUserId);
+    if (!authorized) {
+      throw badRequest(`User ${options.sellerUserId} is not authorized to decline this agreement`);
+    }
+  }
+
+  const now = nowIso();
+  const updated: ServiceAgreementRecord = {
+    ...existing,
+    status: 'declined',
+    sellerDeclinedAt: now,
+    sellerDeclineReason: options?.reason?.trim() || null,
+    updatedAt: now,
+  };
+
+  await db.updateServiceAgreement(updated);
+
+  // Fire real-time cancellation push to buyer (counterparty) and seller (actor)
+  void notifyAgreementCancellation(
+    updated,
+    'seller',
+    'declined',
+    options?.reason
+  );
+
+  return updated;
+}
+
+/**
  * Mark an agreement as funded and compute the delivery due timestamp.
  * Executes on-chain transfer to vault including the Sivan service agreement fee.
  * delivery_due_at = now + deadlineDays calendar days.
@@ -209,6 +669,10 @@ export async function fundAgreement(agreementId: string, externalTxHash?: string
       await db.updateServiceAgreement(existing);
     }
     return existing;
+  }
+
+  if (existing.status === 'pending_seller_acceptance') {
+    throw badRequest(`Agreement ${agreementId} is awaiting seller acceptance before funding`);
   }
 
   if (existing.status !== 'pending_payment' && (existing.status as any) !== 'pending_funding') {
@@ -278,6 +742,9 @@ export async function fundAgreement(agreementId: string, externalTxHash?: string
 
   await db.updateServiceAgreement(updated);
 
+  // Sync funding to external escrow agent so external channels stay in sync
+  void syncEscrowAgentFunding(updated);
+
   try {
     await createBalanceLedgerEntry(
       {
@@ -328,6 +795,28 @@ export async function markDelivered(agreementId: string): Promise<ServiceAgreeme
     throw badRequest(`Agreement ${agreementId} cannot be marked delivered from ${existing.status}`);
   }
 
+  // Tiered verification protocol:
+  // Naira Service Agreements require a phone/WhatsApp anchor for local banking compliance.
+  // USDC / crypto agreements proceed frictionlessly via wallet or user ID.
+  const curr = String(existing.currency || '').toUpperCase();
+  if (curr === 'NAIRA' || curr === 'NGN') {
+    let seller = await db.findUserById(existing.sellerUserId);
+    if (!seller && existing.sellerUserId) {
+      seller = await db.findUserByTarget(existing.sellerUserId);
+    }
+    const hasPhone = Boolean(
+      seller?.whatsappNumber ||
+      (seller as any)?.phone ||
+      existing.sellerUserId?.startsWith('+') ||
+      /^\+?[0-9]{10,15}$/.test(existing.sellerUserId || '')
+    );
+    if (!hasPhone) {
+      throw badRequest(
+        'Naira Service Agreements require a verified WhatsApp phone number for compliance and local banking rail settlement.'
+      );
+    }
+  }
+
   const now = nowIso();
   const updated: ServiceAgreementRecord = {
     ...existing,
@@ -349,7 +838,7 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
     throw badRequest('sellerUserId is required');
   }
 
-  // 1. Look up existing user across user_id, target, email, username
+  // 1. Look up existing user across user_id, target, email, username, customer_identity_links
   let user = await db.findUserById(clean);
   if (!user) user = await db.findUserByTarget(clean);
   if (!user && clean.includes('@') && clean.includes('.')) {
@@ -362,10 +851,30 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
     }
   }
 
+  // 1b. Identity link lookup (explicit fallback)
+  if (!user) {
+    try {
+      const links = await db.listCustomerIdentityLinks();
+      const rawUser = clean.replace(/^@/, '').toLowerCase();
+      const digitsOnly = clean.replace(/\D/g, '');
+      const matched = links.find((l) =>
+        (l.telegramUsername && l.telegramUsername.toLowerCase() === rawUser) ||
+        (l.telegramUserId && l.telegramUserId === clean) ||
+        (l.whatsappNumber && (l.whatsappNumber === clean || l.whatsappNumber === `+${digitsOnly}`))
+      );
+      if (matched?.paymentUserId) {
+        user = await db.findUserById(matched.paymentUserId);
+      }
+    } catch (linkErr) {
+      console.warn('[agreement.resolveContractorUser] identity link lookup note:', linkErr);
+    }
+  }
+
   const isAddress = clean.startsWith('0x') || clean.length >= 32;
   const isEmail = clean.includes('@') && clean.includes('.');
   const username = clean.replace(/^@/, '');
-  const userId = user ? user.id : (clean.startsWith('usr_') ? clean : (isAddress ? clean : `usr_${clean.replace(/[^a-zA-Z0-9_]/g, '')}`));
+  const shadowUserId = `usr_${clean.replace(/[^a-zA-Z0-9_]/g, '')}`;
+  const userId = user ? user.id : (clean.startsWith('usr_') ? clean : (isAddress ? clean : shadowUserId));
 
   // 2. Auto-create user record if not present
   if (!user) {
@@ -389,6 +898,47 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
         createdAt: now,
         updatedAt: now,
       };
+    }
+  } else if (user.id !== shadowUserId) {
+    // If real user was found but a shadow user record was previously credited under shadowUserId,
+    // reconcile shadow user available balance into the real user's ledger!
+    try {
+      const shadowLedger = await getUserBalance(shadowUserId).catch(() => null);
+      if (shadowLedger && shadowLedger.balances?.length) {
+        for (const bal of shadowLedger.balances) {
+          const avail = Number(bal.available || 0);
+          if (avail > 0) {
+            await createBalanceLedgerEntry(
+              {
+                userId: shadowUserId,
+                asset: bal.asset as any,
+                amount: String(avail),
+                kind: 'debit_transfer',
+                status: 'completed',
+                sourceType: 'user_reconciliation',
+                sourceId: `recon_${user.id}`,
+                description: `Reconcile balance to real user account (${user.email || user.username || user.id})`,
+              },
+              { actorType: 'system', actorId: 'balance_reconciliation' }
+            );
+            await createBalanceLedgerEntry(
+              {
+                userId: user.id,
+                asset: bal.asset as any,
+                amount: String(avail),
+                kind: 'credit_available',
+                status: 'available',
+                sourceType: 'user_reconciliation',
+                sourceId: `recon_${shadowUserId}`,
+                description: `Reconciled balance from Telegram contractor handle (${clean})`,
+              },
+              { actorType: 'system', actorId: 'balance_reconciliation' }
+            );
+          }
+        }
+      }
+    } catch (reconErr) {
+      console.warn('[agreement.resolveContractorUser] shadow balance reconciliation note:', reconErr);
     }
   }
 
@@ -422,8 +972,14 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
 export async function releaseAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
   const existing = await db.findServiceAgreementById(agreementId);
   if (!existing) throw notFound(`Service agreement ${agreementId}`);
-  if (existing.status !== 'delivered') {
-    throw badRequest(`Agreement ${agreementId} must be delivered before release; current: ${existing.status}`);
+  
+  if (existing.status === 'released') {
+    return existing;
+  }
+
+  const releasableStatuses: string[] = ['delivered', 'funded', 'in_delivery', 'in_progress', 'pending_payment'];
+  if (!releasableStatuses.includes(existing.status)) {
+    throw badRequest(`Agreement ${agreementId} must be active or delivered before release; current: ${existing.status}`);
   }
 
   const now = nowIso();
@@ -448,6 +1004,22 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   );
 
   // 2. On-chain settlement transfer (if on-chain wallet / vault is active)
+  //
+  // GUARD: For Celo agreements we require the agent vault key upfront.
+  // If it is missing we throw immediately — before any DB write — so the
+  // buyer's UI sees an error instead of a false "Released" receipt while
+  // the contractor receives nothing.
+  const isCeloAgreement = (existing.network || '').toLowerCase() === 'celo';
+  if (isCeloAgreement) {
+    const { getCeloAgentPrivateKey } = await import('../wallets/celo/celo-settlement-relayer.js');
+    if (!getCeloAgentPrivateKey()) {
+      throw new Error(
+        'Celo settlement is not operational: CELO_AGENT_PRIVATE_KEY is not configured on this server. ' +
+        'Contact Sivan support — funds have NOT been released and no debit has occurred.'
+      );
+    }
+  }
+
   try {
     const activeProviderName = await resolveActiveWalletProvider();
     const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
@@ -460,61 +1032,72 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
     if (targetToAddress) {
       // Priority 1: Automated Celo on-chain relayer transfer from Sivan Agent Vault
       if ((existing.network === 'celo' || targetToAddress.startsWith('0x')) && targetToAddress.length === 42) {
-        try {
-          const relayerRes = await dispatchCeloSettlementTransfer({
-            toAddress: targetToAddress,
-            amount: sellerNetAmount,
-            currency: existing.currency,
-            agreementId: existing.id,
-          });
-          if (relayerRes.success && relayerRes.txHash) {
-            releaseTxHash = relayerRes.txHash;
-          }
-        } catch (relayerErr) {
-          console.warn('[agreement.release] Celo relayer note:', relayerErr);
+        const relayerRes = await dispatchCeloSettlementTransfer({
+          toAddress: targetToAddress,
+          amount: sellerNetAmount,
+          currency: existing.currency,
+          agreementId: existing.id,
+        });
+        if (relayerRes.success && relayerRes.txHash) {
+          releaseTxHash = relayerRes.txHash;
+        } else if (isCeloAgreement) {
+          // For Celo agreements, a failed relayer dispatch is a hard error.
+          // Do NOT fall through to Priority 2 or mark the DB released.
+          throw new Error(
+            `Celo settlement transfer failed for agreement ${existing.id}: ${relayerRes.error || 'unknown relayer error'}. ` +
+            'No funds were transferred. Agreement status has NOT been updated.'
+          );
         }
       }
 
-      const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
-
-      // Priority 2: Provider transfer fallback (if not already dispatched)
-      if (!releaseTxHash) {
-        // Transfer net settlement amount to contractor/seller
-        const netTransferResult = await provider.createTransfer({
-          providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
-          providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
-          asset: ((existing.currency || 'usdc').toLowerCase() as any),
-          chain: (existing.network || 'solana') as any,
-          amount: String(sellerNetAmount),
-          toAddress: targetToAddress,
-          idempotencyKey: `rel_agr_${existing.id}_seller`,
-          reference: existing.id,
-        });
-
-        releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
-      }
-
-      // 2. Transfer Sivan Service Agreement Platform Fee to Sivan fee collection wallet
-      if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
+      if (!isCeloAgreement) {
+        // Priority 2: Provider transfer fallback for non-Celo networks only.
+        // For Celo, we rely exclusively on the vault relayer (Priority 1 above).
         try {
-          const feeTransferResult = await provider.createTransfer({
-            providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
-            providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
-            asset: ((existing.currency || 'usdc').toLowerCase() as any),
-            chain: (existing.network || 'solana') as any,
-            amount: String(feeAmount),
-            toAddress: feeWallet,
-            idempotencyKey: `rel_agr_${existing.id}_fee`,
-            reference: `fee_${existing.id}`,
-          });
-          feeTxHash = (feeTransferResult as any).transactionHash || (feeTransferResult as any).txHash || (feeTransferResult as any).providerTransferId || null;
-        } catch (feeErr) {
-          console.warn('[agreement.release] On-chain fee transfer note:', feeErr);
+          const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
+          if (!releaseTxHash) {
+            const netTransferResult = await provider.createTransfer({
+              providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
+              providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
+              asset: ((existing.currency || 'usdc').toLowerCase() as any),
+              chain: (existing.network || 'solana') as any,
+              amount: String(sellerNetAmount),
+              toAddress: targetToAddress,
+              idempotencyKey: `rel_agr_${existing.id}_seller`,
+              reference: existing.id,
+            });
+            releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
+          }
+
+          // Transfer Sivan Platform Fee for non-Celo networks
+          if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
+            try {
+              const provider2 = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
+              const feeTransferResult = await provider2.createTransfer({
+                providerWalletId: buyerWallet?.providerWalletId || sellerWallet?.providerWalletId || `evm_${targetToAddress}`,
+                providerCustomerId: buyerWallet?.customerId || sellerWallet?.customerId,
+                asset: ((existing.currency || 'usdc').toLowerCase() as any),
+                chain: (existing.network || 'solana') as any,
+                amount: String(feeAmount),
+                toAddress: feeWallet,
+                idempotencyKey: `rel_agr_${existing.id}_fee`,
+                reference: `fee_${existing.id}`,
+              });
+              feeTxHash = (feeTransferResult as any).transactionHash || (feeTransferResult as any).txHash || (feeTransferResult as any).providerTransferId || null;
+            } catch (feeErr) {
+              console.warn('[agreement.release] Non-Celo fee transfer note:', feeErr);
+            }
+          }
+        } catch (netTransferErr) {
+          console.warn('[agreement.release] Non-Celo on-chain broadcast note:', netTransferErr);
         }
       }
     }
-  } catch (onChainErr) {
-    console.warn('[agreement.release] On-chain release note:', onChainErr);
+  } catch (onChainErr: any) {
+    if (isCeloAgreement) {
+      throw onChainErr;
+    }
+    console.warn('[agreement.release] Settlement transfer fallback to ledger release:', onChainErr?.message || onChainErr);
   }
 
   const updated: ServiceAgreementRecord = {
@@ -691,6 +1274,14 @@ export async function cancelAgreement(
     }
   }
 
+  // Fire real-time cancellation push to seller (counterparty) and buyer (actor)
+  void notifyAgreementCancellation(
+    updated,
+    'buyer',
+    'cancelled',
+    options?.reason
+  );
+
   return updated;
 }
 
@@ -745,4 +1336,72 @@ export async function getAgreement(agreementId: string): Promise<ServiceAgreemen
     await db.updateServiceAgreement(record);
   }
   return record;
+}
+
+/**
+ * Forward acceptance to external escrow agent so Telegram & WhatsApp channels
+ * immediately transition to PENDING_PAYMENT and display the Pay now button.
+ */
+async function syncEscrowAgentAcceptance(
+  agreement: ServiceAgreementRecord,
+  sellerUserId?: string
+): Promise<void> {
+  try {
+    const configuredUrl = process.env.CORE_API_BASE_URL || process.env.ESCROW_AGENT_URL;
+    const coreSecret = process.env.CORE_API_SECRET;
+    if (!configuredUrl || !coreSecret) return;
+
+    const sellerPhone = agreement.sellerUserId || sellerUserId || '';
+    const cleanPhone = sellerPhone.replace(/^whatsapp:/i, '').trim();
+    const isDigitsOnly = /^\+?[0-9]{7,15}$/.test(cleanPhone);
+    const wireIdentity = isDigitsOnly
+      ? (cleanPhone.startsWith('+') ? `whatsapp:${cleanPhone}` : `whatsapp:+${cleanPhone}`)
+      : cleanPhone;
+
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/escrows/${encodeURIComponent(agreement.id)}/accept`;
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-core-api-key': coreSecret,
+      },
+      body: JSON.stringify({ actorWhatsapp: wireIdentity, actorUserId: cleanPhone }),
+      signal: AbortSignal.timeout(3500),
+    });
+  } catch (err: any) {
+    console.warn('[agreement.service] syncEscrowAgentAcceptance note:', err?.message || err);
+  }
+}
+
+/**
+ * Forward funding to external escrow agent so all channels reflect payment confirmation.
+ */
+async function syncEscrowAgentFunding(
+  agreement: ServiceAgreementRecord
+): Promise<void> {
+  try {
+    const configuredUrl = process.env.CORE_API_BASE_URL || process.env.ESCROW_AGENT_URL;
+    const coreSecret = process.env.CORE_API_SECRET;
+    if (!configuredUrl || !coreSecret) return;
+
+    const buyerPhone = agreement.buyerUserId || '';
+    const wireIdentity = buyerPhone.startsWith('+')
+      ? `whatsapp:${buyerPhone}`
+      : buyerPhone.startsWith('whatsapp:')
+      ? buyerPhone
+      : `whatsapp:+${buyerPhone}`;
+
+    const url = `${configuredUrl.replace(/\/$/, '')}/api/escrows/${encodeURIComponent(agreement.id)}/pay-from-balance`;
+    await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-core-api-key': coreSecret,
+      },
+      body: JSON.stringify({ actorWhatsapp: wireIdentity }),
+      signal: AbortSignal.timeout(3500),
+    });
+  } catch (err: any) {
+    console.warn('[agreement.service] syncEscrowAgentFunding note:', err?.message || err);
+  }
 }

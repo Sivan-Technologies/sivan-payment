@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import {
   createAgreement,
+  acceptAgreement,
+  declineAgreement,
   fundAgreement,
   startDelivery,
   markDelivered,
@@ -121,6 +123,39 @@ export async function agreementRoutes(app: FastifyInstance) {
   app.get<{ Params: { id: string } }>('/api/agreements/:id', async (req, reply) => {
     const agreement = await getAgreement(req.params.id);
     if (!agreement) throw notFound(`Service agreement ${req.params.id}`);
+    return reply.code(200).send({
+      ...agreement,
+      countdownLabel: getCountdownLabel(agreement),
+    });
+  });
+
+  /**
+   * POST /api/agreements/:id/accept
+   * Seller accepts the service agreement, advancing it to pending_payment.
+   */
+  app.post<{ Params: { id: string }; Body?: { sellerUserId?: string } }>(
+    '/api/agreements/:id/accept',
+    async (req, reply) => {
+      const agreement = await acceptAgreement(req.params.id, req.body?.sellerUserId);
+      return reply.code(200).send({
+        ...agreement,
+        countdownLabel: getCountdownLabel(agreement),
+      });
+    }
+  );
+
+  /**
+   * POST /api/agreements/:id/decline
+   * Seller declines the service agreement with optional reason.
+   */
+  app.post<{
+    Params: { id: string };
+    Body?: { sellerUserId?: string; reason?: string };
+  }>('/api/agreements/:id/decline', async (req, reply) => {
+    const agreement = await declineAgreement(req.params.id, {
+      sellerUserId: req.body?.sellerUserId,
+      reason: req.body?.reason,
+    });
     return reply.code(200).send({
       ...agreement,
       countdownLabel: getCountdownLabel(agreement),

@@ -27,7 +27,7 @@
 export type ChainFamily = 'evm' | 'solana' | 'stellar';
 
 /** Sivan chain names that share one secp256k1 key and one 0x address. */
-export const EVM_CHAINS = ['ethereum', 'base', 'celo', 'bsc', 'bnb'] as const;
+export const EVM_CHAINS = ['ethereum', 'base', 'celo', 'bsc', 'bnb', 'arbitrum', 'arc'] as const;
 
 export function chainFamily(chain: string): ChainFamily {
   const normalized = String(chain).toLowerCase().trim();

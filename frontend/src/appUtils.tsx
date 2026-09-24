@@ -149,6 +149,29 @@ export function shortRef(value?: string) {
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
+/**
+ * Format crypto and fiat amounts for clean, professional display.
+ *
+ * Rules:
+ * - If integer or whole amount (e.g. 5, 20, 20.000000): displays cleanly as "5" or "20" (no trailing .00).
+ * - If fractional (e.g. 4.700000, 44.700000000000000016, 9.900000):
+ *   rounds floating point jitter to at most 2 decimal places (e.g. "44.70", "4.70", "9.90").
+ */
+export function formatAmount(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '' || value === '—') return '—';
+  const num = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isFinite(num)) return String(value);
+
+  if (Math.abs(num - Math.round(num)) < 1e-6) {
+    return Math.round(num).toLocaleString('en-US');
+  }
+
+  return num.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 export function timeAgo(value?: string, nowMs = Date.now()) {
   if (!value) return 'Now';
   const then = new Date(value).getTime();
@@ -200,11 +223,12 @@ export const fallbackSourceNetworks: NetworkControl[] = [
   { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
   { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
   { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
+  { network: 'arc', enabled: true, isDefault: false, label: 'Arc', sortOrder: 26, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: true, isDefault: false, label: 'Arbitrum', sortOrder: 27, updatedAt: new Date().toISOString() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
   { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
-  { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
   { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 

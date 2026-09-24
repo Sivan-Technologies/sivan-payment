@@ -176,6 +176,11 @@ export function ServiceAgreementsView({
   const [network, setNetwork] = useState('solana');
   const [deadlineDays, setDeadlineDays] = useState('2');
 
+  // Tiered verification state for Naira agreements
+  const [nairaModalDeal, setNairaModalDeal] = useState<ServiceAgreementDeal | null>(null);
+  const [whatsappPhoneInput, setWhatsappPhoneInput] = useState('');
+  const [savingWhatsapp, setSavingWhatsapp] = useState(false);
+
   const deals = useMemo(() => {
     return serviceAgreements?.deals || [];
   }, [serviceAgreements?.deals]);
@@ -202,8 +207,8 @@ export function ServiceAgreementsView({
   const filteredDeals = useMemo(() => {
     return deals.filter((deal) => {
       const st = String(deal.status || '').toLowerCase();
-      const isActive = ['funded', 'in_delivery', 'delivered', 'pending_payment', 'pending_funding', 'draft', 'pending'].includes(st);
-      const isCompleted = ['released', 'completed', 'cancelled', 'disputed'].includes(st);
+      const isActive = ['funded', 'in_delivery', 'delivered', 'pending_payment', 'pending_funding', 'draft', 'pending', 'pending_seller_acceptance', 'pending_acceptance'].includes(st);
+      const isCompleted = ['released', 'completed', 'cancelled', 'disputed', 'declined'].includes(st);
 
       if (filter === 'active' && !isActive) return false;
       if (filter === 'completed' && !isCompleted) return false;
@@ -249,9 +254,66 @@ export function ServiceAgreementsView({
     }
   };
 
+  const handleAccept = async (deal: ServiceAgreementDeal) => {
+    const agreementId = deal.id || deal.escrowId;
+    if (!agreementId) return;
+    setActionLoadingId(agreementId);
+    setErrorBanner(null);
+    setSuccessBanner(null);
+    try {
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sellerUserId: deal.sellerUserId || user?.telegramUsername || user?.email || user?.id
+        })
+      });
+      setSuccessBanner(`Agreement ${agreementId} accepted successfully! Client notified to fund vault.`);
+      await onRefresh();
+    } catch (e: any) {
+      setErrorBanner(e?.message || 'Failed to accept agreement.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleDecline = async (deal: ServiceAgreementDeal) => {
+    const agreementId = deal.id || deal.escrowId;
+    if (!agreementId) return;
+    if (!window.confirm('Are you sure you want to decline this Service Agreement?')) return;
+    setActionLoadingId(agreementId);
+    setErrorBanner(null);
+    setSuccessBanner(null);
+    try {
+      await api(`/api/agreements/${encodeURIComponent(agreementId)}/decline`, {
+        method: 'POST',
+        body: JSON.stringify({
+          sellerUserId: deal.sellerUserId || user?.telegramUsername || user?.email || user?.id,
+          reason: 'Declined by contractor from web dashboard'
+        })
+      });
+      setSuccessBanner(`Agreement ${agreementId} declined.`);
+      await onRefresh();
+    } catch (e: any) {
+      setErrorBanner(e?.message || 'Failed to decline agreement.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   const handleDeliver = async (deal: ServiceAgreementDeal) => {
     const agreementId = deal.id || deal.escrowId;
     if (!agreementId) return;
+
+    // Tiered verification protocol:
+    // Naira agreements require a verified WhatsApp phone number for local NIBSS/NIP banking compliance.
+    // USDC agreements proceed frictionlessly without phone gating.
+    const isNaira = String(deal.currency || '').toUpperCase() === 'NAIRA' || String(deal.currency || '').toUpperCase() === 'NGN';
+    const hasPhone = Boolean(user?.whatsappNumber || (user as any)?.phone);
+    if (isNaira && !hasPhone) {
+      setNairaModalDeal(deal);
+      return;
+    }
+
     setActionLoadingId(agreementId);
     setErrorBanner(null);
     setSuccessBanner(null);
@@ -547,7 +609,7 @@ export function ServiceAgreementsView({
                 status: selectedDeal.status as any,
                 deadlineDays: 7,
                 deliveryDueAt: selectedDeal.deliveryDueAt || null,
-                countdownLabel: selectedDeal.countdownLabel || (st === 'funded' ? '⏱ In Delivery' : st === 'delivered' ? '✅ Delivered' : st === 'released' ? '✅ Released' : '⏳ Awaiting payment'),
+                countdownLabel: selectedDeal.countdownLabel || (st === 'pending_seller_acceptance' || st === 'pending_acceptance' ? '⏳ Awaiting Seller Acceptance' : st === 'funded' ? '⏱ In Delivery' : st === 'delivered' ? '✅ Delivered' : st === 'released' ? '✅ Released' : st === 'declined' ? '✕ Declined' : '⏳ Awaiting payment'),
                 reminder6hSent: false,
                 overdueNoticeSent: false,
                 fundedAt: selectedDeal.fundedAt || null,
@@ -600,6 +662,48 @@ export function ServiceAgreementsView({
 
                   {/* Actions */}
                   <div className="button-row" style={{ marginTop: '16px' }}>
+                    {/* Contractor / Seller: Pending Seller Acceptance */}
+                    {(st === 'pending_seller_acceptance' || st === 'pending_acceptance') && !isBuyer && (
+                      <>
+                        <button
+                          disabled={isLoading}
+                          onClick={() => handleAccept(selectedDeal)}
+                          className="primary-btn small"
+                          style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                        >
+                          {isLoading ? 'Accepting...' : 'Accept Agreement ✓'}
+                        </button>
+                        <button
+                          disabled={isLoading}
+                          onClick={() => handleDecline(selectedDeal)}
+                          className="ghost-btn small"
+                          style={{ color: '#ef4444' }}
+                        >
+                          Decline ✕
+                        </button>
+                        <button
+                          disabled={isLoading}
+                          onClick={() => handleCancel(selectedDeal)}
+                          className="ghost-btn small"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+
+                    {/* Client / Buyer: Pending Seller Acceptance */}
+                    {(st === 'pending_seller_acceptance' || st === 'pending_acceptance') && isBuyer && (
+                      <button
+                        disabled={isLoading}
+                        onClick={() => handleCancel(selectedDeal)}
+                        className="ghost-btn small"
+                        style={{ color: '#ef4444' }}
+                      >
+                        Cancel Agreement
+                      </button>
+                    )}
+
+                    {/* Client / Buyer: Pending Payment */}
                     {(st === 'pending_payment' || st === 'pending_funding' || st === 'draft' || st === 'pending') && isBuyer && (
                       <>
                         <button
@@ -618,6 +722,18 @@ export function ServiceAgreementsView({
                           Cancel
                         </button>
                       </>
+                    )}
+
+                    {/* Contractor / Seller: Pending Payment */}
+                    {(st === 'pending_payment' || st === 'pending_funding' || st === 'draft' || st === 'pending') && !isBuyer && (
+                      <button
+                        disabled={isLoading}
+                        onClick={() => handleCancel(selectedDeal)}
+                        className="ghost-btn small"
+                        style={{ color: '#ef4444' }}
+                      >
+                        Cancel Agreement
+                      </button>
                     )}
 
                     {(st === 'funded' || st === 'in_delivery') && (
@@ -786,6 +902,70 @@ export function ServiceAgreementsView({
                   style={{ flex: 1 }}
                 >
                   {submitting ? 'Creating...' : 'Create Agreement →'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Naira Delivery WhatsApp Modal */}
+      {nairaModalDeal && (
+        <div className="sv-modal-backdrop" onClick={() => setNairaModalDeal(null)} role="presentation" style={{ zIndex: 9999 }}>
+          <div className="sv-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="sv-modal-head">
+              <button className="sv-modal-close" onClick={() => setNairaModalDeal(null)} aria-label="Close">×</button>
+              <span className="sv-modal-eyebrow">Banking Rail Compliance</span>
+              <h2>Link WhatsApp to Deliver</h2>
+              <p className="sv-modal-sub">
+                Naira service agreements settle directly into Nigerian bank accounts via NIBSS/NIP rails and require your WhatsApp phone number for transaction receipts and identity compliance.
+              </p>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!whatsappPhoneInput.trim()) return;
+                setSavingWhatsapp(true);
+                setErrorBanner(null);
+                try {
+                  await api(`/api/users/${user?.id || 'me'}/profile`, {
+                    method: 'POST',
+                    body: JSON.stringify({ whatsappNumber: whatsappPhoneInput.trim() })
+                  }).catch(() => null);
+                  if (user) (user as any).whatsappNumber = whatsappPhoneInput.trim();
+                  const targetDeal = nairaModalDeal;
+                  setNairaModalDeal(null);
+                  if (targetDeal) {
+                    await handleDeliver(targetDeal);
+                  }
+                } catch (err: any) {
+                  setErrorBanner(err?.message || 'Failed to link WhatsApp number.');
+                } finally {
+                  setSavingWhatsapp(false);
+                }
+              }}
+              className="sv-modal-body form"
+            >
+              <div>
+                <label style={{ display: 'block', fontSize: '11.5px', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#5a6678', marginBottom: '6px', fontWeight: 700 }}>
+                  WhatsApp Phone Number *
+                </label>
+                <input
+                  type="tel"
+                  placeholder="+2348012345678"
+                  value={whatsappPhoneInput}
+                  onChange={(e) => setWhatsappPhoneInput(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="sv-modal-foot" style={{ marginTop: '16px', display: 'flex', gap: '10px' }}>
+                <button type="button" className="secondary-btn" onClick={() => setNairaModalDeal(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn" disabled={savingWhatsapp || !whatsappPhoneInput.trim()}>
+                  {savingWhatsapp ? 'Verifying...' : 'Verify & Submit Delivery'}
                 </button>
               </div>
             </form>

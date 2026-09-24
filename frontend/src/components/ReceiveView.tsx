@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { qrDataUri } from '../qrCode';
 import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
+import { formatAmount } from '../appUtils';
 import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } from '../types';
 
 /**
@@ -20,7 +21,7 @@ import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } f
  *   which is the cheapest known defence against wrong-network loss.
  */
 
-export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc';
+export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'bsc';
 export type ReceiveAsset = 'usdc' | 'usdt';
 
 /** Re-exported so callers do not need to know the record shape. */
@@ -40,6 +41,7 @@ const CHAIN_ASSETS: Record<ReceiveChain, ReceiveAsset[]> = {
   celo: ['usdc', 'usdt'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
+  arc: ['usdc'],
   bsc: ['usdc', 'usdt'],
 };
 
@@ -107,6 +109,14 @@ const CHAIN_META: Record<ReceiveChain, {
     accent: '#28A0F0',
     note: 'Arbitrum One L2 EVM network.',
   },
+  arc: {
+    label: 'Arc',
+    short: 'ARC',
+    addressFormat: 'Starts with 0x (EVM)',
+    confirmations: 'Sub-second (~0.5s)',
+    accent: '#0048E5',
+    note: 'Circle Arc Layer 1 EVM with native 18-decimal USDC and sub-second finality.',
+  },
   bsc: {
     label: 'BNB Chain',
     short: 'BNB',
@@ -162,7 +172,7 @@ export function ReceiveView({
   onRefresh: () => void;
 }) {
   const availableChains = useMemo(() => {
-    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
+    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'arc', 'stellar', 'celo'];
     if (!enabledNetworks || enabledNetworks.length === 0) {
       return supported;
     }
@@ -183,7 +193,7 @@ export function ReceiveView({
   /**
    * NETWORKS PRESENTED AS DISTINCT CHOICES.
    *
-   * All 5 ultra-low-fee networks (Solana, Base, BNB Chain, Stellar, Celo)
+   * All ultra-low-fee networks (Solana, Base, BNB Chain, Arbitrum, Stellar, Celo)
    * are presented as individual options so users can deposit instantly without high gas fees.
    */
   const chainFamilies = useMemo(() => {
@@ -219,6 +229,22 @@ export function ReceiveView({
         accent: CHAIN_META.bsc.accent,
         recommended: activeDefault === 'bsc' || (activeDefault as string) === 'bnb',
         chains: ['bsc'],
+      },
+      {
+        key: 'arbitrum',
+        label: 'Arbitrum',
+        note: 'Arbitrum One L2 EVM network. Ultra-low gas fees for USDC & USDT.',
+        accent: CHAIN_META.arbitrum.accent,
+        recommended: activeDefault === 'arbitrum',
+        chains: ['arbitrum'],
+      },
+      {
+        key: 'arc',
+        label: 'Arc',
+        note: 'Circle Arc Layer 1 EVM. Native 18-decimal USDC with sub-second finality.',
+        accent: CHAIN_META.arc.accent,
+        recommended: activeDefault === 'arc',
+        chains: ['arc'],
       },
       {
         key: 'stellar',
@@ -403,23 +429,24 @@ export function ReceiveView({
       ? ['solana']
       : activeChain === 'stellar'
       ? ['stellar']
-      : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum'];
+      : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum', 'arc'];
 
   const wallet =
     openWallets.find((w) => w.chain === activeChain) ??
     openWallets.find((w) => walletFamily.includes(w.chain));
 
   // The server returns acceptedAssets per wallet and is authoritative. Fall
-  // back to the local matrix before a wallet exists so the warning copy is
-  // still correct on the pre-generation screen.
-  const chainAssets = wallet?.acceptedAssets ?? CHAIN_ASSETS[activeChain];
+  // back to the local matrix before a wallet exists, or when the matched
+  // wallet is a family fallback from another EVM chain (e.g. Base), so the
+  // accepted assets and warnings reflect the active chain accurately.
+  const chainAssets = (wallet && wallet.chain === activeChain ? wallet.acceptedAssets : null) ?? CHAIN_ASSETS[activeChain];
   const assetsOnChain = chainAssets.filter((asset) =>
     enabledAssets.some((a) => a.asset === asset && a.enabled)
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
 
-  const directChainWallet = openWallets.find((w) => w.chain === activeChain);
-  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain === activeChain);
+  const directChainWallet = openWallets.find((w) => w.chain?.toLowerCase() === activeChain.toLowerCase());
+  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain?.toLowerCase() === activeChain.toLowerCase());
   const unifiedWallet = directUnified ?? (unifiedBalance?.wallets || []).find(
     (w) => w.address && wallet?.address && w.address.toLowerCase() === wallet.address.toLowerCase()
   );
@@ -427,23 +454,36 @@ export function ReceiveView({
   const activeBalances = useMemo(() => {
     // 1. Direct wallet for the selected chain
     if (directChainWallet?.balances && directChainWallet.balances.length > 0) {
-      return directChainWallet.balances.filter((b) => !b.chain || b.chain === activeChain);
+      const filtered = directChainWallet.balances.filter((b) => !b.chain || b.chain.toLowerCase() === activeChain.toLowerCase());
+      if (filtered.length > 0) return filtered;
     }
     // 2. Direct unified entry for the selected chain
     if (directUnified?.balances && directUnified.balances.length > 0) {
-      return directUnified.balances.filter((b) => !b.chain || b.chain === activeChain);
+      const filtered = directUnified.balances.filter((b) => !b.chain || b.chain.toLowerCase() === activeChain.toLowerCase());
+      if (filtered.length > 0) return filtered;
     }
     // 3. Fallback to matched wallet if it contains balances for this chain
     if (wallet?.balances && wallet.balances.length > 0) {
-      const matching = wallet.balances.filter((b) => b.chain === activeChain);
+      const matching = wallet.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
       if (matching.length > 0) return matching;
     }
     if (unifiedWallet?.balances && unifiedWallet.balances.length > 0) {
-      const matching = unifiedWallet.balances.filter((b) => b.chain === activeChain);
+      const matching = unifiedWallet.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
       if (matching.length > 0) return matching;
     }
-    return directChainWallet?.balances ?? directUnified?.balances ?? wallet?.balances;
-  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, activeChain]);
+    // 4. Any entry in unifiedBalance.wallets matching activeChain
+    for (const uw of unifiedBalance?.wallets || []) {
+      if (uw.chain?.toLowerCase() === activeChain.toLowerCase() && uw.balances && uw.balances.length > 0) {
+        return uw.balances;
+      }
+      if (uw.balances && uw.balances.length > 0) {
+        const matching = uw.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
+        if (matching.length > 0) return matching;
+      }
+    }
+    // If no balance entries belong to this active chain, return empty so it renders the awaiting deposit state
+    return [];
+  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, unifiedBalance?.wallets, activeChain]);
 
   const lastDispatchedBalanceRef = useRef<string>('');
   useEffect(() => {
@@ -738,7 +778,7 @@ export function ReceiveView({
                   <div className="receive-balance-row">
                     {activeBalances.map((balance) => (
                       <div className="receive-balance" key={`${balance.asset}-${balance.chain}`}>
-                        <strong>{balance.amount}</strong>
+                        <strong>{formatAmount(balance.amount)}</strong>
                         <small>{balance.asset.toUpperCase()}</small>
                       </div>
                     ))}

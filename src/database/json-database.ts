@@ -294,7 +294,21 @@ export class JsonDatabase {
 
     // 4. Telegram user ID match
     user = data.users.find((u) => u.telegramUserId === clean);
-    return user;
+    if (user) return user;
+
+    // 5. Customer identity links match (linked Telegram accounts, phones, usernames)
+    const links = data.customerIdentityLinks || [];
+    const matchedLink = links.find((l) =>
+      (l.telegramUsername && l.telegramUsername.toLowerCase() === username) ||
+      (l.telegramUserId && l.telegramUserId === clean) ||
+      (l.whatsappNumber && (l.whatsappNumber === clean || l.whatsappNumber === `+${digitsOnly}`))
+    );
+    if (matchedLink?.paymentUserId) {
+      user = data.users.find((u) => u.id === matchedLink.paymentUserId);
+      if (user) return user;
+    }
+
+    return undefined;
   }
 
   /**
@@ -1440,14 +1454,36 @@ export class JsonDatabase {
 
   async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
     const data = await this.read();
-    const aliases = (Array.isArray(userIdOrAliases) ? userIdOrAliases : [userIdOrAliases])
-      .filter(Boolean)
-      .map((s) => String(s).toLowerCase());
+    const rawList = (Array.isArray(userIdOrAliases) ? userIdOrAliases : [userIdOrAliases]).filter(Boolean);
+
+    // Expand aliases with phone/username variants (mirrors postgres-database.ts)
+    const expandedSet = new Set<string>();
+    for (const a of rawList) {
+      const lower = String(a).toLowerCase().trim();
+      if (!lower) continue;
+      expandedSet.add(lower);
+      const stripped = lower.replace(/^whatsapp:/i, '');
+      const digits = stripped.replace(/\D/g, '');
+      if (digits.length >= 7) {
+        expandedSet.add(`+${digits}`);
+        expandedSet.add(digits);
+        expandedSet.add(`whatsapp:+${digits}`);
+        expandedSet.add(`whatsapp:${digits}`);
+        if (digits.startsWith('234') && digits.length >= 12) {
+          expandedSet.add(`0${digits.slice(3)}`);
+        }
+      }
+      if (lower.startsWith('@')) {
+        expandedSet.add(lower.slice(1));
+      } else if (/^[a-z0-9_]{3,32}$/.test(lower) && digits.length < lower.length) {
+        expandedSet.add(`@${lower}`);
+      }
+    }
 
     const records = (data.serviceAgreements ?? []).filter((a) => {
       const buyer = String(a.buyerUserId || '').toLowerCase();
       const seller = String(a.sellerUserId || '').toLowerCase();
-      return aliases.includes(buyer) || aliases.includes(seller);
+      return expandedSet.has(buyer) || expandedSet.has(seller);
     });
     return records.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
@@ -1462,6 +1498,22 @@ export class JsonDatabase {
       .filter((a) =>
         (a.status === 'funded' || a.status === 'in_delivery') &&
         a.deliveryDueAt != null
+      )
+      .slice(0, limit);
+  }
+
+  /**
+   * Returns agreements with status 'pending_seller_acceptance' where acceptanceExpiresAt
+   * has passed. Used by the sweeper to auto-cancel unaccepted agreements.
+   */
+  async listExpiredPendingAcceptanceAgreements(now = new Date(), limit = 100): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    const nowMs = now.getTime();
+    return (data.serviceAgreements ?? [])
+      .filter((a) =>
+        a.status === 'pending_seller_acceptance' &&
+        a.acceptanceExpiresAt != null &&
+        new Date(a.acceptanceExpiresAt).getTime() <= nowMs
       )
       .slice(0, limit);
   }

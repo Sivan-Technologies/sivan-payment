@@ -72,6 +72,28 @@ const PUBLIC_ENDPOINTS: Record<string, { mainnet: string[]; testnet: string[] }>
     ],
     testnet: ['https://data-seed-prebsc-1-s1.binance.org:8545'],
   },
+  arbitrum: {
+    mainnet: [
+      'https://arb1.arbitrum.io/rpc',
+      'https://arbitrum.drpc.org',
+      'https://1rpc.io/arb',
+    ],
+    testnet: ['https://sepolia-rollup.arbitrum.io/rpc'],
+  },
+  /**
+   * Arc. Verified by eth_chainId against each host before being listed:
+   *   rpc.mainnet.arc.io      -> 0x13b2   = 5042
+   *   rpc.testnet.arc.io      -> 0x4cef52 = 5042002
+   *   rpc.testnet.arc.network -> 0x4cef52 = 5042002
+   *
+   * Note rpc.mainnet.arc.network returns an EMPTY body and is not a working
+   * endpoint, despite appearing in several launch-week write-ups. Do not add
+   * it as a fallback: it would consume a tier and answer nothing.
+   */
+  arc: {
+    mainnet: ['https://rpc.mainnet.arc.io', 'https://rpc.arc-scan.org'],
+    testnet: ['https://rpc.testnet.arc.io', 'https://rpc.testnet.arc.network'],
+  },
 };
 
 export interface EvmRpcOptions {
@@ -96,6 +118,12 @@ export function evmRpcEndpoints(chain: WalletChain, options: EvmRpcOptions = {})
   } else if (chain === 'bsc' || chain === 'bnb') {
     configured = process.env.BSC_RPC_URL || '';
     secondary = process.env.BSC_RPC_FALLBACK_URL || '';
+  } else if (chain === 'arbitrum') {
+    configured = process.env.ARBITRUM_RPC_URL || '';
+    secondary = process.env.ARBITRUM_RPC_FALLBACK_URL || '';
+  } else if (chain === 'arc') {
+    configured = process.env.ARC_RPC_URL || '';
+    secondary = process.env.ARC_RPC_FALLBACK_URL || '';
   } else {
     configured = env.ETHEREUM_RPC_URL || '';
     secondary = env.ETHEREUM_RPC_FALLBACK_URL || '';
@@ -263,4 +291,108 @@ export async function erc20BalanceOf(
   }
 
   return fromBaseUnits(BigInt(result), decimals);
+}
+
+/**
+ * NATIVE coin balance, as a decimal string.
+ *
+ * Arc is the reason this exists. On every other EVM chain Sivan supports, USDC
+ * is an ERC-20 and the read goes through erc20BalanceOf. On Arc, USDC IS the
+ * native gas token: there is no contract to call. Verified directly against
+ * rpc.mainnet.arc.io, where eth_getCode at the well-known USDC addresses from
+ * other chains returns 0x:
+ *
+ *   0xaf88d065e77c8cC2239327C5EDb3A432268e5831  (Arbitrum USDC)  -> 0x
+ *   0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48  (Ethereum USDC)  -> 0x
+ *
+ * Reading an Arc USDC balance through erc20BalanceOf therefore calls a
+ * contract that is not there. It would throw rather than mislead, which is the
+ * correct failure, but it means the native path is mandatory, not an optimisation.
+ *
+ * DECIMALS. Native Arc USDC is 18dp at the protocol level, unlike the 6dp
+ * ERC-20 USDC everywhere else. Passing 6 here does not throw: it silently
+ * reports a balance 10^12 times too large. Always source this from
+ * decimalsForChainAsset(), never from the asset alone.
+ */
+export async function nativeBalanceOf(
+  chain: WalletChain,
+  holderAddress: string,
+  decimals: number,
+  options: EvmRpcOptions = {}
+): Promise<string> {
+  const holder = holderAddress.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(holder)) {
+    throw new Error(`Invalid holder address: ${holderAddress}`);
+  }
+
+  const result = await evmRpc<string>(chain, 'eth_getBalance', [holder, 'latest'], options);
+
+  if (result === null || result === undefined || result === '0x') {
+    throw new Error(`eth_getBalance returned no data for ${holder} on ${chain}.`);
+  }
+
+  return fromBaseUnits(BigInt(result), decimals);
+}
+
+/**
+ * Does this chain settle its stablecoin as the NATIVE coin rather than ERC-20?
+ *
+ * Arc only, today. Kept as a predicate rather than an inline chain === 'arc'
+ * so the next USDC-gas chain is a one-line change with one place to audit.
+ */
+export function usesNativeStablecoin(chain: WalletChain): boolean {
+  return chain === 'arc';
+}
+
+/**
+ * Wait for an EVM transaction receipt and verify its status.
+ *
+ * Shared guard against false success receipts, applicable to every EVM chain
+ * Sivan supports (Celo, Base, Ethereum, BSC, Arbitrum). The pattern mirrors
+ * what was fixed in celo-settlement-relayer.ts but is extracted here so it is
+ * not duplicated per chain.
+ *
+ * Outcome semantics:
+ *   confirmed  true  — receipt obtained, status === 0x1 (success)
+ *   reverted   true  — receipt obtained, status === 0x0 (included but reverted,
+ *                       no value moved — MUST NOT claim success)
+ *   timedOut   true  — polling window expired without a receipt; the tx may
+ *                       still land. Callers should return 'submitted' and let
+ *                       the background transfer-confirmation poller finish it.
+ *
+ * Celo blocks: ~5s. Base/Arbitrum: ~2s. ETH: ~12s. BSC: ~3s.
+ * The defaults (30 × 2s = 60s) are generous enough for ETH under normal load.
+ * Reduce pollAttempts when calling from a hot path that must answer quickly.
+ */
+export async function waitForEvmReceipt(
+  chain: WalletChain,
+  txHash: string,
+  options: EvmRpcOptions & { pollAttempts?: number; pollIntervalMs?: number } = {}
+): Promise<{ confirmed: boolean; reverted: boolean; timedOut: boolean }> {
+  const attempts = options.pollAttempts ?? 30;
+  const intervalMs = options.pollIntervalMs ?? 2_000;
+
+  for (let i = 0; i < attempts; i++) {
+    // Wait before each attempt (except the very first — the node may have
+    // indexed the receipt already by the time we ask).
+    if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));
+
+    let receipt: any = null;
+    try {
+      receipt = await evmRpc<any>(chain, 'eth_getTransactionReceipt', [txHash], options);
+    } catch {
+      // RPC hiccup — not evidence the tx failed; keep polling.
+      continue;
+    }
+
+    if (!receipt) continue; // Not yet included in a block.
+
+    if (receipt.status === '0x1') return { confirmed: true,  reverted: false, timedOut: false };
+    if (receipt.status === '0x0') return { confirmed: false, reverted: true,  timedOut: false };
+
+    // Unexpected status — log and keep polling rather than guessing.
+    console.warn(`[waitForEvmReceipt] Unexpected receipt status "${receipt.status}" for ${txHash} on ${chain}; continuing.`);
+  }
+
+  return { confirmed: false, reverted: false, timedOut: true };
 }

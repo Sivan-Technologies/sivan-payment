@@ -79,11 +79,12 @@ export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
   { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'arc', enabled: true, isDefault: false, label: 'Arc', sortOrder: 26, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'arbitrum', enabled: true, isDefault: false, label: 'Arbitrum', sortOrder: 27, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
 ];
 
@@ -105,11 +106,11 @@ export const updatePaymentControlsSchema = z.object({
     enabled: z.boolean()
   })).optional(),
   sourceNetworks: z.array(z.object({
-    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']),
+    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']),
     enabled: z.boolean(),
     isDefault: z.boolean().optional()
   })).optional(),
-  defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']).optional(),
+  defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']).optional(),
   // Legacy support for older admin frontend payloads.
   controls: z.array(z.object({
     currency: z.enum(['usd', 'gbp', 'eur', 'ngn']),
@@ -308,6 +309,7 @@ export const CHAIN_ASSET_SUPPORT: Record<string, SourceCurrency[]> = {
   ethereum: ['usdc', 'usdt'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
+  arc: ['usdc'],
   optimism: ['usdc', 'usdt'],
   avalanche_c_chain: ['usdc', 'usdt'],
 };

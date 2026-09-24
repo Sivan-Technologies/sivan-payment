@@ -17,6 +17,7 @@ export interface UserRecord {
    */
   country?: string;
   username?: string;
+  telegramUsername?: string;
   usernameUpdatedAt?: string;
   primaryChannel?: 'email' | 'whatsapp' | 'both';
   avatarUrl?: string;
@@ -486,7 +487,7 @@ export interface AssetControl {
 }
 
 export interface NetworkControl {
-  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb' | string;
+  network: 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'arc' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb' | string;
   enabled: boolean;
   isDefault?: boolean;
   label: string;
@@ -712,7 +713,7 @@ export interface UserPreferencesRecord {
 export interface UserWalletRecord {
   id: string;
   userId: string;
-  chain: 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc' | 'bnb' | string;
+  chain: 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'bsc' | 'bnb' | string;
   address: string;
   status: 'provisioning' | 'active' | 'suspended' | 'closed' | 'failed';
   /**
@@ -909,11 +910,13 @@ export interface SupplierFeeQuoteResponse {
 }
 
 export type ServiceAgreementStatus =
+  | 'pending_seller_acceptance'
   | 'pending_payment'
   | 'funded'
   | 'in_delivery'
   | 'delivered'
   | 'released'
+  | 'declined'
   | 'cancelled'
   | 'disputed';
 

@@ -3,7 +3,7 @@ import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountReq
 export type Currency = 'usd' | 'gbp' | 'eur';
 export type SupplierPayoutCurrency = Currency | 'mxn' | 'brl';
 export type SourceCurrency = 'usdc' | 'usdt';
-export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb';
+export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'arc' | 'optimism' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
 export type ExternalAccountStatus = 'created' | 'active' | 'verification_pending' | 'verified' | 'verification_failed' | 'deactivated';
 export type OnrampStatus = 'created' | 'awaiting_payment' | 'payment_received' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'requires_action';
@@ -459,7 +459,7 @@ export interface UserWalletRecord {
  * Solana is the default because it is the only supported chain that carries
  * BOTH USDC and USDT, and it has the lowest fees. Base cannot hold USDT.
  */
-export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb';
+export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb' | 'arbitrum' | 'arc';
 
 export const DEFAULT_WALLET_CHAIN: WalletChain = 'solana';
 
@@ -1092,11 +1092,13 @@ export interface P2pClaimRecord {
  * Any active status → cancelled | disputed
  */
 export type ServiceAgreementStatus =
+  | 'pending_seller_acceptance'
   | 'pending_payment'
   | 'funded'
   | 'in_delivery'
   | 'delivered'
   | 'released'
+  | 'declined'
   | 'cancelled'
   | 'disputed';
 
@@ -1122,6 +1124,14 @@ export interface ServiceAgreementRecord {
   fundedAt: string | null;
   deliveredAt: string | null;
   releasedAt: string | null;
+  /** Set when seller accepts the agreement. */
+  sellerAcceptedAt?: string | null;
+  /** Set when seller declines the agreement. */
+  sellerDeclinedAt?: string | null;
+  /** Optional reason provided by seller when declining. */
+  sellerDeclineReason?: string | null;
+  /** ISO timestamp after which the agreement auto-cancels if seller has not responded. */
+  acceptanceExpiresAt?: string | null;
   fundingTxHash?: string | null;
   releaseTxHash?: string | null;
   vaultAddress?: string | null;

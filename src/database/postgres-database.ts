@@ -176,6 +176,9 @@ export class PostgresDatabase {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS ?? 30000),
       keepAlive: true,
+      ssl: connectionString.includes('localhost') || connectionString.includes('127.0.0.1')
+        ? false
+        : { rejectUnauthorized: false },
     });
     this.pool.on('error', (error) => {
       console.error('[postgres.pool.error]', error?.message || error);
@@ -578,7 +581,21 @@ export class PostgresDatabase {
       if (res.rows[0]) return mapUser(res.rows[0]);
 
       res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
-      return res.rows[0] ? mapUser(res.rows[0]) : undefined;
+      if (res.rows[0]) return mapUser(res.rows[0]);
+
+      // Check payments_customer_identity_links for linked Telegram accounts or phones
+      const linkRes = await client.query(
+        `select payment_user_id from payments_customer_identity_links 
+         where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number=$3 or whatsapp_number=$4
+         order by linked_at desc nulls last limit 1`,
+        [username, clean, clean, `+${digitsOnly}`]
+      );
+      if (linkRes.rows[0]?.payment_user_id) {
+        const u = await client.query('select * from users where user_id=$1 limit 1', [linkRes.rows[0].payment_user_id]);
+        if (u.rows[0]) return mapUser(u.rows[0]);
+      }
+
+      return undefined;
     } finally { client.release(); }
   }
 
@@ -2207,6 +2224,35 @@ export class PostgresDatabase {
           record.updatedAt,
         ]
       );
+
+      // Dual-table synchronization: Keep escrows table in exact parity across channels
+      const escrowStatusMap: Record<string, string> = {
+        pending_payment: 'PENDING_PAYMENT',
+        delivered: 'DELIVERED',
+        released: 'RELEASED',
+        cancelled: 'CANCELLED',
+        funded: 'IN_PROGRESS',
+        in_delivery: 'IN_PROGRESS',
+      };
+      const mappedEscrowStatus = escrowStatusMap[record.status];
+      if (mappedEscrowStatus) {
+        await client.query(
+          `UPDATE escrows SET 
+             status = $1, 
+             updated_at = $2,
+             seller_user_id = COALESCE(seller_user_id, $4),
+             seller_whatsapp = COALESCE(seller_whatsapp, $5)
+           WHERE escrow_id = $3 AND (status != $1 OR seller_user_id IS NULL OR seller_whatsapp IS NULL)`,
+          [
+            mappedEscrowStatus,
+            record.updatedAt || new Date().toISOString(),
+            record.id,
+            record.sellerUserId || null,
+            record.sellerUserId || null,
+          ]
+        ).catch((err: any) => console.warn('[postgres-database] escrows sync note:', err?.message || err));
+      }
+
       return record;
     } finally {
       client.release();
@@ -2231,7 +2277,44 @@ export class PostgresDatabase {
     try {
       const rawList = Array.isArray(userIdOrAliases) ? userIdOrAliases.filter(Boolean) : [userIdOrAliases].filter(Boolean);
       if (rawList.length === 0) return [];
-      const lowerAliases = Array.from(new Set(rawList.map((a) => String(a).toLowerCase().trim())));
+
+      // Build an expanded alias set that normalises phone numbers and @usernames
+      // so agreements created via Telegram (which stores a raw phone like +2348…
+      // or a Telegram @handle) are visible to the same person when they log in on
+      // the web (where the phone may be stored as 2348…, 08012… or the handle
+      // without the @ prefix).
+      const expandedSet = new Set<string>();
+      for (const a of rawList) {
+        const lower = String(a).toLowerCase().trim();
+        if (!lower) continue;
+        expandedSet.add(lower);
+
+        // Phone variants: strip whatsapp: prefix, normalise +/digits
+        const stripped = lower.replace(/^whatsapp:/i, '');
+        const digitsOnly = stripped.replace(/\D/g, '');
+        if (digitsOnly.length >= 7) {
+          // +234… form
+          expandedSet.add(`+${digitsOnly}`);
+          // bare digits
+          expandedSet.add(digitsOnly);
+          // Nigerian local 0… form (drop leading country code 234)
+          if (digitsOnly.startsWith('234') && digitsOnly.length >= 12) {
+            expandedSet.add(`0${digitsOnly.slice(3)}`);
+          }
+          // If stored with whatsapp: prefix by escrow core
+          expandedSet.add(`whatsapp:+${digitsOnly}`);
+          expandedSet.add(`whatsapp:${digitsOnly}`);
+        }
+
+        // @username variants: normalise with/without leading @
+        if (lower.startsWith('@')) {
+          expandedSet.add(lower.slice(1)); // without @
+        } else if (/^[a-z0-9_]{3,32}$/.test(lower)) {
+          expandedSet.add(`@${lower}`); // with @
+        }
+      }
+
+      const lowerAliases = Array.from(expandedSet);
 
       const result = await client.query(
         'SELECT * FROM payments_service_agreements WHERE LOWER(buyer_user_id) = ANY($1) OR LOWER(seller_user_id) = ANY($1) ORDER BY created_at DESC',
@@ -2254,6 +2337,24 @@ export class PostgresDatabase {
         [limit]
       );
       return result.rows.map(mapServiceAgreement);
+    } finally {
+      client.release();
+    }
+  }
+
+  async listExpiredPendingAcceptanceAgreements(now = new Date(), limit = 100): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT * FROM payments_service_agreements
+         WHERE status = 'pending_seller_acceptance' AND acceptance_expires_at IS NOT NULL AND acceptance_expires_at <= $1
+         ORDER BY acceptance_expires_at ASC
+         LIMIT $2`,
+        [now.toISOString(), limit]
+      );
+      return result.rows.map(mapServiceAgreement);
+    } catch {
+      return [];
     } finally {
       client.release();
     }

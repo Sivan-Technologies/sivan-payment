@@ -37,7 +37,7 @@ async function main() {
     const controls = await request('PUT', '/api/admin/balance/controls', { transfersEnabled: true, minimumSendAmount: 5, manualReviewThreshold: 100, riskHoldsEnabled: true, supportedNetworks: ['base', 'solana'], updatedBy: 'test', reason: 'Enable test balance transfer controls' }, { 'x-admin-api-key': 'balance-admin-key' });
     assert(controls.transfersEnabled === true, 'admin enables balance transfers');
 
-    const adjustment = await request('POST', '/api/admin/balance/adjustments', { userId: user.id, asset: 'usdc', amount: 50, status: 'available', reason: 'Seed test available balance', adjustedBy: 'test' }, { 'x-admin-api-key': 'balance-admin-key' });
+    const adjustment = await request('POST', '/api/admin/balance/adjustments', { userId: user.id, asset: 'usdc', network: 'solana', amount: 50, status: 'available', reason: 'Seed test available balance', adjustedBy: 'test' }, { 'x-admin-api-key': 'balance-admin-key' });
     assert(adjustment.kind === 'adjustment', 'admin adjustment creates ledger credit');
 
     const balance = await request('GET', `/api/users/${user.id}/balance`);

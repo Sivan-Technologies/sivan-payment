@@ -4,7 +4,13 @@ import { forbidden, serviceUnavailable, badRequest, type AppError } from '../../
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import { solanaRpc } from '../solana/solana-rpc.js';
-import { erc20BalanceOf, fromBaseUnits } from '../evm/evm-rpc.js';
+import {
+  erc20BalanceOf,
+  nativeBalanceOf,
+  usesNativeStablecoin,
+  fromBaseUnits,
+  waitForEvmReceipt,
+} from '../evm/evm-rpc.js';
 import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
@@ -80,7 +86,17 @@ import type {
  * destination and cap. That is a deliberate later step, not a default.
  */
 
-const PRIVY_BASE = 'https://api.privy.io/v1';
+/**
+ * Privy API base, from the environment.
+ *
+ * Was a hardcoded literal. A baked-in base URL cannot be pointed at a staging
+ * tenant or a proxy without editing source, and it silently keeps working when
+ * an operator believes they have redirected it, which is the failure that
+ * matters: the change looks applied and is not.
+ *
+ * The default preserves existing behaviour so nothing breaks on deploy.
+ */
+const PRIVY_BASE = (process.env.PRIVY_API_BASE_URL || env.PRIVY_API_BASE_URL || 'https://api.privy.io/v1').replace(/\/+$/, '');
 
 /** Privy's chain vocabulary, keyed by Sivan's. */
 const CHAIN_TYPE: Record<WalletChain, string> = {
@@ -91,6 +107,12 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
   celo: 'ethereum',
   bsc: 'ethereum',
   bnb: 'ethereum',
+  // Arbitrum One is an EVM rollup: standard JSON-RPC, standard secp256k1
+  // addresses. Privy needs no new key material for it.
+  arbitrum: 'ethereum',
+  // Arc is Circle's own L1: EVM-compatible, Reth execution, standard
+  // secp256k1 addresses. Privy needs no new key material for it.
+  arc: 'ethereum',
 };
 
 /**
@@ -121,6 +143,37 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   bnb: {
     mainnet: 'eip155:56',
     testnet: 'eip155:97',
+  },
+  /**
+   * Arbitrum One and Arbitrum Sepolia.
+   *
+   * Both chain ids were read back from the live RPCs before being written
+   * here, rather than copied from documentation:
+   *   eth_chainId on arb1      -> 0xa4b1  = 42161
+   *   eth_chainId on sepolia   -> 0x66eee = 421614
+   *
+   * The distinction matters more than usual on a rollup. An EVM address is
+   * identical across both, so a transaction sent with the wrong CAIP-2 does
+   * not bounce. It succeeds, on a chain nobody is watching.
+   */
+  arbitrum: {
+    mainnet: 'eip155:42161',
+    testnet: 'eip155:421614',
+  },
+  /**
+   * Arc, Circle's stablecoin L1. Read back from each RPC before being
+   * written here:
+   *
+   *   eth_chainId on rpc.mainnet.arc.io -> 0x13b2   = 5042
+   *   eth_chainId on rpc.testnet.arc.io -> 0x4cef52 = 5042002
+   *
+   * Same hazard as Arbitrum: one secp256k1 address is valid on both, so a
+   * transaction sent with the wrong CAIP-2 does not bounce. It succeeds on a
+   * chain nobody is watching.
+   */
+  arc: {
+    mainnet: 'eip155:5042',
+    testnet: 'eip155:5042002',
   },
 };
 
@@ -469,6 +522,34 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
     mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
     testnet: '0x64544969ed7EBf5f083679233325356EbE738930',
   },
+  /**
+   * Arbitrum USDC. Both are Circle NATIVE USDC, not the bridged USDC.e.
+   *
+   * Each was read back from its own RPC with symbol() and decimals() before
+   * being written here, the same standard the Celo entries were held to:
+   *   42161  0xaf88d065e77c8cC2239327C5EDb3A432268e5831  USDC  6dp
+   *   421614 0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d  USDC  6dp
+   *
+   * Worth the check on Arbitrum specifically. The bridged legacy token
+   * USDC.e at 0xFF97...5CC8 is still widely circulated and reports symbol()
+   * as exactly "USDC", so a symbol check does NOT tell them apart. Only
+   * name() does:
+   *
+   *   native   0xaf88...5831  "USD Coin"
+   *   bridged  0xFF97...5CC8  "USD Coin (Arb1)"
+   *
+   * The two are not interchangeable: USDC.e cannot be redeemed with Circle or
+   * moved by CCTP, so a transfer into it lands in an asset the recipient
+   * cannot off-ramp, with nothing in the symbol to warn anyone.
+   */
+  'arbitrum:usdc': {
+    mainnet: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    testnet: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+  },
+  'arbitrum:usdt': {
+    mainnet: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+    testnet: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+  },
   'bsc:usdt': {
     mainnet: '0x55d398326f99059fF775485246999027B3197955',
     testnet: '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd',
@@ -493,9 +574,32 @@ export function erc20TokenAddress(
   return production ? entry.mainnet : entry.testnet;
 }
 
-/** USDC and USDT are 6-decimal tokens on every chain Sivan supports. */
+/**
+ * USDC and USDT are 6-decimal ERC-20 tokens on every chain where they ARE an
+ * ERC-20. Kept for callers that are provably ERC-20-only.
+ *
+ * Prefer decimalsForChainAsset(). This overload cannot see the chain, and Arc
+ * is the case where the chain decides the answer.
+ */
 export function decimalsFor(asset: string): number {
   return ['usdc', 'usdt'].includes(String(asset).toLowerCase()) ? 6 : 18;
+}
+
+/**
+ * Decimals for an asset ON A GIVEN CHAIN.
+ *
+ * Arc broke the assumption that USDC is always 6dp. Arc's USDC is the NATIVE
+ * gas token and is 18dp at the protocol level, so the decimal count is a
+ * property of the (chain, asset) pair, not of the asset alone.
+ *
+ * This matters more than most off-by-one bugs because it does not throw. Using
+ * 6 where 18 is correct reports a balance 10^12 times too large, and formats
+ * cleanly the whole way to the user's screen.
+ */
+export function decimalsForChainAsset(chain: WalletChain, asset: string): number {
+  const a = String(asset).toLowerCase();
+  if (usesNativeStablecoin(chain) && a === 'usdc') return 18;
+  return decimalsFor(a);
 }
 
 /**
@@ -568,7 +672,7 @@ export class PrivyWalletProvider implements WalletProvider {
    * Base is served by the Ethereum wallet - same key, same address - so all
    * three are supported with only TWO keys per user.
    */
-  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb'];
+  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb', 'arbitrum', 'arc'];
 
   /**
    * Create (or return) the user's wallet for a chain.
@@ -801,6 +905,31 @@ export class PrivyWalletProvider implements WalletProvider {
     // missing entry is skipped rather than reported as zero: Base has no
     // native USDT, and "0 USDT on Base" would be an invented figure.
     const balances: WalletBalance[] = [];
+
+    /**
+     * Arc settles USDC as the NATIVE coin, so there is no ERC-20 contract to
+     * read and erc20TokenAddress() correctly returns undefined for it. Without
+     * this branch the loop below would `continue` past every asset and report
+     * an empty balance list for a funded Arc wallet.
+     *
+     * No contractAddress is set on the result: there is no contract, and
+     * inventing one would be a lie the UI would happily render as a link.
+     */
+    if (usesNativeStablecoin(chain)) {
+      try {
+        const amount = await nativeBalanceOf(
+          chain,
+          address,
+          decimalsForChainAsset(chain, 'usdc'),
+          { production }
+        );
+        balances.push({ asset: 'usdc', chain, amount });
+      } catch {
+        balances.push({ asset: 'usdc', chain, amount: '0' });
+      }
+      return balances;
+    }
+
     const assetsToCheck: WalletAsset[] = chain === 'celo' ? ['usdc', 'usdt', 'cusd'] : ['usdc', 'usdt'];
     for (const asset of assetsToCheck) {
       const token = erc20TokenAddress(chain, asset, production);
@@ -811,7 +940,7 @@ export class PrivyWalletProvider implements WalletProvider {
           chain,
           token,
           address,
-          decimalsFor(asset),
+          decimalsForChainAsset(chain, asset),
           { production }
         );
 
@@ -844,27 +973,39 @@ export class PrivyWalletProvider implements WalletProvider {
       const mint = solanaMintFor(asset, production);
       if (!mint) continue;
 
-      const { result } = await solanaRpc<any>(
-        'getTokenAccountsByOwner',
-        [address, { mint }, { encoding: 'jsonParsed' }],
-        { production }
-      );
+      try {
+        const { result } = await solanaRpc<any>(
+          'getTokenAccountsByOwner',
+          [address, { mint }, { encoding: 'jsonParsed' }],
+          { production }
+        );
 
-      const accounts: any[] = result?.value ?? [];
+        const accounts: any[] = result?.value ?? [];
 
-      // Summed, not first-only. One owner can hold several accounts for the
-      // same mint, and showing only one under-reports the holding.
-      const total = accounts.reduce((sum, account) => {
-        const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
-        return sum + (raw ? BigInt(raw) : 0n);
-      }, 0n);
+        // Summed, not first-only. One owner can hold several accounts for the
+        // same mint, and showing only one under-reports the holding.
+        const total = accounts.reduce((sum, account) => {
+          const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
+          return sum + (raw ? BigInt(raw) : 0n);
+        }, 0n);
 
-      balances.push({
-        asset,
-        chain: 'solana',
-        amount: fromBaseUnits(total, 6),
-        contractAddress: mint,
-      });
+        balances.push({
+          asset,
+          chain: 'solana',
+          amount: fromBaseUnits(total, 6),
+          contractAddress: mint,
+        });
+      } catch (err: any) {
+        // A cluster-mint mismatch (e.g. devnet mint against mainnet RPC) or empty account
+        // should resolve as 0 rather than failing the entire multi-chain wallet read.
+        console.warn(`[solanaBalances] getTokenAccountsByOwner non-fatal note for ${asset}:`, err?.message || err);
+        balances.push({
+          asset,
+          chain: 'solana',
+          amount: '0.000000',
+          contractAddress: mint,
+        });
+      }
     }
 
     return balances;
@@ -973,6 +1114,31 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendCeloTransfer(input, signingKey, caip2);
     }
 
+    /**
+     * Arc sends USDC as a NATIVE value transfer, not an ERC-20 call.
+     *
+     * The generic EVM path below builds `to: <token contract>` with an
+     * encoded transfer(address,uint256) and `value: 0x0`. On Arc there is no
+     * USDC contract (eth_getCode at every well-known USDC address returns 0x),
+     * so that transaction would be sent to an address with no code. It would
+     * not revert. It would succeed as a plain value transfer of ZERO to a dead
+     * address, burn the gas, and report a hash the user could paste into an
+     * explorer and see "success" on, with nothing moved.
+     *
+     * Hence: recipient in `to`, amount in `value`, no calldata.
+     *
+     * 18 decimals, sourced from decimalsForChainAsset. Arc's native USDC is
+     * 18dp; using the ERC-20 default of 6 would send 10^12 times too little.
+     */
+    if (usesNativeStablecoin(input.chain)) {
+      if (String(input.asset).toLowerCase() !== 'usdc') {
+        throw forbidden(
+          `Arc settles in USDC only. ${String(input.asset).toUpperCase()} is not available on Arc.`
+        );
+      }
+      return this.sendNativeEvmTransfer(input, signingKey, caip2);
+    }
+
     // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
     // disagreeing is the specific failure this parameter exists to prevent: a
     // mainnet USDC contract addressed on Base Sepolia is not a token contract
@@ -1042,6 +1208,57 @@ export class PrivyWalletProvider implements WalletProvider {
       throw new Error(`Privy: ${message}`);
     }
 
+    const evmTxHash: string | undefined = result?.data?.hash || result?.hash || undefined;
+    const userOpHash: string | undefined = result?.data?.user_operation_hash || undefined;
+    const isSponsored = Boolean(result?.data?.sponsorship_provider);
+
+    /**
+     * RECEIPT VERIFICATION — guard against false success receipts on EVM chains.
+     *
+     * For NON-SPONSORED transactions we have a real txHash immediately and can
+     * poll eth_getTransactionReceipt inline to verify status 0x1 before reporting
+     * success. This matches the fix applied to the Celo settlement relayer.
+     *
+     * For SPONSORED (ERC-4337 user operations) no txHash exists until a bundler
+     * includes the user operation in a block, so we cannot poll synchronously.
+     * Those fall through to 'submitted' and the background transfer-confirmation
+     * poller confirms them asynchronously.
+     *
+     * A reverted non-sponsored tx throws immediately so the balance hold is
+     * released and the user is told the truth: the send failed on-chain.
+     */
+    const production = isProduction(input.networkMode);
+    if (evmTxHash && !isSponsored && /^0x[0-9a-fA-F]{64}$/.test(evmTxHash)) {
+      const receiptResult = await waitForEvmReceipt(input.chain, evmTxHash, {
+        production,
+        pollAttempts: 15,  // 30s max — keeps the HTTP response under gateway timeout
+        pollIntervalMs: 2_000,
+      });
+
+      if (receiptResult.reverted) {
+        console.error(
+          `[privy.createTransfer] ${input.chain} tx ${evmTxHash} reverted (status 0x0). No funds transferred.`
+        );
+        throw new Error(
+          `Transaction reverted on-chain (status 0x0). No funds were transferred. txHash: ${evmTxHash}`
+        );
+      }
+
+      const confirmedStatus = receiptResult.confirmed ? 'confirmed' : 'submitted';
+      return {
+        provider: this.name,
+        providerTransferId:
+          result?.data?.transaction_id ||
+          result?.transaction_id ||
+          evmTxHash,
+        status: confirmedStatus,
+        txHash: evmTxHash,
+        userOperationHash: userOpHash,
+        sponsored: false,
+        rawProviderPayload: { ...result, confirmed: receiptResult.confirmed },
+      };
+    }
+
     return {
       provider: this.name,
       // `??` was wrong here. A SPONSORED transaction is an ERC-4337 user
@@ -1060,12 +1277,154 @@ export class PrivyWalletProvider implements WalletProvider {
         result?.data?.user_operation_hash ||
         result?.data?.hash ||
         `privy_tx_${crypto.randomUUID()}`,
+      // 'submitted' for sponsored txs — background poller will confirm.
       status: 'submitted',
       // Deliberately left undefined rather than '' when sponsored: there is no
       // transaction hash yet, and an empty string reads as "we have one".
-      txHash: result?.data?.hash || result?.hash || undefined,
-      userOperationHash: result?.data?.user_operation_hash || undefined,
-      sponsored: Boolean(result?.data?.sponsorship_provider),
+      txHash: evmTxHash,
+      userOperationHash: userOpHash,
+      sponsored: isSponsored,
+      rawProviderPayload: result,
+    };
+  }
+
+  /**
+   * Move the NATIVE coin out of an EVM wallet.
+   *
+   * Arc is the only chain that takes this path today. Its settlement asset,
+   * USDC, IS the native gas token, so a transfer is `to` plus `value` with no
+   * calldata, exactly like sending ETH on Ethereum.
+   *
+   * Kept separate from the generic EVM path rather than adding a branch inside
+   * it, because the two build fundamentally different transactions and the
+   * failure mode of confusing them is silent. The ERC-20 path sets
+   * `to: <contract>` and `value: 0x0`; run against Arc, where no USDC contract
+   * exists, that sends zero to an address with no code. It does not revert. It
+   * produces a hash that shows "success" in an explorer while moving nothing.
+   *
+   * Amount is converted with decimalsForChainAsset, which returns 18 for Arc
+   * USDC. The ERC-20 default of 6 would transfer 10^12 times too little and
+   * would also not revert.
+   */
+  private async sendNativeEvmTransfer(
+    input: WalletTransferInput,
+    signingKey: string,
+    caip2: string
+  ): Promise<WalletTransfer> {
+    const decimals = decimalsForChainAsset(input.chain, input.asset);
+    const value = '0x' + toBaseUnits(input.amount, decimals).toString(16);
+
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+
+    const numericChainId = Number(caip2.replace(/^eip155:/, ''));
+    const body: Record<string, unknown> = {
+      method: 'eth_sendTransaction',
+      caip2,
+      // On Arc, USDC is the native gas token. The wallet holds native USDC and
+      // pays its own gas without needing external paymasters/sponsorship.
+      // Explicitly omit sponsor: true to avoid 400 invalid_data on custom networks.
+      params: {
+        transaction: {
+          to: input.toAddress,
+          value,
+          ...(Number.isFinite(numericChainId) && numericChainId > 0 ? { chain_id: numericChainId } : {}),
+          // No calldata. A native transfer carries none, and sending an
+          // encoded ERC-20 call here would be interpreted by a plain EOA
+          // recipient as nothing at all while still moving `value`.
+        },
+      },
+    };
+
+    const { appId } = credentials();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result: any = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
+
+      /**
+       * Arc is a new chain and gas sponsorship may not be configured.
+       * Keep message free of provider names so safeUserMessage preserves it.
+       */
+      if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
+        throw forbidden(
+          `Gas sponsorship is not available for ${caip2}. The wallet must hold native currency to pay its own gas.`
+        );
+      }
+      if (/unsupported|unknown|not supported/i.test(message) && /chain|network|caip/i.test(message)) {
+        throw forbidden(
+          `Network ${caip2} is not recognised by the signing infrastructure. Network support must be enabled before transfers on this network can be signed.`
+        );
+      }
+      throw new Error(`Signing failed: ${message}`);
+    }
+
+    const evmTxHash: string | undefined = result?.data?.hash || result?.hash || undefined;
+    const userOpHash: string | undefined = result?.data?.user_operation_hash || undefined;
+    const isSponsored = Boolean(result?.data?.sponsorship_provider);
+
+    // Same receipt discipline as the ERC-20 path: a non-sponsored tx has a
+    // real hash now and is polled inline, so a revert is reported as a
+    // failure rather than as a receipt the user could screenshot.
+    const production = isProduction(input.networkMode);
+    if (evmTxHash && !isSponsored && /^0x[0-9a-fA-F]{64}$/.test(evmTxHash)) {
+      const receiptResult = await waitForEvmReceipt(input.chain, evmTxHash, {
+        production,
+        // Arc finalises in well under a second, so 10 attempts is already
+        // generous. Kept polling rather than assuming, because "fast chain"
+        // is not "instant node indexing".
+        pollAttempts: 10,
+        pollIntervalMs: 2_000,
+      });
+
+      if (receiptResult.reverted) {
+        console.error(
+          `[privy.sendNativeEvmTransfer] ${input.chain} tx ${evmTxHash} reverted (status 0x0). No funds transferred.`
+        );
+        throw new Error(
+          `Transaction reverted on-chain (status 0x0). No funds were transferred. txHash: ${evmTxHash}`
+        );
+      }
+
+      return {
+        provider: this.name,
+        providerTransferId:
+          result?.data?.transaction_id || result?.transaction_id || evmTxHash,
+        status: receiptResult.confirmed ? 'confirmed' : 'submitted',
+        txHash: evmTxHash,
+        userOperationHash: userOpHash,
+        sponsored: false,
+        rawProviderPayload: { ...result, confirmed: receiptResult.confirmed },
+      };
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId:
+        result?.data?.transaction_id ||
+        result?.transaction_id ||
+        result?.data?.user_operation_hash ||
+        result?.data?.hash ||
+        `privy_tx_${crypto.randomUUID()}`,
+      status: 'submitted',
+      txHash: evmTxHash,
+      userOperationHash: userOpHash,
+      sponsored: isSponsored,
       rawProviderPayload: result,
     };
   }
@@ -1234,6 +1593,75 @@ export class PrivyWalletProvider implements WalletProvider {
       (typeof result?.result === 'string' ? result.result : undefined) ||
       undefined;
 
+    /**
+     * SOLANA SIGNATURE STATUS VERIFICATION — guard against false receipts.
+     *
+     * signAndSendTransaction resolves when Privy broadcasts the transaction.
+     * The signature exists but the transaction has NOT yet been confirmed by
+     * the network. Showing a receipt immediately would be a false success
+     * notification if the transaction fails to land.
+     *
+     * Poll getSignatureStatuses for up to 30s (15 × 2s). Solana slots are
+     * ~400ms so the signature is normally confirmed within the first 2–3 polls.
+     *
+     * confirmed/finalized + err === null → status:'confirmed'
+     * err is set (InsufficientFunds, simulation failure etc.) → throw so the
+     *   balance hold is released and the user is told the truth.
+     * timeout → status:'submitted'; background poller handles the rest.
+     */
+    let solanaStatus: 'confirmed' | 'submitted' = 'submitted';
+    if (signature) {
+      const solanaPollAttempts = 15;
+      const solanaPollIntervalMs = 2_000;
+      const solRpcOpts = { production: isProduction(input.networkMode) };
+
+      for (let attempt = 0; attempt < solanaPollAttempts; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, solanaPollIntervalMs));
+
+        let statusResult: any = null;
+        try {
+          statusResult = await solanaRpc<any>(
+            'getSignatureStatuses',
+            [[signature], { searchTransactionHistory: true }],
+            solRpcOpts
+          );
+        } catch {
+          // RPC hiccup — not evidence the tx failed.
+          continue;
+        }
+
+        const statuses: any[] = statusResult?.result?.value ?? [];
+        const sigStatus = statuses[0];
+
+        if (!sigStatus) continue; // Not yet visible to this node.
+
+        if (sigStatus.err !== null && sigStatus.err !== undefined) {
+          // Transaction was processed and FAILED on-chain.
+          console.error(
+            `[privy.sendSolanaTransfer] Signature ${signature} confirmed with error:`,
+            sigStatus.err
+          );
+          throw new Error(
+            `Solana transaction failed on-chain: ${JSON.stringify(sigStatus.err)}. No funds were transferred. signature: ${signature}`
+          );
+        }
+
+        const cs = sigStatus.confirmationStatus;
+        if (cs === 'confirmed' || cs === 'finalized') {
+          solanaStatus = 'confirmed';
+          break;
+        }
+        // 'processed' is too early — tx is in a block but not yet confirmed
+        // by a supermajority of validators. Keep polling.
+      }
+
+      if (solanaStatus !== 'confirmed') {
+        console.warn(
+          `[privy.sendSolanaTransfer] Signature ${signature} did not reach confirmed status within ${solanaPollAttempts * solanaPollIntervalMs / 1000}s. Returning submitted.`
+        );
+      }
+    }
+
     return {
       provider: this.name,
       // Same empty-string trap as the EVM path above: `??` would let Privy's
@@ -1243,7 +1671,7 @@ export class PrivyWalletProvider implements WalletProvider {
         result?.transaction_id ||
         signature ||
         `privy_sol_${crypto.randomUUID()}`,
-      status: 'submitted',
+      status: solanaStatus,
       txHash: signature,
       sponsored: Boolean(result?.data?.sponsorship_provider),
       rawProviderPayload: {
@@ -1426,77 +1854,122 @@ export class PrivyWalletProvider implements WalletProvider {
     const txHash = await celoRpc<string>('eth_sendRawTransaction', [rawTx], rpcOpts);
 
     // -------------------------------------------------------------------
-    // Step 4: Collect Sivan Protocol Fee on-chain if feeAmount > 0 and feeWallet configured
+    // Step 3b: RECEIPT VERIFICATION — guard against false success receipts.
+    //
+    // eth_sendRawTransaction resolves as soon as the node accepts the broadcast.
+    // It does NOT mean the transaction was included and it certainly does NOT
+    // mean it succeeded. A tx can be included and REVERT (status 0x0) — in that
+    // case no value moved and returning 'submitted' (let alone 'confirmed')
+    // would emit a false receipt the user could screenshot as proof of payment.
+    //
+    // Poll the receipt for up to ~30s (15 × 2s). Celo blocks every ~5s so the
+    // receipt normally arrives on attempt 1–3.
+    //
+    // Reverted → throw immediately so the balance hold is released and the user
+    //            is told the truth: the send failed on-chain.
+    // TimedOut → return 'submitted'; the background transfer-confirmation poller
+    //            will finish it and fire a confirmed notification.
     // -------------------------------------------------------------------
-    let feeTxHash: string | undefined;
-    const feeWallet = env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_FEE_WALLET_CELO?.trim();
-    const feeAmountNum = Number(input.feeAmount ?? 0);
+    if (txHash) {
+      const receiptResult = await waitForEvmReceipt('celo', txHash, {
+        production,
+        pollAttempts: 15,
+        pollIntervalMs: 2_000,
+      });
 
-    if (feeWallet && feeAmountNum > 0 && feeWallet.toLowerCase() !== senderAddress.toLowerCase()) {
-      try {
-        const collectionOn = await import('../wallet-controls.service.js')
-          .then((mod) => mod.getWalletControls())
-          .then((controls) => controls?.collectTransferFeeOnChain !== false)
-          .catch(() => false);
+      if (receiptResult.reverted) {
+        console.error(
+          `[privy.sendCeloTransfer] Transaction ${txHash} reverted (status 0x0). No funds were transferred.`
+        );
+        throw new Error(
+          `Celo transaction reverted on-chain (status 0x0). No funds were transferred. txHash: ${txHash}`
+        );
+      }
 
-        if (collectionOn) {
-          const feePayload = buildCeloTransferPayload({
-            tokenAddress: token,
-            recipientAddress: feeWallet,
-            amount: String(input.feeAmount),
-            decimals: decimalsFor(input.asset),
-          });
+      if (receiptResult.confirmed) {
+        // -------------------------------------------------------------------
+        // Step 4: Collect Sivan Protocol Fee on-chain if feeAmount > 0
+        // -------------------------------------------------------------------
+        let feeTxHash: string | undefined;
+        const feeWallet = env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_FEE_WALLET_CELO?.trim();
+        const feeAmountNum = Number(input.feeAmount ?? 0);
 
-          const feeCip64Params = {
-            chainId,
-            nonce: nonce + 1n,
-            maxPriorityFeePerGas: maxPriority,
-            maxFeePerGas: maxFee,
-            gasLimit,
-            to: feePayload.to,
-            value: 0n,
-            data: feePayload.data,
-            feeCurrency,
-          };
+        if (feeWallet && feeAmountNum > 0 && feeWallet.toLowerCase() !== senderAddress.toLowerCase()) {
+          try {
+            const collectionOn = await import('../wallet-controls.service.js')
+              .then((mod) => mod.getWalletControls())
+              .then((controls) => controls?.collectTransferFeeOnChain !== false)
+              .catch(() => false);
 
-          const feeSigningHash = buildCip64SigningHash(feeCip64Params);
-          const feeIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}_fee` : undefined;
+            if (collectionOn) {
+              const feePayload = buildCeloTransferPayload({
+                tokenAddress: token,
+                recipientAddress: feeWallet,
+                amount: String(input.feeAmount),
+                decimals: decimalsFor(input.asset),
+              });
 
-          const feeSignBody = {
-            method: 'secp256k1_sign',
-            params: { hash: feeSigningHash },
-          };
+              const feeCip64Params = {
+                chainId,
+                nonce: nonce + 1n,
+                maxPriorityFeePerGas: maxPriority,
+                maxFeePerGas: maxFee,
+                gasLimit,
+                to: feePayload.to,
+                value: 0n,
+                data: feePayload.data,
+                feeCurrency,
+              };
 
-          const feeSignResponse = await fetch(rawSignUrl, {
-            method: 'POST',
-            headers: {
-              ...headers(feeIdempotencyKey),
-              'privy-authorization-signature': authorizationSignature({
+              const feeSigningHash = buildCip64SigningHash(feeCip64Params);
+              const feeIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}_fee` : undefined;
+              const feeSignBody = { method: 'secp256k1_sign', params: { hash: feeSigningHash } };
+
+              const feeSignResponse = await fetch(rawSignUrl, {
                 method: 'POST',
-                url: rawSignUrl,
-                body: feeSignBody,
-                appId,
-                privateKeyPem: signingKey,
-                idempotencyKey: feeIdempotencyKey,
-              }),
-            },
-            body: JSON.stringify(feeSignBody),
-          });
+                headers: {
+                  ...headers(feeIdempotencyKey),
+                  'privy-authorization-signature': authorizationSignature({
+                    method: 'POST',
+                    url: rawSignUrl,
+                    body: feeSignBody,
+                    appId,
+                    privateKeyPem: signingKey,
+                    idempotencyKey: feeIdempotencyKey,
+                  }),
+                },
+                body: JSON.stringify(feeSignBody),
+              });
 
-          const feeSignResult: any = await feeSignResponse.json().catch(() => ({}));
-          if (feeSignResponse.ok) {
-            const feePrivySignature: string = feeSignResult?.data?.signature ?? feeSignResult?.signature;
-            if (feePrivySignature) {
-              const feeRawTx = buildCip64SignedRawTx(feeCip64Params, feePrivySignature);
-              feeTxHash = await celoRpc<string>('eth_sendRawTransaction', [feeRawTx], rpcOpts);
+              const feeSignResult: any = await feeSignResponse.json().catch(() => ({}));
+              if (feeSignResponse.ok) {
+                const feePrivySignature: string = feeSignResult?.data?.signature ?? feeSignResult?.signature;
+                if (feePrivySignature) {
+                  const feeRawTx = buildCip64SignedRawTx(feeCip64Params, feePrivySignature);
+                  feeTxHash = await celoRpc<string>('eth_sendRawTransaction', [feeRawTx], rpcOpts);
+                }
+              } else {
+                console.warn('[privy.sendCeloTransfer] Fee sign note:', feeSignResult?.error ?? feeSignResult?.message);
+              }
             }
-          } else {
-            console.warn('[privy.sendCeloTransfer] Fee sign note:', feeSignResult?.error ?? feeSignResult?.message);
+          } catch (feeErr) {
+            console.warn('[privy.sendCeloTransfer] On-chain Celo protocol fee transfer note:', feeErr);
           }
         }
-      } catch (feeErr) {
-        console.warn('[privy.sendCeloTransfer] On-chain Celo protocol fee transfer note:', feeErr);
+
+        return {
+          provider: this.name,
+          providerTransferId: txHash,
+          status: 'confirmed',
+          txHash,
+          userOperationHash: undefined,
+          sponsored: false,
+          rawProviderPayload: { chainId: chainId.toString(), txHash, feeTxHash, feeCurrency, senderAddress, confirmed: true },
+        };
       }
+
+      // timedOut — broadcast is in flight, background poller will confirm.
+      console.warn(`[privy.sendCeloTransfer] Receipt for ${txHash} timed out after polling; returning submitted.`);
     }
 
     return {
@@ -1506,7 +1979,7 @@ export class PrivyWalletProvider implements WalletProvider {
       txHash: txHash || undefined,
       userOperationHash: undefined,
       sponsored: false,
-      rawProviderPayload: { chainId: chainId.toString(), txHash, feeTxHash, feeCurrency, senderAddress },
+      rawProviderPayload: { chainId: chainId.toString(), txHash, feeCurrency, senderAddress, confirmed: false },
     };
   }
 

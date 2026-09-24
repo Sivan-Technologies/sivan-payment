@@ -51,7 +51,12 @@ if (!env.DATABASE_URL) {
 const migrationsDir = path.join(process.cwd(), 'database', 'migrations');
 const files = (await fs.readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
 
-const client = new Client({ connectionString: env.DATABASE_URL });
+const client = new Client({
+  connectionString: env.DATABASE_URL,
+  ssl: env.DATABASE_URL.includes('localhost') || env.DATABASE_URL.includes('127.0.0.1')
+    ? false
+    : { rejectUnauthorized: false },
+});
 await client.connect();
 
 try {

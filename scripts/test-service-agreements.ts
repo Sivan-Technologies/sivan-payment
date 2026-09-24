@@ -205,6 +205,7 @@ export async function runServiceAgreementTest() {
   const buyerData = await signupUser('Test Buyer', 'buyer');
   const sellerData = await signupUser('Test Seller', 'seller');
   const buyerToken = buyerData.token;
+  const sellerToken = sellerData.token;
 
   let agreementId: string;
 
@@ -226,10 +227,10 @@ export async function runServiceAgreementTest() {
       });
       assert.equal(res.statusCode, 201, `Expected 201, got ${res.statusCode}: ${res.body}`);
       const body = res.json();
-      assert.equal(body.status, 'pending_payment');
+      assert.equal(body.status, 'pending_seller_acceptance');
       assert.equal(body.deadlineDays, 5, `Expected 5 days parsed from NL, got ${body.deadlineDays}`);
       assert.ok(body.id, 'Expected agreement id');
-      assert.ok(body.countdownLabel.includes('Awaiting payment'), `Got: ${body.countdownLabel}`);
+      assert.ok(body.countdownLabel.includes('Awaiting seller acceptance'), `Got: ${body.countdownLabel}`);
       agreementId = body.id;
     });
     resolve();
@@ -248,7 +249,29 @@ export async function runServiceAgreementTest() {
       assert.ok(body.countdownLabel, 'Expected countdownLabel in response');
     });
 
-    test('POST /api/agreements/:id/fund computes delivery_due_at', async () => {
+    test('POST /api/agreements/:id/fund fails before seller acceptance', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/agreements/${agreementId}/fund`,
+        headers: { Authorization: `Bearer ${buyerToken}` },
+      });
+      assert.equal(res.statusCode, 400, `Expected 400, got ${res.statusCode}: ${res.body}`);
+    });
+
+    test('POST /api/agreements/:id/accept advances to pending_payment', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/agreements/${agreementId}/accept`,
+        headers: { Authorization: `Bearer ${sellerToken}` },
+        payload: { sellerUserId: sellerData.user.id },
+      });
+      assert.equal(res.statusCode, 200, `Expected 200, got ${res.statusCode}: ${res.body}`);
+      const body = res.json();
+      assert.equal(body.status, 'pending_payment');
+      assert.ok(body.countdownLabel.includes('Awaiting payment'), `Got: ${body.countdownLabel}`);
+    });
+
+    test('POST /api/agreements/:id/fund computes delivery_due_at after acceptance', async () => {
       const res = await app.inject({
         method: 'POST',
         url: `/api/agreements/${agreementId}/fund`,
