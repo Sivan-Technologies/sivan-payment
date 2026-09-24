@@ -2213,6 +2213,7 @@ export class PostgresDatabase {
 
       // Dual-table synchronization: Keep escrows table in exact parity across channels
       const escrowStatusMap: Record<string, string> = {
+        pending_payment: 'PENDING_PAYMENT',
         delivered: 'DELIVERED',
         released: 'RELEASED',
         cancelled: 'CANCELLED',
@@ -2222,8 +2223,19 @@ export class PostgresDatabase {
       const mappedEscrowStatus = escrowStatusMap[record.status];
       if (mappedEscrowStatus) {
         await client.query(
-          `UPDATE escrows SET status = $1, updated_at = $2 WHERE escrow_id = $3 AND status != $1`,
-          [mappedEscrowStatus, record.updatedAt || new Date().toISOString(), record.id]
+          `UPDATE escrows SET 
+             status = $1, 
+             updated_at = $2,
+             seller_user_id = COALESCE(seller_user_id, $4),
+             seller_whatsapp = COALESCE(seller_whatsapp, $5)
+           WHERE escrow_id = $3 AND (status != $1 OR seller_user_id IS NULL OR seller_whatsapp IS NULL)`,
+          [
+            mappedEscrowStatus,
+            record.updatedAt || new Date().toISOString(),
+            record.id,
+            record.sellerUserId || null,
+            record.sellerUserId || null,
+          ]
         ).catch((err: any) => console.warn('[postgres-database] escrows sync note:', err?.message || err));
       }
 
