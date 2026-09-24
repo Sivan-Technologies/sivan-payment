@@ -480,9 +480,7 @@ export async function getUserBalance(userId: string) {
     const row = ensure(entry.asset);
     const value = amount(entry.amount);
     if (entry.kind === 'credit_available' || entry.kind === 'adjustment') {
-      if (entry.sourceType !== 'service_agreement') {
-        row.available += value;
-      }
+      row.available += value;
       row.totalCredited += Math.max(value, 0);
     }
     if (entry.kind === 'hold') { row.available -= value; row.held += value; }
