@@ -1268,11 +1268,11 @@ async function syncEscrowAgentAcceptance(
     if (!configuredUrl || !coreSecret) return;
 
     const sellerPhone = agreement.sellerUserId || sellerUserId || '';
-    const wireIdentity = sellerPhone.startsWith('+')
-      ? `whatsapp:${sellerPhone}`
-      : sellerPhone.startsWith('whatsapp:')
-      ? sellerPhone
-      : `whatsapp:+${sellerPhone}`;
+    const cleanPhone = sellerPhone.replace(/^whatsapp:/i, '').trim();
+    const isDigitsOnly = /^\+?[0-9]{7,15}$/.test(cleanPhone);
+    const wireIdentity = isDigitsOnly
+      ? (cleanPhone.startsWith('+') ? `whatsapp:${cleanPhone}` : `whatsapp:+${cleanPhone}`)
+      : cleanPhone;
 
     const url = `${configuredUrl.replace(/\/$/, '')}/api/escrows/${encodeURIComponent(agreement.id)}/accept`;
     await fetch(url, {
@@ -1281,7 +1281,7 @@ async function syncEscrowAgentAcceptance(
         'Content-Type': 'application/json',
         'x-core-api-key': coreSecret,
       },
-      body: JSON.stringify({ actorWhatsapp: wireIdentity }),
+      body: JSON.stringify({ actorWhatsapp: wireIdentity, actorUserId: cleanPhone }),
       signal: AbortSignal.timeout(3500),
     });
   } catch (err: any) {
