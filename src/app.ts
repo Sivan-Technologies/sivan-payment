@@ -34,8 +34,11 @@ function normalizeAdminAliasUrl(rawUrl = '') {
   if (rawUrl.startsWith('/api/admin/payment/')) {
     return rawUrl.replace(/^\/api\/admin\/payment/, '/api/admin');
   }
+  if (rawUrl.startsWith('/api/payment/admin/') || rawUrl === '/api/payment/admin') {
+    return rawUrl.replace(/^\/api\/payment\/admin/, '/api/admin');
+  }
   if (rawUrl.startsWith('/api/payment/')) {
-    return rawUrl.replace(/^\/api\/payment/, '/api/admin');
+    return rawUrl.replace(/^\/api\/payment/, '');
   }
   if (!rawUrl.startsWith('/api/admin')) {
     const path = rawUrl.split('?')[0];
