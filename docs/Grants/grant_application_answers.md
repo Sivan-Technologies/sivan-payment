@@ -59,7 +59,7 @@ Answer:
 > Sivan payment Ai is not a theoretical pitch deck or prototype—it is live, production-ready software.
 >
 > Empirical Validation Milestones Achieved:
-> - Multi-Channel Operational Parity: Live working applications across Web Admin Hub, Telegram (`@Sivan_Ai`), and WhatsApp gateways.
+> - Multi-Channel Operational Parity: Live working applications across Web Admin Hub, Telegram (`@SivanAi_bot`), and WhatsApp gateways.
 > - Real-Time Push Alerts: Verified real-time webhook push notification cards for funding, delivery, and settlement release events.
 > - Solana x402 Integration: Verified end-to-end multi-currency payment router on Solana Devnet.
 > - Enterprise Operations Hub: Production-ready Admin Hub featuring real-time risk controls, currency toggles, system maintenance modes, and sub-50ms audit log views.

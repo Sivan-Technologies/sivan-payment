@@ -49,7 +49,8 @@ Public Live Services and Endpoints:
 - Production Web App / Platform: https://app.sivantech.online
 - Production Ingress API Gateway (AWS): https://api.sivantech.online
 - Staging Ingress API Gateway: https://test-sivan.sivantech.online
-- Telegram Payment AI Agent: https://t.me/Sivan_Ai
+- Telegram Live Payment Bot: https://t.me/SivanAi_bot
+- Telegram Personal Chat / Community: https://t.me/Sivan_Ai
 - Core Payment Engine (sivan-payment): https://sivan-payments-api-test-x9xq.onrender.com/health
 - Service Agreement Backend (sivan-escrow-agent): https://sivan-escrow-agent-test-gb84.onrender.com/api/health
 - WhatsApp Payment AI Layer: https://whatsapp-bot-ix7t.onrender.com/api/health
@@ -95,7 +96,7 @@ Milestone 1: Core Payment and Service Agreement State Machine
 
 Milestone 2: Natural Language Intent Parsing and Telegram Layer Integration
 - Status: Completed
-- Deliverable: Natural-language command parser on Telegram (@Sivan_Ai) for agreement creation and direct transfers.
+- Deliverable: Natural-language command parser on Telegram (@SivanAi_bot) for agreement creation and direct transfers.
 
 Milestone 3: Instant 1-Tap Balance Payment Engine
 - Status: Completed

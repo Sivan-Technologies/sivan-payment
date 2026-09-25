@@ -13,7 +13,7 @@ Platform: Sivan Ai / Sivan Payment Ai
 ## 1. The Split Identity Problem Across Channels
 
 ### Scenario A (Telegram First, Web Later):
-1. User starts on Telegram (@Sivan_Ai) with no email. Sivan Ai automatically provisions Account A (usr_tg_123) and generates multi-chain wallets (Solana, Base, Celo, BNB Chain, Stellar). The user receives 50.00 USDC in their wallet.
+1. User starts on Telegram (@SivanAi_bot) with no email. Sivan Ai automatically provisions Account A (usr_tg_123) and generates multi-chain wallets (Solana, Base, Celo, BNB Chain, Stellar). The user receives 50.00 USDC in their wallet.
 2. User later opens app.sivantech.online and signs in via Google or Email, creating Account B (usr_web_456) with empty wallets (0.00 USDC).
 3. User attempts to link Telegram from the Web Dashboard. The backend detects Telegram ID is already bound to Account A and throws a conflict refusal.
 
@@ -109,7 +109,7 @@ A user must NEVER be asked to complete KYC more than once. Sivan Ai enforces a s
 
 ### Telegram Journey:
 1. User logs into Web Dashboard (0.00 USDC) and clicks "Connect Telegram".
-2. Web Dashboard redirects to t.me/Sivan_Ai?start=pair_TOKEN.
+2. Web Dashboard redirects to t.me/SivanAi_bot?start=pair_TOKEN.
 3. Sivan Ai detects 50.00 USDC in the Telegram wallet and asks: "Merge 50.00 USDC into user@example.com?".
 4. User taps "Approve & Merge Funds".
 5. Sivan Ai confirms: "Accounts merged successfully! Total spendable balance: 50.00 USDC."

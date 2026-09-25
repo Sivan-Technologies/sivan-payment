@@ -69,7 +69,7 @@ graph TD
 
 Sivan payment Ai is not a theoretical whitepaper or Figma concept. It is live, production-ready software with empirical verification:
 
-1. Multi-Channel Presence: Live integration across Web Admin Hub, Telegram (`@Sivan_Ai`), and WhatsApp gateways.
+1. Multi-Channel Presence: Live integration across Web Admin Hub, Telegram (`@SivanAi_bot`), and WhatsApp gateways.
 2. Sub-50ms Query Performance: Bounded snapshot architecture and composite database indexing delivering sub-50ms audit queries and 0.18ms queue write latency.
 3. Real-Time Pop-up Webhook Push Notifications: Instant Telegram pop-up card alerts for funding events, delivery submissions, and settlement releases.
 4. Admin Control Controls: Granular administrative controls in the Sivan Admin Hub to toggle currencies (e.g., USDT/USDC), risk limits, and system maintenance modes.
@@ -96,7 +96,7 @@ To maximize application scoring and guarantee a 100% win rate, here are the imme
 - [x] Implement & test USDT admin toggle switch.
 - [x] Execute Master End-to-End Integration Suite (`test-master-e2e-all-features.ts`).
 - [ ] Record a 2-minute clean screen video demo showing:
-  - Natural language agreement creation in Telegram (`@Sivan_Ai`).
+  - Natural language agreement creation in Telegram (`@SivanAi_bot`).
   - Real-time pop-up notification received by counterparty.
   - Delivery submission & instant Solana Devnet USDC release.
   - Sivan Admin Hub toggle & audit log verification.

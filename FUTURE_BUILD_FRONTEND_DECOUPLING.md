@@ -67,7 +67,7 @@ Once Phase 3 begins, the decoupled architecture will be structured as follows:
 ### Step 2: Environment Variable Sourcing
 - Ensure the new standalone frontend uses dynamic environment variables for all backend API connections:
   - VITE_PAYMENT_API_URL=https://api.sivantech.online
-  - VITE_TELEGRAM_BOT_URL=https://t.me/Sivan_Ai
+  - VITE_TELEGRAM_BOT_URL=https://t.me/SivanAi_bot
   - VITE_EXPLORER_BASE_URL (dynamic multi-chain network resolver)
 - Confirm zero hardcoded backend or explorer URLs exist in client components.
 

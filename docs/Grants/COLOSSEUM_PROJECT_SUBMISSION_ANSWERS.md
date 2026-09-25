@@ -39,7 +39,7 @@ Why now: Solana sub-second finality and negligible fees, combined with breakthro
 
 ## Field 4: WHAT TECHNOLOGIES ARE YOU USING OR INTEGRATING WITH TO BUILD YOUR PRODUCT?
 
-Solana (SPL Token Program, USDC/USDT on Devnet and Mainnet, x402 payment facility), TypeScript, Node.js, Fastify, PostgreSQL (Neon DB with composite indexing), Next.js, Vercel, Telegram Bot API (@Sivan_Ai), WhatsApp Cloud API, Claude / Codex for agentic intent parsing, Privy / Solana Web3.js for wallet management, Breet and Paystack for fiat rails.
+Solana (SPL Token Program, USDC/USDT on Devnet and Mainnet, x402 payment facility), TypeScript, Node.js, Fastify, PostgreSQL (Neon DB with composite indexing), Next.js, Vercel, Telegram Bot API (@SivanAi_bot), WhatsApp Cloud API, Claude / Codex for agentic intent parsing, Privy / Solana Web3.js for wallet management, Breet and Paystack for fiat rails.
 
 ---
 
@@ -79,7 +79,7 @@ https://x.com/samswitchy
 
 ## Field 10: IS THERE ANYTHING ELSE JUDGES SHOULD KNOW ABOUT YOUR PROJECT THAT ISN'T CAPTURED ABOVE?
 
-Sivan Payment AI is live, battle-tested, and already operating on Solana Devnet with a deployed Vercel administrative operations hub and Telegram bot (@Sivan_Ai). We have achieved sub-50ms audit logging query speeds and a 100% successful settlement completion rate across real test transactions. Our mission is to become the default commercial execution layer connecting chat-first emerging markets and autonomous AI agents to Solana.
+Sivan Payment AI is live, battle-tested, and already operating on Solana Devnet with a deployed Vercel administrative operations hub and Telegram live bot (@SivanAi_bot). We have achieved sub-50ms audit logging query speeds and a 100% successful settlement completion rate across real test transactions. Our mission is to become the default commercial execution layer connecting chat-first emerging markets and autonomous AI agents to Solana.
 
 ---
 
