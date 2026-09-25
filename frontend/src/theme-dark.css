@@ -1877,7 +1877,12 @@
 [data-theme="dark"] .custom-select-menu button.selected:before {
   color: #018ee8;
 }
-[data-theme="dark"] .custom-select-menu small {
+[data-theme="dark"] .custom-select-menu span,
+[data-theme="dark"] .custom-select-menu .select-option-label {
+  color: #eef3f7;
+}
+[data-theme="dark"] .custom-select-menu small,
+[data-theme="dark"] .custom-select-menu .select-option-helper {
   color: #a9b8c7;
 }
 [data-theme="dark"] .verified-profile-lock {

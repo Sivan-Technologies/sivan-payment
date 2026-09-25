@@ -23,9 +23,15 @@ export function getNetworkExplorer(
   const isMainnet = mode === 'mainnet' || mode === 'live';
 
   if (net.includes('arc')) {
-    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.io';
+    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.app';
     const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
     return { name: 'ArcScan Explorer', url };
+  }
+
+  if (net.includes('arbitrum') || net.includes('arbi')) {
+    const arbiDomain = isMainnet ? 'https://arbiscan.io' : 'https://sepolia.arbiscan.io';
+    const url = rawTxHash ? `${arbiDomain}/tx/${rawTxHash}` : rawAddr ? `${arbiDomain}/address/${rawAddr}` : arbiDomain;
+    return { name: 'Arbiscan Explorer', url };
   }
 
   if (net.includes('base')) {
