@@ -23,7 +23,7 @@ export function getNetworkExplorer(
   const isMainnet = mode === 'mainnet' || mode === 'live';
 
   if (net.includes('arc')) {
-    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.io';
+    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.app';
     const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
     return { name: 'ArcScan Explorer', url };
   }

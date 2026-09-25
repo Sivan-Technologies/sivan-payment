@@ -49,7 +49,7 @@ const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: s
   ethereum: { mainnet: 'https://etherscan.io', testnet: 'https://sepolia.etherscan.io', label: 'Etherscan' },
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
-  arc: { mainnet: 'https://explorer.arc.network', testnet: 'https://testnet.arcscan.io', label: 'Arc Explorer' },
+  arc: { mainnet: 'https://explorer.arc.network', testnet: 'https://testnet.arcscan.app', label: 'Arc Explorer' },
   avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
   avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
 };
@@ -224,7 +224,7 @@ export function getNetworkExplorer(
   const isMainnet = modeInput ? (modeInput.toLowerCase() === 'mainnet' || modeInput.toLowerCase() === 'live') : false;
 
   if (net.includes('arc')) {
-    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.io';
+    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.app';
     const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
     return { name: 'ArcScan Explorer', url };
   }
