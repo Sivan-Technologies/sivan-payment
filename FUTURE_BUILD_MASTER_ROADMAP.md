@@ -6,7 +6,8 @@ Founder and Author: Samson Micheal (Founder, CEO, Technical Founder, Product Eng
 Official URLs:
 - Landing: https://sivantech.online
 - Payment App: https://app.sivantech.online
-- Telegram: https://t.me/Sivan_Ai
+- Telegram Live Payment Bot: https://t.me/SivanAi_bot
+- Telegram Personal Chat: https://t.me/Sivan_Ai
 - X: https://x.com/sivan_Tech
 
 ---

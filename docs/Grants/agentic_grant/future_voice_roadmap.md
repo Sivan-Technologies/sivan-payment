@@ -25,7 +25,7 @@ Raw Audio -> Speech-to-Text Bridge (Gemini Flash Audio / Whisper API) -> Transcr
 Transcribed Text -> Sivan Conversational Intent Parser -> Validated Transaction Payload (<12ms)
 Validated Transaction Payload -> Verifiable Agreement State Machine -> Lock Funds / Release Settlement
 Solana x402 Settlement Router -> SPL Token Transfer -> Solana Mainnet (<1.4s)
-Sivan Webhook Engine -> Instant Pop-up Alert & Voice Audio Response -> Telegram (@Sivan_Ai) / WhatsApp
+Sivan Webhook Engine -> Instant Pop-up Alert & Voice Audio Response -> Telegram (@SivanAi_bot) / WhatsApp
 
 Key Technical Advantages:
 1. Reuses Existing Infrastructure: Sivan payment Ai's intent parser engine (<12ms) and Solana x402 router (<1.4s) are already built and operational.

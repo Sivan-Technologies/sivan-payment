@@ -46,7 +46,7 @@ Sivan Technologies addresses two critical financial infrastructure problems faci
 2. Cross-Border Settlement and Agentic AI Payments: As young Nigerian developers and creators provide remote services globally, traditional bank wire transfers take days and lose 5% to 10% in high foreign exchange fees. Furthermore, emerging autonomous AI software agents lack native financial infrastructure to contract services and settle payments trustlessly.
 
 Our Solution (Sivan Payment AI):
-Sivan Technologies models service arrangements as verifiable, deterministic state machines (Draft -> Pending -> Funded -> Delivered -> Released). Users negotiate agreements naturally in chat apps (@Sivan_Ai on Telegram & WhatsApp) or APIs, lock funds in stablecoins (USDC on Solana), receive real-time delivery notifications, and execute instant 1-tap balance releases with seamless local Naira (NGN) bank payouts.
+Sivan Technologies models service arrangements as verifiable, deterministic state machines (Draft -> Pending -> Funded -> Delivered -> Released). Users negotiate agreements naturally in chat apps (@SivanAi_bot on Telegram & WhatsApp) or APIs, lock funds in stablecoins (USDC on Solana), receive real-time delivery notifications, and execute instant 1-tap balance releases with seamless local Naira (NGN) bank payouts.
 
 ---
 

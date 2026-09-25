@@ -20,7 +20,7 @@ Pilot testing confirmed that moving agreements into a chat-native, verifiable st
 
 Sivan Payment AI is live, battle-tested, and operational across its full stack:
 
-1. Conversational Chat & State Machine: Live on Telegram (@Sivan_Ai) and WhatsApp with sub-15ms NLP intent parsing translating natural chat into deterministic transaction state machines.
+1. Conversational Chat & State Machine: Live on Telegram (@SivanAi_bot) and WhatsApp with sub-15ms NLP intent parsing translating natural chat into deterministic transaction state machines.
 2. Solana SPL Settlement: Live on Solana Devnet utilizing the x402 payment facility for USDC/USDT transfers with verified on-chain Solscan transaction records.
 3. Operations Console & Database: Live production management hub on Vercel with real-time risk tiers, currency toggles, and sub-50ms audit query speeds.
 

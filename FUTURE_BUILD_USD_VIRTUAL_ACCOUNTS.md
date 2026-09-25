@@ -2,11 +2,12 @@
 
 Document Identifier: FUTURE_BUILD_USD_VIRTUAL_ACCOUNTS
 Feature Name: Global Multi-Currency Virtual Account Display & In-Chat Deposit Engine
-Target Channels: Telegram (@Sivan_Ai), WhatsApp, and Web App (app.sivantech.online)
+Target Channels: Telegram (@SivanAi_bot), WhatsApp, and Web App (app.sivantech.online)
 Target Release Phase: Phase 2 Global Banking Sprint (Feature 1)
 Status: ✅ COMPLETED & 100% VERIFIED
 Founder and Author: Samson Micheal (Founder, CEO, Technical Founder, Product Engineer)
-Official URLs: https://sivantech.online | https://app.sivantech.online | https://t.me/Sivan_Ai
+Location: Abuja, Nigeria
+Official URLs: https://sivantech.online | https://app.sivantech.online | Bot: https://t.me/SivanAi_bot | Chat: https://t.me/Sivan_Ai
 
 ---
 
@@ -163,4 +164,4 @@ export interface VirtualAccountRecord {
 ---
 
 Sivan Technologies · Universal Multi-Chain Settlement Infrastructure
-Global / Remote-First · https://sivantech.online
+Abuja, Nigeria · https://sivantech.online

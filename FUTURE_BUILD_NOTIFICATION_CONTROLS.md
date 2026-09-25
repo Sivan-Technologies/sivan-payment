@@ -19,7 +19,7 @@ To optimize messaging costs, comply with WhatsApp business messaging guidelines,
 
 | Channel | Default State upon Linking | Product and Cost Rationale |
 | :--- | :--- | :--- |
-| Telegram (@Sivan_Ai) | ON (Enabled) | Telegram Bot API is free, instant, and non-intrusive. Gives users instant multi-chain deal alerts out of the box. |
+| Telegram (@SivanAi_bot) | ON (Enabled) | Telegram Bot API is free, instant, and non-intrusive. Gives users instant multi-chain deal alerts out of the box. |
 | WhatsApp (whatsapp:+...) | OFF (Disabled) | WhatsApp Meta/Twilio messaging carries per-message template fees. Defaulting to OFF prevents unnecessary API costs unless explicitly enabled. |
 
 ---
@@ -42,7 +42,7 @@ On the web dashboard under SIVAN UNIFIED IDENTITY:
   - [Refresh status] button
   - [Unlink] button
   - New Toggle: [Notifications: ON / OFF] (Defaults to ON upon linking)
-  - Helper text: "Receive instant free real-time alerts via @Sivan_Ai on Telegram."
+  - Helper text: "Receive instant free real-time alerts via @SivanAi_bot on Telegram."
 
 ---
 
