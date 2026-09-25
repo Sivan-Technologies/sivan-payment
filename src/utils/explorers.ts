@@ -28,6 +28,12 @@ export function getNetworkExplorer(
     return { name: 'ArcScan Explorer', url };
   }
 
+  if (net.includes('arbitrum') || net.includes('arbi')) {
+    const arbiDomain = isMainnet ? 'https://arbiscan.io' : 'https://sepolia.arbiscan.io';
+    const url = rawTxHash ? `${arbiDomain}/tx/${rawTxHash}` : rawAddr ? `${arbiDomain}/address/${rawAddr}` : arbiDomain;
+    return { name: 'Arbiscan Explorer', url };
+  }
+
   if (net.includes('base')) {
     const baseDomain = isMainnet ? 'https://basescan.org' : 'https://sepolia.basescan.org';
     const url = rawTxHash ? `${baseDomain}/tx/${rawTxHash}` : rawAddr ? `${baseDomain}/address/${rawAddr}` : baseDomain;
