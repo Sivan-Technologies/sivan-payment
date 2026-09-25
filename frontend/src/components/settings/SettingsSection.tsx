@@ -321,7 +321,7 @@ function SecuritySettingsPanel({ api, user, preferences, initialStatus, onStatus
 
 function NotificationPreferencesPanel({ preferences, loading, onUpdate }: { preferences: UserPreferencesRecord; loading: boolean; onUpdate: (patch: Partial<UserPreferencesRecord>) => Promise<void> }) {
   const rows: Array<{ key: keyof Pick<UserPreferencesRecord, 'telegramNotificationsEnabled' | 'whatsappNotificationsEnabled' | 'multiChainAlertsEnabled' | 'transactionUpdates' | 'marketingEmails' | 'securityAlerts' | 'emailConfirmationsForHighValue'>; icon: string; title: string; body: string; defaultVal: boolean; locked?: boolean }> = [
-    { key: 'telegramNotificationsEnabled', icon: '✈', title: 'Telegram alerts (@Sivan_Ai)', body: 'Instant free real-time deal alerts, deposit confirmations, and service agreement milestones via Telegram.', defaultVal: true },
+    { key: 'telegramNotificationsEnabled', icon: '✈', title: 'Telegram alerts (@SivanAi_bot)', body: 'Instant free real-time deal alerts, deposit confirmations, and service agreement milestones via Telegram.', defaultVal: true },
     { key: 'whatsappNotificationsEnabled', icon: '💬', title: 'WhatsApp alerts', body: 'Transaction-critical WhatsApp updates and cashout notices. Defaults to paused to optimize messaging costs.', defaultVal: false },
     { key: 'multiChainAlertsEnabled', icon: '⛓', title: 'Multi-Chain settlement alerts', body: 'Real-time on-chain confirmation alerts across Stellar, Celo, Solana, Base, and BNB Chain.', defaultVal: true },
     { key: 'transactionUpdates', icon: '♢', title: 'Transaction updates', body: 'Deposits, on-ramp payments, payouts, balance credits, supplier payments, and transfer status.', defaultVal: true },
@@ -369,7 +369,7 @@ function TelegramLinkCard({ channel, pairingCode, pairingExpiresAt, timeNow, loa
     import.meta.env.VITE_TELEGRAM_BOT_USERNAME ||
     (typeof window !== 'undefined' && (window.location.hostname.includes('staging') || window.location.hostname.includes('localhost'))
       ? 'SivanStaging_Bot'
-      : 'Sivan_Ai');
+      : 'SivanAi_bot');
 
   return <div className="identity-link-card"><div><p className="eyebrow">Sivan unified identity</p><h3>Linked Telegram account</h3><p className="muted">Link your Telegram account so the Sivan bot and your web dashboard use one customer profile.</p></div>{link ? <div className="identity-link-status linked"><span>Linked</span><strong>{link.telegramUsername ? `@${link.telegramUsername}` : `Telegram ID ${link.telegramUserId || ''}`}</strong><small>Linked {link.linkedAt ? new Date(link.linkedAt).toLocaleString() : 'recently'}</small><div className="identity-link-actions"><button type="button" className="ghost-btn small" disabled={loading} onClick={() => void onRefresh()}>Refresh status</button><button type="button" className="ghost-btn small" disabled={loading} onClick={onUnlink}>Unlink</button></div></div> : pending ? <div className="identity-link-status pending">{/* A RELOAD CANNOT RECOVER THE CODE - the server never returns it
         again - so this says a code is pending rather than rendering an empty
