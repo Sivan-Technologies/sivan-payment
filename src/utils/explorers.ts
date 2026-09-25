@@ -23,9 +23,9 @@ export function getNetworkExplorer(
   const isMainnet = mode === 'mainnet' || mode === 'live';
 
   if (net.includes('arc')) {
-    const arcDomain = isMainnet ? 'https://arcscan.io' : 'https://testnet.arcscan.app';
+    const arcDomain = isMainnet ? 'https://explorer.arc.io' : 'https://testnet.arcscan.app';
     const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
-    return { name: 'ArcScan Explorer', url };
+    return { name: 'Arc Explorer', url };
   }
 
   if (net.includes('arbitrum') || net.includes('arbi')) {
