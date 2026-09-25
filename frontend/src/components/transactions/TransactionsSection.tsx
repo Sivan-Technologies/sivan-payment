@@ -917,7 +917,7 @@ function TransactionTimelinePanel({
             {transaction.depositAddress || 'Generating deposit address...'}
           </code>
           {transaction.depositAddress && (
-            <div style={{ marginTop: '8px', marginBottom: '8px' }}>
+            <div style={{ marginTop: '8px', marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="secondary-btn small"
@@ -925,6 +925,17 @@ function TransactionTimelinePanel({
               >
                 {copiedDeposit ? '✓ Copied to clipboard' : 'Copy deposit address'}
               </button>
+              {transaction.network && (
+                <a
+                  className="secondary-btn small explorer-link"
+                  href={getNetworkExplorer(transaction.network, undefined, transaction.depositAddress, networkMode).url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {logoChainFor(transaction.network) && <NetworkLogo chain={logoChainFor(transaction.network)!} size={14} />}
+                  View on {getNetworkExplorer(transaction.network, undefined, transaction.depositAddress, networkMode).name} ↗
+                </a>
+              )}
             </div>
           )}
           <small className="deposit-note">
@@ -939,13 +950,31 @@ function TransactionTimelinePanel({
     const deal = serviceAgreements?.deals?.find((d) => d.escrowId === activityRow.id || d.id === activityRow.id) || (activityRow.raw as any);
     const isAgreement = activityRow.label.startsWith('Agreement:') || Boolean((activityRow.raw as any)?.escrowId) || Boolean(deal?.escrowId);
     const isP2p = activityRow.kind === 'balance_transfer' && (activityRow.network === 'sivan_p2p' || (activityRow.raw as any)?.network === 'sivan_p2p' || activityRow.label.includes('P2P'));
+    const targetNetwork = deal?.network || activityRow.network || (activityRow.raw as any)?.chain || (activityRow.raw as any)?.destinationChain || (activityRow.raw as any)?.sourceChain || 'celo';
+    const txHash = activityRow.providerReference
+      || deal?.fundingTxHash
+      || deal?.releaseTxHash
+      || (activityRow.raw as any)?.txHash
+      || (activityRow.raw as any)?.transactionHash
+      || (activityRow.raw as any)?.hash
+      || (activityRow.raw as any)?.providerReference;
+    const destAddr = (activityRow.raw as any)?.depositAddress
+      || (activityRow.raw as any)?.toAddress
+      || (activityRow.raw as any)?.recipientAddress
+      || (activityRow.raw as any)?.address
+      || (activityRow.raw as any)?.destinationAddress
+      || (activityRow.raw as any)?.recipient;
+    const onChain = Boolean(targetNetwork) && targetNetwork !== 'sivan_p2p' && !isP2p;
     const link = explorerLink({
-      network: activityRow.network,
-      txHash: activityRow.providerReference,
+      network: targetNetwork,
+      txHash,
       networkMode,
-    });
-    const chainMark = logoChainFor(activityRow.network);
-    const onChain = Boolean(activityRow.network) && activityRow.network !== 'sivan_p2p';
+    }) || (onChain ? {
+      url: getNetworkExplorer(targetNetwork, txHash, destAddr, networkMode).url,
+      label: getNetworkExplorer(targetNetwork, txHash, destAddr, networkMode).name,
+      testnet: networkMode === 'testnet',
+    } : undefined);
+    const chainMark = logoChainFor(targetNetwork);
     return <aside className="transaction-timeline-card">
       <div className="timeline-card-head">
         <div>
@@ -974,23 +1003,21 @@ function TransactionTimelinePanel({
             }
           />
         )}
-        <Kv label="Network" value={isP2p ? 'Sivan Instant P2P' : onChain ? networkLabel(deal?.network || activityRow.network || 'celo') : 'Bank transfer'} />
+        <Kv label="Network" value={isP2p ? 'Sivan Instant P2P' : onChain ? networkLabel(targetNetwork) : 'Bank transfer'} />
         <Kv label="When" value={new Date(activityRow.createdAt).toLocaleString()} />
         {onChain && (
           <Kv
             label="Settlement proof"
             value={
-              activityRow.providerReference
-                ? shortHash(activityRow.providerReference)
-                : deal?.fundingTxHash
-                  ? shortHash(deal.fundingTxHash)
-                  : isAgreement
-                    ? (activityRow.state === 'pending' || (deal?.status && deal.status !== 'released' && deal.status !== 'cancelled')
-                        ? `Locked in ${networkLabel(deal?.network || activityRow.network || 'celo')} Vault`
-                        : 'Settled & Released')
-                    : activityRow.state === 'success' || activityRow.statusLabel === 'Confirmed'
-                      ? 'Confirmed on-chain'
-                      : 'Pending on-chain confirmation'
+              txHash
+                ? shortHash(txHash)
+                : isAgreement
+                  ? (activityRow.state === 'pending' || (deal?.status && deal.status !== 'released' && deal.status !== 'cancelled')
+                      ? `Locked in ${networkLabel(targetNetwork)} Vault`
+                      : 'Settled & Released')
+                  : activityRow.state === 'success' || activityRow.statusLabel === 'Confirmed'
+                    ? 'Confirmed on-chain'
+                    : 'Pending on-chain confirmation'
             }
           />
         )}
@@ -1012,6 +1039,20 @@ function TransactionTimelinePanel({
   }
   if (!transaction?.timeline) return <aside className="transaction-timeline-card"><Empty>Select a transaction to see its timeline.</Empty></aside>;
   const timeline = transaction.timeline;
+  const timelineNetwork = (transaction as any)?.network || (transaction?.raw as any)?.network || (transaction?.raw as any)?.chain || (transaction?.raw as any)?.destinationChain;
+  const timelineTxHash = timeline.providerReference || (transaction as any)?.providerReference || (transaction?.raw as any)?.txHash;
+  const timelineAddr = (transaction as any)?.depositAddress || (transaction?.raw as any)?.toAddress;
+  const timelineOnChain = Boolean(timelineNetwork) && timelineNetwork !== 'sivan_p2p' && timelineNetwork !== 'bank';
+  const timelineLink = timelineOnChain ? (explorerLink({
+    network: timelineNetwork,
+    txHash: timelineTxHash,
+    networkMode,
+  }) || {
+    url: getNetworkExplorer(timelineNetwork, timelineTxHash, timelineAddr, networkMode).url,
+    label: getNetworkExplorer(timelineNetwork, timelineTxHash, timelineAddr, networkMode).name,
+    testnet: networkMode === 'testnet',
+  }) : undefined;
+  const timelineChainMark = timelineNetwork ? logoChainFor(timelineNetwork) : null;
   /**
    * `steps` IS OPTIONAL AT RUNTIME, WHATEVER THE TYPE SAYS.
    *
@@ -1032,7 +1073,33 @@ function TransactionTimelinePanel({
    */
   const steps = timeline.steps ?? [];
   const currentStep = steps.find((step) => step.status === 'current') || steps.find((step) => step.status === 'failed') || steps[steps.length - 1];
-  return <aside className="transaction-timeline-card"><div className="timeline-card-head"><div><p className="eyebrow">Transaction Timeline</p><h3>{transaction.label}</h3><small>{currentStep?.label || friendlyStatus(timeline.status)}</small></div><Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge></div><div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div><div className="timeline-meta-grid"><Kv label="Request ID" value={timeline.requestId} /><Kv label="Internal transaction ID" value={timeline.internalTransactionId} /><Kv label="Provider reference" value={timeline.providerReference || 'Pending'} /><Kv label="Amount" value={`${formatAmount(timeline.amount || transaction.amount)} ${timeline.currency || transaction.currency}`} /><Kv label="Currency" value={timeline.currency || transaction.currency} /><Kv label="Asset" value={timeline.asset || transaction.asset} /></div><div className="customer-timeline-list">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div><AskSivanBlock assistant={assistant} row={activityRow ?? null} onAsk={onAsk} /></aside>;
+  return <aside className="transaction-timeline-card">
+    <div className="timeline-card-head">
+      <div>
+        <p className="eyebrow">Transaction Timeline</p>
+        <h3>{transaction.label}</h3>
+        <small>{currentStep?.label || friendlyStatus(timeline.status)}</small>
+      </div>
+      <Badge status={timeline.status}>{friendlyStatus(timeline.status)}</Badge>
+    </div>
+    <div className="transaction-explanation-box">{timeline.explanation || transactionExplanation(timeline.transactionType, timeline.status)}</div>
+    <div className="timeline-meta-grid">
+      <Kv label="Request ID" value={timeline.requestId} />
+      <Kv label="Internal transaction ID" value={timeline.internalTransactionId} />
+      <Kv label="Provider reference" value={timeline.providerReference || 'Pending'} />
+      <Kv label="Amount" value={`${formatAmount(timeline.amount || transaction.amount)} ${timeline.currency || transaction.currency}`} />
+      <Kv label="Currency" value={timeline.currency || transaction.currency} />
+      <Kv label="Asset" value={timeline.asset || transaction.asset} />
+    </div>
+    <div className="customer-timeline-list">{steps.map((step, index) => <div className={`customer-timeline-step ${step.status}`} key={step.key}><div className="timeline-rail"><span>{step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : step.status === 'current' ? '•' : index + 1}</span>{index < steps.length - 1 && <i />}</div><div><strong>{step.label}</strong><time>{step.at ? new Date(step.at).toLocaleTimeString() : step.status === 'pending' ? 'Pending' : 'In progress'}</time><small>{step.description}</small></div></div>)}</div>
+    {timelineLink && (
+      <a className="secondary-btn small explorer-link" href={timelineLink.url} target="_blank" rel="noreferrer" style={{ marginTop: '10px' }}>
+        {timelineChainMark && <NetworkLogo chain={timelineChainMark} size={14} />}
+        View on {timelineLink.label} ↗
+      </a>
+    )}
+    <AskSivanBlock assistant={assistant} row={activityRow ?? null} onAsk={onAsk} />
+  </aside>;
 }
 
 export function InlineTransactionTimeline({ timeline }: { timeline: TransactionTimeline }) {
