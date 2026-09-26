@@ -40,6 +40,9 @@ import { getChainAdapter } from '../src/wallets/chain-adapter-registry.js';
 import { getNetworkExplorer } from '../src/utils/explorers.js';
 import { resolveNetworkFeeConfig } from '../src/balances/transfer-fee-policy.js';
 import {
+  SN_SELECTOR, toU256Calldata, buildErc20TransferCall, buildSivanTransferCalls,
+} from '../src/wallets/starknet/starknet-transfer.js';
+import {
   paymasterEndpoint, isPaymasterAvailable, getSupportedGasTokens,
   isGasTokenSupported, sameFelt, defaultFeeMode, paymasterHealth,
   STARKNET_GAS_TOKEN,
@@ -350,6 +353,65 @@ async function main() {
   const health = await paymasterHealth({ production: true });
   check('paymasterHealth reports available and token supported',
     health.available && health.gasTokenSupported, JSON.stringify(health));
+
+  // ── 13. Transaction construction ────────────────────────────────
+  console.log('\n══ 13. Transaction Construction ══');
+
+  /**
+   * Selectors are DERIVED at load via starknet.js, not pasted. Cross-checked
+   * here against values computed independently (keccak256 truncated to 250
+   * bits), so a library change that altered them would fail rather than
+   * silently sign calls against the wrong entry point.
+   */
+  check('transfer selector matches the independent computation',
+    BigInt(SN_SELECTOR.transfer) ===
+      BigInt('0x83afd3f4caedc6eebf44246fe54e38c95e3179a5ec9ea81740eca5b482d12e'),
+    SN_SELECTOR.transfer);
+  check('balanceOf selector matches the rpc layer constant',
+    BigInt(SN_SELECTOR.balanceOf) === BigInt(SELECTOR.balanceOf));
+
+  /** u256 in CALLDATA is two felts, low first. Wrong length reverts. */
+  // Felts are emitted as hex, which is canonical for calldata, so compare
+  // numerically rather than by string.
+  const [lo, hi] = toU256Calldata('1.5', 6);
+  check('1.5 USDC at 6dp encodes as low=1500000, high=0',
+    BigInt(lo) === 1_500_000n && BigInt(hi) === 0n, `${lo},${hi}`);
+
+  /**
+   * The split only shows up ABOVE 2^128. An earlier version of this assertion
+   * used 3.4e26, which is a trillion times too small, so it asserted nothing.
+   * 2^128 at 6dp is ~3.4e32 USDC.
+   */
+  const huge = (2n ** 128n) + 5n;
+  const [bigLo, bigHi] = toU256Calldata(
+    (huge / 1_000_000n).toString() + '.' + (huge % 1_000_000n).toString().padStart(6, '0'), 6);
+  check('a value above 2^128 sets the high felt', BigInt(bigHi) > 0n, `${bigLo},${bigHi}`);
+  check('the two felts reassemble to the original value',
+    (BigInt(bigHi) << 128n) + BigInt(bigLo) === huge);
+  check('more decimals than the token allows is rejected',
+    (() => { try { toU256Calldata('1.1234567', 6); return false; } catch { return true; } })());
+
+  const call = buildErc20TransferCall(STARKNET_GAS_TOKEN.mainnet, usdc, '2.5', 6);
+  check('a transfer call has exactly 3 calldata entries', call.calldata.length === 3,
+    JSON.stringify(call.calldata));
+  check('the transfer call targets the token contract',
+    sameFelt(call.contract_address, STARKNET_GAS_TOKEN.mainnet));
+
+  /**
+   * MULTICALL. Recipient and protocol fee go in ONE invoke, so they are
+   * atomic. On Celo the fee needs a second transaction after the first
+   * confirms, which can leave a fee uncollected.
+   */
+  const withFee = buildSivanTransferCalls({
+    tokenAddress: STARKNET_GAS_TOKEN.mainnet, recipient: usdc,
+    amount: '10', decimals: 6, feeAmount: '0.10', feeRecipient: usdc,
+  });
+  check('a transfer with a fee builds 2 atomic calls', withFee.length === 2, String(withFee.length));
+
+  const noFee = buildSivanTransferCalls({
+    tokenAddress: STARKNET_GAS_TOKEN.mainnet, recipient: usdc, amount: '10', decimals: 6,
+  });
+  check('a zero fee builds 1 call, not a 0-value transfer', noFee.length === 1, String(noFee.length));
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);

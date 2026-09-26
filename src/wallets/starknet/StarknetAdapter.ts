@@ -111,13 +111,24 @@ export class StarknetAdapter implements IChainAdapter {
     });
   }
 
+  /**
+   * Execute a transfer through the wallet provider.
+   *
+   * The Starknet send path lives in privy-wallet.provider.ts
+   * (sendStarknetTransfer), because it needs the user's provider wallet id and
+   * the Privy authorization key, neither of which belongs in an adapter. The
+   * flow is: AVNU builds the transaction, Privy signs the SNIP-12 hash, AVNU
+   * broadcasts.
+   *
+   * This entry point refuses rather than duplicating that orchestration
+   * against a userId it cannot resolve to a provider wallet. It is a routing
+   * boundary, not an unimplemented feature.
+   */
   async transfer(_params: ChainTransferParams): Promise<ChainTransferResult> {
     throw new Error(
-      'Starknet transfers are not yet enabled. Privy supports Starknet at Tier 2 ' +
-        '(sign only, no broadcast), so the invoke transaction must be built, hashed, ' +
-        'signed and submitted by Sivan. That path is not implemented and must not ' +
-        'be simulated: a transfer that returns a hash it did not create would record ' +
-        'a settlement that never happened.'
+      'Route Starknet transfers through the wallet service, not the chain adapter. ' +
+        'The send path needs a Privy provider wallet id and authorization key: see ' +
+        'sendStarknetTransfer in privy-wallet.provider.ts.'
     );
   }
 

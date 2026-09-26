@@ -11,6 +11,20 @@ import {
   fromBaseUnits,
   waitForEvmReceipt,
 } from '../evm/evm-rpc.js';
+import {
+  buildSivanTransferCalls,
+  computeTypedDataHash,
+} from '../starknet/starknet-transfer.js';
+import {
+  buildPaymasterTransaction,
+  executePaymasterTransaction,
+  defaultFeeMode,
+  sponsoredFeeMode,
+  STARKNET_GAS_TOKEN,
+} from '../starknet/paymaster.js';
+import { isAccountDeployed } from '../starknet/starknet-rpc.js';
+import { STARKNET_USDC_DECIMALS } from '../starknet/StarknetAdapter.js';
+import { normaliseStarknetAddress } from '../address-validation.js';
 import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
@@ -1156,6 +1170,16 @@ export class PrivyWalletProvider implements WalletProvider {
      * 18 decimals, sourced from decimalsForChainAsset. Arc's native USDC is
      * 18dp; using the ERC-20 default of 6 would send 10^12 times too little.
      */
+    /**
+     * Starknet is not EVM and cannot use any branch below it. It is dispatched
+     * here, before the native and ERC-20 EVM paths, because those both assume
+     * an eth_sendTransaction shaped request that Privy will broadcast. On
+     * Starknet Privy signs only, and the paymaster broadcasts.
+     */
+    if (input.chain === 'starknet') {
+      return this.sendStarknetTransfer(input, signingKey);
+    }
+
     if (usesNativeStablecoin(input.chain)) {
       if (String(input.asset).toLowerCase() !== 'usdc') {
         throw forbidden(
@@ -1452,6 +1476,196 @@ export class PrivyWalletProvider implements WalletProvider {
       userOperationHash: userOpHash,
       sponsored: isSponsored,
       rawProviderPayload: result,
+    };
+  }
+
+  /**
+   * Move USDC out of a user's Starknet wallet, with gas abstracted.
+   *
+   * THREE STEPS, AND THE REASON THE SHAPE IS UNUSUAL.
+   *
+   * Privy supports Starknet at TIER 2: it creates the STARK curve wallet and
+   * signs a hash via raw_sign, but it will NOT broadcast, and it does not
+   * sponsor gas on Starknet at all. Every other chain here either has Privy
+   * broadcast (EVM, Solana) or has us broadcast a locally assembled raw
+   * transaction (Celo CIP-64). Starknet can do neither cheaply, because v3
+   * invoke hashing covers calldata, nonce, resource bounds, tip, paymaster
+   * data and both DA modes.
+   *
+   * The AVNU paymaster removes the problem rather than solving it:
+   *
+   *   1. paymaster_buildTransaction   AVNU returns SNIP-12 typed data
+   *   2. raw_sign                     Privy signs the typed data hash
+   *   3. paymaster_executeTransaction AVNU SUBMITS the transaction
+   *
+   * So sign-only is sufficient and we never touch
+   * starknet_addInvokeTransaction.
+   *
+   * FEE MODE. Default is the USER paying gas in USDC, so Sivan carries no
+   * float and there is no sponsorship balance that can run dry and halt the
+   * chain. Sponsorship is used for exactly one case: an account that is not
+   * yet deployed. On Starknet an account IS a contract, and a brand new one
+   * holds nothing to pay with, so that first transaction has to be on us.
+   */
+  private async sendStarknetTransfer(
+    input: WalletTransferInput,
+    signingKey: string
+  ): Promise<WalletTransfer> {
+    if (String(input.asset).toLowerCase() !== 'usdc') {
+      throw forbidden(
+        `Starknet settles in USDC only. ${String(input.asset).toUpperCase()} is not available.`
+      );
+    }
+
+    const production = isProduction(input.networkMode);
+    const token = production ? STARKNET_GAS_TOKEN.mainnet : STARKNET_GAS_TOKEN.testnet;
+    if (!token) {
+      throw forbidden('No Starknet USDC address is configured for this network mode.');
+    }
+
+    const senderWallet = await this.getWallet(input.providerWalletId).catch(() => undefined);
+    const senderAddress = senderWallet?.address;
+    if (!senderAddress) {
+      throw forbidden('Starknet wallet address could not be resolved for this transfer.');
+    }
+
+    /**
+     * Addresses are normalised before they touch calldata or the paymaster.
+     * Starknet drops leading zeros freely, so 0x123 and 0x0123 are the same
+     * account. Comparing or keying on the raw string is how one user ends up
+     * with two wallet rows and a split balance.
+     */
+    const from = normaliseStarknetAddress(senderAddress);
+    const to = normaliseStarknetAddress(input.toAddress);
+
+    const feeWallet = (process.env.SIVAN_FEE_WALLET_STARKNET || '').trim();
+    const calls = buildSivanTransferCalls({
+      tokenAddress: token,
+      recipient: to,
+      amount: input.amount,
+      decimals: STARKNET_USDC_DECIMALS,
+      feeAmount: input.feeAmount,
+      feeRecipient: feeWallet ? normaliseStarknetAddress(feeWallet) : undefined,
+    });
+
+    // An undeployed account cannot pay its own gas, so that one case is ours.
+    const deployed = await isAccountDeployed(from, { production }).catch(() => true);
+    const feeMode = deployed ? defaultFeeMode(production) : sponsoredFeeMode();
+
+    // ── 1. Ask the paymaster to build it ───────────────────────────
+    let built: any;
+    try {
+      built = await buildPaymasterTransaction(from, calls, feeMode, { production });
+    } catch (error: any) {
+      const msg = String(error?.message ?? error);
+      if (/gas token|not supported|unsupported token/i.test(msg)) {
+        throw forbidden(
+          `The paymaster does not currently accept our settlement token as gas on Starknet. ${msg}`
+        );
+      }
+      throw new Error(`Starknet paymaster build failed: ${msg}`);
+    }
+
+    const typedData = built?.typed_data ?? built?.typedData;
+    if (!typedData) {
+      throw new Error(
+        'Starknet paymaster did not return typed data to sign. ' +
+          `Response keys: ${Object.keys(built ?? {}).join(', ') || 'none'}`
+      );
+    }
+
+    // ── 2. Privy signs the SNIP-12 hash ────────────────────────────
+    const messageHash = computeTypedDataHash(typedData, from);
+
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const body = { method: 'raw_sign', params: { hash: messageHash } };
+    const { appId } = credentials();
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const signResult: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const msg = String(signResult?.error ?? signResult?.message ?? `HTTP ${response.status}`);
+      /**
+       * Named explicitly because the remedy is a Privy dashboard or plan
+       * change, not a code change, and the raw message does not say so.
+       * Starknet is a Tier 2 chain on Privy and raw_sign is the only signing
+       * primitive available for it.
+       */
+      if (/not supported|unsupported|unknown chain|not enabled/i.test(msg)) {
+        throw forbidden(
+          'Privy has not enabled Starknet for this app, or raw_sign is not available on this plan. ' +
+            'Starknet is a Tier 2 chain: it needs raw_sign, since Privy will not broadcast for it.'
+        );
+      }
+      throw new Error(`Privy Starknet raw_sign: ${msg}`);
+    }
+
+    /**
+     * A STARK signature is a pair (r, s), two felts. Privy may return it as an
+     * array or as an object; both shapes are accepted, and anything else fails
+     * loudly rather than being coerced into a signature the paymaster would
+     * reject with a less useful error.
+     */
+    const raw = signResult?.data?.signature ?? signResult?.signature;
+    const signature: string[] = Array.isArray(raw)
+      ? raw.map(String)
+      : raw && typeof raw === 'object' && 'r' in raw && 's' in raw
+        ? [String((raw as any).r), String((raw as any).s)]
+        : [];
+    if (signature.length < 2) {
+      throw new Error(
+        `Privy Starknet raw_sign returned an unusable signature: ${JSON.stringify(raw)}. ` +
+          'Expected a STARK (r, s) pair.'
+      );
+    }
+
+    // ── 3. The paymaster broadcasts ────────────────────────────────
+    let executed: { transaction_hash?: string; tracking_id?: string };
+    try {
+      executed = await executePaymasterTransaction(from, typedData, signature, feeMode, {
+        production,
+      });
+    } catch (error: any) {
+      throw new Error(`Starknet paymaster execute failed: ${String(error?.message ?? error)}`);
+    }
+
+    const txHash = executed?.transaction_hash;
+    if (!txHash) {
+      throw new Error(
+        'Starknet paymaster accepted the transaction but returned no hash. ' +
+          `tracking_id: ${executed?.tracking_id ?? 'none'}`
+      );
+    }
+
+    /**
+     * 'submitted', not 'confirmed'. The paymaster has broadcast, which is not
+     * the same as inclusion. The background transfer-confirmation poller
+     * resolves it, exactly as it does for sponsored EVM user operations.
+     * Claiming 'confirmed' here would emit a receipt the user could screenshot
+     * before the transaction had landed.
+     */
+    return {
+      provider: this.name,
+      providerTransferId: executed?.tracking_id || txHash,
+      status: 'submitted',
+      txHash,
+      sponsored: feeMode.mode === 'sponsored',
+      rawProviderPayload: { ...executed, feeMode: feeMode.mode, accountDeployed: deployed },
     };
   }
 
