@@ -198,7 +198,16 @@ export async function buildPaymasterTransaction(
   userAddress: string,
   calls: StarknetCall[],
   feeMode: FeeMode,
-  options: PaymasterOptions = {}
+  options: PaymasterOptions = {},
+  /**
+   * Present only when the account is not yet deployed. Switches the request
+   * from `invoke` to `deploy_and_invoke`, so the paymaster creates the account
+   * contract AND runs the calls in one atomic sponsored transaction.
+   *
+   * Without this an undeployed account cannot transact at all: there is no
+   * contract to verify its signature, and paying its gas does not change that.
+   */
+  deployment?: unknown
 ): Promise<unknown> {
   if (feeMode.mode === 'sponsored' && !(process.env.AVNU_API_KEY || '').trim()) {
     throw new Error(
@@ -206,14 +215,13 @@ export async function buildPaymasterTransaction(
         'where the user pays gas in USDC.'
     );
   }
+  const transaction = deployment
+    ? { type: 'deploy_and_invoke', deployment, invoke: { user_address: userAddress, calls } }
+    : { type: 'invoke', invoke: { user_address: userAddress, calls } };
+
   return paymasterRpc(
     'paymaster_buildTransaction',
-    [
-      {
-        transaction: { type: 'invoke', invoke: { user_address: userAddress, calls } },
-        parameters: { version: '0x1', fee_mode: feeMode },
-      },
-    ],
+    [{ transaction, parameters: { version: '0x1', fee_mode: feeMode } }],
     options
   );
 }
@@ -229,19 +237,28 @@ export async function executePaymasterTransaction(
   typedData: unknown,
   signature: string[],
   feeMode: FeeMode,
-  options: PaymasterOptions = {}
+  options: PaymasterOptions = {},
+  deployment?: unknown
 ): Promise<{ transaction_hash?: string; tracking_id?: string }> {
+  /**
+   * The execute call must mirror the SAME transaction type that was built.
+   * Building a deploy_and_invoke and executing it as a plain invoke would have
+   * the paymaster run calls against an account that does not exist yet.
+   */
+  const transaction = deployment
+    ? {
+        type: 'deploy_and_invoke',
+        deployment,
+        invoke: { user_address: userAddress, typed_data: typedData, signature },
+      }
+    : {
+        type: 'invoke',
+        invoke: { user_address: userAddress, typed_data: typedData, signature },
+      };
+
   return paymasterRpc(
     'paymaster_executeTransaction',
-    [
-      {
-        transaction: {
-          type: 'invoke',
-          invoke: { user_address: userAddress, typed_data: typedData, signature },
-        },
-        parameters: { version: '0x1', fee_mode: feeMode },
-      },
-    ],
+    [{ transaction, parameters: { version: '0x1', fee_mode: feeMode } }],
     options
   );
 }

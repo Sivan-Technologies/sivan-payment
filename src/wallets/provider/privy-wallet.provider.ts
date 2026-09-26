@@ -23,6 +23,7 @@ import {
   STARKNET_GAS_TOKEN,
 } from '../starknet/paymaster.js';
 import { isAccountDeployed } from '../starknet/starknet-rpc.js';
+import { buildAccountDeployment } from '../starknet/starknet-deploy.js';
 import { STARKNET_USDC_DECIMALS } from '../starknet/StarknetAdapter.js';
 import { normaliseStarknetAddress } from '../address-validation.js';
 import { resolveNetworkMode } from '../network-mode.js';
@@ -1548,14 +1549,63 @@ export class PrivyWalletProvider implements WalletProvider {
       feeRecipient: feeWallet ? normaliseStarknetAddress(feeWallet) : undefined,
     });
 
-    // An undeployed account cannot pay its own gas, so that one case is ours.
+    /**
+     * ACCOUNT DEPLOYMENT.
+     *
+     * On Starknet an account IS a contract. A wallet Privy has just created
+     * has a counterfactual address with nothing at it: funds can be sent TO
+     * it, but it cannot send, because there is no contract to verify its
+     * signature. Sponsoring its gas does not help, since the transaction has
+     * nothing to execute against.
+     *
+     * SNIP-29 deploy_and_invoke creates the account and runs the transfer in
+     * one atomic sponsored transaction, which is the only way a brand new user
+     * can make their first payment.
+     *
+     * The deployment payload is checked to derive EXACTLY this address before
+     * it is submitted. A mismatch would deploy a working account somewhere
+     * else and strand the funds already sent here, silently. buildAccountDeployment
+     * refuses rather than returning an unverified payload.
+     */
     const deployed = await isAccountDeployed(from, { production }).catch(() => true);
+
+    let deployment: unknown;
+    if (!deployed) {
+      const publicKey =
+        (senderWallet as any)?.publicKey ??
+        (senderWallet as any)?.rawProviderPayload?.public_key ??
+        (senderWallet as any)?.rawProviderPayload?.publicKey;
+
+      if (!publicKey) {
+        throw forbidden(
+          'This Starknet account is not deployed yet and its public key is not on the ' +
+            'wallet record, so the deployment payload cannot be built. The key is ' +
+            'returned by Privy at wallet creation and is required, because it determines ' +
+            'the account address.'
+        );
+      }
+
+      try {
+        deployment = buildAccountDeployment({ address: from, publicKey: String(publicKey) });
+      } catch (error: any) {
+        // Surfaced verbatim: these messages name the exact missing input
+        // (class hash, public key) or the address mismatch, and each has a
+        // different remedy.
+        throw forbidden(`Starknet account deployment could not be prepared. ${String(error?.message ?? error)}`);
+      }
+    }
+
+    /**
+     * Sponsored only while deploying. Once the account exists the user pays
+     * gas in USDC, so Sivan carries no float and no sponsorship balance can
+     * run dry and halt the chain.
+     */
     const feeMode = deployed ? defaultFeeMode(production) : sponsoredFeeMode();
 
     // ── 1. Ask the paymaster to build it ───────────────────────────
     let built: any;
     try {
-      built = await buildPaymasterTransaction(from, calls, feeMode, { production });
+      built = await buildPaymasterTransaction(from, calls, feeMode, { production }, deployment);
     } catch (error: any) {
       const msg = String(error?.message ?? error);
       if (/gas token|not supported|unsupported token/i.test(msg)) {
@@ -1637,9 +1687,9 @@ export class PrivyWalletProvider implements WalletProvider {
     // ── 3. The paymaster broadcasts ────────────────────────────────
     let executed: { transaction_hash?: string; tracking_id?: string };
     try {
-      executed = await executePaymasterTransaction(from, typedData, signature, feeMode, {
-        production,
-      });
+      executed = await executePaymasterTransaction(
+        from, typedData, signature, feeMode, { production }, deployment
+      );
     } catch (error: any) {
       throw new Error(`Starknet paymaster execute failed: ${String(error?.message ?? error)}`);
     }
@@ -1665,7 +1715,7 @@ export class PrivyWalletProvider implements WalletProvider {
       status: 'submitted',
       txHash,
       sponsored: feeMode.mode === 'sponsored',
-      rawProviderPayload: { ...executed, feeMode: feeMode.mode, accountDeployed: deployed },
+      rawProviderPayload: { ...executed, feeMode: feeMode.mode, accountDeployed: deployed, deployedInThisTx: !deployed },
     };
   }
 

@@ -43,6 +43,9 @@ import {
   SN_SELECTOR, toU256Calldata, buildErc20TransferCall, buildSivanTransferCalls,
 } from '../src/wallets/starknet/starknet-transfer.js';
 import {
+  deriveAccountAddress, assertDeploymentMatches, buildAccountDeployment, accountClassHash,
+} from '../src/wallets/starknet/starknet-deploy.js';
+import {
   paymasterEndpoint, isPaymasterAvailable, getSupportedGasTokens,
   isGasTokenSupported, sameFelt, defaultFeeMode, paymasterHealth,
   STARKNET_GAS_TOKEN,
@@ -412,6 +415,70 @@ async function main() {
     tokenAddress: STARKNET_GAS_TOKEN.mainnet, recipient: usdc, amount: '10', decimals: 6,
   });
   check('a zero fee builds 1 call, not a 0-value transfer', noFee.length === 1, String(noFee.length));
+
+  // ── 14. Account deployment ──────────────────────────────────────
+  console.log('\n══ 14. Account Deployment ══');
+
+  /**
+   * On Starknet an account IS a contract. A new wallet has a counterfactual
+   * address that can RECEIVE but cannot SEND, and sponsoring its gas does not
+   * help because there is nothing to execute against. Verified live earlier:
+   * getClassHashAt says "Contract not found" while balanceOf returns fine.
+   */
+  const OZ_CLASS = '0x061dac032f228abef9c6626f995015233097ae253a7f72d68552db02f2971b8f';
+  const pubKey = '0x1234567890abcdef1234567890abcdef12345678';
+
+  const derived = deriveAccountAddress({ publicKey: pubKey, classHash: OZ_CLASS });
+  check('address derivation is deterministic',
+    derived === deriveAccountAddress({ publicKey: pubKey, classHash: OZ_CLASS }));
+  check('derived address is a normalised felt', derived.length === 66 && derived.startsWith('0x'));
+
+  /** A different class hash MUST produce a different address. */
+  const other = deriveAccountAddress({
+    publicKey: pubKey,
+    classHash: '0x0111111111111111111111111111111111111111111111111111111111111111',
+  });
+  check('a different class hash derives a different address', derived !== other);
+  check('a different public key derives a different address',
+    derived !== deriveAccountAddress({ publicKey: '0xdeadbeef', classHash: OZ_CLASS }));
+
+  /**
+   * THE GUARD THAT PREVENTS STRANDED FUNDS. Deployment data that derives a
+   * different address than the funded one would create a working account the
+   * user does not control, silently. This must refuse.
+   */
+  const goodDeployment = buildAccountDeployment({
+    address: derived, publicKey: pubKey, classHash: OZ_CLASS,
+  });
+  check('a self-consistent deployment is accepted', goodDeployment.address === derived);
+  check('the deployment carries a class hash and salt',
+    Boolean(goodDeployment.class_hash) && Boolean(goodDeployment.salt));
+
+  let refusedMismatch = false;
+  try {
+    buildAccountDeployment({ address: other, publicKey: pubKey, classHash: OZ_CLASS });
+  } catch { refusedMismatch = true; }
+  check('deployment for the WRONG address is refused', refusedMismatch);
+
+  let refusedNoKey = false;
+  try {
+    buildAccountDeployment({ address: derived, publicKey: '', classHash: OZ_CLASS });
+  } catch { refusedNoKey = true; }
+  check('deployment without a public key is refused', refusedNoKey);
+
+  /** Leading zeros must not defeat the address match. */
+  const stripped = '0x' + BigInt(derived).toString(16);
+  check('the address match survives leading-zero stripping',
+    (() => {
+      try { assertDeploymentMatches(goodDeployment, stripped); return true; } catch { return false; }
+    })());
+
+  /** The class hash is env-driven with NO default, because guessing it strands funds. */
+  const prevCh = process.env.STARKNET_ACCOUNT_CLASS_HASH;
+  delete process.env.STARKNET_ACCOUNT_CLASS_HASH;
+  check('a missing STARKNET_ACCOUNT_CLASS_HASH refuses rather than guessing',
+    (() => { try { accountClassHash(); return false; } catch { return true; } })());
+  if (prevCh !== undefined) process.env.STARKNET_ACCOUNT_CLASS_HASH = prevCh;
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);
