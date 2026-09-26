@@ -50,9 +50,6 @@ const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: s
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
   arc: { mainnet: 'https://explorer.arc.io', testnet: 'https://testnet.arcscan.app', label: 'Arc Explorer' },
-  // Starkscan rather than Voyager: Voyager returns 403 to automated requests,
-  // so Starkscan is the one whose availability we can actually verify.
-  starknet: { mainnet: 'https://starkscan.co', testnet: 'https://sepolia.starkscan.co', label: 'Starkscan' },
   avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
   avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
 };
@@ -115,6 +112,28 @@ export function explorerLink(input: ExplorerInput): ExplorerLink | undefined {
     return {
       url: `${host}/tx/${encodeURIComponent(hash)}`,
       label: 'StellarExpert',
+      testnet,
+    };
+  }
+
+  /**
+   * Starknet is NOT EVM and must not fall through to EVM_EXPLORERS below.
+   *
+   * Functionally the key lookup would have worked, but the fall-through path
+   * ends at jiffyscan for a pending user operation, and that is ERC-4337.
+   * Starknet has native account abstraction and no userOp hash, so a pending
+   * Starknet transfer would have produced a jiffyscan link for an identifier
+   * that does not exist there.
+   *
+   * Starkscan rather than Voyager: Voyager returns 403 to automated requests,
+   * so Starkscan is the one whose availability we can actually verify.
+   */
+  if (network === 'starknet') {
+    if (!hash) return undefined;
+    const host = testnet ? 'https://sepolia.starkscan.co' : 'https://starkscan.co';
+    return {
+      url: `${host}/tx/${encodeURIComponent(hash)}`,
+      label: 'Starkscan',
       testnet,
     };
   }
