@@ -21,7 +21,7 @@ import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } f
  *   which is the cheapest known defence against wrong-network loss.
  */
 
-export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'bsc';
+export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'starknet' | 'bsc';
 export type ReceiveAsset = 'usdc' | 'usdt';
 
 /** Re-exported so callers do not need to know the record shape. */
@@ -42,6 +42,7 @@ const CHAIN_ASSETS: Record<ReceiveChain, ReceiveAsset[]> = {
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
   arc: ['usdc'],
+  starknet: ['usdc'],
   bsc: ['usdc', 'usdt'],
 };
 
@@ -109,6 +110,17 @@ const CHAIN_META: Record<ReceiveChain, {
     accent: '#28A0F0',
     note: 'Arbitrum One L2 EVM network.',
   },
+  starknet: {
+    label: 'Starknet',
+    short: 'STRK',
+    // felt252, NOT a 20 byte EVM address. Variable length up to 64 hex
+    // characters, and leading zeros are optional, so 0x123 and 0x0123 are the
+    // same account. Never compare these as raw strings.
+    addressFormat: 'Starts with 0x (Starknet felt)',
+    confirmations: 'A few seconds',
+    accent: '#0C0C4F',
+    note: 'Send only USDC on Starknet. Gas is paid in USDC, so you never need STRK.',
+  },
   arc: {
     label: 'Arc',
     short: 'ARC',
@@ -172,7 +184,7 @@ export function ReceiveView({
   onRefresh: () => void;
 }) {
   const availableChains = useMemo(() => {
-    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'arc', 'stellar', 'celo'];
+    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'arc', 'starknet', 'stellar', 'celo'];
     if (!enabledNetworks || enabledNetworks.length === 0) {
       return supported;
     }

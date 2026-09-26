@@ -50,6 +50,9 @@ const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: s
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
   arc: { mainnet: 'https://explorer.arc.io', testnet: 'https://testnet.arcscan.app', label: 'Arc Explorer' },
+  // Starkscan rather than Voyager: Voyager returns 403 to automated requests,
+  // so Starkscan is the one whose availability we can actually verify.
+  starknet: { mainnet: 'https://starkscan.co', testnet: 'https://sepolia.starkscan.co', label: 'Starkscan' },
   avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
   avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
 };

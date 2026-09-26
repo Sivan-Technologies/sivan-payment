@@ -39,6 +39,11 @@ import { validateAddressForChain, normaliseStarknetAddress } from '../src/wallet
 import { getChainAdapter } from '../src/wallets/chain-adapter-registry.js';
 import { getNetworkExplorer } from '../src/utils/explorers.js';
 import { resolveNetworkFeeConfig } from '../src/balances/transfer-fee-policy.js';
+import {
+  paymasterEndpoint, isPaymasterAvailable, getSupportedGasTokens,
+  isGasTokenSupported, sameFelt, defaultFeeMode, paymasterHealth,
+  STARKNET_GAS_TOKEN,
+} from '../src/wallets/starknet/paymaster.js';
 import type { WalletChain } from '../src/wallets/types/wallet.types.js';
 
 let passed = 0;
@@ -286,6 +291,65 @@ async function main() {
     baseFee.minimumUsd === 0.25, String(baseFee.minimumUsd));
   check('starknet has no new-recipient surcharge',
     snFee.newRecipientUsd === 0, String(snFee.newRecipientUsd));
+
+  // ── 12. Gas abstraction via AVNU paymaster ─────────────────────
+  console.log('\n══ 12. Gas Abstraction (AVNU) ══');
+
+  /**
+   * Privy does NOT sponsor gas on Starknet and will not broadcast there
+   * (Tier 2: sign only). The paymaster removes both problems at once, because
+   * AVNU submits the transaction itself. These assertions are what make that
+   * claim real rather than a comment.
+   */
+  check('paymaster is available on mainnet', await isPaymasterAvailable({ production: true }));
+
+  const tokens = await getSupportedGasTokens({ production: true });
+  check('paymaster lists supported gas tokens', tokens.length > 0, `${tokens.length} tokens`);
+
+  check('our settlement USDC is an accepted gas token',
+    await isGasTokenSupported({ production: true }));
+
+  /**
+   * THE TWO-USDC TRAP, the Starknet form of Arbitrum's USDC.e.
+   * Both contracts report symbol() as exactly "USDC" and AVNU accepts BOTH as
+   * gas tokens, so neither a symbol check nor a supported-token check tells
+   * them apart. Only name() and supply do.
+   */
+  const bridged = '0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8';
+  check('the bridged USDC is a DIFFERENT contract from ours',
+    !sameFelt(bridged, STARKNET_GAS_TOKEN.mainnet));
+
+  const nameOurs = decodeShortString(
+    (await starknetCall(STARKNET_GAS_TOKEN.mainnet, SELECTOR.symbol, [], { production: true })).slice(-2)[0]
+  );
+  check('our token still reports symbol USDC on chain', nameOurs === 'USDC', nameOurs);
+
+  const bridgedSym = decodeShortString(
+    (await starknetCall(bridged, SELECTOR.symbol, [], { production: true }))[0]
+  );
+  check('the bridged token ALSO reports symbol USDC, so symbol cannot discriminate',
+    bridgedSym === 'USDC', bridgedSym);
+
+  /** Endpoint comes from env, never hardcoded in a caller. */
+  const prevPm = process.env.AVNU_PAYMASTER_URL;
+  process.env.AVNU_PAYMASTER_URL = 'https://paymaster.example.invalid';
+  check('AVNU_PAYMASTER_URL overrides the public endpoint',
+    paymasterEndpoint({ production: true }) === 'https://paymaster.example.invalid');
+  if (prevPm === undefined) delete process.env.AVNU_PAYMASTER_URL;
+  else process.env.AVNU_PAYMASTER_URL = prevPm;
+
+  check('mainnet and testnet paymaster endpoints differ',
+    paymasterEndpoint({ production: true }) !== paymasterEndpoint({ production: false }));
+
+  /** Default mode is the user paying in USDC, not us sponsoring. */
+  const fm = defaultFeeMode(true);
+  check('default fee mode is user-pays, not sponsored', fm.mode === 'default');
+  check('default fee mode uses our settlement USDC',
+    fm.mode === 'default' && sameFelt(fm.gasToken, STARKNET_GAS_TOKEN.mainnet));
+
+  const health = await paymasterHealth({ production: true });
+  check('paymasterHealth reports available and token supported',
+    health.available && health.gasTokenSupported, JSON.stringify(health));
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);

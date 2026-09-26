@@ -15,14 +15,14 @@
  * confusion this screen exists to prevent.
  */
 
-export type LogoChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'bsc';
+export type LogoChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'starknet' | 'bsc';
 
 /**
  * Is there a real mark for this chain string?
  */
 export function logoChainFor(chain?: string): LogoChain | undefined {
   const key = String(chain ?? '').trim().toLowerCase();
-  const valid: LogoChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'polygon', 'arbitrum', 'arc', 'bsc'];
+  const valid: LogoChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'polygon', 'arbitrum', 'arc', 'starknet', 'bsc'];
   return valid.includes(key as LogoChain) ? (key as LogoChain) : undefined;
 }
 
@@ -114,6 +114,16 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
       <svg {...common} viewBox="0 0 32 32">
         <circle cx="16" cy="16" r="15" fill="#8247E5" />
         <path fill="#fff" d="M16 8l6 3.5v7L16 22l-6-3.5v-7L16 8zm0 3.2L12.5 13v4l3.5 1.8 3.5-1.8v-4L16 11.2z" />
+      </svg>
+    );
+  }
+
+  if (chain === 'starknet') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <circle cx="12" cy="12" r="12" fill="#0C0C4F" />
+        <path d="M6 13.4c2.1-2.6 4-3.9 5.9-3.9 1.9 0 3.8 1.3 5.9 3.9-1.4-1-2.8-1.5-4.2-1.5-1.6 0-3.1.6-4.6 1.7l-.5.4-.5-.4C7.3 13.1 6.7 13.2 6 13.4z" fill="#FAFAFA" />
+        <circle cx="17.1" cy="8.6" r="1.3" fill="#EC796B" />
       </svg>
     );
   }
