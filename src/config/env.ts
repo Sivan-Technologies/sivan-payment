@@ -181,6 +181,14 @@ const envSchema = z.object({
    * production traffic. Set these in any real deployment.
    */
   ARBITRUM_RPC_URL: z.string().url().optional(),
+  // Starknet. The public tier in starknet-rpc.ts is a degraded fallback only:
+  // three public Starknet endpoints were discontinued or paywalled during 2026,
+  // so a configured provider is effectively required in production.
+  STARKNET_RPC_URL: z.string().url().optional(),
+  STARKNET_RPC_FALLBACK_URL: z.string().url().optional(),
+  STARKNET_USDC_TESTNET_ADDRESS: z.string().optional(),
+  AVNU_PAYMASTER_URL: z.string().url().optional(),
+  AVNU_API_KEY: z.string().optional(),
   ARBITRUM_RPC_FALLBACK_URL: z.string().url().optional(),
   STELLAR_HORIZON_URL: z.string().url().optional(),
   STELLAR_SPONSOR_ACCOUNT_ID: z.string().optional(),

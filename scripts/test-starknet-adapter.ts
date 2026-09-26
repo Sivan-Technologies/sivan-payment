@@ -37,6 +37,8 @@ import {
 import { EVM_CHAINS, chainFamily, networksServedByWallet } from '../src/wallets/chain-family.js';
 import { validateAddressForChain, normaliseStarknetAddress } from '../src/wallets/address-validation.js';
 import { getChainAdapter } from '../src/wallets/chain-adapter-registry.js';
+import { getNetworkExplorer } from '../src/utils/explorers.js';
+import { resolveNetworkFeeConfig } from '../src/balances/transfer-fee-policy.js';
 import type { WalletChain } from '../src/wallets/types/wallet.types.js';
 
 let passed = 0;
@@ -235,6 +237,55 @@ async function main() {
   check('getChainAdapter(arc) no longer throws', getChainAdapter('arc')?.chain === 'arc');
   check('getChainAdapter(arbitrum) no longer throws',
     getChainAdapter('arbitrum')?.chain === 'arbitrum');
+
+  // ── 10. Explorer routing: the substring trap ────────────────────
+  console.log('\n══ 10. Explorer Routing ══');
+
+  /**
+   * The explorer resolver dispatches on net.includes(...), so a new chain name
+   * can be swallowed by an earlier branch. Checked explicitly: of the twelve
+   * patterns in that file, only 'starknet' matches the string 'starknet'.
+   * 'starknet' contains 'ark', not 'arc', so there is no collision with the
+   * arc branch.
+   *
+   * An earlier version of this comment claimed such a collision existed and
+   * the accompanying test passed under mutation, which means it was asserting
+   * nothing. What follows asserts the property that actually matters: a
+   * Starknet link points at Starkscan and at no other chain's explorer.
+   */
+  const snExp = getNetworkExplorer('starknet', undefined, undefined, 'mainnet');
+  check('starknet routes to Starkscan, not Arc',
+    snExp.url.includes('starkscan'), `${snExp.name} ${snExp.url}`);
+  const foreignDomains = ['arc.io', 'arcscan', 'arbiscan', 'basescan', 'celoscan',
+                          'solscan', 'stellar.expert', 'bscscan', 'etherscan'];
+  check('starknet routes to no other chain explorer',
+    foreignDomains.every((d) => !snExp.url.includes(d)), snExp.url);
+
+  const arcExp = getNetworkExplorer('arc', undefined, undefined, 'mainnet');
+  check('arc still routes to the Arc explorer',
+    arcExp.url.includes('arc.io'), arcExp.url);
+
+  const snTest = getNetworkExplorer('starknet', undefined, undefined, 'testnet');
+  check('starknet testnet routes to sepolia.starkscan',
+    snTest.url.includes('sepolia.starkscan'), snTest.url);
+
+  const snTx = getNetworkExplorer('starknet', '0xabc123', undefined, 'mainnet');
+  check('a starknet tx hash builds a Starkscan tx link',
+    snTx.url === 'https://starkscan.co/tx/0xabc123', snTx.url);
+
+  // ── 11. Fee policy ──────────────────────────────────────────────
+  console.log('\n══ 11. Fee Policy ══');
+
+  const snFee = resolveNetworkFeeConfig('starknet');
+  const baseFee = resolveNetworkFeeConfig('base');
+  check('starknet is on the high efficiency rail (floor 0.10)',
+    snFee.minimumUsd === 0.10, String(snFee.minimumUsd));
+  check('starknet cap is 0.75', snFee.maximumUsd === 0.75, String(snFee.maximumUsd));
+  check('starknet rate is 0.5 percent', snFee.percent === 0.5, String(snFee.percent));
+  check('base is still on the standard rail (floor 0.25)',
+    baseFee.minimumUsd === 0.25, String(baseFee.minimumUsd));
+  check('starknet has no new-recipient surcharge',
+    snFee.newRecipientUsd === 0, String(snFee.newRecipientUsd));
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);

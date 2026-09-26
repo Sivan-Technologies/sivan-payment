@@ -186,6 +186,24 @@ export function resolveNetworkFeeConfig(network?: string): TransferFeeConfig {
     };
   }
 
+  /**
+   * Starknet sits on the high efficiency rail alongside Arc, Celo and
+   * Stellar. Fees there are fractions of a cent, so the lower floor and cap
+   * keep price tracking real cost rather than a blended average.
+   *
+   * newRecipientUsd is 0: unlike Stellar, there is no trustline reserve. There
+   * IS an account deployment cost, but that is sponsored at onboarding rather
+   * than recovered per transfer, so it does not belong in this number.
+   */
+  if (n === 'starknet') {
+    return {
+      percent: 0.5,
+      minimumUsd: 0.10,
+      maximumUsd: 0.75,
+      newRecipientUsd: 0.0,
+    };
+  }
+
   if (n === 'arc') {
     return {
       percent: 0.5,
