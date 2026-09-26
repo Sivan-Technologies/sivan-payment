@@ -5,10 +5,7 @@
  * This is strictly distinct from direct crypto-to-crypto transfer fees.
  *
  * Curve:
- * - Standard Rail (Solana, Base, BSC, Ethereum):
- *     1.0% platform fee, floor $0.50, cap $50.00
- * - High-Efficiency Micro-Rail (Celo, Stellar):
- *     0.75% platform fee, floor $0.20, cap $25.00
+ * - Every chain: 2.0% platform fee, floor $0.50, cap $50.00
  *
  * Fee Allocation:
  * - 'buyer':  Buyer pays amount + fee; Seller receives amount.
@@ -37,23 +34,42 @@ export interface ServiceAgreementFeeQuote {
   explanation: string;
 }
 
+/**
+ * Service Agreement fee: 2.0 percent, floor $0.50, cap $50.00.
+ *
+ * ONE RATE ON EVERY CHAIN. This deliberately differs from the TRANSFER fee in
+ * transfer-fee-policy.ts, which does vary per chain (floor $0.10 on Arc, Celo,
+ * Stellar and Starknet, $0.25 elsewhere) because per-transfer gas is a real
+ * cost that differs by rail.
+ *
+ * An agreement fee is not priced against gas. It is priced against the work
+ * the protocol does around the money: holding funds through a delivery review
+ * window, arbitration, and the dispute trail. That work is identical whichever
+ * chain settles it, so charging Celo less for it was never justified by cost.
+ *
+ * HISTORY, because the old numbers are still quoted in places. This was
+ * previously 1.0 percent standard with a 0.75 percent "micro-rail" discount on
+ * Celo and Stellar. Two problems with that: the discount had no cost basis, and
+ * the `main` branch had already flattened both constants to 1.0 percent while
+ * leaving a docblock promising 0.75, so the code and its own comment disagreed.
+ * Collapsing to a single rate removes both the unjustified discount and the
+ * drift.
+ */
 export const DEFAULT_AGREEMENT_FEE_CONFIG: ServiceAgreementFeeConfig = {
-  percent: 1.0,
+  percent: 2.0,
   minimumUsd: 0.50,
   maximumUsd: 50.00,
 };
 
-export const MICRO_RAIL_AGREEMENT_FEE_CONFIG: ServiceAgreementFeeConfig = {
-  percent: 0.75,
-  minimumUsd: 0.20,
-  maximumUsd: 25.00,
-};
-
-export function resolveAgreementFeeConfig(network?: string): ServiceAgreementFeeConfig {
-  const n = (network ?? '').toLowerCase().trim();
-  if (n === 'celo' || n === 'stellar') {
-    return { ...MICRO_RAIL_AGREEMENT_FEE_CONFIG };
-  }
+/**
+ * Resolve the agreement fee for a network.
+ *
+ * The `network` parameter is retained because every caller already passes it
+ * and because a future rail may justify a different rate. It is currently
+ * unused BY DESIGN rather than by accident, which is the distinction that was
+ * missing the last time this function ignored its own argument.
+ */
+export function resolveAgreementFeeConfig(_network?: string): ServiceAgreementFeeConfig {
   return { ...DEFAULT_AGREEMENT_FEE_CONFIG };
 }
 
