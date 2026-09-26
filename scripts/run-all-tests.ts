@@ -129,6 +129,10 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-arc-adapter.ts',
   },
   {
+    name: 'Multi-Chain Starknet Adapter & felt252 Settlement',
+    command: 'tsx scripts/test-starknet-adapter.ts',
+  },
+  {
     name: 'Multi-Chain Developer Gateway & Agent API',
     command: 'tsx scripts/test-developer-gateway.ts',
     env: {

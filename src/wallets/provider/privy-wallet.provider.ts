@@ -113,6 +113,17 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
   // Arc is Circle's own L1: EVM-compatible, Reth execution, standard
   // secp256k1 addresses. Privy needs no new key material for it.
   arc: 'ethereum',
+  /**
+   * Starknet is its own Privy chain_type, not 'ethereum'. It uses the STARK
+   * curve, so Privy must generate distinct key material: an existing EVM
+   * wallet cannot sign for it.
+   *
+   * Privy supports Starknet at TIER 2, which means it will create the wallet
+   * and sign a hash via rawSign, but it will NOT broadcast. We build,
+   * hash, and submit the transaction ourselves. Same shape as sendCeloTransfer,
+   * which already signs through Privy and broadcasts the raw tx itself.
+   */
+  starknet: 'starknet',
 };
 
 /**
@@ -174,6 +185,21 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   arc: {
     mainnet: 'eip155:5042',
     testnet: 'eip155:5042002',
+  },
+  /**
+   * Starknet breaks the eip155:<integer> shape used by every other entry here.
+   * Its chain id is an ASCII SHORT STRING encoded as a felt, not a number:
+   *
+   *   starknet_chainId on mainnet -> 0x534e5f4d41494e -> "SN_MAIN"
+   *   starknet_chainId on sepolia -> "SN_SEPOLIA"
+   *
+   * Read back from api.cartridge.gg/x/starknet/mainnet before being written
+   * here. CAIP-2 namespaces Starknet as `starknet:<chain id>`, so the
+   * reference is the decoded short string rather than a decimal.
+   */
+  starknet: {
+    mainnet: 'starknet:SN_MAIN',
+    testnet: 'starknet:SN_SEPOLIA',
   },
 };
 
