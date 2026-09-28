@@ -237,6 +237,22 @@ export function ServiceAgreementsView({
   const handleFund = async (deal: ServiceAgreementDeal) => {
     const agreementId = deal.id || deal.escrowId;
     if (!agreementId) return;
+
+    // Pre-flight guard: block fund call if agreement is not ready to be funded
+    const dealStatus = (deal.status || '').toLowerCase();
+    if (dealStatus === 'pending_seller_acceptance' || dealStatus === 'pending_acceptance') {
+      setErrorBanner('This agreement is still awaiting contractor acceptance. You can lock funds into the vault once the contractor accepts the terms.');
+      return;
+    }
+    if (dealStatus === 'funded') {
+      setErrorBanner('This agreement has already been funded.');
+      return;
+    }
+    if (!['pending_payment', 'pending_funding', 'draft', 'pending'].includes(dealStatus)) {
+      setErrorBanner(`Cannot fund agreement in current status: ${dealStatus}.`);
+      return;
+    }
+
     setActionLoadingId(agreementId);
     setErrorBanner(null);
     setSuccessBanner(null);
@@ -691,16 +707,33 @@ export function ServiceAgreementsView({
                       </>
                     )}
 
-                    {/* Client / Buyer: Pending Seller Acceptance */}
+                    {/* Client / Buyer: Pending Seller Acceptance — show status banner + cancel only */}
                     {(st === 'pending_seller_acceptance' || st === 'pending_acceptance') && isBuyer && (
-                      <button
-                        disabled={isLoading}
-                        onClick={() => handleCancel(selectedDeal)}
-                        className="ghost-btn small"
-                        style={{ color: '#ef4444' }}
-                      >
-                        Cancel Agreement
-                      </button>
+                      <>
+                        <div
+                          style={{
+                            background: 'rgba(234, 179, 8, 0.1)',
+                            border: '1px solid rgba(234, 179, 8, 0.4)',
+                            borderRadius: '8px',
+                            padding: '10px 14px',
+                            fontSize: '13px',
+                            color: '#ca8a04',
+                            lineHeight: '1.5',
+                            marginBottom: '8px',
+                            width: '100%',
+                          }}
+                        >
+                          ⏳ Awaiting contractor acceptance — You will be able to lock funds into the vault once the contractor accepts the terms.
+                        </div>
+                        <button
+                          disabled={isLoading}
+                          onClick={() => handleCancel(selectedDeal)}
+                          className="ghost-btn small"
+                          style={{ color: '#ef4444' }}
+                        >
+                          Cancel Agreement
+                        </button>
+                      </>
                     )}
 
                     {/* Client / Buyer: Pending Payment */}
