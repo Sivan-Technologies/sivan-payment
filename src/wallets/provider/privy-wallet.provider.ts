@@ -142,6 +142,21 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
 };
 
 /**
+ * Convert a Privy chain_type string to the Sivan WalletChain label.
+ *
+ * Privy uses: 'solana', 'ethereum', 'starknet' (and 'stellar' for read-only
+ * linked accounts). The mapping is intentionally explicit so that any future
+ * Privy chain_type is caught at code-review time rather than silently becoming
+ * 'ethereum' at runtime.
+ */
+function privyChainTypeToWalletChain(chainType: string | undefined): WalletChain {
+  if (chainType === 'solana') return 'solana';
+  if (chainType === 'starknet') return 'starknet';
+  // 'ethereum' covers base, celo, bsc, arbitrum, arc — all share one secp256k1 key.
+  return 'ethereum';
+}
+
+/**
  * CAIP-2 identifiers, needed when sending a transaction.
  *
  * Mainnet and testnet differ, and sending on the wrong one silently succeeds on
@@ -795,9 +810,32 @@ export class PrivyWalletProvider implements WalletProvider {
 
   /**
    * The user's existing wallet of a chain type, if any.
+   *
+   * WHY chain IS NOT ALWAYS 'ethereum' FOR NON-SOLANA TYPES.
+   *
+   * The original code did `chainType === 'solana' ? 'solana' : 'ethereum'`,
+   * which collapsed 'starknet' (and any future non-EVM chain type) to
+   * 'ethereum'. This had two failure modes:
+   *
+   *   1. DB lookup: `db.findUserWallet(userId, 'ethereum')` returns an EVM
+   *      wallet for a starknet request, so the EVM wallet is returned early
+   *      with chain='starknet' — wrong address, wrong family.
+   *
+   *   2. Privy linked_accounts path: the account is found by chain_type filter
+   *      (correct) but then returned via toProviderWallet(wallet, 'ethereum')
+   *      — right wallet, wrong chain label, so the record never matches on the
+   *      ReceiveView lookup (w.chain === 'starknet').
+   *
+   * The fix: resolve chain from chainType directly. Starknet is its own family
+   * and must stay 'starknet' all the way through.
    */
   private async findWallet(userId: string, chainType: string): Promise<ProviderWallet | undefined> {
-    const chain = chainType === 'solana' ? 'solana' : 'ethereum';
+    const chain: WalletChain =
+      chainType === 'solana'
+        ? 'solana'
+        : chainType === 'starknet'
+        ? 'starknet'
+        : 'ethereum';
     const dbWallet = await db.findUserWallet(userId, chain as any).catch(() => undefined);
     if (dbWallet?.providerWalletId) {
       const full = await privyRequest<any>(`/wallets/${encodeURIComponent(dbWallet.providerWalletId)}`).catch(() => undefined);
@@ -849,7 +887,7 @@ export class PrivyWalletProvider implements WalletProvider {
 
   async getWallet(providerWalletId: string): Promise<ProviderWallet> {
     const raw = await privyRequest<any>(`/wallets/${encodeURIComponent(providerWalletId)}`);
-    return this.toProviderWallet(raw, raw?.chain_type === 'solana' ? 'solana' : 'ethereum');
+    return this.toProviderWallet(raw, privyChainTypeToWalletChain(raw?.chain_type));
   }
 
   async listWallets(providerCustomerId: string): Promise<ProviderWallet[]> {
@@ -858,7 +896,7 @@ export class PrivyWalletProvider implements WalletProvider {
     return (user?.linked_accounts ?? [])
       .filter((account: any) => account?.type === 'wallet')
       .map((account: any) =>
-        this.toProviderWallet(account, account?.chain_type === 'solana' ? 'solana' : 'ethereum')
+        this.toProviderWallet(account, privyChainTypeToWalletChain(account?.chain_type))
       );
   }
 

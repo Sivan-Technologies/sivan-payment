@@ -311,6 +311,9 @@ export const CHAIN_ASSET_SUPPORT: Record<string, SourceCurrency[]> = {
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
   arc: ['usdc'],
+  // Starknet: Circle native USDC only, 6 decimals.
+  // USDT does not exist natively on Starknet.
+  starknet: ['usdc'],
   optimism: ['usdc', 'usdt'],
   avalanche_c_chain: ['usdc', 'usdt'],
 };
