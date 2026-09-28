@@ -83,7 +83,8 @@ export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
   { network: 'arbitrum', enabled: true, isDefault: false, label: 'Arbitrum', sortOrder: 27, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedBy: 'system', updatedAt: nowIso() },
-  { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'starknet', enabled: true, isDefault: false, label: 'Starknet', sortOrder: 30, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 35, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedBy: 'system', updatedAt: nowIso() }
 ];
@@ -106,11 +107,11 @@ export const updatePaymentControlsSchema = z.object({
     enabled: z.boolean()
   })).optional(),
   sourceNetworks: z.array(z.object({
-    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']),
+    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb', 'starknet']),
     enabled: z.boolean(),
     isDefault: z.boolean().optional()
   })).optional(),
-  defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb']).optional(),
+  defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb', 'starknet']).optional(),
   // Legacy support for older admin frontend payloads.
   controls: z.array(z.object({
     currency: z.enum(['usd', 'gbp', 'eur', 'ngn']),
