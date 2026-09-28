@@ -274,6 +274,14 @@ export function ReceiveView({
         recommended: activeDefault === 'celo',
         chains: ['celo'],
       },
+      {
+        key: 'starknet',
+        label: 'Starknet',
+        note: 'Validity rollup with native account abstraction. Gas paid directly in USDC.',
+        accent: CHAIN_META.starknet.accent,
+        recommended: activeDefault === 'starknet',
+        chains: ['starknet'],
+      },
     ];
     return families
       .map((family) => ({ ...family, chains: family.chains.filter((c) => availableChains.includes(c)) }))
@@ -441,6 +449,8 @@ export function ReceiveView({
       ? ['solana']
       : activeChain === 'stellar'
       ? ['stellar']
+      : activeChain === 'starknet'
+      ? ['starknet']
       : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum', 'arc'];
 
   const wallet =

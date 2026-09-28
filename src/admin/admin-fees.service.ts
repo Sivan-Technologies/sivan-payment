@@ -172,13 +172,13 @@ export const feeSettingsSchema = z.object({
    */
   transferFeeMaximumUsd: z.coerce.number().min(0).max(10_000).default(DEFAULT_TRANSFER_FEE.maximumUsd),
   /**
-   * Micro-rail (Celo & Stellar) minimum fee floor, USD.
-   * Default $0.10. Celo (CIP-64) and Stellar (CAP-0015) have sub-cent gas,
+   * Micro-rail (Celo, Stellar & Starknet) minimum fee floor, USD.
+   * Default $0.10. Celo (CIP-64), Stellar (CAP-0015), and Starknet have sub-cent gas,
    * allowing a lower floor for everyday micro-transactions ($5 to $50) with >99% margin.
    */
   microRailFeeMinimumUsd: z.coerce.number().min(0).max(100).default(0.10),
   /**
-   * Micro-rail (Celo & Stellar) maximum fee cap, USD.
+   * Micro-rail (Celo, Stellar & Starknet) maximum fee cap, USD.
    * Default $0.75.
    */
   microRailFeeMaximumUsd: z.coerce.number().min(0).max(10_000).default(0.75),

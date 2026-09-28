@@ -214,6 +214,7 @@ export function networkLabel(chain?: string): string {
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
     arc: 'Arc',
+    starknet: 'Starknet',
     avalanche_c_chain: 'Avalanche',
     tron: 'Tron',
     sivan_p2p: 'Sivan Instant P2P',
@@ -249,6 +250,12 @@ export function getNetworkExplorer(
     const arcDomain = isMainnet ? 'https://explorer.arc.io' : 'https://testnet.arcscan.app';
     const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
     return { name: 'Arc Explorer', url };
+  }
+
+  if (net.includes('starknet') || net.includes('strk')) {
+    const starkDomain = isMainnet ? 'https://starkscan.co' : 'https://sepolia.starkscan.co';
+    const url = rawTxHash ? `${starkDomain}/tx/${rawTxHash}` : rawAddr ? `${starkDomain}/contract/${rawAddr}` : starkDomain;
+    return { name: 'Starkscan Explorer', url };
   }
 
   if (net.includes('arbitrum') || net.includes('arbi')) {

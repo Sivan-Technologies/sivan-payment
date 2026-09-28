@@ -101,6 +101,7 @@ function networkLabel(network: string): string {
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
     arc: 'Arc',
+    starknet: 'Starknet',
     optimism: 'Optimism',
     avalanche: 'Avalanche',
     tron: 'Tron',

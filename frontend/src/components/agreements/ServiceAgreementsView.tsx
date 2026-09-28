@@ -855,6 +855,7 @@ export function ServiceAgreementsView({
                     <option value="base">Base (USDC Rail)</option>
                     <option value="celo">Celo (Mobile-First)</option>
                     <option value="stellar">Stellar (Cross-Border)</option>
+                    <option value="starknet">Starknet (Native AA)</option>
                   </select>
                 </div>
 
