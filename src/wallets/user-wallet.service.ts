@@ -204,7 +204,7 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const { customer } = await requireWalletEligibility(userId, provider.name);
 
-  const targetChain = chain === 'solana' ? 'solana' : 'ethereum';
+  const targetChain = chain === 'solana' ? 'solana' : chain === 'starknet' ? 'starknet' : 'ethereum';
   const providerWallet = await provider.createWallet({
     userId,
     providerCustomerId: customer?.providerCustomerId,
