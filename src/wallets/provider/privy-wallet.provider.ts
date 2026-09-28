@@ -22,9 +22,9 @@ import {
   sponsoredFeeMode,
   STARKNET_GAS_TOKEN,
 } from '../starknet/paymaster.js';
-import { isAccountDeployed } from '../starknet/starknet-rpc.js';
+import { isAccountDeployed, starknetErc20Balance } from '../starknet/starknet-rpc.js';
 import { buildAccountDeployment } from '../starknet/starknet-deploy.js';
-import { STARKNET_USDC_DECIMALS } from '../starknet/StarknetAdapter.js';
+import { STARKNET_USDC_DECIMALS, STARKNET_USDC, STARKNET_STRK } from '../starknet/StarknetAdapter.js';
 import { normaliseStarknetAddress } from '../address-validation.js';
 import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
@@ -980,6 +980,10 @@ export class PrivyWalletProvider implements WalletProvider {
       ];
     }
 
+    if (chain === 'starknet') {
+      return this.starknetBalances(address, production);
+    }
+
     // USDC and USDT where a contract is known for this chain and network. A
     // missing entry is skipped rather than reported as zero: Base has no
     // native USDT, and "0 USDT on Base" would be an invented figure.
@@ -1085,6 +1089,67 @@ export class PrivyWalletProvider implements WalletProvider {
           contractAddress: mint,
         });
       }
+    }
+
+    return balances;
+  }
+
+  /**
+   * Token balances (USDC, STRK) for a Starknet address.
+   */
+  private async starknetBalances(address: string, production: boolean): Promise<WalletBalance[]> {
+    const normalised = normaliseStarknetAddress(address);
+    const balances: WalletBalance[] = [];
+
+    const usdcAddress = production
+      ? STARKNET_USDC.mainnet
+      : (process.env.STARKNET_USDC_TESTNET_ADDRESS || '0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343');
+
+    // 1. USDC
+    try {
+      const amount = await starknetErc20Balance(
+        usdcAddress,
+        normalised,
+        STARKNET_USDC_DECIMALS,
+        { production }
+      );
+      balances.push({
+        asset: 'usdc',
+        chain: 'starknet',
+        amount: Number(amount).toFixed(6),
+        contractAddress: usdcAddress,
+      });
+    } catch {
+      balances.push({
+        asset: 'usdc',
+        chain: 'starknet',
+        amount: '0.000000',
+        contractAddress: usdcAddress,
+      });
+    }
+
+    // 2. STRK
+    const strkAddress = production ? STARKNET_STRK.mainnet : STARKNET_STRK.testnet;
+    try {
+      const amount = await starknetErc20Balance(
+        strkAddress,
+        normalised,
+        18,
+        { production }
+      );
+      balances.push({
+        asset: 'strk',
+        chain: 'starknet',
+        amount: Number(amount).toFixed(6),
+        contractAddress: strkAddress,
+      });
+    } catch {
+      balances.push({
+        asset: 'strk',
+        chain: 'starknet',
+        amount: '0.000000',
+        contractAddress: strkAddress,
+      });
     }
 
     return balances;

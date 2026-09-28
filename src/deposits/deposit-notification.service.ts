@@ -115,7 +115,8 @@ export function humanNetwork(chain: string): string {
     bsc: 'BNB Chain',
     bnb: 'BNB Chain',
     stellar: 'Stellar',
-    avalanche_c_chain: 'Avalanche'
+    avalanche_c_chain: 'Avalanche',
+    starknet: 'Starknet',
   };
   return map[chain] ?? chain.replaceAll('_', ' ');
 }
@@ -202,6 +203,63 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
 }
 
 /**
+ * Deliver WhatsApp deposit notification if user has linked WhatsApp.
+ */
+export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepositRecord): Promise<void> {
+  try {
+    if (
+      userId.startsWith('usr_dev_') ||
+      userId.startsWith('usr_test_') ||
+      userId.includes('mock') ||
+      userId.includes('test_agent') ||
+      userId.includes('buyer_test') ||
+      userId.includes('seller_test')
+    ) {
+      return;
+    }
+
+    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL;
+    if (!rawWaUrl) return;
+
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (!secret) return;
+
+    const user = await db.findUserById(userId);
+    let targetPhone = user?.whatsappNumber;
+    if (!targetPhone) {
+      const links = await db.listCustomerIdentityLinks();
+      const activeWa = links
+        .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.whatsappNumber))
+        .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+      targetPhone = activeWa[0]?.whatsappNumber;
+    }
+    if (!targetPhone) return;
+
+    const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
+    const amount = `${deposit.amount} ${deposit.asset}`;
+    const network = humanNetwork(deposit.chain);
+    const text = deposit.status === 'confirmed'
+      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
+
+    const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+    await fetch(waNotifyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-notify-secret': secret,
+      },
+      body: JSON.stringify({
+        to: targetPhone,
+        message: text,
+      }),
+    });
+  } catch {
+    // Non-blocking notification enhancement
+  }
+}
+
+/**
  * Deliver everything owed.
  *
  * In-app delivery needs no work here: the activity feed reads the deposit rows
@@ -227,6 +285,9 @@ export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> 
 
     // Deliver Telegram notification if linked & enabled
     void notifyTelegramDeposit(deposit.userId, deposit);
+
+    // Deliver WhatsApp notification if linked & enabled
+    void notifyWhatsAppDeposit(deposit.userId, deposit);
 
     if (!user?.email) {
       outcome.skipped += 1;

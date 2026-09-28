@@ -59,7 +59,7 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc' | 'starknet';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -82,7 +82,7 @@ export const balanceTransferControlsSchema = z.object({
   minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -90,7 +90,7 @@ export const balanceTransferControlsSchema = z.object({
 
 export const createBalanceTransferSchema = z.object({
   asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc']),
+  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet']),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
@@ -300,9 +300,9 @@ export async function getBalanceTransferControls() {
    * one place to set it.
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
-  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc'];
+  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet'];
   const mergedNetworks: BalanceNetwork[] = saved?.supportedNetworks
-    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork]))
+    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork, 'starknet' as BalanceNetwork]))
     : defaultNetworks;
 
   return {

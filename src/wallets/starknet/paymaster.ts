@@ -84,7 +84,7 @@ export function paymasterEndpoint(options: PaymasterOptions = {}): string {
  */
 export const STARKNET_GAS_TOKEN = {
   mainnet: '0x033068F6539f8e6e6b131e6B2B814e6c34A5224bC66947c47DaB9dFeE93b35fb',
-  testnet: process.env.STARKNET_USDC_TESTNET_ADDRESS || '',
+  testnet: process.env.STARKNET_USDC_TESTNET_ADDRESS || '0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343',
 } as const;
 
 export interface SupportedToken {

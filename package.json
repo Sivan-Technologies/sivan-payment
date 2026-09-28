@@ -11,6 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
     "test:build-isolation": "tsx scripts/test-build-isolation.ts",
+    "test:starknet-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-starknet-e2e.json tsx scripts/test-starknet-e2e.ts",
     "seed": "tsx scripts/seed.ts",
     "test:webhook-signature": "tsx scripts/test-webhook-signature.ts",
     "test:admin-health-bypass": "tsx scripts/test-admin-health-bypass.ts",

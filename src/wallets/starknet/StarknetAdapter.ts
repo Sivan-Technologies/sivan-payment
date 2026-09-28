@@ -47,9 +47,16 @@ import { resolveNetworkMode, isMainnet } from '../network-mode.js';
  * which is why decimals must always come from a (chain, asset) lookup and
  * never from the asset alone.
  */
+import { db } from '../../database/json-database.js';
+
 export const STARKNET_USDC = {
   mainnet: '0x033068F6539f8e6e6b131e6B2B814e6c34A5224bC66947c47DaB9dFeE93b35fb',
-  testnet: process.env.STARKNET_USDC_TESTNET_ADDRESS || '',
+  testnet: process.env.STARKNET_USDC_TESTNET_ADDRESS || '0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343',
+} as const;
+
+export const STARKNET_STRK = {
+  mainnet: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d',
+  testnet: '0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d',
 } as const;
 
 export const STARKNET_USDC_DECIMALS = 6;
@@ -85,11 +92,20 @@ export class StarknetAdapter implements IChainAdapter {
     );
   }
 
-  async getBalance(_userId: string, _asset = 'usdc'): Promise<number> {
-    throw new Error(
-      'Starknet balance lookup by userId requires a provisioned wallet row. ' +
-        'Use balanceForAddress() with a known address.'
-    );
+  async getBalance(userId: string, asset = 'usdc'): Promise<number> {
+    const wallet = await db.findUserWallet(userId, 'starknet');
+    if (!wallet?.address) return 0;
+    const a = asset.toLowerCase();
+    if (a === 'strk') {
+      const amount = await starknetErc20Balance(
+        STARKNET_STRK.mainnet,
+        normaliseStarknetAddress(wallet.address),
+        18,
+        { production: this.production() }
+      ).catch(() => '0');
+      return Number(amount);
+    }
+    return this.balanceForAddress(wallet.address).catch(() => 0);
   }
 
   /** Read a USDC balance for an address. Normalises before use. */

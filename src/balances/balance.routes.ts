@@ -97,7 +97,7 @@ export async function balanceRoutes(app: FastifyInstance) {
 
     let unified = await getUnifiedBalance(user.id);
     const existingChains = (unified.wallets || []).map((w) => w.chain);
-    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc'];
+    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc', 'starknet'];
     const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
 
     if (missingChains.length > 0) {

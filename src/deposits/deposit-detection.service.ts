@@ -49,7 +49,7 @@ import type { WalletChain } from '../wallets/types/wallet.types.js';
  * invites dust and airdropped spam tokens to generate notification rows, which
  * trains users to ignore deposit alerts. A deliberate allow-list.
  */
-const WATCHED_ASSETS = new Set(['USDC', 'USDT']);
+const WATCHED_ASSETS = new Set(['USDC', 'USDT', 'STRK']);
 
 /**
  * Six decimals. Both USDC and USDT use six on every chain we support, and the
