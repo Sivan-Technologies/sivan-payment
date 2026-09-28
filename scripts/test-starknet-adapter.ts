@@ -133,7 +133,7 @@ async function main() {
     decodeShortString(STARKNET_CHAIN_ID_HEX.testnet) === 'SN_SEPOLIA',
     decodeShortString(STARKNET_CHAIN_ID_HEX.testnet));
   check('mainnet and testnet chain ids differ',
-    STARKNET_CHAIN_ID.mainnet !== STARKNET_CHAIN_ID.testnet);
+    (STARKNET_CHAIN_ID.mainnet as string) !== (STARKNET_CHAIN_ID.testnet as string));
 
   // ── 4. u256: the silent truncation ──────────────────────────────
   console.log('\n══ 4. u256 Reassembly ══');
