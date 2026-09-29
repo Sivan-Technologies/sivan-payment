@@ -28,6 +28,7 @@ import { metamapKycRoutes } from '../kyc/api/metamap.routes.js';
 
 import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
 import { agreementRoutes } from '../agreements/agreement.routes.js';
+import { agreementControlsRoutes } from '../agreements/agreement-controls.routes.js';
 import { passkeyRoutes } from '../identity/passkey.routes.js';
 import { fraudSecurityRoutes } from '../security/fraud.routes.js';
 import { celoCashoutRoutes } from '../offramp/api/celo-cashout.routes.js';
@@ -106,6 +107,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await webhooksRoutes(app);
   await app.register(developerGatewayRoutes);
   await agreementRoutes(app);
+  await agreementControlsRoutes(app);
   await passkeyRoutes(app);
   await fraudSecurityRoutes(app);
   await celoCashoutRoutes(app);

@@ -56,6 +56,7 @@ import type {
   ServiceAgreementRecord,
   PasskeyCredentialRecord,
   PasskeyChallengeRecord,
+  AgreementControlsRecord,
 } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
@@ -2522,6 +2523,63 @@ export class PostgresDatabase {
       client.release();
     }
   }
+
+  async getAgreementControls(): Promise<AgreementControlsRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      await ensureAgreementControlsSchema(client);
+      const result = await client.query(
+        'SELECT * FROM payments_agreement_controls WHERE id = $1 LIMIT 1',
+        ['default_controls']
+      );
+      if (!result.rows.length) return null;
+      return mapAgreementControls(result.rows[0]);
+    } catch (err) {
+      console.warn('[postgres.getAgreementControls]', err);
+      return null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveAgreementControls(record: AgreementControlsRecord): Promise<AgreementControlsRecord> {
+    const client = await this.pool.connect();
+    try {
+      await ensureAgreementControlsSchema(client);
+      await client.query(
+        `INSERT INTO payments_agreement_controls
+           (id, creation_enabled, servicing_enabled, emergency_halt, pilot_whitelist_only, allowed_networks, maintenance_message, updated_by_admin_id, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+         ON CONFLICT (id) DO UPDATE SET
+           creation_enabled     = EXCLUDED.creation_enabled,
+           servicing_enabled    = EXCLUDED.servicing_enabled,
+           emergency_halt       = EXCLUDED.emergency_halt,
+           pilot_whitelist_only = EXCLUDED.pilot_whitelist_only,
+           allowed_networks     = EXCLUDED.allowed_networks,
+           maintenance_message  = EXCLUDED.maintenance_message,
+           updated_by_admin_id  = EXCLUDED.updated_by_admin_id,
+           updated_at           = EXCLUDED.updated_at`,
+        [
+          record.id,
+          record.creationEnabled,
+          record.servicingEnabled,
+          record.emergencyHalt,
+          record.pilotWhitelistOnly,
+          JSON.stringify(record.allowedNetworks),
+          record.maintenanceMessage,
+          record.updatedByAdminId ?? null,
+          record.updatedAt,
+        ]
+      );
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
 }
 
 
@@ -2546,6 +2604,43 @@ async function ensureServiceAgreementsSchema(client: pg.PoolClient) {
   } catch (err) {
     console.warn('[postgres.migration.service_agreements]', err);
   }
+}
+
+let agreementControlsSchemaMigrated = false;
+async function ensureAgreementControlsSchema(client: pg.PoolClient) {
+  if (agreementControlsSchemaMigrated) return;
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS payments_agreement_controls (
+        id TEXT PRIMARY KEY DEFAULT 'default_controls',
+        creation_enabled BOOLEAN NOT NULL DEFAULT false,
+        servicing_enabled BOOLEAN NOT NULL DEFAULT true,
+        emergency_halt BOOLEAN NOT NULL DEFAULT false,
+        pilot_whitelist_only BOOLEAN NOT NULL DEFAULT false,
+        allowed_networks JSONB NOT NULL DEFAULT '[]',
+        maintenance_message TEXT NOT NULL DEFAULT 'Service Agreement creation is reserved for verified pilot partners during mainnet staging. Active agreements continue to settle normally.',
+        updated_by_admin_id TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    agreementControlsSchemaMigrated = true;
+  } catch (err) {
+    console.warn('[postgres.migration.agreement_controls]', err);
+  }
+}
+
+function mapAgreementControls(row: any): AgreementControlsRecord {
+  return {
+    id: 'default_controls',
+    creationEnabled: Boolean(row.creation_enabled),
+    servicingEnabled: Boolean(row.servicing_enabled),
+    emergencyHalt: Boolean(row.emergency_halt),
+    pilotWhitelistOnly: Boolean(row.pilot_whitelist_only),
+    allowedNetworks: Array.isArray(row.allowed_networks) ? row.allowed_networks : JSON.parse(row.allowed_networks ?? '[]'),
+    maintenanceMessage: row.maintenance_message ?? '',
+    updatedByAdminId: row.updated_by_admin_id ?? undefined,
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
 }
 
 function mapServiceAgreement(row: any): ServiceAgreementRecord {

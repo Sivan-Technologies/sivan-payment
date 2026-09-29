@@ -8,6 +8,10 @@ import {
   DeveloperAgreementRequest,
   DeveloperSettleRequest,
 } from './developer-api.types.js';
+import {
+  getAgreementControls,
+  isCreationAllowed,
+} from '../agreements/agreement-controls.service.js';
 
 export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Public developer health check (no auth needed)
@@ -200,6 +204,16 @@ export const developerGatewayRoutes: FastifyPluginAsync = async (app: FastifyIns
     authedRoutes.post<{ Body: DeveloperAgreementRequest }>(
       '/api/v1/developer/agreements',
       async (req, reply) => {
+        // PSA Creation Guard: developer API and MCP agent creation is subject to
+        // the same creation_enabled flag as the web and MiniPay surfaces.
+        const controls = await getAgreementControls();
+        if (!isCreationAllowed(controls, req.body?.buyerUserId)) {
+          return reply.code(503).send({
+            success: false,
+            code: 'AGREEMENT_CREATION_PAUSED',
+            message: controls.maintenanceMessage,
+          });
+        }
         const result = await developerGatewayService.createProgrammaticAgreement(req.body);
         return reply.code(201).send(result);
       }

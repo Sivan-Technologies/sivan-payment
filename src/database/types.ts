@@ -1207,6 +1207,39 @@ export interface DatabaseShape {
   serviceAgreements: ServiceAgreementRecord[];
   passkeyCredentials?: PasskeyCredentialRecord[];
   passkeyChallenges?: PasskeyChallengeRecord[];
+  agreementControls?: AgreementControlsRecord[];
+}
+
+/**
+ * Central Protocol Safeguard Architecture (PSA) controls for Service Agreements.
+ *
+ * Three independent control axes replace a single binary enabled flag:
+ *
+ *  creation_enabled — gates NEW agreement drafts. When false, all POST /api/agreements
+ *  and POST /api/v1/developer/agreements calls are rejected with 503. Existing funded
+ *  agreements are completely unaffected.
+ *
+ *  servicing_enabled — governs lifecycle mutations on EXISTING agreements (fund, deliver,
+ *  release, cancel, extend). Must stay true while any agreement holds user funds.
+ *
+ *  emergency_halt — circuit breaker reserved for confirmed smart-contract or bridge
+ *  vulnerabilities. Blocks on-chain settlement calls (release, fund) while leaving
+ *  read-only agreement views fully accessible. Should be toggled by the founder
+ *  only via the admin key.
+ *
+ * Separating creation from servicing protects user capital: toggling creation off
+ * does not trap funds already held inside active agreements.
+ */
+export interface AgreementControlsRecord {
+  id: 'default_controls';
+  creationEnabled: boolean;
+  servicingEnabled: boolean;
+  emergencyHalt: boolean;
+  pilotWhitelistOnly: boolean;
+  allowedNetworks: string[];
+  maintenanceMessage: string;
+  updatedByAdminId?: string;
+  updatedAt: string;
 }
 
 export interface PasskeyCredentialRecord {

@@ -15,6 +15,12 @@ import {
 import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import type { WalletChain } from '../database/types.js';
+import {
+  getAgreementControls,
+  isCreationAllowed,
+  isServicingAllowed,
+  isSettlementAllowed,
+} from './agreement-controls.service.js';
 
 import { db } from '../database/json-database.js';
 
@@ -92,6 +98,16 @@ export async function agreementRoutes(app: FastifyInstance) {
       throw badRequest('buyerUserId, sellerUserId, title, amountUsdc, and network are required');
     }
 
+    // PSA Creation Guard: check before any DB write.
+    const controls = await getAgreementControls();
+    if (!isCreationAllowed(controls, body.buyerUserId)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_CREATION_PAUSED',
+        message: controls.maintenanceMessage,
+      });
+    }
+
     const agreement = await createAgreement({
       id: body.id,
       buyerUserId: body.buyerUserId,
@@ -167,6 +183,15 @@ export async function agreementRoutes(app: FastifyInstance) {
    * Mark the agreement as funded and compute delivery_due_at.
    */
   app.post<{ Params: { id: string }; Body?: { fundingTxHash?: string } }>('/api/agreements/:id/fund', async (req, reply) => {
+    // PSA Settlement Guard: fund is an on-chain operation — blocked during emergency halt.
+    const controls = await getAgreementControls();
+    if (!isSettlementAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SETTLEMENT_PAUSED',
+        message: 'On-chain settlement is temporarily paused due to a network safety event. Active agreements remain fully visible.',
+      });
+    }
     const agreement = await fundAgreement(req.params.id, req.body?.fundingTxHash);
     return reply.code(200).send({
       ...agreement,
@@ -191,6 +216,15 @@ export async function agreementRoutes(app: FastifyInstance) {
    * Seller marks delivery submitted.
    */
   app.post<{ Params: { id: string } }>('/api/agreements/:id/deliver', async (req, reply) => {
+    // PSA Servicing Guard
+    const controls = await getAgreementControls();
+    if (!isServicingAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SERVICING_PAUSED',
+        message: 'Agreement servicing is temporarily paused. Please check back shortly.',
+      });
+    }
     const agreement = await markDelivered(req.params.id);
     return reply.code(200).send({
       ...agreement,
@@ -203,6 +237,22 @@ export async function agreementRoutes(app: FastifyInstance) {
    * Buyer approves delivery and releases funds.
    */
   app.post<{ Params: { id: string } }>('/api/agreements/:id/release', async (req, reply) => {
+    // PSA Settlement Guard: release is the on-chain payment transfer — blocked during emergency halt.
+    const controls = await getAgreementControls();
+    if (!isSettlementAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SETTLEMENT_PAUSED',
+        message: 'On-chain settlement is temporarily paused due to a network safety event. Your funds are secure. Active agreements remain fully visible.',
+      });
+    }
+    if (!isServicingAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SERVICING_PAUSED',
+        message: 'Agreement servicing is temporarily paused. Please check back shortly.',
+      });
+    }
     const agreement = await releaseAgreement(req.params.id);
     return reply.code(200).send({
       ...agreement,
