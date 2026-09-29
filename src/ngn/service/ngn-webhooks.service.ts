@@ -113,6 +113,48 @@ async function applyWebhookToTransfer(event: {
   }
 
   if (!transfer) {
+    // Check if the event belongs to an isolated GHS transfer
+    const ghsTransfers = await db.listGhsTransfers();
+    const ghsTransfer = ghsTransfers.find((t) =>
+      t.id === providerRef ||
+      t.providerTransferId === providerRef ||
+      t.depositAddress === payload?.destinationAddress ||
+      t.depositAddress === payload?.address ||
+      t.settlementReference === providerRef ||
+      (payload?.label && typeof payload.label === 'string' && payload.label.includes(t.userId))
+    );
+
+    if (ghsTransfer) {
+      const isCompleted = /completed|success/i.test(event.eventType) || /completed|success/i.test(payload?.status ?? '');
+      const isFailed = /failed|rejected/i.test(event.eventType) || /failed|rejected/i.test(payload?.status ?? '');
+      const updatedStatus = isCompleted ? 'completed' : isFailed ? 'failed' : 'processing';
+
+      await db.upsertGhsTransferRecord({
+        ...ghsTransfer,
+        status: updatedStatus,
+        updatedAt: new Date().toISOString(),
+        metadata: {
+          ...(ghsTransfer.metadata ?? {}),
+          lastWebhookEvent: event.eventType,
+          webhookPayload: payload,
+        },
+      });
+
+      await createAuditLog({
+        actorType: 'system',
+        actorId: 'breet_webhook',
+        action: 'ghs.webhook_settled',
+        resourceType: 'ghs_transfer',
+        resourceId: ghsTransfer.id,
+        metadata: {
+          eventType: event.eventType,
+          status: updatedStatus,
+        },
+      }).catch(() => undefined);
+
+      return undefined;
+    }
+
     /**
      * AN UNMATCHED WEBHOOK USED TO BE INVISIBLE, which is precisely how the
      * above ran unnoticed for a day: the delivery succeeded, Breet showed 200,

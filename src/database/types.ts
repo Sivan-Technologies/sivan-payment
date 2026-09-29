@@ -532,6 +532,83 @@ export interface NgnPayoutAccountRecord {
   updatedAt: string;
 }
 
+/**
+ * A Ghanaian payout account (MoMo or bank) and the name-match verdict attached to it.
+ * Completely isolated from Nigerian accounts to prevent schema pollution.
+ */
+export interface GhsPayoutAccountRecord {
+  id: string;
+  userId: string;
+  provider: string;
+  bankId: string;
+  bankName?: string;
+  accountNumber: string;
+  accountType: 'momo' | 'bank';
+  accountName: string;
+  declaredName: string;
+  matchVerdict: 'match' | 'review' | 'mismatch';
+  matchScore: number;
+  matchExplanation?: string;
+  matchedTokens?: string[];
+  unmatchedBankTokens?: string[];
+  resolutionTrustworthy: boolean;
+  status: 'pending_review' | 'verified' | 'rejected';
+  reviewReason?: 'auto_verified' | 'name_needs_review' | 'name_mismatch' | 'resolution_untrustworthy';
+  needsHumanReview?: boolean;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GhsQuoteRecord {
+  id: string;
+  userId: string;
+  provider: string;
+  providerQuoteId?: string;
+  direction: 'onramp' | 'offramp';
+  sourceCurrency: string;
+  destinationCurrency: string;
+  sourceAmount: string;
+  destinationAmount: string;
+  rate: string;
+  feeAmount: string;
+  network?: string;
+  payoutAccountId?: string;
+  expiresAt: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface GhsTransferRecord {
+  id: string;
+  quoteId: string;
+  userId: string;
+  provider: string;
+  providerTransferId?: string;
+  direction: 'onramp' | 'offramp';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  sourceCurrency: string;
+  destinationCurrency: string;
+  sourceAmount: string;
+  destinationAmount: string;
+  rate: string;
+  feeAmount: string;
+  depositAddress?: string;
+  payoutAccountId?: string;
+  bankId?: string;
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  settlementReference?: string;
+  failureReason?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LiquidationAddressRecord {
   id: string;
   userId: string;
@@ -1208,6 +1285,9 @@ export interface DatabaseShape {
   passkeyCredentials?: PasskeyCredentialRecord[];
   passkeyChallenges?: PasskeyChallengeRecord[];
   agreementControls?: AgreementControlsRecord[];
+  ghsPayoutAccounts?: GhsPayoutAccountRecord[];
+  ghsQuotes?: GhsQuoteRecord[];
+  ghsTransfers?: GhsTransferRecord[];
 }
 
 /**

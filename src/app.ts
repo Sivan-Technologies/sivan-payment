@@ -767,8 +767,10 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (method === 'GET' && url.startsWith('/api/users/whatsapp-balance')) return false;
   if (url.startsWith('/api/users/whatsapp-payout-account')) return false;
   if (method === 'GET' && url.includes('/verification-summary')) return false;
-  if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
-  if (url.startsWith('/api/ngn/offramp/orders')) return false;
+  if (method === 'GET' && (url.startsWith('/api/ngn/quote') || url.startsWith('/api/ghs/quote'))) return false;
+  if (url.startsWith('/api/ngn/offramp/orders') || url.startsWith('/api/ghs/offramp/orders')) return false;
+  if (method === 'GET' && (url.startsWith('/api/ghs/banks') || url.startsWith('/api/ghs/bank-account/resolve'))) return false;
+  if (url.startsWith('/api/ghs/payout-accounts')) return false;
   if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile' || url === '/api/identity/reset-test-user')) return false;
 
   if (url === '/api/customers') return true;
@@ -878,6 +880,7 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
   if (url.startsWith('/api/admin/settings/team') || url.startsWith('/api/admin/settings/api-keys')) return ['ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/virtual-account')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);
   if (url.startsWith('/api/admin/ngn')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
+  if (url.startsWith('/api/admin/ghs')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/approvals')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.includes('/sync') || url.includes('/reconciliation') || url.includes('/webhooks')) return ['ops', 'operator', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/customers') && url.includes('/kyc-status')) return ['ops', 'operator', 'compliance'].includes(role);

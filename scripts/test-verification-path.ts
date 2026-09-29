@@ -22,6 +22,7 @@ import {
   verificationPlanFor,
   normalizeCountry,
   isNigerianUser,
+  isGhanaianUser,
 } from '../src/kyc/service/verification-path.js';
 
 let pass = 0;
@@ -49,13 +50,14 @@ console.log('\nEVERYWHERE ELSE GETS BRIDGE');
   check('a non-Nigerian is not treated as Nigerian', !isNigerianUser('US'));
 }
 
-console.log('\nGHANA IS NOT SILENTLY INCLUDED');
+console.log('\nGHANA GETS THE LOCAL BANK / MOMO PATH');
 {
-  // Breet settles GHS, so Ghana is the obvious next local rail - but the
-  // Ghanaian resolver has never been tested. Routing GH to the bank check
-  // would strand those users on a check that does not exist yet.
-  check('GH goes to Bridge until its resolver is tested',
-    verificationPathFor('GH') === 'bridge_kyc', verificationPathFor('GH'));
+  check('GH routes to the local bank check', verificationPathFor('GH') === 'ngn_bank');
+  check('lowercase still works for gh', verificationPathFor('gh') === 'ngn_bank');
+  check('isGhanaianUser agrees', isGhanaianUser('GH') === true);
+  const ghanaPlan = verificationPlanFor('GH');
+  check('Ghana plan title is MoMo/bank specific', /Mobile Money/i.test(ghanaPlan.title));
+  check('Ghana unlocks Ghanaian Cedi', ghanaPlan.unlocks.some((u) => /Ghanaian Cedi/i.test(u)));
 }
 
 console.log('\nAN UNKNOWN COUNTRY FAILS TOWARDS THE PATH THAT CAN SUCCEED');

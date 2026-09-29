@@ -59,6 +59,7 @@ import type {
   AgreementControlsRecord,
 } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
+import type { GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord } from './types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const { Pool } = pg;
@@ -1250,6 +1251,128 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try { await upsertNgnWebhook(client, record); return record; } finally { client.release(); }
   }
+
+  // ------------------------------------------------------------------
+  // GHS corridor (Ghana off-ramp)
+  // ------------------------------------------------------------------
+  // GHS tables are not yet promoted to dedicated Postgres columns, so
+  // we store/retrieve using the shared payments_json_store key-value
+  // table (same pattern as early NGN records before migration).
+
+  async listGhsTransfers(filter?: { userId?: string }): Promise<GhsTransferRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, `
+        SELECT value FROM payments_json_store
+        WHERE key LIKE 'ghs_transfer:%'
+        ORDER BY (value->>'createdAt') ASC
+      `);
+      let rows: GhsTransferRecord[] = result.rows.map((r) => r.value as GhsTransferRecord);
+      if (filter?.userId) rows = rows.filter((t) => t.userId === filter.userId);
+      return rows;
+    } finally { client.release(); }
+  }
+
+  async findGhsTransferById(id: string): Promise<GhsTransferRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client,
+        `SELECT value FROM payments_json_store WHERE key = $1`,
+        [`ghs_transfer:${id}`]
+      );
+      return result.rows.length ? result.rows[0].value as GhsTransferRecord : null;
+    } finally { client.release(); }
+  }
+
+  async upsertGhsTransferRecord(record: GhsTransferRecord): Promise<GhsTransferRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_json_store (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [`ghs_transfer:${record.id}`, JSON.stringify(record)]
+      );
+      return record;
+    } finally { client.release(); }
+  }
+
+  async listGhsPayoutAccounts(userId?: string): Promise<GhsPayoutAccountRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, `
+        SELECT value FROM payments_json_store
+        WHERE key LIKE 'ghs_payout_account:%'
+        ORDER BY (value->>'createdAt') ASC
+      `);
+      let rows: GhsPayoutAccountRecord[] = result.rows.map((r) => r.value as GhsPayoutAccountRecord);
+      if (userId) rows = rows.filter((a) => a.userId === userId);
+      return rows;
+    } finally { client.release(); }
+  }
+
+  async findGhsPayoutAccountById(id: string): Promise<GhsPayoutAccountRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client,
+        `SELECT value FROM payments_json_store WHERE key = $1`,
+        [`ghs_payout_account:${id}`]
+      );
+      return result.rows.length ? result.rows[0].value as GhsPayoutAccountRecord : null;
+    } finally { client.release(); }
+  }
+
+  async upsertGhsPayoutAccountRecord(record: GhsPayoutAccountRecord): Promise<GhsPayoutAccountRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_json_store (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [`ghs_payout_account:${record.id}`, JSON.stringify(record)]
+      );
+      return record;
+    } finally { client.release(); }
+  }
+
+  async listGhsQuotes(userId?: string): Promise<GhsQuoteRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, `
+        SELECT value FROM payments_json_store
+        WHERE key LIKE 'ghs_quote:%'
+        ORDER BY (value->>'createdAt') ASC
+      `);
+      let rows: GhsQuoteRecord[] = result.rows.map((r) => r.value as GhsQuoteRecord);
+      if (userId) rows = rows.filter((q) => q.userId === userId);
+      return rows;
+    } finally { client.release(); }
+  }
+
+  async findGhsQuoteById(id: string): Promise<GhsQuoteRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client,
+        `SELECT value FROM payments_json_store WHERE key = $1`,
+        [`ghs_quote:${id}`]
+      );
+      return result.rows.length ? result.rows[0].value as GhsQuoteRecord : null;
+    } finally { client.release(); }
+  }
+
+  async upsertGhsQuoteRecord(record: GhsQuoteRecord): Promise<GhsQuoteRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_json_store (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [`ghs_quote:${record.id}`, JSON.stringify(record)]
+      );
+      return record;
+    } finally { client.release(); }
+  }
+
   async insertSupportTicketRecord(record: SupportTicketRecord) {
     const client = await this.pool.connect();
     try { await upsertSupportTicket(client, record); return record; } finally { client.release(); }

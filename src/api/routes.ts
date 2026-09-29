@@ -21,6 +21,8 @@ import { identityRoutes } from '../identity/identity.routes.js';
 import { virtualAccountsRoutes } from '../virtual-accounts/api/virtual-accounts.routes.js';
 import { aceSupportRoutes } from '../ace/api/ace-support.routes.js';
 import { ngnRoutes } from '../ngn/api/ngn.routes.js';
+import { ghsRoutes } from '../ghs/api/ghs.routes.js';
+import { ghsAdminRoutes } from '../ghs/api/ghs.admin.routes.js';
 import { balanceRoutes } from '../balances/balance.routes.js';
 import { supplierRoutes } from '../suppliers/supplier.routes.js';
 import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
@@ -97,6 +99,8 @@ export async function registerRoutes(app: FastifyInstance) {
   await paymentControlsRoutes(app);
   await systemStatusRoutes(app);
   await ngnRoutes(app);
+  await ghsRoutes(app);
+  await ghsAdminRoutes(app);
   await balanceRoutes(app);
   await supplierRoutes(app);
   await kycLevelRoutes(app);

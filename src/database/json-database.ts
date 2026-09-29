@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord } from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -69,6 +69,9 @@ const emptyDb = (): DatabaseShape => ({
   p2pClaims: [],
   serviceAgreements: [],
   agreementControls: [],
+  ghsPayoutAccounts: [],
+  ghsQuotes: [],
+  ghsTransfers: [],
 });
 
 export class JsonDatabase {
@@ -757,6 +760,80 @@ export class JsonDatabase {
         return merged;
       }
       data.ngnPayoutAccounts.push(record);
+      return record;
+    });
+  }
+
+  async listGhsPayoutAccounts(userId?: string): Promise<GhsPayoutAccountRecord[]> {
+    const data = await this.read();
+    const all = data.ghsPayoutAccounts ?? [];
+    return userId ? all.filter((item) => item.userId === userId) : all;
+  }
+
+  async findGhsPayoutAccountById(id: string): Promise<GhsPayoutAccountRecord | null> {
+    const data = await this.read();
+    return (data.ghsPayoutAccounts ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsPayoutAccountRecord(record: GhsPayoutAccountRecord) {
+    return this.mutate((data) => {
+      data.ghsPayoutAccounts = data.ghsPayoutAccounts ?? [];
+      const index = data.ghsPayoutAccounts.findIndex(
+        (item) =>
+          item.userId === record.userId &&
+          item.provider === record.provider &&
+          item.bankId === record.bankId &&
+          item.accountNumber === record.accountNumber
+      );
+      if (index >= 0) {
+        const existing = data.ghsPayoutAccounts[index];
+        const merged = { ...record, id: existing.id, createdAt: existing.createdAt };
+        data.ghsPayoutAccounts[index] = merged;
+        return merged;
+      }
+      data.ghsPayoutAccounts.push(record);
+      return record;
+    });
+  }
+
+  async listGhsQuotes(userId?: string): Promise<GhsQuoteRecord[]> {
+    const data = await this.read();
+    const all = data.ghsQuotes ?? [];
+    return userId ? all.filter((item) => item.userId === userId) : all;
+  }
+
+  async findGhsQuoteById(id: string): Promise<GhsQuoteRecord | null> {
+    const data = await this.read();
+    return (data.ghsQuotes ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsQuoteRecord(record: GhsQuoteRecord) {
+    return this.mutate((data) => {
+      data.ghsQuotes = data.ghsQuotes ?? [];
+      const index = data.ghsQuotes.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ghsQuotes[index] = record;
+      else data.ghsQuotes.push(record);
+      return record;
+    });
+  }
+
+  async listGhsTransfers(filter?: { userId?: string }): Promise<GhsTransferRecord[]> {
+    const data = await this.read();
+    const all = data.ghsTransfers ?? [];
+    return filter?.userId ? all.filter((item) => item.userId === filter.userId) : all;
+  }
+
+  async findGhsTransferById(id: string): Promise<GhsTransferRecord | null> {
+    const data = await this.read();
+    return (data.ghsTransfers ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsTransferRecord(record: GhsTransferRecord) {
+    return this.mutate((data) => {
+      data.ghsTransfers = data.ghsTransfers ?? [];
+      const index = data.ghsTransfers.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ghsTransfers[index] = record;
+      else data.ghsTransfers.push(record);
       return record;
     });
   }
