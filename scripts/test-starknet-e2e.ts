@@ -22,6 +22,7 @@ import {
   notifyWhatsAppDeposit,
   notifyPendingDeposits,
 } from '../src/deposits/deposit-notification.service.js';
+import { confirmDeposits } from '../src/deposits/deposit-confirmation.service.js';
 import { normaliseStarknetAddress, validateAddressForChain } from '../src/wallets/address-validation.js';
 import type { WalletDepositRecord } from '../src/database/types.js';
 
@@ -262,6 +263,50 @@ async function run() {
   const unnotifiedAfter = await db.listUnnotifiedWalletDeposits(10);
   const stillUnnotified = unnotifiedAfter.some((d) => d.id === recorded.record.id);
   check('Deposit is marked as notified after sweeper runs', !stillUnnotified);
+
+  // ══ 9. Starknet Deposit Confirmation Sweeper ══
+  console.log('\n══ 9. Starknet Deposit Confirmation Sweeper ══');
+  const pendingStarknetDeposit = await recordDeposit({
+    userId: testUserId,
+    walletId: walletRow.id,
+    address: testAddress,
+    chain: 'starknet',
+    asset: 'USDC',
+    amount: '15.000000',
+    detectionSource: 'balance_poll',
+    txHash: '0xstarknet_confirmed_tx_hash_123',
+    idempotencyKeyOverride: `starknet:confirm_test:${Date.now()}`,
+  });
+
+  check('Pending Starknet deposit is recorded with pending status', pendingStarknetDeposit.record.status === 'pending');
+
+  // Stub Starknet RPC for tx status
+  const originalFetch2 = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any) => {
+    const body = JSON.parse(String(init?.body ?? '{}'));
+    if (body.method === 'starknet_getTransactionStatus') {
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: body.id ?? 1,
+          result: { execution_status: 'SUCCEEDED', finality_status: 'ACCEPTED_ON_L2' },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return originalFetch2(url, init);
+  }) as any;
+
+  try {
+    const outcome = await confirmDeposits();
+    check('confirmDeposits outcome includes confirmed Starknet deposit', outcome.confirmed.includes(pendingStarknetDeposit.record.id));
+
+    const allDeposits = await db.listWalletDeposits(testUserId);
+    const updated = allDeposits.find((d) => d.id === pendingStarknetDeposit.record.id);
+    check('Database record status successfully transitioned to confirmed', updated?.status === 'confirmed');
+  } finally {
+    globalThis.fetch = originalFetch2;
+  }
 
   console.log('\n==================================================');
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);

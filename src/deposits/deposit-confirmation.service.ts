@@ -232,6 +232,25 @@ async function balanceStillPresent(
       return held + EPSILON >= expected ? 'confirmed' : 'unknown';
     }
 
+    if (deposit.chain === 'starknet') {
+      const { starknetErc20Balance } = await import('../wallets/starknet/starknet-rpc.js');
+      const { STARKNET_USDC, STARKNET_STRK, STARKNET_USDC_DECIMALS } = await import('../wallets/starknet/StarknetAdapter.js');
+      const { normaliseStarknetAddress } = await import('../wallets/address-validation.js');
+      const isStrk = deposit.asset.toLowerCase() === 'strk';
+      const tokenAddress = isStrk
+        ? (production ? STARKNET_STRK.mainnet : STARKNET_STRK.testnet)
+        : (production ? STARKNET_USDC.mainnet : STARKNET_USDC.testnet);
+      const decimals = isStrk ? 18 : STARKNET_USDC_DECIMALS;
+      const amountStr = await starknetErc20Balance(
+        tokenAddress,
+        normaliseStarknetAddress(deposit.address),
+        decimals,
+        { production }
+      );
+      const held = Number(amountStr);
+      return held + EPSILON >= expected ? 'confirmed' : 'unknown';
+    }
+
     /**
      * EVM: read at a block behind the head, not at 'latest'.
      *
@@ -332,6 +351,28 @@ async function txOutcome(
         }
       }
       return 'unknown';
+    }
+
+    if (deposit.chain === 'starknet') {
+      const { starknetRpc } = await import('../wallets/starknet/starknet-rpc.js');
+      try {
+        const status = await starknetRpc<{ execution_status?: string; finality_status?: string }>(
+          'starknet_getTransactionStatus',
+          [hash],
+          { production }
+        );
+        if (!status) return 'unknown';
+        if (status.execution_status === 'REVERTED') return 'failed';
+        if (
+          status.execution_status === 'SUCCEEDED' &&
+          (status.finality_status === 'ACCEPTED_ON_L2' || status.finality_status === 'ACCEPTED_ON_L1')
+        ) {
+          return 'confirmed';
+        }
+        return 'unknown';
+      } catch {
+        return 'unknown';
+      }
     }
 
     const receipt = await evmRpc<any>(

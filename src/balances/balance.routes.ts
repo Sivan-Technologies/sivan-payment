@@ -6,6 +6,7 @@ import { quoteTransfer } from './balance.service.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { listUserDeposits } from '../deposits/deposit.service.js';
+import { confirmDeposits } from '../deposits/deposit-confirmation.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber, activeLinkForTelegram } from '../identity/identity.service.js';
 import { requireIdentityServiceSecret } from '../shared/service-auth.js';
@@ -358,7 +359,13 @@ export async function balanceRoutes(app: FastifyInstance) {
 
   app.get('/api/users/:userId/balance/deposits', async (request) => {
     const { userId } = request.params as { userId: string };
-    return { data: await listUserDeposits(userId) };
+    let deposits = await listUserDeposits(userId);
+    const hasPending = deposits.some((d) => d.status === 'pending');
+    if (hasPending) {
+      await confirmDeposits().catch(() => undefined);
+      deposits = await listUserDeposits(userId);
+    }
+    return { data: deposits };
   });
 
   app.get('/api/balance/controls', async () => ({ data: await getBalanceTransferControls() }));

@@ -117,7 +117,7 @@ const CHAIN_META: Record<ReceiveChain, {
     // characters, and leading zeros are optional, so 0x123 and 0x0123 are the
     // same account. Never compare these as raw strings.
     addressFormat: 'Starts with 0x (Starknet felt)',
-    confirmations: 'A few seconds',
+    confirmations: 'Usually 15–30 seconds',
     accent: '#0C0C4F',
     note: 'Send only USDC on Starknet. Gas is paid in USDC, so you never need STRK.',
   },

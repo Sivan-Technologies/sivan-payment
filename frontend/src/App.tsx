@@ -1093,14 +1093,18 @@ export default function App() {
   useEffect(() => {
     if (view === 'receive') {
       void loadControls();
+      void throttledLoadUserData(3000);
+      void loadUserWallets();
       const interval = setInterval(() => {
         if (document.visibilityState === 'visible') {
           void loadControls();
+          void throttledLoadUserData(5000);
+          void loadUserWallets();
         }
-      }, 10000);
+      }, 8000);
       return () => clearInterval(interval);
     }
-  }, [view, loadControls]);
+  }, [view, loadControls, throttledLoadUserData, loadUserWallets]);
 
   useEffect(() => {
     const handleAgreementsRefresh = () => {

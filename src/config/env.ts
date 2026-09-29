@@ -421,7 +421,7 @@ const envSchema = z.object({
    * calls by the number of wallets. This is a stopgap detector; the real fix is
    * RPC webhooks, at which point this goes to 0.
    */
-  DEPOSIT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  DEPOSIT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(15),
   /**
    * How often to deliver deposit notifications, in seconds. 0 disables.
    *
@@ -429,7 +429,7 @@ const envSchema = z.object({
    * deposits being RECORDED, and a slow sweep must not delay the alert for a
    * deposit already found. The two loops share only the database.
    */
-  DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(45),
+  DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(30),
   /**
    * How often to re-check pending deposits for finality, in seconds. 0
    * disables.
@@ -440,10 +440,10 @@ const envSchema = z.object({
    * deposit stays 'pending' forever - which is exactly what shipped, and what
    * put "In progress" next to money the balance card already called spendable.
    *
-   * 45s rather than the scan's 60s: confirmation is the tail of the delay a
+   * 15s confirmation interval: confirmation is the tail of the delay a
    * user actually watches, and waiting longer saves no chain reads.
    */
-  DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(45),
+  DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(15),
   /**
    * How often the service agreement deadline sweeper runs, in seconds. 0 disables.
    *
