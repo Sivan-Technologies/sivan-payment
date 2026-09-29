@@ -125,6 +125,15 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
 
   const activeProviderName = await resolveActiveWalletProvider();
   const providerCache = new Map<string, ReturnType<typeof getWalletProvider>>();
+  /**
+   * Returns both the resolved provider and its canonical name.
+   *
+   * The name is needed inside the scan loop so we can gate baseline sync on
+   * whether THIS wallet uses a mock provider (synthetic balances) rather
+   * than checking a process-wide ALLOW_MOCK_WALLETS flag. A global flag
+   * blocked real Starknet / Privy wallets from getting baseline-synced even
+   * when the process had been started with mock wallets for other wallets.
+   */
   const providerFor = (w: { provider?: string }) => {
     const name = w.provider ?? activeProviderName;
     let resolved = providerCache.get(name);
@@ -132,13 +141,13 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
       resolved = getWalletProvider(name);
       providerCache.set(name, resolved);
     }
-    return resolved;
+    return { provider: resolved, providerName: name };
   };
 
   const windowStart = new Date().toISOString();
 
   for (const wallet of wallets) {
-    const provider = providerFor(wallet);
+    const { provider, providerName } = providerFor(wallet);
     // Every network this one key can receive on, not just the filed chain.
     const networks = networksServedByWallet(wallet.chain);
 
@@ -182,10 +191,20 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
         // Always update the baseline, whatever we decide below.
         lastSeen.set(key, current);
 
-        // First sighting establishes a baseline. In production, if there is an existing on-chain balance
-        // that has not yet been recorded as a deposit, record the unrecorded delta safely with a dynamic idempotency key.
+        // First sighting establishes a baseline. If there is an existing on-chain
+        // balance that has not yet been recorded as a deposit, record the
+        // unrecorded delta safely with a dynamic idempotency key.
+        //
+        // GUARDED ON THE WALLET'S OWN PROVIDER, NOT A GLOBAL FLAG.
+        //
+        // The previous guard was `process.env.ALLOW_MOCK_WALLETS !== 'true'`,
+        // which blocked ALL baseline sync whenever mock wallets were enabled -
+        // even for real Privy / Starknet wallets holding genuine faucet balances.
+        // The correct check is whether THIS wallet's provider returns synthetic
+        // data (mock). A real Starknet wallet using Privy must baseline sync
+        // regardless of what other wallets in the process are doing.
         if (previous === undefined) {
-          if (process.env.ALLOW_MOCK_WALLETS !== 'true' && current >= MIN_DEPOSIT) {
+          if (providerName !== 'mock' && current >= MIN_DEPOSIT) {
             const existing = await db.listWalletDeposits(wallet.userId);
             const recordedTotal = existing
               .filter((d) => d.chain.toLowerCase() === network.toLowerCase() && d.asset.toUpperCase() === asset.toUpperCase())
@@ -202,7 +221,7 @@ export async function scanForDeposits(): Promise<DepositScanOutcome> {
                 amount: money(unrecorded),
                 detectionSource: 'balance_poll',
                 idempotencyKeyOverride: `${network}:${wallet.address.toLowerCase()}:${asset}:baseline_sync_${money(recordedTotal)}_${money(current)}`,
-                rawPayload: { current: money(current), recordedTotal: money(recordedTotal), detector: 'baseline_sync' }
+                rawPayload: { current: money(current), recordedTotal: money(recordedTotal), detector: 'baseline_sync', providerName }
               });
 
               if (result.created) {

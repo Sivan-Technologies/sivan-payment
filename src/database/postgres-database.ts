@@ -583,9 +583,9 @@ export class PostgresDatabase {
       res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
       if (res.rows[0]) return mapUser(res.rows[0]);
 
-      // Check payments_customer_identity_links for linked Telegram accounts or phones
+      // Check customer_identity_links for linked Telegram accounts or phones
       const linkRes = await client.query(
-        `select payment_user_id from payments_customer_identity_links 
+        `select payment_user_id from customer_identity_links 
          where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number=$3 or whatsapp_number=$4
          order by linked_at desc nulls last limit 1`,
         [username, clean, clean, `+${digitsOnly}`]

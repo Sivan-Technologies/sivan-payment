@@ -1,17 +1,20 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
 
 export async function runP2pTransferTest() {
   console.log('--- Starting P2P Direct Transfer Integration Test ---');
-  const dbPath = path.isAbsolute(env.DATABASE_FILE) ? env.DATABASE_FILE : path.join(process.cwd(), env.DATABASE_FILE);
-  await fs.rm(dbPath, { force: true });
+
+  // Unique run suffix so each test run creates fresh users on a persistent Postgres DB
+  const runId = Date.now();
+  const senderUsername = `sender_tester_${runId}`;
+  const recipUsername = `samson_micheal_${runId}`;
+  const newbieUsername = `newbie_claimant_${runId}`;
+
   const app = await buildApp();
 
   async function signup(name: string, username: string) {
-    const email = `${username.toLowerCase()}-${Date.now()}@sivan.test`;
+    const email = `${username.toLowerCase().replace(/_/g, '')}@sivan.test`;
     const startRes = await app.inject({
       method: 'POST',
       url: '/api/auth/email/start',
@@ -32,7 +35,7 @@ export async function runP2pTransferTest() {
     const token = authData.token;
     const user = authData.user;
 
-    // Set custom username
+    // Set custom username — ignore 409 (already taken) since we use unique run IDs
     await app.inject({
       method: 'PUT',
       url: `/api/users/${user.id}/username`,
@@ -40,11 +43,11 @@ export async function runP2pTransferTest() {
       payload: { username },
     });
 
-    return { user, token };
+    return { user, token, username };
   }
 
-  const senderSignup = await signup('Sender User', 'sender_tester');
-  const recipSignup = await signup('Samson Micheal', 'samson_micheal');
+  const senderSignup = await signup('Sender User', senderUsername);
+  const recipSignup = await signup('Samson Micheal', recipUsername);
 
   const senderUser = senderSignup.user;
   const recipUser = recipSignup.user;
@@ -53,7 +56,7 @@ export async function runP2pTransferTest() {
   const creditRes = await app.inject({
     method: 'POST',
     url: '/api/admin/balance/adjustments',
-    headers: { 'x-admin-api-key': 'test-admin-key' },
+    headers: { 'x-admin-api-key': env.ADMIN_API_KEY },
     payload: {
       userId: senderUser.id,
       asset: 'usdc',
@@ -64,16 +67,25 @@ export async function runP2pTransferTest() {
   });
   assert.equal(creditRes.statusCode, 200, 'Admin funding succeeded');
 
+  // Ensure P2P transfers are enabled for this test run (may be disabled in persistent DB)
+  const enableP2pRes = await app.inject({
+    method: 'PUT',
+    url: '/api/admin/balance/controls',
+    headers: { 'x-admin-api-key': env.ADMIN_API_KEY },
+    payload: { p2pTransfersEnabled: true, updatedBy: 'p2p_test_setup' },
+  });
+  assert.equal(enableP2pRes.statusCode, 200, `P2P transfers enabled: ${enableP2pRes.body}`);
+
   // Test 1: Resolve recipient by @username
   const resolveTagRes = await app.inject({
     method: 'GET',
-    url: '/api/identity/resolve-target?target=@samson_micheal',
+    url: `/api/identity/resolve-target?target=@${recipUsername}`,
   });
   assert.equal(resolveTagRes.statusCode, 200);
   const resolveTagJson = resolveTagRes.json();
   assert.equal(resolveTagJson.data.found, true);
   assert.equal(resolveTagJson.data.user.userId, recipUser.id);
-  console.log('✅ Verified: Resolved recipient by @samson_micheal');
+  console.log(`✅ Verified: Resolved recipient by @${recipUsername}`);
 
   // Test 2: Resolve recipient by userId
   const resolveIdRes = await app.inject({
@@ -94,7 +106,7 @@ export async function runP2pTransferTest() {
     payload: {
       asset: 'usdc',
       amount: 15,
-      recipientTarget: '@samson_micheal',
+      recipientTarget: `@${recipUsername}`,
       note: 'Payment for design consultation',
     },
   });
@@ -105,6 +117,7 @@ export async function runP2pTransferTest() {
   assert.equal(transferJson.data.netAmount, 15, 'Net amount matches exact requested amount');
   assert.equal(transferJson.data.recipient.userId, recipUser.id);
   console.log('✅ Verified: Executed 15.00 USDC P2P transfer with $0.00 fee');
+
 
   // Test 4: Verify Recipient Received 15 USDC
   const recipBalRes = await app.inject({
@@ -130,8 +143,8 @@ export async function runP2pTransferTest() {
   assert.equal(Number(senderUsdc.available), 35, 'Sender balance is 35 USDC');
   console.log('✅ Verified: Sender balance deducted by exact 15.00 USDC');
 
-  // Test 6: Case B - Create P2P Claim Vault for Unregistered Phone (+14159998877)
-  const unregPhone = '+14159998877';
+  // Test 6: Case B - Create P2P Claim Vault for Unregistered Phone
+  const unregPhone = `+1415${String(runId).slice(-7)}`;
   const claimRes = await app.inject({
     method: 'POST',
     url: `/api/users/${senderUser.id}/balance/p2p-transfer`,
@@ -166,7 +179,7 @@ export async function runP2pTransferTest() {
   console.log('✅ Verified: Inspected claim via GET /api/claims/:token');
 
   // Test 8: New User Signs Up on Web & Redeems Claim
-  const newSignup = await signup('New Invited User', 'newbie_claimant');
+  const newSignup = await signup('New Invited User', newbieUsername);
   const newUser = newSignup.user;
 
   const redeemRes = await app.inject({

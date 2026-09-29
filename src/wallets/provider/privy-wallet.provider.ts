@@ -960,7 +960,19 @@ export class PrivyWalletProvider implements WalletProvider {
 
     if (chain === 'stellar') {
       const { readStellarTokenBalances } = await import('../stellar/stellar-rpc.js');
-      const stellarBalances = await readStellarTokenBalances(address).catch(() => ({ usdc: 0, usdt: 0, xlm: 0 }));
+      /**
+       * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+       *
+       * The old code caught any Stellar RPC error and silently returned all
+       * three assets as 0. This poisoned `lastSeen` in the deposit detector:
+       * the next successful read looked like a deposit of the user's entire
+       * Stellar holding.
+       *
+       * Re-throwing causes the detector's per-wallet try/catch to skip this
+       * chain entirely and leave `lastSeen` untouched, so the next tick diffs
+       * against the last figure we actually believed.
+       */
+      const stellarBalances = await readStellarTokenBalances(address);
       return [
         {
           asset: 'usdc',
@@ -1008,7 +1020,17 @@ export class PrivyWalletProvider implements WalletProvider {
         );
         balances.push({ asset: 'usdc', chain, amount });
       } catch {
-        balances.push({ asset: 'usdc', chain, amount: '0' });
+        /**
+         * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+         *
+         * Do not push amount:'0' here. The deposit-detection poller would
+         * store 0 in lastSeen and record the entire real balance as a new
+         * deposit on the next successful read (the Arc phantom-deposit bug).
+         *
+         * Returning an empty list causes the poller's outer try/catch (for the
+         * whole chain) to NOT apply, but the inner per-asset loop simply sees
+         * no USDC entry and leaves lastSeen untouched for this tick.
+         */
       }
       return balances;
     }
@@ -1029,8 +1051,20 @@ export class PrivyWalletProvider implements WalletProvider {
 
         balances.push({ asset, chain, amount, contractAddress: token });
       } catch (err) {
-        // Individual token contract read error defaults to 0 rather than failing the entire wallet
-        balances.push({ asset, chain, amount: '0', contractAddress: token });
+        /**
+         * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+         *
+         * The old code pushed amount:'0' on any ERC-20 read failure (Arbitrum
+         * timeout, rate-limit, etc.). The deposit-detection poller stored that
+         * 0 in lastSeen; the next successful read reported the full balance as
+         * a new deposit — exactly the Arbitrum phantom-deposit bug observed in
+         * production (dep_349ef453, dep_cdc45068, etc.).
+         *
+         * Omitting the asset here means lastSeen is unchanged for this tick.
+         * The next successful read picks up from the last known-good value and
+         * only fires for the real delta.
+         */
+        console.warn(`[getBalances] ERC-20 read failed for ${asset} on ${chain}, omitting from result to protect deposit baseline`, err instanceof Error ? err.message : err);
       }
     }
 
@@ -1079,15 +1113,22 @@ export class PrivyWalletProvider implements WalletProvider {
           contractAddress: mint,
         });
       } catch (err: any) {
-        // A cluster-mint mismatch (e.g. devnet mint against mainnet RPC) or empty account
-        // should resolve as 0 rather than failing the entire multi-chain wallet read.
-        console.warn(`[solanaBalances] getTokenAccountsByOwner non-fatal note for ${asset}:`, err?.message || err);
-        balances.push({
-          asset,
-          chain: 'solana',
-          amount: '0.000000',
-          contractAddress: mint,
-        });
+        /**
+         * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+         *
+         * A genuine "no token account for this mint" returns { value: [] }
+         * from the RPC without throwing - that path above correctly sums to 0
+         * and pushes '0.000000'. A throw here is a real RPC error (cluster-mint
+         * mismatch, node timeout, rate-limit, etc.), NOT a confirmed zero.
+         *
+         * The old code pushed '0.000000' on error, poisoning lastSeen in the
+         * deposit detector. The next successful read reported the entire Solana
+         * balance as a new deposit.
+         *
+         * Omitting the asset leaves lastSeen unchanged for this tick. The next
+         * successful read diffs against the last figure we actually believed.
+         */
+        console.warn(`[solanaBalances] getTokenAccountsByOwner failed for ${asset}, omitting from result to protect deposit baseline:`, err?.message || err);
       }
     }
 
@@ -1120,12 +1161,13 @@ export class PrivyWalletProvider implements WalletProvider {
         contractAddress: usdcAddress,
       });
     } catch {
-      balances.push({
-        asset: 'usdc',
-        chain: 'starknet',
-        amount: '0.000000',
-        contractAddress: usdcAddress,
-      });
+      /**
+       * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+       *
+       * Omit the asset rather than pushing '0.000000'. The deposit detector
+       * leaves lastSeen untouched when an asset is absent from the result,
+       * preventing phantom deposits on Starknet after a node hiccup.
+       */
     }
 
     // 2. STRK
@@ -1144,12 +1186,11 @@ export class PrivyWalletProvider implements WalletProvider {
         contractAddress: strkAddress,
       });
     } catch {
-      balances.push({
-        asset: 'strk',
-        chain: 'starknet',
-        amount: '0.000000',
-        contractAddress: strkAddress,
-      });
+      /**
+       * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+       *
+       * Same reasoning as the USDC catch above. Omit rather than zero.
+       */
     }
 
     return balances;

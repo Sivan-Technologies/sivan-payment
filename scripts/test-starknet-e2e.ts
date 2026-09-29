@@ -44,29 +44,30 @@ async function run() {
   console.log('==================================================\n');
 
   // Setup test user and linked identity channels
-  const testUserId = `sn_user_${Date.now()}`;
-  const testEmail = 'starknet_tester@sivantech.online';
+  const ts = Date.now();
+  const testUserId = `sn_user_${ts}`;
+  const testEmail = `starknet_tester_${ts}@sivantech.online`;
   const testAddress = '0x132cb73dc429c15f6700ef6335cee25e07a4217e77ea39e5589254f2518331f';
-  const testTelegramId = '987654321';
-  const testWhatsAppPhone = '+2348012345678';
+  const testTelegramId = `987${ts.toString().slice(-6)}`;
+  const testWhatsAppPhone = `+234801${ts.toString().slice(-6)}`;
 
   await db.insertUserRecord({
     id: testUserId,
     email: testEmail,
-    username: 'starknet_tester',
-    name: 'Starknet Tester',
-    phone: testWhatsAppPhone,
+    username: `starknet_tester_${ts}`,
+    fullName: 'Starknet Tester',
+    whatsappNumber: testWhatsAppPhone,
     status: 'active',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  });
+  } as any);
 
   // Link Telegram channel
   await db.upsertCustomerIdentityLinkRecord({
     id: `link_tg_${Date.now()}`,
     paymentUserId: testUserId,
-    customerId: `cust_${testUserId}`,
     email: testEmail,
+    channel: 'telegram',
     telegramUserId: testTelegramId,
     status: 'linked',
     createdAt: new Date().toISOString(),
@@ -77,13 +78,27 @@ async function run() {
   await db.upsertCustomerIdentityLinkRecord({
     id: `link_wa_${Date.now()}`,
     paymentUserId: testUserId,
-    customerId: `cust_${testUserId}`,
     email: testEmail,
+    channel: 'whatsapp',
     whatsappNumber: testWhatsAppPhone,
     status: 'linked',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
+
+  // Create Customer row
+  const now = new Date().toISOString();
+  await db.insertCustomerRecord({
+    id: `cust_${testUserId}`,
+    userId: testUserId,
+    provider: 'bridge',
+    providerCustomerId: `pc_${testUserId}`,
+    customerType: 'individual',
+    kycStatus: 'kyc_approved',
+    tosStatus: 'approved',
+    createdAt: now,
+    updatedAt: now,
+  } as any);
 
   // Create Starknet wallet row
   const walletRow = await db.insertUserWallet({
@@ -95,6 +110,7 @@ async function run() {
     provider: 'privy',
     providerWalletId: `privy_sn_${Date.now()}`,
     status: 'active',
+    custodial: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
@@ -150,8 +166,8 @@ async function run() {
     chain: 'starknet',
     asset: 'USDC',
     amount: '25.000000',
-    detectionSource: 'balance_poller',
-    externalTxId: `sn_tx_${Date.now()}`,
+    detectionSource: 'balance_poll',
+    txHash: `sn_tx_${Date.now()}`,
   });
 
   check('Deposit is recorded successfully', recorded.created);

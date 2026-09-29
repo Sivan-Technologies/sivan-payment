@@ -175,7 +175,9 @@ export class MockWalletProvider implements WalletProvider {
   async __seedBalance(providerWalletId: string, balance: WalletBalance): Promise<void> {
     const wallet = await this.getWallet(providerWalletId);
     const balances = wallet.balances ?? [];
-    const idx = balances.findIndex((b) => b.asset === balance.asset && b.chain === balance.chain);
+    const idx = balances.findIndex(
+      (b) => b.asset.toUpperCase() === balance.asset.toUpperCase() && b.chain === balance.chain
+    );
     if (idx >= 0) balances[idx] = balance;
     else balances.push(balance);
     this.wallets.set(providerWalletId, { ...wallet, balances });
