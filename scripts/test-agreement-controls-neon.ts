@@ -67,7 +67,7 @@ async function runNeonPsaVerification() {
 
   await step('Save and retrieve agreement controls via PostgresDatabase', async () => {
     const testRecord = {
-      id: 'default_controls',
+      id: 'default_controls' as const,
       creationEnabled: false,
       servicingEnabled: true,
       emergencyHalt: false,
