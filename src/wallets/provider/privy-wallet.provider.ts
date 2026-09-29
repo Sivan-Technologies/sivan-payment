@@ -881,7 +881,13 @@ export class PrivyWalletProvider implements WalletProvider {
 
     if (chain === 'stellar') {
       const { readStellarTokenBalances } = await import('../stellar/stellar-rpc.js');
-      const stellarBalances = await readStellarTokenBalances(address).catch(() => ({ usdc: 0, usdt: 0, xlm: 0 }));
+      /**
+       * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+       *
+       * Re-throw on Stellar RPC errors so the deposit detector's per-wallet
+       * try/catch marks this chain unreadable and leaves lastSeen untouched.
+       */
+      const stellarBalances = await readStellarTokenBalances(address);
       return [
         {
           asset: 'usdc',
@@ -925,7 +931,8 @@ export class PrivyWalletProvider implements WalletProvider {
         );
         balances.push({ asset: 'usdc', chain, amount });
       } catch {
-        balances.push({ asset: 'usdc', chain, amount: '0' });
+        // AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+        // Omit rather than pushing '0' to protect the deposit detector's lastSeen.
       }
       return balances;
     }
@@ -946,8 +953,9 @@ export class PrivyWalletProvider implements WalletProvider {
 
         balances.push({ asset, chain, amount, contractAddress: token });
       } catch (err) {
-        // Individual token contract read error defaults to 0 rather than failing the entire wallet
-        balances.push({ asset, chain, amount: '0', contractAddress: token });
+        // AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+        // Omit rather than pushing '0' — a failed RPC read must not poison lastSeen.
+        console.warn(`[getBalances] ERC-20 read failed for ${asset} on ${chain}, omitting from result to protect deposit baseline`, err instanceof Error ? err.message : err);
       }
     }
 
@@ -996,15 +1004,10 @@ export class PrivyWalletProvider implements WalletProvider {
           contractAddress: mint,
         });
       } catch (err: any) {
-        // A cluster-mint mismatch (e.g. devnet mint against mainnet RPC) or empty account
-        // should resolve as 0 rather than failing the entire multi-chain wallet read.
-        console.warn(`[solanaBalances] getTokenAccountsByOwner non-fatal note for ${asset}:`, err?.message || err);
-        balances.push({
-          asset,
-          chain: 'solana',
-          amount: '0.000000',
-          contractAddress: mint,
-        });
+        // AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+        // A genuine zero (no token account) returns { value: [] } without throwing.
+        // A throw here is a real RPC error — omit rather than pushing '0'.
+        console.warn(`[solanaBalances] getTokenAccountsByOwner failed for ${asset}, omitting from result to protect deposit baseline:`, err?.message || err);
       }
     }
 
