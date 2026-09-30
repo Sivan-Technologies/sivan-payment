@@ -133,6 +133,10 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-starknet-adapter.ts',
   },
   {
+    name: 'Paystack Config & DVA Type Guards',
+    command: 'tsx scripts/test-paystack-config.ts',
+  },
+  {
     name: 'Multi-Chain Developer Gateway & Agent API',
     command: 'tsx scripts/test-developer-gateway.ts',
     env: {
