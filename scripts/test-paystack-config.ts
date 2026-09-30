@@ -368,9 +368,11 @@ async function main() {
   check('an empty name is refused', throws(() => splitLegalName('   ')));
 
   // ── 13. Service state machine ───────────────────────────────────
-  console.log('\n══ 13. DVA State Machine ══');
-
-  await withEnvAsync({ PAYSTACK_SECRET_KEY: TEST_SK }, async () => {
+  await withEnvAsync({
+    PAYSTACK_SECRET_KEY: TEST_SK,
+    DATABASE_PROVIDER: 'json',
+    DATABASE_FILE: '.data/test-paystack-config.json',
+  }, async () => {
     /** An unknown user must ask for identity, not throw and not call Paystack. */
     const fresh = await getDvaState('nonexistent-user-' + Date.now());
     check('an unknown user resolves to awaiting_identity',

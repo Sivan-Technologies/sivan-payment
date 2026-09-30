@@ -140,6 +140,10 @@ export default {
       targetUpstream = upstreams.payments;
       targetPath = pathname;
       serviceName = "mcp-gateway";
+    } else if (pathname === "/webhooks/paystack" || pathname === "/api/webhooks/paystack") {
+      targetUpstream = upstreams.payments;
+      targetPath = pathname;
+      serviceName = "payments-paystack-webhook";
     } else if (
       pathname.startsWith("/api/admin/escrow") ||
       pathname.startsWith("/api/escrow") ||

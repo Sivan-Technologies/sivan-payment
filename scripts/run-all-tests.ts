@@ -135,10 +135,26 @@ const TEST_SUITES: TestSuite[] = [
   {
     name: 'Paystack Config & DVA Type Guards',
     command: 'tsx scripts/test-paystack-config.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-config.json',
+    },
   },
   {
     name: 'Paystack DVA Flow (local stub)',
     command: 'tsx scripts/test-paystack-dva-flow.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-dva.json',
+    },
+  },
+  {
+    name: 'Paystack Routes & Webhooks Ingestion',
+    command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-routes-webhooks.json',
+    },
   },
   {
     name: 'Multi-Chain Developer Gateway & Agent API',

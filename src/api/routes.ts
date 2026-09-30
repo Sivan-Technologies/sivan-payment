@@ -19,6 +19,7 @@ import { getOperationalHealth } from '../monitoring/operational-health.service.j
 import { onrampOrdersRoutes } from '../onramp/api/onramp-orders.routes.js';
 import { identityRoutes } from '../identity/identity.routes.js';
 import { virtualAccountsRoutes } from '../virtual-accounts/api/virtual-accounts.routes.js';
+import { paystackDvaRoutes } from '../virtual-accounts/api/paystackDvaRoutes.js';
 import { aceSupportRoutes } from '../ace/api/ace-support.routes.js';
 import { ngnRoutes } from '../ngn/api/ngn.routes.js';
 import { ghsRoutes } from '../ghs/api/ghs.routes.js';
@@ -87,6 +88,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await usersRoutes(app);
   await identityRoutes(app);
   await virtualAccountsRoutes(app);
+  await paystackDvaRoutes(app);
   await customersRoutes(app);
   await externalAccountsRoutes(app);
   await liquidationAddressesRoutes(app);
