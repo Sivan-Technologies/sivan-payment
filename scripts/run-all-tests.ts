@@ -157,6 +157,14 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'Multi-Provider Daily Utility Engine (Airtime, Data, Electricity)',
+    command: 'tsx scripts/test-paystack-utility-engine.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-utility-engine.json',
+    },
+  },
+  {
     name: 'Multi-Chain Developer Gateway & Agent API',
     command: 'tsx scripts/test-developer-gateway.ts',
     env: {

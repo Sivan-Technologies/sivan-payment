@@ -769,6 +769,7 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (method === 'GET' && url.includes('/verification-summary')) return false;
   if (method === 'GET' && (url.startsWith('/api/ngn/quote') || url.startsWith('/api/ghs/quote'))) return false;
   if (url.startsWith('/api/ngn/offramp/orders') || url.startsWith('/api/ghs/offramp/orders')) return false;
+  if (url.startsWith('/api/ngn/utility')) return false;
   if (method === 'GET' && (url.startsWith('/api/ghs/banks') || url.startsWith('/api/ghs/bank-account/resolve'))) return false;
   if (url.startsWith('/api/ghs/payout-accounts')) return false;
   if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile' || url === '/api/identity/reset-test-user')) return false;
