@@ -137,6 +137,10 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-paystack-config.ts',
   },
   {
+    name: 'Paystack DVA Flow (local stub)',
+    command: 'tsx scripts/test-paystack-dva-flow.ts',
+  },
+  {
     name: 'Multi-Chain Developer Gateway & Agent API',
     command: 'tsx scripts/test-developer-gateway.ts',
     env: {

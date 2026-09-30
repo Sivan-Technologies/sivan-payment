@@ -127,9 +127,22 @@ export function paystackBaseUrl(): string {
   const configured = (process.env.PAYSTACK_BASE_URL || '').trim();
   const url = configured || 'https://api.paystack.co';
   if (!/^https:\/\//i.test(url)) {
-    throw new Error(
-      `PAYSTACK_BASE_URL must be https. Got: ${url}. Paystack credentials must never cross a plaintext connection.`
-    );
+    /**
+     * One narrow exception, for a loopback stub in tests.
+     *
+     * Deliberately requires BOTH an explicit opt-in flag AND a loopback host.
+     * A flag alone would let a misconfigured deployment send live credentials
+     * over plaintext to a real host; a host check alone would let any local
+     * process silently downgrade. Requiring both means this cannot be
+     * switched on by accident in an environment that matters.
+     */
+    const optedIn = (process.env.PAYSTACK_ALLOW_INSECURE_BASE_URL || '').trim() === 'true';
+    const loopback = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(url);
+    if (!(optedIn && loopback)) {
+      throw new Error(
+        `PAYSTACK_BASE_URL must be https. Got: ${url}. Paystack credentials must never cross a plaintext connection.`
+      );
+    }
   }
   return url.replace(/\/+$/, '');
 }

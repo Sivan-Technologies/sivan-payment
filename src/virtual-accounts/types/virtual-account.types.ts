@@ -1,4 +1,4 @@
-export type VirtualAccountProviderName = 'mock' | 'bridge' | 'nomba' | 'monnify' | 'flutterwave';
+export type VirtualAccountProviderName = 'mock' | 'bridge' | 'nomba' | 'monnify' | 'flutterwave' | 'paystack';
 
 export type VirtualAccountCurrency = 'usd' | 'gbp' | 'eur' | 'ngn';
 

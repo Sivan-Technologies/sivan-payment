@@ -31,6 +31,9 @@ import {
   preferredBankForMode, assignDedicatedAccount, validateCustomerBvnNin,
   createCustomer, PaystackApiError, redactIdentifier,
 } from '../src/virtual-accounts/provider/paystackDvaProvider.js';
+import {
+  paystackCustomerEmail, splitLegalName, getDvaState, resolveOrCreateDva,
+} from '../src/virtual-accounts/service/paystackDvaService.js';
 
 let passed = 0;
 let failed = 0;
@@ -311,6 +314,80 @@ async function main() {
   const err = new PaystackApiError(`rejected value ${bvn}`, '/x', 400, `bad ${bvn}`);
   const scrubbed = err.message.replace(bvn, redactIdentifier(bvn));
   check('a scrubbed error message no longer contains the BVN', !scrubbed.includes(bvn), scrubbed);
+
+  // ── 11. Service: deterministic identity ─────────────────────────
+  console.log('\n══ 11. Deterministic Customer Identity ══');
+
+  /**
+   * Paystack keys customers on EMAIL. If it is not stable per user, a dropped
+   * connection mid-flow creates a SECOND customer and therefore a second bank
+   * account, and the user's deposits split across two accounts.
+   */
+  withEnv({ PAYSTACK_SECRET_KEY: TEST_SK }, () => {
+    /**
+     * Asserted against an EXACT expected string, not self-equality. An
+     * earlier version compared two back to back calls, which a timestamp
+     * suffix satisfies trivially when both land in the same millisecond, so
+     * the assertion survived a mutation that destroyed determinism.
+     */
+    const a = paystackCustomerEmail('user-123');
+    check('the customer email is an exact, reproducible value',
+      a === 'test-u_user123@user.sivantech.online', a);
+    check('it is stable across calls', a === paystackCustomerEmail('user-123'));
+    check('it contains no timestamp or random component', !/\d{10,}/.test(a.split('@')[0].replace('user123','')), a);
+    check('different users get different emails',
+      paystackCustomerEmail('user-123') !== paystackCustomerEmail('user-456'));
+    check('id formatting differences normalise to one email',
+      paystackCustomerEmail('User-123') === paystackCustomerEmail('user123'));
+    check('an empty user id is refused', throws(() => paystackCustomerEmail('')));
+  });
+
+  /**
+   * Test and live must not collide in Paystack's customer namespace, or a
+   * staging run binds a record production would later resolve to.
+   */
+  let liveEmail = '';
+  withEnv({ PAYSTACK_SECRET_KEY: LIVE_SK }, () => { liveEmail = paystackCustomerEmail('user-123'); });
+  withEnv({ PAYSTACK_SECRET_KEY: TEST_SK }, () => {
+    check('test and live emails are namespaced apart',
+      paystackCustomerEmail('user-123') !== liveEmail,
+      `${paystackCustomerEmail('user-123')} vs ${liveEmail}`);
+  });
+
+  // ── 12. Legal name handling ─────────────────────────────────────
+  console.log('\n══ 12. Legal Name ══');
+
+  check('a two part name splits correctly',
+    splitLegalName('Samson Micheal').first_name === 'Samson' &&
+    splitLegalName('Samson Micheal').last_name === 'Micheal');
+  check('a three part name keeps the remainder as surname',
+    splitLegalName('Samson Ade Micheal').last_name === 'Ade Micheal');
+  /** NIBSS matches BVN against BOTH names, so one name cannot proceed. */
+  check('a single name is refused, since NIBSS matches both names',
+    throws(() => splitLegalName('Samson')));
+  check('an empty name is refused', throws(() => splitLegalName('   ')));
+
+  // ── 13. Service state machine ───────────────────────────────────
+  console.log('\n══ 13. DVA State Machine ══');
+
+  await withEnvAsync({ PAYSTACK_SECRET_KEY: TEST_SK }, async () => {
+    /** An unknown user must ask for identity, not throw and not call Paystack. */
+    const fresh = await getDvaState('nonexistent-user-' + Date.now());
+    check('an unknown user resolves to awaiting_identity',
+      fresh.state === 'awaiting_identity', fresh.state);
+
+    /**
+     * Crucially, resolveOrCreateDva must NOT hit Paystack when it has no
+     * identity details. A network call here would mean every "my account"
+     * message from a new user burns an API round trip.
+     */
+    const noDetails = await resolveOrCreateDva({ userId: 'fresh-user-' + Date.now() });
+    check('resolve without identity details returns awaiting_identity offline',
+      noDetails.state === 'awaiting_identity', noDetails.state);
+
+    check('resolve without a userId is refused',
+      await rejectsWith(() => resolveOrCreateDva({ userId: '' }), /requires a userId/));
+  });
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);
