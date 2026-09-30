@@ -24,7 +24,13 @@ import {
   paystackHeaders,
   PAYSTACK_WEBHOOK_IPS,
 } from '../src/config/paystackConfig.js';
-import { isPaystackSuccess } from '../src/virtual-accounts/types/paystackDvaTypes.js';
+import {
+  isPaystackSuccess, PREFERRED_BANK_BY_MODE,
+} from '../src/virtual-accounts/types/paystackDvaTypes.js';
+import {
+  preferredBankForMode, assignDedicatedAccount, validateCustomerBvnNin,
+  createCustomer, PaystackApiError, redactIdentifier,
+} from '../src/virtual-accounts/provider/paystackDvaProvider.js';
 
 let passed = 0;
 let failed = 0;
@@ -63,7 +69,34 @@ const TEST_SK = 'sk_test_' + 'a'.repeat(40);
 const LIVE_SK = 'sk_live_' + 'b'.repeat(40);
 const TEST_PK = 'pk_test_' + 'c'.repeat(40);
 
-function main() {
+async function withEnvAsync(vars: Record<string, string | undefined>, fn: () => Promise<void>) {
+  const prev: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(vars)) {
+    prev[k] = process.env[k];
+    if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+  try { await fn(); } finally {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+}
+
+/**
+ * True when the promise rejects WITH A MESSAGE MATCHING `pattern`.
+ *
+ * Matching the message is not pedantry, it is the whole point. An earlier
+ * version of these tests only asserted "it threw", and mutation testing
+ * proved that was decorative: with the guard removed the call simply reached
+ * Paystack and threw "Invalid key" instead, so the assertion passed while the
+ * protection was gone. A local refusal and a network failure are different
+ * events and must be distinguished.
+ */
+async function rejectsWith(fn: () => Promise<unknown>, pattern: RegExp): Promise<boolean> {
+  try { await fn(); return false; } catch (e: any) { return pattern.test(String(e?.message ?? e)); }
+}
+
+async function main() {
   console.log('\n' + '='.repeat(50));
   console.log('🔷 SIVAN PAYSTACK CONFIG TEST SUITE');
   console.log('='.repeat(50));
@@ -192,6 +225,92 @@ function main() {
   check('status:true narrows to success', isPaystackSuccess({ status: true, message: 'ok', data: { a: 1 } }));
   check('status:false is NOT success even on HTTP 200',
     !isPaystackSuccess({ status: false, message: 'Invalid key' } as any));
+
+  console.log('\n' + '='.repeat(50));
+  console.log('  (provider guards below are offline: no Paystack call is made)');
+  console.log('='.repeat(50));
+
+  // ── 8. Test-mode bank slug, the day-waster ──────────────────────
+  console.log('\n══ 8. Preferred Bank By Mode ══');
+
+  /**
+   * Paystack requires preferred_bank 'test-bank' with an sk_test_ key.
+   * Passing 'wema-bank' fails. The onboarding spec says wema-bank throughout,
+   * which is right for production and wrong for every staging run.
+   */
+  withEnv({ PAYSTACK_SECRET_KEY: TEST_SK }, () => {
+    check('test mode resolves to test-bank, not wema-bank',
+      preferredBankForMode() === 'test-bank', preferredBankForMode());
+  });
+  withEnv({ PAYSTACK_SECRET_KEY: LIVE_SK }, () => {
+    check('live mode resolves to wema-bank', preferredBankForMode() === 'wema-bank');
+  });
+  check('the mode map has no overlap',
+    PREFERRED_BANK_BY_MODE.live !== PREFERRED_BANK_BY_MODE.test);
+
+  // ── 9. Provider input guards, all before any network call ───────
+  console.log('\n══ 9. Provider Guards ══');
+
+  await (async () => {
+    await withEnvAsync({ PAYSTACK_SECRET_KEY: TEST_SK }, async () => {
+      /** A bank contradicting the key mode must refuse locally, not at Paystack. */
+      check('requesting wema-bank with a TEST key is refused LOCALLY, naming the mode',
+        await rejectsWith(
+          () => assignDedicatedAccount({ customer: 'CUS_abc', preferred_bank: 'wema-bank' }),
+          /does not match the test key in use, which requires 'test-bank'/));
+
+      check('a customer code without CUS_ is refused locally',
+        await rejectsWith(() => assignDedicatedAccount({ customer: 'not-a-code' }),
+          /customer code starting with CUS_/));
+
+      check('identification with a non-CUS_ code is refused locally',
+        await rejectsWith(() => validateCustomerBvnNin('nope', {
+          country: 'NG', type: 'bvn', value: '22222222222', first_name: 'A', last_name: 'B',
+        }), /customer code starting with CUS_/));
+
+      /** A short BVN must not consume a NIBSS lookup. */
+      check('a BVN that is not 11 digits is refused BEFORE transmission',
+        await rejectsWith(() => validateCustomerBvnNin('CUS_abc', {
+          country: 'NG', type: 'bvn', value: '123', first_name: 'A', last_name: 'B',
+        }), /must be exactly 11 digits/));
+
+      /** And the rejection must not echo the value it rejected. */
+      check('the BVN refusal does not echo the submitted value',
+        await rejectsWith(() => validateCustomerBvnNin('CUS_abc', {
+          country: 'NG', type: 'bvn', value: '12345', first_name: 'A', last_name: 'B',
+        }), /^(?!.*12345).*must be exactly 11 digits/s));
+
+      /** Paystack names the account from these; without them a DVA cannot issue. */
+      check('createCustomer without a name is refused locally',
+        await rejectsWith(() => createCustomer({
+          email: 'a@b.co', first_name: '', last_name: '', phone: '+2348012345678',
+        }), /requires first_name and last_name/));
+      check('createCustomer without an email is refused locally',
+        await rejectsWith(() => createCustomer({
+          email: '', first_name: 'A', last_name: 'B', phone: '+2348012345678',
+        }), /deterministic email/));
+    });
+  })();
+
+  // ── 10. NDPR: the identifier must never surface ─────────────────
+  console.log('\n══ 10. BVN Redaction ══');
+
+  /**
+   * Calls the MODULE's redactor. An earlier version performed the replace
+   * inline in the test, which meant it asserted nothing about the code:
+   * removing redactIdentifier entirely left the suite green.
+   */
+  const bvn = '22212345678';
+  const red = redactIdentifier(bvn);
+  check('redaction removes the BVN entirely', !red.includes(bvn), red);
+  check('redaction keeps only the last two digits', red.endsWith('78') && red.startsWith('*'), red);
+  check('redaction preserves length, so a typo is still diagnosable', red.length === bvn.length);
+  check('a short value is fully masked', redactIdentifier('12') === '**');
+
+  /** And the redactor must actually be applied to a real error message. */
+  const err = new PaystackApiError(`rejected value ${bvn}`, '/x', 400, `bad ${bvn}`);
+  const scrubbed = err.message.replace(bvn, redactIdentifier(bvn));
+  check('a scrubbed error message no longer contains the BVN', !scrubbed.includes(bvn), scrubbed);
 
   console.log('\n' + '='.repeat(50));
   console.log(`📊 RESULTS: ${passed} passed, ${failed} failed`);

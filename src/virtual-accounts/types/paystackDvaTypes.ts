@@ -134,7 +134,23 @@ export type IdentificationStatus = 'pending' | 'success' | 'failed';
  * is unavailable, and the pair is modelled as a union so a typo cannot reach
  * the API as a silently unsupported slug.
  */
-export type PreferredBank = 'wema-bank' | 'titan-paystack';
+export type PreferredBank = 'wema-bank' | 'titan-paystack' | 'test-bank';
+
+/**
+ * TEST MODE USES A DIFFERENT BANK SLUG, and this is not optional.
+ *
+ * Paystack's documentation is explicit: to create a DVA with a test secret
+ * key you must pass preferred_bank 'test-bank'. Passing 'wema-bank' with an
+ * sk_test_ key fails. The onboarding spec says wema-bank throughout, which is
+ * correct for production and wrong for every staging run.
+ *
+ * Resolved from the key mode rather than configured separately, so the two
+ * cannot drift apart.
+ */
+export const PREFERRED_BANK_BY_MODE: Record<'live' | 'test', PreferredBank> = {
+  live: 'wema-bank',
+  test: 'test-bank',
+};
 
 /** POST /dedicated_account */
 export interface DvaRequest {
