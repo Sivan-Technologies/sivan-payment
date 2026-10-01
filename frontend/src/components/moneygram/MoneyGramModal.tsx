@@ -45,6 +45,7 @@ export function MoneyGramModal({
   const [stellarWalletAddress, setStellarWalletAddress] = useState<string>('');
   const [isSigning, setIsSigning] = useState(false);
   const [signingStatus, setSigningStatus] = useState<string>('');
+  const [widgetAlert, setWidgetAlert] = useState<{ type: 'error' | 'warning'; message: string; action?: string } | null>(null);
   const [liveQuote, setLiveQuote] = useState<{
     targetAmount: string;
     exchangeRate: number;
@@ -64,6 +65,7 @@ export function MoneyGramModal({
       setMode(initialMode);
       setStep('setup');
       setSigningStatus('');
+      setWidgetAlert(null);
       setIsSigning(false);
       setLiveQuote(null);
       setIsQuoting(false);
@@ -289,6 +291,36 @@ export function MoneyGramModal({
           payload.transactionId ||
           (data as any).transaction?.external_transaction_id;
         completeSession(refNumber);
+      }
+      // 4. MoneyGram error or validation failure event
+      else if (
+        type === 'RAMPS_ERROR' ||
+        type === 'ERROR' ||
+        type === 'RAMPS_VALIDATION_ERROR' ||
+        (data as any).status === 'error' ||
+        (data as any).error
+      ) {
+        const rawErr = payload.message || payload.error || (data as any).error || (data as any).message;
+        const errStr = typeof rawErr === 'string' ? rawErr : JSON.stringify(rawErr || 'Validation error');
+        
+        let friendlyAlert = errStr;
+        let actionTip = 'Please click Edit inside the MoneyGram card to update the information.';
+        if (/character|length|too long|too many/i.test(errStr)) {
+          friendlyAlert = 'Field contains too many characters. MoneyGram limits text to 30 characters.';
+          actionTip = 'Click Edit on Your address to shorten address line 1, city, or postal code.';
+        } else if (/address/i.test(errStr)) {
+          friendlyAlert = 'Address requires updating.';
+          actionTip = 'Click Edit on Your address to verify your street address and postal code.';
+        } else if (/id|kyc|identity/i.test(errStr)) {
+          friendlyAlert = 'Identification details need verification.';
+          actionTip = 'Click Edit on Identification to check your official ID number.';
+        }
+
+        setWidgetAlert({
+          type: 'error',
+          message: friendlyAlert,
+          action: actionTip,
+        });
       }
     }
 
@@ -739,6 +771,51 @@ export function MoneyGramModal({
         {/* Step 2: Official MoneyGram XRamps Partner Widget */}
         {step === 'session' && (
           <div style={{ textAlign: 'center', padding: '6px 0' }}>
+            {/* Actionable Error / Validation Alert Banner */}
+            {widgetAlert && (
+              <div
+                style={{
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.35)',
+                  borderRadius: '10px',
+                  padding: '12px 14px',
+                  marginBottom: '12px',
+                  textAlign: 'left',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '10px',
+                }}
+              >
+                <span style={{ fontSize: '18px', lineHeight: 1 }}>⚠️</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '13px', fontWeight: 700, color: '#ef4444', marginBottom: '2px' }}>
+                    {widgetAlert.message}
+                  </div>
+                  {widgetAlert.action && (
+                    <div style={{ fontSize: '12px', color: 'var(--text)', opacity: 0.9 }}>
+                      {widgetAlert.action}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWidgetAlert(null)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--muted)',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    lineHeight: 1,
+                    padding: '2px',
+                  }}
+                  title="Dismiss"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
             {/* Signing Status Banner (when non-custodial signing is active) */}
             {signingStatus && (
               <div
