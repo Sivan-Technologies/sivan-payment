@@ -688,11 +688,38 @@ export function MoneyGramModal({
                   borderRadius: '14px',
                   overflow: 'hidden',
                   border: '1px solid var(--border)',
-                  background: '#fff',
+                  background: 'var(--surface-2)',
                   marginBottom: '14px',
                   boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                  position: 'relative',
+                  minHeight: '560px',
                 }}
               >
+                {/* Background loader visible while MoneyGram iframe connects */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '12px',
+                    color: 'var(--muted)',
+                    zIndex: 0,
+                    padding: '20px',
+                  }}
+                >
+                  <span className="sv-spinner" style={{ width: '28px', height: '28px' }} />
+                  <span style={{ fontSize: '13px', color: 'var(--text)', fontWeight: 600 }}>Connecting to MoneyGram XRamps...</span>
+                  <small style={{ fontSize: '11.5px', color: 'var(--muted)', maxWidth: '320px', textAlign: 'center', lineHeight: '1.5' }}>
+                    If your browser or ad blocker restricts embedded frames, click <strong>Open in New Window ↗</strong> below to proceed directly.
+                  </small>
+                </div>
+
                 <iframe
                   ref={iframeRef}
                   src={interactiveUrl}
@@ -703,8 +730,10 @@ export function MoneyGramModal({
                     border: 'none',
                     background: '#fff',
                     display: 'block',
+                    position: 'relative',
+                    zIndex: 1,
                   }}
-                  allow="clipboard-write; camera"
+                  allow="clipboard-write; camera; geolocation"
                   onLoad={() => {
                     sendRampsConfig();
                     setTimeout(sendRampsConfig, 400);
