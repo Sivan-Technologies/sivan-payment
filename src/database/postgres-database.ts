@@ -2304,14 +2304,22 @@ export class PostgresDatabase {
         `INSERT INTO payments_service_agreements
           (id, buyer_user_id, seller_user_id, title, description, amount_usdc, currency, network,
            status, deadline_days, delivery_due_at, reminder_6h_sent, overdue_notice_sent,
-           funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, channel, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+           funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, channel,
+           fee_amount_usdc, seller_net_amount_usdc, buyer_total_payable_usdc, fee_payer, fee_percent, fee_tx_hash,
+           created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
          ON CONFLICT (id) DO UPDATE SET
            status=EXCLUDED.status,
            deadline_days=EXCLUDED.deadline_days,
            delivery_due_at=COALESCE(EXCLUDED.delivery_due_at, payments_service_agreements.delivery_due_at),
            funded_at=COALESCE(EXCLUDED.funded_at, payments_service_agreements.funded_at),
            funding_tx_hash=COALESCE(EXCLUDED.funding_tx_hash, payments_service_agreements.funding_tx_hash),
+           fee_amount_usdc=COALESCE(EXCLUDED.fee_amount_usdc, payments_service_agreements.fee_amount_usdc),
+           seller_net_amount_usdc=COALESCE(EXCLUDED.seller_net_amount_usdc, payments_service_agreements.seller_net_amount_usdc),
+           buyer_total_payable_usdc=COALESCE(EXCLUDED.buyer_total_payable_usdc, payments_service_agreements.buyer_total_payable_usdc),
+           fee_payer=COALESCE(EXCLUDED.fee_payer, payments_service_agreements.fee_payer),
+           fee_percent=COALESCE(EXCLUDED.fee_percent, payments_service_agreements.fee_percent),
+           fee_tx_hash=COALESCE(EXCLUDED.fee_tx_hash, payments_service_agreements.fee_tx_hash),
            updated_at=EXCLUDED.updated_at`,
         [
           record.id, record.buyerUserId, record.sellerUserId, record.title, record.description,
@@ -2320,6 +2328,12 @@ export class PostgresDatabase {
           record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
           record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
           record.channel || 'web',
+          record.feeAmountUsdc ?? null,
+          record.sellerNetAmountUsdc ?? null,
+          record.buyerTotalPayableUsdc ?? null,
+          record.feePayer ?? null,
+          record.feePercent ?? null,
+          record.feeTxHash ?? null,
           record.createdAt, record.updatedAt,
         ]
       );
@@ -2337,7 +2351,14 @@ export class PostgresDatabase {
            status=$2, deadline_days=$3, delivery_due_at=$4,
            reminder_6h_sent=$5, overdue_notice_sent=$6,
            funded_at=$7, delivered_at=$8, released_at=$9,
-           funding_tx_hash=$10, release_tx_hash=$11, vault_address=$12, channel=$13, updated_at=$14
+           funding_tx_hash=$10, release_tx_hash=$11, vault_address=$12, channel=$13,
+           fee_amount_usdc=COALESCE($14, fee_amount_usdc),
+           seller_net_amount_usdc=COALESCE($15, seller_net_amount_usdc),
+           buyer_total_payable_usdc=COALESCE($16, buyer_total_payable_usdc),
+           fee_payer=COALESCE($17, fee_payer),
+           fee_percent=COALESCE($18, fee_percent),
+           fee_tx_hash=COALESCE($19, fee_tx_hash),
+           updated_at=$20
          WHERE id=$1`,
         [
           record.id, record.status, record.deadlineDays, record.deliveryDueAt ?? null,
@@ -2345,6 +2366,12 @@ export class PostgresDatabase {
           record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
           record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
           record.channel || 'web',
+          record.feeAmountUsdc ?? null,
+          record.sellerNetAmountUsdc ?? null,
+          record.buyerTotalPayableUsdc ?? null,
+          record.feePayer ?? null,
+          record.feePercent ?? null,
+          record.feeTxHash ?? null,
           record.updatedAt,
         ]
       );
@@ -2717,7 +2744,13 @@ async function ensureServiceAgreementsSchema(client: pg.PoolClient) {
       ADD COLUMN IF NOT EXISTS funding_tx_hash TEXT,
       ADD COLUMN IF NOT EXISTS release_tx_hash TEXT,
       ADD COLUMN IF NOT EXISTS vault_address TEXT,
-      ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'web';
+      ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'web',
+      ADD COLUMN IF NOT EXISTS fee_amount_usdc NUMERIC,
+      ADD COLUMN IF NOT EXISTS seller_net_amount_usdc NUMERIC,
+      ADD COLUMN IF NOT EXISTS buyer_total_payable_usdc NUMERIC,
+      ADD COLUMN IF NOT EXISTS fee_payer VARCHAR(20) DEFAULT 'seller',
+      ADD COLUMN IF NOT EXISTS fee_percent NUMERIC,
+      ADD COLUMN IF NOT EXISTS fee_tx_hash TEXT;
 
       ALTER TABLE payments_service_agreements
       DROP CONSTRAINT IF EXISTS payments_service_agreements_buyer_user_id_fkey,
@@ -2788,6 +2821,12 @@ function mapServiceAgreement(row: any): ServiceAgreementRecord {
     releaseTxHash: row.release_tx_hash ?? null,
     vaultAddress: row.vault_address ?? null,
     channel: row.channel || 'web',
+    feeAmountUsdc: row.fee_amount_usdc != null ? Number(row.fee_amount_usdc) : undefined,
+    sellerNetAmountUsdc: row.seller_net_amount_usdc != null ? Number(row.seller_net_amount_usdc) : undefined,
+    buyerTotalPayableUsdc: row.buyer_total_payable_usdc != null ? Number(row.buyer_total_payable_usdc) : undefined,
+    feePayer: row.fee_payer ?? undefined,
+    feePercent: row.fee_percent != null ? Number(row.fee_percent) : undefined,
+    feeTxHash: row.fee_tx_hash ?? null,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };

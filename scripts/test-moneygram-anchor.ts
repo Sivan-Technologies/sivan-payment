@@ -120,7 +120,7 @@ async function main() {
     check('production passphrase is PUBLIC', info.networkPassphrase === PUBLIC_PP);
     check('the anchor declares its USDC as live', info.currencyStatus === 'live', String(info.currencyStatus));
     /** The two environments must not be confusable. */
-    check('production and sandbox signing keys differ', PROD_KEY !== SANDBOX_KEY);
+    check('production and sandbox signing keys differ', (PROD_KEY as string) !== (SANDBOX_KEY as string));
   });
 
   // ── 4. The tripwire ─────────────────────────────────────────────

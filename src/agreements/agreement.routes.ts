@@ -99,10 +99,10 @@ export async function agreementRoutes(app: FastifyInstance) {
       maxNairaAmount: 50000000,
       minUsdcAmount: 5,
       maxUsdcAmount: 50000,
-      usdcFeePercent: 2.0,
+      usdcFeePercent: 3.0,
       usdcFeeFixed: 0.50,
-      usdtFeePercent: 2.0,
-      cusdFeePercent: 2.0,
+      usdtFeePercent: 3.0,
+      cusdFeePercent: 3.0,
       cngnFeePercent: 1.0,
       version: 1,
     });

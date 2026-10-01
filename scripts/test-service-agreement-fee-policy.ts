@@ -21,6 +21,7 @@ import {
 import {
   getSivanServiceAgreementFeeWallet,
   createAgreement,
+  acceptAgreement,
   fundAgreement,
   markDelivered,
   releaseAgreement,
@@ -183,6 +184,9 @@ export async function runServiceAgreementFeePolicyTests() {
     assert.equal(agreement.feePayer, 'buyer');
     assert.equal(agreement.buyerTotalPayableUsdc, 20.50);
     assert.equal(agreement.sellerNetAmountUsdc, 20.00);
+
+    // Seller accepts before funding
+    await acceptAgreement(agreement.id, agreement.sellerUserId);
 
     // Fund
     const funded = await fundAgreement(agreement.id);

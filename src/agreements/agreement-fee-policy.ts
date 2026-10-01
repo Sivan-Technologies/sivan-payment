@@ -19,6 +19,7 @@ export type FeePayer = 'buyer' | 'seller' | 'split';
 
 export interface ServiceAgreementFeeConfig {
   percent: number;
+  fixedUsd?: number;
   minimumUsd: number;
   maximumUsd: number;
 }
@@ -87,7 +88,8 @@ export function quoteServiceAgreementFee(
     maximumUsd: customConfig?.maximumUsd ?? baseConfig.maximumUsd,
   };
 
-  const raw = safeAmount * (config.percent / 100);
+  const fixedFee = customConfig?.fixedUsd ?? baseConfig.fixedUsd ?? 0;
+  const raw = safeAmount * (config.percent / 100) + fixedFee;
   let fee = raw;
   let appliedRule: ServiceAgreementFeeQuote['appliedRule'] = 'percent';
 
@@ -122,11 +124,15 @@ export function quoteServiceAgreementFee(
     ? parseFloat(((roundedFee / safeAmount) * 100).toFixed(3))
     : 0;
 
+  const formulaDesc = fixedFee > 0
+    ? `${config.percent}% + $${fixedFee.toFixed(2)}`
+    : `${config.percent}%`;
+
   const explanation = appliedRule === 'minimum'
     ? `$${config.minimumUsd.toFixed(2)} Sivan service agreement platform fee minimum applied.`
     : appliedRule === 'maximum'
     ? `$${config.maximumUsd.toFixed(2)} Sivan service agreement platform fee cap applied.`
-    : `${config.percent}% Sivan service agreement platform fee ($${roundedFee.toFixed(2)}).`;
+    : `${formulaDesc} Sivan service agreement platform fee ($${roundedFee.toFixed(2)}).`;
 
   return {
     amount: safeAmount,
