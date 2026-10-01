@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "sivan-payments-user",
+  "name": "sivan-payment",
   "compatibility_date": "2026-09-30",
   "observability": {
     "enabled": true
