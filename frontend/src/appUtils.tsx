@@ -44,7 +44,7 @@ export const pathByView: Record<ViewKey, string> = {
 export function viewFromPath(pathname: string): ViewKey {
   const clean = pathname.replace(/\/$/, '') || '/';
   if (clean === '/dashboard' || clean === '/app') return 'overview';
-  if (clean === '/withdraw' || clean === '/app/sell') return 'withdraw';
+  if (clean === '/withdraw' || clean === '/cashout' || clean === '/app/sell') return 'withdraw';
   if (clean === '/transfer' || clean === '/send' || clean === '/app/transfer') return 'transfer';
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/receive' || clean === '/deposit' || clean === '/app/receive') return 'receive';

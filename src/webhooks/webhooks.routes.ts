@@ -71,7 +71,17 @@ export async function webhooksRoutes(app: FastifyInstance) {
 
   app.post('/api/webhooks/moneygram', handleMoneyGramWebhook);
   app.post('/webhooks/moneygram', handleMoneyGramWebhook);
+  app.post('/api/webhooks/ramps-sandbox', handleMoneyGramWebhook);
+  app.post('/webhooks/ramps-sandbox', handleMoneyGramWebhook);
+  app.post('/api/webhooks/ramps', handleMoneyGramWebhook);
+  app.post('/webhooks/ramps', handleMoneyGramWebhook);
   app.get('/api/webhooks/moneygram', async (_req, reply) => {
+    return reply.code(200).send({ status: 'ok', service: 'moneygram-webhook-receiver' });
+  });
+  app.get('/api/webhooks/ramps-sandbox', async (_req, reply) => {
+    return reply.code(200).send({ status: 'ok', service: 'moneygram-webhook-receiver' });
+  });
+  app.get('/api/webhooks/ramps', async (_req, reply) => {
     return reply.code(200).send({ status: 'ok', service: 'moneygram-webhook-receiver' });
   });
 }

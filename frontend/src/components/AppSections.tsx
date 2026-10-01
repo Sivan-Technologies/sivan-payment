@@ -240,7 +240,13 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   onClose?: () => void;
   onReset?: () => void;
 }) {
-  const [moneygramMode, setMoneygramMode] = useState(false);
+  const [moneygramMode, setMoneygramMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('provider') === 'moneygram';
+    }
+    return false;
+  });
   const hasEnabledBank = accounts.some((account) => enabledControls.some((control) => control.currency === account.currency));
   const step = depositResult ? 3 : withdrawalReview ? 2 : 1;
   /**

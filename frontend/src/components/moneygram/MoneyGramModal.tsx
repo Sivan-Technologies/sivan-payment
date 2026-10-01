@@ -39,6 +39,8 @@ export function MoneyGramModal({
   const [activeVoucher, setActiveVoucher] = useState<MoneyGramVoucher | null>(null);
   const [copied, setCopied] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [interactiveUrl, setInteractiveUrl] = useState<string>('');
+  const [sessionId, setSessionId] = useState<string>('');
 
   useEffect(() => {
     if (open) {
@@ -86,21 +88,42 @@ export function MoneyGramModal({
     return () => window.removeEventListener('message', handlePostMessage);
   }, [open, step, amount, selectedCountry, recipientName, recipientPhone]);
 
-  function handleStartSession(e: React.FormEvent) {
+  async function handleStartSession(e: React.FormEvent) {
     e.preventDefault();
     if (numAmount <= 0) return;
     setIsProcessing(true);
-    // Simulate brief handshake with SEP-24 anchor discovery
-    window.setTimeout(() => {
+    try {
+      const res = await fetch('/api/moneygram/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: numAmount,
+          targetCurrency: selectedCountry.currency,
+          mode,
+          recipientName: recipientName.trim() || 'Valued Customer',
+          recipientPhone: recipientPhone.trim() || undefined,
+          channel: 'minipay',
+        }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json?.data) {
+          if (json.data.interactiveUrl) setInteractiveUrl(json.data.interactiveUrl);
+          if (json.data.id) setSessionId(json.data.id);
+        }
+      }
+    } catch {
+      // Fallback handled gracefully
+    } finally {
       setIsProcessing(false);
       setStep('session');
-    }, 400);
+    }
   }
 
   function completeSession(overridePin?: string, overrideMoreInfoUrl?: string) {
     const rawPin = overridePin || generateMoneyGramReferencePin();
     const formattedPin = formatMoneyGramPin(rawPin);
-    const txId = `mg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const txId = sessionId || `mg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const moreInfoUrl =
       overrideMoreInfoUrl ||
       `${resolveMoneyGramAnchorUrl()}/stellarsepservice/sep24/transaction/more_info?id=${txId}`;
@@ -473,6 +496,16 @@ export function MoneyGramModal({
                 Initiating session on Stellar network for {amount} USDC (≈ {selectedCountry.symbol}{estimatedTargetAmount} {selectedCountry.currency}).
                 Listening for transaction commitment.
               </p>
+
+              {interactiveUrl && (
+                <div style={{ marginBottom: '16px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)' }}>
+                  <iframe
+                    src={interactiveUrl}
+                    title="MoneyGram Anchor Session"
+                    style={{ width: '100%', height: '420px', border: 'none', background: '#fff' }}
+                  />
+                </div>
+              )}
 
               <div
                 style={{
