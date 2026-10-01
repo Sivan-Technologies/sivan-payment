@@ -4,6 +4,7 @@ import {
   anchorHost,
   moneyGramEnvironment,
   isMoneyGramProduction,
+  rampsApiKeys,
 } from '../config/moneygram.config.js';
 import {
   anchorHealth,
@@ -198,14 +199,15 @@ export async function moneygramRoutes(app: FastifyInstance) {
       });
 
       return { data: session };
-    } catch {
-      // Graceful fallback session generation if sandbox anchor network has temporary hiccup
+    } catch (err) {
+      // Graceful fallback session generation using official MoneyGram XRamps widget URL
       const txId = `mg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const host = anchorHost();
+      const ramps = rampsApiKeys();
       const env = moneyGramEnvironment();
 
-      const interactiveUrl = `${host}/stellarsepservice/sep24/interactive?transaction_id=${txId}&asset_code=USDC&amount=${numAmount}&currency=${targetCurrency}`;
-      const moreInfoUrl = `${host}/stellarsepservice/sep24/transaction/more_info?id=${txId}`;
+      const widgetUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=${mode === 'deposit' ? 'on-ramp' : 'off-ramp'}`;
+      const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=view&id=${txId}`;
+      const interactiveUrl = widgetUrl;
 
       const corridor = SUPPORTED_MONEYGRAM_CORRIDORS.find((c) => c.currency === targetCurrency) || { rate: 1620 };
       const targetAmount = Math.round(numAmount * corridor.rate);

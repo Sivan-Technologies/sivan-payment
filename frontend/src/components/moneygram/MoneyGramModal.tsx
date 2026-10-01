@@ -104,6 +104,33 @@ export function MoneyGramModal({
     return 0;
   }, [userSpendableUsdc]);
 
+  const sendRampsConfig = () => {
+    const targetWin = iframeRef.current?.contentWindow;
+    if (!targetWin) return;
+    const configMessage = {
+      type: 'RAMPS_CONFIG',
+      payload: {
+        sessionToken: sessionTokenRef.current || undefined,
+        theme: 'dark',
+        wallet: {
+          address: stellarAddressRef.current || 'GB3AE2OH354LR3SSSA5KF3BMSIAAG2EJGVOQSKCMEICECFWG7KDHZTNJ',
+          chain: 'stellar',
+          asset: 'USDC',
+          walletType: 'non-custodial',
+        },
+        devConfig: {
+          mockMode: false,
+          apiBaseUrl: 'https://playground.xramps.moneygram.com/api',
+        },
+      },
+    };
+    try {
+      targetWin.postMessage(JSON.stringify(configMessage), '*');
+    } catch {
+      // Ignored
+    }
+  };
+
   // Listen for MoneyGram XRamps postMessage protocol (RAMPS_READY, RAMPS_SIGN_TRANSACTION, RAMPS_TRANSACTION_COMPLETE)
   useEffect(() => {
     if (!open || step !== 'session') return;
@@ -124,23 +151,7 @@ export function MoneyGramModal({
 
       // 1. MoneyGram XRamps widget handshake: respond with RAMPS_CONFIG
       if (type === 'RAMPS_READY') {
-        const configMessage = {
-          type: 'RAMPS_CONFIG',
-          payload: {
-            sessionToken: sessionTokenRef.current,
-            wallet: {
-              address: stellarAddressRef.current || 'GB3AE2OH354LR3SSSA5KF3BMSIAAG2EJGVOQSKCMEICECFWG7KDHZTNJ',
-              chain: 'stellar',
-              asset: 'USDC',
-              walletType: 'non-custodial',
-            },
-            devConfig: {
-              mockMode: false,
-              apiBaseUrl: 'https://playground.xramps.moneygram.com/api',
-            },
-          },
-        };
-        iframeRef.current?.contentWindow?.postMessage(JSON.stringify(configMessage), '*');
+        sendRampsConfig();
       }
       // 2. Non-custodial sign request from MoneyGram widget
       else if (type === 'RAMPS_SIGN_TRANSACTION') {
@@ -694,6 +705,12 @@ export function MoneyGramModal({
                     display: 'block',
                   }}
                   allow="clipboard-write; camera"
+                  onLoad={() => {
+                    sendRampsConfig();
+                    setTimeout(sendRampsConfig, 400);
+                    setTimeout(sendRampsConfig, 1000);
+                    setTimeout(sendRampsConfig, 2000);
+                  }}
                 />
               </div>
             ) : null}
