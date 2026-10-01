@@ -40,6 +40,8 @@ interface CreateAgreementBody {
   channel?: string;
   fundingTxHash?: string;
   attributionTag?: string;
+  feeAmountUsdc?: number;
+  sellerNetAmountUsdc?: number;
 }
 
 export async function agreementRoutes(app: FastifyInstance) {
@@ -124,6 +126,8 @@ export async function agreementRoutes(app: FastifyInstance) {
       channel: body.channel,
       fundingTxHash: body.fundingTxHash,
       attributionTag: body.attributionTag,
+      feeAmountUsdc: body.feeAmountUsdc,
+      sellerNetAmountUsdc: body.sellerNetAmountUsdc,
     });
 
     return reply.code(201).send({

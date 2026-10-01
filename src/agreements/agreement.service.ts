@@ -368,6 +368,8 @@ export interface CreateAgreementInput {
   channel?: string;
   fundingTxHash?: string;
   attributionTag?: string;
+  feeAmountUsdc?: number;
+  sellerNetAmountUsdc?: number;
 }
 
 // ─── Countdown label ─────────────────────────────────────────────────────────
@@ -434,7 +436,7 @@ export function getSivanServiceAgreementFeeWallet(network: string): string {
     return process.env.SIVAN_FEE_WALLET_STELLAR?.trim() || process.env.STELLAR_DISTRIBUTION_PUBLIC_KEY?.trim() || '';
   }
   if (n === 'celo') {
-    return process.env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_CELO_FEE_WALLET?.trim() || '';
+    return process.env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_CELO_FEE_WALLET?.trim() || '0xd62D8aD1EE242745959221b5d020FAf20b41d14A';
   }
   // Base, BSC, and general EVM
   return process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || process.env.EVM_VAULT_ADDRESS?.trim() || process.env.EVM_SETTLEMENT_ROUTER_ADDRESS?.trim() || '';
@@ -459,8 +461,18 @@ export async function createAgreement(
   const parseResult = parseDeliveryDeadline(input.description || '');
   const deadlineDays = input.deadlineDays ?? parseResult.deadlineDays;
 
-  const feePayer: FeePayer = input.feePayer || 'buyer';
+  const feePayer: FeePayer = input.feePayer || (input.channel === 'minipay' ? 'seller' : 'buyer');
   const feeQuote = quoteServiceAgreementFee(input.amountUsdc, input.network, feePayer);
+
+  const feeAmount = typeof input.feeAmountUsdc === 'number' && input.feeAmountUsdc >= 0
+    ? input.feeAmountUsdc
+    : feeQuote.feeAmount;
+
+  const sellerNetAmount = typeof input.sellerNetAmountUsdc === 'number' && input.sellerNetAmountUsdc > 0
+    ? input.sellerNetAmountUsdc
+    : feeQuote.sellerNetAmount;
+
+  const buyerTotalPayable = feePayer === 'seller' ? input.amountUsdc : feeQuote.buyerTotalPayable;
 
   const now = nowIso();
   const isPreFunded = Boolean(input.fundingTxHash);
@@ -508,11 +520,11 @@ export async function createAgreement(
     releaseTxHash: null,
     vaultAddress: null,
     channel: input.channel || 'web',
-    feeAmountUsdc: feeQuote.feeAmount,
+    feeAmountUsdc: feeAmount,
     feePercent: feeQuote.feePercent,
     feePayer,
-    buyerTotalPayableUsdc: feeQuote.buyerTotalPayable,
-    sellerNetAmountUsdc: feeQuote.sellerNetAmount,
+    buyerTotalPayableUsdc: buyerTotalPayable,
+    sellerNetAmountUsdc: sellerNetAmount,
     feeTxHash: null,
     createdAt: now,
     updatedAt: now,
@@ -1050,6 +1062,25 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
         });
         if (relayerRes.success && relayerRes.txHash) {
           releaseTxHash = relayerRes.txHash;
+
+          // Priority 1b: Automated Celo on-chain protocol fee transfer from Sivan Agent Vault directly to Sivan Fee Wallet
+          if (feeAmount > 0 && feeWallet && feeWallet.toLowerCase() !== targetToAddress.toLowerCase()) {
+            try {
+              const feeRelayerRes = await dispatchCeloSettlementTransfer({
+                toAddress: feeWallet,
+                amount: feeAmount,
+                currency: existing.currency,
+                agreementId: `fee_${existing.id}`,
+              });
+              if (feeRelayerRes.success && feeRelayerRes.txHash) {
+                feeTxHash = feeRelayerRes.txHash;
+              } else {
+                console.warn('[agreement.release] Celo fee relayer transfer note:', feeRelayerRes.error);
+              }
+            } catch (feeErr) {
+              console.warn('[agreement.release] Celo fee relayer dispatch exception:', feeErr);
+            }
+          }
         } else if (isCeloAgreement) {
           // For Celo agreements, a failed relayer dispatch is a hard error.
           // Do NOT fall through to Priority 2 or mark the DB released.
