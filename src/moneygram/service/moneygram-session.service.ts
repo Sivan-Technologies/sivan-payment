@@ -1,5 +1,15 @@
 import crypto from 'node:crypto';
-import { Keypair, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
+import {
+  Asset,
+  BASE_FEE,
+  Horizon,
+  Keypair,
+  Memo,
+  Networks,
+  Operation,
+  TransactionBuilder,
+  type Transaction,
+} from '@stellar/stellar-sdk';
 import {
   fetchAnchorInfo,
   type AnchorInfo,
@@ -11,6 +21,7 @@ import {
   isMoneyGramProduction,
   sivanStellarSecret,
   sivanStellarPublicKey,
+  rampsApiKeys,
 } from '../config/moneygram.config.js';
 import {
   recordMoneyGramTransaction,
@@ -30,6 +41,10 @@ export interface CreateMoneyGramSessionInput {
 
 export interface MoneyGramSessionResult {
   id: string;
+  sessionId?: string;
+  sessionToken?: string;
+  widgetUrl?: string;
+  walletAddress?: string;
   mode: 'withdraw' | 'deposit';
   amount: string;
   asset: 'USDC';
@@ -188,6 +203,83 @@ export async function createMoneyGramSep24WithdrawSession(
   }
 
   const keypair = resolveStellarKeypair(input.userAddressOrId);
+  const targetCurrency = input.targetCurrency?.toUpperCase() || 'NGN';
+
+  // Calculate target amount from FX rate
+  let targetAmount = Math.round(numAmount * 1620);
+  if (targetCurrency === 'GHS') targetAmount = Math.round(numAmount * 15.5);
+  else if (targetCurrency === 'KES') targetAmount = Math.round(numAmount * 129.8);
+  else if (['USD', 'EUR', 'GBP', 'CAD'].includes(targetCurrency)) targetAmount = Number((numAmount * 1.0).toFixed(2));
+
+  // Check if official MoneyGram XRamps partner API credentials are configured
+  const ramps = rampsApiKeys();
+  if (ramps.secretKey) {
+    try {
+      const rampsEndpoint = `${ramps.baseUrl}/v1/sessions`;
+      const rampsRes = await fetch(rampsEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ramps.secretKey,
+        },
+        body: JSON.stringify({
+          walletAddress: keypair.publicKey(),
+          chain: 'stellar',
+        }),
+      });
+
+      if (rampsRes.ok) {
+        const rampsData = (await rampsRes.json()) as any;
+        if (rampsData.sessionId && rampsData.sessionToken) {
+          const txId = rampsData.sessionId;
+          let widgetUrl = rampsData.widgetUrl || `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=off-ramp`;
+          if (input.mode === 'deposit') {
+            const urlObj = new URL(widgetUrl);
+            urlObj.searchParams.set('mode', 'on-ramp');
+            widgetUrl = urlObj.toString();
+          }
+
+          const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=view&id=${txId}`;
+
+          await recordMoneyGramTransaction({
+            id: txId,
+            mode: input.mode || 'withdraw',
+            amountUsdc: numAmount,
+            targetCurrency,
+            targetAmount,
+            channel: input.channel || 'minipay',
+            userAddressOrId: input.userAddressOrId || keypair.publicKey(),
+            status: 'pending_user_transfer_start',
+            moreInfoUrl,
+          });
+
+          return {
+            id: txId,
+            sessionId: txId,
+            sessionToken: rampsData.sessionToken,
+            widgetUrl,
+            walletAddress: keypair.publicKey(),
+            mode: input.mode || 'withdraw',
+            amount: numAmount.toFixed(2),
+            asset: 'USDC',
+            targetCurrency,
+            targetAmount,
+            recipientName: input.recipientName || 'Valued Customer',
+            recipientPhone: input.recipientPhone,
+            interactiveUrl: widgetUrl,
+            moreInfoUrl,
+            environment: moneyGramEnvironment(),
+            status: 'pending_user_transfer_start',
+            createdAt: new Date().toISOString(),
+          };
+        }
+      }
+    } catch {
+      // If XRamps call fails, seamlessly fall through to legacy SEP-24 anchor flow
+    }
+  }
+
+  // Fallback to direct SEP-24 Anchor flow
   const { token, anchorInfo } = await getMoneyGramSep10Token(keypair);
 
   const withdrawInteractiveEndpoint = `${anchorInfo.transferServerSep24}/transactions/withdraw/interactive`;
@@ -228,13 +320,6 @@ export async function createMoneyGramSep24WithdrawSession(
   const txId = sep24Data.id;
   const interactiveUrl = sep24Data.url;
   const moreInfoUrl = `${anchorInfo.transferServerSep24}/transaction/more_info?id=${txId}`;
-  const targetCurrency = input.targetCurrency?.toUpperCase() || 'NGN';
-
-  // Calculate target amount from FX rate
-  let targetAmount = Math.round(numAmount * 1620);
-  if (targetCurrency === 'GHS') targetAmount = Math.round(numAmount * 15.5);
-  else if (targetCurrency === 'KES') targetAmount = Math.round(numAmount * 129.8);
-  else if (['USD', 'EUR', 'GBP', 'CAD'].includes(targetCurrency)) targetAmount = Number((numAmount * 1.0).toFixed(2));
 
   // Persist transaction record
   await recordMoneyGramTransaction({
@@ -264,6 +349,77 @@ export async function createMoneyGramSep24WithdrawSession(
     status: 'pending_user_transfer_start',
     createdAt: new Date().toISOString(),
   };
+}
+
+const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+function usdcIssuer(requiredNetwork?: 'mainnet' | 'testnet'): string {
+  if (requiredNetwork === 'mainnet') return MAINNET_USDC_ISSUER;
+  return TESTNET_USDC_ISSUER;
+}
+
+function settlementMemo(memo: string) {
+  if (!/^[0-9]+$/.test(memo)) {
+    throw new Error('Settlement memo must be a numeric Stellar ID memo');
+  }
+  return Memo.id(memo);
+}
+
+/**
+ * Signs and submits Stellar USDC payments requested by MoneyGram Ramps RAMPS_SIGN_TRANSACTION.
+ */
+export async function sendStellarUsdcPayment(input: {
+  sourceSecret: string;
+  to: string;
+  amount: string;
+  memo?: string;
+  tokenAddress?: string;
+  requiredNetwork?: 'mainnet' | 'testnet';
+  issuer?: string;
+}): Promise<string> {
+  const {
+    sourceSecret,
+    to,
+    amount,
+    memo,
+    tokenAddress = 'USDC',
+    requiredNetwork = 'testnet',
+    issuer,
+  } = input;
+
+  const assetIssuer = issuer || usdcIssuer(requiredNetwork);
+  const pass = requiredNetwork === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET;
+  const horizonUrl =
+    requiredNetwork === 'mainnet'
+      ? 'https://horizon.stellar.org'
+      : 'https://horizon-testnet.stellar.org';
+  const horizon = new Horizon.Server(horizonUrl);
+
+  const sourceKeypair = Keypair.fromSecret(sourceSecret);
+  const usdc = new Asset(tokenAddress, assetIssuer);
+  const account = await horizon.loadAccount(sourceKeypair.publicKey());
+
+  let builder = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: pass,
+  }).addOperation(
+    Operation.payment({
+      destination: to,
+      asset: usdc,
+      amount,
+    })
+  );
+
+  if (memo && memo.trim()) {
+    builder = builder.addMemo(settlementMemo(memo.trim()));
+  }
+
+  const transaction = builder.setTimeout(180).build();
+  transaction.sign(sourceKeypair);
+
+  const result = await horizon.submitTransaction(transaction);
+  return result.hash;
 }
 
 /**

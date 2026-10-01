@@ -3,6 +3,7 @@ import {
   moneyGramConfigSummary,
   anchorHost,
   moneyGramEnvironment,
+  isMoneyGramProduction,
 } from '../config/moneygram.config.js';
 import {
   anchorHealth,
@@ -10,6 +11,8 @@ import {
 import {
   createMoneyGramSep24WithdrawSession,
   getMoneyGramSep24Transaction,
+  sendStellarUsdcPayment,
+  resolveStellarKeypair,
 } from '../service/moneygram-session.service.js';
 import {
   getMoneyGramControls,
@@ -248,6 +251,45 @@ export async function moneygramRoutes(app: FastifyInstance) {
     const { userAddressOrId } = (request.query || {}) as { userAddressOrId?: string };
     const tx = await getMoneyGramSep24Transaction(id, userAddressOrId);
     return { data: tx };
+  });
+
+  // Non-Custodial RAMPS_SIGN_TRANSACTION bridge endpoint
+  app.post<{
+    Body: {
+      to: string;
+      amount: string;
+      memo?: string;
+      tokenAddress?: string;
+      requiredNetwork?: 'mainnet' | 'testnet';
+      issuer?: string;
+      userAddressOrId?: string;
+    };
+  }>('/api/moneygram/sign-transaction', async (request, reply) => {
+    const { to, amount, memo, tokenAddress, requiredNetwork, issuer, userAddressOrId } = request.body || {};
+    if (!to || !amount) {
+      return reply.code(400).send({
+        error: { code: 'INVALID_PARAMETERS', message: 'Missing transaction destination or amount' },
+      });
+    }
+
+    try {
+      const keypair = resolveStellarKeypair(userAddressOrId);
+      const txHash = await sendStellarUsdcPayment({
+        sourceSecret: keypair.secret(),
+        to,
+        amount,
+        memo,
+        tokenAddress,
+        requiredNetwork: requiredNetwork || (isMoneyGramProduction() ? 'mainnet' : 'testnet'),
+        issuer,
+      });
+
+      return { data: { txHash, walletAddress: keypair.publicKey() } };
+    } catch (err: any) {
+      return reply.code(500).send({
+        error: { code: 'SIGNING_FAILED', message: err?.message || 'Failed to sign Stellar USDC transaction' },
+      });
+    }
   });
 }
 

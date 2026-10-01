@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   formatMoneyGramPin,
   generateMoneyGramReferencePin,
@@ -41,11 +41,23 @@ export function MoneyGramModal({
   const [isProcessing, setIsProcessing] = useState(false);
   const [interactiveUrl, setInteractiveUrl] = useState<string>('');
   const [sessionId, setSessionId] = useState<string>('');
+  const [sessionToken, setSessionToken] = useState<string>('');
+  const [stellarWalletAddress, setStellarWalletAddress] = useState<string>('');
+  const [isSigning, setIsSigning] = useState(false);
+  const [signingStatus, setSigningStatus] = useState<string>('');
+
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const sessionTokenRef = useRef(sessionToken);
+  sessionTokenRef.current = sessionToken;
+  const stellarAddressRef = useRef(stellarWalletAddress);
+  stellarAddressRef.current = stellarWalletAddress;
 
   useEffect(() => {
     if (open) {
       setMode(initialMode);
       setStep('setup');
+      setSigningStatus('');
+      setIsSigning(false);
       if (userFullName && !recipientName) setRecipientName(userFullName);
       if (userPhone && !recipientPhone) setRecipientPhone(userPhone);
     }
@@ -92,21 +104,113 @@ export function MoneyGramModal({
     return 0;
   }, [userSpendableUsdc]);
 
-  // Listen for SEP-24 postMessage COMMIT_RESULT event from MoneyGram iframe or popup
+  // Listen for MoneyGram XRamps postMessage protocol (RAMPS_READY, RAMPS_SIGN_TRANSACTION, RAMPS_TRANSACTION_COMPLETE)
   useEffect(() => {
     if (!open || step !== 'session') return;
 
-    function handlePostMessage(event: MessageEvent) {
-      const data = event.data as MoneyGramPostMessageEvent;
-      if (
-        data &&
-        (data.type === 'COMMIT_RESULT' ||
-          data.type === 'transaction_completed' ||
-          data.status === 'success' ||
-          data.transaction?.status === 'pending_user_transfer_start' ||
-          data.transaction?.status === 'pending_user_transfer_complete')
+    async function handlePostMessage(event: MessageEvent) {
+      let data = event.data;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          return;
+        }
+      }
+      if (!data || typeof data !== 'object') return;
+
+      const type = (data as any).type;
+      const payload = (data as any).payload || {};
+
+      // 1. MoneyGram XRamps widget handshake: respond with RAMPS_CONFIG
+      if (type === 'RAMPS_READY') {
+        const configMessage = {
+          type: 'RAMPS_CONFIG',
+          payload: {
+            sessionToken: sessionTokenRef.current,
+            wallet: {
+              address: stellarAddressRef.current || 'GB3AE2OH354LR3SSSA5KF3BMSIAAG2EJGVOQSKCMEICECFWG7KDHZTNJ',
+              chain: 'stellar',
+              asset: 'USDC',
+              walletType: 'non-custodial',
+            },
+            devConfig: {
+              mockMode: false,
+              apiBaseUrl: 'https://playground.xramps.moneygram.com/api',
+            },
+          },
+        };
+        iframeRef.current?.contentWindow?.postMessage(JSON.stringify(configMessage), '*');
+      }
+      // 2. Non-custodial sign request from MoneyGram widget
+      else if (type === 'RAMPS_SIGN_TRANSACTION') {
+        setIsSigning(true);
+        setSigningStatus('Signing Stellar USDC transaction...');
+        try {
+          const signRes = await fetch('/api/moneygram/sign-transaction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              to: payload.to,
+              amount: payload.amount,
+              memo: payload.memo,
+              tokenAddress: payload.tokenAddress || 'USDC',
+              requiredNetwork: payload.requiredNetwork || 'testnet',
+              issuer: payload.issuer,
+              userAddressOrId: stellarAddressRef.current,
+            }),
+          });
+          const signJson = await signRes.json();
+          if (signJson?.data?.txHash) {
+            setSigningStatus('Payment confirmed on-chain!');
+            iframeRef.current?.contentWindow?.postMessage(
+              JSON.stringify({
+                type: 'RAMPS_SIGN_SUCCESS',
+                payload: {
+                  txHash: signJson.data.txHash,
+                  walletAddress: stellarAddressRef.current,
+                },
+              }),
+              '*'
+            );
+          } else {
+            const errMsg = signJson?.error?.message || 'Transaction signing failed';
+            setSigningStatus(`Error: ${errMsg}`);
+            iframeRef.current?.contentWindow?.postMessage(
+              JSON.stringify({
+                type: 'RAMPS_SIGN_ERROR',
+                payload: { error: errMsg },
+              }),
+              '*'
+            );
+          }
+        } catch (err: any) {
+          setSigningStatus(`Signing failed: ${err?.message || err}`);
+          iframeRef.current?.contentWindow?.postMessage(
+            JSON.stringify({
+              type: 'RAMPS_SIGN_ERROR',
+              payload: { error: err?.message || 'Signing failed' },
+            }),
+            '*'
+          );
+        } finally {
+          setIsSigning(false);
+        }
+      }
+      // 3. MoneyGram transaction completed / committed
+      else if (
+        type === 'RAMPS_TRANSACTION_COMPLETE' ||
+        type === 'COMMIT_RESULT' ||
+        type === 'transaction_completed' ||
+        (data as any).status === 'success' ||
+        (data as any).transaction?.status === 'pending_user_transfer_start' ||
+        (data as any).transaction?.status === 'pending_user_transfer_complete'
       ) {
-        completeSession(data.transaction?.external_transaction_id, data.transaction?.more_info_url);
+        const refNumber =
+          payload.referenceNumber ||
+          payload.transactionId ||
+          (data as any).transaction?.external_transaction_id;
+        completeSession(refNumber);
       }
     }
 
@@ -141,6 +245,7 @@ export function MoneyGramModal({
     e.preventDefault();
     if (numAmount <= 0) return;
     setIsProcessing(true);
+    setSigningStatus('');
     try {
       const res = await fetch('/api/moneygram/session', {
         method: 'POST',
@@ -157,10 +262,10 @@ export function MoneyGramModal({
       if (res.ok) {
         const json = await res.json();
         if (json?.data) {
-          if (json.data.interactiveUrl) {
-            setInteractiveUrl(json.data.interactiveUrl);
-            openMoneyGramPortal(json.data.interactiveUrl);
-          }
+          if (json.data.sessionToken) setSessionToken(json.data.sessionToken);
+          if (json.data.walletAddress) setStellarWalletAddress(json.data.walletAddress);
+          const url = json.data.widgetUrl || json.data.interactiveUrl;
+          if (url) setInteractiveUrl(url);
           if (json.data.id) setSessionId(json.data.id);
         }
       }
@@ -513,163 +618,113 @@ export function MoneyGramModal({
           </form>
         )}
 
-        {/* Step 2: Interactive Session Frame */}
+        {/* Step 2: Official MoneyGram XRamps Partner Widget */}
         {step === 'session' && (
-          <div style={{ textAlign: 'center', padding: '16px 0' }}>
-            <div
-              style={{
-                background: 'var(--surface-2)',
-                border: '1px solid var(--border)',
-                borderRadius: '12px',
-                padding: '24px 20px',
-                marginBottom: '20px',
-              }}
-            >
+          <div style={{ textAlign: 'center', padding: '6px 0' }}>
+            {/* Signing Status Banner (when non-custodial signing is active) */}
+            {signingStatus && (
               <div
                 style={{
-                  width: '48px',
-                  height: '48px',
-                  borderRadius: '50%',
-                  background: 'rgba(0, 122, 199, 0.1)',
-                  color: 'var(--green-ink)',
+                  background: isSigning ? 'rgba(0, 122, 199, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                  border: `1px solid ${isSigning ? '#007ac7' : '#10b981'}`,
+                  borderRadius: '10px',
+                  padding: '10px 14px',
+                  marginBottom: '12px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: 'var(--text)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '24px',
-                  margin: '0 auto 14px',
-                }}
-              >
-                ⚡
-              </div>
-              <h3 style={{ margin: '0 0 8px', fontSize: '18px' }}>
-                MoneyGram SEP-24 Interactive Session
-              </h3>
-              <p style={{ margin: '0 0 16px', color: 'var(--muted)', fontSize: '13px', lineHeight: '1.5' }}>
-                Initiating session on Stellar network for {amount} USDC (≈ {selectedCountry.symbol}{estimatedTargetAmount} {selectedCountry.currency}).
-                Listening for transaction commitment.
-              </p>
-
-              {/* Session Overview Card */}
-              <div
-                style={{
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  border: '1px solid var(--border)',
-                  borderRadius: '10px',
-                  padding: '14px',
-                  marginBottom: '16px',
-                  textAlign: 'left',
-                  display: 'flex',
-                  flexDirection: 'column',
                   gap: '8px',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Beneficiary</span>
-                  <strong style={{ fontSize: '13px', color: 'var(--text)' }}>{recipientName || 'Valued Customer'}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Payout Amount</span>
-                  <strong style={{ fontSize: '14px', color: '#10b981' }}>{selectedCountry.symbol}{estimatedTargetAmount} {selectedCountry.currency}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Network / Rail</span>
-                  <span style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 600 }}>Stellar Native USDC</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Corridor</span>
-                  <span style={{ fontSize: '12px', color: 'var(--text)' }}>{selectedCountry.flag} {selectedCountry.country}</span>
-                </div>
+                <span className="pulsing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', background: isSigning ? '#007ac7' : '#10b981' }} />
+                {signingStatus}
               </div>
+            )}
 
-              {/* Secure Window Handoff Card (Replaces blocked iframe per SEP-24 spec) */}
-              <div
-                style={{
-                  background: 'linear-gradient(135deg, rgba(0, 122, 199, 0.08) 0%, rgba(224, 36, 36, 0.05) 100%)',
-                  border: '1px solid rgba(0, 122, 199, 0.25)',
-                  borderRadius: '12px',
-                  padding: '18px 16px',
-                  marginBottom: '18px',
-                  textAlign: 'left',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                  <span
-                    style={{
-                      background: '#e02424',
-                      color: '#fff',
-                      fontSize: '10px',
-                      fontWeight: 800,
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    MONEYGRAM PORTAL
-                  </span>
-                  <strong style={{ fontSize: '13px', color: 'var(--text)' }}>
-                    Secure Identity Verification
-                  </strong>
-                </div>
-                <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: 'var(--muted)', lineHeight: '1.5' }}>
-                  Per Stellar SEP-24 banking security standards, MoneyGram KYC verification runs inside their official encrypted portal. Embedded iframes are restricted to protect your personal identity.
-                </p>
-
-                {interactiveUrl && (
-                  <button
-                    type="button"
-                    className="primary-btn"
-                    onClick={() => openMoneyGramPortal()}
-                    style={{
-                      width: '100%',
-                      padding: '11px 16px',
-                      fontSize: '13.5px',
-                      fontWeight: 700,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      background: '#007ac7',
-                      borderColor: '#007ac7',
-                      marginBottom: '8px',
-                    }}
-                  >
-                    🚀 Open Secure MoneyGram Portal ↗
-                  </button>
-                )}
-
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '11.5px',
-                    color: 'var(--muted)',
-                  }}
-                >
-                  <span className="pulsing-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
-                  Auto-detecting completion listener active.
-                </div>
+            {/* Session Overview Mini Bar */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                borderRadius: '10px',
+                padding: '10px 14px',
+                marginBottom: '14px',
+                fontSize: '12px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ background: '#e02424', color: '#fff', fontSize: '9px', fontWeight: 800, padding: '2px 5px', borderRadius: '3px' }}>
+                  XRAMPS
+                </span>
+                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{selectedCountry.flag} {selectedCountry.country}</span>
               </div>
-
-              {/* Sandbox / Certification Run Quick Action */}
-              <div style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-                <button
-                  type="button"
-                  className="primary-btn"
-                  onClick={() => completeSession()}
-                  style={{ width: '100%', marginBottom: '8px' }}
-                >
-                  Confirm & Generate 8-Digit Pickup PIN →
-                </button>
-                <small style={{ color: 'var(--muted)', fontSize: '11.5px', display: 'block' }}>
-                  Simulates instant on-chain transaction lock and issues reference voucher.
-                </small>
+              <div>
+                <span style={{ color: 'var(--muted)', marginRight: '6px' }}>Target:</span>
+                <strong style={{ color: '#10b981' }}>{selectedCountry.symbol}{estimatedTargetAmount} {selectedCountry.currency}</strong>
               </div>
             </div>
 
-            <button type="button" className="ghost-btn" onClick={() => setStep('setup')}>
-              ← Back to Details
-            </button>
+            {/* Embedded MoneyGram XRamps Partner Widget */}
+            {interactiveUrl ? (
+              <div
+                style={{
+                  borderRadius: '14px',
+                  overflow: 'hidden',
+                  border: '1px solid var(--border)',
+                  background: '#fff',
+                  marginBottom: '14px',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+                }}
+              >
+                <iframe
+                  ref={iframeRef}
+                  src={interactiveUrl}
+                  title="MoneyGram XRamps Non-Custodial Widget"
+                  style={{
+                    width: '100%',
+                    height: '560px',
+                    border: 'none',
+                    background: '#fff',
+                    display: 'block',
+                  }}
+                  allow="clipboard-write; camera"
+                />
+              </div>
+            ) : null}
+
+            {/* Bottom Controls */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginTop: '12px' }}>
+              <button type="button" className="ghost-btn" onClick={() => setStep('setup')} style={{ fontSize: '12px' }}>
+                ← Back
+              </button>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {interactiveUrl && (
+                  <button
+                    type="button"
+                    className="secondary-btn small"
+                    onClick={() => openMoneyGramPortal()}
+                    style={{ fontSize: '12px' }}
+                  >
+                    Open in New Window ↗
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="primary-btn small"
+                  onClick={() => completeSession()}
+                  style={{ fontSize: '12px' }}
+                >
+                  Confirm & View PIN →
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
