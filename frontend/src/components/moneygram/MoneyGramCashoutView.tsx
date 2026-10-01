@@ -6,6 +6,7 @@ import {
 } from '../../moneygram';
 import { MoneyGramVoucherCard } from './MoneyGramVoucherCard';
 import { MoneyGramModal } from './MoneyGramModal';
+import { ConfirmModal } from '../ConfirmModal';
 
 export interface MoneyGramCashoutViewProps {
   userFullName?: string;
@@ -21,6 +22,7 @@ export function MoneyGramCashoutView({
 }: MoneyGramCashoutViewProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [vouchers, setVouchers] = useState<MoneyGramVoucher[]>(() => getStoredMoneyGramVouchers());
+  const [voucherToCancel, setVoucherToCancel] = useState<MoneyGramVoucher | null>(null);
 
   const refreshVouchers = () => {
     setVouchers(getStoredMoneyGramVouchers());
@@ -31,10 +33,14 @@ export function MoneyGramCashoutView({
   }, [modalOpen]);
 
   const handleCancelVoucher = (voucher: MoneyGramVoucher) => {
-    if (window.confirm(`Are you sure you want to cancel MoneyGram Voucher ${voucher.referencePin}? Any reserved funds will be refunded.`)) {
-      const updated = updateMoneyGramVoucherStatus(voucher.id, 'cancelled', 'Cancelled by User');
-      setVouchers(updated);
-    }
+    setVoucherToCancel(voucher);
+  };
+
+  const handleConfirmCancel = () => {
+    if (!voucherToCancel) return;
+    const updated = updateMoneyGramVoucherStatus(voucherToCancel.id, 'cancelled', 'Cancelled by User');
+    setVouchers(updated);
+    setVoucherToCancel(null);
   };
 
   return (
@@ -200,6 +206,18 @@ export function MoneyGramCashoutView({
         userFullName={userFullName}
         userPhone={userPhone}
         userSpendableUsdc={userSpendableUsdc}
+      />
+
+      {/* Sleek In-App Voucher Cancellation Confirmation Modal */}
+      <ConfirmModal
+        open={Boolean(voucherToCancel)}
+        title="Cancel Cash Pickup Voucher"
+        description={`Are you sure you want to cancel MoneyGram Voucher ${voucherToCancel?.referencePin || ''}? The counter pickup PIN will be deactivated, and your ${voucherToCancel?.amount || ''} USDC will remain in your Stellar wallet.`}
+        confirmLabel="Yes, Cancel Voucher"
+        cancelLabel="Keep Voucher"
+        isDestructive
+        onConfirm={handleConfirmCancel}
+        onCancel={() => setVoucherToCancel(null)}
       />
     </div>
   );

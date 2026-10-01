@@ -114,6 +114,29 @@ export function MoneyGramModal({
     return () => window.removeEventListener('message', handlePostMessage);
   }, [open, step, amount, selectedCountry, recipientName, recipientPhone]);
 
+  function openMoneyGramPortal(urlToOpen?: string) {
+    const targetUrl = urlToOpen || interactiveUrl;
+    if (!targetUrl) return;
+    const width = 540;
+    const height = 750;
+    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
+    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
+    try {
+      const popup = window.open(
+        targetUrl,
+        'MoneyGram_KYC_Portal',
+        `width=${width},height=${height},left=${left},top=${top},menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes`
+      );
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        window.open(targetUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        popup.focus();
+      }
+    } catch {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
+
   async function handleStartSession(e: React.FormEvent) {
     e.preventDefault();
     if (numAmount <= 0) return;
@@ -134,7 +157,10 @@ export function MoneyGramModal({
       if (res.ok) {
         const json = await res.json();
         if (json?.data) {
-          if (json.data.interactiveUrl) setInteractiveUrl(json.data.interactiveUrl);
+          if (json.data.interactiveUrl) {
+            setInteractiveUrl(json.data.interactiveUrl);
+            openMoneyGramPortal(json.data.interactiveUrl);
+          }
           if (json.data.id) setSessionId(json.data.id);
         }
       }
@@ -547,49 +573,82 @@ export function MoneyGramModal({
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Network / Rail</span>
-                  <span style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 600 }}>Stellar USDC (Sandbox)</span>
+                  <span style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 600 }}>Stellar Native USDC</span>
                 </div>
-                {interactiveUrl && (
-                  <div style={{ marginTop: '6px', textAlign: 'center' }}>
-                    <a
-                      href={interactiveUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="primary-btn small"
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', textDecoration: 'none' }}
-                    >
-                      Open in MoneyGram Window ↗
-                    </a>
-                  </div>
-                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Corridor</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text)' }}>{selectedCountry.flag} {selectedCountry.country}</span>
+                </div>
               </div>
 
-              {interactiveUrl && (
-                <div style={{ marginBottom: '16px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)' }}>
-                  <iframe
-                    src={interactiveUrl}
-                    title="MoneyGram Anchor Session"
-                    style={{ width: '100%', height: '360px', border: 'none', background: '#fff' }}
-                  />
-                </div>
-              )}
-
+              {/* Secure Window Handoff Card (Replaces blocked iframe per SEP-24 spec) */}
               <div
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  background: 'rgba(0, 122, 199, 0.08)',
-                  color: 'var(--green-ink)',
-                  fontSize: '12.5px',
-                  fontWeight: 600,
-                  marginBottom: '16px',
+                  background: 'linear-gradient(135deg, rgba(0, 122, 199, 0.08) 0%, rgba(224, 36, 36, 0.05) 100%)',
+                  border: '1px solid rgba(0, 122, 199, 0.25)',
+                  borderRadius: '12px',
+                  padding: '18px 16px',
+                  marginBottom: '18px',
+                  textAlign: 'left',
                 }}
               >
-                <span className="pulsing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#007ac7' }} />
-                Awaiting COMMIT_RESULT from MoneyGram Anchor
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <span
+                    style={{
+                      background: '#e02424',
+                      color: '#fff',
+                      fontSize: '10px',
+                      fontWeight: 800,
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    MONEYGRAM PORTAL
+                  </span>
+                  <strong style={{ fontSize: '13px', color: 'var(--text)' }}>
+                    Secure Identity Verification
+                  </strong>
+                </div>
+                <p style={{ margin: '0 0 14px', fontSize: '12.5px', color: 'var(--muted)', lineHeight: '1.5' }}>
+                  Per Stellar SEP-24 banking security standards, MoneyGram KYC verification runs inside their official encrypted portal. Embedded iframes are restricted to protect your personal identity.
+                </p>
+
+                {interactiveUrl && (
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => openMoneyGramPortal()}
+                    style={{
+                      width: '100%',
+                      padding: '11px 16px',
+                      fontSize: '13.5px',
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      background: '#007ac7',
+                      borderColor: '#007ac7',
+                      marginBottom: '8px',
+                    }}
+                  >
+                    🚀 Open Secure MoneyGram Portal ↗
+                  </button>
+                )}
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontSize: '11.5px',
+                    color: 'var(--muted)',
+                  }}
+                >
+                  <span className="pulsing-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
+                  Auto-detecting completion listener active.
+                </div>
               </div>
 
               {/* Sandbox / Certification Run Quick Action */}
