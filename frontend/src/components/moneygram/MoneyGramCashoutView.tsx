@@ -13,12 +13,14 @@ export interface MoneyGramCashoutViewProps {
   userPhone?: string;
   userSpendableUsdc?: number | null;
   onRefresh?: () => void;
+  apiBase?: string;
 }
 
 export function MoneyGramCashoutView({
   userFullName = '',
   userPhone = '',
   userSpendableUsdc,
+  apiBase,
 }: MoneyGramCashoutViewProps) {
   const [modalOpen, setModalOpen] = useState(false);
   const [vouchers, setVouchers] = useState<MoneyGramVoucher[]>(() => getStoredMoneyGramVouchers());
@@ -206,6 +208,7 @@ export function MoneyGramCashoutView({
         userFullName={userFullName}
         userPhone={userPhone}
         userSpendableUsdc={userSpendableUsdc}
+        apiBase={apiBase}
       />
 
       {/* Sleek In-App Voucher Cancellation Confirmation Modal */}

@@ -239,7 +239,7 @@ export const fallbackVirtualAccounts: VirtualAccountControl[] = [
   { currency: 'eur', enabled: false, label: 'EUR virtual account', provider: 'bridge', accountType: 'iban', paymentRails: ['sepa'], updatedAt: new Date().toISOString() }
 ];
 
-export function normalizeFrontendApiBase(value: string) {
+export function normalizeFrontendApiBase(value?: string) {
   const clean = (value || '').trim().replace(/\/$/, '');
   try {
     const parsed = new URL(clean);

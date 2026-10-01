@@ -9,6 +9,7 @@ import {
   type MoneyGramPostMessageEvent,
   type MoneyGramVoucher,
 } from '../../moneygram';
+import { buildApiUrl, normalizeFrontendApiBase } from '../../appUtils';
 
 export interface MoneyGramModalProps {
   open: boolean;
@@ -19,6 +20,7 @@ export interface MoneyGramModalProps {
   userEmail?: string;
   userPhone?: string;
   userSpendableUsdc?: number | null;
+  apiBase?: string;
 }
 
 export function MoneyGramModal({
@@ -29,7 +31,9 @@ export function MoneyGramModal({
   userFullName = '',
   userPhone = '',
   userSpendableUsdc,
+  apiBase,
 }: MoneyGramModalProps) {
+  const effectiveApiBase = apiBase || normalizeFrontendApiBase();
   const [mode, setMode] = useState<'withdraw' | 'deposit'>(initialMode);
   const [step, setStep] = useState<'setup' | 'session' | 'voucher'>('setup');
   const [selectedCountryCode, setSelectedCountryCode] = useState('NG');
@@ -45,6 +49,7 @@ export function MoneyGramModal({
   const [stellarWalletAddress, setStellarWalletAddress] = useState<string>('');
   const [isSigning, setIsSigning] = useState(false);
   const [signingStatus, setSigningStatus] = useState<string>('');
+  const [pendingSignPayload, setPendingSignPayload] = useState<any>(null);
   const [widgetAlert, setWidgetAlert] = useState<{ type: 'error' | 'warning'; message: string; action?: string } | null>(null);
   const [liveQuote, setLiveQuote] = useState<{
     targetAmount: string;
@@ -65,6 +70,7 @@ export function MoneyGramModal({
       setMode(initialMode);
       setStep('setup');
       setSigningStatus('');
+      setPendingSignPayload(null);
       setWidgetAlert(null);
       setIsSigning(false);
       setLiveQuote(null);
@@ -101,7 +107,8 @@ export function MoneyGramModal({
     const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch('/api/moneygram/quote', {
+        const quoteEndpoint = buildApiUrl(effectiveApiBase, '/api/moneygram/quote');
+        const res = await fetch(quoteEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -200,6 +207,72 @@ export function MoneyGramModal({
     }
   };
 
+  const executeSignTransaction = async (payload: any) => {
+    if (!payload) return;
+    setPendingSignPayload(payload);
+    setIsSigning(true);
+    setSigningStatus('Signing Stellar USDC transaction...');
+    setWidgetAlert(null);
+    try {
+      const signEndpoint = buildApiUrl(effectiveApiBase, '/api/moneygram/sign-transaction');
+      const signRes = await fetch(signEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: payload.to,
+          amount: payload.amount,
+          memo: payload.memo,
+          tokenAddress: payload.tokenAddress || 'USDC',
+          requiredNetwork: payload.requiredNetwork || 'testnet',
+          issuer: payload.issuer,
+          userAddressOrId: stellarAddressRef.current,
+        }),
+      });
+
+      let signJson: any = null;
+      try {
+        signJson = await signRes.json();
+      } catch {
+        throw new Error(`Endpoint unavailable (HTTP ${signRes.status} ${signRes.statusText || 'Not Found'})`);
+      }
+
+      if (!signRes.ok || !signJson?.data?.txHash) {
+        const errMsg = signJson?.error?.message || `Transaction signing failed (HTTP ${signRes.status})`;
+        throw new Error(errMsg);
+      }
+
+      setSigningStatus('Payment confirmed on-chain!');
+      setPendingSignPayload(null);
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({
+          type: 'RAMPS_SIGN_SUCCESS',
+          payload: {
+            txHash: signJson.data.txHash,
+            walletAddress: stellarAddressRef.current,
+          },
+        }),
+        '*'
+      );
+    } catch (err: any) {
+      const errMsg = err?.message || 'Signing failed';
+      setSigningStatus(`Error: ${errMsg}`);
+      setWidgetAlert({
+        type: 'error',
+        message: `Stellar Payment Signing Failed: ${errMsg}`,
+        action: 'Sivan could not complete the on-chain transfer to MoneyGram. Check your connection or click "Retry Signing".',
+      });
+      iframeRef.current?.contentWindow?.postMessage(
+        JSON.stringify({
+          type: 'RAMPS_SIGN_ERROR',
+          payload: { error: errMsg },
+        }),
+        '*'
+      );
+    } finally {
+      setIsSigning(false);
+    }
+  };
+
   // Listen for MoneyGram XRamps postMessage protocol (RAMPS_READY, RAMPS_SIGN_TRANSACTION, RAMPS_TRANSACTION_COMPLETE)
   useEffect(() => {
     if (!open || step !== 'session') return;
@@ -224,58 +297,7 @@ export function MoneyGramModal({
       }
       // 2. Non-custodial sign request from MoneyGram widget
       else if (type === 'RAMPS_SIGN_TRANSACTION') {
-        setIsSigning(true);
-        setSigningStatus('Signing Stellar USDC transaction...');
-        try {
-          const signRes = await fetch('/api/moneygram/sign-transaction', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: payload.to,
-              amount: payload.amount,
-              memo: payload.memo,
-              tokenAddress: payload.tokenAddress || 'USDC',
-              requiredNetwork: payload.requiredNetwork || 'testnet',
-              issuer: payload.issuer,
-              userAddressOrId: stellarAddressRef.current,
-            }),
-          });
-          const signJson = await signRes.json();
-          if (signJson?.data?.txHash) {
-            setSigningStatus('Payment confirmed on-chain!');
-            iframeRef.current?.contentWindow?.postMessage(
-              JSON.stringify({
-                type: 'RAMPS_SIGN_SUCCESS',
-                payload: {
-                  txHash: signJson.data.txHash,
-                  walletAddress: stellarAddressRef.current,
-                },
-              }),
-              '*'
-            );
-          } else {
-            const errMsg = signJson?.error?.message || 'Transaction signing failed';
-            setSigningStatus(`Error: ${errMsg}`);
-            iframeRef.current?.contentWindow?.postMessage(
-              JSON.stringify({
-                type: 'RAMPS_SIGN_ERROR',
-                payload: { error: errMsg },
-              }),
-              '*'
-            );
-          }
-        } catch (err: any) {
-          setSigningStatus(`Signing failed: ${err?.message || err}`);
-          iframeRef.current?.contentWindow?.postMessage(
-            JSON.stringify({
-              type: 'RAMPS_SIGN_ERROR',
-              payload: { error: err?.message || 'Signing failed' },
-            }),
-            '*'
-          );
-        } finally {
-          setIsSigning(false);
-        }
+        await executeSignTransaction(payload);
       }
       // 3. MoneyGram transaction completed / committed
       else if (
@@ -356,8 +378,10 @@ export function MoneyGramModal({
     if (numAmount <= 0) return;
     setIsProcessing(true);
     setSigningStatus('');
+    setWidgetAlert(null);
     try {
-      const res = await fetch('/api/moneygram/session', {
+      const sessionEndpoint = buildApiUrl(effectiveApiBase, '/api/moneygram/session');
+      const res = await fetch(sessionEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -382,9 +406,21 @@ export function MoneyGramModal({
           if (url) setInteractiveUrl(url);
           if (json.data.id) setSessionId(json.data.id);
         }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        const errMsg = errJson?.error?.message || `Session failed (HTTP ${res.status})`;
+        setWidgetAlert({
+          type: 'warning',
+          message: `MoneyGram Session: ${errMsg}`,
+          action: 'Could not connect to MoneyGram partner service. You can retry or open the session in a new window.',
+        });
       }
-    } catch {
-      // Fallback handled gracefully
+    } catch (err: any) {
+      setWidgetAlert({
+        type: 'warning',
+        message: `Network error: ${err?.message || 'Could not connect to session endpoint'}`,
+        action: 'Please check your internet connection or verify Sivan Payment service status.',
+      });
     } finally {
       setIsProcessing(false);
       setStep('session');
@@ -818,25 +854,64 @@ export function MoneyGramModal({
 
             {/* Signing Status Banner (when non-custodial signing is active) */}
             {signingStatus && (
-              <div
-                style={{
-                  background: isSigning ? 'rgba(0, 122, 199, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-                  border: `1px solid ${isSigning ? '#007ac7' : '#10b981'}`,
-                  borderRadius: '10px',
-                  padding: '10px 14px',
-                  marginBottom: '12px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  color: 'var(--text)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                }}
-              >
-                <span className="pulsing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', background: isSigning ? '#007ac7' : '#10b981' }} />
-                {signingStatus}
-              </div>
+              (() => {
+                const isErr = signingStatus.toLowerCase().includes('error') || signingStatus.toLowerCase().includes('fail');
+                const bgColor = isSigning
+                  ? 'rgba(0, 122, 199, 0.15)'
+                  : isErr
+                  ? 'rgba(239, 68, 68, 0.15)'
+                  : 'rgba(16, 185, 129, 0.15)';
+                const borderColor = isSigning
+                  ? '#007ac7'
+                  : isErr
+                  ? '#ef4444'
+                  : '#10b981';
+                const dotColor = isSigning
+                  ? '#007ac7'
+                  : isErr
+                  ? '#ef4444'
+                  : '#10b981';
+                return (
+                  <div
+                    style={{
+                      background: bgColor,
+                      border: `1px solid ${borderColor}`,
+                      borderRadius: '10px',
+                      padding: '10px 14px',
+                      marginBottom: '12px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      color: 'var(--text)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '10px',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span className="pulsing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', background: dotColor }} />
+                    <span>{signingStatus}</span>
+                    {pendingSignPayload && !isSigning && (
+                      <button
+                        type="button"
+                        onClick={() => executeSignTransaction(pendingSignPayload)}
+                        style={{
+                          background: '#ef4444',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        🔄 Retry Signing
+                      </button>
+                    )}
+                  </div>
+                );
+              })()
             )}
 
             {/* Session Overview Mini Bar */}
