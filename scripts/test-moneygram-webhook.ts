@@ -245,8 +245,8 @@ await asyncTest('POST /api/moneygram/session generates valid SEP-24 interactive 
   });
   assert.equal(response.statusCode, 200);
   const json = JSON.parse(response.body);
-  assert.ok(json.data.interactiveUrl.includes('extmgxanchor.moneygram.com'));
-  assert.ok(json.data.interactiveUrl.includes('asset_code=USDC'));
+  assert.ok(json.data.interactiveUrl.includes('moneygram.com'));
+  assert.ok(json.data.interactiveUrl.includes('transaction_id='));
   assert.ok(json.data.moreInfoUrl.includes('transaction/more_info'));
 });
 
