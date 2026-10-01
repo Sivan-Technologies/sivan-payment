@@ -470,7 +470,7 @@ export async function createAgreement(
 
   const sellerNetAmount = typeof input.sellerNetAmountUsdc === 'number' && input.sellerNetAmountUsdc > 0
     ? input.sellerNetAmountUsdc
-    : feeQuote.sellerNetAmount;
+    : (feePayer === 'seller' ? Math.max(0, parseFloat((input.amountUsdc - feeAmount).toFixed(6))) : feeQuote.sellerNetAmount);
 
   const buyerTotalPayable = feePayer === 'seller' ? input.amountUsdc : feeQuote.buyerTotalPayable;
 
@@ -483,12 +483,28 @@ export async function createAgreement(
   if (input.id) {
     const existing = await db.findServiceAgreementById(input.id);
     if (existing) {
+      let shouldSave = false;
       if (input.fundingTxHash && (existing.status === 'pending_payment' || (existing.status as any) === 'pending_funding')) {
         existing.status = 'funded';
         existing.fundingTxHash = input.fundingTxHash;
         existing.fundedAt = now;
         existing.deliveryDueAt = dueAt || new Date(Date.now() + (existing.deadlineDays || 1) * 24 * 60 * 60 * 1000).toISOString();
         existing.updatedAt = now;
+        shouldSave = true;
+      }
+      if (typeof input.feeAmountUsdc === 'number' && existing.feeAmountUsdc !== input.feeAmountUsdc) {
+        existing.feeAmountUsdc = input.feeAmountUsdc;
+        shouldSave = true;
+      }
+      if (typeof input.sellerNetAmountUsdc === 'number' && existing.sellerNetAmountUsdc !== input.sellerNetAmountUsdc) {
+        existing.sellerNetAmountUsdc = input.sellerNetAmountUsdc;
+        shouldSave = true;
+      }
+      if (input.feePayer && existing.feePayer !== input.feePayer) {
+        existing.feePayer = input.feePayer;
+        shouldSave = true;
+      }
+      if (shouldSave) {
         await db.updateServiceAgreement(existing);
       }
       return existing;
@@ -1009,14 +1025,19 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
   }
 
   const now = nowIso();
+  const feePayer: FeePayer = existing.feePayer || (existing.channel === 'minipay' ? 'seller' : 'buyer');
   const feeQuote = quoteServiceAgreementFee(
     existing.amountUsdc,
     existing.network,
-    existing.feePayer || 'buyer'
+    feePayer
   );
-  const sellerNetAmount = existing.sellerNetAmountUsdc ?? feeQuote.sellerNetAmount;
-  const feeAmount = existing.feeAmountUsdc ?? feeQuote.feeAmount;
-  const payableAmount = existing.buyerTotalPayableUsdc ?? feeQuote.buyerTotalPayable;
+  const feeAmount = typeof existing.feeAmountUsdc === 'number' && existing.feeAmountUsdc >= 0
+    ? existing.feeAmountUsdc
+    : feeQuote.feeAmount;
+  const sellerNetAmount = typeof existing.sellerNetAmountUsdc === 'number' && existing.sellerNetAmountUsdc > 0
+    ? existing.sellerNetAmountUsdc
+    : (feePayer === 'seller' ? Math.max(0, parseFloat((existing.amountUsdc - feeAmount).toFixed(6))) : feeQuote.sellerNetAmount);
+  const payableAmount = existing.buyerTotalPayableUsdc ?? (feePayer === 'seller' ? existing.amountUsdc : feeQuote.buyerTotalPayable);
   const feeWallet = getSivanServiceAgreementFeeWallet(existing.network || 'solana');
 
   let releaseTxHash: string | null = null;
