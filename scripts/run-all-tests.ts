@@ -149,6 +149,14 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'MoneyGram Anchor Discovery & SEP-10 Trust',
+    command: 'tsx scripts/test-moneygram-anchor.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-anchor.json',
+    },
+  },
+  {
     name: 'Paystack Routes & Webhooks Ingestion',
     command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
     env: {
