@@ -233,10 +233,20 @@ export async function createMoneyGramSep24WithdrawSession(
         if (rampsData.sessionId && rampsData.sessionToken) {
           const txId = rampsData.sessionId;
           let widgetUrl = rampsData.widgetUrl || `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=off-ramp`;
-          if (input.mode === 'deposit') {
+          try {
             const urlObj = new URL(widgetUrl);
-            urlObj.searchParams.set('mode', 'on-ramp');
+            if (input.mode === 'deposit') {
+              urlObj.searchParams.set('mode', 'on-ramp');
+            }
+            if (rampsData.sessionToken) {
+              urlObj.searchParams.set('sessionToken', rampsData.sessionToken);
+            }
+            if (ramps.publicKey) {
+              urlObj.searchParams.set('key', ramps.publicKey);
+            }
             widgetUrl = urlObj.toString();
+          } catch {
+            // Keep default widgetUrl
           }
 
           const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=view&id=${txId}`;

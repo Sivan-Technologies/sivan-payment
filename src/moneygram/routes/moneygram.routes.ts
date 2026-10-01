@@ -205,7 +205,10 @@ export async function moneygramRoutes(app: FastifyInstance) {
       const ramps = rampsApiKeys();
       const env = moneyGramEnvironment();
 
-      const widgetUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=${mode === 'deposit' ? 'on-ramp' : 'off-ramp'}`;
+      let widgetUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=${mode === 'deposit' ? 'on-ramp' : 'off-ramp'}`;
+      if (ramps.publicKey) {
+        widgetUrl += `&key=${encodeURIComponent(ramps.publicKey)}`;
+      }
       const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=view&id=${txId}`;
       const interactiveUrl = widgetUrl;
 

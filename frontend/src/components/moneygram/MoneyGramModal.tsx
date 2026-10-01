@@ -125,6 +125,9 @@ export function MoneyGramModal({
       },
     };
     try {
+      // MoneyGram widget expects a plain JavaScript Object in $.data: if ($.data?.type !== "RAMPS_CONFIG") return;
+      targetWin.postMessage(configMessage, '*');
+      // Also send stringified for backwards compatibility with string-based message listeners
       targetWin.postMessage(JSON.stringify(configMessage), '*');
     } catch {
       // Ignored
@@ -275,7 +278,11 @@ export function MoneyGramModal({
         if (json?.data) {
           if (json.data.sessionToken) setSessionToken(json.data.sessionToken);
           if (json.data.walletAddress) setStellarWalletAddress(json.data.walletAddress);
-          const url = json.data.widgetUrl || json.data.interactiveUrl;
+          let url = json.data.widgetUrl || json.data.interactiveUrl;
+          if (url && json.data.sessionToken && !url.includes('sessionToken=')) {
+            const joiner = url.includes('?') ? '&' : '?';
+            url = `${url}${joiner}sessionToken=${encodeURIComponent(json.data.sessionToken)}`;
+          }
           if (url) setInteractiveUrl(url);
           if (json.data.id) setSessionId(json.data.id);
         }
