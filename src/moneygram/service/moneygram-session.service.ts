@@ -244,12 +244,13 @@ export async function createMoneyGramSep24WithdrawSession(
             if (ramps.publicKey) {
               urlObj.searchParams.set('key', ramps.publicKey);
             }
+            urlObj.searchParams.set('transaction_id', txId);
             widgetUrl = urlObj.toString();
           } catch {
             // Keep default widgetUrl
           }
 
-          const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=view&id=${txId}`;
+          const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/stellarsepservice/sep24/transaction/more_info?id=${txId}`;
 
           await recordMoneyGramTransaction({
             id: txId,

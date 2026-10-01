@@ -76,6 +76,21 @@ export async function moneygramRoutes(app: FastifyInstance) {
     };
   });
 
+async function resolveCorridorRate(corridorCurrency: string, numAmount: number, fallbackRate: number): Promise<number> {
+  if (corridorCurrency.toUpperCase() === 'NGN') {
+    try {
+      const { getTextileFxQuote } = await import('../../wallets/celo/textile-fx.service.js');
+      const fxQuote = await getTextileFxQuote('usdc_to_ngn', numAmount);
+      if (fxQuote?.rate && Number.isFinite(fxQuote.rate) && fxQuote.rate > 0) {
+        return Math.round(fxQuote.rate * 100) / 100;
+      }
+    } catch {
+      // Fallback to corridor baseline
+    }
+  }
+  return fallbackRate;
+}
+
   // RFQ Quote Generator for Cash Pickup or Cash In
   app.post<{
     Body: {
@@ -105,7 +120,9 @@ export async function moneygramRoutes(app: FastifyInstance) {
         (c) => c.currency === queryKey || c.code === queryKey || c.alpha3 === queryKey
       ) || SUPPORTED_MONEYGRAM_CORRIDORS[0]; // Default
 
-    const targetAmount = (numAmount * corridor.rate).toFixed(
+    const exchangeRate = await resolveCorridorRate(corridor.currency, numAmount, corridor.rate);
+
+    const targetAmount = (numAmount * exchangeRate).toFixed(
       ['USD', 'EUR', 'GBP', 'CAD'].includes(corridor.currency) ? 2 : 0
     );
 
@@ -117,7 +134,7 @@ export async function moneygramRoutes(app: FastifyInstance) {
         assetIn: 'USDC',
         targetCurrency: corridor.currency,
         targetAmount,
-        exchangeRate: corridor.rate,
+        exchangeRate,
         platformFeeUsd: '0.00',
         networkFeeUsd: '0.00',
         expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
@@ -205,15 +222,16 @@ export async function moneygramRoutes(app: FastifyInstance) {
       const ramps = rampsApiKeys();
       const env = moneyGramEnvironment();
 
-      let widgetUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=${mode === 'deposit' ? 'on-ramp' : 'off-ramp'}`;
+      let widgetUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=${mode === 'deposit' ? 'on-ramp' : 'off-ramp'}&transaction_id=${txId}`;
       if (ramps.publicKey) {
         widgetUrl += `&key=${encodeURIComponent(ramps.publicKey)}`;
       }
-      const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/sdk/widget.html?mode=view&id=${txId}`;
+      const moreInfoUrl = `${ramps.baseUrl.replace('/api', '')}/stellarsepservice/sep24/transaction/more_info?id=${txId}`;
       const interactiveUrl = widgetUrl;
 
-      const corridor = SUPPORTED_MONEYGRAM_CORRIDORS.find((c) => c.currency === targetCurrency) || { rate: 1620 };
-      const targetAmount = Math.round(numAmount * corridor.rate);
+      const corridor = SUPPORTED_MONEYGRAM_CORRIDORS.find((c) => c.currency === targetCurrency) || { rate: 1500 };
+      const exchangeRate = await resolveCorridorRate(targetCurrency, numAmount, corridor.rate);
+      const targetAmount = Math.round(numAmount * exchangeRate);
 
       await recordMoneyGramTransaction({
         id: txId,

@@ -45,6 +45,13 @@ export function MoneyGramModal({
   const [stellarWalletAddress, setStellarWalletAddress] = useState<string>('');
   const [isSigning, setIsSigning] = useState(false);
   const [signingStatus, setSigningStatus] = useState<string>('');
+  const [liveQuote, setLiveQuote] = useState<{
+    targetAmount: string;
+    exchangeRate: number;
+    quoteId?: string;
+  } | null>(null);
+  const [isQuoting, setIsQuoting] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const sessionTokenRef = useRef(sessionToken);
@@ -58,6 +65,9 @@ export function MoneyGramModal({
       setStep('setup');
       setSigningStatus('');
       setIsSigning(false);
+      setLiveQuote(null);
+      setIsQuoting(false);
+      setQuoteError(null);
       if (userFullName && !recipientName) setRecipientName(userFullName);
       if (userPhone && !recipientPhone) setRecipientPhone(userPhone);
     }
@@ -71,12 +81,66 @@ export function MoneyGramModal({
   }, [selectedCountryCode]);
 
   const numAmount = Number(amount) || 0;
-  const estimatedTargetAmount = useMemo(() => {
-    const total = numAmount * selectedCountry.estimatedRate;
-    return selectedCountry.currency === 'USD' || selectedCountry.currency === 'EUR' || selectedCountry.currency === 'GBP'
-      ? total.toFixed(2)
-      : Math.round(total).toLocaleString();
-  }, [numAmount, selectedCountry]);
+
+  // Debounced quote fetcher: strictly fetch authentic quote before displaying Naira or local currency
+  useEffect(() => {
+    if (!open || step !== 'setup') return;
+
+    if (!Number.isFinite(numAmount) || numAmount < 5) {
+      setLiveQuote(null);
+      setIsQuoting(false);
+      setQuoteError(null);
+      return;
+    }
+
+    setIsQuoting(true);
+    setQuoteError(null);
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/moneygram/quote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: numAmount,
+            targetCurrency: selectedCountry.currency,
+            mode,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData?.error?.message || `Quote unavailable (HTTP ${res.status})`);
+        }
+
+        const json = await res.json();
+        if (json?.data?.targetAmount && json?.data?.exchangeRate) {
+          setLiveQuote({
+            targetAmount: json.data.targetAmount,
+            exchangeRate: Number(json.data.exchangeRate),
+            quoteId: json.data.quoteId,
+          });
+          setQuoteError(null);
+        } else {
+          setLiveQuote(null);
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          setLiveQuote(null);
+          setQuoteError(err.message || 'Could not calculate quote');
+        }
+      } finally {
+        setIsQuoting(false);
+      }
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [open, step, numAmount, selectedCountry.currency, mode]);
 
   // Resolve actual spendable Stellar USDC: strictly use Stellar native balance
   const resolvedSpendable = useMemo(() => {
@@ -312,7 +376,7 @@ export function MoneyGramModal({
       amount: numAmount.toFixed(2),
       asset: 'USDC',
       targetCurrency: selectedCountry.currency,
-      targetAmount: estimatedTargetAmount,
+      targetAmount: liveQuote ? String(liveQuote.targetAmount) : String(numAmount),
       recipientName: recipientName.trim() || 'Valued Customer',
       recipientPhone: recipientPhone.trim() || undefined,
       status: 'ready_for_pickup',
@@ -596,23 +660,57 @@ export function MoneyGramModal({
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
+                minHeight: '66px',
               }}
             >
               <div>
                 <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
                   {mode === 'withdraw' ? 'Estimated Cash to Collect' : 'Cash Required at Counter'}
                 </span>
-                <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
-                  {selectedCountry.symbol} {estimatedTargetAmount} {selectedCountry.currency}
-                </div>
+                {numAmount < 5 ? (
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--muted)', marginTop: '2px' }}>
+                    Enter at least 5 USDC to calculate
+                  </div>
+                ) : isQuoting ? (
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span className="pulsing-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#007ac7' }} />
+                    Calculating live rate...
+                  </div>
+                ) : quoteError ? (
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: '#ef4444', marginTop: '2px' }}>
+                    {quoteError}
+                  </div>
+                ) : liveQuote ? (
+                  <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text)', marginTop: '2px' }}>
+                    {selectedCountry.symbol} {Number(liveQuote.targetAmount).toLocaleString()} {selectedCountry.currency}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--muted)', marginTop: '2px' }}>
+                    Awaiting quote calculation...
+                  </div>
+                )}
               </div>
               <div style={{ textAlign: 'right' }}>
                 <span style={{ fontSize: '11px', color: 'var(--muted)', display: 'block' }}>
                   Stellar Fee: 0% · Zero Gas Delays
                 </span>
-                <span style={{ fontSize: '11px', color: 'var(--green-ink)', fontWeight: 600 }}>
-                  1 USDC ≈ {selectedCountry.estimatedRate} {selectedCountry.currency}
-                </span>
+                {numAmount < 5 ? (
+                  <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                    Min. 5.00 USDC
+                  </span>
+                ) : isQuoting ? (
+                  <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                    Fetching verified quote...
+                  </span>
+                ) : quoteError ? (
+                  <span style={{ fontSize: '11px', color: '#ef4444' }}>
+                    Calculation failed
+                  </span>
+                ) : liveQuote ? (
+                  <span style={{ fontSize: '11px', color: 'var(--green-ink)', fontWeight: 600 }}>
+                    1 USDC ≈ {liveQuote.exchangeRate.toLocaleString()} {selectedCountry.currency}
+                  </span>
+                ) : null}
               </div>
             </div>
 
@@ -623,11 +721,13 @@ export function MoneyGramModal({
               <button
                 type="submit"
                 className="primary-btn"
-                disabled={isProcessing || numAmount <= 0}
+                disabled={isProcessing || isQuoting || numAmount < 5 || !liveQuote}
                 style={{ flex: 2 }}
               >
                 {isProcessing
                   ? 'Connecting to MoneyGram...'
+                  : isQuoting
+                  ? 'Calculating Rate...'
                   : mode === 'withdraw'
                   ? 'Start Cash Pickup Session →'
                   : 'Start Cash In Session →'}
@@ -684,7 +784,11 @@ export function MoneyGramModal({
               </div>
               <div>
                 <span style={{ color: 'var(--muted)', marginRight: '6px' }}>Target:</span>
-                <strong style={{ color: '#10b981' }}>{selectedCountry.symbol}{estimatedTargetAmount} {selectedCountry.currency}</strong>
+                <strong style={{ color: '#10b981' }}>
+                  {liveQuote
+                    ? `${selectedCountry.symbol} ${Number(liveQuote.targetAmount).toLocaleString()} ${selectedCountry.currency}`
+                    : `${numAmount} USDC`}
+                </strong>
               </div>
             </div>
 
