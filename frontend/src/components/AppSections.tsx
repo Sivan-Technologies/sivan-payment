@@ -5,6 +5,7 @@ import { networkLabel } from '../blockExplorer';
 import { approximateNote, formatFromNgn, isConverted, type DisplayCurrency } from '../displayCurrency';
 import type { DisplayFx } from '../types';
 import { NgnPayoutForm } from './sell/NgnPayoutForm';
+import { MoneyGramCashoutView } from './moneygram/MoneyGramCashoutView';
 
 /**
  * A gas estimate the user can believe.
@@ -176,7 +177,7 @@ export type WithdrawAssetOption = {
   chainUnavailable?: boolean;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, onClose, onReset, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, ngnThirdPartyPayoutsEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, onClose, onReset, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, ngnThirdPartyPayoutsEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable, userFullName, userPhone }: {
 
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
@@ -219,6 +220,8 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   onEnterNgn?: () => void;
   /** Whether the NGN rail has any usable off-ramp network right now. */
   ngnAvailable?: boolean;
+  userFullName?: string;
+  userPhone?: string;
   accounts: ExternalAccountRecord[];
   enabledControls: PaymentControl[];
   enabledAssets: AssetControl[];
@@ -237,6 +240,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
   onClose?: () => void;
   onReset?: () => void;
 }) {
+  const [moneygramMode, setMoneygramMode] = useState(false);
   const hasEnabledBank = accounts.some((account) => enabledControls.some((control) => control.currency === account.currency));
   const step = depositResult ? 3 : withdrawalReview ? 2 : 1;
   /**
@@ -246,14 +250,14 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
    * submit, and the review object carries it from step 2 onward.
    */
   const [bridgeFunding, setBridgeFunding] = useState<'balance' | 'external'>('balance');
-  const balanceFunded = !ngnMode && (withdrawalReview?.fundingSource ?? bridgeFunding) === 'balance';
+  const balanceFunded = !ngnMode && !moneygramMode && (withdrawalReview?.fundingSource ?? bridgeFunding) === 'balance';
   return (
     <section className="offramp-wizard">
       <div className="trade-head">
         <div>
-          <p className="eyebrow">Withdraw to your bank</p>
-          <h3>Withdraw to your bank</h3>
-          <p className="muted">{balanceFunded ? "Choose a verified bank account, asset, and amount. We'll move the crypto from your Sivan balance." : "Choose a verified bank account, asset, and network. Review carefully before a deposit address is created."}</p>
+          <p className="eyebrow">{moneygramMode ? 'Physical cash collection' : 'Withdraw to your bank'}</p>
+          <h3>{moneygramMode ? 'MoneyGram Cash Pickup' : 'Withdraw to your bank'}</h3>
+          <p className="muted">{moneygramMode ? "Collect physical paper cash at any of 400,000+ MoneyGram locations worldwide. No bank account required." : balanceFunded ? "Choose a verified bank account, asset, and amount. We'll move the crypto from your Sivan balance." : "Choose a verified bank account, asset, and network. Review carefully before a deposit address is created."}</p>
         </div>
         <div className="wizard-stepper">
           <StepDot active={step === 1} done={step > 1} label="Details" />
@@ -261,35 +265,33 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
           <StepDot active={step === 3} done={false} label={balanceFunded ? "Sending" : "Deposit"} />
         </div>
       </div>
-      {step === 1 && ngnAvailable && (
-        // The rail is chosen explicitly rather than inferred from a saved
-        // account, because a Nigerian user has no saved account to infer from
-        // until this flow creates one.
+      {step === 1 && (
+        // The rail is chosen explicitly rather than inferred from a saved account
         <div className="seg">
-          <button type="button" className={!ngnMode ? 'active' : ''} onClick={onExitNgn}>Bank transfer (USD · GBP · EUR)</button>
-          <button type="button" className={ngnMode ? 'active' : ''} onClick={onEnterNgn}>Nigerian bank (NGN)</button>
+          <button type="button" className={!ngnMode && !moneygramMode ? 'active' : ''} onClick={() => { setMoneygramMode(false); onExitNgn?.(); }}>Bank transfer (USD · GBP · EUR)</button>
+          {ngnAvailable && <button type="button" className={ngnMode && !moneygramMode ? 'active' : ''} onClick={() => { setMoneygramMode(false); onEnterNgn?.(); }}>Nigerian bank (NGN)</button>}
+          <button type="button" className={moneygramMode ? 'active' : ''} onClick={() => { setMoneygramMode(true); }}>💵 Cash Pickup (MoneyGram)</button>
         </div>
       )}
       <div className="trade-grid">
         <div>
-          {step === 1 && ngnMode
+          {step === 1 && moneygramMode ? (
+            <MoneyGramCashoutView
+              userFullName={userFullName}
+              userPhone={userPhone}
+              userSpendableUsdc={ngnSpendable}
+            />
+          ) : step === 1 && ngnMode ? (
             // Naira needs a different first step entirely: a NUBAN and a
-            // quote, not a saved Bridge external account. Bridge account
-            // shapes (routing number, sort code, IBAN) cannot express one.
-            // network falls back to '' - NOT to a chain. '' means "not
-            // resolved yet" and NgnPayoutForm refuses to quote on it; any real
-            // default here would be a guess at where someone's money lives.
-            ? <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} assetOptions={withdrawAssetOptions} onAssetChange={onNgnAssetChange} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} thirdPartyPayoutsEnabled={ngnThirdPartyPayoutsEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
-
-            // The balance and the external-funding toggle are the SAME values
-            // the naira form already receives. Reusing them rather than adding
-            // parallel props keeps one source of truth for "how much can this
-            // user spend" across both rails.
-            : step === 1 && <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} assetOptions={withdrawAssetOptions} externalFundingEnabled={ngnExternalFundingEnabled} fundingSource={bridgeFunding} onFundingSourceChange={setBridgeFunding} />}
+            // quote, not a saved Bridge external account.
+            <NgnPayoutForm userId={ngnUserId ?? ''} api={ngnApi!} network={ngnNetwork ?? ''} networkOptions={ngnNetworkOptions ?? []} onNetworkChange={onNgnNetworkChange} asset={ngnAsset} assetOptions={withdrawAssetOptions} onAssetChange={onNgnAssetChange} breetMinimumUsd={ngnMinimumUsd} remainingNgn={ngnRemainingNgn} spendable={ngnSpendable} windowDays={ngnWindowDays} externalFundingEnabled={ngnExternalFundingEnabled} thirdPartyPayoutsEnabled={ngnThirdPartyPayoutsEnabled} onReady={onNgnReady!} onCancel={onExitNgn!} />
+          ) : step === 1 ? (
+            <WithdrawalDetailsForm accounts={accounts} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} primaryAccount={primaryAccount} hasEnabledBank={hasEnabledBank} loading={loading} canCreatePaymentActions={canCreatePaymentActions} onSubmit={onSubmit} assetOptions={withdrawAssetOptions} externalFundingEnabled={ngnExternalFundingEnabled} fundingSource={bridgeFunding} onFundingSourceChange={setBridgeFunding} />
+          ) : null}
           {step === 2 && <WithdrawalReviewCard review={withdrawalReview} feePercent={feePercent} ngnFeePercent={ngnFeePercent} loading={loading} onCancel={onCancelReview} onConfirm={onConfirm} />}
           {step === 3 && <DepositCard result={depositResult} onClose={onClose} onReset={onReset} />}
         </div>
-        <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} balanceFunded={balanceFunded} />
+        <OffRampSidePanel step={step} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} balanceFunded={balanceFunded} moneygramMode={moneygramMode} />
       </div>
     </section>
   );
@@ -464,7 +466,35 @@ function WithdrawalDetailsForm({ accounts, enabledControls, enabledAssets, enabl
   );
 }
 
-function OffRampSidePanel({ step, enabledAssets, enabledNetworks, balanceFunded }: { step: number; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[]; balanceFunded?: boolean }) {
+function OffRampSidePanel({ step, enabledAssets, enabledNetworks, balanceFunded, moneygramMode }: { step: number; enabledAssets: AssetControl[]; enabledNetworks: NetworkControl[]; balanceFunded?: boolean; moneygramMode?: boolean }) {
+  if (moneygramMode) {
+    return (
+      <aside className="side-info-stack">
+        <article className="panel">
+          <p className="eyebrow">MoneyGram Cash Pickup</p>
+          <h3>400,000+ Agent Locations</h3>
+          <ol className="ordered-steps">
+            <li className="active">Choose your pickup country and amount (15 to 50 USDC).</li>
+            <li className="active">Confirm session to lock native Stellar USDC.</li>
+            <li className="active">Receive your 8-digit Reference PIN voucher.</li>
+            <li>Collect physical cash at any MoneyGram counter with valid photo ID.</li>
+          </ol>
+        </article>
+        <article className="panel control-summary-card">
+          <p className="eyebrow">Instant Physical Cash</p>
+          <p className="muted" style={{ margin: '0 0 10px', fontSize: '13px', lineHeight: '1.5' }}>
+            No bank account required. Over 400,000 retail locations, post offices, and partner counters across 180+ countries.
+          </p>
+          <div className="rail-chips">
+            <span>Stellar USDC</span>
+            <span>Zero Bank Delays</span>
+            <span>8-Digit PIN</span>
+          </div>
+        </article>
+      </aside>
+    );
+  }
+
   return (
     <aside className="side-info-stack">
       {/*

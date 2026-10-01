@@ -3115,6 +3115,8 @@ export default function App() {
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
             ngnAvailable={(ngnNetworks?.offramp.length ?? 0) > 0}
+            userFullName={user?.fullName}
+            userPhone={user?.whatsappNumber}
             onClose={() => {
               setDepositResult(null);
               goToView('overview');
@@ -3126,7 +3128,7 @@ export default function App() {
           />
         )}
 
-        {view === 'receive' && <ReceiveView wallets={userWallets} unifiedBalance={unifiedBalance} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} />}
+        {view === 'receive' && <ReceiveView wallets={userWallets} unifiedBalance={unifiedBalance} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} userFullName={user?.fullName} userPhone={user?.whatsappNumber} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 

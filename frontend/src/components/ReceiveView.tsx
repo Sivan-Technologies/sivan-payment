@@ -3,6 +3,7 @@ import { qrDataUri } from '../qrCode';
 import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
 import { formatAmount } from '../appUtils';
 import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } from '../types';
+import { MoneyGramModal } from './moneygram/MoneyGramModal';
 
 /**
  * Receive (deposit) screen.
@@ -169,6 +170,8 @@ export function ReceiveView({
   walletsEnabled,
   onCreateWallet,
   onRefresh,
+  userFullName,
+  userPhone,
 }: {
   wallets: WalletRecord[];
   unifiedBalance?: UnifiedBalance | null;
@@ -182,7 +185,11 @@ export function ReceiveView({
   walletsEnabled: boolean;
   onCreateWallet: (chain: ReceiveChain) => void;
   onRefresh: () => void;
+  userFullName?: string;
+  userPhone?: string;
 }) {
+  const [depositMethod, setDepositMethod] = useState<'crypto' | 'moneygram'>('crypto');
+  const [moneygramModalOpen, setMoneygramModalOpen] = useState(false);
   const availableChains = useMemo(() => {
     const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'arc', 'starknet', 'stellar', 'celo'];
     if (!enabledNetworks || enabledNetworks.length === 0) {
@@ -536,13 +543,110 @@ export function ReceiveView({
     <section className="app-page receive-page">
       <PageHead onRefresh={handleRefresh} />
 
-      <article className="receive-panel">
-        <div className="receive-chain-head">
-          <div>
-            <p className="eyebrow">Step 1</p>
-            <h3>Choose a network</h3>
+      <div className="seg" style={{ marginBottom: '20px' }}>
+        <button
+          type="button"
+          className={depositMethod === 'crypto' ? 'active' : ''}
+          onClick={() => setDepositMethod('crypto')}
+        >
+          🌐 On-Chain Crypto Deposit
+        </button>
+        <button
+          type="button"
+          className={depositMethod === 'moneygram' ? 'active' : ''}
+          onClick={() => setDepositMethod('moneygram')}
+        >
+          💵 Cash In via MoneyGram
+        </button>
+      </div>
+
+      {depositMethod === 'moneygram' ? (
+        <article className="panel receive-panel" style={{ padding: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <span
+              style={{
+                background: '#e02424',
+                color: '#fff',
+                fontSize: '11px',
+                fontWeight: 800,
+                padding: '3px 8px',
+                borderRadius: '4px',
+                letterSpacing: '0.04em',
+              }}
+            >
+              MONEYGRAM CASH IN
+            </span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--green-ink)' }}>
+              STELLAR NATIVE USDC DEPOSIT
+            </span>
           </div>
-        </div>
+          <h3 style={{ margin: '0 0 8px', fontSize: '22px', fontWeight: 700 }}>
+            Deposit Physical Cash at Any MoneyGram Location
+          </h3>
+          <p style={{ margin: '0 0 20px', color: 'var(--muted)', fontSize: '14px', lineHeight: '1.5' }}>
+            Deposit physical cash at over 400,000 MoneyGram locations across 180+ countries. Your physical fiat deposit is converted directly into native Stellar USDC and credited to your Sivan account.
+          </p>
+
+          <div
+            style={{
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              borderRadius: '14px',
+              padding: '20px',
+              marginBottom: '24px',
+            }}
+          >
+            <h4 style={{ margin: '0 0 12px', fontSize: '15px' }}>Simple 4-Step Cash In Process:</h4>
+            <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '13.5px', color: 'var(--muted)', lineHeight: '1.7' }}>
+              <li>Click <strong>Start Cash-In Session</strong> below and choose your deposit country and currency.</li>
+              <li>Receive your official MoneyGram deposit barcode or reference instruction.</li>
+              <li>Present the barcode and cash to the cashier at any MoneyGram agent location.</li>
+              <li>Cashier accepts cash, and native USDC arrives on Stellar in your Sivan wallet with zero bank account needed.</li>
+            </ol>
+          </div>
+
+          <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => setMoneygramModalOpen(true)}
+              style={{ padding: '12px 24px', fontSize: '15px' }}
+            >
+              💵 Start Cash In Session →
+            </button>
+            <a
+              href="https://www.moneygram.com/mgo/us/en/locations"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '13px', color: 'var(--green-ink)', fontWeight: 600, textDecoration: 'none' }}
+            >
+              📍 Find Nearest MoneyGram Agent ↗
+            </a>
+          </div>
+
+          <MoneyGramModal
+            open={moneygramModalOpen}
+            mode="deposit"
+            onClose={() => {
+              setMoneygramModalOpen(false);
+              onRefresh();
+            }}
+            onSuccess={() => {
+              onRefresh();
+            }}
+            userFullName={userFullName}
+            userPhone={userPhone}
+          />
+        </article>
+      ) : (
+        <>
+          <article className="receive-panel">
+            <div className="receive-chain-head">
+            <div>
+              <p className="eyebrow">Step 1</p>
+              <h3>Choose a network</h3>
+            </div>
+          </div>
 
         {/* GROUPED BY ADDRESS, NOT BY CHAIN.
 
@@ -810,6 +914,8 @@ export function ReceiveView({
             </>
           )}
         </article>
+      )}
+      </>
       )}
     </section>
   );

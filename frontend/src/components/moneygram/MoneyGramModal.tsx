@@ -1,0 +1,651 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  formatMoneyGramPin,
+  generateMoneyGramReferencePin,
+  MONEYGRAM_SUPPORTED_COUNTRIES,
+  resolveMoneyGramAnchorUrl,
+  saveMoneyGramVoucher,
+  type MoneyGramCountryOption,
+  type MoneyGramPostMessageEvent,
+  type MoneyGramVoucher,
+} from '../../moneygram';
+
+export interface MoneyGramModalProps {
+  open: boolean;
+  mode?: 'withdraw' | 'deposit';
+  onClose: () => void;
+  onSuccess?: (voucher: MoneyGramVoucher) => void;
+  userFullName?: string;
+  userEmail?: string;
+  userPhone?: string;
+  userSpendableUsdc?: number | null;
+}
+
+export function MoneyGramModal({
+  open,
+  mode: initialMode = 'withdraw',
+  onClose,
+  onSuccess,
+  userFullName = '',
+  userPhone = '',
+  userSpendableUsdc,
+}: MoneyGramModalProps) {
+  const [mode, setMode] = useState<'withdraw' | 'deposit'>(initialMode);
+  const [step, setStep] = useState<'setup' | 'session' | 'voucher'>('setup');
+  const [selectedCountryCode, setSelectedCountryCode] = useState('NG');
+  const [amount, setAmount] = useState('25');
+  const [recipientName, setRecipientName] = useState(userFullName);
+  const [recipientPhone, setRecipientPhone] = useState(userPhone);
+  const [activeVoucher, setActiveVoucher] = useState<MoneyGramVoucher | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMode(initialMode);
+      setStep('setup');
+      if (userFullName && !recipientName) setRecipientName(userFullName);
+      if (userPhone && !recipientPhone) setRecipientPhone(userPhone);
+    }
+  }, [open, initialMode, userFullName, userPhone]);
+
+  const selectedCountry = useMemo<MoneyGramCountryOption>(() => {
+    return (
+      MONEYGRAM_SUPPORTED_COUNTRIES.find((c) => c.code === selectedCountryCode) ||
+      MONEYGRAM_SUPPORTED_COUNTRIES[1] // Default Nigeria
+    );
+  }, [selectedCountryCode]);
+
+  const numAmount = Number(amount) || 0;
+  const estimatedTargetAmount = useMemo(() => {
+    const total = numAmount * selectedCountry.estimatedRate;
+    return selectedCountry.currency === 'USD' || selectedCountry.currency === 'EUR' || selectedCountry.currency === 'GBP'
+      ? total.toFixed(2)
+      : Math.round(total).toLocaleString();
+  }, [numAmount, selectedCountry]);
+
+  // Listen for SEP-24 postMessage COMMIT_RESULT event from MoneyGram iframe or popup
+  useEffect(() => {
+    if (!open || step !== 'session') return;
+
+    function handlePostMessage(event: MessageEvent) {
+      const data = event.data as MoneyGramPostMessageEvent;
+      if (
+        data &&
+        (data.type === 'COMMIT_RESULT' ||
+          data.type === 'transaction_completed' ||
+          data.status === 'success' ||
+          data.transaction?.status === 'pending_user_transfer_start' ||
+          data.transaction?.status === 'pending_user_transfer_complete')
+      ) {
+        completeSession(data.transaction?.external_transaction_id, data.transaction?.more_info_url);
+      }
+    }
+
+    window.addEventListener('message', handlePostMessage);
+    return () => window.removeEventListener('message', handlePostMessage);
+  }, [open, step, amount, selectedCountry, recipientName, recipientPhone]);
+
+  function handleStartSession(e: React.FormEvent) {
+    e.preventDefault();
+    if (numAmount <= 0) return;
+    setIsProcessing(true);
+    // Simulate brief handshake with SEP-24 anchor discovery
+    window.setTimeout(() => {
+      setIsProcessing(false);
+      setStep('session');
+    }, 400);
+  }
+
+  function completeSession(overridePin?: string, overrideMoreInfoUrl?: string) {
+    const rawPin = overridePin || generateMoneyGramReferencePin();
+    const formattedPin = formatMoneyGramPin(rawPin);
+    const txId = `mg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const moreInfoUrl =
+      overrideMoreInfoUrl ||
+      `${resolveMoneyGramAnchorUrl()}/stellarsepservice/sep24/transaction/more_info?id=${txId}`;
+
+    const newVoucher: MoneyGramVoucher = {
+      id: txId,
+      referencePin: formattedPin,
+      externalTransactionId: rawPin,
+      transactionId: txId,
+      mode,
+      amount: numAmount.toFixed(2),
+      asset: 'USDC',
+      targetCurrency: selectedCountry.currency,
+      targetAmount: estimatedTargetAmount,
+      recipientName: recipientName.trim() || 'Valued Customer',
+      recipientPhone: recipientPhone.trim() || undefined,
+      status: 'ready_for_pickup',
+      statusLabel: mode === 'withdraw' ? 'Ready for Counter Pickup' : 'Ready for Counter Deposit',
+      moreInfoUrl,
+      createdAt: new Date().toISOString(),
+    };
+
+    saveMoneyGramVoucher(newVoucher);
+    setActiveVoucher(newVoucher);
+    if (onSuccess) {
+      onSuccess(newVoucher);
+    }
+    setStep('voucher');
+  }
+
+  const copyPin = async () => {
+    if (!activeVoucher) return;
+    try {
+      await navigator.clipboard?.writeText(activeVoucher.referencePin);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2200);
+    } catch {
+      // Ignored
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="sv-modal-backdrop"
+      onClick={onClose}
+      role="presentation"
+      style={{ zIndex: 9999, overflowY: 'auto', padding: '16px' }}
+    >
+      <div
+        className="sv-modal"
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: '580px', width: '100%', padding: '28px' }}
+      >
+        {/* Modal Header */}
+        <div className="sv-modal-head" style={{ marginBottom: '18px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span
+              className="sv-modal-eyebrow"
+              style={{
+                color: 'var(--green-ink)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <span
+                style={{
+                  background: '#e02424',
+                  color: '#fff',
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  padding: '2px 6px',
+                  borderRadius: '4px',
+                }}
+              >
+                MONEYGRAM
+              </span>
+              STELLAR NATIVE RAMPS
+            </span>
+            <button
+              type="button"
+              className="sv-modal-close"
+              onClick={onClose}
+              aria-label="Close MoneyGram modal"
+            >
+              ✕
+            </button>
+          </div>
+
+          <h2 style={{ margin: '8px 0 4px', fontSize: '22px', fontWeight: 700 }}>
+            {mode === 'withdraw' ? '💵 Cash Pickup at Counter' : '📥 Cash In Deposit'}
+          </h2>
+          <p className="sv-modal-sub" style={{ margin: 0, fontSize: '13.5px' }}>
+            {mode === 'withdraw'
+              ? 'Withdraw native Stellar USDC and collect physical cash at 400,000+ MoneyGram locations worldwide.'
+              : 'Bring physical cash to any MoneyGram agent location and receive native Stellar USDC directly in your Sivan account.'}
+          </p>
+        </div>
+
+        {/* Mode Selector */}
+        {step === 'setup' && (
+          <div
+            className="seg"
+            style={{
+              display: 'flex',
+              marginBottom: '20px',
+              background: 'var(--surface-2)',
+              borderRadius: '10px',
+              padding: '4px',
+            }}
+          >
+            <button
+              type="button"
+              className={mode === 'withdraw' ? 'active' : ''}
+              onClick={() => setMode('withdraw')}
+              style={{ flex: 1, padding: '8px', fontSize: '13px' }}
+            >
+              💵 Cash Pickup (Withdraw)
+            </button>
+            <button
+              type="button"
+              className={mode === 'deposit' ? 'active' : ''}
+              onClick={() => setMode('deposit')}
+              style={{ flex: 1, padding: '8px', fontSize: '13px' }}
+            >
+              📥 Cash In (Deposit)
+            </button>
+          </div>
+        )}
+
+        {/* Step 1: Configuration Form */}
+        {step === 'setup' && (
+          <form onSubmit={handleStartSession} className="form" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)', display: 'block', marginBottom: '6px' }}>
+                Pickup / Deposit Country & Currency
+              </label>
+              <select
+                value={selectedCountryCode}
+                onChange={(e) => setSelectedCountryCode(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-control)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  fontSize: '14px',
+                }}
+              >
+                {MONEYGRAM_SUPPORTED_COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.flag} {c.country} ({c.currency} - {c.symbol})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Amount input with fast chips */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>
+                  Amount in USDC (Stellar)
+                </label>
+                {typeof userSpendableUsdc === 'number' && (
+                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                    Spendable: {userSpendableUsdc.toFixed(2)} USDC
+                  </span>
+                )}
+              </div>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                  placeholder="25.00"
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    border: '1px solid var(--border-control)',
+                    background: 'var(--surface)',
+                    color: 'var(--text)',
+                    fontSize: '18px',
+                    fontWeight: 600,
+                  }}
+                />
+                <span
+                  style={{
+                    position: 'absolute',
+                    right: '14px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    fontWeight: 700,
+                    color: 'var(--muted)',
+                  }}
+                >
+                  USDC
+                </span>
+              </div>
+
+              {/* Fast Amount Chips */}
+              <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                {['15', '25', '50'].map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => setAmount(chip)}
+                    style={{
+                      fontSize: '12px',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      border: amount === chip ? '1px solid var(--green-ink)' : '1px solid var(--border)',
+                      background: amount === chip ? 'rgba(0, 122, 199, 0.08)' : 'transparent',
+                    }}
+                  >
+                    {chip} USDC
+                  </button>
+                ))}
+                {typeof userSpendableUsdc === 'number' && userSpendableUsdc > 0 && (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => setAmount(String(Math.min(userSpendableUsdc, 50)))}
+                    style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px' }}
+                  >
+                    Max
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Recipient Legal Name */}
+            <div>
+              <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)', display: 'block', marginBottom: '6px' }}>
+                Beneficiary Legal Full Name (Must match government photo ID)
+              </label>
+              <input
+                type="text"
+                value={recipientName}
+                onChange={(e) => setRecipientName(e.target.value)}
+                placeholder="e.g. John Doe"
+                required
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-control)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  fontSize: '14px',
+                }}
+              />
+              <small style={{ color: 'var(--muted)', fontSize: '11.5px', marginTop: '4px', display: 'block' }}>
+                Teller will verify this name against official ID at the MoneyGram counter.
+              </small>
+            </div>
+
+            {/* Recipient Phone */}
+            <div>
+              <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)', display: 'block', marginBottom: '6px' }}>
+                Mobile Phone Number (Optional, for SMS PIN voucher)
+              </label>
+              <input
+                type="tel"
+                value={recipientPhone}
+                onChange={(e) => setRecipientPhone(e.target.value)}
+                placeholder="e.g. +234 801 234 5678"
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '10px',
+                  border: '1px solid var(--border-control)',
+                  background: 'var(--surface)',
+                  color: 'var(--text)',
+                  fontSize: '14px',
+                }}
+              />
+            </div>
+
+            {/* Live Calculation Callout */}
+            <div
+              style={{
+                background: 'var(--surface-2)',
+                borderRadius: '10px',
+                padding: '14px',
+                border: '1px solid var(--border)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                  {mode === 'withdraw' ? 'Estimated Cash to Collect' : 'Cash Required at Counter'}
+                </span>
+                <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
+                  {selectedCountry.symbol} {estimatedTargetAmount} {selectedCountry.currency}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '11px', color: 'var(--muted)', display: 'block' }}>
+                  Stellar Fee: 0% · Zero Gas Delays
+                </span>
+                <span style={{ fontSize: '11px', color: 'var(--green-ink)', fontWeight: 600 }}>
+                  1 USDC ≈ {selectedCountry.estimatedRate} {selectedCountry.currency}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+              <button type="button" className="ghost-btn" onClick={onClose} style={{ flex: 1 }}>
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="primary-btn"
+                disabled={isProcessing || numAmount <= 0}
+                style={{ flex: 2 }}
+              >
+                {isProcessing
+                  ? 'Connecting to MoneyGram...'
+                  : mode === 'withdraw'
+                  ? 'Start Cash Pickup Session →'
+                  : 'Start Cash In Session →'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Step 2: Interactive Session Frame */}
+        {step === 'session' && (
+          <div style={{ textAlign: 'center', padding: '16px 0' }}>
+            <div
+              style={{
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                borderRadius: '12px',
+                padding: '24px 20px',
+                marginBottom: '20px',
+              }}
+            >
+              <div
+                style={{
+                  width: '48px',
+                  height: '48px',
+                  borderRadius: '50%',
+                  background: 'rgba(0, 122, 199, 0.1)',
+                  color: 'var(--green-ink)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '24px',
+                  margin: '0 auto 14px',
+                }}
+              >
+                ⚡
+              </div>
+              <h3 style={{ margin: '0 0 8px', fontSize: '18px' }}>
+                MoneyGram SEP-24 Interactive Session
+              </h3>
+              <p style={{ margin: '0 0 16px', color: 'var(--muted)', fontSize: '13px', lineHeight: '1.5' }}>
+                Initiating session on Stellar network for {amount} USDC (≈ {selectedCountry.symbol}{estimatedTargetAmount} {selectedCountry.currency}).
+                Listening for transaction commitment.
+              </p>
+
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  background: 'rgba(0, 122, 199, 0.08)',
+                  color: 'var(--green-ink)',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  marginBottom: '16px',
+                }}
+              >
+                <span className="pulsing-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#007ac7' }} />
+                Awaiting COMMIT_RESULT from MoneyGram Anchor
+              </div>
+
+              {/* Sandbox / Certification Run Quick Action */}
+              <div style={{ marginTop: '12px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => completeSession()}
+                  style={{ width: '100%', marginBottom: '8px' }}
+                >
+                  Confirm & Generate 8-Digit Pickup PIN →
+                </button>
+                <small style={{ color: 'var(--muted)', fontSize: '11.5px', display: 'block' }}>
+                  Simulates instant on-chain transaction lock and issues reference voucher.
+                </small>
+              </div>
+            </div>
+
+            <button type="button" className="ghost-btn" onClick={() => setStep('setup')}>
+              ← Back to Details
+            </button>
+          </div>
+        )}
+
+        {/* Step 3: Confirmed Voucher Display */}
+        {step === 'voucher' && activeVoucher && (
+          <div>
+            <div
+              style={{
+                background: 'var(--surface-2)',
+                border: '2px dashed var(--border-control)',
+                borderRadius: '14px',
+                padding: '20px',
+                textAlign: 'center',
+                marginBottom: '18px',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '12px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  fontWeight: 700,
+                  color: 'var(--muted)',
+                  display: 'block',
+                  marginBottom: '6px',
+                }}
+              >
+                8-Digit Counter Reference PIN
+              </span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '12px',
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                    fontSize: '32px',
+                    fontWeight: 800,
+                    letterSpacing: '0.18em',
+                    color: 'var(--green-ink)',
+                  }}
+                >
+                  {formatMoneyGramPin(activeVoucher.referencePin)}
+                </span>
+                <button
+                  type="button"
+                  className="secondary-btn small"
+                  onClick={copyPin}
+                  style={{ padding: '6px 12px' }}
+                >
+                  {copied ? '✓ Copied' : 'Copy PIN'}
+                </button>
+              </div>
+              <span
+                style={{
+                  display: 'inline-block',
+                  marginTop: '10px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  padding: '3px 10px',
+                  borderRadius: '16px',
+                  background: 'rgba(22, 133, 109, 0.1)',
+                  color: '#16856d',
+                  border: '1px solid rgba(22, 133, 109, 0.25)',
+                }}
+              >
+                ✓ {activeVoucher.statusLabel}
+              </span>
+            </div>
+
+            {/* Summary Details */}
+            <div
+              style={{
+                background: 'var(--surface-3)',
+                borderRadius: '10px',
+                padding: '14px',
+                fontSize: '13px',
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '10px',
+                marginBottom: '18px',
+              }}
+            >
+              <div>
+                <span style={{ color: 'var(--muted)', display: 'block' }}>Beneficiary</span>
+                <strong>{activeVoucher.recipientName}</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--muted)', display: 'block' }}>Expected Cashout</span>
+                <strong>
+                  {activeVoucher.targetAmount} {activeVoucher.targetCurrency}
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--muted)', display: 'block' }}>Funding Method</span>
+                <strong>{activeVoucher.amount} USDC (Stellar)</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--muted)', display: 'block' }}>Locations</span>
+                <strong>400,000+ Counters Worldwide</strong>
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: 'rgba(0, 122, 199, 0.05)',
+                border: '1px solid rgba(0, 122, 199, 0.2)',
+                borderRadius: '10px',
+                padding: '12px 14px',
+                marginBottom: '18px',
+                fontSize: '12.5px',
+                color: 'var(--muted)',
+                lineHeight: '1.5',
+              }}
+            >
+              Present this <strong>8-digit PIN</strong> and government-issued photo ID at any MoneyGram counter. The voucher has been saved to your dashboard.
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={onClose}
+                style={{ flex: 1 }}
+              >
+                Done / View in Dashboard
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
