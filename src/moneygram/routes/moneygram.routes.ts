@@ -4,6 +4,10 @@ import {
   anchorHost,
   moneyGramEnvironment,
 } from '../config/moneygram.config.js';
+import {
+  getMoneyGramControls,
+  recordMoneyGramTransaction,
+} from '../../admin/feature-controls.service.js';
 
 export const SUPPORTED_MONEYGRAM_CORRIDORS = [
   {
@@ -165,15 +169,57 @@ export async function moneygramRoutes(app: FastifyInstance) {
       mode?: 'withdraw' | 'deposit';
       recipientName?: string;
       recipientPhone?: string;
+      channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | 'api';
+      userAddressOrId?: string;
     };
   }>('/api/moneygram/session', async (request, reply) => {
+    const controls = await getMoneyGramControls();
+
+    if (!controls.enabled || controls.maintenanceMode) {
+      return reply.code(503).send({
+        error: {
+          code: 'MONEYGRAM_MAINTENANCE',
+          message: controls.maintenanceReason || 'MoneyGram cash corridors are temporarily undergoing maintenance. Please use direct bank cashouts.',
+        },
+      });
+    }
+
     const {
       amount,
       targetCurrency = 'NGN',
       mode = 'withdraw',
       recipientName,
       recipientPhone,
+      channel = 'webapp',
+      userAddressOrId = 'anonymous',
     } = request.body || {};
+
+    if (channel === 'minipay' && !controls.minipayEnabled) {
+      return reply.code(403).send({
+        error: {
+          code: 'MONEYGRAM_MINIPAY_DISABLED',
+          message: 'MoneyGram Cash Pickup is currently unavailable on MiniPay. Please use direct bank transfer.',
+        },
+      });
+    }
+
+    if (channel === 'telegram' && !controls.telegramEnabled) {
+      return reply.code(403).send({
+        error: {
+          code: 'MONEYGRAM_TELEGRAM_DISABLED',
+          message: 'MoneyGram Cash Pickup is currently disabled on Telegram.',
+        },
+      });
+    }
+
+    if (channel === 'whatsapp' && !controls.whatsappEnabled) {
+      return reply.code(403).send({
+        error: {
+          code: 'MONEYGRAM_WHATSAPP_DISABLED',
+          message: 'MoneyGram Cash Pickup is currently disabled on WhatsApp.',
+        },
+      });
+    }
 
     const numAmount = Number(amount) || 25;
     const txId = `mg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -182,6 +228,21 @@ export async function moneygramRoutes(app: FastifyInstance) {
 
     const interactiveUrl = `${host}/stellarsepservice/sep24/interactive?transaction_id=${txId}&asset_code=USDC&amount=${numAmount}&currency=${targetCurrency}`;
     const moreInfoUrl = `${host}/stellarsepservice/sep24/transaction/more_info?id=${txId}`;
+
+    const corridor = SUPPORTED_MONEYGRAM_CORRIDORS.find((c) => c.currency === targetCurrency) || { rate: 1620 };
+    const targetAmount = Math.round(numAmount * corridor.rate);
+
+    await recordMoneyGramTransaction({
+      id: txId,
+      mode,
+      amountUsdc: numAmount,
+      targetCurrency,
+      targetAmount,
+      channel,
+      userAddressOrId,
+      status: 'pending_user_transfer_start',
+      moreInfoUrl,
+    });
 
     return {
       data: {

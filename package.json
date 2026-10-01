@@ -14,6 +14,7 @@
     "test:starknet-e2e": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-starknet-e2e.json tsx scripts/test-starknet-e2e.ts",
     "seed": "tsx scripts/seed.ts",
     "test:moneygram-webhook": "tsx scripts/test-moneygram-webhook.ts",
+    "test:feature-controls": "tsx scripts/test-feature-controls.ts",
     "test:webhook-signature": "tsx scripts/test-webhook-signature.ts",
     "test:admin-health-bypass": "tsx scripts/test-admin-health-bypass.ts",
     "test:identifyorg-kyc": "tsx scripts/test-identifyorg-kyc.ts",
