@@ -90,6 +90,25 @@ export async function agreementRoutes(app: FastifyInstance) {
   });
 
   /**
+   * GET /api/settings/limits
+   * Dynamic platform limits and fee configuration for client apps.
+   */
+  app.get('/api/settings/limits', async (_req, reply) => {
+    return reply.code(200).send({
+      minNairaAmount: 2000,
+      maxNairaAmount: 50000000,
+      minUsdcAmount: 5,
+      maxUsdcAmount: 50000,
+      usdcFeePercent: 2.0,
+      usdcFeeFixed: 0.50,
+      usdtFeePercent: 2.0,
+      cusdFeePercent: 2.0,
+      cngnFeePercent: 1.0,
+      version: 1,
+    });
+  });
+
+  /**
    * POST /api/agreements
    * Create a new service agreement. Deadline is extracted from description
    * automatically unless deadlineDays is supplied explicitly.
