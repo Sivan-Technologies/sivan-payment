@@ -177,7 +177,7 @@ export type WithdrawAssetOption = {
   chainUnavailable?: boolean;
 };
 
-export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, onClose, onReset, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, ngnWindowDays, ngnExternalFundingEnabled, ngnThirdPartyPayoutsEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable, userFullName, userPhone }: {
+export function OffRampWizard({ accounts, enabledControls, enabledAssets, enabledNetworks, primaryAccount, withdrawalReview, depositResult, feePercent, ngnFeePercent, loading, canCreatePaymentActions, onSubmit, onCancelReview, onConfirm, onClose, onReset, ngnMode, ngnUserId, ngnApi, ngnNetwork, ngnNetworkOptions, onNgnNetworkChange, ngnAsset = 'usdc', onNgnAssetChange, withdrawAssetOptions = [], ngnMinimumUsd, ngnRemainingNgn, ngnSpendable, stellarSpendable, ngnWindowDays, ngnExternalFundingEnabled, ngnThirdPartyPayoutsEnabled, onNgnReady, onExitNgn, onEnterNgn, ngnAvailable, userFullName, userPhone }: {
 
   /** True when the user is withdrawing to a Nigerian bank. */
   ngnMode?: boolean;
@@ -210,6 +210,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
    * null = could not be read. Neither is zero.
    */
   ngnSpendable?: number | null;
+  stellarSpendable?: number | null;
   ngnWindowDays?: number;
   onNgnReady?: (payload: { quote: any; account: any; fundingSource: 'balance' | 'external' }) => void;
   /** Admin toggle: may the withdraw screen offer "I'll send crypto myself"? */
@@ -285,7 +286,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             <MoneyGramCashoutView
               userFullName={userFullName}
               userPhone={userPhone}
-              userSpendableUsdc={ngnSpendable}
+              userSpendableUsdc={stellarSpendable !== undefined ? stellarSpendable : 0}
             />
           ) : step === 1 && ngnMode ? (
             // Naira needs a different first step entirely: a NUBAN and a

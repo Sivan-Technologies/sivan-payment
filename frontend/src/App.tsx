@@ -1237,6 +1237,31 @@ export default function App() {
     return undefined;
   }, [ngnNetwork, ngnNetworkOptionsWithBalances, ngnNetworkBalances, unifiedBalance]);
 
+  const stellarSpendable = useMemo(() => {
+    const allWallets = [
+      ...(unifiedBalance?.wallets || []),
+      ...(userWallets || [])
+    ];
+    for (const w of allWallets) {
+      if (!w) continue;
+      const chain = String(w.chain || '').toLowerCase();
+      if (chain === 'stellar') {
+        if (Array.isArray(w.balances)) {
+          for (const b of w.balances) {
+            if (!b) continue;
+            if (String(b.asset || '').toLowerCase() === 'usdc') {
+              const parsed = typeof b.amount === 'number' ? b.amount : parseFloat(String(b.amount || '0'));
+              if (Number.isFinite(parsed)) return parsed;
+            }
+          }
+        }
+      }
+    }
+    const fromMap = ngnNetworkBalances.get('stellar');
+    if (typeof fromMap === 'number') return fromMap;
+    return 0;
+  }, [unifiedBalance, userWallets, ngnNetworkBalances]);
+
   useEffect(() => {
     const options = ngnNetworkOptionsWithBalances;
     if (!options.length) {
@@ -3105,6 +3130,7 @@ export default function App() {
              * because "we could not check" is not "you have nothing".
              */
             ngnSpendable={selectedNetworkSpendable !== undefined ? selectedNetworkSpendable : selectedNgnSpendable}
+            stellarSpendable={stellarSpendable}
             ngnWindowDays={verificationSummary?.windowDays}
             /* From GET /api/ngn/networks, which this screen already awaits.
                Undefined until it answers, which reads as OFF - the withdraw

@@ -219,6 +219,14 @@ export function isMoneyGramConfigured(): boolean {
   }
 }
 
+/** MoneyGram XRamps Playground / Live API keys for widget sessions. */
+export function rampsApiKeys(): { publicKey?: string; secretKey?: string; baseUrl: string } {
+  const publicKey = (process.env.MONEYGRAM_RAMPS_PUBLIC_KEY || process.env.RAMPS_PUBLIC_KEY || '').trim();
+  const secretKey = (process.env.MONEYGRAM_RAMPS_SECRET_KEY || process.env.RAMPS_SECRET_KEY || process.env.MONEYGRAM_API_KEY || '').trim();
+  const baseUrl = (process.env.MONEYGRAM_API_BASE_URL || 'https://playground.xramps.moneygram.com/api').trim();
+  return { publicKey: publicKey || undefined, secretKey: secretKey || undefined, baseUrl };
+}
+
 /**
  * Configuration summary safe to log or return from a health endpoint.
  *

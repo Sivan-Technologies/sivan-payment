@@ -66,6 +66,32 @@ export function MoneyGramModal({
       : Math.round(total).toLocaleString();
   }, [numAmount, selectedCountry]);
 
+  // Resolve actual spendable Stellar USDC: strictly use Stellar native balance
+  const resolvedSpendable = useMemo(() => {
+    if (typeof userSpendableUsdc === 'number' && userSpendableUsdc >= 0) {
+      return userSpendableUsdc;
+    }
+    try {
+      const raw = localStorage.getItem('sivan.unifiedBalance');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        for (const w of parsed.wallets || []) {
+          if (String(w.chain || '').toLowerCase() === 'stellar') {
+            for (const b of w.balances || []) {
+              if (String(b.asset || '').toLowerCase() === 'usdc') {
+                const amt = Number(b.amount);
+                if (Number.isFinite(amt)) return amt;
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignored
+    }
+    return 0;
+  }, [userSpendableUsdc]);
+
   // Listen for SEP-24 postMessage COMMIT_RESULT event from MoneyGram iframe or popup
   useEffect(() => {
     if (!open || step !== 'session') return;
@@ -292,9 +318,9 @@ export function MoneyGramModal({
                 <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text)' }}>
                   Amount in USDC (Stellar)
                 </label>
-                {typeof userSpendableUsdc === 'number' && (
+                {typeof resolvedSpendable === 'number' && (
                   <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                    Spendable: {userSpendableUsdc.toFixed(2)} USDC
+                    Spendable: {resolvedSpendable.toFixed(2)} USDC
                   </span>
                 )}
               </div>
@@ -350,11 +376,11 @@ export function MoneyGramModal({
                     {chip} USDC
                   </button>
                 ))}
-                {typeof userSpendableUsdc === 'number' && userSpendableUsdc > 0 && (
+                {typeof resolvedSpendable === 'number' && resolvedSpendable > 0 && (
                   <button
                     type="button"
                     className="ghost-btn"
-                    onClick={() => setAmount(String(Math.min(userSpendableUsdc, 50)))}
+                    onClick={() => setAmount(String(Math.min(resolvedSpendable, 2500)))}
                     style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '6px' }}
                   >
                     Max
@@ -497,12 +523,53 @@ export function MoneyGramModal({
                 Listening for transaction commitment.
               </p>
 
+              {/* Session Overview Card */}
+              <div
+                style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '10px',
+                  padding: '14px',
+                  marginBottom: '16px',
+                  textAlign: 'left',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Beneficiary</span>
+                  <strong style={{ fontSize: '13px', color: 'var(--text)' }}>{recipientName || 'Valued Customer'}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Payout Amount</span>
+                  <strong style={{ fontSize: '14px', color: '#10b981' }}>{selectedCountry.symbol}{estimatedTargetAmount} {selectedCountry.currency}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Network / Rail</span>
+                  <span style={{ fontSize: '12px', color: '#38bdf8', fontWeight: 600 }}>Stellar USDC (Sandbox)</span>
+                </div>
+                {interactiveUrl && (
+                  <div style={{ marginTop: '6px', textAlign: 'center' }}>
+                    <a
+                      href={interactiveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="primary-btn small"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', textDecoration: 'none' }}
+                    >
+                      Open in MoneyGram Window ↗
+                    </a>
+                  </div>
+                )}
+              </div>
+
               {interactiveUrl && (
                 <div style={{ marginBottom: '16px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)' }}>
                   <iframe
                     src={interactiveUrl}
                     title="MoneyGram Anchor Session"
-                    style={{ width: '100%', height: '420px', border: 'none', background: '#fff' }}
+                    style={{ width: '100%', height: '360px', border: 'none', background: '#fff' }}
                   />
                 </div>
               )}
