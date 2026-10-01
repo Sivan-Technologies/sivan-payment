@@ -1,4 +1,4 @@
-import { createWalletClient, http, parseUnits, encodeFunctionData, parseAbi } from 'viem';
+import { createWalletClient, fallback, http, parseUnits, encodeFunctionData, parseAbi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { celo, celoSepolia } from 'viem/chains';
 import { CELO_USDC_MAINNET, CELO_USDC_SEPOLIA, CELO_CNGN_MAINNET, CELO_CUSD_MAINNET, celoRpcEndpoints, celoRpc } from './celo-rpc.js';
@@ -86,8 +86,10 @@ export async function dispatchCeloSettlementTransfer(
 
   const isMainnet = resolveNetworkMode() === 'mainnet';
   const targetChain = isMainnet ? celo : celoSepolia;
-  const endpoints = celoRpcEndpoints({ production: isMainnet });
-  const rpcUrl = endpoints[0] || (isMainnet ? 'https://forno.celo.org' : 'https://forno.celo-sepolia.celo-testnet.org');
+  const endpoints = celoRpcEndpoints({ production: isMainnet }).filter((url) => !url.includes('alfajores'));
+  const fallbackTransports = endpoints.length > 0
+    ? endpoints.map((url) => http(url, { timeout: 15_000, retryCount: 2 }))
+    : [http(isMainnet ? 'https://forno.celo.org' : 'https://forno.celo-sepolia.celo-testnet.org', { timeout: 15_000, retryCount: 2 })];
 
   const curr = (params.currency || 'usdc').toUpperCase();
   let tokenAddress: `0x${string}`;
@@ -109,7 +111,7 @@ export async function dispatchCeloSettlementTransfer(
     const client = createWalletClient({
       account,
       chain: targetChain,
-      transport: http(rpcUrl),
+      transport: fallback(fallbackTransports),
     });
 
     const amountRaw = parseUnits(String(params.amount), decimals);
