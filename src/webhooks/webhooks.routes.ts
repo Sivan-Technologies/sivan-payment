@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { processBridgeWebhook } from './webhooks.service.js';
 import { processPaystackWebhook, PaystackWebhookError } from './paystackWebhookHandler.js';
+import { processMoneyGramWebhook, MoneyGramWebhookError } from './moneygramWebhookHandler.js';
 
 export async function webhooksRoutes(app: FastifyInstance) {
   app.post('/api/webhooks/bridge', async (request, reply) => {
@@ -40,7 +41,38 @@ export async function webhooksRoutes(app: FastifyInstance) {
     }
   };
 
+  const handleMoneyGramWebhook = async (request: any, reply: any) => {
+    const rawBody = request.rawBody as Buffer | undefined;
+    const raw = rawBody ?? Buffer.from(JSON.stringify(request.body ?? {}));
+
+    try {
+      await processMoneyGramWebhook(
+        request.body ?? {},
+        raw,
+        request.headers
+      );
+      // MoneyGram specification requires HTTP 200 with an EMPTY body.
+      return reply.code(200).type('text/plain').send('');
+    } catch (error) {
+      if (error instanceof MoneyGramWebhookError) {
+        return reply.code(error.statusCode).send({
+          error: {
+            name: error.name,
+            message: error.message,
+          },
+        });
+      }
+      throw error;
+    }
+  };
+
   app.post('/api/webhooks/paystack', handlePaystackWebhook);
   app.post('/webhooks/paystack', handlePaystackWebhook);
+
+  app.post('/api/webhooks/moneygram', handleMoneyGramWebhook);
+  app.post('/webhooks/moneygram', handleMoneyGramWebhook);
+  app.get('/api/webhooks/moneygram', async (_req, reply) => {
+    return reply.code(200).send({ status: 'ok', service: 'moneygram-webhook-receiver' });
+  });
 }
 
