@@ -1,4 +1,5 @@
 import { nowIso } from '../shared/id.js';
+import { MONEYGRAM_GLOBAL_CORRIDORS } from '../moneygram/data/corridors.data.js';
 
 export interface MoneyGramControls {
   enabled: boolean;
@@ -12,6 +13,8 @@ export interface MoneyGramControls {
   platformFeePercent: number;
   minAmountUsdc: number;
   maxAmountUsdc: number;
+  cashInMinAmountUsdc?: number;
+  cashInMaxAmountUsdc?: number;
   updatedAt: string;
   updatedBy: string;
 }
@@ -69,10 +72,12 @@ let moneyGramControls: MoneyGramControls = {
   webappEnabled: true,
   maintenanceMode: false,
   maintenanceReason: 'MoneyGram Stellar cash corridors are undergoing scheduled maintenance. Direct bank cashouts remain active.',
-  corridors: ['NG', 'GH', 'KE', 'UG', 'ZA', 'CO', 'PH', 'US'],
+  corridors: MONEYGRAM_GLOBAL_CORRIDORS.map((c) => c.code),
   platformFeePercent: 0,
   minAmountUsdc: 5,
-  maxAmountUsdc: 500,
+  maxAmountUsdc: 2500,
+  cashInMinAmountUsdc: 5,
+  cashInMaxAmountUsdc: 950,
   updatedAt: nowIso(),
   updatedBy: 'system',
 };

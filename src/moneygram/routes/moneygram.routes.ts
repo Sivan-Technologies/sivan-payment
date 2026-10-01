@@ -15,89 +15,23 @@ import {
   getMoneyGramControls,
   recordMoneyGramTransaction,
 } from '../../admin/feature-controls.service.js';
+import { MONEYGRAM_GLOBAL_CORRIDORS } from '../data/corridors.data.js';
 
-export const SUPPORTED_MONEYGRAM_CORRIDORS = [
-  {
-    code: 'US',
-    country: 'United States',
-    currency: 'USD',
-    symbol: '$',
-    minAmountUsd: 15,
-    maxAmountUsd: 2500,
-    rate: 1.00,
-    feePercent: 0,
-  },
-  {
-    code: 'NG',
-    country: 'Nigeria',
-    currency: 'NGN',
-    symbol: '₦',
-    minAmountUsd: 15,
-    maxAmountUsd: 1000,
-    rate: 1620,
-    feePercent: 0,
-  },
-  {
-    code: 'KE',
-    country: 'Kenya',
-    currency: 'KES',
-    symbol: 'KSh',
-    minAmountUsd: 15,
-    maxAmountUsd: 1500,
-    rate: 129.8,
-    feePercent: 0,
-  },
-  {
-    code: 'GH',
-    country: 'Ghana',
-    currency: 'GHS',
-    symbol: 'GH₵',
-    minAmountUsd: 15,
-    maxAmountUsd: 1000,
-    rate: 15.5,
-    feePercent: 0,
-  },
-  {
-    code: 'EU',
-    country: 'Eurozone',
-    currency: 'EUR',
-    symbol: '€',
-    minAmountUsd: 15,
-    maxAmountUsd: 2500,
-    rate: 0.92,
-    feePercent: 0,
-  },
-  {
-    code: 'GB',
-    country: 'United Kingdom',
-    currency: 'GBP',
-    symbol: '£',
-    minAmountUsd: 15,
-    maxAmountUsd: 2500,
-    rate: 0.79,
-    feePercent: 0,
-  },
-  {
-    code: 'CA',
-    country: 'Canada',
-    currency: 'CAD',
-    symbol: 'CA$',
-    minAmountUsd: 15,
-    maxAmountUsd: 2500,
-    rate: 1.36,
-    feePercent: 0,
-  },
-  {
-    code: 'PH',
-    country: 'Philippines',
-    currency: 'PHP',
-    symbol: '₱',
-    minAmountUsd: 15,
-    maxAmountUsd: 1500,
-    rate: 58.4,
-    feePercent: 0,
-  },
-];
+export const SUPPORTED_MONEYGRAM_CORRIDORS = MONEYGRAM_GLOBAL_CORRIDORS.map((c) => ({
+  code: c.code,
+  alpha3: c.alpha3,
+  country: c.country,
+  currency: c.currency,
+  symbol: c.symbol,
+  flag: c.flag,
+  region: c.region,
+  minAmountUsd: c.minAmountUsd,
+  maxAmountUsd: c.maxAmountUsd,
+  rate: c.estimatedRate,
+  feePercent: 0,
+  cashOutEnabled: c.cashOutEnabled,
+  cashInEnabled: c.cashInEnabled,
+}));
 
 export async function moneygramRoutes(app: FastifyInstance) {
   // Health & Gateway Readiness Probe
@@ -115,10 +49,22 @@ export async function moneygramRoutes(app: FastifyInstance) {
   });
 
   // Corridors & FX Rates Endpoint
-  app.get('/api/moneygram/corridors', async () => {
+  app.get<{
+    Querystring: { mode?: 'withdraw' | 'deposit'; region?: string };
+  }>('/api/moneygram/corridors', async (request) => {
+    const { mode, region } = (request.query || {}) as { mode?: 'withdraw' | 'deposit'; region?: string };
+    let filtered = SUPPORTED_MONEYGRAM_CORRIDORS;
+    if (mode === 'deposit') filtered = filtered.filter((c) => c.cashInEnabled);
+    if (region && region !== 'all') filtered = filtered.filter((c) => c.region.toLowerCase() === region.toLowerCase());
+
     return {
       data: {
-        corridors: SUPPORTED_MONEYGRAM_CORRIDORS,
+        corridors: filtered,
+        totalCount: SUPPORTED_MONEYGRAM_CORRIDORS.length,
+        cashOutCount: SUPPORTED_MONEYGRAM_CORRIDORS.filter((c) => c.cashOutEnabled).length,
+        cashInCount: SUPPORTED_MONEYGRAM_CORRIDORS.filter((c) => c.cashInEnabled).length,
+        cashOutLimits: { minUsd: 5.0, maxUsd: 2500.0 },
+        cashInLimits: { minUsd: 5.0, maxUsd: 950.0 },
         settlementAsset: 'USDC',
         settlementNetwork: 'Stellar',
         locationsWorldwide: '400,000+',
@@ -137,18 +83,23 @@ export async function moneygramRoutes(app: FastifyInstance) {
     const { amount, targetCurrency = 'NGN', mode = 'withdraw' } = request.body || {};
     const numAmount = Number(amount);
 
-    if (!Number.isFinite(numAmount) || numAmount <= 0) {
+    const minAllowed = 5.0;
+    const maxAllowed = mode === 'deposit' ? 950.0 : 2500.0;
+
+    if (!Number.isFinite(numAmount) || numAmount < minAllowed || numAmount > maxAllowed) {
       return reply.code(400).send({
         error: {
           code: 'INVALID_AMOUNT',
-          message: 'Amount must be a positive number (between 15 and 50 USDC for testing)',
+          message: `Amount must be between $${minAllowed.toFixed(2)} and $${maxAllowed.toFixed(2)} USD for ${mode === 'deposit' ? 'cash-in' : 'cash-out'}`,
         },
       });
     }
 
+    const queryKey = targetCurrency.toUpperCase().trim();
     const corridor =
-      SUPPORTED_MONEYGRAM_CORRIDORS.find((c) => c.currency.toUpperCase() === targetCurrency.toUpperCase()) ||
-      SUPPORTED_MONEYGRAM_CORRIDORS[1]; // Default NGN
+      SUPPORTED_MONEYGRAM_CORRIDORS.find(
+        (c) => c.currency === queryKey || c.code === queryKey || c.alpha3 === queryKey
+      ) || SUPPORTED_MONEYGRAM_CORRIDORS[0]; // Default
 
     const targetAmount = (numAmount * corridor.rate).toFixed(
       ['USD', 'EUR', 'GBP', 'CAD'].includes(corridor.currency) ? 2 : 0

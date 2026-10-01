@@ -24,96 +24,20 @@ export interface MoneyGramCountryOption {
   estimatedRate: number; // e.g. 1 USDC = 1620 NGN, 129.8 KES, 15.5 GHS, 1.00 USD, 0.92 EUR
 }
 
-export const MONEYGRAM_SUPPORTED_COUNTRIES: MoneyGramCountryOption[] = [
-  {
-    code: 'US',
-    country: 'United States',
-    currency: 'USD',
-    symbol: '$',
-    flag: '🇺🇸',
-    minAmountUsd: 10,
-    maxAmountUsd: 2500,
-    typicalFeePercent: 0,
-    estimatedRate: 1.00,
-  },
-  {
-    code: 'NG',
-    country: 'Nigeria',
-    currency: 'NGN',
-    symbol: '₦',
-    flag: '🇳🇬',
-    minAmountUsd: 10,
-    maxAmountUsd: 1000,
-    typicalFeePercent: 0,
-    estimatedRate: 1620,
-  },
-  {
-    code: 'KE',
-    country: 'Kenya',
-    currency: 'KES',
-    symbol: 'KSh',
-    flag: '🇰🇪',
-    minAmountUsd: 10,
-    maxAmountUsd: 1500,
-    typicalFeePercent: 0,
-    estimatedRate: 129.8,
-  },
-  {
-    code: 'GH',
-    country: 'Ghana',
-    currency: 'GHS',
-    symbol: 'GH₵',
-    flag: '🇬🇭',
-    minAmountUsd: 10,
-    maxAmountUsd: 1000,
-    typicalFeePercent: 0,
-    estimatedRate: 15.5,
-  },
-  {
-    code: 'EU',
-    country: 'Eurozone',
-    currency: 'EUR',
-    symbol: '€',
-    flag: '🇪🇺',
-    minAmountUsd: 10,
-    maxAmountUsd: 2500,
-    typicalFeePercent: 0,
-    estimatedRate: 0.92,
-  },
-  {
-    code: 'GB',
-    country: 'United Kingdom',
-    currency: 'GBP',
-    symbol: '£',
-    flag: '🇬🇧',
-    minAmountUsd: 10,
-    maxAmountUsd: 2500,
-    typicalFeePercent: 0,
-    estimatedRate: 0.79,
-  },
-  {
-    code: 'CA',
-    country: 'Canada',
-    currency: 'CAD',
-    symbol: 'CA$',
-    flag: '🇨🇦',
-    minAmountUsd: 10,
-    maxAmountUsd: 2500,
-    typicalFeePercent: 0,
-    estimatedRate: 1.36,
-  },
-  {
-    code: 'PH',
-    country: 'Philippines',
-    currency: 'PHP',
-    symbol: '₱',
-    flag: '🇵🇭',
-    minAmountUsd: 10,
-    maxAmountUsd: 1500,
-    typicalFeePercent: 0,
-    estimatedRate: 58.4,
-  },
-];
+import { MONEYGRAM_GLOBAL_CORRIDORS } from './corridors.data';
+
+export const MONEYGRAM_SUPPORTED_COUNTRIES: MoneyGramCountryOption[] = MONEYGRAM_GLOBAL_CORRIDORS.map((c) => ({
+  code: c.code,
+  country: c.country,
+  currency: c.currency,
+  symbol: c.symbol,
+  flag: c.flag,
+  minAmountUsd: c.minAmountUsd,
+  maxAmountUsd: c.maxAmountUsd,
+  typicalFeePercent: 0,
+  estimatedRate: c.estimatedRate,
+}));
+
 
 export type MoneyGramVoucherStatus =
   | 'pending_user_transfer_start'
