@@ -253,11 +253,23 @@ export async function agreementRoutes(app: FastifyInstance) {
         message: 'Agreement servicing is temporarily paused. Please check back shortly.',
       });
     }
-    const agreement = await releaseAgreement(req.params.id);
-    return reply.code(200).send({
-      ...agreement,
-      countdownLabel: getCountdownLabel(agreement),
-    });
+    try {
+      const agreement = await releaseAgreement(req.params.id);
+      return reply.code(200).send({
+        ...agreement,
+        countdownLabel: getCountdownLabel(agreement),
+      });
+    } catch (err: any) {
+      req.log.error(err, `Failed to release agreement ${req.params.id}`);
+      const statusCode = err.statusCode || (err.message?.includes('not found') ? 404 : 400);
+      return reply.code(statusCode).send({
+        success: false,
+        error: {
+          code: err.code || 'RELEASE_FAILED',
+          message: err.message || 'Failed to release agreement',
+        },
+      });
+    }
   });
 
   /**
