@@ -284,6 +284,121 @@ export async function provisionSandboxAccount(input: {
 }
 
 /**
+ * Buy testnet USDC on the Stellar DEX so a sandbox withdrawal can complete.
+ *
+ * WHY THIS IS NEEDED AT ALL
+ *
+ * Friendbot funds XLM and nothing else. Circle issues testnet USDC from
+ * GBBD47IF..., and nobody but Circle can mint it, so a freshly provisioned
+ * sandbox account reaches the withdrawal step holding 10,000 XLM and 0 USDC.
+ * The preflight then correctly reports INSUFFICIENT_USDC and the cashout
+ * stops one step short of done. The Circle faucet is browser and captcha
+ * gated, which makes it useless to a server completing a user's withdrawal.
+ *
+ * The Stellar testnet DEX carries real standing offers in XLM/USDC, so the
+ * network itself provides the missing step: a path payment converts free
+ * Friendbot XLM into the USDC the anchor expects. It is one operation, it
+ * settles in the same ledger, and it needs no third party.
+ *
+ * TESTNET ONLY. The guard is load bearing: the identical operation on mainnet
+ * would spend real XLM at whatever price the book happens to show, which is a
+ * treasury decision and must never be a side effect of a user tapping
+ * Withdraw.
+ */
+export async function acquireTestnetUsdc(input: {
+  secret: string;
+  issuer: string;
+  assetCode?: string;
+  /** Exact amount of the asset to end up receiving. */
+  destAmount: string;
+  network: StellarNetwork;
+  /** Fraction of headroom allowed on the XLM side. Default 0.5 (50 percent). */
+  slippage?: number;
+  timeoutMs?: number;
+}): Promise<{ acquired: string; xlmSendMax: string; hash: string; quotedXlm: string }> {
+  const assetCode = input.assetCode || 'USDC';
+
+  if (input.network !== 'testnet') {
+    throw new Error(
+      'acquireTestnetUsdc refuses to run on mainnet. Converting XLM to USDC on the live DEX spends ' +
+        'real funds at an unpredictable price, which is a treasury decision and not an automatic ' +
+        'step in a user withdrawal.'
+    );
+  }
+
+  const destAmount = Number(input.destAmount);
+  if (!Number.isFinite(destAmount) || destAmount <= 0) {
+    throw new Error(`acquireTestnetUsdc needs a positive destAmount, received: ${input.destAmount}`);
+  }
+
+  const base = horizonUrlFor('testnet');
+  const keypair = Keypair.fromSecret(input.secret);
+  const publicKey = keypair.publicKey();
+
+  // Ask Horizon what the book actually costs right now rather than assuming a peg.
+  const pathUrl =
+    `${base}/paths/strict-receive` +
+    `?source_assets=native` +
+    `&destination_asset_type=${assetCode.length <= 4 ? 'credit_alphanum4' : 'credit_alphanum12'}` +
+    `&destination_asset_code=${encodeURIComponent(assetCode)}` +
+    `&destination_asset_issuer=${encodeURIComponent(input.issuer)}` +
+    `&destination_amount=${destAmount.toFixed(7)}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 15_000);
+  let quotedXlm: string;
+  try {
+    const res = await fetch(pathUrl, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`Horizon path lookup failed: HTTP ${res.status} at ${base}`);
+    }
+    const body: any = await res.json();
+    const records: any[] = body?._embedded?.records ?? [];
+    if (records.length === 0) {
+      throw new Error(
+        `No testnet DEX liquidity to convert XLM into ${destAmount} ${assetCode} from issuer ` +
+          `${input.issuer}. Fund the account with ${assetCode} directly, or set ` +
+          'MONEYGRAM_STELLAR_SECRET to an already funded sandbox treasury account.'
+      );
+    }
+    quotedXlm = String(records[0].source_amount);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const slippage = typeof input.slippage === 'number' ? input.slippage : 0.5;
+  const sendMax = (Number(quotedXlm) * (1 + slippage)).toFixed(7);
+
+  const horizon = new Horizon.Server(base);
+  const account = await horizon.loadAccount(publicKey);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.pathPaymentStrictReceive({
+        sendAsset: Asset.native(),
+        sendMax,
+        destination: publicKey,
+        destAsset: new Asset(assetCode, input.issuer),
+        destAmount: destAmount.toFixed(7),
+        path: [],
+      })
+    )
+    .setTimeout(60)
+    .build();
+  tx.sign(keypair);
+
+  const submitted: any = await horizon.submitTransaction(tx);
+  return {
+    acquired: destAmount.toFixed(7),
+    xlmSendMax: sendMax,
+    quotedXlm,
+    hash: submitted.hash,
+  };
+}
+
+/**
  * Turn a Horizon submission failure into something actionable.
  *
  * Horizon reports operation failures as result codes buried several levels

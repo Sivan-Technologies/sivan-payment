@@ -165,6 +165,14 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'MoneyGram USDC Cashout End to End (live testnet)',
+    command: 'tsx scripts/test-moneygram-usdc-cashout.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-usdc-cashout.json',
+    },
+  },
+  {
     name: 'Paystack Routes & Webhooks Ingestion',
     command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
     env: {

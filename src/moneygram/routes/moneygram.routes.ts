@@ -14,12 +14,14 @@ import {
   getMoneyGramSep24Transaction,
   sendStellarUsdcPayment,
   resolveStellarKeypair,
+  MONEYGRAM_DEFAULT_IDENTITY,
 } from '../service/moneygram-session.service.js';
 import {
   getMoneyGramControls,
   recordMoneyGramTransaction,
 } from '../../admin/feature-controls.service.js';
 import { MONEYGRAM_GLOBAL_CORRIDORS } from '../data/corridors.data.js';
+import { verifyUserJwt } from '../../auth/jwt.js';
 
 export const SUPPORTED_MONEYGRAM_CORRIDORS = MONEYGRAM_GLOBAL_CORRIDORS.map((c) => ({
   code: c.code,
@@ -36,6 +38,44 @@ export const SUPPORTED_MONEYGRAM_CORRIDORS = MONEYGRAM_GLOBAL_CORRIDORS.map((c) 
   cashOutEnabled: c.cashOutEnabled,
   cashInEnabled: c.cashInEnabled,
 }));
+
+/**
+ * ONE resolver for "who is withdrawing", used by every MoneyGram route.
+ *
+ * Three call sites previously each decided this for themselves. The session
+ * route defaulted to the string "anonymous", the signing route defaulted to
+ * "anonymous_user", and the browser sent back a G address on retry. All three
+ * derive valid but DIFFERENT Stellar accounts, so a session was opened
+ * against one account, funded against a second and signed from a third. Every
+ * one of those mismatches surfaces as an opaque Horizon error.
+ *
+ * The authenticated subject wins over anything in the request body. A body
+ * supplied identity selects which user's wallet is spent, so trusting it on
+ * an authenticated call would let any caller drain another user's Stellar
+ * wallet. It is honoured only when there is no token to contradict it, which
+ * is the unauthenticated sandbox and demo path.
+ */
+export function resolveMoneyGramIdentity(
+  request: any,
+  bodyIdentity?: string
+): string | undefined {
+  if (request?.authUser?.sub) return String(request.authUser.sub);
+
+  const header: string | undefined = request?.headers?.authorization;
+  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+  if (token) {
+    try {
+      const payload = verifyUserJwt(token);
+      if (payload?.sub) return String(payload.sub);
+    } catch {
+      // An unverifiable token is not an identity. Fall through rather than
+      // trusting the body, which would make a forged token an upgrade path.
+    }
+  }
+
+  const supplied = (bodyIdentity || '').trim();
+  return supplied || undefined;
+}
 
 export async function moneygramRoutes(app: FastifyInstance) {
   // Health & Gateway Readiness Probe
@@ -172,8 +212,11 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
       recipientName,
       recipientPhone,
       channel = 'webapp',
-      userAddressOrId = 'anonymous',
+      userAddressOrId,
     } = request.body || {};
+
+    // Resolved once, here, so the session and the later signature agree.
+    const identity = resolveMoneyGramIdentity(request, userAddressOrId);
 
     if (channel === 'minipay' && !controls.minipayEnabled) {
       return reply.code(403).send({
@@ -212,7 +255,7 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
         recipientName,
         recipientPhone,
         channel,
-        userAddressOrId,
+        userAddressOrId: identity,
       });
 
       return { data: session };
@@ -240,7 +283,9 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
         targetCurrency,
         targetAmount,
         channel,
-        userAddressOrId,
+        // Same default the signer applies, so the degraded path records the
+        // account it will actually pay from.
+        userAddressOrId: identity ?? MONEYGRAM_DEFAULT_IDENTITY,
         status: 'pending_user_transfer_start',
         moreInfoUrl,
       });
@@ -249,6 +294,21 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
         data: {
           id: txId,
           mode,
+          /**
+           * The fallback session must advertise the SAME account the signer
+           * will use, otherwise the widget collects a payment from one
+           * address while Sivan pays from another. Resolution can legitimately
+           * throw in production when no institutional secret is configured, and
+           * that must not turn a degraded session into a 500.
+           */
+          walletAddress: (() => {
+            try {
+              return resolveStellarKeypair(identity).publicKey();
+            } catch {
+              return undefined;
+            }
+          })(),
+          rampsApiBaseUrl: ramps.baseUrl,
           amount: numAmount.toFixed(2),
           asset: 'USDC',
           targetCurrency,
@@ -296,7 +356,7 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
     }
 
     try {
-      const keypair = resolveStellarKeypair(userAddressOrId);
+      const keypair = resolveStellarKeypair(resolveMoneyGramIdentity(request, userAddressOrId));
       const txHash = await sendStellarUsdcPayment({
         sourceSecret: keypair.secret(),
         to,

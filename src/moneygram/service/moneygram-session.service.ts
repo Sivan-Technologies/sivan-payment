@@ -1,9 +1,11 @@
-import crypto from 'node:crypto';
 import {
   preflightStellarPayment,
   provisionSandboxAccount,
+  acquireTestnetUsdc,
   explainHorizonError,
 } from './stellar-preflight.service.js';
+import { generateStellarKeypair } from '../../wallets/stellar/stellar-keypair.js';
+import { getStellarUsdcIssuer } from '../../wallets/stellar/trustline.js';
 import {
   Asset,
   BASE_FEE,
@@ -12,6 +14,7 @@ import {
   Memo,
   Networks,
   Operation,
+  StrKey,
   TransactionBuilder,
   type Transaction,
 } from '@stellar/stellar-sdk';
@@ -50,6 +53,13 @@ export interface MoneyGramSessionResult {
   sessionToken?: string;
   widgetUrl?: string;
   walletAddress?: string;
+  /**
+   * The XRamps API base the widget should talk to. Sent from the server so
+   * the browser is not a second place where this URL is decided; the modal
+   * previously carried its own hardcoded copy that could disagree with
+   * MONEYGRAM_API_BASE_URL.
+   */
+  rampsApiBaseUrl?: string;
   mode: 'withdraw' | 'deposit';
   amount: string;
   asset: 'USDC';
@@ -64,12 +74,47 @@ export interface MoneyGramSessionResult {
   createdAt: string;
 }
 
+/** Identity used when no authenticated user is attached to the session. */
+export const MONEYGRAM_DEFAULT_IDENTITY = 'anonymous_user';
+
 /**
- * Resolves the Stellar keypair for SEP-10 authentication.
+ * The seed every part of Sivan uses for a user's Stellar wallet.
  *
- * In production, requires the institutional allowlisted secret key configured via environment.
- * In sandbox, if no explicit secret is set, deterministically derives a keypair from the user
- * identifier without hardcoding any keys or addresses.
+ * It is a function and not an inline template so that MoneyGram and
+ * user-wallet.service cannot drift apart silently. They derive the same
+ * account or the withdrawal debits a wallet the user has never seen.
+ */
+export function stellarWalletSeedFor(userId: string): string {
+  return `sivan_stellar_${userId}`;
+}
+
+/**
+ * Resolves the Stellar keypair that signs SEP-10 and the USDC payment.
+ *
+ * THIS FUNCTION USED TO HASH WHATEVER IT WAS HANDED, AND THAT CAUSED TWO BUGS.
+ *
+ * 1. IT WAS NOT IDEMPOTENT. The browser sends an empty identity on the first
+ *    attempt, so the signer resolved to the hash of "anonymous_user". The
+ *    response carried that account's G address back, the modal stored it, and
+ *    "Retry Signing" sent the ADDRESS as the identity. Hashing an address
+ *    produces an unrelated account, so the retry signed from a second,
+ *    never-provisioned account and failed again. Measured:
+ *      ""                         -> GB3AE2OH354LR3SSSA5KF3BMSIAAG2EJGVOQSKCMEICECFWG7KDHZTNJ
+ *      "GB3AE2OH...HZTNJ"         -> GAIWQCLNIYGSE4RGVTJXBCSTAHOX4JOS2QZO7SXPQKN5M7OTOMUTMGWE
+ *    Retrying therefore could never recover, however well the first attempt
+ *    was diagnosed.
+ *
+ * 2. IT WAS NOT THE USER'S WALLET. The old seed prefix was
+ *    "sivan_stellar_sandbox_", while every other module derives a user's
+ *    Stellar wallet from "sivan_stellar_" + userId and runs
+ *    ensureStellarAccountAndTrustline against it. For user-123 those are
+ *    GBWV3PRV... and GCSBNOSY... respectively. MoneyGram was spending from an
+ *    account unrelated to the balance the app displays, so a withdrawal could
+ *    never debit the user's actual USDC.
+ *
+ * A G address is a DESTINATION, never an identity. It is rejected rather than
+ * hashed, because hashing it is precisely what produced bug 1 and the failure
+ * was invisible: both inputs yield a syntactically perfect Stellar account.
  */
 export function resolveStellarKeypair(userAddressOrId?: string): Keypair {
   try {
@@ -86,13 +131,26 @@ export function resolveStellarKeypair(userAddressOrId?: string): Keypair {
     }
   }
 
-  // Sandbox deterministic derivation: derive an ed25519 keypair from user identifier seed
-  const identifier = (userAddressOrId || 'anonymous_user').trim().toLowerCase();
-  const seed = crypto
-    .createHash('sha256')
-    .update(`sivan_stellar_sandbox_${identifier}`)
-    .digest();
-  return Keypair.fromRawEd25519Seed(seed);
+  const raw = (userAddressOrId || '').trim();
+
+  if (StrKey.isValidEd25519PublicKey(raw)) {
+    throw new Error(
+      `Refusing to derive a signing key from the Stellar address ${raw}. A G address identifies an ` +
+        'account, not a user, and hashing it yields a different, unfunded account than the one it ' +
+        'names. Pass the Sivan user id so the signer resolves to that user\'s own Stellar wallet.'
+    );
+  }
+
+  if (StrKey.isValidEd25519SecretSeed(raw)) {
+    throw new Error(
+      'Refusing to accept a Stellar secret seed as a user identity. Secrets must arrive through ' +
+        'MONEYGRAM_STELLAR_SECRET, never through a request body.'
+    );
+  }
+
+  const identity = raw || MONEYGRAM_DEFAULT_IDENTITY;
+  const derived = generateStellarKeypair(stellarWalletSeedFor(identity));
+  return Keypair.fromSecret(derived.secretKey);
 }
 
 /**
@@ -353,6 +411,14 @@ export async function createMoneyGramSep24WithdrawSession(
   return {
     id: txId,
     mode: input.mode || 'withdraw',
+    /**
+     * Returned so the browser never has to invent it. The modal previously
+     * fell back to a hardcoded G address because this field was declared on
+     * MoneyGramSessionResult but never populated, which left the widget and
+     * the signer agreeing only by coincidence.
+     */
+    walletAddress: keypair.publicKey(),
+    rampsApiBaseUrl: ramps.baseUrl,
     amount: numAmount.toFixed(2),
     asset: 'USDC',
     targetCurrency,
@@ -367,12 +433,19 @@ export async function createMoneyGramSep24WithdrawSession(
   };
 }
 
-const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
-const MAINNET_USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
-
+/**
+ * Single source of truth for the USDC issuer.
+ *
+ * This module used to keep its own copy of both issuer addresses while
+ * src/wallets/stellar/trustline.ts kept another. Two copies of a constant
+ * that must match is a drift waiting to happen: the trustline module is what
+ * actually establishes the trustline on the user's wallet, so if MoneyGram
+ * ever paid a different issuer the payment would fail with op_no_trust
+ * against an account that visibly trusts "USDC". It also honours the
+ * STELLAR_USDC_ISSUER override, which the local copy ignored.
+ */
 function usdcIssuer(requiredNetwork?: 'mainnet' | 'testnet'): string {
-  if (requiredNetwork === 'mainnet') return MAINNET_USDC_ISSUER;
-  return TESTNET_USDC_ISSUER;
+  return getStellarUsdcIssuer({ production: requiredNetwork === 'mainnet' });
 }
 
 function settlementMemo(memo: string) {
@@ -453,6 +526,34 @@ export async function sendStellarUsdcPayment(input: {
       assetCode: tokenAddress,
       network: requiredNetwork,
     });
+  }
+
+  /**
+   * A provisioned sandbox account holds Friendbot XLM and zero USDC, because
+   * Friendbot funds XLM only and Circle alone can mint testnet USDC. Without
+   * this step the cashout stops one square short of done with
+   * INSUFFICIENT_USDC. The testnet DEX sells USDC for XLM, so the shortfall
+   * is covered with a single path payment. Testnet only, enforced inside
+   * acquireTestnetUsdc.
+   */
+  if (!pre.ok && requiredNetwork === 'testnet' && pre.code === 'INSUFFICIENT_USDC') {
+    const shortfall = Number(amount) - Number(pre.usdcBalance);
+    if (shortfall > 0) {
+      await acquireTestnetUsdc({
+        secret: sourceSecret,
+        issuer: assetIssuer,
+        assetCode: tokenAddress,
+        destAmount: shortfall.toFixed(7),
+        network: 'testnet',
+      });
+      pre = await preflightStellarPayment({
+        publicKey: sourceKeypair.publicKey(),
+        amount,
+        issuer: assetIssuer,
+        assetCode: tokenAddress,
+        network: requiredNetwork,
+      });
+    }
   }
 
   if (!pre.ok) {

@@ -20,6 +20,14 @@ export interface MoneyGramModalProps {
   userEmail?: string;
   userPhone?: string;
   userSpendableUsdc?: number | null;
+  /**
+   * Stable Sivan identity for the signer. The server prefers the
+   * authenticated subject when a bearer token is present; this is the
+   * sandbox and demo path. It must NEVER be a Stellar G address: the server
+   * rejects those outright, because hashing an address derives a different,
+   * unfunded account than the one it names.
+   */
+  userId?: string;
   apiBase?: string;
 }
 
@@ -31,6 +39,7 @@ export function MoneyGramModal({
   userFullName = '',
   userPhone = '',
   userSpendableUsdc,
+  userId,
   apiBase,
 }: MoneyGramModalProps) {
   const effectiveApiBase = apiBase || normalizeFrontendApiBase();
@@ -47,6 +56,7 @@ export function MoneyGramModal({
   const [sessionId, setSessionId] = useState<string>('');
   const [sessionToken, setSessionToken] = useState<string>('');
   const [stellarWalletAddress, setStellarWalletAddress] = useState<string>('');
+  const [rampsApiBaseUrl, setRampsApiBaseUrl] = useState<string>('');
   const [isSigning, setIsSigning] = useState(false);
   const [signingStatus, setSigningStatus] = useState<string>('');
   const [pendingSignPayload, setPendingSignPayload] = useState<any>(null);
@@ -64,6 +74,21 @@ export function MoneyGramModal({
   sessionTokenRef.current = sessionToken;
   const stellarAddressRef = useRef(stellarWalletAddress);
   stellarAddressRef.current = stellarWalletAddress;
+  /**
+   * Identity and address are deliberately separate refs.
+   *
+   * They used to be one value, and that is what broke "Retry Signing": the
+   * first attempt sent an empty identity, the response carried back the
+   * derived G address, and the retry sent that address as the identity. The
+   * server hashed it and signed from an unrelated account, so the retry could
+   * never succeed. The address is for display and for the widget; the
+   * identity is the only thing the signer may key on, and it does not change
+   * between attempts.
+   */
+  const identityRef = useRef(userId);
+  identityRef.current = userId;
+  const rampsApiBaseRef = useRef(rampsApiBaseUrl);
+  rampsApiBaseRef.current = rampsApiBaseUrl;
 
   useEffect(() => {
     if (open) {
@@ -186,14 +211,16 @@ export function MoneyGramModal({
         sessionToken: sessionTokenRef.current || undefined,
         theme: 'dark',
         wallet: {
-          address: stellarAddressRef.current || 'GB3AE2OH354LR3SSSA5KF3BMSIAAG2EJGVOQSKCMEICECFWG7KDHZTNJ',
+          address: stellarAddressRef.current,
           chain: 'stellar',
           asset: 'USDC',
           walletType: 'non-custodial',
         },
         devConfig: {
           mockMode: false,
-          apiBaseUrl: 'https://playground.xramps.moneygram.com/api',
+          // Supplied by the session response, which resolves it from
+          // MONEYGRAM_API_BASE_URL. Omitted rather than guessed if absent.
+          apiBaseUrl: rampsApiBaseRef.current || undefined,
         },
       },
     };
@@ -225,7 +252,7 @@ export function MoneyGramModal({
           tokenAddress: payload.tokenAddress || 'USDC',
           requiredNetwork: payload.requiredNetwork || 'testnet',
           issuer: payload.issuer,
-          userAddressOrId: stellarAddressRef.current,
+          userAddressOrId: identityRef.current,
         }),
       });
 
@@ -391,6 +418,7 @@ export function MoneyGramModal({
           recipientName: recipientName.trim() || 'Valued Customer',
           recipientPhone: recipientPhone.trim() || undefined,
           channel: 'minipay',
+          userAddressOrId: identityRef.current,
         }),
       });
       if (res.ok) {
@@ -398,6 +426,7 @@ export function MoneyGramModal({
         if (json?.data) {
           if (json.data.sessionToken) setSessionToken(json.data.sessionToken);
           if (json.data.walletAddress) setStellarWalletAddress(json.data.walletAddress);
+          if (json.data.rampsApiBaseUrl) setRampsApiBaseUrl(json.data.rampsApiBaseUrl);
           let url = json.data.widgetUrl || json.data.interactiveUrl;
           if (url && json.data.sessionToken && !url.includes('sessionToken=')) {
             const joiner = url.includes('?') ? '&' : '?';
