@@ -173,6 +173,14 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'MoneyGram Transaction Status & Webhook Authentication',
+    command: 'tsx scripts/test-moneygram-status-and-webhook.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-status-webhook.json',
+    },
+  },
+  {
     name: 'Paystack Routes & Webhooks Ingestion',
     command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
     env: {

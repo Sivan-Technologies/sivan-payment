@@ -15,6 +15,7 @@ import {
   sendStellarUsdcPayment,
   resolveStellarKeypair,
   MONEYGRAM_DEFAULT_IDENTITY,
+  MoneyGramTransactionNotFound,
 } from '../service/moneygram-session.service.js';
 import {
   getMoneyGramControls,
@@ -345,11 +346,29 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
   app.get<{
     Params: { id: string };
     Querystring: { userAddressOrId?: string };
-  }>('/api/moneygram/transactions/:id', async (request) => {
+  }>('/api/moneygram/transactions/:id', async (request, reply) => {
     const { id } = request.params;
     const { userAddressOrId } = (request.query || {}) as { userAddressOrId?: string };
-    const tx = await getMoneyGramSep24Transaction(id, userAddressOrId);
-    return { data: tx };
+    try {
+      const tx = await getMoneyGramSep24Transaction(
+        id,
+        await resolveMoneyGramIdentity(request, userAddressOrId)
+      );
+      return { data: tx };
+    } catch (err) {
+      /**
+       * An unknown transaction is a 404, not a 200 with invented contents.
+       * This endpoint previously answered every id with a "ready for pickup"
+       * placeholder, so the client had no way to tell a real pickup from a
+       * typo in the id.
+       */
+      if (err instanceof MoneyGramTransactionNotFound) {
+        return reply.code(404).send({
+          error: { code: 'MONEYGRAM_TRANSACTION_NOT_FOUND', message: err.message },
+        });
+      }
+      throw err;
+    }
   });
 
   // Non-Custodial RAMPS_SIGN_TRANSACTION bridge endpoint

@@ -595,12 +595,22 @@ export async function sendStellarUsdcPayment(input: {
 }
 
 /**
- * Queries SEP-24 transaction status from MoneyGram anchor or unified memory store.
+ * Raised when a transaction id is not known to the anchor or to Sivan.
+ *
+ * It is an error and not a default value on purpose. See below.
  */
-export async function getMoneyGramSep24Transaction(
-  transactionId: string,
-  userAddressOrId?: string
-): Promise<{
+export class MoneyGramTransactionNotFound extends Error {
+  readonly statusCode = 404;
+  constructor(readonly transactionId: string) {
+    super(
+      `MoneyGram transaction ${transactionId} is not known to the anchor or to Sivan. ` +
+        'No status, amount or pickup reference can be reported for it.'
+    );
+    this.name = 'MoneyGramTransactionNotFound';
+  }
+}
+
+export interface MoneyGramTransactionView {
   id: string;
   status: string;
   statusLabel: string;
@@ -610,17 +620,50 @@ export async function getMoneyGramSep24Transaction(
   assetIn: string;
   moreInfoUrl: string;
   updatedAt: string;
-}> {
-  // First check local recorded transactions
+  /** Where these values came from. Never a guess. */
+  source: 'anchor' | 'local';
+  /** Set when the anchor could not be reached and local state was used. */
+  anchorUnreachable?: boolean;
+}
+
+/**
+ * Queries SEP-24 transaction status from the MoneyGram anchor, falling back
+ * to Sivan's own record.
+ *
+ * THIS FUNCTION USED TO INVENT ITS ANSWER.
+ *
+ * When neither the anchor nor the local store knew the id, the old code
+ * returned a fully populated success:
+ *
+ *   status  "ready_for_pickup"
+ *   pin     "4829-1049"
+ *   amount  "25.00"
+ *
+ * Verified by querying an id that had never existed; it came back
+ * "Ready for Counter Pickup" with that pin. Those were placeholder values
+ * from early development that became the FALLBACK path, so the worst case,
+ * knowing nothing, produced the most reassuring possible output. A user
+ * would have travelled to a MoneyGram counter and presented a pin that was
+ * never issued, and no log would have shown anything wrong.
+ *
+ * A status endpoint that cannot fail is not a status endpoint. Unknown is
+ * now an error, and every field returned is traceable to the anchor or to a
+ * stored record via `source`.
+ */
+export async function getMoneyGramSep24Transaction(
+  transactionId: string,
+  userAddressOrId?: string
+): Promise<MoneyGramTransactionView> {
   const records = await listMoneyGramTransactions(userAddressOrId);
   const found = records.find((r) => r.id === transactionId);
 
+  let anchorUnreachable = false;
   try {
     const anchor = await fetchAnchorInfo({ timeoutMs: 5000 });
     const keypair = resolveStellarKeypair(userAddressOrId);
     const { token } = await getMoneyGramSep10Token(keypair, { timeoutMs: 5000 });
 
-    const queryUrl = `${anchor.transferServerSep24}/transaction?id=${transactionId}`;
+    const queryUrl = `${anchor.transferServerSep24}/transaction?id=${encodeURIComponent(transactionId)}`;
     const res = await fetch(queryUrl, {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
@@ -629,24 +672,33 @@ export async function getMoneyGramSep24Transaction(
     if (res.ok) {
       const data = (await res.json()) as any;
       const tx = data?.transaction;
-      if (tx) {
-        const status = tx.status || found?.status || 'pending_user_transfer_start';
-        const pin = tx.external_transaction_id || found?.pickupPin || '4829-1049';
+      if (tx?.status) {
+        /**
+         * Anchor values only. A missing pin stays missing: the anchor issues
+         * the reference, so absence means it has not been issued yet, and
+         * substituting anything here would be inventing it again.
+         */
         return {
           id: transactionId,
-          status,
-          statusLabel: status.replace(/_/g, ' '),
-          externalTransactionId: pin,
-          referencePin: pin,
-          amountIn: tx.amount_in || found?.amountUsdc.toFixed(2) || '25.00',
+          status: tx.status,
+          statusLabel: String(tx.status).replace(/_/g, ' '),
+          externalTransactionId: tx.external_transaction_id || undefined,
+          referencePin: tx.external_transaction_id || undefined,
+          amountIn: tx.amount_in ?? found?.amountUsdc.toFixed(2) ?? '',
           assetIn: 'USDC',
-          moreInfoUrl: tx.more_info_url || found?.moreInfoUrl || `${anchor.transferServerSep24}/transaction/more_info?id=${transactionId}`,
+          moreInfoUrl:
+            tx.more_info_url ||
+            found?.moreInfoUrl ||
+            `${anchor.transferServerSep24}/transaction/more_info?id=${encodeURIComponent(transactionId)}`,
           updatedAt: new Date().toISOString(),
+          source: 'anchor',
         };
       }
     }
   } catch {
-    // If live lookup times out or fails, fall back to local record
+    // Distinguished from "anchor answered and did not know it", because the
+    // two mean different things to a caller deciding whether to retry.
+    anchorUnreachable = true;
   }
 
   if (found) {
@@ -654,27 +706,16 @@ export async function getMoneyGramSep24Transaction(
       id: found.id,
       status: found.status,
       statusLabel: found.status.replace(/_/g, ' '),
-      externalTransactionId: found.pickupPin || '4829-1049',
-      referencePin: found.pickupPin || '4829-1049',
+      externalTransactionId: found.pickupPin || undefined,
+      referencePin: found.pickupPin || undefined,
       amountIn: found.amountUsdc.toFixed(2),
       assetIn: 'USDC',
       moreInfoUrl: found.moreInfoUrl,
       updatedAt: found.updatedAt,
+      source: 'local',
+      ...(anchorUnreachable ? { anchorUnreachable: true } : {}),
     };
   }
 
-  const anchor = await fetchAnchorInfo().catch(() => null);
-  const host = anchor?.transferServerSep24 || 'https://extmgxanchor.moneygram.com/stellarsepservice/sep24';
-
-  return {
-    id: transactionId,
-    status: 'ready_for_pickup',
-    statusLabel: 'Ready for Counter Pickup',
-    externalTransactionId: '48291049',
-    referencePin: '4829-1049',
-    amountIn: '25.00',
-    assetIn: 'USDC',
-    moreInfoUrl: `${host}/transaction/more_info?id=${transactionId}`,
-    updatedAt: new Date().toISOString(),
-  };
+  throw new MoneyGramTransactionNotFound(transactionId);
 }

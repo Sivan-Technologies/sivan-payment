@@ -65,15 +65,36 @@ export function verifyMoneyGramSignature({
   const sig = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
   const ts = Array.isArray(timestampHeader) ? timestampHeader[0] : timestampHeader;
 
-  // In sandbox/development, allow graceful pass-through if public key is not yet configured
+  /**
+   * The unsigned bypass is now an explicit opt-in, not a consequence of
+   * forgetting to configure something.
+   *
+   * It previously keyed off moneyGramEnvironment() === 'sandbox', and that
+   * function defaults to 'sandbox' when MONEYGRAM_ENVIRONMENT is unset. Two
+   * omissions in the same deployment, no public key and no environment
+   * variable, therefore combined into "accept every unsigned webhook and
+   * write it to the database". Both omissions are silent and the resulting
+   * behaviour looks identical to working correctly.
+   *
+   * Requiring MONEYGRAM_ALLOW_UNSIGNED_WEBHOOKS means the insecure path can
+   * only be reached by someone who typed it, and it still refuses to engage
+   * in production.
+   */
   let publicKeyPem: string;
   try {
     publicKeyPem = webhookPublicKey();
-  } catch (err: any) {
-    if (moneyGramEnvironment() === 'sandbox') {
-      return { valid: true, reason: 'sandbox_unconfigured_key_bypass' };
+  } catch {
+    const explicitlyAllowed =
+      (process.env.MONEYGRAM_ALLOW_UNSIGNED_WEBHOOKS || '').trim().toLowerCase() === 'true';
+    if (explicitlyAllowed && moneyGramEnvironment() !== 'production') {
+      return { valid: true, reason: 'unsigned_webhooks_explicitly_allowed' };
     }
-    return { valid: false, reason: 'MONEYGRAM_WEBHOOK_PUBLIC_KEY not set' };
+    return {
+      valid: false,
+      reason:
+        'MONEYGRAM_WEBHOOK_PUBLIC_KEY is not set, so no callback can be authenticated. Set it, or ' +
+        'set MONEYGRAM_ALLOW_UNSIGNED_WEBHOOKS=true to accept unsigned callbacks outside production.',
+    };
   }
 
   if (!sig) return { valid: false, reason: 'missing signature header' };
@@ -90,7 +111,24 @@ export function verifyMoneyGramSignature({
 
   // Construct digest: `${timestamp}.${host}.${rawBodyString}`
   const rawString = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : String(rawBody);
-  const destinationHost = host || (process.env.MONEYGRAM_WEBHOOK_HOST || 'api.sivantech.online');
+  /**
+   * MONEYGRAM_WEBHOOK_HOST wins over the request's own Host header.
+   *
+   * The host is part of the signed digest, so letting a caller-controlled
+   * header decide it lets the caller choose what was signed. It also had a
+   * hardcoded production hostname as its last resort, which silently
+   * produced the wrong digest on every other deployment.
+   */
+  const configuredHost = (process.env.MONEYGRAM_WEBHOOK_HOST || '').trim();
+  const destinationHost = configuredHost || host;
+  if (!destinationHost) {
+    return {
+      valid: false,
+      reason:
+        'Cannot build the signature digest: no MONEYGRAM_WEBHOOK_HOST configured and no Host header ' +
+        'on the request. The host is part of what MoneyGram signs.',
+    };
+  }
   const digest = `${ts}.${destinationHost}.${rawString}`;
 
   try {
@@ -116,7 +154,9 @@ export async function processMoneyGramWebhook(
 ): Promise<MoneyGramWebhookResult> {
   const signature = headers['x-mg-signature'] || headers['x-moneygram-signature'];
   const timestamp = headers['x-mg-timestamp'] || headers['x-mg-time'] || headers['x-timestamp'];
-  const host = (headers['x-forwarded-host'] || headers['host'] || 'api.sivantech.online') as string;
+  // No hardcoded hostname fallback: an absent host is reported by the
+  // verifier rather than papered over with one deployment's domain.
+  const host = (headers['x-forwarded-host'] || headers['host']) as string | undefined;
 
   const verification = verifyMoneyGramSignature({
     rawBody,
