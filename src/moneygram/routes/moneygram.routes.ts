@@ -10,6 +10,7 @@ import {
   anchorHealth,
   fetchAssetLimits,
 } from '../service/anchor-discovery.service.js';
+import { verifyClientDomain } from '../service/client-domain.service.js';
 import {
   createMoneyGramSep24WithdrawSession,
   getMoneyGramSep24Transaction,
@@ -99,8 +100,24 @@ export async function moneygramRoutes(app: FastifyInstance) {
   // Health & Gateway Readiness Probe
   app.get('/api/moneygram/health', async () => {
     const health = await anchorHealth();
+    /**
+     * Both halves of the SEP-10 handshake, not just MoneyGram's.
+     * anchorHealth checks THEIR toml. clientDomain checks OURS, which is the
+     * half that silently breaks when an environment variable is edited and a
+     * static file is not.
+     */
+    const clientDomain = await verifyClientDomain({ timeoutMs: 8_000 }).catch((err) => ({
+      ok: false,
+      homeDomain: '',
+      checks: [],
+      problems: [String(err?.message ?? err)],
+    }));
     return {
-      status: health.reachable && health.signingKeyMatches ? 'healthy' : 'degraded',
+      status:
+        health.reachable && health.signingKeyMatches && clientDomain.ok
+          ? 'healthy'
+          : 'degraded',
+      clientDomain,
       service: 'sivan-moneygram-api',
       protocol: 'Sivan Ai Stellar Native Ramps',
       network: 'Stellar USDC',

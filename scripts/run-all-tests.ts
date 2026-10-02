@@ -197,6 +197,16 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'MoneyGram Client Domain & Published stellar.toml',
+    command: 'tsx scripts/test-moneygram-client-domain.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-client-domain.json',
+      MONEYGRAM_HOME_DOMAIN: 'www.sivantech.online',
+      MONEYGRAM_STELLAR_PUBLIC_KEY: 'GC2U4MR5FDCOICAGDUQU5JAEOM4C4WQOCPB3NABMTYPLX56YCKC35N3V',
+    },
+  },
+  {
     name: 'Paystack Routes & Webhooks Ingestion',
     command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
     env: {
