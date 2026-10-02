@@ -211,3 +211,97 @@ export async function anchorHealth(): Promise<{
     };
   }
 }
+
+/**
+ * SEP-24 /info limits for one asset and direction, as the anchor reports them.
+ */
+export interface AnchorAssetLimits {
+  assetCode: string;
+  mode: 'withdraw' | 'deposit';
+  enabled: boolean;
+  minAmount: number;
+  maxAmount: number;
+}
+
+let sep24InfoCache: { info: any; expiresAt: number } | undefined;
+
+export function clearSep24InfoCache(): void {
+  sep24InfoCache = undefined;
+}
+
+/** Raw SEP-24 /info document for the configured anchor. */
+export async function fetchSep24Info(
+  options: { timeoutMs?: number; force?: boolean } = {}
+): Promise<any> {
+  if (!options.force && sep24InfoCache && sep24InfoCache.expiresAt > Date.now()) {
+    return sep24InfoCache.info;
+  }
+  const anchor = await fetchAnchorInfo({ timeoutMs: options.timeoutMs });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000);
+  try {
+    const res = await fetch(`${anchor.transferServerSep24}/info`, {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`MoneyGram SEP-24 /info returned HTTP ${res.status}`);
+    }
+    const info = await res.json();
+    sep24InfoCache = { info, expiresAt: Date.now() + CACHE_TTL_MS };
+    return info;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The amount limits MoneyGram will actually enforce.
+ *
+ * WHY THIS IS NOT A CONSTANT.
+ *
+ * The quote route hardcoded a 5 USDC minimum. The live anchor reports 15,
+ * and rejects anything under it with HTTP 400 "amount is less than asset's
+ * minimum limit". So every quote between 5 and 14.99 was accepted by Sivan,
+ * shown to the user with a converted local amount, and only then refused by
+ * MoneyGram, after the user had committed to the flow. The session service
+ * disagreed with both, telling users the range was "15 and 50" when the
+ * anchor's maximum is 2500.
+ *
+ * Three numbers for one rule, none of them the anchor's. Limits are a
+ * property of the anchor and vary by asset, direction and environment, so
+ * they are read from the anchor and cached rather than copied into the code.
+ */
+export async function fetchAssetLimits(
+  assetCode: string,
+  mode: 'withdraw' | 'deposit',
+  options: { timeoutMs?: number; force?: boolean } = {}
+): Promise<AnchorAssetLimits> {
+  const info = await fetchSep24Info(options);
+  const section = mode === 'deposit' ? info?.deposit : info?.withdraw;
+  const asset = section?.[assetCode];
+
+  if (!asset) {
+    throw new Error(
+      `MoneyGram does not list ${assetCode} for ${mode} in its SEP-24 /info document. ` +
+        'Sivan will not invent limits for an asset the anchor does not advertise.'
+    );
+  }
+
+  const minAmount = Number(asset.min_amount);
+  const maxAmount = Number(asset.max_amount);
+  if (!Number.isFinite(minAmount) || !Number.isFinite(maxAmount)) {
+    throw new Error(
+      `MoneyGram reported non-numeric ${mode} limits for ${assetCode}: ` +
+        `min=${asset.min_amount}, max=${asset.max_amount}.`
+    );
+  }
+
+  return {
+    assetCode,
+    mode,
+    enabled: asset.enabled !== false,
+    minAmount,
+    maxAmount,
+  };
+}

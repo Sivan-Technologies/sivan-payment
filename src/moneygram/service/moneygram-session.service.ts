@@ -20,6 +20,7 @@ import {
 } from '@stellar/stellar-sdk';
 import {
   fetchAnchorInfo,
+  fetchAssetLimits,
   type AnchorInfo,
 } from './anchor-discovery.service.js';
 import {
@@ -262,7 +263,27 @@ export async function createMoneyGramSep24WithdrawSession(
 ): Promise<MoneyGramSessionResult> {
   const numAmount = Number(input.amount);
   if (!Number.isFinite(numAmount) || numAmount <= 0) {
-    throw new Error('Amount must be a positive number (between 15 and 50 USDC for testing)');
+    throw new Error('Amount must be a positive number.');
+  }
+
+  /**
+   * Checked against the anchor's own limits before any session is opened.
+   *
+   * The message here used to claim the range was "15 and 50 USDC", which
+   * matched neither the quote route's 5 nor the anchor's 2500 maximum.
+   * Opening a session for an amount MoneyGram will refuse wastes a SEP-10
+   * round trip and surfaces as a generic failure much later in the flow.
+   */
+  const mgMode = input.mode === 'deposit' ? 'deposit' : 'withdraw';
+  const limits = await fetchAssetLimits('USDC', mgMode);
+  if (!limits.enabled) {
+    throw new Error(`MoneyGram has disabled USDC ${mgMode} at the moment.`);
+  }
+  if (numAmount < limits.minAmount || numAmount > limits.maxAmount) {
+    throw new Error(
+      `MoneyGram accepts between ${limits.minAmount} and ${limits.maxAmount} USDC for a ${mgMode}. ` +
+        `Requested ${numAmount}.`
+    );
   }
 
   const keypair = resolveStellarKeypair(input.userAddressOrId);

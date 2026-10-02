@@ -181,6 +181,14 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'MoneyGram SEP-10 Auth, SEP-24 Init & Live Limits',
+    command: 'tsx scripts/test-moneygram-sep24-limits.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-sep24-limits.json',
+    },
+  },
+  {
     name: 'Paystack Routes & Webhooks Ingestion',
     command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
     env: {

@@ -8,6 +8,7 @@ import {
 } from '../config/moneygram.config.js';
 import {
   anchorHealth,
+  fetchAssetLimits,
 } from '../service/anchor-discovery.service.js';
 import {
   createMoneyGramSep24WithdrawSession,
@@ -159,14 +160,45 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
     const { amount, targetCurrency = 'NGN', mode = 'withdraw' } = request.body || {};
     const numAmount = Number(amount);
 
-    const minAllowed = 5.0;
-    const maxAllowed = mode === 'deposit' ? 950.0 : 2500.0;
+    /**
+      * Limits come from the anchor, not from this file.
+      *
+      * This route used to hardcode a 5.00 minimum while MoneyGram enforces
+      * 15. Quotes between 5 and 14.99 were accepted here, converted, shown
+      * to the user, and only then rejected by the anchor with HTTP 400,
+      * after the user had committed to the flow.
+      */
+    let limits;
+    try {
+      limits = await fetchAssetLimits('USDC', mode === 'deposit' ? 'deposit' : 'withdraw');
+    } catch (err: any) {
+      return reply.code(503).send({
+        error: {
+          code: 'MONEYGRAM_LIMITS_UNAVAILABLE',
+          message:
+            'Could not read MoneyGram\'s current amount limits, so this quote cannot be validated: ' +
+            String(err?.message ?? err),
+        },
+      });
+    }
+
+    if (!limits.enabled) {
+      return reply.code(503).send({
+        error: {
+          code: 'MONEYGRAM_ASSET_DISABLED',
+          message: `MoneyGram has disabled USDC ${mode === 'deposit' ? 'cash-in' : 'cash-out'} right now.`,
+        },
+      });
+    }
+
+    const minAllowed = limits.minAmount;
+    const maxAllowed = limits.maxAmount;
 
     if (!Number.isFinite(numAmount) || numAmount < minAllowed || numAmount > maxAllowed) {
       return reply.code(400).send({
         error: {
           code: 'INVALID_AMOUNT',
-          message: `Amount must be between $${minAllowed.toFixed(2)} and $${maxAllowed.toFixed(2)} USD for ${mode === 'deposit' ? 'cash-in' : 'cash-out'}`,
+          message: `Amount must be between $${minAllowed.toFixed(2)} and $${maxAllowed.toFixed(2)} USD for ${mode === 'deposit' ? 'cash-in' : 'cash-out'}. MoneyGram enforces this limit.`,
         },
       });
     }
