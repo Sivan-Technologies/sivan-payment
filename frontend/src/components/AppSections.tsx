@@ -286,6 +286,7 @@ export function OffRampWizard({ accounts, enabledControls, enabledAssets, enable
             <MoneyGramCashoutView
               userFullName={userFullName}
               userPhone={userPhone}
+              userId={ngnUserId}
               userSpendableUsdc={stellarSpendable !== undefined ? stellarSpendable : 0}
             />
           ) : step === 1 && ngnMode ? (

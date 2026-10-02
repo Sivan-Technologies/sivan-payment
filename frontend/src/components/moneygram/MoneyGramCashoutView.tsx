@@ -9,6 +9,7 @@ import { MoneyGramModal } from './MoneyGramModal';
 import { ConfirmModal } from '../ConfirmModal';
 
 export interface MoneyGramCashoutViewProps {
+  userId?: string;
   userFullName?: string;
   userPhone?: string;
   userSpendableUsdc?: number | null;
@@ -17,6 +18,7 @@ export interface MoneyGramCashoutViewProps {
 }
 
 export function MoneyGramCashoutView({
+  userId,
   userFullName = '',
   userPhone = '',
   userSpendableUsdc,
@@ -207,6 +209,7 @@ export function MoneyGramCashoutView({
         }}
         userFullName={userFullName}
         userPhone={userPhone}
+        userId={userId}
         userSpendableUsdc={userSpendableUsdc}
         apiBase={apiBase}
       />

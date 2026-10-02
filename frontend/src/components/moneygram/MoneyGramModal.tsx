@@ -85,8 +85,41 @@ export function MoneyGramModal({
    * identity is the only thing the signer may key on, and it does not change
    * between attempts.
    */
-  const identityRef = useRef(userId);
-  identityRef.current = userId;
+  const getStoredIdentity = (): string | undefined => {
+    if (userId) return userId;
+    try {
+      const stored = localStorage.getItem('sivan.user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.id) return String(parsed.id);
+        if (parsed?.userId) return String(parsed.userId);
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
+  };
+  const effectiveUserId = userId || getStoredIdentity();
+  const identityRef = useRef(effectiveUserId);
+  identityRef.current = effectiveUserId;
+
+  const getAuthHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    try {
+      const token =
+        localStorage.getItem('sivan.authToken') ||
+        localStorage.getItem('sivan_auth_token') ||
+        localStorage.getItem('sivan.token') ||
+        '';
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    } catch {
+      // ignore
+    }
+    return headers;
+  };
+
   const rampsApiBaseRef = useRef(rampsApiBaseUrl);
   rampsApiBaseRef.current = rampsApiBaseUrl;
 
@@ -244,7 +277,7 @@ export function MoneyGramModal({
       const signEndpoint = buildApiUrl(effectiveApiBase, '/api/moneygram/sign-transaction');
       const signRes = await fetch(signEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           to: payload.to,
           amount: payload.amount,
@@ -270,16 +303,31 @@ export function MoneyGramModal({
 
       setSigningStatus('Payment confirmed on-chain!');
       setPendingSignPayload(null);
-      iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({
-          type: 'RAMPS_SIGN_SUCCESS',
-          payload: {
-            txHash: signJson.data.txHash,
-            walletAddress: stellarAddressRef.current,
-          },
-        }),
-        '*'
-      );
+
+      // MoneyGram XRamps widget listener expects plain Object in event.data: if (event.data?.type !== 'RAMPS_SIGN_SUCCESS')
+      const successPayload = {
+        txHash: signJson.data.txHash,
+        transactionHash: signJson.data.txHash,
+        hash: signJson.data.txHash,
+        walletAddress: stellarAddressRef.current,
+      };
+      const successMsg = {
+        type: 'RAMPS_SIGN_SUCCESS',
+        payload: successPayload,
+      };
+      try {
+        iframeRef.current?.contentWindow?.postMessage(successMsg, '*');
+        iframeRef.current?.contentWindow?.postMessage(JSON.stringify(successMsg), '*');
+      } catch {
+        // Ignored
+      }
+
+      // Refresh balances across the app so the user's updated USDC / XLM balances reflect immediately
+      try {
+        window.dispatchEvent(new CustomEvent('sivan:balances:refresh'));
+      } catch {
+        // Ignored
+      }
     } catch (err: any) {
       const errMsg = err?.message || 'Signing failed';
       setSigningStatus(`Error: ${errMsg}`);
@@ -288,13 +336,16 @@ export function MoneyGramModal({
         message: `Stellar Payment Signing Failed: ${errMsg}`,
         action: 'Sivan could not complete the on-chain transfer to MoneyGram. Check your connection or click "Retry Signing".',
       });
-      iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({
-          type: 'RAMPS_SIGN_ERROR',
-          payload: { error: errMsg },
-        }),
-        '*'
-      );
+      const errorMsg = {
+        type: 'RAMPS_SIGN_ERROR',
+        payload: { error: errMsg },
+      };
+      try {
+        iframeRef.current?.contentWindow?.postMessage(errorMsg, '*');
+        iframeRef.current?.contentWindow?.postMessage(JSON.stringify(errorMsg), '*');
+      } catch {
+        // Ignored
+      }
     } finally {
       setIsSigning(false);
     }
@@ -410,7 +461,7 @@ export function MoneyGramModal({
       const sessionEndpoint = buildApiUrl(effectiveApiBase, '/api/moneygram/session');
       const res = await fetch(sessionEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           amount: numAmount,
           targetCurrency: selectedCountry.currency,

@@ -172,6 +172,7 @@ export function ReceiveView({
   onRefresh,
   userFullName,
   userPhone,
+  userId,
 }: {
   wallets: WalletRecord[];
   unifiedBalance?: UnifiedBalance | null;
@@ -187,6 +188,7 @@ export function ReceiveView({
   onRefresh: () => void;
   userFullName?: string;
   userPhone?: string;
+  userId?: string;
 }) {
   const [depositMethod, setDepositMethod] = useState<'crypto' | 'moneygram'>('crypto');
   const [moneygramModalOpen, setMoneygramModalOpen] = useState(false);
@@ -636,6 +638,7 @@ export function ReceiveView({
             }}
             userFullName={userFullName}
             userPhone={userPhone}
+            userId={userId}
           />
         </article>
       ) : (

@@ -22,6 +22,8 @@ import {
 } from '../../admin/feature-controls.service.js';
 import { MONEYGRAM_GLOBAL_CORRIDORS } from '../data/corridors.data.js';
 import { verifyUserJwt } from '../../auth/jwt.js';
+import { StrKey } from '@stellar/stellar-sdk';
+import { db } from '../../database/json-database.js';
 
 export const SUPPORTED_MONEYGRAM_CORRIDORS = MONEYGRAM_GLOBAL_CORRIDORS.map((c) => ({
   code: c.code,
@@ -54,11 +56,14 @@ export const SUPPORTED_MONEYGRAM_CORRIDORS = MONEYGRAM_GLOBAL_CORRIDORS.map((c) 
  * an authenticated call would let any caller drain another user's Stellar
  * wallet. It is honoured only when there is no token to contradict it, which
  * is the unauthenticated sandbox and demo path.
+ *
+ * If a Stellar G address is provided in the body, it is looked up in the
+ * user wallets database to resolve the user's authentic identity.
  */
-export function resolveMoneyGramIdentity(
+export async function resolveMoneyGramIdentity(
   request: any,
   bodyIdentity?: string
-): string | undefined {
+): Promise<string | undefined> {
   if (request?.authUser?.sub) return String(request.authUser.sub);
 
   const header: string | undefined = request?.headers?.authorization;
@@ -74,7 +79,18 @@ export function resolveMoneyGramIdentity(
   }
 
   const supplied = (bodyIdentity || '').trim();
-  return supplied || undefined;
+  if (supplied) {
+    if (StrKey.isValidEd25519PublicKey(supplied)) {
+      try {
+        const wallet = await db.findWalletByAddress(supplied);
+        if (wallet?.userId) return wallet.userId;
+      } catch {
+        // Fall through
+      }
+    }
+    return supplied;
+  }
+  return undefined;
 }
 
 export async function moneygramRoutes(app: FastifyInstance) {
@@ -216,7 +232,7 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
     } = request.body || {};
 
     // Resolved once, here, so the session and the later signature agree.
-    const identity = resolveMoneyGramIdentity(request, userAddressOrId);
+    const identity = await resolveMoneyGramIdentity(request, userAddressOrId);
 
     if (channel === 'minipay' && !controls.minipayEnabled) {
       return reply.code(403).send({
@@ -356,7 +372,8 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
     }
 
     try {
-      const keypair = resolveStellarKeypair(resolveMoneyGramIdentity(request, userAddressOrId));
+      const resolvedIdentity = await resolveMoneyGramIdentity(request, userAddressOrId);
+      const keypair = resolveStellarKeypair(resolvedIdentity);
       const txHash = await sendStellarUsdcPayment({
         sourceSecret: keypair.secret(),
         to,
