@@ -113,6 +113,14 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-stellar-adapter.ts',
   },
   {
+    name: 'Multi-Chain Solana SPL Transfers & RPC Failover',
+    command: 'tsx scripts/test-solana-transfer.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-solana-transfer.json',
+    },
+  },
+  {
     name: 'Multi-Chain Celo Adapter & Protocols',
     command: 'tsx scripts/test-celo-adapter.ts',
   },
