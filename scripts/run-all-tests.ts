@@ -157,6 +157,14 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'MoneyGram Stellar Preflight (live testnet)',
+    command: 'tsx scripts/test-moneygram-stellar-preflight.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-preflight.json',
+    },
+  },
+  {
     name: 'Paystack Routes & Webhooks Ingestion',
     command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
     env: {

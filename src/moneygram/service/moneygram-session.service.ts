@@ -1,5 +1,10 @@
 import crypto from 'node:crypto';
 import {
+  preflightStellarPayment,
+  provisionSandboxAccount,
+  explainHorizonError,
+} from './stellar-preflight.service.js';
+import {
   Asset,
   BASE_FEE,
   Horizon,
@@ -409,6 +414,54 @@ export async function sendStellarUsdcPayment(input: {
 
   const sourceKeypair = Keypair.fromSecret(sourceSecret);
   const usdc = new Asset(tokenAddress, assetIssuer);
+
+  /**
+   * PREFLIGHT BEFORE TOUCHING HORIZON.
+   *
+   * loadAccount() used to be the first call here, and on a non-existent
+   * account the SDK throws the literal string "Not Found". That propagated
+   * all the way to the browser, where a user saw "Stellar Payment Signing
+   * Failed: Not Found" for what is really one of three precise conditions:
+   * no account, no trustline, or no balance.
+   *
+   * In SANDBOX the first two are fixed automatically, because Friendbot
+   * funding and a changeTrust are free and reversible and are exactly what a
+   * developer would do by hand. In PRODUCTION nothing self-provisions:
+   * funding a live treasury account is not a side effect of a user tapping a
+   * button, so the condition is reported instead.
+   */
+  let pre = await preflightStellarPayment({
+    publicKey: sourceKeypair.publicKey(),
+    amount,
+    issuer: assetIssuer,
+    assetCode: tokenAddress,
+    network: requiredNetwork,
+  });
+
+  if (!pre.ok && requiredNetwork === 'testnet' &&
+      (pre.code === 'ACCOUNT_NOT_FOUND' || pre.code === 'NO_TRUSTLINE')) {
+    await provisionSandboxAccount({
+      secret: sourceSecret,
+      issuer: assetIssuer,
+      assetCode: tokenAddress,
+      network: 'testnet',
+    });
+    pre = await preflightStellarPayment({
+      publicKey: sourceKeypair.publicKey(),
+      amount,
+      issuer: assetIssuer,
+      assetCode: tokenAddress,
+      network: requiredNetwork,
+    });
+  }
+
+  if (!pre.ok) {
+    // Thrown with the diagnosis, not the code. The route forwards
+    // err.message to the UI verbatim, so this string is what the user and
+    // the on-call engineer both read.
+    throw new Error(pre.diagnosis ?? `Stellar preflight failed (${pre.code ?? 'unknown'})`);
+  }
+
   const account = await horizon.loadAccount(sourceKeypair.publicKey());
 
   let builder = new TransactionBuilder(account, {
@@ -429,8 +482,15 @@ export async function sendStellarUsdcPayment(input: {
   const transaction = builder.setTimeout(180).build();
   transaction.sign(sourceKeypair);
 
-  const result = await horizon.submitTransaction(transaction);
-  return result.hash;
+  try {
+    const result = await horizon.submitTransaction(transaction);
+    return result.hash;
+  } catch (error: any) {
+    // Horizon buries operation failures in extras.result_codes. Surfacing
+    // "op_no_trust" is barely better than "Not Found"; surfacing what it
+    // means is the point.
+    throw new Error(explainHorizonError(error));
+  }
 }
 
 /**
