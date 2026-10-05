@@ -157,6 +157,31 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'Starknet End to End (live RPC)',
+    command: 'tsx scripts/test-starknet-e2e.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-starknet-e2e.json' },
+  },
+  {
+    name: 'Transfer Fee Policy',
+    command: 'tsx scripts/test-transfer-fee-policy.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-transfer-fee-policy.json' },
+  },
+  {
+    name: 'Tiered Fees: Celo & Stellar',
+    command: 'tsx scripts/test-tiered-fee-celo-stellar.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-tiered-fee.json' },
+  },
+  {
+    name: 'Service Agreement Fee Policy',
+    command: 'tsx scripts/test-service-agreement-fee-policy.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-sa-fee-policy.json' },
+  },
+  {
+    name: 'MoneyGram Webhook Receiver & Routes',
+    command: 'tsx scripts/test-moneygram-webhook.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-moneygram-webhook.json' },
+  },
+  {
     name: 'MoneyGram Anchor Discovery & SEP-10 Trust',
     command: 'tsx scripts/test-moneygram-anchor.ts',
     env: {

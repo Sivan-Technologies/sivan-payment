@@ -5,6 +5,7 @@ import {
   moneyGramEnvironment,
   isMoneyGramProduction,
   rampsApiKeys,
+  sivanHomeDomain,
 } from '../config/moneygram.config.js';
 import {
   anchorHealth,
@@ -112,11 +113,30 @@ export async function moneygramRoutes(app: FastifyInstance) {
       checks: [],
       problems: [String(err?.message ?? err)],
     }));
+
+    /**
+     * The client domain gates the overall status only when it is actually
+     * part of this deployment's configuration.
+     *
+     * Letting it gate unconditionally reported a perfectly working sandbox as
+     * degraded purely because MONEYGRAM_HOME_DOMAIN was unset, which is the
+     * normal state of a developer machine and of CI. SEP-10 demonstrably
+     * succeeds against the sandbox anchor without it. In production it does
+     * gate, because there MoneyGram allowlists the domain and a mismatch is a
+     * real outage.
+     */
+    const homeDomainConfigured = (() => {
+      try { sivanHomeDomain(); return true; } catch { return false; }
+    })();
+    const clientDomainGates = homeDomainConfigured || isMoneyGramProduction();
+
     return {
       status:
-        health.reachable && health.signingKeyMatches && clientDomain.ok
+        health.reachable && health.signingKeyMatches &&
+        (!clientDomainGates || clientDomain.ok)
           ? 'healthy'
           : 'degraded',
+      clientDomainGatesStatus: clientDomainGates,
       clientDomain,
       service: 'sivan-moneygram-api',
       protocol: 'Sivan Ai Stellar Native Ramps',
