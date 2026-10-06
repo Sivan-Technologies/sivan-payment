@@ -128,7 +128,7 @@ export async function moneygramRoutes(app: FastifyInstance) {
     const homeDomainConfigured = (() => {
       try { sivanHomeDomain(); return true; } catch { return false; }
     })();
-    const clientDomainGates = homeDomainConfigured || isMoneyGramProduction();
+    const clientDomainGates = isMoneyGramProduction();
 
     return {
       status:
@@ -255,11 +255,23 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
           },
         });
       }
-      if (numAmount > 950) {
+      // Enforce admin-configurable cash-in ceiling (falls back to 950 if not set)
+      const controls = await getMoneyGramControls();
+      const cashInMax = controls.cashInMaxAmountUsdc ?? 950;
+      const cashInMin = controls.cashInMinAmountUsdc ?? controls.minAmountUsdc ?? 5;
+      if (numAmount > cashInMax) {
         return reply.code(400).send({
           error: {
             code: 'EXCEEDS_CASH_IN_LIMIT',
-            message: 'MoneyGram limits Cash-in deposits to a maximum of $950.00 USD per transaction.',
+            message: `MoneyGram Cash-in maximum is $${cashInMax.toFixed(2)} USD per transaction.`,
+          },
+        });
+      }
+      if (numAmount < cashInMin) {
+        return reply.code(400).send({
+          error: {
+            code: 'BELOW_CASH_IN_MIN',
+            message: `MoneyGram Cash-in minimum is $${cashInMin.toFixed(2)} USD.`,
           },
         });
       }
@@ -357,6 +369,12 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
       (c) => c.currency === targetKey || c.code === targetKey || c.alpha3 === targetKey
     );
 
+    // Resolve live admin-configurable limits (with policy floor/ceiling fallbacks)
+    const cashInMin = controls.cashInMinAmountUsdc ?? controls.minAmountUsdc ?? 5;
+    const cashInMax = controls.cashInMaxAmountUsdc ?? 950;
+    const cashOutMin = controls.minAmountUsdc ?? 5;
+    const cashOutMax = controls.maxAmountUsdc ?? 2500;
+
     if (mode === 'deposit') {
       if (corridor && !corridor.cashInEnabled) {
         return reply.code(400).send({
@@ -366,20 +384,36 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
           },
         });
       }
-      if (numAmount > 950) {
+      if (numAmount < cashInMin) {
+        return reply.code(400).send({
+          error: {
+            code: 'BELOW_CASH_IN_MIN',
+            message: `MoneyGram Cash-in minimum is $${cashInMin.toFixed(2)} USD.`,
+          },
+        });
+      }
+      if (numAmount > cashInMax) {
         return reply.code(400).send({
           error: {
             code: 'EXCEEDS_CASH_IN_LIMIT',
-            message: 'MoneyGram limits Cash-in deposits to a maximum of $950.00 USD.',
+            message: `MoneyGram Cash-in maximum is $${cashInMax.toFixed(2)} USD.`,
           },
         });
       }
     } else {
-      if (numAmount > 2500) {
+      if (numAmount < cashOutMin) {
+        return reply.code(400).send({
+          error: {
+            code: 'BELOW_CASH_OUT_MIN',
+            message: `MoneyGram Cash-out minimum is $${cashOutMin.toFixed(2)} USD.`,
+          },
+        });
+      }
+      if (numAmount > cashOutMax) {
         return reply.code(400).send({
           error: {
             code: 'EXCEEDS_CASH_OUT_LIMIT',
-            message: 'MoneyGram limits Cash-out pickups to a maximum of $2,500.00 USD.',
+            message: `MoneyGram Cash-out maximum is $${cashOutMax.toFixed(2)} USD.`,
           },
         });
       }

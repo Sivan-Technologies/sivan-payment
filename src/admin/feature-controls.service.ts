@@ -220,6 +220,8 @@ export async function getPublicFeatureStatus() {
       platformFeePercent: moneyGramControls.platformFeePercent,
       minAmountUsdc: moneyGramControls.minAmountUsdc,
       maxAmountUsdc: moneyGramControls.maxAmountUsdc,
+      cashInMinAmountUsdc: moneyGramControls.cashInMinAmountUsdc ?? moneyGramControls.minAmountUsdc ?? 5,
+      cashInMaxAmountUsdc: moneyGramControls.cashInMaxAmountUsdc ?? 950,
     },
     utilities: {
       enabled: utilitiesControls.enabled && !utilitiesControls.maintenanceMode,

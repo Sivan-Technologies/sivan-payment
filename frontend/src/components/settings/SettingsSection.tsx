@@ -94,7 +94,7 @@ function ProfileSettingsPanel({ api, user, isVerified, identityStatus, pairingCo
       setUsernameBusy(false);
     }
   }
-  const usernameLocked = Boolean(isVerified && user?.username);
+  const usernameLocked = Boolean(user?.username);
 
   // CONTROLLED INPUTS. These were defaultValue with no name and no onChange,
   // so nothing could read them - the "Save changes" button had nothing to
