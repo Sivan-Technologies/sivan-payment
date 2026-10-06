@@ -157,6 +157,11 @@ const TEST_SUITES: TestSuite[] = [
     },
   },
   {
+    name: 'Wallet Chain Family & Dashboard Balance KPI',
+    command: 'tsx scripts/test-wallet-chain-family.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-wallet-chain-family.json' },
+  },
+  {
     name: 'Starknet End to End (live RPC)',
     command: 'tsx scripts/test-starknet-e2e.ts',
     env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-starknet-e2e.json' },
