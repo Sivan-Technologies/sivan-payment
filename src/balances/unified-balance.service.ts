@@ -272,6 +272,23 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
     (wallet) => wallet.balancesUnavailable && spendableNetworks.has(String(wallet.chain).toLowerCase())
   );
 
+  /**
+   * STABLECOIN-ONLY BALANCE.
+   *
+   * Sivan is a stablecoin payment platform. The USD balance the user sees
+   * must answer one question: "how much can I withdraw?". Native gas tokens
+   * (XLM, SOL, BNB, ETH, MATIC, etc.) are NOT pegged to the dollar, and
+   * treating 1 XLM as $1 produces nonsense totals (e.g. 9,999 XLM became
+   * $9,999 on the dashboard).
+   *
+   * Rule: only assets in this set are counted toward the USD balance total.
+   * Non-stablecoins are still present in wallet.balances (passed through to
+   * the Receive page so the user can see their gas balance), but they never
+   * enter the byAsset financial map and therefore never appear in Unified
+   * Balance, Available, or On Hold.
+   */
+  const STABLECOIN_ASSETS = new Set(['usdc', 'usdt', 'usdm', 'cusd']);
+
   // Chain first: it is the truth, and it decides which assets exist at all.
   for (const wallet of wallets) {
     if (wallet.balancesUnavailable) continue;
@@ -295,6 +312,9 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
        * not depend on every present and future adapter being well behaved.
        */
       if (entry.chain && String(entry.chain).toLowerCase() !== String(wallet.chain).toLowerCase()) continue;
+      // Skip non-stablecoin assets (XLM, SOL, BNB, ETH, etc.) — gas tokens
+      // are not USD-pegged and must never be counted in the financial balance.
+      if (!STABLECOIN_ASSETS.has(String(entry.asset).toLowerCase())) continue;
       const row = ensure(String(entry.asset).toLowerCase());
       row.chain = money(num(row.chain) + num(entry.amount));
     }
