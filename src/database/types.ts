@@ -1221,6 +1221,9 @@ export interface ServiceAgreementRecord {
   feeTxHash?: string | null;
   refundTxHash?: string | null;
   refundSignature?: string | null;
+  lastError?: string | null;
+  adminReleaseNote?: string | null;
+  adminReleasedBy?: string | null;
   createdAt: string;
   updatedAt: string;
 }

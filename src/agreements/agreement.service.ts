@@ -28,6 +28,60 @@ import { dispatchCeloSettlementTransfer } from '../wallets/celo/celo-settlement-
 import { getIdentityStatus } from '../identity/identity.service.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserRecord, UserWalletRecord } from '../database/types.js';
 
+/**
+ * Resolve a buyerUserId that may carry a channel prefix (whatsapp:, telegram:, tg:)
+ * to the underlying payments UUID so that findUserWalletForNetwork can match the
+ * correct row in payments_user_wallets.  Raw UUID strings are returned unchanged.
+ *
+ * Without this, agreements created from WhatsApp or Telegram channels store the
+ * raw phone / Telegram ID as buyer_user_id, and the wallet lookup silently returns
+ * undefined — causing the release transfer to either skip the debit entirely or
+ * execute as a no-op circular transfer from the fee wallet.
+ */
+async function resolveBuyerUUID(rawBuyerUserId: string): Promise<string> {
+  const raw = String(rawBuyerUserId || '').trim();
+  if (!raw) return raw;
+
+  // Already a UUID-style payments ID — nothing to resolve
+  if (raw.startsWith('usr_') || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+    return raw;
+  }
+
+  try {
+    let user: UserRecord | undefined;
+
+    // 1. Telegram prefix: tg:123456 or telegram:123456
+    if (raw.startsWith('tg:') || raw.startsWith('telegram:')) {
+      const telegramId = raw.replace(/^(tg:|telegram:)/i, '').trim();
+      user = await (db as any).findUserByTelegramUserId?.(telegramId);
+      if (!user) user = await db.findUserByTarget(telegramId);
+    }
+
+    // 2. WhatsApp prefix: whatsapp:+2349...
+    if (!user && raw.startsWith('whatsapp:')) {
+      const phone = raw.slice('whatsapp:'.length).trim();
+      user = await db.findUserByWhatsappNumber(raw);
+      if (!user) user = await db.findUserByWhatsappNumber(phone);
+      if (!user) {
+        const digits = phone.replace(/\D/g, '');
+        user = await db.findUserByWhatsappNumber(`+${digits}`);
+      }
+    }
+
+    // 3. Fallback: generic target / identity-link lookup
+    if (!user) user = await db.findUserByTarget(raw);
+
+    if (user?.id) {
+      return user.id;
+    }
+  } catch (lookupErr) {
+    console.warn('[agreement.resolveBuyerUUID] lookup note:', lookupErr);
+  }
+
+  // Return the original value so existing fallback paths still apply
+  return raw;
+}
+
 // ─── Cross-channel cancellation notifier ─────────────────────────────────────
 
 /**
@@ -458,6 +512,41 @@ export async function createAgreement(
   if (!input.amountUsdc || input.amountUsdc <= 0) throw badRequest('amountUsdc must be positive');
   if (!input.network) throw badRequest('network is required');
 
+  // Enforce Sivan Identity & Integrity Protocol: No generic/placeholder buyer or seller IDs
+  const DISALLOWED_IDENTIFIERS = [
+    'minipay_buyer',
+    'test_user',
+    'anonymous',
+    'buyer',
+    'seller',
+    'user',
+    'undefined',
+    'null',
+  ];
+  const cleanBuyer = String(input.buyerUserId || '').trim().toLowerCase();
+  const cleanSeller = String(input.sellerUserId || '').trim().toLowerCase();
+
+  if (DISALLOWED_IDENTIFIERS.includes(cleanBuyer)) {
+    throw badRequest(`Invalid buyerUserId: generic placeholder identifiers ('${input.buyerUserId}') are prohibited.`);
+  }
+  if (DISALLOWED_IDENTIFIERS.includes(cleanSeller)) {
+    throw badRequest(`Invalid sellerUserId: generic placeholder identifiers ('${input.sellerUserId}') are prohibited.`);
+  }
+  if (cleanBuyer === cleanSeller) {
+    throw badRequest('Invalid agreement: buyer and seller cannot be the same user identity.');
+  }
+  if (
+    input.buyerWalletAddress &&
+    input.sellerWalletAddress &&
+    input.buyerWalletAddress.trim().toLowerCase() === input.sellerWalletAddress.trim().toLowerCase()
+  ) {
+    throw badRequest('Invalid agreement: buyer wallet address cannot equal seller wallet address.');
+  }
+
+  // Pre-resolve buyer identity to actual DB user ID when available
+  const resolvedBuyerUUID = await resolveBuyerUUID(input.buyerUserId);
+  const effectiveBuyerUserId = resolvedBuyerUUID || input.buyerUserId;
+
   const parseResult = parseDeliveryDeadline(input.description || '');
   const deadlineDays = input.deadlineDays ?? parseResult.deadlineDays;
 
@@ -513,7 +602,7 @@ export async function createAgreement(
 
   const agreement: ServiceAgreementRecord = {
     id: input.id || generateId('agr'),
-    buyerUserId: input.buyerUserId,
+    buyerUserId: effectiveBuyerUserId,
     sellerUserId: input.sellerUserId,
     title: input.title,
     description: input.description || '',
@@ -722,7 +811,8 @@ export async function fundAgreement(agreementId: string, externalTxHash?: string
 
   if (!fundingTxHash) {
     try {
-      const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+      const resolvedBuyerUUID = await resolveBuyerUUID(existing.buyerUserId);
+      const buyerWallet = await db.findUserWalletForNetwork(resolvedBuyerUUID, existing.network || 'solana');
       if (buyerWallet) {
         const activeProviderName = await resolveActiveWalletProvider();
         const network = (existing.network || 'solana').toLowerCase();
@@ -1011,7 +1101,10 @@ async function resolveContractorUser(sellerTarget: string, network: string = 'ce
  * Buyer approves delivery and releases funds.
  * Executes on-chain transfer directly to seller wallet, debits buyer hold, and credits contractor available balance.
  */
-export async function releaseAgreement(agreementId: string): Promise<ServiceAgreementRecord> {
+export async function releaseAgreement(
+  agreementId: string,
+  toAddressOverride?: string
+): Promise<ServiceAgreementRecord> {
   const existing = await db.findServiceAgreementById(agreementId);
   if (!existing) throw notFound(`Service agreement ${agreementId}`);
   
@@ -1068,11 +1161,40 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
 
   try {
     const activeProviderName = await resolveActiveWalletProvider();
-    const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+    const resolvedBuyerUUID = await resolveBuyerUUID(existing.buyerUserId);
+    const buyerWallet = await db.findUserWalletForNetwork(resolvedBuyerUUID, existing.network || 'solana');
     const sellerWallet = await db.findUserWalletForNetwork(contractorUser.id, existing.network || 'solana');
-    const targetToAddress = contractorAddress || sellerWallet?.address;
+    const targetToAddress = toAddressOverride || contractorAddress || sellerWallet?.address;
+
+    // CIRCULAR TRANSFER GUARD
+    // If the resolved sender wallet address equals the recipient address the
+    // transfer is a no-op at best and silently misleading at worst. Throw
+    // immediately so the release fails visibly rather than recording a fake
+    // tx hash that moved nothing.
+    if (buyerWallet?.address && targetToAddress && buyerWallet.address.toLowerCase() === targetToAddress.toLowerCase()) {
+      throw new Error(
+        `Circular transfer detected for agreement ${existing.id}: ` +
+        `sender wallet (${buyerWallet.address}) equals recipient address. ` +
+        'Release rejected — check buyer/seller identity mapping.'
+      );
+    }
 
     if (targetToAddress) {
+      // Recipient address format check
+      if (existing.network === 'solana') {
+        if (!/^[1-9A-HJ-NP-za-km-z]{32,44}$/.test(targetToAddress)) {
+          throw new Error(`Invalid Solana recipient wallet address format: '${targetToAddress}'`);
+        }
+      } else if (existing.network === 'celo' || targetToAddress.startsWith('0x')) {
+        if (!/^0x[0-9a-fA-F]{40}$/.test(targetToAddress)) {
+          throw new Error(`Invalid EVM/Celo recipient wallet address format: '${targetToAddress}'`);
+        }
+      } else if (existing.network === 'stellar') {
+        if (!/^G[A-Z0-9]{55}$/.test(targetToAddress)) {
+          throw new Error(`Invalid Stellar recipient wallet address format: '${targetToAddress}'`);
+        }
+      }
+
       // Priority 1: Automated Celo on-chain relayer transfer from Sivan Agent Vault
       if ((existing.network === 'celo' || targetToAddress.startsWith('0x')) && targetToAddress.length === 42) {
         const relayerRes = await dispatchCeloSettlementTransfer({
@@ -1105,16 +1227,51 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
         } else if (isCeloAgreement) {
           // For Celo agreements, a failed relayer dispatch is a hard error.
           // Do NOT fall through to Priority 2 or mark the DB released.
-          throw new Error(
-            `Celo settlement transfer failed for agreement ${existing.id}: ${relayerRes.error || 'unknown relayer error'}. ` +
-            'No funds were transferred. Agreement status has NOT been updated.'
-          );
+          const errorMsg = `Celo settlement transfer failed for agreement ${existing.id}: ${relayerRes.error || 'unknown relayer error'}. No funds were transferred.`;
+          await db.updateServiceAgreement({
+            ...existing,
+            lastError: errorMsg,
+            updatedAt: nowIso(),
+          });
+          throw new Error(`${errorMsg} Agreement status has NOT been updated.`);
         }
       }
 
       if (!isCeloAgreement) {
+        // Pre-flight check: Verify source wallet balance before attempting broadcast
+        if (buyerWallet?.providerWalletId) {
+          try {
+            const provider = getWalletProvider(buyerWallet?.provider ?? activeProviderName);
+            const balances = await provider.getBalances(
+              buyerWallet.providerWalletId,
+              buyerWallet.customerId,
+              buyerWallet.address,
+              (existing.network || 'solana') as any
+            );
+            const tokenMatch = balances.find(
+              (b) =>
+                b.asset.toLowerCase() === (existing.currency || 'usdc').toLowerCase() &&
+                b.chain.toLowerCase() === (existing.network || 'solana').toLowerCase()
+            );
+            const availableAmount = tokenMatch ? Number(tokenMatch.amount) : 0;
+            if (availableAmount < sellerNetAmount) {
+              const errorMsg = `Insufficient balance in buyer wallet (${buyerWallet.address}) for ${existing.network}: available ${availableAmount} ${existing.currency || 'USDC'}, required ${sellerNetAmount} ${existing.currency || 'USDC'}. Please top up the wallet before release.`;
+              await db.updateServiceAgreement({
+                ...existing,
+                lastError: errorMsg,
+                updatedAt: nowIso(),
+              });
+              throw new Error(errorMsg);
+            }
+          } catch (balErr: any) {
+            if (balErr.message?.includes('Insufficient balance')) {
+              throw balErr;
+            }
+            console.warn('[agreement.release] Pre-flight balance check warning:', balErr?.message || balErr);
+          }
+        }
+
         // Priority 2: Provider transfer fallback for non-Celo networks only.
-        // For Celo, we rely exclusively on the vault relayer (Priority 1 above).
         try {
           const provider = getWalletProvider(buyerWallet?.provider ?? sellerWallet?.provider ?? activeProviderName);
           if (!releaseTxHash) {
@@ -1129,6 +1286,9 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
               reference: existing.id,
             });
             releaseTxHash = (netTransferResult as any).transactionHash || (netTransferResult as any).txHash || (netTransferResult as any).providerTransferId || null;
+            if (!releaseTxHash) {
+              throw new Error(`Wallet provider did not return a confirmed transaction hash for agreement ${existing.id}.`);
+            }
           }
 
           // Transfer Sivan Platform Fee for non-Celo networks
@@ -1150,16 +1310,22 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
               console.warn('[agreement.release] Non-Celo fee transfer note:', feeErr);
             }
           }
-        } catch (netTransferErr) {
-          console.warn('[agreement.release] Non-Celo on-chain broadcast note:', netTransferErr);
+        } catch (netTransferErr: any) {
+          const errorMsg = `Settlement transfer broadcast failed on ${existing.network || 'solana'}: ${netTransferErr?.message || netTransferErr}`;
+          await db.updateServiceAgreement({
+            ...existing,
+            lastError: errorMsg,
+            updatedAt: nowIso(),
+          });
+          throw new Error(
+            `${errorMsg}. Agreement status has NOT been updated to prevent phantom releases.`
+          );
         }
       }
     }
   } catch (onChainErr: any) {
-    if (isCeloAgreement) {
-      throw onChainErr;
-    }
-    console.warn('[agreement.release] Settlement transfer fallback to ledger release:', onChainErr?.message || onChainErr);
+    // Both Celo and non-Celo on-chain errors must NOT fall through to a fake release!
+    throw onChainErr;
   }
 
   const updated: ServiceAgreementRecord = {
@@ -1171,6 +1337,7 @@ export async function releaseAgreement(agreementId: string): Promise<ServiceAgre
     sellerNetAmountUsdc: sellerNetAmount,
     buyerTotalPayableUsdc: payableAmount,
     feeAmountUsdc: feeAmount,
+    lastError: null,
     updatedAt: now,
   };
 
@@ -1254,7 +1421,8 @@ export async function cancelAgreement(
   ) {
     try {
       const activeProviderName = await resolveActiveWalletProvider();
-      const buyerWallet = await db.findUserWalletForNetwork(existing.buyerUserId, existing.network || 'solana');
+      const resolvedBuyerUUID = await resolveBuyerUUID(existing.buyerUserId);
+      const buyerWallet = await db.findUserWalletForNetwork(resolvedBuyerUUID, existing.network || 'solana');
       const targetAddress = buyerTargetAddress || buyerWallet?.address;
 
       if (targetAddress) {
@@ -1467,3 +1635,155 @@ async function syncEscrowAgentFunding(
     console.warn('[agreement.service] syncEscrowAgentFunding note:', err?.message || err);
   }
 }
+
+// ─── Admin Agreement Operations ──────────────────────────────────────────────
+
+export interface AdminReleaseAgreementInput {
+  agreementId: string;
+  toAddressOverride?: string;
+  releaseTxHashOverride?: string;
+  adminNote?: string;
+  callerAdmin?: string;
+}
+
+/**
+ * Administrative action to force-release or retry release on a service agreement.
+ * Supports toAddressOverride (if original seller ATA/address was misconfigured)
+ * and releaseTxHashOverride (if manual on-chain broadcast was executed).
+ */
+export async function adminReleaseAgreement(
+  input: AdminReleaseAgreementInput
+): Promise<ServiceAgreementRecord> {
+  const existing = await db.findServiceAgreementById(input.agreementId);
+  if (!existing) throw notFound(`Service agreement ${input.agreementId}`);
+
+  // Option A: Admin manual on-chain transaction hash binding
+  if (input.releaseTxHashOverride?.trim()) {
+    const txHash = input.releaseTxHashOverride.trim();
+    const now = nowIso();
+    const updated: ServiceAgreementRecord = {
+      ...existing,
+      status: 'released',
+      releasedAt: existing.releasedAt || now,
+      releaseTxHash: txHash,
+      lastError: null,
+      adminReleaseNote: input.adminNote || 'Admin manual on-chain transaction hash binding',
+      adminReleasedBy: input.callerAdmin || 'admin',
+      updatedAt: now,
+    };
+    await db.updateServiceAgreement(updated);
+
+    // Ledger settlement entries: Debit buyer held balance AND credit contractor available balance
+    try {
+      const payableAmount = existing.buyerTotalPayableUsdc ?? existing.amountUsdc;
+      const sellerNetAmount = existing.sellerNetAmountUsdc ?? existing.amountUsdc;
+      await createBalanceLedgerEntry({
+        userId: existing.buyerUserId,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        amount: String(payableAmount),
+        kind: 'debit_transfer',
+        status: 'completed',
+        sourceType: 'service_agreement',
+        sourceId: existing.id,
+        description: `Admin manual release: Debit ${payableAmount} ${(existing.currency || 'USDC').toUpperCase()} for Agreement (${existing.title}) [Admin: ${input.callerAdmin || 'admin'}]`,
+      });
+      await createBalanceLedgerEntry({
+        userId: existing.sellerUserId,
+        asset: ((existing.currency || 'usdc').toLowerCase() as any),
+        amount: String(sellerNetAmount),
+        kind: 'credit_available',
+        status: 'completed',
+        sourceType: 'service_agreement',
+        sourceId: existing.id,
+        description: `Admin manual release: Credit ${sellerNetAmount} ${(existing.currency || 'USDC').toUpperCase()} for Agreement (${existing.title}) [Admin: ${input.callerAdmin || 'admin'}]`,
+      });
+    } catch (ledgerErr) {
+      console.warn('[adminReleaseAgreement] Ledger recording note:', ledgerErr);
+    }
+    return updated;
+  }
+
+  // Option B: Trigger standard or overridden release
+  const released = await releaseAgreement(existing.id, input.toAddressOverride);
+  if (input.adminNote || input.callerAdmin) {
+    const now = nowIso();
+    const withAudit: ServiceAgreementRecord = {
+      ...released,
+      adminReleaseNote: input.adminNote || null,
+      adminReleasedBy: input.callerAdmin || 'admin',
+      updatedAt: now,
+    };
+    await db.updateServiceAgreement(withAudit);
+    return withAudit;
+  }
+  return released;
+}
+
+/**
+ * List all service agreements for admin console with filtering and health summary.
+ */
+export async function listAdminAgreements(filters?: {
+  status?: string;
+  network?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{
+  agreements: ServiceAgreementRecord[];
+  total: number;
+  summary: {
+    total: number;
+    funded: number;
+    delivered: number;
+    released: number;
+    attentionRequired: number;
+  };
+}> {
+  const all: ServiceAgreementRecord[] = await (db as any).listServiceAgreements();
+  let filtered: ServiceAgreementRecord[] = [...all];
+
+  if (filters?.status && filters.status !== 'all') {
+    filtered = filtered.filter((a: ServiceAgreementRecord) => a.status === filters.status);
+  }
+  if (filters?.network && filters.network !== 'all') {
+    filtered = filtered.filter((a: ServiceAgreementRecord) => (a.network || '').toLowerCase() === filters.network?.toLowerCase());
+  }
+  if (filters?.search) {
+    const q = filters.search.toLowerCase();
+    filtered = filtered.filter(
+      (a: ServiceAgreementRecord) =>
+        a.id.toLowerCase().includes(q) ||
+        a.title.toLowerCase().includes(q) ||
+        a.buyerUserId.toLowerCase().includes(q) ||
+        a.sellerUserId.toLowerCase().includes(q) ||
+        (a.releaseTxHash || '').toLowerCase().includes(q)
+    );
+  }
+
+  // Sort newest first
+  filtered.sort((a: ServiceAgreementRecord, b: ServiceAgreementRecord) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const summary = {
+    total: all.length,
+    funded: all.filter((a: ServiceAgreementRecord) => a.status === 'funded').length,
+    delivered: all.filter((a: ServiceAgreementRecord) => a.status === 'delivered').length,
+    released: all.filter((a: ServiceAgreementRecord) => a.status === 'released').length,
+    attentionRequired: all.filter(
+      (a: ServiceAgreementRecord) =>
+        Boolean(a.lastError) ||
+        (a.status === 'delivered' && !a.releasedAt) ||
+        (a.status === 'released' && !a.releaseTxHash)
+    ).length,
+  };
+
+  const limit = filters?.limit ?? 50;
+  const offset = filters?.offset ?? 0;
+  const paged = filtered.slice(offset, offset + limit);
+
+  return {
+    agreements: paged,
+    total: filtered.length,
+    summary,
+  };
+}
+

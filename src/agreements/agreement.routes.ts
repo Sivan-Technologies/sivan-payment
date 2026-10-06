@@ -11,6 +11,8 @@ import {
   extendAgreementDeadline,
   getAgreement,
   getCountdownLabel,
+  adminReleaseAgreement,
+  listAdminAgreements,
 } from './agreement.service.js';
 import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
 import { badRequest, notFound } from '../shared/errors.js';
@@ -333,4 +335,114 @@ export async function agreementRoutes(app: FastifyInstance) {
       });
     }
   );
+
+  /**
+   * GET /api/admin/agreements
+   * List all service agreements with filters and operations health summary.
+   */
+  app.get<{
+    Querystring: {
+      status?: string;
+      network?: string;
+      search?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>('/api/admin/agreements', async (req, reply) => {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+    const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
+    const result = await listAdminAgreements({
+      status: req.query.status,
+      network: req.query.network,
+      search: req.query.search,
+      limit,
+      offset,
+    });
+    return reply.code(200).send({ data: result });
+  });
+
+  /**
+   * GET /api/admin/agreements/:id
+   * Get detail for a specific service agreement.
+   */
+  app.get<{ Params: { id: string } }>('/api/admin/agreements/:id', async (req, reply) => {
+    const agreement = await getAgreement(req.params.id);
+    if (!agreement) throw notFound(`Service agreement ${req.params.id}`);
+    return reply.code(200).send({
+      data: {
+        ...agreement,
+        countdownLabel: getCountdownLabel(agreement),
+      },
+    });
+  });
+
+  /**
+   * POST /api/admin/agreements/:id/force-release
+   * Admin intervention to release or force-bind an on-chain transaction hash.
+   */
+  app.post<{
+    Params: { id: string };
+    Body?: {
+      toAddressOverride?: string;
+      releaseTxHashOverride?: string;
+      adminNote?: string;
+    };
+  }>('/api/admin/agreements/:id/force-release', async (req, reply) => {
+    const adminActor = (req as any).adminActor?.email || (req as any).adminActor?.role || 'admin';
+    try {
+      const agreement = await adminReleaseAgreement({
+        agreementId: req.params.id,
+        toAddressOverride: req.body?.toAddressOverride,
+        releaseTxHashOverride: req.body?.releaseTxHashOverride,
+        adminNote: req.body?.adminNote,
+        callerAdmin: adminActor,
+      });
+      return reply.code(200).send({
+        success: true,
+        data: {
+          ...agreement,
+          countdownLabel: getCountdownLabel(agreement),
+        },
+      });
+    } catch (err: any) {
+      req.log.error(err, `Admin force-release failed for agreement ${req.params.id}`);
+      return reply.code(err.statusCode || 400).send({
+        success: false,
+        error: {
+          code: err.code || 'ADMIN_RELEASE_FAILED',
+          message: err.message || 'Admin release failed',
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /api/admin/agreements/:id/retry
+   * Admin re-attempts the automated on-chain release.
+   */
+  app.post<{ Params: { id: string } }>('/api/admin/agreements/:id/retry', async (req, reply) => {
+    const adminActor = (req as any).adminActor?.email || (req as any).adminActor?.role || 'admin';
+    try {
+      const agreement = await adminReleaseAgreement({
+        agreementId: req.params.id,
+        callerAdmin: adminActor,
+      });
+      return reply.code(200).send({
+        success: true,
+        data: {
+          ...agreement,
+          countdownLabel: getCountdownLabel(agreement),
+        },
+      });
+    } catch (err: any) {
+      req.log.error(err, `Admin retry failed for agreement ${req.params.id}`);
+      return reply.code(err.statusCode || 400).send({
+        success: false,
+        error: {
+          code: err.code || 'ADMIN_RETRY_FAILED',
+          message: err.message || 'Admin retry failed',
+        },
+      });
+    }
+  });
 }

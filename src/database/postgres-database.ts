@@ -2423,6 +2423,21 @@ export class PostgresDatabase {
     }
   }
 
+  async listServiceAgreements(limit = 200): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT * FROM payments_service_agreements
+         ORDER BY created_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+      return result.rows.map(mapServiceAgreement);
+    } finally {
+      client.release();
+    }
+  }
+
   async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
     const client = await this.pool.connect();
     try {

@@ -1548,6 +1548,13 @@ export class JsonDatabase {
     return (data.serviceAgreements ?? []).find((a) => a.id === id) ?? null;
   }
 
+  async listServiceAgreements(limit = 200): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    return [...(data.serviceAgreements ?? [])]
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      .slice(0, limit);
+  }
+
   async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
     const data = await this.read();
     const rawList = (Array.isArray(userIdOrAliases) ? userIdOrAliases : [userIdOrAliases]).filter(Boolean);
