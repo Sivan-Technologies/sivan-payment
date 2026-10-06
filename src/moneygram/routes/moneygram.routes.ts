@@ -246,6 +246,25 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
         (c) => c.currency === queryKey || c.code === queryKey || c.alpha3 === queryKey
       ) || SUPPORTED_MONEYGRAM_CORRIDORS[0]; // Default
 
+    if (mode === 'deposit') {
+      if (!corridor.cashInEnabled) {
+        return reply.code(400).send({
+          error: {
+            code: 'CASH_IN_NOT_SUPPORTED',
+            message: `MoneyGram Cash-in (deposit) is not supported for ${corridor.country} (${corridor.currency}). Cash-in is strictly limited to 27 authorized countries under MoneyGram policy. Did you mean Cash-out (pickup)?`,
+          },
+        });
+      }
+      if (numAmount > 950) {
+        return reply.code(400).send({
+          error: {
+            code: 'EXCEEDS_CASH_IN_LIMIT',
+            message: 'MoneyGram limits Cash-in deposits to a maximum of $950.00 USD per transaction.',
+          },
+        });
+      }
+    }
+
     const exchangeRate = await resolveCorridorRate(corridor.currency, numAmount, corridor.rate);
 
     const targetAmount = (numAmount * exchangeRate).toFixed(
@@ -332,6 +351,39 @@ async function resolveCorridorRate(corridorCurrency: string, numAmount: number, 
     }
 
     const numAmount = Number(amount) || 25;
+
+    const targetKey = (targetCurrency || 'NGN').toUpperCase().trim();
+    const corridor = SUPPORTED_MONEYGRAM_CORRIDORS.find(
+      (c) => c.currency === targetKey || c.code === targetKey || c.alpha3 === targetKey
+    );
+
+    if (mode === 'deposit') {
+      if (corridor && !corridor.cashInEnabled) {
+        return reply.code(400).send({
+          error: {
+            code: 'CASH_IN_NOT_SUPPORTED',
+            message: `MoneyGram Cash-in is not supported for ${corridor.country} (${corridor.currency}). Cash-in is strictly limited to 27 authorized countries under MoneyGram integration policy.`,
+          },
+        });
+      }
+      if (numAmount > 950) {
+        return reply.code(400).send({
+          error: {
+            code: 'EXCEEDS_CASH_IN_LIMIT',
+            message: 'MoneyGram limits Cash-in deposits to a maximum of $950.00 USD.',
+          },
+        });
+      }
+    } else {
+      if (numAmount > 2500) {
+        return reply.code(400).send({
+          error: {
+            code: 'EXCEEDS_CASH_OUT_LIMIT',
+            message: 'MoneyGram limits Cash-out pickups to a maximum of $2,500.00 USD.',
+          },
+        });
+      }
+    }
 
     try {
       const session = await createMoneyGramSep24WithdrawSession({
