@@ -104,8 +104,17 @@ async function main() {
 
   const { resolveOrCreateDva, completeAfterIdentification, getDvaState } =
     await import('../src/virtual-accounts/service/paystackDvaService.js');
+  const { db } = await import('../src/database/json-database.js');
 
   const userId = 'stub-user-' + Date.now();
+  const now = new Date().toISOString();
+  await db.insertUserRecord({
+    id: userId,
+    email: `${userId}@user.sivantech.online`,
+    fullName: 'Samson Micheal',
+    createdAt: now,
+    updatedAt: now,
+  });
 
   // ── 1. Initial flow must stop at 'verifying' ────────────────────
   console.log('\n══ 1. Identity Is Not Assumed Verified ══');
@@ -160,6 +169,13 @@ async function main() {
   console.log('\n══ 5. Identification Failure ══');
   identificationFails = true;
   const failUser = 'stub-fail-' + Date.now();
+  await db.insertUserRecord({
+    id: failUser,
+    email: `${failUser}@user.sivantech.online`,
+    fullName: 'Bad Name',
+    createdAt: now,
+    updatedAt: now,
+  });
   const bad = await resolveOrCreateDva({
     userId: failUser, legalName: 'Bad Name', identifier: '00000000000',
   });

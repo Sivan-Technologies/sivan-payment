@@ -251,6 +251,23 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
     };
   }
 
+  try {
+    const now = new Date().toISOString();
+    await db.insertCustomerRecord({
+      id: customer.customer_code,
+      userId,
+      provider: PROVIDER,
+      providerCustomerId: customer.customer_code,
+      customerType: 'individual',
+      kycStatus: 'pending',
+      tosStatus: 'approved',
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (_ignored) {
+    // Already created on prior step or idempotent re-entry
+  }
+
   await persist(userId, {
     customerId: customer.customer_code,
     status: 'under_review',
