@@ -159,6 +159,26 @@ async function main() {
   const customerCode = 'CUS_mock_test_code_99';
   const now = new Date().toISOString();
 
+  await db.insertUserRecord({
+    id: testUserId,
+    email: 'webhook-test@user.sivantech.online',
+    fullName: 'Samson Micheal',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await db.insertCustomerRecord({
+    id: customerCode,
+    userId: testUserId,
+    provider: 'paystack',
+    providerCustomerId: customerCode,
+    customerType: 'individual',
+    kycStatus: 'verified',
+    tosStatus: 'approved',
+    createdAt: now,
+    updatedAt: now,
+  });
+
   await db.upsertVirtualAccountRecord({
     id: 'va_paystack_test_row_99',
     userId: testUserId,
