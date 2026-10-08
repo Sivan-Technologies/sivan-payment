@@ -29,6 +29,7 @@ import {
   hasWithdrawalPin,
   setWithdrawalPin,
   verifyWithdrawalPin,
+  verifyPinForUserId,
 } from '../src/identity/withdrawal-pin.service.js';
 
 const SERVICE_SECRET = process.env.IDENTITY_LINK_SERVICE_SECRET ?? 'pin-test-secret';
@@ -113,7 +114,7 @@ async function main() {
     // Resolves a chat identity the way the route does, without needing a real
     // linked WhatsApp or Telegram account for every case under test.
     const resolver = async (_channel: string, identity: string) =>
-      identity === 'alice-chat' ? alice.id : identity === 'bob-chat' ? bob.id : undefined;
+      identity === 'alice-chat' || identity === 'alice-tg' ? alice.id : identity === 'bob-chat' ? bob.id : undefined;
 
     // 1. WEAK PINS ---------------------------------------------------------
     assertRejectsSync(() => assertPinIsAcceptable('123456'), 'PIN 123456 is refused as guessable');
@@ -237,8 +238,16 @@ async function main() {
       { channel: 'whatsapp', identity: 'alice-chat', pin: '824193', ...payout } as any,
       resolver as any, { ipAddress: '127.0.0.1' });
     assert(typeof minted.stepUpToken === 'string' && minted.stepUpToken.length > 20,
-      'a correct PIN mints a step-up token');
+      'a correct PIN mints a step-up token on WhatsApp');
     assert(minted.userId === alice.id, 'the token is minted for the resolved user');
+
+    // 7b. CROSS-CHANNEL: ONE PIN SET ON WEB WORKS ON TELEGRAM TOO -----------
+    const mintedTelegram: any = await verifyWithdrawalPin(
+      { channel: 'telegram', identity: 'alice-tg', pin: '824193', ...payout } as any,
+      resolver as any, { ipAddress: '127.0.0.1' });
+    assert(typeof mintedTelegram.stepUpToken === 'string' && mintedTelegram.stepUpToken.length > 20,
+      'PIN set on Web is successfully verified on Telegram');
+    assert(mintedTelegram.userId === alice.id, 'the telegram token is minted for alice');
 
     /**
      * Amount and destination mismatches expect the SAME message, deliberately.
@@ -305,6 +314,27 @@ async function main() {
       // something that no longer tells the user their PIN still works.
       'Too many incorrect PIN attempts',
       'after 5 wrong PINs the correct PIN is refused too');
+
+    // 10. 24-HOUR WITHDRAWAL HOLD AFTER A PIN CHANGE ------------------------
+    const carol = await createUser('carol');
+    await setWithdrawalPin(carol.id, { pin: '391048' }, { ipAddress: '127.0.0.1' });
+    assert((await hasWithdrawalPin(carol.id)) === true, 'carol sets initial PIN without hold');
+
+    // Carol changes PIN on web (requires currentPin):
+    await setWithdrawalPin(carol.id, { pin: '840172', currentPin: '391048' }, { ipAddress: '127.0.0.1' });
+
+    const carolResolver = async () => carol.id;
+    await assertRejects(
+      () => verifyWithdrawalPin(
+        { channel: 'telegram', identity: 'carol-tg', pin: '840172', amount: '50', currency: 'NGN', destinationRef: 'acct-c' } as any,
+        carolResolver as any, { ipAddress: '127.0.0.1' }),
+      'Withdrawals are paused because your PIN changed recently',
+      '24-hour withdrawal hold pauses chat withdrawals after PIN change');
+
+    await assertRejects(
+      () => verifyPinForUserId(carol.id, '840172', { ipAddress: '127.0.0.1' }),
+      'Withdrawals are paused because your PIN changed recently',
+      '24-hour withdrawal hold pauses web withdrawals after PIN change');
 
     console.log(`\nAll ${passed} assertions passed on ${env.DATABASE_PROVIDER}.\n`);
   } finally {
