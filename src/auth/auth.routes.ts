@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { startEmailAuth, startEmailAuthSchema, verifyEmailAuth, verifyEmailAuthSchema } from './auth.service.js';
 import { disableTwoFactor, enableTwoFactor, getRecoveryQuestionCatalog, getTwoFactorRecoveryChallengeQuestions, getTwoFactorStatus, listUserRecoveryQuestions, setRecoveryQuestionsSchema, setUserRecoveryQuestions, startTwoFactorSetup, twoFactorLoginVerifySchema, twoFactorRecoveryQuestionsChallengeSchema, twoFactorVerifySchema, verifyRecoveryQuestionsSchema, verifyTwoFactorLogin, verifyTwoFactorRecoveryQuestions } from './two-factor.service.js';
-import { signUserJwt, verifyUserJwt } from './jwt.js';
+import { signUserJwt, verifyUserJwt, getAuthUserId } from './jwt.js';
 import { getUser } from '../users/users.service.js';
 import { env } from '../config/env.js';
 
@@ -38,34 +38,40 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/users/:userId/2fa', async (request) => {
-    const { userId } = request.params as { userId: string };
+    let { userId } = request.params as { userId: string };
+    if (userId === 'me') userId = getAuthUserId(request) || userId;
     return { data: await getTwoFactorStatus(userId) };
   });
 
   app.post('/api/users/:userId/2fa/setup', async (request) => {
-    const { userId } = request.params as { userId: string };
+    let { userId } = request.params as { userId: string };
+    if (userId === 'me') userId = getAuthUserId(request) || userId;
     return { data: await startTwoFactorSetup(userId) };
   });
 
   app.post('/api/users/:userId/2fa/enable', async (request) => {
-    const { userId } = request.params as { userId: string };
+    let { userId } = request.params as { userId: string };
+    if (userId === 'me') userId = getAuthUserId(request) || userId;
     const body = parseBody(twoFactorVerifySchema, request.body);
     return { data: await enableTwoFactor(userId, body.code) };
   });
 
   app.post('/api/users/:userId/2fa/disable', async (request) => {
-    const { userId } = request.params as { userId: string };
+    let { userId } = request.params as { userId: string };
+    if (userId === 'me') userId = getAuthUserId(request) || userId;
     const body = parseBody(twoFactorVerifySchema, request.body);
     return { data: await disableTwoFactor(userId, body.code) };
   });
 
   app.get('/api/users/:userId/2fa/recovery-questions', async (request) => {
-    const { userId } = request.params as { userId: string };
+    let { userId } = request.params as { userId: string };
+    if (userId === 'me') userId = getAuthUserId(request) || userId;
     return { data: await listUserRecoveryQuestions(userId) };
   });
 
   app.put('/api/users/:userId/2fa/recovery-questions', async (request) => {
-    const { userId } = request.params as { userId: string };
+    let { userId } = request.params as { userId: string };
+    if (userId === 'me') userId = getAuthUserId(request) || userId;
     const body = parseBody(setRecoveryQuestionsSchema, request.body);
     return { data: await setUserRecoveryQuestions(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
