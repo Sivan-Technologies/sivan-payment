@@ -30,6 +30,8 @@ import {
   hasWithdrawalPin,
   setWithdrawalPin,
   setWithdrawalPinSchema,
+  setChatWithdrawalPinSchema,
+  setInitialPinFromChat,
   verifyWithdrawalPin,
   verifyWithdrawalPinSchema,
   verifyTmaPinStepUp,
@@ -833,6 +835,24 @@ export async function identityRoutes(app: FastifyInstance) {
     const userId = await resolveChatIdentity(body.channel, body.identity);
     return { data: { hasPin: userId ? await hasWithdrawalPin(userId) : false } };
   });
+
+  /**
+   * Set initial withdrawal PIN from an authenticated chat channel (e.g. Meta WhatsApp Flows).
+   * Guarded by identity service secret.
+   * Only allows initial setup when user has no PIN yet; prevents takeovers by blocking chat-based resets.
+   */
+  app.post('/api/identity/set-pin-chat', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(setChatWithdrawalPinSchema, request.body);
+    return {
+      data: await setInitialPinFromChat(
+        body,
+        resolveChatIdentity,
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] }
+      ),
+    };
+  });
+
 
   /**
    * Telegram Mini-App (TMA) & Web Keypad Step-Up PIN Verification.
