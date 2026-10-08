@@ -94,6 +94,8 @@ export const createBalanceTransferSchema = z.object({
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
 });
 
 export const adminBalanceAdjustmentSchema = z.object({
@@ -717,6 +719,17 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   // the user's balance locked behind a transfer that can never settle.
   const addressCheck = validateAddressForChain(input.destinationAddress, input.network as AddressChain);
   if (!addressCheck.valid) throw badRequest(addressCheck.reason ?? 'That destination address is not valid.');
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId,
+    amount: input.amount,
+    destinationAddress: input.destinationAddress,
+    network: input.network,
+    isP2p: false,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
   /**
    * SPENDABLE, NOT "settled ledger available".
    *
@@ -1312,6 +1325,8 @@ export const createP2pTransferSchema = z.object({
   amount: z.coerce.number().positive(),
   recipientTarget: z.string().min(1).max(160),
   note: z.string().max(500).optional(),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
 });
 
 export async function executeP2pTransfer(
@@ -1331,6 +1346,16 @@ export async function executeP2pTransfer(
   if (input.amount < minAmount) {
     throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
   }
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId: senderUserId,
+    amount: input.amount,
+    destinationAddress: input.recipientTarget,
+    isP2p: true,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
 
   const cleanTarget = input.recipientTarget.trim();
   const recipient = await db.findUserByTarget(cleanTarget);
