@@ -28,6 +28,7 @@ import {
   consumeStepUpToken,
   hasWithdrawalPin,
   setWithdrawalPin,
+  setInitialPinFromChat,
   verifyWithdrawalPin,
   verifyPinForUserId,
 } from '../src/identity/withdrawal-pin.service.js';
@@ -335,6 +336,49 @@ async function main() {
       () => verifyPinForUserId(carol.id, '840172', { ipAddress: '127.0.0.1' }),
       'Withdrawals are paused because your PIN changed recently',
       '24-hour withdrawal hold pauses web withdrawals after PIN change');
+
+    // ── Meta WhatsApp Flow / Chat Initial PIN Enrollment Tests ───────────────
+    // 1. HTTP route without service secret -> 403
+    const noSecretSet = await fetch(`${baseUrl}/api/identity/set-pin-chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: 'whatsapp', identity: 'bob-chat', pin: '652914' }),
+    });
+    assert(noSecretSet.status === 403, 'set-pin-chat without service secret is refused (got 403)');
+
+    // 2. Fresh user Dave sets initial PIN via chat flow (who has no PIN yet)
+    const dave = await createUser('dave');
+    const daveResolver = async (_channel: string, identity: string) => identity === 'dave-chat' ? dave.id : undefined;
+    assert((await hasWithdrawalPin(dave.id)) === false, 'Dave has no PIN initially');
+
+    await setInitialPinFromChat(
+      { channel: 'whatsapp', identity: 'dave-chat', pin: '652914' },
+      daveResolver as any,
+      { ipAddress: '127.0.0.1' }
+    );
+    assert((await hasWithdrawalPin(dave.id)) === true, 'Dave now has a withdrawal PIN set via chat flow');
+
+    // 3. Attempting to overwrite existing PIN via chat is refused (prevents chat account takeover)
+    await assertRejects(
+      () => setInitialPinFromChat(
+        { channel: 'whatsapp', identity: 'dave-chat', pin: '839201' },
+        daveResolver as any,
+        { ipAddress: '127.0.0.1' }
+      ),
+      'already set',
+      'overwriting existing PIN via chat is refused'
+    );
+
+    // 4. Unlinked chat account cannot set PIN
+    await assertRejects(
+      () => setInitialPinFromChat(
+        { channel: 'whatsapp', identity: 'ghost-user', pin: '652914' },
+        daveResolver as any,
+        { ipAddress: '127.0.0.1' }
+      ),
+      'not linked',
+      'unlinked chat user cannot set PIN'
+    );
 
     console.log(`\nAll ${passed} assertions passed on ${env.DATABASE_PROVIDER}.\n`);
   } finally {
