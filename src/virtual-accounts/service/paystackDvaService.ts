@@ -174,11 +174,12 @@ async function persist(
 ): Promise<VirtualAccountRecord> {
   const existing = await findDvaRecord(userId);
   const now = new Date().toISOString();
+  const recId = existing?.id ?? recordId(userId);
   const merged: VirtualAccountRecord = {
-    id: existing?.id ?? recordId(userId),
+    id: recId,
     userId,
     provider: PROVIDER,
-    providerAccountId: patch.providerAccountId ?? existing?.providerAccountId ?? '',
+    providerAccountId: patch.providerAccountId ?? existing?.providerAccountId ?? (patch.customerId || recId),
     currency: 'ngn',
     country: 'NG',
     status: patch.status ?? existing?.status ?? 'requested',
@@ -259,7 +260,7 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
       provider: PROVIDER,
       providerCustomerId: customer.customer_code,
       customerType: 'individual',
-      kycStatus: 'pending',
+      kycStatus: 'kyc_under_review',
       tosStatus: 'approved',
       createdAt: now,
       updatedAt: now,
