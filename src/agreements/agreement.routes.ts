@@ -25,6 +25,7 @@ import {
 } from './agreement-controls.service.js';
 
 import { db } from '../database/json-database.js';
+import { getAuthUserId } from '../auth/jwt.js';
 
 interface CreateAgreementBody {
   id?: string;
@@ -59,11 +60,34 @@ export async function agreementRoutes(app: FastifyInstance) {
       sellerUserId?: string;
     };
   }>('/api/agreements', async (req, reply) => {
-    const target = req.query.walletAddress || req.query.userId || req.query.buyerUserId || req.query.sellerUserId;
+    let target = req.query.walletAddress || req.query.userId || req.query.buyerUserId || req.query.sellerUserId;
+    if (!target || target === 'me') {
+      const authUser = getAuthUserId(req);
+      if (authUser) target = authUser;
+    }
     if (!target) {
       return reply.code(200).send([]);
     }
-    const list = await db.listServiceAgreementsByUserId(target);
+
+    const aliases: string[] = [target];
+    try {
+      const user = await db.findUserById(target).catch(() => null);
+      if (user) {
+        if (user.id) aliases.push(user.id);
+        if (user.email) aliases.push(user.email);
+        if (user.username) aliases.push(user.username);
+        if ((user as any).phone) aliases.push((user as any).phone);
+        if (user.whatsappNumber) aliases.push(user.whatsappNumber);
+        if (user.telegramUserId) aliases.push(String(user.telegramUserId));
+        if (user.telegramUsername) aliases.push(user.telegramUsername);
+        const wallets = await db.listUserWallets(user.id).catch(() => []);
+        for (const w of wallets) {
+          if (w.address) aliases.push(w.address);
+        }
+      }
+    } catch {}
+
+    const list = await db.listServiceAgreementsByUserId(aliases.length > 1 ? aliases : target);
     const enriched = list.map((a) => ({
       ...a,
       countdownLabel: getCountdownLabel(a),
