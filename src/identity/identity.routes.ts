@@ -1096,6 +1096,8 @@ export async function identityRoutes(app: FastifyInstance) {
           username: user.username,
           displayName: (user as any).name || (user as any).fullName || user.username || (user as any).telegramUsername || user.whatsappNumber || 'Sivan User',
           phone: user.whatsappNumber,
+          telegramUserId: user.telegramUserId,
+          telegramUsername: user.telegramUsername,
           targetAddress,
           chain: requestedChain,
           wallets: userWallets.map((w) => ({ chain: w.chain, address: w.address })),

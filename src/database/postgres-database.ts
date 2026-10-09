@@ -572,29 +572,65 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try {
       let res = await client.query('select * from users where user_id=$1 limit 1', [clean]);
-      if (res.rows[0]) return mapUser(res.rows[0]);
+      if (res.rows[0]) {
+        const userRec = mapUser(res.rows[0]);
+        if (!userRec.telegramUserId) {
+          const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
+          if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
+          if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+        }
+        return userRec;
+      }
 
       const username = clean.replace(/^@/, '');
       res = await client.query('select * from users where lower(username)=lower($1) or lower(telegram_username)=lower($1) limit 1', [username]);
-      if (res.rows[0]) return mapUser(res.rows[0]);
+      if (res.rows[0]) {
+        const userRec = mapUser(res.rows[0]);
+        if (!userRec.telegramUserId) {
+          const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
+          if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
+          if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+        }
+        return userRec;
+      }
 
       const digitsOnly = clean.replace(/\D/g, '');
       res = await client.query('select * from users where whatsapp_number=$1 or whatsapp_number=$2 limit 1', [clean, `+${digitsOnly}`]);
-      if (res.rows[0]) return mapUser(res.rows[0]);
+      if (res.rows[0]) {
+        const userRec = mapUser(res.rows[0]);
+        if (!userRec.telegramUserId) {
+          const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
+          if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
+          if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+        }
+        return userRec;
+      }
 
       res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
       if (res.rows[0]) return mapUser(res.rows[0]);
 
       // Check customer_identity_links for linked Telegram accounts or phones
       const linkRes = await client.query(
-        `select payment_user_id from customer_identity_links 
+        `select payment_user_id, telegram_user_id, telegram_username, whatsapp_number from customer_identity_links 
          where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number=$3 or whatsapp_number=$4
          order by linked_at desc nulls last limit 1`,
         [username, clean, clean, `+${digitsOnly}`]
       );
       if (linkRes.rows[0]?.payment_user_id) {
         const u = await client.query('select * from users where user_id=$1 limit 1', [linkRes.rows[0].payment_user_id]);
-        if (u.rows[0]) return mapUser(u.rows[0]);
+        if (u.rows[0]) {
+          const userRec = mapUser(u.rows[0]);
+          if (!userRec.telegramUserId && linkRes.rows[0].telegram_user_id) {
+            userRec.telegramUserId = String(linkRes.rows[0].telegram_user_id);
+          }
+          if (!userRec.telegramUsername && linkRes.rows[0].telegram_username) {
+            userRec.telegramUsername = String(linkRes.rows[0].telegram_username);
+          }
+          if (!userRec.whatsappNumber && linkRes.rows[0].whatsapp_number) {
+            userRec.whatsappNumber = String(linkRes.rows[0].whatsapp_number);
+          }
+          return userRec;
+        }
       }
 
       return undefined;

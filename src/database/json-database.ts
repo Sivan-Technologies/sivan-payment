@@ -291,14 +291,30 @@ export class JsonDatabase {
     const clean = String(target || '').trim();
     if (!clean) return undefined;
 
+    // Helper to backfill telegram info from customerIdentityLinks if missing on user
+    const backfillUser = (u: UserRecord): UserRecord => {
+      if (u.telegramUserId && (u as any).telegramUsername) return u;
+      const links = data.customerIdentityLinks || [];
+      const link = links.find((l) => l.paymentUserId === u.id && (l.telegramUserId || l.telegramUsername));
+      if (link) {
+        return {
+          ...u,
+          telegramUserId: u.telegramUserId || link.telegramUserId,
+          telegramUsername: (u as any).telegramUsername || link.telegramUsername,
+          whatsappNumber: u.whatsappNumber || link.whatsappNumber,
+        };
+      }
+      return u;
+    };
+
     // 1. Direct ID match
     let user = data.users.find((u) => u.id === clean);
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 2. Username match (@username or username)
     const username = clean.replace(/^@/, '').toLowerCase();
     user = data.users.find((u) => u.username?.toLowerCase() === username || (u as any).telegramUsername?.toLowerCase() === username);
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 3. Phone / WhatsApp match (normalize to E.164 and local)
     const digitsOnly = clean.replace(/\D/g, '');
@@ -312,11 +328,11 @@ export class JsonDatabase {
       }
       return false;
     });
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 4. Telegram user ID match
     user = data.users.find((u) => u.telegramUserId === clean);
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 5. Customer identity links match (linked Telegram accounts, phones, usernames)
     const links = data.customerIdentityLinks || [];
@@ -327,7 +343,14 @@ export class JsonDatabase {
     );
     if (matchedLink?.paymentUserId) {
       user = data.users.find((u) => u.id === matchedLink.paymentUserId);
-      if (user) return user;
+      if (user) {
+        return {
+          ...user,
+          telegramUserId: user.telegramUserId || matchedLink.telegramUserId,
+          telegramUsername: (user as any).telegramUsername || matchedLink.telegramUsername,
+          whatsappNumber: user.whatsappNumber || matchedLink.whatsappNumber,
+        };
+      }
     }
 
     return undefined;
