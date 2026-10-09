@@ -24,7 +24,14 @@ import { dispatchCeloSettlementTransfer } from '../wallets/celo/celo-settlement-
 import { getIdentityStatus } from '../identity/identity.service.js';
 import type { ServiceAgreementRecord, ServiceAgreementStatus, WalletChain, UserRecord, UserWalletRecord } from '../database/types.js';
 import { syncEscrowAgentAcceptance, syncEscrowAgentFunding } from './agreement-escrow-sync.service.js';
-import { notifyAgreementAccepted, notifyAgreementCancellation } from './agreement-notifications.service.js';
+import {
+  notifyAgreementCreated,
+  notifyAgreementAccepted,
+  notifyAgreementFunded,
+  notifyAgreementDelivered,
+  notifyAgreementReleased,
+  notifyAgreementCancellation,
+} from './agreement-notifications.service.js';
 import { resolveBuyerUUID, resolveTelegramIdForAgreement, resolveWhatsAppPhoneForAgreement } from './agreement-identity.service.js';
 import { getCountdownLabel, getSivanServiceAgreementFeeWallet } from './agreement-finance.service.js';
 import { getAgreement } from './agreement-queries.service.js';
@@ -192,6 +199,7 @@ export async function createAgreement(
   };
 
   await db.insertServiceAgreement(agreement);
+  void notifyAgreementCreated(agreement);
   return agreement;
 }
 
@@ -437,6 +445,7 @@ export async function fundAgreement(agreementId: string, externalTxHash?: string
     console.warn('[agreement.fund] Ledger hold note:', err);
   }
 
+  void notifyAgreementFunded(updated);
   return updated;
 }
 
@@ -499,6 +508,7 @@ export async function markDelivered(agreementId: string): Promise<ServiceAgreeme
     updatedAt: now,
   };
   await db.updateServiceAgreement(updated);
+  void notifyAgreementDelivered(updated);
   return updated;
 }
 
@@ -934,6 +944,7 @@ export async function releaseAgreement(
     console.warn('[agreement.release] Ledger release note:', err);
   }
 
+  void notifyAgreementReleased(updated);
   return updated;
 }
 

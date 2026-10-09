@@ -157,17 +157,28 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
+    const user = await db.findUserById(userId);
+    let targetTelegramId: string | null = null;
+
     const links = await db.listCustomerIdentityLinks();
     const activeLinks = links
       .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
       .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
 
-    const telegramLink = activeLinks[0];
-    if (!telegramLink?.telegramUserId) return;
+    if (activeLinks[0]?.telegramUserId) {
+      targetTelegramId = activeLinks[0].telegramUserId;
+    } else if (user?.telegramUserId) {
+      targetTelegramId = user.telegramUserId;
+    } else {
+      const { resolveTelegramIdForAgreement } = await import('../agreements/agreement-identity.service.js');
+      targetTelegramId = await resolveTelegramIdForAgreement(userId);
+    }
+
+    if (!targetTelegramId) return;
 
     // Verify this Telegram ID has not been superseded by a newer link to a different user
     const allLinksForTg = links
-      .filter((l) => l.telegramUserId === telegramLink.telegramUserId && l.status === 'linked')
+      .filter((l) => l.telegramUserId === targetTelegramId && l.status === 'linked')
       .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
 
     if (allLinksForTg.length > 0 && allLinksForTg[0].paymentUserId !== userId) {
@@ -177,14 +188,17 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
     const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && prefs.telegramNotificationsEnabled === false) return;
 
-    const user = await db.findUserById(userId);
     const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
-
     const amount = `${deposit.amount} ${deposit.asset}`;
     const network = humanNetwork(deposit.chain);
     const text = deposit.status === 'confirmed'
       ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
       : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
+
+    const depositKeyboard = [
+      [{ text: '💰 View Balance', callback_data: 'v1:balance' }],
+      [{ text: '🏠 Main Menu', callback_data: 'v1:menu' }],
+    ];
 
     await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
       method: 'POST',
@@ -193,8 +207,9 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
         'x-notify-secret': secret,
       },
       body: JSON.stringify({
-        telegramId: telegramLink.telegramUserId,
+        telegramId: targetTelegramId,
         message: text,
+        keyboard: depositKeyboard,
       }),
     });
   } catch {
