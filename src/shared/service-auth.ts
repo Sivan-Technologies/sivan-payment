@@ -31,7 +31,9 @@ export function requireIdentityServiceSecret(request: {
   if (!configured) throw forbidden('IDENTITY_LINK_SERVICE_SECRET is not configured. Set it via environment variable.');
 
   const provided =
-    request.headers['x-sivan-identity-link-secret'] ?? request.headers['x-admin-api-key'];
+    request.headers['x-sivan-identity-link-secret'] ??
+    request.headers['x-admin-api-key'] ??
+    request.headers['x-service-secret'];
   const value = Array.isArray(provided) ? provided[0] : provided;
   if (typeof value !== 'string' || !value) throw forbidden('Invalid identity link service secret.');
 
