@@ -1340,7 +1340,7 @@ export async function executeP2pTransfer(
 
   const controls = await getBalanceTransferControls().catch(() => null);
   if (!controls || controls.p2pTransfersEnabled === false) {
-    throw badRequest('Internal zero-fee P2P transfers are disabled. Please send an on-chain transfer using the recipient\'s wallet address or Sivan Tag.');
+    throw badRequest('Internal P2P transfers are disabled. Please send an on-chain transfer using the recipient\'s wallet address or Sivan Tag.');
   }
 
   const minAmount = controls?.minimumSendAmount ?? 1;
