@@ -78,7 +78,7 @@ export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing
 
 export const balanceTransferControlsSchema = z.object({
   transfersEnabled: z.boolean().default(true),
-  p2pTransfersEnabled: z.boolean().default(true),
+  p2pTransfersEnabled: z.boolean().default(false),
   minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
@@ -309,6 +309,7 @@ export async function getBalanceTransferControls() {
 
   return {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
+    p2pTransfersEnabled: saved?.p2pTransfersEnabled ?? (process.env.P2P_TRANSFERS_ENABLED === 'true'),
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
@@ -1338,8 +1339,8 @@ export async function executeP2pTransfer(
   if (!sender) throw notFound('Sender User');
 
   const controls = await getBalanceTransferControls().catch(() => null);
-  if (controls && controls.p2pTransfersEnabled === false) {
-    throw badRequest('P2P transfers are temporarily paused by administration for maintenance. Please try again shortly.');
+  if (!controls || controls.p2pTransfersEnabled === false) {
+    throw badRequest('Internal zero-fee P2P transfers are disabled. Please send an on-chain transfer using the recipient\'s wallet address or Sivan Tag.');
   }
 
   const minAmount = controls?.minimumSendAmount ?? 1;
