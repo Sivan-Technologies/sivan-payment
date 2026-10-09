@@ -71,7 +71,8 @@ export async function agreementRoutes(app: FastifyInstance) {
 
     const aliases: string[] = [target];
     try {
-      const user = await db.findUserById(target).catch(() => null);
+      const user = (await db.findUserById(target).catch(() => null)) ||
+                   (await db.findUserByTarget(target).catch(() => null));
       if (user) {
         if (user.id) aliases.push(user.id);
         if (user.email) aliases.push(user.email);
