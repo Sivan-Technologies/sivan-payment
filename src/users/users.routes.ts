@@ -14,9 +14,27 @@ import { legalAcceptancePayloadSchema, listUserLegalAcceptances, recordSignupLeg
 import { confirmUserEmailChange, userEmailChangeConfirmSchema } from '../admin/account-recovery.service.js';
 import { getAuthUserId } from '../auth/jwt.js';
 
-function resolveTargetUserId(userIdParam: string, request: any): string {
+import { id, nowIso } from '../shared/id.js';
+
+async function resolveTargetUserId(userIdParam: string, request: any): Promise<string> {
   if (userIdParam === 'me') {
     return getAuthUserId(request) || userIdParam;
+  }
+  if (userIdParam.startsWith('+') || /^\d{10,14}$/.test(userIdParam) || userIdParam.startsWith('whatsapp:')) {
+    const rawClean = userIdParam.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    let user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) || (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) || (await db.findUserByWhatsappNumber(rawClean));
+    if (!user) {
+      const now = nowIso();
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email: `${rawClean}@sivantech.online`,
+        fullName: 'Sivan User',
+        whatsappNumber: `+${rawClean}`,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return user.id;
   }
   return userIdParam;
 }
@@ -52,7 +70,7 @@ export async function usersRoutes(app: FastifyInstance) {
 
   app.get('/api/users/:userId/preferences', async (request) => {
     const rawUserId = (request.params as { userId: string }).userId;
-    const userId = resolveTargetUserId(rawUserId, request);
+    const userId = await resolveTargetUserId(rawUserId, request);
     const preferences = await getUserPreferences(userId);
     return {
       data: {
@@ -64,7 +82,7 @@ export async function usersRoutes(app: FastifyInstance) {
 
   app.put('/api/users/:userId/preferences', async (request) => {
     const rawUserId = (request.params as { userId: string }).userId;
-    const userId = resolveTargetUserId(rawUserId, request);
+    const userId = await resolveTargetUserId(rawUserId, request);
     const body = parseBody(updateUserPreferencesSchema, request.body);
     const updated = await updateUserPreferences(userId, body);
     return {
@@ -77,21 +95,21 @@ export async function usersRoutes(app: FastifyInstance) {
 
   app.get('/api/users/:userId/username/availability', async (request) => {
     const rawUserId = (request.params as { userId: string }).userId;
-    const userId = resolveTargetUserId(rawUserId, request);
+    const userId = (rawUserId === 'check' || rawUserId === 'none') ? undefined : await resolveTargetUserId(rawUserId, request);
     const query = request.query as { username?: string };
     return { data: await checkUsernameAvailability(query.username || '', userId) };
   });
 
   app.put('/api/users/:userId/username', async (request) => {
     const rawUserId = (request.params as { userId: string }).userId;
-    const userId = resolveTargetUserId(rawUserId, request);
+    const userId = await resolveTargetUserId(rawUserId, request);
     const body = parseBody(usernameSchema, request.body);
     return { data: await updateUsername(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.post('/api/users/:userId/avatar/upload-url', async (request) => {
     const rawUserId = (request.params as { userId: string }).userId;
-    const userId = resolveTargetUserId(rawUserId, request);
+    const userId = await resolveTargetUserId(rawUserId, request);
     const body = parseBody(createAvatarUploadUrlSchema, request.body);
     return { data: await createAvatarUploadUrl(userId, body) };
   });
