@@ -154,7 +154,8 @@ export async function notifyAgreementAccepted(
       `Your agreement is now ready to be funded. Tap Pay now below to lock funds in the multi-chain vault and start delivery.`;
 
     const telegramKeyboard = [
-      [{ text: '💳 Pay now', callback_data: `v1:pay:${agreement.id}` }],
+      [{ text: '⚡ Pay from Balance', callback_data: `v1:pay_balance:${agreement.id}` }],
+      [{ text: '💳 Pay now / Options', callback_data: `v1:pay:${agreement.id}` }],
       [{ text: '🔍 View Status', callback_data: `v1:status:${agreement.id}` }],
       [{ text: '📋 My Agreements', callback_data: 'v1:deals' }],
     ];
