@@ -129,7 +129,7 @@ async function activeLinksForPaymentUser(userId: string) {
   return links.filter((item) => item.paymentUserId === userId && item.status === 'linked');
 }
 
-async function activeLinkForWhatsapp(whatsappNumber: string) {
+export async function activeLinkForWhatsapp(whatsappNumber: string) {
   const links = await db.listCustomerIdentityLinks();
   return links.find((item) => item.whatsappNumber === whatsappNumber && item.status === 'linked' && linkChannel(item) === 'whatsapp');
 }
