@@ -696,6 +696,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   // request hitting this check before the first resolves is also blocked.
   recentTransferKeys.set(dKey, Date.now());
 
+  try {
   /**
    * The gateway's 12s clock starts HERE, so ours does too. Everything between
    * this line and the broadcast - chain balance reads, a Solana RPC for the
@@ -940,6 +941,10 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   }
 
   return transfer;
+} catch (err) {
+  recentTransferKeys.delete(dKey);
+  throw err;
+}
 }
 
 /**
