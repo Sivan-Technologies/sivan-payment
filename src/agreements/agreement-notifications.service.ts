@@ -6,13 +6,9 @@ import type { ServiceAgreementRecord } from '../database/types.js';
 import { resolveTelegramIdForAgreement, resolveWhatsAppPhoneForAgreement } from './agreement-identity.service.js';
 
 function getNotifyConfig() {
-  const envTg = process.env.TELEGRAM_NOTIFICATION_URL;
-  // If unset, or pointing to api-staging gateway where /api/notify is unmapped, route to official telegram domain
-  const telegramUrl = (envTg && !envTg.includes('api-staging.sivantech.online'))
-    ? envTg
-    : 'https://telegram.sivantech.online';
+  const telegramUrl = process.env.TELEGRAM_NOTIFICATION_URL;
   const whatsappUrl = process.env.WHATSAPP_NOTIFICATION_URL;
-  const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || 'vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU';
+  const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
   return { telegramUrl, whatsappUrl, secret };
 }
 
