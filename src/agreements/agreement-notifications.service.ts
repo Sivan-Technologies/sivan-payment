@@ -6,9 +6,13 @@ import type { ServiceAgreementRecord } from '../database/types.js';
 import { resolveTelegramIdForAgreement, resolveWhatsAppPhoneForAgreement } from './agreement-identity.service.js';
 
 function getNotifyConfig() {
-  const telegramUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+  const envTg = process.env.TELEGRAM_NOTIFICATION_URL;
+  // If unset, or pointing to api-staging gateway where /api/notify is unmapped, route to official telegram domain
+  const telegramUrl = (envTg && !envTg.includes('api-staging.sivantech.online'))
+    ? envTg
+    : 'https://telegram.sivantech.online';
   const whatsappUrl = process.env.WHATSAPP_NOTIFICATION_URL;
-  const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+  const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || 'vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU';
   return { telegramUrl, whatsappUrl, secret };
 }
 
@@ -165,16 +169,23 @@ export async function notifyAgreementAccepted(
       void (async () => {
         try {
           const tgId = await resolveTelegramIdForAgreement(buyerId);
-          await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
+          const fallbackPhone = tgId ? undefined : ((await resolveWhatsAppPhoneForAgreement(buyerId)) || buyerId);
+          const res = await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
             body: JSON.stringify({
               telegramId: tgId || undefined,
-              phone: tgId ? undefined : buyerId,
+              phone: tgId ? undefined : fallbackPhone,
               message: buyerMsg,
               keyboard: telegramKeyboard,
             }),
           });
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            console.warn(`[agreement.notify] Telegram buyer acceptance notification status ${res.status}:`, errText);
+          } else {
+            console.info(`[agreement.notify] Telegram buyer acceptance notification delivered for agreement ${agreement.id}`);
+          }
         } catch (e) {
           console.warn('[agreement.notify] Telegram buyer acceptance notification failed:', e);
         }
