@@ -1548,11 +1548,8 @@ export async function executeP2pTransfer(
   }
 
   try {
-    const envTg = process.env.TELEGRAM_NOTIFICATION_URL;
-    const notifyUrl = (envTg && !envTg.includes('api-staging.sivantech.online'))
-      ? envTg
-      : 'https://telegram.sivantech.online';
-    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || 'vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU';
+    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
     if (notifyUrl && secret) {
       void (async () => {
         try {

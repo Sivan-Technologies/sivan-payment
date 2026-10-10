@@ -180,7 +180,7 @@ services:
       - key: TELEGRAM_MINIAPP_URL
         value: https://staging.sivantech.online/pin-pad
       - key: TELEGRAM_NOTIFICATION_URL
-        value: https://telegram.sivantech.online
+        value: https://sivan-telegram-service.onrender.com
       - key: NOTIFY_SECRET
         sync: false
       - key: WEBAUTHN_RP_ID
