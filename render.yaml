@@ -179,6 +179,10 @@ services:
         value: https://api-staging.sivantech.online
       - key: TELEGRAM_MINIAPP_URL
         value: https://staging.sivantech.online/pin-pad
+      - key: TELEGRAM_NOTIFICATION_URL
+        value: https://telegram.sivantech.online
+      - key: NOTIFY_SECRET
+        sync: false
       - key: WEBAUTHN_RP_ID
         value: sivantech.online
       - key: WEBAUTHN_ORIGIN
@@ -487,6 +491,10 @@ services:
         value: https://api.sivantech.online
       - key: TELEGRAM_MINIAPP_URL
         value: https://app.sivantech.online/pin-pad
+      - key: TELEGRAM_NOTIFICATION_URL
+        value: https://telegram.sivantech.online
+      - key: NOTIFY_SECRET
+        sync: false
       - key: WEBAUTHN_RP_ID
         value: sivantech.online
       - key: WEBAUTHN_ORIGIN
