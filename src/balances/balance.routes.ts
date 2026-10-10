@@ -10,6 +10,7 @@ import { confirmDeposits } from '../deposits/deposit-confirmation.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber, activeLinkForTelegram } from '../identity/identity.service.js';
 import { requireIdentityServiceSecret } from '../shared/service-auth.js';
+import { id, nowIso } from '../shared/id.js';
 
 /**
  * Resolve a chat-channel caller to a payment user.
@@ -93,7 +94,22 @@ export async function balanceRoutes(app: FastifyInstance) {
     requireIdentityServiceSecret(request as any);
     const { whatsapp } = request.query as { whatsapp?: string };
     if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
-    const user = await findUserByChannelPhone(whatsapp);
+    let user: any = await findUserByChannelPhone(whatsapp);
+    if (!user) {
+      const rawClean = whatsapp.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+      const withPlus = `+${rawClean}`;
+      const now = nowIso();
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email: `${rawClean}@sivantech.online`,
+        fullName: 'Sivan User',
+        whatsappNumber: withPlus,
+        createdAt: now,
+        updatedAt: now,
+      }).catch(async () => {
+        return (await findUserByChannelPhone(whatsapp)) || undefined;
+      });
+    }
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
 
     let unified = await getUnifiedBalance(user.id);
@@ -133,6 +149,9 @@ export async function balanceRoutes(app: FastifyInstance) {
     return {
       data: {
         userId: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        email: user.email,
         asset: usdcEntry?.asset ?? 'usdc',
         // `spendable` is chain + credited - held: what the user may actually
         // move right now, which is the question both bots are really asking.
