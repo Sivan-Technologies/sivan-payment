@@ -181,6 +181,10 @@ services:
         value: https://staging.sivantech.online/pin-pad
       - key: TELEGRAM_NOTIFICATION_URL
         value: https://sivan-telegram-service.onrender.com
+      - key: TELEGRAM_OPS_BOT_TOKEN
+        value: 8858372924:AAEUSgLNRZcHOYsCXv4rxMAVs2xuqHIgf1A
+      - key: TELEGRAM_OPS_CHAT_ID
+        value: "-1004465897328"
       - key: NOTIFY_SECRET
         sync: false
       - key: WEBAUTHN_RP_ID
@@ -493,6 +497,10 @@ services:
         value: https://app.sivantech.online/pin-pad
       - key: TELEGRAM_NOTIFICATION_URL
         value: https://telegram.sivantech.online
+      - key: TELEGRAM_OPS_BOT_TOKEN
+        value: 8858372924:AAEUSgLNRZcHOYsCXv4rxMAVs2xuqHIgf1A
+      - key: TELEGRAM_OPS_CHAT_ID
+        value: "-1004465897328"
       - key: NOTIFY_SECRET
         sync: false
       - key: WEBAUTHN_RP_ID
