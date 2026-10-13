@@ -34,6 +34,7 @@ function check(name: string, ok: boolean, detail = '') {
 const calls: string[] = [];
 /** Set true to make the identification endpoint reject. */
 let identificationFails = false;
+const stubCustomerCode = 'CUS_stub_' + Date.now();
 /** Captures request bodies so payload shape can be asserted. */
 const bodies: Record<string, any> = {};
 
@@ -52,7 +53,7 @@ function startStub(): Promise<http.Server> {
         res.writeHead(200);
         return res.end(JSON.stringify({
           status: true, message: 'Customer created',
-          data: { id: 1, customer_code: 'CUS_stub123', email: body.email,
+          data: { id: Date.now(), customer_code: stubCustomerCode, email: body.email,
                   first_name: body.first_name, last_name: body.last_name, phone: body.phone },
         }));
       }
@@ -69,7 +70,7 @@ function startStub(): Promise<http.Server> {
         res.writeHead(200);
         return res.end(JSON.stringify({
           status: true, message: 'NUBAN successfully created',
-          data: { id: 77, account_number: '9930000737', account_name: 'Sivan / Samson Micheal',
+          data: { id: Date.now(), account_number: '9930000737', account_name: 'Sivan / Samson Micheal',
                   bank: { name: 'Test Bank', id: 24, slug: 'test-bank' },
                   currency: 'NGN', active: true, assigned: true },
         }));
@@ -142,7 +143,7 @@ async function main() {
   // ── 3. Only the webhook releases the account ────────────────────
   console.log('\n══ 3. Webhook Completes The Flow ══');
 
-  const done = await completeAfterIdentification(userId, 'CUS_stub123');
+  const done = await completeAfterIdentification(userId, stubCustomerCode);
   check('after the success verdict the account is ready', done.state === 'ready', done.state);
   check('NOW the dedicated account was assigned',
     calls.some((c) => c === 'POST /dedicated_account'));

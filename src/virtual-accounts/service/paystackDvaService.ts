@@ -44,6 +44,7 @@ import {
 } from '../provider/paystackDvaProvider.js';
 import type { CustomerData, DvaAssignedAccount, IdentificationType } from '../types/paystackDvaTypes.js';
 import type { VirtualAccountRecord } from '../types/virtual-account.types.js';
+import type { UserRecord } from '../../database/types.js';
 
 /**
  * The email domain Paystack customers are keyed under.
@@ -136,7 +137,80 @@ function toPublicView(record: VirtualAccountRecord): PublicDvaView | undefined {
 /** The stored Paystack DVA row for a user, if any. */
 export async function findDvaRecord(userId: string): Promise<VirtualAccountRecord | undefined> {
   const all = await db.listVirtualAccounts();
-  return all.find((r) => r.userId === userId && r.provider === PROVIDER);
+  const direct = all.find((r) => r.userId === userId && r.provider === PROVIDER);
+  if (direct) return direct;
+
+  // Cross-reference canonical user if userId was a phone number, channel id, or alias
+  try {
+    const user = (await db.findUserById(userId)) || (await db.findUserByTarget(userId));
+    if (user && user.id !== userId) {
+      const byCanonical = all.find((r) => r.userId === user.id && r.provider === PROVIDER);
+      if (byCanonical) return byCanonical;
+    }
+  } catch {
+    // Non-fatal
+  }
+  return undefined;
+}
+
+/**
+ * Ensures a user record exists in the central users table so foreign key
+ * constraints on payments_virtual_accounts and payments_customers are always satisfied.
+ */
+async function ensureUserForDva(
+  userId: string,
+  legalName?: string,
+  phone?: string
+): Promise<string> {
+  // 1. Exact match on user_id
+  const direct = await db.findUserById(userId);
+  if (direct) return direct.id;
+
+  // 2. Check if a user with this phone or WhatsApp number already exists
+  const cleanPhone = phone?.trim() || (userId.startsWith('whatsapp:') ? userId.replace(/^whatsapp:\+?/, '').replace(/^\+/, '') : undefined);
+  const formattedPhone = cleanPhone ? (cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone.replace(/\D/g, '')}`) : undefined;
+
+  if (formattedPhone) {
+    const byPhone = (await db.findUserByWhatsappNumber(formattedPhone))
+      || (await db.findUserByWhatsappNumber(formattedPhone.replace(/^\+/, '')))
+      || (await db.findUserByWhatsappNumber(`whatsapp:${formattedPhone}`));
+    if (byPhone) return byPhone.id;
+  }
+
+  // 3. Fallback check by target if available
+  try {
+    const byTarget = await db.findUserByTarget(userId);
+    if (byTarget) return byTarget.id;
+  } catch {
+    // Non-fatal
+  }
+
+  // 4. Create a minimal valid user record to satisfy foreign keys
+  const now = new Date().toISOString();
+  const email = paystackCustomerEmail(userId);
+  const fullName = legalName && legalName.trim() ? legalName.trim() : 'Sivan User';
+
+  const newRecord: UserRecord = {
+    id: userId,
+    email,
+    fullName,
+    whatsappNumber: formattedPhone,
+    country: 'NG',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  try {
+    const inserted = await db.insertUserRecord(newRecord);
+    return inserted.id;
+  } catch (_err) {
+    // In case of concurrent insert or key conflict, fetch the existing record
+    const fallback = (await db.findUserById(userId))
+      || (formattedPhone ? await db.findUserByWhatsappNumber(formattedPhone) : undefined)
+      || (await db.findUserByEmail(email));
+    if (fallback) return fallback.id;
+    return userId;
+  }
 }
 
 /**
@@ -172,12 +246,13 @@ async function persist(
   userId: string,
   patch: Partial<VirtualAccountRecord> & { rawExtra?: Record<string, unknown> }
 ): Promise<VirtualAccountRecord> {
-  const existing = await findDvaRecord(userId);
+  const canonicalUserId = await ensureUserForDva(userId, patch.accountName);
+  const existing = await findDvaRecord(canonicalUserId);
   const now = new Date().toISOString();
-  const recId = existing?.id ?? recordId(userId);
+  const recId = existing?.id ?? recordId(canonicalUserId);
   const merged: VirtualAccountRecord = {
     id: recId,
-    userId,
+    userId: canonicalUserId,
     provider: PROVIDER,
     providerAccountId: patch.providerAccountId ?? existing?.providerAccountId ?? (patch.customerId || recId),
     currency: 'ngn',
@@ -217,8 +292,11 @@ export interface ResolveDvaInput {
  * forward, and never repeats a step that already succeeded.
  */
 export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaState> {
-  const { userId } = input;
-  if (!userId) throw new Error('resolveOrCreateDva requires a userId.');
+  const { userId: rawUserId } = input;
+  if (!rawUserId) throw new Error('resolveOrCreateDva requires a userId.');
+
+  // Ensure user exists in users table and resolve canonical userId
+  const userId = await ensureUserForDva(rawUserId, input.legalName, input.phone);
 
   // 1. Already have it? Cheapest path, no network.
   const current = await getDvaState(userId);
