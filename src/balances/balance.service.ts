@@ -50,7 +50,7 @@ import { evaluateGasLimits } from './gas-usage.service.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { buildP2pReceivedEmail, sendEmail } from '../notifications/email.service.js';
 
-export type BalanceAsset = 'usdc' | 'usdt';
+export type BalanceAsset = 'usdc' | 'usdt' | 'ngn';
 /**
  * Networks Sivan knows about.
  *
