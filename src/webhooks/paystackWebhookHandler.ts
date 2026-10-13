@@ -50,22 +50,13 @@ export function verifyPaystackSignature(
 }
 
 /**
- * Calculates Sivan platform fee for Dedicated Virtual Account deposits:
- * - Under 3,000 NGN: 0% fee (free tier).
- * - 3,000 NGN and above: 1.3% capped at 500 NGN.
+ * Calculates Sivan platform fee for Dedicated Virtual Account deposits.
+ * Canonical implementation lives in src/ngn/fees/dva-inflow-fee.ts
+ * Imported for internal use and re-exported for external consumers.
  */
-export function calculateDvaInflowFee(grossNgn: number): {
-  feeNgn: number;
-  netNgn: number;
-} {
-  if (grossNgn < 3000) {
-    return { feeNgn: 0, netNgn: grossNgn };
-  }
-  const rawFee = grossNgn * 0.013;
-  const feeNgn = Math.min(500, Math.round(rawFee * 100) / 100);
-  const netNgn = Math.round((grossNgn - feeNgn) * 100) / 100;
-  return { feeNgn, netNgn };
-}
+import { calculateDvaInflowFee } from '../ngn/fees/dva-inflow-fee.js';
+export { calculateDvaInflowFee };
+
 
 export interface PaystackWebhookResult {
   status: 'processed' | 'ignored';

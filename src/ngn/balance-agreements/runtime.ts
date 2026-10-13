@@ -4,12 +4,12 @@ import { env } from '../../config/env.js';
 import { db } from '../../database/json-database.js';
 import { verifyUserJwt } from '../../auth/jwt.js';
 import { consumeStepUpToken } from '../../identity/withdrawal-pin.service.js';
-import { getDvaState } from '../../virtual-accounts/service/paystackDvaService.js';
+import { getBankingRailAdapter } from '../../banking-rail/index.js';
 import { NgnAgreementLedger, NgnAgreementError, type Authorization } from './ledger.js';
 import { ngnAgreementTransaction } from './postgres.js';
 import { ngnBalanceAgreementRoutes } from './routes.js';
 import { createNgnWorkers, createNgnEventTransport } from './workers.js';
-import { calculateDvaInflowFee } from '../../webhooks/paystackWebhookHandler.js';
+import { calculateDvaInflowFee } from '../fees/dva-inflow-fee.js';
 import { getVerificationState } from '../../kyc/service/verification-state.js';
 import { VerificationLevel } from '../../kyc/types/verification.types.js';
 import { levelIsIntact, decide } from '../../kyc/service/verification-policy.js';
@@ -243,8 +243,9 @@ export async function registerNgnBalanceRuntime(app:FastifyInstance) {
       }
     },
     async sellerEligible(userId) {
-      const [state,checks]=await Promise.all([getDvaState(userId),db.listNgnIdentityVerifications(userId)]);
-      return state.state==='ready' && state.account.active && checks.some(row=>
+      const [accounts,checks]=await Promise.all([getBankingRailAdapter().listVirtualAccounts(userId),db.listNgnIdentityVerifications(userId)]);
+      const activeAccount = accounts.find(a => a.active && a.currency === 'NGN');
+      return Boolean(activeAccount) && checks.some(row=>
         ['bvn_info','nin_info'].includes(row.checkType)&&Boolean(row.verifiedAt));
     },
     authorizeRuling: createHumanRulingAdapter(db),
