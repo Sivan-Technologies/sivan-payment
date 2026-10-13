@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import Fastify from 'fastify';
 import { NgnAgreementError, NgnAgreementLedger, type Policies, type Transaction } from '../src/ngn/balance-agreements/ledger.js';
 import { ngnBalanceAgreementRoutes } from '../src/ngn/balance-agreements/routes.js';
+import { redactNgnMonitoring } from '../src/ngn/balance-agreements/redaction.js';
 
 // Real embedded PostgreSQL transactions, ephemeral storage, NO config/env import,
 // sockets, live provider calls, actual users, provisioning or money movement.
@@ -193,6 +194,20 @@ try {
     assert.equal((await pg.query('SELECT operation_id FROM ngn_agreement_postings GROUP BY operation_id HAVING sum(delta_kobo)<>0')).rows.length,0);
     assert.equal((await pg.query<{sum:string}>('SELECT sum(balance_kobo)::text AS sum FROM ngn_agreement_accounts')).rows[0].sum,'0');
     assert.equal((await pg.query('SELECT o.id FROM ngn_agreement_operations o LEFT JOIN ngn_agreement_outbox b ON b.id=o.id WHERE b.id IS NULL')).rows.length,0);
+  });
+  await test('runtime funding gate refuses writes and monitoring removes confirmation payloads',async()=>{
+    const app=Fastify({logger:false});
+    await app.register(async scope=>ngnBalanceAgreementRoutes(scope,{
+      ledger,authenticate:async()=> 'buyer-http',fundingEnabled:()=>false,
+    }));
+    try {
+      const response=await app.inject({method:'POST',url:'/api/ngn/balance-agreements/http/fund',payload:{credential:'fixture'}});
+      assert.equal(response.statusCode,503);
+      assert.equal(response.json().error,'NGN_FUNDING_NOT_ENABLED');
+      const event=redactNgnMonitoring({request:{url:'/api/ngn/balance-agreements/http/fund',data:{credential:'never-log-this'},headers:{authorization:'Bearer fixture'}}});
+      assert.ok(!JSON.stringify(event).includes('never-log-this'));
+      assert.ok(!JSON.stringify(event).includes('Bearer fixture'));
+    } finally {await app.close();}
   });
   console.log(`${checks} NGN ledger scenarios passed. Embedded PostgreSQL only; public/provider E2E NOT performed.`);
 } finally { await pg.close(); }

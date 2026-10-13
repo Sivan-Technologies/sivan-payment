@@ -44,7 +44,7 @@ export async function registerNgnBalanceRuntime(app:FastifyInstance) {
     async verifyDeposit() {throw new NgnAgreementError('VERIFIED_DEPOSIT_ADAPTER_REQUIRED',503);},
   });
   // Verify schema availability; never apply migrations or import balances at boot.
-  await transaction(sql=>sql.query('SELECT sequence,lease_token FROM ngn_agreement_outbox LIMIT 0'));
+  await transaction(sql=>sql.query('SELECT sequence,lease_token,skipped_at FROM ngn_agreement_outbox LIMIT 0'));
   await app.register(async scope=>ngnBalanceAgreementRoutes(scope,{
     ledger,
     // Keep new funding closed until verified deposit integration, reconciliation
@@ -58,8 +58,16 @@ export async function registerNgnBalanceRuntime(app:FastifyInstance) {
     },
   }));
   if(process.env.NGN_BALANCE_WORKERS_ENABLED==='true') {
-    const publish=createNgnEventTransport(process.env.NGN_AGREEMENT_EVENT_URL??'',process.env.NGN_AGREEMENT_EVENT_SECRET??'');
-    const workers=createNgnWorkers({transaction,ledger,publish});
+    const transport=createNgnEventTransport(process.env.NGN_AGREEMENT_EVENT_URL??'',process.env.NGN_AGREEMENT_EVENT_SECRET??'');
+    const workers=createNgnWorkers({transaction,ledger,publish:async event=>{
+      const ids=[String(event.agreement.buyer_id),String(event.agreement.seller_id)];
+      const recipients=await Promise.all(ids.map(async userId=>{
+        const user=await db.findUserById(userId);
+        if(!user || (!user.whatsappNumber&&!user.telegramUserId)) throw new Error('NGN_RECIPIENT_NOT_LINKED');
+        return {userId,whatsapp:user.whatsappNumber,telegramId:user.telegramUserId};
+      }));
+      await transport({...event,recipients});
+    }});
     app.addHook('onListen',async()=>{stop=workers.start(5000,code=>app.log.error({code},'NGN agreement worker failed'));});
   }
 }

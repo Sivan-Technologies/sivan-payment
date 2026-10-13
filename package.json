@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "test:ngn-agreement-ledger": "node --import tsx scripts/test-ngn-agreement-ledger.ts",
+    "test:ngn-worker-integration": "node --import tsx scripts/test-ngn-worker-integration.ts",
     "test": "tsx scripts/run-all-tests.ts",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",

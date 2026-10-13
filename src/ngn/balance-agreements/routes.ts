@@ -8,8 +8,8 @@ const createBody = z.object({ id, sellerId:id, title:z.string().trim().min(1).ma
   principalKobo:z.string().regex(/^[1-9][0-9]{0,14}$/), credential }).strict();
 const actionBody = z.object({ credential }).strict();
 
-/** Explicit dependency injection: NOT registered in app.ts until the operational
- * adapters and rollout checks in NGN_BALANCE_IMPLEMENTATION.md are complete.
+/** Explicit dependency injection: registered by runtime.ts only when opted in.
+ * Funding remains blocked pending the documented operational prerequisites.
  * authenticate must validate a user JWT/delegation and return canonical payment
  * user ID. A bot/service API key plus arbitrary userId is NOT authentication.
  * Register in an encapsulated Fastify plugin to scope the error handler.
