@@ -69,12 +69,12 @@ async function main() {
   assert.equal(extractPhone(undefined, 'user_uuid_12345'), '');
   ok('returns empty string if userId is not a phone number');
 
-  // ─── 2. Fee Calculation (3k Rule & Cap) ───────────────────────────
-  console.log('\n══ 2. DVA Fee Calculation (3k Rule & 500 NGN Cap) ══');
+  // ─── 2. Fee Calculation (Zero-Loss 1.3% & 500 NGN Cap) ────────────
+  console.log('\n══ 2. DVA Fee Calculation (Zero-Loss 1.3% & 500 NGN Cap) ══');
   const feeUnder3k = calculateDvaInflowFee(2000);
-  assert.equal(feeUnder3k.feeNgn, 0);
-  assert.equal(feeUnder3k.netNgn, 2000);
-  ok('inflows under 3,000 NGN have 0 fee (100% credited)');
+  assert.equal(feeUnder3k.feeNgn, 26); // 1.3% of 2000
+  assert.equal(feeUnder3k.netNgn, 1974);
+  ok('inflows under 3,000 NGN have 1.3% fee to eliminate provider loss (26 NGN on 2,000)');
 
   const fee3k = calculateDvaInflowFee(3000);
   assert.equal(fee3k.feeNgn, 39); // 1.3% of 3000
