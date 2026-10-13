@@ -16,12 +16,13 @@
 
 import type { IBankingRailAdapter, BankingRailName } from './banking-rail.adapter.js';
 import { PaystackBankingRailAdapter } from './adapters/paystack.adapter.js';
+import { MonoBankingRailAdapter } from './adapters/mono.adapter.js';
 
 const _registry = new Map<BankingRailName, IBankingRailAdapter>();
 
 // ── Register built-in adapters ────────────────────────────────────────────────
 _registry.set('paystack', new PaystackBankingRailAdapter());
-// Future: _registry.set('mono', new MonoBankingRailAdapter());
+_registry.set('mono', new MonoBankingRailAdapter());
 // Future: _registry.set('flutterwave', new FlutterwaveBankingRailAdapter());
 // Future: _registry.set('nomba', new NombaBankingRailAdapter());
 
