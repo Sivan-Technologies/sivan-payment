@@ -3860,6 +3860,19 @@ async function upsertVirtualAccountRequest(client: pg.PoolClient, item: VirtualA
 }
 
 async function upsertVirtualAccount(client: pg.PoolClient, item: VirtualAccountRecord) {
+  // Defensive guard: Ensure foreign key target exists in users table
+  const userCheck = await client.query('select 1 from users where user_id = $1 limit 1', [item.userId]);
+  if (userCheck.rowCount === 0) {
+    const now = new Date().toISOString();
+    const fallbackEmail = `${String(item.userId).replace(/[^a-zA-Z0-9_-]/g, '_')}@user.sivantech.online`;
+    await client.query(
+      `insert into users (user_id, email, first_name, last_name, role_history, primary_channel, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       on conflict (user_id) do nothing`,
+      [item.userId, fallbackEmail, 'Sivan', 'User', JSON.stringify(['payments_user']), 'whatsapp', now, now]
+    );
+  }
+
   await client.query(
     `insert into payments_virtual_accounts (id, request_id, user_id, payments_customer_id, provider, provider_account_id, currency, country, bank_name, account_name, account_number_masked, routing_number_masked, iban_masked, status, raw_provider_payload, created_at, updated_at)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
@@ -4058,6 +4071,19 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
 }
 
 async function upsertCustomer(client: pg.PoolClient, item: CustomerRecord) {
+  // Defensive guard: Ensure foreign key target exists in users table
+  const userCheck = await client.query('select 1 from users where user_id = $1 limit 1', [item.userId]);
+  if (userCheck.rowCount === 0) {
+    const now = new Date().toISOString();
+    const fallbackEmail = `${String(item.userId).replace(/[^a-zA-Z0-9_-]/g, '_')}@user.sivantech.online`;
+    await client.query(
+      `insert into users (user_id, email, first_name, last_name, role_history, primary_channel, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       on conflict (user_id) do nothing`,
+      [item.userId, fallbackEmail, 'Sivan', 'User', JSON.stringify(['payments_user']), 'whatsapp', now, now]
+    );
+  }
+
   await client.query(
     `insert into payments_customers (id, user_id, provider, provider_customer_id, customer_type, kyc_link_id, kyc_link, tos_link, kyc_status, tos_status, onboarding_cost_usd, onboarding_cost_type, onboarding_cost_recorded_at, raw_payload, created_at, updated_at)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
