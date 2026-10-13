@@ -12,29 +12,31 @@
 -- and human ruling authorisation. Without indexes they scale linearly with
 -- table row count and will degrade badly under real user load.
 --
--- Each index uses CONCURRENTLY so it can be applied to a live production
--- database without locking the table or blocking in-flight transactions.
--- CONCURRENTLY cannot run inside an explicit BEGIN/COMMIT block; run this
--- migration outside a transaction (psql with --single-transaction=off).
+-- NOTE: CONCURRENTLY is intentionally omitted here. The project migration
+-- runner (scripts/db-migrate.ts) wraps every file in BEGIN/COMMIT, and
+-- Postgres forbids CREATE INDEX CONCURRENTLY inside a transaction block.
+-- Plain CREATE INDEX IF NOT EXISTS is safe, idempotent, and transactional.
+-- On Neon/AWS RDS the index build locks only the table briefly at the end
+-- (not throughout) for small-to-medium tables with no concurrent heavy load.
 
-create index concurrently if not exists idx_external_accounts_user_id
+-- Simple user_id lookup indexes (WHERE clause)
+create index if not exists idx_external_accounts_user_id
   on payments_external_accounts(user_id);
 
-create index concurrently if not exists idx_ngn_payout_accounts_user_id
+create index if not exists idx_ngn_payout_accounts_user_id
   on payments_ngn_payout_accounts(user_id);
 
-create index concurrently if not exists idx_ngn_identity_verifications_user_id
+create index if not exists idx_ngn_identity_verifications_user_id
   on payments_ngn_identity_verifications(user_id);
 
--- Secondary composite indexes for the exact ORDER BY clauses used in
--- the live queries (created_at asc / desc) so Postgres can satisfy
--- both the WHERE and ORDER BY from the index alone (index-only scan).
+-- Composite indexes matching the exact ORDER BY clauses in the live queries
+-- so Postgres can satisfy WHERE + ORDER BY from the index alone (index-only scan).
 
-create index concurrently if not exists idx_external_accounts_user_id_created_asc
+create index if not exists idx_external_accounts_user_id_created_asc
   on payments_external_accounts(user_id, created_at asc);
 
-create index concurrently if not exists idx_ngn_payout_accounts_user_id_created_asc
+create index if not exists idx_ngn_payout_accounts_user_id_created_asc
   on payments_ngn_payout_accounts(user_id, created_at asc);
 
-create index concurrently if not exists idx_ngn_identity_verifications_user_id_created_desc
+create index if not exists idx_ngn_identity_verifications_user_id_created_desc
   on payments_ngn_identity_verifications(user_id, created_at desc);
