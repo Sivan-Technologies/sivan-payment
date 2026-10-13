@@ -32,6 +32,7 @@ import { metamapKycRoutes } from '../kyc/api/metamap.routes.js';
 
 import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
 import { agreementRoutes } from '../agreements/agreement.routes.js';
+import { registerNgnBalanceRuntime } from '../ngn/balance-agreements/runtime.js';
 import { agreementControlsRoutes } from '../agreements/agreement-controls.routes.js';
 import { passkeyRoutes } from '../identity/passkey.routes.js';
 import { fraudSecurityRoutes } from '../security/fraud.routes.js';
@@ -117,6 +118,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await moneygramRoutes(app);
   await app.register(developerGatewayRoutes);
   await agreementRoutes(app);
+  await registerNgnBalanceRuntime(app);
   await agreementControlsRoutes(app);
   await passkeyRoutes(app);
   await fraudSecurityRoutes(app);
