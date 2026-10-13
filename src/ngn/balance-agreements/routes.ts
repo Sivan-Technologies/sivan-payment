@@ -17,7 +17,7 @@ const actionBody = z.object({ credential }).strict();
 export async function ngnBalanceAgreementRoutes(app: FastifyInstance, dependencies: {
   ledger: NgnAgreementLedger;
   authenticate(request: FastifyRequest): Promise<string>;
-  fundingEnabled?: () => boolean;
+  fundingEnabled?: (context?: { actorId: string; agreementId: string }) => Promise<boolean> | boolean;
 }) {
   const { ledger, authenticate } = dependencies;
   app.setErrorHandler((error, _request, reply) => {
@@ -50,10 +50,13 @@ export async function ngnBalanceAgreementRoutes(app: FastifyInstance, dependenci
   for (const [action,perform] of Object.entries(actions)) {
     app.post(`${root}/:id/${action}`,async req => {
       const actorId = await actor(req);
-      if (action === 'fund' && dependencies.fundingEnabled && !dependencies.fundingEnabled()) {
-        throw new NgnAgreementError('NGN_FUNDING_NOT_ENABLED',503);
-      }
       const agreementId = id.parse((req.params as any).id);
+      if (action === 'fund' && dependencies.fundingEnabled) {
+        const allowed = await dependencies.fundingEnabled({ actorId, agreementId });
+        if (!allowed) {
+          throw new NgnAgreementError('NGN_FUNDING_NOT_ENABLED',503);
+        }
+      }
       const { credential } = actionBody.parse(req.body);
       return { data:await perform(agreementId,actorId,credential) };
     });

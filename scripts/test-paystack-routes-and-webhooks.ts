@@ -25,6 +25,11 @@ import {
   calculateDvaInflowFee,
   processPaystackWebhook,
 } from '../src/webhooks/paystackWebhookHandler.js';
+import {
+  createVerifiedDepositAdapter,
+  assertFundingLimits,
+  createHumanRulingAdapter,
+} from '../src/ngn/balance-agreements/runtime.js';
 
 const TEST_SECRET = 'sk_test_mock_secret_key_for_webhook_tests_12345';
 
@@ -37,6 +42,7 @@ async function main() {
   process.env.DATABASE_PROVIDER = 'json';
   process.env.DATABASE_FILE = '.data/test-paystack-routes-webhooks.json';
   process.env.PAYSTACK_SECRET_KEY = TEST_SECRET;
+  process.env.PAYSTACK_WEBHOOK_SECRET = TEST_SECRET;
   process.env.NODE_ENV = 'test';
 
   console.log('\n==================================================');
@@ -276,6 +282,369 @@ async function main() {
   assert.equal(replayRes.statusCode, 200);
   assert.equal(replayRes.json().data.details.duplicate, true);
   ok('duplicate deposit webhook is recognized and ignored idempotently');
+
+  // F. Security: Rejection of unmapped customer code with spoofed metadata
+  const spoofPayload = {
+    event: 'charge.success',
+    data: {
+      channel: 'dedicated_nuban',
+      reference: `spoof_ref_${Date.now()}`,
+      amount: 1000000,
+      currency: 'NGN',
+      customer: {
+        customer_code: 'CUST_unregistered_attacker_99',
+        metadata: { sivanUserId: 'attacker_user_id' },
+      },
+    },
+  };
+  const spoofSig = signPayload(spoofPayload);
+  const spoofRes = await app.inject({
+    method: 'POST',
+    url: '/api/webhooks/paystack',
+    headers: { 'x-paystack-signature': spoofSig },
+    payload: spoofPayload,
+  });
+  assert.equal(spoofRes.statusCode, 200);
+  assert.equal(spoofRes.json().data.status, 'ignored');
+  ok('unmapped customer code with spoofed metadata is rejected without credit');
+
+  // G. Rejection of unsupported currency (non-NGN)
+  const usdPayload = {
+    event: 'charge.success',
+    data: {
+      channel: 'dedicated_nuban',
+      reference: `usd_ref_${Date.now()}`,
+      amount: 1000000,
+      currency: 'USD',
+      customer: {
+        customer_code: customerCode,
+      },
+    },
+  };
+  const usdSig = signPayload(usdPayload);
+  const usdRes = await app.inject({
+    method: 'POST',
+    url: '/api/webhooks/paystack',
+    headers: { 'x-paystack-signature': usdSig },
+    payload: usdPayload,
+  });
+  assert.equal(usdRes.statusCode, 200);
+  assert.equal(usdRes.json().data.status, 'ignored');
+  ok('deposit with non-NGN currency is rejected without credit');
+
+  // H. Verified Deposit Adapter (Pillar 1 & 2 Agreement Ledger Adapter)
+  const verifyDeposit = createVerifiedDepositAdapter(db);
+  const depositCheck = await verifyDeposit(depositRef);
+  assert.equal(depositCheck.userId, testUserId);
+  assert.equal(depositCheck.netKobo, '987000'); // 10,000 NGN gross - 130 NGN fee = 9,870 NGN = 987,000 kobo
+  assert.equal(depositCheck.currency, 'NGN');
+  assert.equal(depositCheck.reference, depositRef);
+  ok('createVerifiedDepositAdapter validates stored DVA deposit and computes exact netKobo');
+
+  await assert.rejects(
+    async () => verifyDeposit('non_existent_deposit_ref_999'),
+    /DEPOSIT_NOT_FOUND/
+  );
+  ok('createVerifiedDepositAdapter fails closed with DEPOSIT_NOT_FOUND for unknown reference');
+
+  // ─── 6. Outbound Transfer Webhooks (Success, Failure & Reversal) ──
+  console.log('\n══ 6. Outbound Transfer Webhook Processing & Reconciliation ══');
+
+  // A. transfer.success
+  const successQuoteId = `quote_${Date.now()}_1`;
+  const successRef = `sivan_tx_success_${Date.now()}`;
+  const successTrfCode = `TRF_success_${Date.now()}`;
+  await db.upsertNgnQuoteRecord({
+    id: successQuoteId,
+    userId: testUserId,
+    direction: 'offramp',
+    provider: 'textile',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '10000.00',
+    destinationAmount: '10000.00',
+    rate: '1',
+    feeAmount: '0.00',
+    status: 'quote_accepted',
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.upsertNgnTransferRecord({
+    id: `ngnt_${Date.now()}_1`,
+    quoteId: successQuoteId,
+    userId: testUserId,
+    direction: 'offramp',
+    provider: 'textile',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '10000.00',
+    destinationAmount: '10000.00',
+    rate: '1',
+    feeAmount: '0.00',
+    status: 'bank_processing',
+    bankReference: successRef,
+    settlementReference: successRef,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const transferSuccessPayload = {
+    event: 'transfer.success',
+    data: {
+      reference: successRef,
+      transfer_code: successTrfCode,
+      amount: 1000000, // 10,000 NGN in Kobo
+      status: 'success',
+      recipient: {
+        name: 'Samson Micheal',
+        details: { account_number: '0123456789', bank_name: 'Guaranty Trust Bank' },
+      },
+    },
+  };
+  const transferSuccessSig = signPayload(transferSuccessPayload);
+  const transferSuccessRes = await app.inject({
+    method: 'POST',
+    url: '/api/webhooks/paystack',
+    headers: { 'x-paystack-signature': transferSuccessSig },
+    payload: transferSuccessPayload,
+  });
+  assert.equal(transferSuccessRes.statusCode, 200);
+  assert.equal(transferSuccessRes.json().data.status, 'processed');
+  assert.equal(transferSuccessRes.json().data.details.status, 'completed');
+  ok('transfer.success marks transfer completed and finalizes ledger');
+
+  // Replay transfer.success (Idempotency)
+  const transferSuccessReplay = await app.inject({
+    method: 'POST',
+    url: '/api/webhooks/paystack',
+    headers: { 'x-paystack-signature': transferSuccessSig },
+    payload: transferSuccessPayload,
+  });
+  assert.equal(transferSuccessReplay.statusCode, 200);
+  assert.equal(transferSuccessReplay.json().data.details.duplicate, true);
+  ok('transfer.success replay is handled idempotently');
+
+  // B. transfer.failed
+  const failedQuoteId = `quote_${Date.now()}_2`;
+  const failedRef = `sivan_tx_failed_${Date.now()}`;
+  const failedTrfCode = `TRF_failed_${Date.now()}`;
+  await db.upsertNgnQuoteRecord({
+    id: failedQuoteId,
+    userId: testUserId,
+    direction: 'offramp',
+    provider: 'textile',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '5000.00',
+    destinationAmount: '5000.00',
+    rate: '1',
+    feeAmount: '0.00',
+    status: 'quote_accepted',
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.upsertNgnTransferRecord({
+    id: `ngnt_${Date.now()}_2`,
+    quoteId: failedQuoteId,
+    userId: testUserId,
+    direction: 'offramp',
+    provider: 'textile',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '5000.00',
+    destinationAmount: '5000.00',
+    rate: '1',
+    feeAmount: '0.00',
+    status: 'bank_processing',
+    bankReference: failedRef,
+    settlementReference: failedRef,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const transferFailedPayload = {
+    event: 'transfer.failed',
+    data: {
+      reference: failedRef,
+      transfer_code: failedTrfCode,
+      amount: 500000, // 5,000 NGN in Kobo
+      status: 'failed',
+      reason: 'Account number does not exist',
+    },
+  };
+  const transferFailedSig = signPayload(transferFailedPayload);
+  const transferFailedRes = await app.inject({
+    method: 'POST',
+    url: '/api/webhooks/paystack',
+    headers: { 'x-paystack-signature': transferFailedSig },
+    payload: transferFailedPayload,
+  });
+  assert.equal(transferFailedRes.statusCode, 200);
+  assert.equal(transferFailedRes.json().data.status, 'processed');
+  assert.equal(transferFailedRes.json().data.details.status, 'failed');
+  assert.equal(transferFailedRes.json().data.details.refunded, true);
+  ok('transfer.failed marks transfer failed and atomically releases ledger hold');
+
+  // C. transfer.reversed
+  const reversedQuoteId = `quote_${Date.now()}_3`;
+  const reversedRef = `sivan_tx_rev_${Date.now()}`;
+  const reversedTrfCode = `TRF_rev_${Date.now()}`;
+  await db.upsertNgnQuoteRecord({
+    id: reversedQuoteId,
+    userId: testUserId,
+    direction: 'offramp',
+    provider: 'textile',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '8000.00',
+    destinationAmount: '8000.00',
+    rate: '1',
+    feeAmount: '0.00',
+    status: 'quote_accepted',
+    expiresAt: new Date(Date.now() + 3600000).toISOString(),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await db.upsertNgnTransferRecord({
+    id: `ngnt_${Date.now()}_3`,
+    quoteId: reversedQuoteId,
+    userId: testUserId,
+    direction: 'offramp',
+    provider: 'textile',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '8000.00',
+    destinationAmount: '8000.00',
+    rate: '1',
+    feeAmount: '0.00',
+    status: 'completed',
+    bankReference: reversedRef,
+    settlementReference: reversedRef,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const transferReversedPayload = {
+    event: 'transfer.reversed',
+    data: {
+      reference: reversedRef,
+      transfer_code: reversedTrfCode,
+      amount: 800000, // 8,000 NGN in Kobo
+      status: 'reversed',
+      reason: 'Destination bank recalled funds',
+    },
+  };
+  const transferReversedSig = signPayload(transferReversedPayload);
+  const transferReversedRes = await app.inject({
+    method: 'POST',
+    url: '/api/webhooks/paystack',
+    headers: { 'x-paystack-signature': transferReversedSig },
+    payload: transferReversedPayload,
+  });
+  assert.equal(transferReversedRes.statusCode, 200);
+  assert.equal(transferReversedRes.json().data.status, 'processed');
+  assert.equal(transferReversedRes.json().data.details.status, 'reversed');
+  assert.equal(transferReversedRes.json().data.details.refunded, true);
+  ok('transfer.reversed marks transfer reversed and atomically credits ledger back');
+
+  // Replay transfer.reversed (Idempotency)
+  const transferReversedReplay = await app.inject({
+    method: 'POST',
+    url: '/api/webhooks/paystack',
+    headers: { 'x-paystack-signature': transferReversedSig },
+    payload: transferReversedPayload,
+  });
+  assert.equal(transferReversedReplay.statusCode, 200);
+  assert.equal(transferReversedReplay.json().data.details.duplicate, true);
+  ok('transfer.reversed replay is handled idempotently without double credit');
+
+  // ─── 7. Risk Controls, Spending Limits & Human Ruling Adapter ─────
+  console.log('\n══ 7. Risk Controls, Spending Limits & Human Ruling Adapter ══');
+
+  // Test 1: Level 0 / Unverified user is rejected with KYC_LEVEL_INSUFFICIENT
+  const unverifiedUserId = 'user_unverified_tier0';
+  if (!(await db.findUserById(unverifiedUserId))) {
+    await db.insertUserRecord({
+      id: unverifiedUserId,
+      email: 'unverified@example.com',
+      fullName: 'Unverified User',
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  await assert.rejects(
+    () => assertFundingLimits(unverifiedUserId, '1000000'), // 10,000 NGN in kobo
+    (err: any) => err.code === 'KYC_LEVEL_INSUFFICIENT'
+  );
+  ok('assertFundingLimits rejects Level 0 unverified users with KYC_LEVEL_INSUFFICIENT');
+
+  // Test 2: Verified user (Level 1 with bank payout account) within limits passes
+  const verifiedUserId = testUserId;
+  await db.upsertNgnPayoutAccountRecord({
+    id: `pa_${testUserId}`,
+    userId: verifiedUserId,
+    provider: 'paystack',
+    bankId: '058',
+    bankName: 'Guaranty Trust Bank',
+    accountNumber: '0123456789',
+    accountName: 'CHUKWUDI EZE',
+    declaredName: 'CHUKWUDI EZE',
+    matchVerdict: 'match',
+    matchScore: 1.0,
+    resolutionTrustworthy: true,
+    status: 'verified',
+    createdAt: now,
+    updatedAt: now,
+  });
+  await assertFundingLimits(verifiedUserId, '2000000'); // 20,000 NGN in kobo
+  ok('assertFundingLimits allows verified user within tier limits');
+
+  // Test 3: Excessive amount exceeding tier limit is rejected with LIMIT_EXCEEDED
+  await assert.rejects(
+    () => assertFundingLimits(verifiedUserId, '60000000'), // 600,000 NGN (exceeds 500k Level 1 limit)
+    (err: any) => err.code === 'LIMIT_EXCEEDED'
+  );
+  ok('assertFundingLimits rejects amounts exceeding tier cumulative ceiling with LIMIT_EXCEEDED');
+
+  // Test 4: Human Ruling Adapter requires valid reviewer
+  const rulingAdapter = createHumanRulingAdapter(db);
+  await assert.rejects(
+    () => rulingAdapter('unknown_reviewer', 'agr_123', '50000', 'Buyer delivered on terms', 'admin_credential_secret_123'),
+    (err: any) => err.code === 'REVIEWER_NOT_FOUND'
+  );
+  ok('createHumanRulingAdapter rejects unknown reviewer with REVIEWER_NOT_FOUND');
+
+  // Test 5: Human Ruling Adapter requires valid credentials (rejects empty / short)
+  const adminReviewerId = 'admin_reviewer_test';
+  if (!(await db.findUserById(adminReviewerId))) {
+    await db.insertUserRecord({
+      id: adminReviewerId,
+      email: 'compliance@sivantech.online',
+      fullName: 'Compliance Officer',
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  await assert.rejects(
+    () => rulingAdapter(adminReviewerId, 'agr_123', '50000', 'Dispute ruling reasoning', ''),
+    (err: any) => err.code === 'REVIEWER_CREDENTIAL_REQUIRED'
+  );
+  ok('createHumanRulingAdapter rejects missing reviewer credential with REVIEWER_CREDENTIAL_REQUIRED');
+
+  // Test 6: Human Ruling Adapter requires substantive reasoning
+  await assert.rejects(
+    () => rulingAdapter(adminReviewerId, 'agr_123', '50000', 'no', 'valid_admin_credential_12345'),
+    (err: any) => err.code === 'RULING_REASON_REQUIRED'
+  );
+  ok('createHumanRulingAdapter rejects empty/short reason with RULING_REASON_REQUIRED');
+
+  // Test 7: Valid human ruling succeeds and writes audit log
+  await rulingAdapter(adminReviewerId, 'agr_123', '50000', 'Work verified by independent proof review', 'valid_admin_credential_12345');
+  ok('createHumanRulingAdapter authorizes valid dispute ruling with credentials redacted');
 
   await app.close();
 
