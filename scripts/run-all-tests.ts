@@ -8,6 +8,10 @@ interface TestSuite {
 
 const TEST_SUITES: TestSuite[] = [
   {
+    name: 'NGN Agreement Ledger (isolated embedded PostgreSQL)',
+    command: 'node --import tsx scripts/test-ngn-agreement-ledger.ts',
+  },
+  {
     name: 'Build Isolation & Type Checks',
     command: 'tsx scripts/test-build-isolation.ts',
   },
