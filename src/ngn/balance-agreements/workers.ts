@@ -1,7 +1,8 @@
 import { randomUUID, createHmac } from 'node:crypto';
 import type { NgnAgreementLedger, Transaction } from './ledger.js';
 
-export interface NgnEvent { id:string; sequence:string; agreement:Record<string,unknown> }
+export interface NgnEvent { id:string; sequence:string; agreement:Record<string,unknown>;
+  recipients?:Array<{userId:string;whatsapp?:string;telegramId?:string}> }
 export function createNgnEventTransport(url:string, secret:string, request:typeof fetch = fetch) {
   const target = new URL(url);
   if (target.protocol !== 'https:' || target.username || target.password || target.hash || target.search || secret.length<32) {
@@ -27,7 +28,7 @@ export function createNgnWorkers(deps:{transaction:Transaction; ledger:NgnAgreem
     const row=await deps.transaction(async sql => {
       const result=await sql.query(`UPDATE ngn_agreement_outbox SET lease_token=$1,
         lease_until=clock_timestamp()+interval '60 seconds',attempts=attempts+1
-        WHERE id=(SELECT id FROM ngn_agreement_outbox WHERE delivered_at IS NULL
+        WHERE id=(SELECT id FROM ngn_agreement_outbox WHERE delivered_at IS NULL AND skipped_at IS NULL
           AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<clock_timestamp())
           ORDER BY sequence FOR UPDATE SKIP LOCKED LIMIT 1)
         RETURNING id,sequence::text,payload,attempts`,[token]);
@@ -35,12 +36,15 @@ export function createNgnWorkers(deps:{transaction:Transaction; ledger:NgnAgreem
     });
     if(!row) return false;
     try {
+      const agreementEvent=Boolean(row.payload?.buyer_id && row.payload?.seller_id);
       // Deposit events remain recorded but are not agreement notifications.
-      if (row.payload?.buyer_id && row.payload?.seller_id) {
+      if (agreementEvent) {
         await deps.publish({id:row.id,sequence:row.sequence,agreement:row.payload});
       }
-      await deps.transaction(sql=>sql.query(`UPDATE ngn_agreement_outbox SET delivered_at=clock_timestamp(),
-        lease_token=NULL,lease_until=NULL,last_error_code=NULL WHERE id=$1 AND lease_token=$2`,[row.id,token]));
+      await deps.transaction(sql=>sql.query(`UPDATE ngn_agreement_outbox SET
+        delivered_at=CASE WHEN $3 THEN clock_timestamp() ELSE NULL END,
+        skipped_at=CASE WHEN $3 THEN NULL ELSE clock_timestamp() END,
+        lease_token=NULL,lease_until=NULL,last_error_code=NULL WHERE id=$1 AND lease_token=$2`,[row.id,token,agreementEvent]));
     } catch {
       const delay=Math.min(3600,2**Math.min(row.attempts,11));
       await deps.transaction(sql=>sql.query(`UPDATE ngn_agreement_outbox SET lease_token=NULL,lease_until=NULL,

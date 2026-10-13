@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/node';
 import { env } from '../config/env.js';
+import { redactNgnMonitoring } from '../ngn/balance-agreements/redaction.js';
 
 let initialized = false;
 
@@ -10,7 +11,9 @@ export function initMonitoring() {
     dsn: env.SENTRY_DSN,
     environment: env.SENTRY_ENVIRONMENT || env.APP_ENV,
     tracesSampleRate: env.SENTRY_TRACES_SAMPLE_RATE,
-    release: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version
+    release: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version,
+    beforeSend: redactNgnMonitoring,
+    beforeSendTransaction: redactNgnMonitoring,
   });
 
   initialized = true;
