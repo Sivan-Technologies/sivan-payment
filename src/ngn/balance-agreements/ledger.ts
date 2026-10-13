@@ -14,6 +14,7 @@ export interface Authorization {
   agreementId: string;
   amountKobo: string;
   credential: string;
+  termsHash?: string;
 }
 export interface Policies {
   // Resolve canonical identities, validate bound authorization and rate limits.
@@ -163,7 +164,8 @@ export class NgnAgreementLedger {
     // 1%, rounded UP to a whole kobo. Frozen at creation, disclosed before authorization.
     const fee = (principal + 99n) / 100n;
     await this.policies.authorize({ actorId: buyerId, action: 'create', agreementId: id,
-      amountKobo: (principal + fee).toString(), credential: input.credential });
+      amountKobo: (principal + fee).toString(), credential: input.credential,
+      termsHash:fingerprint({sellerId,title,principalKobo,policyVersion:'ngn-balance-v1'}) });
     const eligible = await this.policies.sellerEligible(sellerId);
     return this.transaction(sql => this.operation(sql, `create:${id}`, { id, buyerId, sellerId, title, principalKobo }, async () => {
       // Per-buyer row lock makes the three-invite cap safe across channels/processes.
