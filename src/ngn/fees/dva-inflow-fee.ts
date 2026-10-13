@@ -1,15 +1,13 @@
 /**
  * DVA INFLOW FEE CALCULATOR
  *
- * Extracted from paystackWebhookHandler.ts so that NGN agreement runtime
- * logic has zero direct Paystack imports. The fee policy itself is
- * Sivan-owned (not Paystack-owned), so it belongs here.
+ * Zero-Loss Financial Policy:
+ *   - Paystack charges flat 1% on every DVA deposit with no free tier.
+ *   - Sivan charges flat 1.3% across ALL amounts, capped at 500 NGN.
+ *   - This guarantees Sivan never incurs out-of-pocket loss on micro-deposits
+ *     and consistently retains a positive 0.3% spread (or up to 200 NGN on capped inflows).
  *
- * Policy (CBN-compliant, 2024):
- *   - Under 3,000 NGN: 0% fee (free tier)
- *   - 3,000 NGN and above: 1.3% of gross, capped at 500 NGN
- *
- * Both paystackWebhookHandler.ts and runtime.ts now import from this file.
+ * Both paystackWebhookHandler.ts and runtime.ts import from this file.
  */
 
 /**
@@ -20,8 +18,8 @@ export function calculateDvaInflowFee(grossNgn: number): {
   feeNgn: number;
   netNgn: number;
 } {
-  if (grossNgn < 3000) {
-    return { feeNgn: 0, netNgn: grossNgn };
+  if (grossNgn <= 0) {
+    return { feeNgn: 0, netNgn: 0 };
   }
   const rawFee = grossNgn * 0.013;
   const feeNgn = Math.min(500, Math.round(rawFee * 100) / 100);
