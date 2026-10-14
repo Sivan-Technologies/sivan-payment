@@ -5,8 +5,10 @@ import { getOnrampFeePercent } from '../service/onramp-fees.service.js';
 import { syncOnrampOrder } from '../service/onramp-sync.service.js';
 import { getOnrampControls, onrampControlsSchema, updateOnrampControls } from '../service/onramp-controls.service.js';
 import { parseBody } from '../../shared/validation.js';
+import { getOnrampCapabilities } from '../service/onramp-capabilities.service.js';
 
 export async function onrampOrdersRoutes(app: FastifyInstance) {
+  app.get('/api/onramp/capabilities', async () => ({ data: await getOnrampCapabilities() }));
   app.get('/api/onramp/fees', async () => ({ data: { percent: await getOnrampFeePercent(), type: 'percentage' } }));
   app.get('/api/onramp/controls', async () => ({ data: await getOnrampControls() }));
   app.get('/api/admin/onramp/controls', async () => ({ data: await getOnrampControls() }));

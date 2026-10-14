@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { NgnAgreementError, type NgnAgreementLedger } from './ledger.js';
+import {confirmationAction, type createNgnConfirmationReview} from './confirmation.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const credential = z.string().min(1).max(4096);
@@ -18,6 +19,10 @@ export async function ngnBalanceAgreementRoutes(app: FastifyInstance, dependenci
   ledger: NgnAgreementLedger;
   authenticate(request: FastifyRequest): Promise<string>;
   fundingEnabled?: (context?: { actorId: string; agreementId: string }) => Promise<boolean> | boolean;
+  confirmation?: {
+    review: ReturnType<typeof createNgnConfirmationReview>;
+    verifyPin(input:{actorId:string;agreementId:string;action:string;totalKobo:string;pin:string;ipAddress:string}):Promise<string>;
+  };
 }) {
   const { ledger, authenticate } = dependencies;
   app.setErrorHandler((error, _request, reply) => {
@@ -47,6 +52,31 @@ export async function ngnBalanceAgreementRoutes(app: FastifyInstance, dependenci
     deliver:ledger.deliver.bind(ledger), release:ledger.release.bind(ledger),
     dispute:ledger.dispute.bind(ledger), cancel:ledger.consentCancellation.bind(ledger),
   };
+  if(dependencies.confirmation) {
+    const confirmation=dependencies.confirmation;
+    app.get(`${root}/:id/confirmation/:action`,async(req,reply)=>{
+      const actorId=await actor(req),params=req.params as Record<string,string>;
+      const agreement=await ledger.get(id.parse(params.id),actorId);
+      const action=confirmationAction.parse(params.action);
+      reply.header('Cache-Control','no-store');
+      return {data:confirmation.review.issue(agreement,actorId,action)};
+    });
+    app.post(`${root}/:id/confirmation/:action`,async(req,reply)=>{
+      const actorId=await actor(req),params=req.params as Record<string,string>;
+      const agreementId=id.parse(params.id),action=confirmationAction.parse(params.action);
+      const body=z.object({pin:z.string().regex(/^\d{6,12}$/),reviewToken:z.string().min(20).max(4096)}).strict().parse(req.body);
+      const agreement=await ledger.get(agreementId,actorId);
+      confirmation.review.verify(body.reviewToken,agreement,actorId,action);
+      if(action==='fund'&&dependencies.fundingEnabled&&!await dependencies.fundingEnabled({actorId,agreementId})) throw new NgnAgreementError('NGN_FUNDING_NOT_ENABLED',503);
+      const credential=await confirmation.verifyPin({actorId,agreementId,action,
+        totalKobo:(BigInt(agreement.principal_kobo)+BigInt(agreement.fee_kobo)).toString(),pin:body.pin,ipAddress:req.ip});
+      // Existing ledger methods recheck state and participant under a row lock,
+      // consume the bound token and preserve the existing idempotency policy.
+      const data=await actions[action](agreementId,actorId,credential);
+      reply.header('Cache-Control','no-store');
+      return {data};
+    });
+  }
   for (const [action,perform] of Object.entries(actions)) {
     app.post(`${root}/:id/${action}`,async req => {
       const actorId = await actor(req);

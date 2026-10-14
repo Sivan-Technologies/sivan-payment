@@ -3,7 +3,8 @@ import type { FastifyInstance } from 'fastify';
 import { env } from '../../config/env.js';
 import { db } from '../../database/json-database.js';
 import { verifyUserJwt } from '../../auth/jwt.js';
-import { consumeStepUpToken } from '../../identity/withdrawal-pin.service.js';
+import { consumeStepUpToken, verifyTmaPinStepUp } from '../../identity/withdrawal-pin.service.js';
+import {createNgnConfirmationReview} from './confirmation.js';
 import { getBankingRailAdapter } from '../../banking-rail/index.js';
 import { NgnAgreementLedger, NgnAgreementError, type Authorization } from './ledger.js';
 import { ngnAgreementTransaction } from './postgres.js';
@@ -256,6 +257,22 @@ export async function registerNgnBalanceRuntime(app:FastifyInstance) {
   await transaction(sql=>sql.query('SELECT sequence,lease_token,skipped_at FROM ngn_agreement_outbox LIMIT 0'));
   await app.register(async scope=>ngnBalanceAgreementRoutes(scope,{
     ledger,
+    confirmation: {
+      review:createNgnConfirmationReview(env.USER_JWT_SECRET ?? ''),
+      async verifyPin(input) {
+        try {
+          const result=await verifyTmaPinStepUp({userId:input.actorId,pin:input.pin,
+            amount:naira(input.totalKobo),currency:'NGN',
+            destinationRef:ngnAuthorizationBinding({agreementId:input.agreementId,action:input.action,amountKobo:input.totalKobo}),
+            channel:'telegram'}, {ipAddress:input.ipAddress});
+          return result.stepUpToken;
+        } catch(error:any) {
+          const code=error?.details?.code;
+          if(['PIN_INVALID','PIN_LOCKED','PIN_HELD','PIN_NOT_SET'].includes(code)) throw new NgnAgreementError(code,403);
+          throw new NgnAgreementError('NGN_CONFIRMATION_UNAVAILABLE',503);
+        }
+      },
+    },
     fundingEnabled: createNgnFundingGuard(() => activeLedger),
     async authenticate(request) {
       const value=request.headers.authorization;

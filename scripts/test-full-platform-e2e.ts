@@ -104,6 +104,8 @@ const paymentSteps: Step[] = [
   { name: 'Webhook signature verification', cwd: paymentRoot, command: 'npm run test:webhook-signature' },
   { name: 'Admin/payment controls E2E', cwd: paymentRoot, command: 'npm run test:controls' },
   { name: 'On-ramp order/reconciliation E2E', cwd: paymentRoot, command: 'npm run test:onramp' },
+  { name: 'On-ramp capability contract', cwd: paymentRoot, command: 'node --import tsx scripts/test-onramp-capabilities.ts' },
+  { name: 'NGN secure confirmation lifecycle (isolated PostgreSQL)', cwd: paymentRoot, command: 'node --import tsx scripts/test-ngn-confirmation.ts' },
   { name: 'Support tickets + uploads E2E', cwd: paymentRoot, command: 'npm run test:support' },
   { name: 'User notification preferences E2E', cwd: paymentRoot, command: 'npm run test:preferences' },
   { name: 'Legal acceptance E2E', cwd: paymentRoot, command: 'npm run test:legal' },
