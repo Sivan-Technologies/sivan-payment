@@ -1093,14 +1093,18 @@ export default function App() {
   useEffect(() => {
     if (view === 'receive') {
       void loadControls();
+      void throttledLoadUserData(3000);
+      void loadUserWallets();
       const interval = setInterval(() => {
         if (document.visibilityState === 'visible') {
           void loadControls();
+          void throttledLoadUserData(5000);
+          void loadUserWallets();
         }
-      }, 10000);
+      }, 8000);
       return () => clearInterval(interval);
     }
-  }, [view, loadControls]);
+  }, [view, loadControls, throttledLoadUserData, loadUserWallets]);
 
   useEffect(() => {
     const handleAgreementsRefresh = () => {
@@ -1232,6 +1236,31 @@ export default function App() {
     }
     return undefined;
   }, [ngnNetwork, ngnNetworkOptionsWithBalances, ngnNetworkBalances, unifiedBalance]);
+
+  const stellarSpendable = useMemo(() => {
+    const allWallets = [
+      ...(unifiedBalance?.wallets || []),
+      ...(userWallets || [])
+    ];
+    for (const w of allWallets) {
+      if (!w) continue;
+      const chain = String(w.chain || '').toLowerCase();
+      if (chain === 'stellar') {
+        if (Array.isArray(w.balances)) {
+          for (const b of w.balances) {
+            if (!b) continue;
+            if (String(b.asset || '').toLowerCase() === 'usdc') {
+              const parsed = typeof b.amount === 'number' ? b.amount : parseFloat(String(b.amount || '0'));
+              if (Number.isFinite(parsed)) return parsed;
+            }
+          }
+        }
+      }
+    }
+    const fromMap = ngnNetworkBalances.get('stellar');
+    if (typeof fromMap === 'number') return fromMap;
+    return 0;
+  }, [unifiedBalance, userWallets, ngnNetworkBalances]);
 
   useEffect(() => {
     const options = ngnNetworkOptionsWithBalances;
@@ -3101,6 +3130,7 @@ export default function App() {
              * because "we could not check" is not "you have nothing".
              */
             ngnSpendable={selectedNetworkSpendable !== undefined ? selectedNetworkSpendable : selectedNgnSpendable}
+            stellarSpendable={stellarSpendable}
             ngnWindowDays={verificationSummary?.windowDays}
             /* From GET /api/ngn/networks, which this screen already awaits.
                Undefined until it answers, which reads as OFF - the withdraw
@@ -3111,6 +3141,8 @@ export default function App() {
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
             ngnAvailable={(ngnNetworks?.offramp.length ?? 0) > 0}
+            userFullName={user?.fullName}
+            userPhone={user?.whatsappNumber}
             onClose={() => {
               setDepositResult(null);
               goToView('overview');
@@ -3122,7 +3154,7 @@ export default function App() {
           />
         )}
 
-        {view === 'receive' && <ReceiveView wallets={userWallets} unifiedBalance={unifiedBalance} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} />}
+        {view === 'receive' && <ReceiveView wallets={userWallets} unifiedBalance={unifiedBalance} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} userFullName={user?.fullName} userPhone={user?.whatsappNumber} userId={user?.id} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
         {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 

@@ -53,19 +53,12 @@ function check(name: string, ok: unknown, detail = '') {
 }
 
 const provider = getWalletProvider('mock') as any;
-// The wallet must exist in the provider before balances can be seeded.
-await provider.createWallet({
-  chain: 'base', idempotencyKey: 'seed-a', customerId: 'cus_a', userId: 'user_a'
-}).catch(() => undefined);
-const created = await provider.getWallet('mock_a').catch(() => undefined);
-if (!created) {
-  // The mock keys wallets by its own generated id; register ours explicitly.
-  (provider as any).wallets?.set?.('mock_a', {
-    providerWalletId: 'mock_a', chain: 'base',
-    address: '0xAAA0000000000000000000000000000000000001',
-    custodyModel: 'non_custodial', balances: []
-  });
-}
+// Explicitly register mock_a with empty balances so initial scan starts clean.
+(provider as any).wallets?.set?.('mock_a', {
+  providerWalletId: 'mock_a', chain: 'base',
+  address: '0xAAA0000000000000000000000000000000000001',
+  custodyModel: 'non_custodial', balances: []
+});
 
 const seed = async (asset: string, chain: string, amount: string) =>
   provider.__seedBalance('mock_a', { asset, chain, amount });
@@ -139,7 +132,7 @@ check('and its amount is the USDT delta', usdtRows[0]?.amount === '20.000000',
 
 const src = fs.readFileSync(path.join(root, 'src/deposits/deposit-detection.service.ts'), 'utf8');
 check('the asset list is an explicit allow-list',
-  /WATCHED_ASSETS = new Set\(\['USDC', 'USDT'\]\)/.test(src),
+  /WATCHED_ASSETS = new Set\(\['USDC', 'USDT', 'STRK'\]\)/.test(src),
   'watching every token invites dust and airdrop spam to generate alerts');
 
 console.log('\n── an unreadable balance is not a zero balance ────────────────');

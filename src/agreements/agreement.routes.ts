@@ -11,12 +11,21 @@ import {
   extendAgreementDeadline,
   getAgreement,
   getCountdownLabel,
+  adminReleaseAgreement,
+  listAdminAgreements,
 } from './agreement.service.js';
 import { quoteServiceAgreementFee, type FeePayer } from './agreement-fee-policy.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import type { WalletChain } from '../database/types.js';
+import {
+  getAgreementControls,
+  isCreationAllowed,
+  isServicingAllowed,
+  isSettlementAllowed,
+} from './agreement-controls.service.js';
 
 import { db } from '../database/json-database.js';
+import { getAuthUserId } from '../auth/jwt.js';
 
 interface CreateAgreementBody {
   id?: string;
@@ -34,6 +43,8 @@ interface CreateAgreementBody {
   channel?: string;
   fundingTxHash?: string;
   attributionTag?: string;
+  feeAmountUsdc?: number;
+  sellerNetAmountUsdc?: number;
 }
 
 export async function agreementRoutes(app: FastifyInstance) {
@@ -49,11 +60,35 @@ export async function agreementRoutes(app: FastifyInstance) {
       sellerUserId?: string;
     };
   }>('/api/agreements', async (req, reply) => {
-    const target = req.query.walletAddress || req.query.userId || req.query.buyerUserId || req.query.sellerUserId;
+    let target = req.query.walletAddress || req.query.userId || req.query.buyerUserId || req.query.sellerUserId;
+    if (!target || target === 'me') {
+      const authUser = getAuthUserId(req);
+      if (authUser) target = authUser;
+    }
     if (!target) {
       return reply.code(200).send([]);
     }
-    const list = await db.listServiceAgreementsByUserId(target);
+
+    const aliases: string[] = [target];
+    try {
+      const user = (await db.findUserById(target).catch(() => null)) ||
+                   (await db.findUserByTarget(target).catch(() => null));
+      if (user) {
+        if (user.id) aliases.push(user.id);
+        if (user.email) aliases.push(user.email);
+        if (user.username) aliases.push(user.username);
+        if ((user as any).phone) aliases.push((user as any).phone);
+        if (user.whatsappNumber) aliases.push(user.whatsappNumber);
+        if (user.telegramUserId) aliases.push(String(user.telegramUserId));
+        if (user.telegramUsername) aliases.push(user.telegramUsername);
+        const wallets = await db.listUserWallets(user.id).catch(() => []);
+        for (const w of wallets) {
+          if (w.address) aliases.push(w.address);
+        }
+      }
+    } catch {}
+
+    const list = await db.listServiceAgreementsByUserId(aliases.length > 1 ? aliases : target);
     const enriched = list.map((a) => ({
       ...a,
       countdownLabel: getCountdownLabel(a),
@@ -82,6 +117,25 @@ export async function agreementRoutes(app: FastifyInstance) {
   });
 
   /**
+   * GET /api/settings/limits
+   * Dynamic platform limits and fee configuration for client apps.
+   */
+  app.get('/api/settings/limits', async (_req, reply) => {
+    return reply.code(200).send({
+      minNairaAmount: 2000,
+      maxNairaAmount: 50000000,
+      minUsdcAmount: 5,
+      maxUsdcAmount: 50000,
+      usdcFeePercent: 3.0,
+      usdcFeeFixed: 0.50,
+      usdtFeePercent: 3.0,
+      cusdFeePercent: 3.0,
+      cngnFeePercent: 1.0,
+      version: 1,
+    });
+  });
+
+  /**
    * POST /api/agreements
    * Create a new service agreement. Deadline is extracted from description
    * automatically unless deadlineDays is supplied explicitly.
@@ -90,6 +144,16 @@ export async function agreementRoutes(app: FastifyInstance) {
     const body = req.body;
     if (!body?.buyerUserId || !body?.sellerUserId || !body?.title || !body?.amountUsdc || !body?.network) {
       throw badRequest('buyerUserId, sellerUserId, title, amountUsdc, and network are required');
+    }
+
+    // PSA Creation Guard: check before any DB write.
+    const controls = await getAgreementControls();
+    if (!isCreationAllowed(controls, body.buyerUserId)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_CREATION_PAUSED',
+        message: controls.maintenanceMessage,
+      });
     }
 
     const agreement = await createAgreement({
@@ -108,6 +172,8 @@ export async function agreementRoutes(app: FastifyInstance) {
       channel: body.channel,
       fundingTxHash: body.fundingTxHash,
       attributionTag: body.attributionTag,
+      feeAmountUsdc: body.feeAmountUsdc,
+      sellerNetAmountUsdc: body.sellerNetAmountUsdc,
     });
 
     return reply.code(201).send({
@@ -167,6 +233,15 @@ export async function agreementRoutes(app: FastifyInstance) {
    * Mark the agreement as funded and compute delivery_due_at.
    */
   app.post<{ Params: { id: string }; Body?: { fundingTxHash?: string } }>('/api/agreements/:id/fund', async (req, reply) => {
+    // PSA Settlement Guard: fund is an on-chain operation — blocked during emergency halt.
+    const controls = await getAgreementControls();
+    if (!isSettlementAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SETTLEMENT_PAUSED',
+        message: 'On-chain settlement is temporarily paused due to a network safety event. Active agreements remain fully visible.',
+      });
+    }
     const agreement = await fundAgreement(req.params.id, req.body?.fundingTxHash);
     return reply.code(200).send({
       ...agreement,
@@ -191,6 +266,15 @@ export async function agreementRoutes(app: FastifyInstance) {
    * Seller marks delivery submitted.
    */
   app.post<{ Params: { id: string } }>('/api/agreements/:id/deliver', async (req, reply) => {
+    // PSA Servicing Guard
+    const controls = await getAgreementControls();
+    if (!isServicingAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SERVICING_PAUSED',
+        message: 'Agreement servicing is temporarily paused. Please check back shortly.',
+      });
+    }
     const agreement = await markDelivered(req.params.id);
     return reply.code(200).send({
       ...agreement,
@@ -203,11 +287,39 @@ export async function agreementRoutes(app: FastifyInstance) {
    * Buyer approves delivery and releases funds.
    */
   app.post<{ Params: { id: string } }>('/api/agreements/:id/release', async (req, reply) => {
-    const agreement = await releaseAgreement(req.params.id);
-    return reply.code(200).send({
-      ...agreement,
-      countdownLabel: getCountdownLabel(agreement),
-    });
+    // PSA Settlement Guard: release is the on-chain payment transfer — blocked during emergency halt.
+    const controls = await getAgreementControls();
+    if (!isSettlementAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SETTLEMENT_PAUSED',
+        message: 'On-chain settlement is temporarily paused due to a network safety event. Your funds are secure. Active agreements remain fully visible.',
+      });
+    }
+    if (!isServicingAllowed(controls)) {
+      return reply.code(503).send({
+        success: false,
+        code: 'AGREEMENT_SERVICING_PAUSED',
+        message: 'Agreement servicing is temporarily paused. Please check back shortly.',
+      });
+    }
+    try {
+      const agreement = await releaseAgreement(req.params.id);
+      return reply.code(200).send({
+        ...agreement,
+        countdownLabel: getCountdownLabel(agreement),
+      });
+    } catch (err: any) {
+      req.log.error(err, `Failed to release agreement ${req.params.id}`);
+      const statusCode = err.statusCode || (err.message?.includes('not found') ? 404 : 400);
+      return reply.code(statusCode).send({
+        success: false,
+        error: {
+          code: err.code || 'RELEASE_FAILED',
+          message: err.message || 'Failed to release agreement',
+        },
+      });
+    }
   });
 
   /**
@@ -248,4 +360,114 @@ export async function agreementRoutes(app: FastifyInstance) {
       });
     }
   );
+
+  /**
+   * GET /api/admin/agreements
+   * List all service agreements with filters and operations health summary.
+   */
+  app.get<{
+    Querystring: {
+      status?: string;
+      network?: string;
+      search?: string;
+      limit?: string;
+      offset?: string;
+    };
+  }>('/api/admin/agreements', async (req, reply) => {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+    const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
+    const result = await listAdminAgreements({
+      status: req.query.status,
+      network: req.query.network,
+      search: req.query.search,
+      limit,
+      offset,
+    });
+    return reply.code(200).send({ data: result });
+  });
+
+  /**
+   * GET /api/admin/agreements/:id
+   * Get detail for a specific service agreement.
+   */
+  app.get<{ Params: { id: string } }>('/api/admin/agreements/:id', async (req, reply) => {
+    const agreement = await getAgreement(req.params.id);
+    if (!agreement) throw notFound(`Service agreement ${req.params.id}`);
+    return reply.code(200).send({
+      data: {
+        ...agreement,
+        countdownLabel: getCountdownLabel(agreement),
+      },
+    });
+  });
+
+  /**
+   * POST /api/admin/agreements/:id/force-release
+   * Admin intervention to release or force-bind an on-chain transaction hash.
+   */
+  app.post<{
+    Params: { id: string };
+    Body?: {
+      toAddressOverride?: string;
+      releaseTxHashOverride?: string;
+      adminNote?: string;
+    };
+  }>('/api/admin/agreements/:id/force-release', async (req, reply) => {
+    const adminActor = (req as any).adminActor?.email || (req as any).adminActor?.role || 'admin';
+    try {
+      const agreement = await adminReleaseAgreement({
+        agreementId: req.params.id,
+        toAddressOverride: req.body?.toAddressOverride,
+        releaseTxHashOverride: req.body?.releaseTxHashOverride,
+        adminNote: req.body?.adminNote,
+        callerAdmin: adminActor,
+      });
+      return reply.code(200).send({
+        success: true,
+        data: {
+          ...agreement,
+          countdownLabel: getCountdownLabel(agreement),
+        },
+      });
+    } catch (err: any) {
+      req.log.error(err, `Admin force-release failed for agreement ${req.params.id}`);
+      return reply.code(err.statusCode || 400).send({
+        success: false,
+        error: {
+          code: err.code || 'ADMIN_RELEASE_FAILED',
+          message: err.message || 'Admin release failed',
+        },
+      });
+    }
+  });
+
+  /**
+   * POST /api/admin/agreements/:id/retry
+   * Admin re-attempts the automated on-chain release.
+   */
+  app.post<{ Params: { id: string } }>('/api/admin/agreements/:id/retry', async (req, reply) => {
+    const adminActor = (req as any).adminActor?.email || (req as any).adminActor?.role || 'admin';
+    try {
+      const agreement = await adminReleaseAgreement({
+        agreementId: req.params.id,
+        callerAdmin: adminActor,
+      });
+      return reply.code(200).send({
+        success: true,
+        data: {
+          ...agreement,
+          countdownLabel: getCountdownLabel(agreement),
+        },
+      });
+    } catch (err: any) {
+      req.log.error(err, `Admin retry failed for agreement ${req.params.id}`);
+      return reply.code(err.statusCode || 400).send({
+        success: false,
+        error: {
+          code: err.code || 'ADMIN_RETRY_FAILED',
+          message: err.message || 'Admin retry failed',
+        },
+      });
+    }
+  });
 }

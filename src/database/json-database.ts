@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord } from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -68,12 +68,34 @@ const emptyDb = (): DatabaseShape => ({
   ngnIdentityVerifications: [],
   p2pClaims: [],
   serviceAgreements: [],
+  agreementControls: [],
+  ghsPayoutAccounts: [],
+  ghsQuotes: [],
+  ghsTransfers: [],
 });
 
 export class JsonDatabase {
   private filePath: string;
   private db: DatabaseShape | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
+
+  async getAgreementControls(): Promise<AgreementControlsRecord | null> {
+    const data = await this.read();
+    return (data.agreementControls ?? []).find((c) => c.id === 'default_controls') ?? null;
+  }
+
+  async saveAgreementControls(record: AgreementControlsRecord): Promise<AgreementControlsRecord> {
+    return this.mutate((data) => {
+      data.agreementControls = data.agreementControls ?? [];
+      const idx = data.agreementControls.findIndex((c) => c.id === 'default_controls');
+      if (idx >= 0) {
+        data.agreementControls[idx] = record;
+      } else {
+        data.agreementControls.push(record);
+      }
+      return record;
+    });
+  }
 
   async saveP2pClaim(claim: P2pClaimRecord): Promise<P2pClaimRecord> {
     return this.mutate((data) => {
@@ -269,14 +291,30 @@ export class JsonDatabase {
     const clean = String(target || '').trim();
     if (!clean) return undefined;
 
+    // Helper to backfill telegram info from customerIdentityLinks if missing on user
+    const backfillUser = (u: UserRecord): UserRecord => {
+      if (u.telegramUserId && (u as any).telegramUsername) return u;
+      const links = data.customerIdentityLinks || [];
+      const link = links.find((l) => l.paymentUserId === u.id && (l.telegramUserId || l.telegramUsername));
+      if (link) {
+        return {
+          ...u,
+          telegramUserId: u.telegramUserId || link.telegramUserId,
+          telegramUsername: (u as any).telegramUsername || link.telegramUsername,
+          whatsappNumber: u.whatsappNumber || link.whatsappNumber,
+        };
+      }
+      return u;
+    };
+
     // 1. Direct ID match
     let user = data.users.find((u) => u.id === clean);
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 2. Username match (@username or username)
     const username = clean.replace(/^@/, '').toLowerCase();
     user = data.users.find((u) => u.username?.toLowerCase() === username || (u as any).telegramUsername?.toLowerCase() === username);
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 3. Phone / WhatsApp match (normalize to E.164 and local)
     const digitsOnly = clean.replace(/\D/g, '');
@@ -290,11 +328,11 @@ export class JsonDatabase {
       }
       return false;
     });
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 4. Telegram user ID match
     user = data.users.find((u) => u.telegramUserId === clean);
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 5. Customer identity links match (linked Telegram accounts, phones, usernames)
     const links = data.customerIdentityLinks || [];
@@ -305,7 +343,14 @@ export class JsonDatabase {
     );
     if (matchedLink?.paymentUserId) {
       user = data.users.find((u) => u.id === matchedLink.paymentUserId);
-      if (user) return user;
+      if (user) {
+        return {
+          ...user,
+          telegramUserId: user.telegramUserId || matchedLink.telegramUserId,
+          telegramUsername: (user as any).telegramUsername || matchedLink.telegramUsername,
+          whatsappNumber: user.whatsappNumber || matchedLink.whatsappNumber,
+        };
+      }
     }
 
     return undefined;
@@ -738,6 +783,80 @@ export class JsonDatabase {
         return merged;
       }
       data.ngnPayoutAccounts.push(record);
+      return record;
+    });
+  }
+
+  async listGhsPayoutAccounts(userId?: string): Promise<GhsPayoutAccountRecord[]> {
+    const data = await this.read();
+    const all = data.ghsPayoutAccounts ?? [];
+    return userId ? all.filter((item) => item.userId === userId) : all;
+  }
+
+  async findGhsPayoutAccountById(id: string): Promise<GhsPayoutAccountRecord | null> {
+    const data = await this.read();
+    return (data.ghsPayoutAccounts ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsPayoutAccountRecord(record: GhsPayoutAccountRecord) {
+    return this.mutate((data) => {
+      data.ghsPayoutAccounts = data.ghsPayoutAccounts ?? [];
+      const index = data.ghsPayoutAccounts.findIndex(
+        (item) =>
+          item.userId === record.userId &&
+          item.provider === record.provider &&
+          item.bankId === record.bankId &&
+          item.accountNumber === record.accountNumber
+      );
+      if (index >= 0) {
+        const existing = data.ghsPayoutAccounts[index];
+        const merged = { ...record, id: existing.id, createdAt: existing.createdAt };
+        data.ghsPayoutAccounts[index] = merged;
+        return merged;
+      }
+      data.ghsPayoutAccounts.push(record);
+      return record;
+    });
+  }
+
+  async listGhsQuotes(userId?: string): Promise<GhsQuoteRecord[]> {
+    const data = await this.read();
+    const all = data.ghsQuotes ?? [];
+    return userId ? all.filter((item) => item.userId === userId) : all;
+  }
+
+  async findGhsQuoteById(id: string): Promise<GhsQuoteRecord | null> {
+    const data = await this.read();
+    return (data.ghsQuotes ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsQuoteRecord(record: GhsQuoteRecord) {
+    return this.mutate((data) => {
+      data.ghsQuotes = data.ghsQuotes ?? [];
+      const index = data.ghsQuotes.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ghsQuotes[index] = record;
+      else data.ghsQuotes.push(record);
+      return record;
+    });
+  }
+
+  async listGhsTransfers(filter?: { userId?: string }): Promise<GhsTransferRecord[]> {
+    const data = await this.read();
+    const all = data.ghsTransfers ?? [];
+    return filter?.userId ? all.filter((item) => item.userId === filter.userId) : all;
+  }
+
+  async findGhsTransferById(id: string): Promise<GhsTransferRecord | null> {
+    const data = await this.read();
+    return (data.ghsTransfers ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsTransferRecord(record: GhsTransferRecord) {
+    return this.mutate((data) => {
+      data.ghsTransfers = data.ghsTransfers ?? [];
+      const index = data.ghsTransfers.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ghsTransfers[index] = record;
+      else data.ghsTransfers.push(record);
       return record;
     });
   }
@@ -1450,6 +1569,13 @@ export class JsonDatabase {
   async findServiceAgreementById(id: string): Promise<ServiceAgreementRecord | null> {
     const data = await this.read();
     return (data.serviceAgreements ?? []).find((a) => a.id === id) ?? null;
+  }
+
+  async listServiceAgreements(limit = 200): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    return [...(data.serviceAgreements ?? [])]
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      .slice(0, limit);
   }
 
   async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {

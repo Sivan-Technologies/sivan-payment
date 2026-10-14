@@ -55,6 +55,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chainFamily, networksServedByWallet, walletServesNetwork, EVM_CHAINS } from '../src/wallets/chain-family.js';
+import { stableUsdBalanceKpi } from '../frontend/src/dashboardKpis.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
@@ -99,9 +100,17 @@ check('the served list is never empty for a known chain', ['base', 'ethereum', '
 check(
   'EVM_CHAINS is the full EVM set',
   JSON.stringify([...EVM_CHAINS].sort()) ===
-    JSON.stringify(['arbitrum', 'base', 'bnb', 'bsc', 'celo', 'ethereum']),
+    JSON.stringify(['arbitrum', 'arc', 'base', 'bnb', 'bsc', 'celo', 'ethereum']),
   [...EVM_CHAINS].sort().join(',')
 );
+// Arc is on this list because it IS an EVM chain: chain id 5042, secp256k1,
+// 0x addresses, and eth_getCode answers there. Starknet is deliberately NOT,
+// for the reason spelled out in chain-family.ts. If that ever flips, the two
+// assertions below this one will also start lying.
+check('starknet is not treated as EVM', !([...EVM_CHAINS] as string[]).includes('starknet'));
+check('stellar and solana are not treated as EVM',
+  !([...EVM_CHAINS] as string[]).includes('stellar') &&
+  !([...EVM_CHAINS] as string[]).includes('solana'));
 
 console.log('\n── the exact reported case ────────────────────────────────────');
 
@@ -165,9 +174,56 @@ console.log('\n── the dashboard shows a balance, from the shared source ─�
 
 const app = read('frontend/src/App.tsx');
 check('the dashboard has a balance KPI', app.includes('label="Your balance"'));
-check('it reads the SAME unified balance the transfer screen uses', app.includes("unifiedBalance?.balances.find((item) => item.asset === 'usdc')"));
+/**
+ * These two used to grep App.tsx for literal expressions:
+ *
+ *   "unifiedBalance?.balances.find((item) => item.asset === 'usdc')"
+ *   "chainUnavailable ? '-'"
+ *
+ * Both were refactored into dashboardKpis.stableUsdBalanceKpi(), which is a
+ * pure function. The behaviour survived the refactor intact; only the text
+ * moved, and the test went red for a change that improved the code. A test
+ * that fails on a legitimate refactor gets ignored, and an ignored test is
+ * the thing that let Arc slip past the assertion above.
+ *
+ * So these now CALL the function instead of reading the file. That cannot be
+ * satisfied by a comment, cannot be broken by renaming a variable, and WILL
+ * fail if anyone makes the dashboard render a confident zero for a chain it
+ * could not read.
+ */
+check('the dashboard KPI comes from the shared dashboardKpis module',
+  app.includes("from './dashboardKpis'") && app.includes('stableUsdBalanceKpi(unifiedBalance)'));
 check('it does not recompute a balance of its own', !/dashboardBalance\s*=/.test(app));
-check('an unreadable chain shows a dash, never a confident zero', app.includes("chainUnavailable ? '—'"));
+
+// A chain that could not be read must never be reported as zero.
+const allUnreadable = stableUsdBalanceKpi({
+  balances: [{ asset: 'usdc', spendable: '0', held: '0', chainUnavailable: true }],
+} as any);
+check('an unreadable chain shows a dash, never a confident zero',
+  allUnreadable.value === '\u2014', `got ${allUnreadable.value}`);
+
+// A readable chain with a real balance must still show the number.
+const readable = stableUsdBalanceKpi({
+  balances: [{ asset: 'usdc', spendable: '98.00', held: '0', chainUnavailable: false }],
+} as any);
+check('a readable balance is still shown as a number',
+  readable.value.includes('98'), `got ${readable.value}`);
+
+// Partially unreadable must show what loaded, flagged, not a silent total.
+const partial = stableUsdBalanceKpi({
+  balances: [
+    { asset: 'usdc', spendable: '50.00', held: '0', chainUnavailable: false },
+    { asset: 'usdt', spendable: '0', held: '0', chainUnavailable: true },
+  ],
+} as any);
+check('a partial read is flagged rather than silently totalled',
+  partial.value.includes('50') && /partial|retry/i.test(`${partial.sub} ${partial.trend}`),
+  `${partial.value} | ${partial.sub} | ${partial.trend}`);
+
+// No balance at all is unknown, not zero.
+const loading = stableUsdBalanceKpi(null);
+check('no balance yet reads as unknown, not zero',
+  loading.value === '\u2014', `got ${loading.value}`);
 check('"Total volume" no longer sits where a balance belongs', !app.includes('label="Total volume"'));
 /**
  * SUPERSEDED. This asserted the "Payout volume" card, which was DELETED in the

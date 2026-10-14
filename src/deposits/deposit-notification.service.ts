@@ -115,7 +115,8 @@ export function humanNetwork(chain: string): string {
     bsc: 'BNB Chain',
     bnb: 'BNB Chain',
     stellar: 'Stellar',
-    avalanche_c_chain: 'Avalanche'
+    avalanche_c_chain: 'Avalanche',
+    starknet: 'Starknet',
   };
   return map[chain] ?? chain.replaceAll('_', ' ');
 }
@@ -146,27 +147,33 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
     }
 
     const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
-    if (!notifyUrl) {
-      console.warn('[deposit-notification] TELEGRAM_NOTIFICATION_URL is not set — skipping Telegram deposit notification.');
-      return;
-    }
     const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
-    if (!secret) {
-      console.warn('[deposit-notification] NOTIFICATION_SECRET is not set — skipping Telegram deposit notification.');
+    if (!notifyUrl || !secret) {
       return;
     }
+
+    const user = await db.findUserById(userId);
+    let targetTelegramId: string | null = null;
 
     const links = await db.listCustomerIdentityLinks();
     const activeLinks = links
       .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
       .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
 
-    const telegramLink = activeLinks[0];
-    if (!telegramLink?.telegramUserId) return;
+    if (activeLinks[0]?.telegramUserId) {
+      targetTelegramId = activeLinks[0].telegramUserId;
+    } else if (user?.telegramUserId) {
+      targetTelegramId = user.telegramUserId;
+    } else {
+      const { resolveTelegramIdForAgreement } = await import('../agreements/agreement-identity.service.js');
+      targetTelegramId = await resolveTelegramIdForAgreement(userId);
+    }
+
+    if (!targetTelegramId) return;
 
     // Verify this Telegram ID has not been superseded by a newer link to a different user
     const allLinksForTg = links
-      .filter((l) => l.telegramUserId === telegramLink.telegramUserId && l.status === 'linked')
+      .filter((l) => l.telegramUserId === targetTelegramId && l.status === 'linked')
       .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
 
     if (allLinksForTg.length > 0 && allLinksForTg[0].paymentUserId !== userId) {
@@ -176,14 +183,17 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
     const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && prefs.telegramNotificationsEnabled === false) return;
 
-    const user = await db.findUserById(userId);
     const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
-
     const amount = `${deposit.amount} ${deposit.asset}`;
     const network = humanNetwork(deposit.chain);
     const text = deposit.status === 'confirmed'
       ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
       : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
+
+    const depositKeyboard = [
+      [{ text: '💰 View Balance', callback_data: 'v1:balance' }],
+      [{ text: '🏠 Main Menu', callback_data: 'v1:menu' }],
+    ];
 
     await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
       method: 'POST',
@@ -192,7 +202,65 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
         'x-notify-secret': secret,
       },
       body: JSON.stringify({
-        telegramId: telegramLink.telegramUserId,
+        telegramId: targetTelegramId,
+        message: text,
+        keyboard: depositKeyboard,
+      }),
+    });
+  } catch {
+    // Non-blocking notification enhancement
+  }
+}
+
+/**
+ * Deliver WhatsApp deposit notification if user has linked WhatsApp.
+ */
+export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepositRecord): Promise<void> {
+  try {
+    if (
+      userId.startsWith('usr_dev_') ||
+      userId.startsWith('usr_test_') ||
+      userId.includes('mock') ||
+      userId.includes('test_agent') ||
+      userId.includes('buyer_test') ||
+      userId.includes('seller_test')
+    ) {
+      return;
+    }
+
+    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL;
+    if (!rawWaUrl) return;
+
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    if (!secret) return;
+
+    const user = await db.findUserById(userId);
+    let targetPhone = user?.whatsappNumber;
+    if (!targetPhone) {
+      const links = await db.listCustomerIdentityLinks();
+      const activeWa = links
+        .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.whatsappNumber))
+        .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+      targetPhone = activeWa[0]?.whatsappNumber;
+    }
+    if (!targetPhone) return;
+
+    const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
+    const amount = `${deposit.amount} ${deposit.asset}`;
+    const network = humanNetwork(deposit.chain);
+    const text = deposit.status === 'confirmed'
+      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
+
+    const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+    await fetch(waNotifyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-notify-secret': secret,
+      },
+      body: JSON.stringify({
+        to: targetPhone,
         message: text,
       }),
     });
@@ -227,6 +295,9 @@ export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> 
 
     // Deliver Telegram notification if linked & enabled
     void notifyTelegramDeposit(deposit.userId, deposit);
+
+    // Deliver WhatsApp notification if linked & enabled
+    void notifyWhatsAppDeposit(deposit.userId, deposit);
 
     if (!user?.email) {
       outcome.skipped += 1;

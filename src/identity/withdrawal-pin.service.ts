@@ -44,21 +44,18 @@ export const setWithdrawalPinSchema = z.object({
 export const verifyWithdrawalPinSchema = z.object({
   channel: z.enum(['whatsapp', 'telegram']),
   identity: z.string().min(1).max(64),
-  /**
-   * 6-12, matching setWithdrawalPinSchema above.
-   *
-   * This used to accept a minimum of 4. Nothing could ever satisfy it: a PIN
-   * can only be created through setWithdrawalPinSchema, which demands 6, so a
-   * 4 or 5 digit submission was accepted by the schema and then failed the
-   * hash comparison - burning one of the user's limited attempts and moving
-   * them toward a lockout for input the API had told them was well-formed.
-   */
   pin: z.string().min(6).max(12),
-
   amount: z.string().min(1).max(40),
   currency: z.string().min(2).max(10),
   destinationRef: z.string().min(1).max(200),
 });
+
+export const setChatWithdrawalPinSchema = z.object({
+  channel: z.enum(['whatsapp', 'telegram']),
+  identity: z.string().min(1).max(64),
+  pin: z.string().min(6).max(12),
+});
+
 
 /**
  * scrypt, matching `scrypt-sha256-v1` already used for 2FA recovery answers.
@@ -215,6 +212,27 @@ export async function setWithdrawalPin(
     changed: Boolean(existing),
     withdrawalsHeldUntil: record.withdrawalsHeldUntil ?? null,
   };
+}
+
+/**
+ * Set the initial PIN for a user from an authenticated chat channel (e.g. Meta WhatsApp Flows).
+ * Guarded by service secret at the route layer.
+ * Only allows setting if no PIN exists yet; prevents chat-based PIN changes to guard against takeovers.
+ */
+export async function setInitialPinFromChat(
+  input: z.infer<typeof setChatWithdrawalPinSchema>,
+  resolveIdentity: (channel: 'whatsapp' | 'telegram', identity: string) => Promise<string | undefined>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const userId = await resolveIdentity(input.channel, input.identity);
+  if (!userId) {
+    throw badRequest('Your chat account is not linked to a Sivan Payment profile.');
+  }
+  const existing = await pinForUser(userId);
+  if (existing) {
+    throw badRequest('A withdrawal PIN is already set for your account. To change or reset your PIN, please use Security Settings in the Sivan dashboard.');
+  }
+  return setWithdrawalPin(userId, { pin: input.pin }, context);
 }
 
 /**

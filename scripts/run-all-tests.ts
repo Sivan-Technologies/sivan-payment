@@ -8,6 +8,10 @@ interface TestSuite {
 
 const TEST_SUITES: TestSuite[] = [
   {
+    name: 'NGN Agreement Ledger (isolated embedded PostgreSQL)',
+    command: 'node --import tsx scripts/test-ngn-agreement-ledger.ts',
+  },
+  {
     name: 'Build Isolation & Type Checks',
     command: 'tsx scripts/test-build-isolation.ts',
   },
@@ -113,6 +117,14 @@ const TEST_SUITES: TestSuite[] = [
     command: 'tsx scripts/test-stellar-adapter.ts',
   },
   {
+    name: 'Multi-Chain Solana SPL Transfers & RPC Failover',
+    command: 'tsx scripts/test-solana-transfer.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-solana-transfer.json',
+    },
+  },
+  {
     name: 'Multi-Chain Celo Adapter & Protocols',
     command: 'tsx scripts/test-celo-adapter.ts',
   },
@@ -127,6 +139,122 @@ const TEST_SUITES: TestSuite[] = [
   {
     name: 'Multi-Chain Arc Adapter & Native USDC Settlement',
     command: 'tsx scripts/test-arc-adapter.ts',
+  },
+  {
+    name: 'Multi-Chain Starknet Adapter & felt252 Settlement',
+    command: 'tsx scripts/test-starknet-adapter.ts',
+  },
+  {
+    name: 'Paystack Config & DVA Type Guards',
+    command: 'tsx scripts/test-paystack-config.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-config.json',
+    },
+  },
+  {
+    name: 'Paystack DVA Flow (local stub)',
+    command: 'tsx scripts/test-paystack-dva-flow.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-dva.json',
+    },
+  },
+  {
+    name: 'Wallet Chain Family & Dashboard Balance KPI',
+    command: 'tsx scripts/test-wallet-chain-family.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-wallet-chain-family.json' },
+  },
+  {
+    name: 'Starknet End to End (live RPC)',
+    command: 'tsx scripts/test-starknet-e2e.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-starknet-e2e.json' },
+  },
+  {
+    name: 'Transfer Fee Policy',
+    command: 'tsx scripts/test-transfer-fee-policy.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-transfer-fee-policy.json' },
+  },
+  {
+    name: 'Tiered Fees: Celo & Stellar',
+    command: 'tsx scripts/test-tiered-fee-celo-stellar.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-tiered-fee.json' },
+  },
+  {
+    name: 'Service Agreement Fee Policy',
+    command: 'tsx scripts/test-service-agreement-fee-policy.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-sa-fee-policy.json' },
+  },
+  {
+    name: 'MoneyGram Webhook Receiver & Routes',
+    command: 'tsx scripts/test-moneygram-webhook.ts',
+    env: { DATABASE_PROVIDER: 'json', DATABASE_FILE: '.data/test-moneygram-webhook.json' },
+  },
+  {
+    name: 'MoneyGram Anchor Discovery & SEP-10 Trust',
+    command: 'tsx scripts/test-moneygram-anchor.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-anchor.json',
+    },
+  },
+  {
+    name: 'MoneyGram Stellar Preflight (live testnet)',
+    command: 'tsx scripts/test-moneygram-stellar-preflight.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-preflight.json',
+    },
+  },
+  {
+    name: 'MoneyGram USDC Cashout End to End (live testnet)',
+    command: 'tsx scripts/test-moneygram-usdc-cashout.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-usdc-cashout.json',
+    },
+  },
+  {
+    name: 'MoneyGram Transaction Status & Webhook Authentication',
+    command: 'tsx scripts/test-moneygram-status-and-webhook.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-status-webhook.json',
+    },
+  },
+  {
+    name: 'MoneyGram SEP-10 Auth, SEP-24 Init & Live Limits',
+    command: 'tsx scripts/test-moneygram-sep24-limits.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-sep24-limits.json',
+    },
+  },
+  {
+    name: 'MoneyGram Client Domain & Published stellar.toml',
+    command: 'tsx scripts/test-moneygram-client-domain.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-moneygram-client-domain.json',
+      MONEYGRAM_HOME_DOMAIN: 'www.sivantech.online',
+      MONEYGRAM_STELLAR_PUBLIC_KEY: 'GC2U4MR5FDCOICAGDUQU5JAEOM4C4WQOCPB3NABMTYPLX56YCKC35N3V',
+    },
+  },
+  {
+    name: 'Paystack Routes & Webhooks Ingestion',
+    command: 'tsx scripts/test-paystack-routes-and-webhooks.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-routes-webhooks.json',
+    },
+  },
+  {
+    name: 'Multi-Provider Daily Utility Engine (Airtime, Data, Electricity)',
+    command: 'tsx scripts/test-paystack-utility-engine.ts',
+    env: {
+      DATABASE_PROVIDER: 'json',
+      DATABASE_FILE: '.data/test-paystack-utility-engine.json',
+    },
   },
   {
     name: 'Multi-Chain Developer Gateway & Agent API',

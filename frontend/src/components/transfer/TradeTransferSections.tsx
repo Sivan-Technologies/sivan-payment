@@ -624,7 +624,7 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
    * asset; this component threw that away and looked up one hardcoded key.
    */
   const selectedAssetKey = String(sendAsset || '').toLowerCase();
-  const SUPPORTED_TRANSFER_NETWORKS = ['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo', 'arc', 'arbitrum'];
+  const SUPPORTED_TRANSFER_NETWORKS = ['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo', 'arc', 'arbitrum', 'starknet'];
   const networks = useMemo(() => {
     const list = (enabledNetworks ?? []).filter(
       (n) => n.enabled && SUPPORTED_TRANSFER_NETWORKS.includes(n.network.toLowerCase())
@@ -638,6 +638,7 @@ export function TransferCryptoView({ hasUser, isVerified, supplierPayoutsEnabled
       { network: 'arbitrum', enabled: true, isDefault: false, label: 'Arbitrum', sortOrder: 27, updatedAt: new Date().toISOString() },
       { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
       { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
+      { network: 'starknet', enabled: true, isDefault: false, label: 'Starknet', sortOrder: 30, updatedAt: new Date().toISOString() },
     ];
   }, [enabledNetworks]);
 

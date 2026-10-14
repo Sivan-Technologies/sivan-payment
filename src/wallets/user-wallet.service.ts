@@ -204,7 +204,7 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const { customer } = await requireWalletEligibility(userId, provider.name);
 
-  const targetChain = chain === 'solana' ? 'solana' : 'ethereum';
+  const targetChain = chain === 'solana' ? 'solana' : chain === 'starknet' ? 'starknet' : 'ethereum';
   const providerWallet = await provider.createWallet({
     userId,
     providerCustomerId: customer?.providerCustomerId,
@@ -257,7 +257,10 @@ export async function listUserWallets(userId: string): Promise<UserWalletRecord[
   const stored = await db.listUserWallets(userId);
   if (!stored.length) return stored;
 
-  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo', 'arbitrum', 'arc'];
+  // Starknet is safe to list here even though it shares no key with the EVM
+  // rails: the expansion below matches on walletServesNetwork, which is
+  // family based, so an EVM wallet will never be surfaced as a Starknet one.
+  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo', 'arbitrum', 'arc', 'starknet'];
   const expanded: UserWalletRecord[] = [];
 
   for (const chain of activeRails) {

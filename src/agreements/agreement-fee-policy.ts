@@ -5,10 +5,7 @@
  * This is strictly distinct from direct crypto-to-crypto transfer fees.
  *
  * Curve:
- * - Standard Rail (Solana, Base, BSC, Ethereum):
- *     1.0% platform fee, floor $0.50, cap $50.00
- * - High-Efficiency Micro-Rail (Celo, Stellar):
- *     0.75% platform fee, floor $0.20, cap $25.00
+ * - Every chain: 2.0% platform fee, floor $0.50, cap $50.00
  *
  * Fee Allocation:
  * - 'buyer':  Buyer pays amount + fee; Seller receives amount.
@@ -22,6 +19,7 @@ export type FeePayer = 'buyer' | 'seller' | 'split';
 
 export interface ServiceAgreementFeeConfig {
   percent: number;
+  fixedUsd?: number;
   minimumUsd: number;
   maximumUsd: number;
 }
@@ -37,19 +35,42 @@ export interface ServiceAgreementFeeQuote {
   explanation: string;
 }
 
+/**
+ * Service Agreement fee: 2.0 percent, floor $0.50, cap $50.00.
+ *
+ * ONE RATE ON EVERY CHAIN. This deliberately differs from the TRANSFER fee in
+ * transfer-fee-policy.ts, which does vary per chain (floor $0.10 on Arc, Celo,
+ * Stellar and Starknet, $0.25 elsewhere) because per-transfer gas is a real
+ * cost that differs by rail.
+ *
+ * An agreement fee is not priced against gas. It is priced against the work
+ * the protocol does around the money: holding funds through a delivery review
+ * window, arbitration, and the dispute trail. That work is identical whichever
+ * chain settles it, so charging Celo less for it was never justified by cost.
+ *
+ * HISTORY, because the old numbers are still quoted in places. This was
+ * previously 1.0 percent standard with a 0.75 percent "micro-rail" discount on
+ * Celo and Stellar. Two problems with that: the discount had no cost basis, and
+ * the `main` branch had already flattened both constants to 1.0 percent while
+ * leaving a docblock promising 0.75, so the code and its own comment disagreed.
+ * Collapsing to a single rate removes both the unjustified discount and the
+ * drift.
+ */
 export const DEFAULT_AGREEMENT_FEE_CONFIG: ServiceAgreementFeeConfig = {
-  percent: 1.0,
+  percent: 2.0,
   minimumUsd: 0.50,
   maximumUsd: 50.00,
 };
 
-export const MICRO_RAIL_AGREEMENT_FEE_CONFIG: ServiceAgreementFeeConfig = {
-  percent: 1.0,
-  minimumUsd: 0.50,
-  maximumUsd: 50.00,
-};
-
-export function resolveAgreementFeeConfig(network?: string): ServiceAgreementFeeConfig {
+/**
+ * Resolve the agreement fee for a network.
+ *
+ * The `network` parameter is retained because every caller already passes it
+ * and because a future rail may justify a different rate. It is currently
+ * unused BY DESIGN rather than by accident, which is the distinction that was
+ * missing the last time this function ignored its own argument.
+ */
+export function resolveAgreementFeeConfig(_network?: string): ServiceAgreementFeeConfig {
   return { ...DEFAULT_AGREEMENT_FEE_CONFIG };
 }
 
@@ -67,38 +88,51 @@ export function quoteServiceAgreementFee(
     maximumUsd: customConfig?.maximumUsd ?? baseConfig.maximumUsd,
   };
 
-  // Unified fee calculation: (amount * percent%) + fixed
-  const percentFee = safeAmount * (config.percent / 100);
-  let fee = percentFee + config.minimumUsd;
+  const fixedFee = customConfig?.fixedUsd ?? baseConfig.fixedUsd ?? 0;
+  const raw = safeAmount * (config.percent / 100) + fixedFee;
+  let fee = raw;
   let appliedRule: ServiceAgreementFeeQuote['appliedRule'] = 'percent';
+
+  if (config.minimumUsd > 0 && fee < config.minimumUsd) {
+    fee = config.minimumUsd;
+    appliedRule = 'minimum';
+  }
 
   if (config.maximumUsd > 0 && fee > config.maximumUsd) {
     fee = config.maximumUsd;
     appliedRule = 'maximum';
   }
 
-  // Round to 2 decimal places for standard display
-  const roundedFee = parseFloat(fee.toFixed(2));
+  // Round to 6 decimal places for stablecoin precision
+  const roundedFee = parseFloat(fee.toFixed(6));
   let buyerTotalPayable = safeAmount;
   let sellerNetAmount = safeAmount;
 
   if (feePayer === 'buyer') {
-    buyerTotalPayable = parseFloat((safeAmount + roundedFee).toFixed(2));
+    buyerTotalPayable = parseFloat((safeAmount + roundedFee).toFixed(6));
     sellerNetAmount = safeAmount;
   } else if (feePayer === 'seller') {
     buyerTotalPayable = safeAmount;
-    sellerNetAmount = Math.max(0, parseFloat((safeAmount - roundedFee).toFixed(2)));
+    sellerNetAmount = Math.max(0, parseFloat((safeAmount - roundedFee).toFixed(6)));
   } else if (feePayer === 'split') {
-    const halfFee = parseFloat((roundedFee / 2).toFixed(2));
-    buyerTotalPayable = parseFloat((safeAmount + halfFee).toFixed(2));
-    sellerNetAmount = Math.max(0, parseFloat((safeAmount - halfFee).toFixed(2)));
+    const halfFee = parseFloat((roundedFee / 2).toFixed(6));
+    buyerTotalPayable = parseFloat((safeAmount + halfFee).toFixed(6));
+    sellerNetAmount = Math.max(0, parseFloat((safeAmount - halfFee).toFixed(6)));
   }
 
   const effectivePercent = safeAmount > 0
-    ? parseFloat(((roundedFee / safeAmount) * 100).toFixed(2))
+    ? parseFloat(((roundedFee / safeAmount) * 100).toFixed(3))
     : 0;
 
-  const explanation = `${config.percent}% + $${config.minimumUsd.toFixed(2)}`;
+  const formulaDesc = fixedFee > 0
+    ? `${config.percent}% + $${fixedFee.toFixed(2)}`
+    : `${config.percent}%`;
+
+  const explanation = appliedRule === 'minimum'
+    ? `$${config.minimumUsd.toFixed(2)} Sivan service agreement platform fee minimum applied.`
+    : appliedRule === 'maximum'
+    ? `$${config.maximumUsd.toFixed(2)} Sivan service agreement platform fee cap applied.`
+    : `${formulaDesc} Sivan service agreement platform fee ($${roundedFee.toFixed(2)}).`;
 
   return {
     amount: safeAmount,

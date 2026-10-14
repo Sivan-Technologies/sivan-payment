@@ -116,6 +116,28 @@ export function explorerLink(input: ExplorerInput): ExplorerLink | undefined {
     };
   }
 
+  /**
+   * Starknet is NOT EVM and must not fall through to EVM_EXPLORERS below.
+   *
+   * Functionally the key lookup would have worked, but the fall-through path
+   * ends at jiffyscan for a pending user operation, and that is ERC-4337.
+   * Starknet has native account abstraction and no userOp hash, so a pending
+   * Starknet transfer would have produced a jiffyscan link for an identifier
+   * that does not exist there.
+   *
+   * Starkscan rather than Voyager: Voyager returns 403 to automated requests,
+   * so Starkscan is the one whose availability we can actually verify.
+   */
+  if (network === 'starknet') {
+    if (!hash) return undefined;
+    const host = testnet ? 'https://sepolia.starkscan.co' : 'https://starkscan.co';
+    return {
+      url: `${host}/tx/${encodeURIComponent(hash)}`,
+      label: 'Starkscan',
+      testnet,
+    };
+  }
+
   const evm = EVM_EXPLORERS[network];
   if (!evm) return undefined;
 
@@ -192,6 +214,7 @@ export function networkLabel(chain?: string): string {
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
     arc: 'Arc',
+    starknet: 'Starknet',
     avalanche_c_chain: 'Avalanche',
     tron: 'Tron',
     sivan_p2p: 'Sivan Instant P2P',
@@ -227,6 +250,12 @@ export function getNetworkExplorer(
     const arcDomain = isMainnet ? 'https://explorer.arc.io' : 'https://testnet.arcscan.app';
     const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
     return { name: 'Arc Explorer', url };
+  }
+
+  if (net.includes('starknet') || net.includes('strk')) {
+    const starkDomain = isMainnet ? 'https://starkscan.co' : 'https://sepolia.starkscan.co';
+    const url = rawTxHash ? `${starkDomain}/tx/${rawTxHash}` : rawAddr ? `${starkDomain}/contract/${rawAddr}` : starkDomain;
+    return { name: 'Starkscan Explorer', url };
   }
 
   if (net.includes('arbitrum') || net.includes('arbi')) {

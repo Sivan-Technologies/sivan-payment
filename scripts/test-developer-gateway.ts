@@ -4,6 +4,7 @@ import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { env } from '../src/config/env.js';
 import { db } from '../src/database/json-database.js';
+import { updateAgreementControls } from '../src/agreements/agreement-controls.service.js';
 
 /**
  * AUTOMATED MULTI-CHAIN TEST SUITE: DEVELOPER API & AI AGENT GATEWAY
@@ -23,6 +24,7 @@ async function main() {
 
   const dbPath = path.isAbsolute(env.DATABASE_FILE) ? env.DATABASE_FILE : path.join(process.cwd(), env.DATABASE_FILE);
   await fs.rm(dbPath, { force: true });
+  await updateAgreementControls({ creationEnabled: true, maintenanceMessage: '' }, 'test_runner');
 
   for (const u of [
     { id: 'usr_dev_test_agent', email: 'dev_agent@sivan.test', fullName: 'Dev Test Agent' },

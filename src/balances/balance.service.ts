@@ -50,7 +50,7 @@ import { evaluateGasLimits } from './gas-usage.service.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { buildP2pReceivedEmail, sendEmail } from '../notifications/email.service.js';
 
-export type BalanceAsset = 'usdc' | 'usdt';
+export type BalanceAsset = 'usdc' | 'usdt' | 'ngn';
 /**
  * Networks Sivan knows about.
  *
@@ -59,7 +59,7 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc' | 'starknet';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -78,11 +78,11 @@ export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing
 
 export const balanceTransferControlsSchema = z.object({
   transfersEnabled: z.boolean().default(true),
-  p2pTransfersEnabled: z.boolean().default(true),
+  p2pTransfersEnabled: z.boolean().default(false),
   minimumSendAmount: z.coerce.number().positive().default(0.1),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -90,10 +90,12 @@ export const balanceTransferControlsSchema = z.object({
 
 export const createBalanceTransferSchema = z.object({
   asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc']),
+  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet']),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
 });
 
 export const adminBalanceAdjustmentSchema = z.object({
@@ -300,13 +302,14 @@ export async function getBalanceTransferControls() {
    * one place to set it.
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
-  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc'];
+  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet'];
   const mergedNetworks: BalanceNetwork[] = saved?.supportedNetworks
-    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork]))
+    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork, 'starknet' as BalanceNetwork]))
     : defaultNetworks;
 
   return {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
+    p2pTransfersEnabled: saved?.p2pTransfersEnabled ?? (process.env.P2P_TRANSFERS_ENABLED === 'true'),
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
@@ -693,6 +696,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   // request hitting this check before the first resolves is also blocked.
   recentTransferKeys.set(dKey, Date.now());
 
+  try {
   /**
    * The gateway's 12s clock starts HERE, so ours does too. Everything between
    * this line and the broadcast - chain balance reads, a Solana RPC for the
@@ -717,6 +721,17 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   // the user's balance locked behind a transfer that can never settle.
   const addressCheck = validateAddressForChain(input.destinationAddress, input.network as AddressChain);
   if (!addressCheck.valid) throw badRequest(addressCheck.reason ?? 'That destination address is not valid.');
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId,
+    amount: input.amount,
+    destinationAddress: input.destinationAddress,
+    network: input.network,
+    isP2p: false,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
   /**
    * SPENDABLE, NOT "settled ledger available".
    *
@@ -926,6 +941,10 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   }
 
   return transfer;
+} catch (err) {
+  recentTransferKeys.delete(dKey);
+  throw err;
+}
 }
 
 /**
@@ -1312,6 +1331,8 @@ export const createP2pTransferSchema = z.object({
   amount: z.coerce.number().positive(),
   recipientTarget: z.string().min(1).max(160),
   note: z.string().max(500).optional(),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
 });
 
 export async function executeP2pTransfer(
@@ -1323,14 +1344,24 @@ export async function executeP2pTransfer(
   if (!sender) throw notFound('Sender User');
 
   const controls = await getBalanceTransferControls().catch(() => null);
-  if (controls && controls.p2pTransfersEnabled === false) {
-    throw badRequest('P2P transfers are temporarily paused by administration for maintenance. Please try again shortly.');
+  if (!controls || controls.p2pTransfersEnabled === false) {
+    throw badRequest('Internal P2P transfers are disabled. Please send an on-chain transfer using the recipient\'s wallet address or Sivan Tag.');
   }
 
   const minAmount = controls?.minimumSendAmount ?? 1;
   if (input.amount < minAmount) {
     throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
   }
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId: senderUserId,
+    amount: input.amount,
+    destinationAddress: input.recipientTarget,
+    isP2p: true,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
 
   const cleanTarget = input.recipientTarget.trim();
   const recipient = await db.findUserByTarget(cleanTarget);

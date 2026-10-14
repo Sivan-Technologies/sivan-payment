@@ -44,7 +44,7 @@ export const pathByView: Record<ViewKey, string> = {
 export function viewFromPath(pathname: string): ViewKey {
   const clean = pathname.replace(/\/$/, '') || '/';
   if (clean === '/dashboard' || clean === '/app') return 'overview';
-  if (clean === '/withdraw' || clean === '/app/sell') return 'withdraw';
+  if (clean === '/withdraw' || clean === '/cashout' || clean === '/app/sell') return 'withdraw';
   if (clean === '/transfer' || clean === '/send' || clean === '/app/transfer') return 'transfer';
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/receive' || clean === '/deposit' || clean === '/app/receive') return 'receive';
@@ -227,6 +227,7 @@ export const fallbackSourceNetworks: NetworkControl[] = [
   { network: 'arbitrum', enabled: true, isDefault: false, label: 'Arbitrum', sortOrder: 27, updatedAt: new Date().toISOString() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
+  { network: 'starknet', enabled: true, isDefault: false, label: 'Starknet', sortOrder: 30, updatedAt: new Date().toISOString() },
   { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
   { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
@@ -238,7 +239,7 @@ export const fallbackVirtualAccounts: VirtualAccountControl[] = [
   { currency: 'eur', enabled: false, label: 'EUR virtual account', provider: 'bridge', accountType: 'iban', paymentRails: ['sepa'], updatedAt: new Date().toISOString() }
 ];
 
-export function normalizeFrontendApiBase(value: string) {
+export function normalizeFrontendApiBase(value?: string) {
   const clean = (value || '').trim().replace(/\/$/, '');
   try {
     const parsed = new URL(clean);
