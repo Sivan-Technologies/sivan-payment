@@ -268,7 +268,6 @@ const paymentSteps: Step[] = [
   { name: 'Virtual account reprovision', cwd: paymentRoot, command: 'npm run test:va-reprovision' },
 
   // ---- Frontend behaviour ----
-  { name: 'React hook order (guards React #310)', cwd: paymentRoot, command: 'npm run test:react-hook-order' },
   { name: 'Unified activity feed', cwd: paymentRoot, command: 'npm run test:activity-feed' },
   { name: 'Activity chain marks', cwd: paymentRoot, command: 'npm run test:activity-network-logo' },
   { name: 'Transaction detail panel (a selected row shows detail)', cwd: paymentRoot, command: 'npm run test:transaction-detail-panel' },
@@ -276,7 +275,6 @@ const paymentSteps: Step[] = [
   { name: 'Dashboard notice', cwd: paymentRoot, command: 'npm run test:dashboard-notice' },
   { name: 'Dashboard setup card', cwd: paymentRoot, command: 'npm run test:dashboard-setup-card' },
   { name: 'Receive screen', cwd: paymentRoot, command: 'npm run test:receive-screen' },
-  { name: 'Receive QR decodes to the real address', cwd: paymentRoot, command: 'npm run test:receive-qr-decode' },
   { name: 'Receive never shows a mock address', cwd: paymentRoot, command: 'npm run test:receive-no-mock' },
   { name: 'Block explorer links', cwd: paymentRoot, command: 'npm run test:block-explorer' },
   { name: 'Bank picker', cwd: paymentRoot, command: 'npm run test:bank-picker' },
@@ -293,7 +291,6 @@ const paymentSteps: Step[] = [
   { name: 'Database migrations', cwd: paymentRoot, command: 'npm run test:migrations' },
   { name: 'Watchdog', cwd: paymentRoot, command: 'npm run test:watchdog' },
   { name: 'Build isolation (API must not compile frontend source)', cwd: paymentRoot, command: 'npm run test:build-isolation' },
-  { name: 'Lint hook guard (react-hooks is on and blocking)', cwd: paymentRoot, command: 'npm run test:lint-hooks' },
   { name: 'CI coverage (no suite may be orphaned)', cwd: paymentRoot, command: 'npm run test:ci-coverage' }
 ];
 

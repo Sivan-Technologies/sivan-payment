@@ -179,7 +179,7 @@ async function main() {
     provider: 'paystack',
     providerCustomerId: customerCode,
     customerType: 'individual',
-    kycStatus: 'verified',
+    kycStatus: 'kyc_approved',
     tosStatus: 'approved',
     createdAt: now,
     updatedAt: now,
