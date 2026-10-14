@@ -140,12 +140,31 @@ export class StarknetAdapter implements IChainAdapter {
    * against a userId it cannot resolve to a provider wallet. It is a routing
    * boundary, not an unimplemented feature.
    */
-  async transfer(_params: ChainTransferParams): Promise<ChainTransferResult> {
-    throw new Error(
-      'Route Starknet transfers through the wallet service, not the chain adapter. ' +
-        'The send path needs a Privy provider wallet id and authorization key: see ' +
-        'sendStarknetTransfer in privy-wallet.provider.ts.'
-    );
+  async transfer(params: ChainTransferParams): Promise<ChainTransferResult> {
+    const { getWalletProvider } = await import('../provider/provider-registry.js');
+    const { resolveActiveWalletProvider } = await import('../wallet-controls.service.js');
+    const provider = getWalletProvider(await resolveActiveWalletProvider());
+    const wallet = await db.findUserWallet(params.fromUserId, 'starknet');
+    if (!wallet) throw new Error(`Could not resolve Starknet wallet for user: ${params.fromUserId}`);
+
+    const transfer = await provider.createTransfer({
+      userId: params.fromUserId,
+      providerWalletId: wallet.providerWalletId,
+      providerCustomerId: wallet.customerId,
+      chain: 'starknet',
+      asset: (params.asset || 'usdc') as any,
+      amount: String(params.amountUsdc),
+      toAddress: params.toAddress,
+      idempotencyKey: params.idempotencyKey,
+      reference: params.idempotencyKey,
+      feeAmount: params.feeAmount,
+    });
+
+    return {
+      txHash: transfer.txHash || transfer.providerTransferId,
+      network: 'starknet',
+      timestamp: new Date().toISOString(),
+    };
   }
 
   validateAddress(address: string): boolean {

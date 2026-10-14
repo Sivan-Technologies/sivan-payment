@@ -77,6 +77,7 @@ export class EvmAdapter implements IChainAdapter {
     if (!wallet) throw new Error(`Could not resolve ${this.chain} wallet for user: ${params.fromUserId}`);
 
     const transfer = await provider.createTransfer({
+      userId: params.fromUserId,
       providerWalletId: wallet.providerWalletId,
       providerCustomerId: wallet.customerId,
       chain: this.chain,
@@ -85,6 +86,7 @@ export class EvmAdapter implements IChainAdapter {
       toAddress: params.toAddress,
       idempotencyKey: params.idempotencyKey,
       reference: params.idempotencyKey,
+      feeAmount: params.feeAmount,
     });
 
     return {
