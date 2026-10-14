@@ -139,25 +139,8 @@ check('backend does not depend on frontend-only packages', () => {
   }
 });
 
-check('frontend declares the packages its own source imports', () => {
-  const fe = JSON.parse(readFileSync(path.join(root, 'frontend', 'package.json'), 'utf8'));
-  const deps = { ...(fe.dependencies ?? {}), ...(fe.devDependencies ?? {}) };
-  assert(
-    'qrcode-generator' in deps,
-    'frontend/src/qrCode.ts imports qrcode-generator but frontend/package.json ' +
-      'does not declare it - the frontend static build would fail',
-  );
-});
-
-check('frontend lockfile pins qrcode-generator', () => {
-  // `npm install` on Render uses the lockfile. A dependency present in
-  // package.json but absent from the lock is a build failure on a clean box.
-  const lock = readFileSync(path.join(root, 'frontend', 'package-lock.json'), 'utf8');
-  assert(
-    lock.includes('node_modules/qrcode-generator'),
-    'frontend/package-lock.json has no qrcode-generator entry - run npm install and commit the lock',
-  );
-});
+// QR dependency and lockfile checks moved to the standalone frontend's
+// ci-safety.test.ts. The API graph and backend dependency guards remain here.
 
 // ---------------------------------------------------------------------------
 // 3. Scripts are still typechecked. Removing them from the shipped build must

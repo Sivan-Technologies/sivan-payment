@@ -12,6 +12,7 @@ export interface CreateAuditLogInput {
   ipAddress?: string;
   userAgent?: string;
   metadata?: unknown;
+  createdAt?: string;
 }
 
 export async function createAuditLog(input: CreateAuditLogInput) {
@@ -26,7 +27,7 @@ export async function createAuditLog(input: CreateAuditLogInput) {
     ipAddress: input.ipAddress,
     userAgent: input.userAgent,
     metadata: input.metadata,
-    createdAt: nowIso()
+    createdAt: input.createdAt ?? nowIso()
   };
 
   await db.insertAuditLogRecord(record);
