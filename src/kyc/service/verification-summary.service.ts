@@ -39,7 +39,7 @@ import {
 } from '../types/verification.types.js';
 import { getActiveUserLimitOverrides } from './user-limits.service.js';
 import { effectiveUsedNgn } from './user-limit-usage.js';
-import { verificationPathFor } from './verification-path.js';
+import { verificationPathFor, normalizeCountry, NIGERIA, GHANA } from './verification-path.js';
 import { getNgnControls } from '../../ngn/service/ngn-controls.service.js';
 import { db } from '../../database/json-database.js';
 import { notFound } from '../../shared/errors.js';
@@ -296,7 +296,14 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
      */
     db.findCustomerByUserId(userId).catch(() => null),
   ]);
-  const path = verificationPathFor(user.country);
+  const declaredCountry = normalizeCountry(user.country);
+  const userPhone = String((user as any).phone || user.whatsappNumber || '');
+  const isNgnPhone = userPhone.includes('+234') || userPhone.startsWith('234') || /^0[789][01]\d{8}$/.test(userPhone);
+  const isGhPhone = userPhone.includes('+233') || userPhone.startsWith('233');
+  const isKePhone = userPhone.includes('+254') || userPhone.startsWith('254');
+  const inferredCountry = isNgnPhone || ngnAccounts.length > 0 ? NIGERIA : isGhPhone ? GHANA : isKePhone ? 'KE' : undefined;
+  const effectiveCountry = declaredCountry || inferredCountry;
+  const path = verificationPathFor(effectiveCountry);
 
   const hasVerifiedNgnAccount = ngnAccounts.some((a) => a.status === 'verified');
   const hasPendingPayoutReview = ngnAccounts.some((a) => a.status === 'pending_review');
@@ -371,7 +378,7 @@ export async function getVerificationSummary(userId: string): Promise<Verificati
     level: state.level,
     levelLabel: LEVEL_LABELS[state.level] ?? `Level ${state.level}`,
     path,
-    country: user.country,
+    country: effectiveCountry || user.country,
     checks: {
       identity: state.identityStatus,
       bank: state.bankStatus,
