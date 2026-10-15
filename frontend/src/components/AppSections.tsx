@@ -6,6 +6,7 @@ import { approximateNote, formatFromNgn, isConverted, type DisplayCurrency } fro
 import type { DisplayFx } from '../types';
 import { NgnPayoutForm } from './sell/NgnPayoutForm';
 import { MoneyGramCashoutView } from './moneygram/MoneyGramCashoutView';
+import { DateOfBirthSelector } from './verification/DateOfBirthSelector';
 
 /**
  * A gas estimate the user can believe.
@@ -1828,8 +1829,16 @@ function NgnLevel2VerificationForm({ busy, result, error, onSubmit, consentBusy 
   return <form className="ngn-level2-card" onSubmit={onSubmit}>
     <div><p className="eyebrow">Level 2 · Nigerian identity</p><h3>Verify your BVN identity</h3><p className="muted">This checks your BVN identity details. We never show your full BVN after submission and this does not run automatically.</p></div>
     <div className="split"><label>First name<input name="firstName" placeholder="John" autoComplete="given-name" required /></label><label>Last name<input name="lastName" placeholder="Doe" autoComplete="family-name" required /></label></div>
-    <div className="split"><label>Date of birth<input name="dateOfBirth" placeholder="dd-MM-yyyy" inputMode="numeric" autoComplete="bday" required /></label><label>Mobile number<input name="mobileNo" placeholder="08012345678" inputMode="tel" autoComplete="tel" required /></label></div>
-    <label>BVN<input name="bvn" placeholder="11-digit BVN" inputMode="numeric" autoComplete="off" required minLength={11} maxLength={11} /></label>
+    <DateOfBirthSelector
+      name="dateOfBirth"
+      label="Date of birth"
+      caption="Verified against your Central Bank of Nigeria NIBSS record"
+      required
+    />
+    <div className="split">
+      <label>Mobile number<input name="mobileNo" placeholder="08012345678" inputMode="tel" autoComplete="tel" required /></label>
+      <label>BVN<input name="bvn" placeholder="11-digit BVN" inputMode="numeric" autoComplete="off" required minLength={11} maxLength={11} /></label>
+    </div>
     <div className="warning-box compact">BVN is sensitive. Sivan uses it only for this Level 2 check. It is not sent to Sivan Assistant and should not be shared in support chat.</div>
     {result && <div className={result.status === 'matched' ? 'success-note' : 'verification-note'}><strong>{result.message}</strong>{result.bvnLast4 && <span> BVN ending {result.bvnLast4}</span>}</div>}
     {awaitingConsent && (
