@@ -89,7 +89,7 @@ export async function createStepUpVerificationRequest(
     resourceId: reqId,
     actorType: 'admin',
     actorId: input.adminId,
-    details: {
+    metadata: {
       userId: input.userId,
       requestedModules: input.requestedModules,
       reason: input.reason,
@@ -211,7 +211,7 @@ export async function submitStepUpVerification(
     resourceId: record.id,
     actorType: 'user',
     actorId: record.userId,
-    details: {
+    metadata: {
       submittedModules: Object.keys(submissionData).filter((k) => (submissionData as any)[k]),
       submittedAt: now,
     },
@@ -272,7 +272,7 @@ export async function reviewStepUpVerificationRequest(
     resourceId: requestId,
     actorType: 'admin',
     actorId: adminId,
-    details: {
+    metadata: {
       userId: record.userId,
       decision,
       reviewNotes,

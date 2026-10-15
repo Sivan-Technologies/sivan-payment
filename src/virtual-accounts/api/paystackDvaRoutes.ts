@@ -14,7 +14,7 @@ const createDvaSchema = z.object({
   legalName: z.string().min(2, 'legalName is required'),
   identifier: z
     .string()
-    .regex(/^\d{11}$/, 'Identifier (BVN or NIN) must be exactly 11 digits'),
+    .regex(/^\d{11}$/, 'Identifier (BVN) must be exactly 11 digits'),
   identifierType: z.enum(['bvn', 'nin']).default('bvn'),
   phone: z.string().optional(),
 });
