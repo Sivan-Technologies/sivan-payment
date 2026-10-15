@@ -391,7 +391,16 @@ export async function getSpendable(userId: string, asset: string, network?: stri
     const chainAmount = balanceEntry ? num(balanceEntry.amount) : 0;
     const pooledCredits = num(row.credited);
     const held = num(row.held);
-    return Math.max(0, chainAmount + pooledCredits - held);
+
+    // Funds outside this network's on-chain wallet that can absorb account-level holds
+    const otherFunds = Math.max(0, num(row.chain) + pooledCredits - chainAmount);
+    // Only the portion of held funds that cannot be covered by other wallets falls onto this chain
+    const uncoveredHold = Math.max(0, held - otherFunds);
+    const chainSpendable = Math.max(0, chainAmount - uncoveredHold);
+
+    // Network spendable cannot exceed what is physically on this chain,
+    // nor the user's global unencumbered spendable balance
+    return Math.min(chainSpendable, num(row.spendable));
   }
 
   if (row.chainUnavailable && num(row.chain) === 0 && num(row.credited) === 0) return null;
