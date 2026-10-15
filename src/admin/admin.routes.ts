@@ -27,6 +27,11 @@ import {
   listUtilitiesTransactions,
   getPublicFeatureStatus,
 } from './feature-controls.service.js';
+import {
+  createStepUpVerificationRequest,
+  listAllStepUpVerificationRequests,
+  reviewStepUpVerificationRequest,
+} from './verification-request.service.js';
 
 
 function listOptions(request: any) {
@@ -480,4 +485,51 @@ export async function adminRoutes(app: FastifyInstance) {
   // Public Feature Status Resolver (for MiniPay, Telegram, WhatsApp, Web App)
   app.get('/api/features/status', async () => ({ data: await getPublicFeatureStatus() }));
   app.get('/features/status', async () => ({ data: await getPublicFeatureStatus() }));
+
+  // Step-Up Verification Requests (Admin Compliance Links)
+  regPost('/verification-requests', async (request) => {
+    const body = z
+      .object({
+        userId: z.string().min(1, 'userId is required'),
+        requestedModules: z.array(z.enum(['nin', 'proof_of_address', 'source_of_funds', 'global_passport'])).min(1),
+        reason: z.string().min(1, 'reason is required'),
+        expiresInHours: z.number().int().positive().optional(),
+      })
+      .parse(request.body);
+
+    const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
+    const result = await createStepUpVerificationRequest({
+      adminId,
+      userId: body.userId,
+      requestedModules: body.requestedModules,
+      reason: body.reason,
+      expiresInHours: body.expiresInHours,
+    });
+    return { data: result };
+  });
+
+  regGet('/verification-requests', async (request) => {
+    const query = (request.query || {}) as Record<string, string>;
+    const requests = await listAllStepUpVerificationRequests(query.userId);
+    return { data: requests };
+  });
+
+  regPost('/verification-requests/:id/review', async (request) => {
+    const params = request.params as { id: string };
+    const body = z
+      .object({
+        decision: z.enum(['approved', 'rejected']),
+        reviewNotes: z.string().optional(),
+      })
+      .parse(request.body);
+
+    const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
+    const reviewed = await reviewStepUpVerificationRequest(
+      adminId,
+      params.id,
+      body.decision,
+      body.reviewNotes
+    );
+    return { data: reviewed };
+  });
 }

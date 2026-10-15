@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord, StepUpVerificationRequestRecord } from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -72,6 +72,7 @@ const emptyDb = (): DatabaseShape => ({
   ghsPayoutAccounts: [],
   ghsQuotes: [],
   ghsTransfers: [],
+  verificationRequests: [],
 });
 
 export class JsonDatabase {
@@ -1730,6 +1731,45 @@ export class JsonDatabase {
     await this.mutate((data) => {
       data.passkeyChallenges = (data.passkeyChallenges ?? []).filter((c) => c.id !== id);
       return true;
+    });
+  }
+
+  async createVerificationRequest(record: StepUpVerificationRequestRecord): Promise<StepUpVerificationRequestRecord> {
+    return this.mutate((data) => {
+      data.verificationRequests = data.verificationRequests ?? [];
+      data.verificationRequests.push(record);
+      return record;
+    });
+  }
+
+  async getVerificationRequestById(id: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const data = await this.read();
+    return (data.verificationRequests ?? []).find((r) => r.id === id);
+  }
+
+  async getVerificationRequestByTokenHash(tokenHash: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const data = await this.read();
+    return (data.verificationRequests ?? []).find((r) => r.tokenHash === tokenHash);
+  }
+
+  async listVerificationRequests(userId?: string): Promise<StepUpVerificationRequestRecord[]> {
+    const data = await this.read();
+    return (data.verificationRequests ?? [])
+      .filter((r) => !userId || r.userId === userId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async updateVerificationRequest(
+    id: string,
+    patch: Partial<StepUpVerificationRequestRecord>
+  ): Promise<StepUpVerificationRequestRecord | undefined> {
+    return this.mutate((data) => {
+      data.verificationRequests = data.verificationRequests ?? [];
+      const idx = data.verificationRequests.findIndex((r) => r.id === id);
+      if (idx === -1) return undefined;
+      const merged = { ...data.verificationRequests[idx], ...patch, updatedAt: new Date().toISOString() };
+      data.verificationRequests[idx] = merged;
+      return merged;
     });
   }
 

@@ -49,4 +49,41 @@ export async function kycLevelRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     return { data: await completeNgnBvnConsent(userId) };
   });
+
+  /**
+   * Validate a step-up verification token (public / user frontend).
+   */
+  app.get('/api/verification-requests/validate', async (request) => {
+    const { token } = (request.query || {}) as { token?: string };
+    const { validateStepUpVerificationToken } = await import('../../admin/verification-request.service.js');
+    const result = await validateStepUpVerificationToken(token || '');
+    return { data: result };
+  });
+
+  /**
+   * Submit credentials against a step-up verification request.
+   */
+  app.post('/api/verification-requests/submit', async (request) => {
+    const { z } = await import('zod');
+    const body = z
+      .object({
+        token: z.string().min(1, 'token is required'),
+        nin: z.string().optional(),
+        proofOfAddressDocId: z.string().optional(),
+        sourceOfFundsDocId: z.string().optional(),
+        passportDocId: z.string().optional(),
+        notes: z.string().optional(),
+      })
+      .parse(request.body);
+
+    const { submitStepUpVerification } = await import('../../admin/verification-request.service.js');
+    const result = await submitStepUpVerification(body.token, {
+      nin: body.nin,
+      proofOfAddressDocId: body.proofOfAddressDocId,
+      sourceOfFundsDocId: body.sourceOfFundsDocId,
+      passportDocId: body.passportDocId,
+      notes: body.notes,
+    });
+    return { data: result };
+  });
 }

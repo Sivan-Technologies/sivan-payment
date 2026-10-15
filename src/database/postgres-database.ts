@@ -9,6 +9,7 @@ import type {
   WalletDepositRecord,
   NgnIdentityVerificationRecord,
   NgnPayoutAccountRecord,
+  StepUpVerificationRequestRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
   AceSupportSessionRecord,
@@ -2732,6 +2733,158 @@ export class PostgresDatabase {
     } finally {
       client.release();
     }
+  }
+
+  async createVerificationRequest(record: StepUpVerificationRequestRecord): Promise<StepUpVerificationRequestRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS payments_verification_requests (
+          id VARCHAR(64) PRIMARY KEY,
+          user_id VARCHAR(64) NOT NULL,
+          admin_id VARCHAR(64) NOT NULL,
+          requested_modules JSONB NOT NULL,
+          reason VARCHAR(255) NOT NULL,
+          status VARCHAR(32) NOT NULL DEFAULT 'pending',
+          token_hash VARCHAR(128) NOT NULL UNIQUE,
+          expires_at TIMESTAMPTZ NOT NULL,
+          submitted_at TIMESTAMPTZ,
+          submission_data JSONB,
+          reviewed_at TIMESTAMPTZ,
+          reviewed_by VARCHAR(64),
+          review_notes TEXT,
+          metadata JSONB DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await client.query(
+        `INSERT INTO payments_verification_requests
+         (id, user_id, admin_id, requested_modules, reason, status, token_hash, expires_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          record.id,
+          record.userId,
+          record.adminId,
+          JSON.stringify(record.requestedModules),
+          record.reason,
+          record.status,
+          record.tokenHash,
+          record.expiresAt,
+          record.createdAt,
+          record.updatedAt,
+        ]
+      );
+      return record;
+    } catch {
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getVerificationRequestById(id: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_verification_requests WHERE id = $1 LIMIT 1', [id]);
+      if (!result.rows.length) return undefined;
+      return this.mapVerificationRequest(result.rows[0]);
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getVerificationRequestByTokenHash(tokenHash: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_verification_requests WHERE token_hash = $1 LIMIT 1', [tokenHash]);
+      if (!result.rows.length) return undefined;
+      return this.mapVerificationRequest(result.rows[0]);
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listVerificationRequests(userId?: string): Promise<StepUpVerificationRequestRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const query = userId
+        ? 'SELECT * FROM payments_verification_requests WHERE user_id = $1 ORDER BY created_at DESC'
+        : 'SELECT * FROM payments_verification_requests ORDER BY created_at DESC';
+      const params = userId ? [userId] : [];
+      const result = await client.query(query, params);
+      return result.rows.map((r) => this.mapVerificationRequest(r));
+    } catch {
+      return [];
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateVerificationRequest(
+    id: string,
+    patch: Partial<StepUpVerificationRequestRecord>
+  ): Promise<StepUpVerificationRequestRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const current = await this.getVerificationRequestById(id);
+      if (!current) return undefined;
+      const merged = { ...current, ...patch, updatedAt: new Date().toISOString() };
+      await client.query(
+        `UPDATE payments_verification_requests SET
+          status = $1,
+          submitted_at = $2,
+          submission_data = $3,
+          reviewed_at = $4,
+          reviewed_by = $5,
+          review_notes = $6,
+          metadata = $7,
+          updated_at = $8
+         WHERE id = $9`,
+        [
+          merged.status,
+          merged.submittedAt || null,
+          merged.submissionData ? JSON.stringify(merged.submissionData) : null,
+          merged.reviewedAt || null,
+          merged.reviewedBy || null,
+          merged.reviewNotes || null,
+          JSON.stringify(merged.metadata || {}),
+          merged.updatedAt,
+          id,
+        ]
+      );
+      return merged;
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  private mapVerificationRequest(r: any): StepUpVerificationRequestRecord {
+    return {
+      id: r.id,
+      userId: r.user_id,
+      adminId: r.admin_id,
+      requestedModules: typeof r.requested_modules === 'string' ? JSON.parse(r.requested_modules) : (r.requested_modules || []),
+      reason: r.reason,
+      status: r.status,
+      tokenHash: r.token_hash,
+      expiresAt: r.expires_at?.toISOString?.() || r.expires_at,
+      submittedAt: r.submitted_at?.toISOString?.() || r.submitted_at,
+      submissionData: typeof r.submission_data === 'string' ? JSON.parse(r.submission_data) : r.submission_data,
+      reviewedAt: r.reviewed_at?.toISOString?.() || r.reviewed_at,
+      reviewedBy: r.reviewed_by,
+      reviewNotes: r.review_notes,
+      metadata: typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}),
+      createdAt: r.created_at?.toISOString?.() || r.created_at,
+      updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+    };
   }
 
   async getAgreementControls(): Promise<AgreementControlsRecord | null> {
