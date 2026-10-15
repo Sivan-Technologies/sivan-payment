@@ -2090,6 +2090,15 @@ export class PostgresDatabase {
         `insert into payments_ngn_identity_verifications
            (id, user_id, check_type, status, provider, provider_reference, bvn_last4, bvn_hash, matched_fields, verified_at, created_at, updated_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         on conflict (id) do update set
+           status = excluded.status,
+           provider = excluded.provider,
+           provider_reference = coalesce(excluded.provider_reference, payments_ngn_identity_verifications.provider_reference),
+           bvn_last4 = coalesce(excluded.bvn_last4, payments_ngn_identity_verifications.bvn_last4),
+           bvn_hash = coalesce(excluded.bvn_hash, payments_ngn_identity_verifications.bvn_hash),
+           matched_fields = coalesce(excluded.matched_fields, payments_ngn_identity_verifications.matched_fields),
+           verified_at = coalesce(excluded.verified_at, payments_ngn_identity_verifications.verified_at),
+           updated_at = excluded.updated_at
          returning *`,
         [
           record.id, record.userId, record.checkType, record.status, record.provider,

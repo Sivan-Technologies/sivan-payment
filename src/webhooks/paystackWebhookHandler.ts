@@ -107,6 +107,28 @@ export async function processPaystackWebhook(
       }
 
       await completeAfterIdentification(userId, customerCode);
+
+      // Atomically mark the user's NGN Level 2 identity verification as matched / verified
+      try {
+        const now = new Date().toISOString();
+        const verifications = await db.listNgnIdentityVerifications(userId);
+        const existingKyc = verifications.find((v) => v.checkType === 'bvn_info');
+        await db.upsertNgnIdentityVerification({
+          id: existingKyc?.id || `ngnkyc_${userId}_bvn`,
+          userId,
+          checkType: 'bvn_info',
+          status: 'matched',
+          provider: 'paystack',
+          providerReference: customerCode,
+          bvnLast4: existingKyc?.bvnLast4 || 'bvn',
+          verifiedAt: now,
+          createdAt: existingKyc?.createdAt || now,
+          updatedAt: now,
+        });
+      } catch (_err) {
+        // Non-blocking: DVA assignment is already complete
+      }
+
       return {
         status: 'processed',
         event: eventType,
@@ -137,6 +159,20 @@ export async function processPaystackWebhook(
       }
 
       await recordIdentificationFailure(userId, reason);
+
+      try {
+        const verifications = await db.listNgnIdentityVerifications(userId);
+        const existingKyc = verifications.find((v) => v.checkType === 'bvn_info');
+        if (existingKyc) {
+          await db.upsertNgnIdentityVerification({
+            ...existingKyc,
+            status: 'failed',
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch (_err) {
+        // Ignore failure update error
+      }
       return {
         status: 'processed',
         event: eventType,

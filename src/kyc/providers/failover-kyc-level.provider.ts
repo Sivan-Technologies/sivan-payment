@@ -4,6 +4,8 @@ import { createAuditLog } from '../../audit/audit.service.js';
 import { MonnifyKycLevelProvider } from './monnify-kyc-level.provider.js';
 import { FlutterwaveKycLevelProvider } from './flutterwave-kyc-level.provider.js';
 import { IdentifyOrgKycLevelProvider, isIdentifyOrgConfigured } from './identifyorg-kyc-level.provider.js';
+import { PaystackKycLevelProvider } from './paystack-kyc-level.provider.js';
+import { isPaystackConfigured } from '../../config/paystackConfig.js';
 import type {
   BvnAccountMatchInput,
   BvnInfoMatchInput,
@@ -13,77 +15,14 @@ import type {
   NinInfoMatchInput,
 } from './kyc-level-provider.js';
 
-/**
- * TRY ONE BVN PROVIDER, FALL THROUGH TO THE NEXT WHEN IT CANNOT ANSWER.
- *
- * The immediate reason: Monnify has not approved the account for BVN
- * validation, so Level 2 cannot ship on Monnify today - but it should switch
- * to Monnify by itself the moment approval lands, without a code change or a
- * deploy timed to someone else's email.
- *
- * The standing reason: a single BVN vendor is a single point of failure on the
- * step that gates every Nigerian's limits. If it is down or rate-limited,
- * nobody reaches Level 2 and NGN 5,000,000 of headroom is unreachable until a
- * human notices.
- *
- * ─────────────────────────────────────────────────────────────────────
- * THE RULE THAT MATTERS: FALL OVER ON ERRORS, NEVER ON VERDICTS.
- *
- * This is the whole safety property of this file, and getting it wrong would
- * be far worse than having no failover at all.
- *
- *   AN ERROR is "this provider could not answer" - a revoked key, a 503, a
- *   timeout, an account not approved for the product. Another provider may
- *   legitimately answer the same question. FALL THROUGH.
- *
- *   A VERDICT is "this provider answered, and the answer is no" - `failed`
- *   because the name does not match, or `review` because something needs a
- *   human. That IS the answer. RETURN IT.
- *
- * Falling through on a `failed` verdict would mean asking every provider in
- * turn until one says `matched` - shopping for a yes. A user whose BVN
- * genuinely belongs to somebody else would be refused by Monnify and then
- * handed to Flutterwave for a second opinion on the same facts, and any
- * disagreement between vendors becomes a free pass to Level 2 and a
- * NGN 5,000,000 ceiling.
- *
- * So: only a thrown error advances to the next provider. A returned result -
- * whatever its status - is final.
- *
- * ─────────────────────────────────────────────────────────────────────
- * WHY NOT SILENT.
- *
- * Every fall-through is audited at `warning`. A chain that quietly works is a
- * chain nobody notices has been running on the backup for three weeks, and
- * "why are we paying Flutterwave N50 a call when Monnify is contracted" is a
- * question that should be answerable from the audit log rather than a bill.
- */
-
 export const FAILOVER_PROVIDER_NAME = 'failover';
 
-/**
- * Errors that mean "ask someone else", as opposed to "the answer is no".
- *
- * A 400 from a provider is usually OUR request being wrong - a malformed BVN,
- * a missing field - and re-sending the same bad request to a second provider
- * just spends money to be told the same thing. It is therefore NOT retried.
- *
- * 403 IS retried, deliberately: "your account is not approved for this
- * product" is exactly the situation this class exists for, and it arrives as a
- * 403 from both vendors.
- */
 function isRetryableProviderFailure(error: unknown): boolean {
   if (error instanceof AppError) {
-    // 403 - not provisioned / not approved / key rejected -> try the next one.
-    // 503 - upstream down -> try the next one.
     if (error.statusCode === 403 || error.statusCode === 503) return true;
-    // 400/404/409 are about THIS request, not about the provider. Sending the
-    // same malformed input elsewhere cannot help and costs another N50.
     if (error.statusCode >= 400 && error.statusCode < 500) return false;
     return true;
   }
-  // A bare Error is a fetch failure, a timeout, or a non-2xx the provider
-  // client turned into `new Error(...)`. All of those are "could not answer".
   return true;
 }
 
@@ -92,18 +31,6 @@ interface ChainEntry {
   provider: KycLevelProvider;
 }
 
-/**
- * The ordered chain, built from configuration.
- *
- * PREFERRED FIRST. KYC_LEVEL_PROVIDER still names the provider that should
- * answer when it can, so this is not a behaviour change for a deployment with
- * one working vendor - it is the same provider, with a net under it.
- *
- * A provider that is not configured is left OUT of the chain rather than
- * included and allowed to fail: attempting a vendor whose key is absent turns
- * one clean failure into two, and pollutes the audit trail with a fall-through
- * that was never a real attempt.
- */
 export function buildKycProviderChain(preferred = env.KYC_LEVEL_PROVIDER): ChainEntry[] {
   const chain: ChainEntry[] = [];
   const seen = new Set<string>();
@@ -121,26 +48,18 @@ export function buildKycProviderChain(preferred = env.KYC_LEVEL_PROVIDER): Chain
   );
 
   const makers: Record<string, { make: () => KycLevelProvider; configured: boolean }> = {
+    paystack: { make: () => new PaystackKycLevelProvider(), configured: isPaystackConfigured() },
+    identifyorg: { make: () => new IdentifyOrgKycLevelProvider(), configured: isIdentifyOrgConfigured() },
     monnify: { make: () => new MonnifyKycLevelProvider(), configured: monnifyConfigured },
     flutterwave: { make: () => new FlutterwaveKycLevelProvider(), configured: flutterwaveConfigured },
-    identifyorg: { make: () => new IdentifyOrgKycLevelProvider(), configured: isIdentifyOrgConfigured() },
   };
 
   // The preferred provider goes first, when it is one of the real vendors.
   if (preferred in makers) {
     add(preferred, makers[preferred].make, makers[preferred].configured);
   }
-  // Then everyone else, in a fixed order so the chain is predictable.
-  /**
-   * identifyorg is listed FIRST in the fallback order, not last.
-   *
-   * The order here is what a deployment falls back to when the preferred
-   * vendor cannot answer, and today only one of the three actually can:
-   * Monnify has no live key issued, and Flutterwave's compliant v3 path
-   * cannot settle synchronously. Putting the working provider first means a
-   * deployment that has not set KYC_LEVEL_PROVIDER still verifies people.
-   */
-  for (const name of ['identifyorg', 'monnify', 'flutterwave']) {
+  // Then everyone else, in a fixed order: Paystack primary, IdentifyOrg second (synchronous failover), Monnify, Flutterwave
+  for (const name of ['paystack', 'identifyorg', 'monnify', 'flutterwave']) {
     add(name, makers[name].make, makers[name].configured);
   }
 
