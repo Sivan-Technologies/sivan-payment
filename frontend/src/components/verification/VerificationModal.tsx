@@ -17,6 +17,7 @@ import {
   type VerificationPathPlan,
   type VerificationPath,
 } from '../../verificationPath';
+import { DateOfBirthSelector } from './DateOfBirthSelector';
 
 /**
  * Level 1 verification, as a modal.
@@ -702,18 +703,12 @@ function BridgeVerification({
         // STEP 1. Nothing else is offered until this is on file - a Start
         // button here would create a customer Bridge cannot approve.
         <div className="sv-dob-step">
-          <label className="sv-field">
-            <span>Date of birth</span>
-            <input
-              type="date"
-              value={dob}
-              max={maxDob}
-              onChange={(event) => { setDob(event.target.value); setDobError(''); }}
-            />
-          </label>
-          <p className="sv-muted">
-            Bridge needs this to verify you. It must match the ID you are about to upload.
-          </p>
+          <DateOfBirthSelector
+            value={dob}
+            onChange={(newDob) => { setDob(newDob); setDobError(''); }}
+            caption="Bridge needs this to verify you. It must match the ID you are about to upload."
+            required
+          />
           {dobError && <p className="sv-warn" role="alert">{dobError}</p>}
           <button className="sv-primary" disabled={savingDob} onClick={saveDob}>
             {savingDob ? 'Saving…' : 'Continue →'}
