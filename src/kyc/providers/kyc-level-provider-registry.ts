@@ -3,27 +3,12 @@ import { MockKycLevelProvider } from './mock-kyc-level.provider.js';
 import { MonnifyKycLevelProvider } from './monnify-kyc-level.provider.js';
 import { FlutterwaveKycLevelProvider } from './flutterwave-kyc-level.provider.js';
 import { IdentifyOrgKycLevelProvider, isIdentifyOrgConfigured } from './identifyorg-kyc-level.provider.js';
+import { PaystackKycLevelProvider } from './paystack-kyc-level.provider.js';
+import { isPaystackConfigured } from '../../config/paystackConfig.js';
 import { FailoverKycLevelProvider, buildKycProviderChain } from './failover-kyc-level.provider.js';
 
-/**
- * The provider a BVN check should go to.
- *
- * WHEN MORE THAN ONE REAL VENDOR IS CONFIGURED, THIS RETURNS A CHAIN.
- *
- * The preferred vendor still answers whenever it can - KYC_LEVEL_PROVIDER is
- * unchanged in meaning - but a provider that cannot answer at all now falls
- * through to the other instead of failing the user. That is what lets Level 2
- * ship on Flutterwave today and move itself to Monnify the moment Monnify
- * approves the account, with no deploy.
- *
- * A verdict is never failed over, only an error. See
- * failover-kyc-level.provider.ts for why that distinction is the whole safety
- * property.
- *
- * `name` is still honoured exactly when passed explicitly: callers and tests
- * that ask for one specific vendor get that vendor on its own, not a chain.
- */
 export function getKycLevelProvider(name?: string) {
+  if (name === 'paystack') return new PaystackKycLevelProvider();
   if (name === 'monnify') return new MonnifyKycLevelProvider();
   if (name === 'flutterwave') return new FlutterwaveKycLevelProvider();
   if (name === 'identifyorg') return new IdentifyOrgKycLevelProvider();
@@ -65,6 +50,7 @@ export function isKycLevelProviderConfigured(): boolean {
   if (buildKycProviderChain().length > 0) return true;
 
   const name = env.KYC_LEVEL_PROVIDER;
+  if (name === 'paystack') return isPaystackConfigured();
   /**
    * A key is all IdentifyOrg needs - no OAuth step, no redirect URL, no
    * consent page. That is also why it is the one provider whose readiness can
