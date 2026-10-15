@@ -53,6 +53,8 @@ Object.assign(process.env, {
 
 const { buildApp } = await import('../src/app.js');
 const { getWalletProvider } = await import('../src/wallets/provider/provider-registry.js');
+const { setWithdrawalPin } = await import('../src/identity/withdrawal-pin.service.js');
+await setWithdrawalPin('user_e2e', { pin: '749201' });
 
 let pass = 0;
 let fail = 0;
@@ -148,6 +150,7 @@ try {
   const made = await post('/api/users/user_e2e/balance/transfers', {
     asset: 'usdc', network: 'base', amount: 100,
     destinationAddress: '0xAAA0000000000000000000000000000000000002',
+    pin: '749201',
   });
   check('the transfer is created', made.status === 200 || made.status === 201, String(made.status));
   check('the fee charged equals the fee quoted',
@@ -194,6 +197,7 @@ try {
   const made2 = await post('/api/users/user_e2e/balance/transfers', {
     asset: 'usdc', network: 'base', amount: 100,
     destinationAddress: '0xBBB0000000000000000000000000000000000003',
+    pin: '749201',
   });
   check('and a real transfer is charged the NEW fee',
     Number(made2.body?.data?.fee) === 1.5,
@@ -205,6 +209,7 @@ try {
   const tooSmall = await post('/api/users/user_e2e/balance/transfers', {
     asset: 'usdc', network: 'base', amount: 7,
     destinationAddress: '0xCCC0000000000000000000000000000000000004',
+    pin: '749201',
   });
   check('a $7 send is refused under the new $8 minimum',
     tooSmall.status >= 400,
@@ -218,6 +223,7 @@ try {
   const eth = await post('/api/users/user_e2e/balance/transfers', {
     asset: 'usdc', network: 'ethereum', amount: 100,
     destinationAddress: '0xDDD0000000000000000000000000000000000005',
+    pin: '749201',
   });
   check('an ethereum transfer is refused over HTTP', eth.status >= 400, String(eth.status));
 

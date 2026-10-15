@@ -405,7 +405,7 @@ export async function quoteTransfer(
   const adminFees = await getAdminFeeSettings().catch(() => undefined);
 
   const n = (network || '').toLowerCase().trim();
-  const isMicroRail = n === 'celo' || n === 'stellar';
+  const isMicroRail = n === 'celo' || n === 'stellar' || n === 'starknet' || n === 'arc';
 
   // Merge: admin overrides replace network defaults dynamically.
   const config: TransferFeeConfig = {
@@ -707,7 +707,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   const controls = await getBalanceTransferControls();
   if (!controls.transfersEnabled) throw forbidden('Transfers from settled USDC balance are currently disabled.');
   if (!controls.supportedNetworks.includes(input.network)) throw forbidden(`${input.network} transfers are currently disabled.`);
-  const minAllowed = Math.min(controls.minimumSendAmount, 1);
+  const minAllowed = controls.minimumSendAmount ?? 1;
   if (input.amount < minAllowed) throw badRequest(`Minimum transfer amount is ${minAllowed} ${input.asset.toUpperCase()}.`);
 
   // THE DESTINATION WAS ONLY LENGTH-CHECKED: z.string().min(8).max(160).
