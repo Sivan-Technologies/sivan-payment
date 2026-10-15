@@ -764,7 +764,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     if (networkSpendable !== null && networkSpendable < input.amount) {
       const unified = await getUnifiedBalance(userId);
       const availableChains = (unified.wallets || [])
-        .filter((w) => (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0))
+        .filter((w) => w.chain.toLowerCase() !== input.network.toLowerCase() && (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0))
         .map((w) => {
           const bal = w.balances?.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
           return `${w.chain} (${bal?.amount} ${input.asset.toUpperCase()})`;
