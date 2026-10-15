@@ -1055,6 +1055,34 @@ export interface NgnIdentityVerificationRecord {
   updatedAt: string;
 }
 
+export type StepUpModule = 'nin' | 'proof_of_address' | 'source_of_funds' | 'global_passport';
+export type StepUpRequestStatus = 'pending' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'expired';
+
+export interface StepUpVerificationRequestRecord {
+  id: string; // vreq_...
+  userId: string;
+  adminId: string;
+  requestedModules: StepUpModule[];
+  reason: string;
+  status: StepUpRequestStatus;
+  tokenHash: string; // SHA-256 of raw secret token
+  expiresAt: string;
+  submittedAt?: string;
+  submissionData?: {
+    nin?: string;
+    proofOfAddressDocId?: string;
+    sourceOfFundsDocId?: string;
+    passportDocId?: string;
+    notes?: string;
+  };
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewNotes?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UnifiedWebhookLogRecord {
   id: string;
   serviceName: string;
@@ -1291,6 +1319,7 @@ export interface DatabaseShape {
   ghsPayoutAccounts?: GhsPayoutAccountRecord[];
   ghsQuotes?: GhsQuoteRecord[];
   ghsTransfers?: GhsTransferRecord[];
+  verificationRequests?: StepUpVerificationRequestRecord[];
 }
 
 /**
