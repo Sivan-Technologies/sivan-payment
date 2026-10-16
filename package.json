@@ -7,6 +7,7 @@
   "scripts": {
     "test:ngn-agreement-ledger": "node --import tsx scripts/test-ngn-agreement-ledger.ts",
     "test:ngn-worker-integration": "node --import tsx scripts/test-ngn-worker-integration.ts",
+    "test:wa-deposit": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-wa-deposit.json tsx scripts/test-whatsapp-deposit-notification.ts",
     "test": "tsx scripts/run-all-tests.ts",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/src/server.js",

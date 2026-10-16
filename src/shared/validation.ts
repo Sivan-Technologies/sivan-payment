@@ -4,7 +4,8 @@ import { badRequest } from './errors.js';
 export function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    throw badRequest('Invalid request body', parsed.error.flatten());
+    const errorMessages = parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join(', ');
+    throw badRequest(`Invalid request body (${errorMessages})`, parsed.error.flatten());
   }
   return parsed.data;
 }
