@@ -217,10 +217,16 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
   const existingVirtualAccounts = data.virtualAccountControls ?? [];
   const existingNetworks = data.networkControls ?? [];
 
-  const sourceNetworks = DEFAULT_NETWORK_CONTROLS.map((defaultControl) => ({
-    ...defaultControl,
-    ...(existingNetworks.find((item) => item.network === defaultControl.network) ?? {})
-  })).sort((a, b) => a.sortOrder - b.sortOrder);
+  const activeSupportedChains = new Set(['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo', 'arbitrum', 'arc', 'starknet']);
+  const sourceNetworks = DEFAULT_NETWORK_CONTROLS.map((defaultControl) => {
+    const existing = existingNetworks.find((item) => item.network === defaultControl.network);
+    const isSupported = activeSupportedChains.has(defaultControl.network.toLowerCase());
+    return {
+      ...defaultControl,
+      ...(existing ?? {}),
+      enabled: isSupported ? Boolean(existing?.enabled ?? defaultControl.enabled) : false,
+    };
+  }).sort((a, b) => a.sortOrder - b.sortOrder);
 
   const defaultNetwork =
     sourceNetworks.find((n) => n.enabled && n.isDefault)?.network ??
