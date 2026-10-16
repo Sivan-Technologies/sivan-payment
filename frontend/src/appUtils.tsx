@@ -282,7 +282,7 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
       sourceAssets: fallbackSourceAssets,
       sourceNetworks: fallbackSourceNetworks,
       defaultNetwork: 'solana',
-      supplierPayoutsEnabled: true
+      supplierPayoutsEnabled: false
       // No displayFx on the legacy array shape - there is nowhere for it to
       // have come from. Consumers fall back to naira, which is what the
       // figures already are.
@@ -296,15 +296,11 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
     sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks,
     defaultNetwork: data?.defaultNetwork ?? data?.sourceNetworks?.find((n) => n.enabled && n.isDefault)?.network ?? 'solana',
     /**
-     * DEFAULTS TO TRUE, and the direction matters.
+     * DEFAULTS TO FALSE (fail-closed).
      *
-     * `?? true` means a failed or stale controls fetch shows the route and
-     * lets the server refuse - annoying but honest. Defaulting to false would
-     * hide a live, working feature every time this endpoint hiccupped, which
-     * is a far worse failure: the user cannot tell "switched off" from
-     * "broken", and neither can support.
+     * Supplier payout is hidden by default and only enabled when explicitly confirmed by the API.
      */
-    supplierPayoutsEnabled: data?.supplierPayoutsEnabled ?? true,
+    supplierPayoutsEnabled: Boolean(data?.supplierPayoutsEnabled),
     /**
      * `?? true` DELIBERATELY, and the opposite direction to the server.
      *
