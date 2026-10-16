@@ -230,8 +230,13 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
-    const gatewayUrl = (process.env.API_GATEWAY_URL || process.env.PUBLIC_API_GATEWAY_URL || '').replace(/\/$/, '');
-    const defaultUrl = gatewayUrl ? `${gatewayUrl}/api/whatsapp` : 'https://api-staging.sivantech.online/api/whatsapp';
+    const gatewayUrl = (
+      process.env.CORE_API_BASE_URL ||
+      process.env.API_GATEWAY_URL ||
+      process.env.PUBLIC_API_GATEWAY_URL ||
+      'https://api.sivantech.online'
+    ).replace(/\/$/, '');
+    const defaultUrl = `${gatewayUrl}/api/whatsapp`;
     const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || process.env.WHATSAPP_BOT_URL || defaultUrl;
     if (!rawWaUrl) return;
 
@@ -267,7 +272,7 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
       : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
 
     const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
-    await fetch(waNotifyUrl, {
+    const resp = await fetch(waNotifyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -278,8 +283,14 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
         message: text,
       }),
     });
-  } catch {
-    // Non-blocking notification enhancement
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.error(`WhatsApp deposit notify failed [${resp.status}]: ${errText}`);
+    } else {
+      console.log(`WhatsApp deposit notify delivered successfully to ${formattedRecipient}`);
+    }
+  } catch (err: any) {
+    console.error('WhatsApp deposit notification error:', err?.message || err);
   }
 }
 

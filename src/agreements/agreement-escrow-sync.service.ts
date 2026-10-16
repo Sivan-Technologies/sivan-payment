@@ -67,7 +67,7 @@ export async function syncEscrowAgentFunding(
         'Content-Type': 'application/json',
         'x-core-api-key': coreSecret,
       },
-      body: JSON.stringify({ actorWhatsapp: wireIdentity }),
+      body: JSON.stringify({ actorWhatsapp: wireIdentity, actorUserId: agreement.buyerUserId }),
       signal: AbortSignal.timeout(3500),
     });
   } catch (err: any) {

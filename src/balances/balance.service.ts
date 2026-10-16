@@ -89,8 +89,8 @@ export const balanceTransferControlsSchema = z.object({
 });
 
 export const createBalanceTransferSchema = z.object({
-  asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet']),
+  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt'])).default('usdc'),
+  network: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
@@ -1340,7 +1340,7 @@ export async function createAdminBalanceAdjustment(input: z.infer<typeof adminBa
 }
 
 export const createP2pTransferSchema = z.object({
-  asset: z.enum(['usdc', 'usdt']).default('usdc'),
+  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt'])).default('usdc'),
   amount: z.coerce.number().positive(),
   recipientTarget: z.string().min(1).max(160),
   note: z.string().max(500).optional(),
