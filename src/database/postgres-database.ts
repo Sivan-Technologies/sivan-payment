@@ -304,6 +304,7 @@ export class PostgresDatabase {
       const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
       const virtualAccountControls = await optionalQuery(client, 'select * from payments_virtual_account_controls order by currency asc');
       const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
+      await ensureNetworkControlsSchema(client);
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
       const systemIncidents = await optionalQuery(client, 'select * from payments_system_incidents order by started_at desc, created_at desc');
@@ -2995,6 +2996,30 @@ async function ensureAgreementControlsSchema(client: pg.PoolClient) {
     agreementControlsSchemaMigrated = true;
   } catch (err) {
     console.warn('[postgres.migration.agreement_controls]', err);
+  }
+}
+
+let networkControlsSchemaMigrated = false;
+async function ensureNetworkControlsSchema(client: pg.PoolClient) {
+  if (networkControlsSchemaMigrated) return;
+  try {
+    await client.query(`
+      ALTER TABLE payments_network_controls ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;
+      INSERT INTO payments_network_controls (network, enabled, is_default, label, sort_order, updated_by, updated_at)
+      VALUES
+        ('solana', true, true, 'Solana', 10, 'system', NOW()),
+        ('base', true, false, 'Base', 20, 'system', NOW()),
+        ('bsc', true, false, 'BNB Chain', 25, 'system', NOW()),
+        ('arc', true, false, 'Arc', 26, 'system', NOW()),
+        ('arbitrum', true, false, 'Arbitrum', 27, 'system', NOW()),
+        ('stellar', true, false, 'Stellar', 28, 'system', NOW()),
+        ('celo', true, false, 'Celo', 29, 'system', NOW()),
+        ('starknet', true, false, 'Starknet', 30, 'system', NOW())
+      ON CONFLICT (network) DO NOTHING;
+    `);
+    networkControlsSchemaMigrated = true;
+  } catch (err) {
+    console.warn('[postgres.migration.network_controls]', err);
   }
 }
 
