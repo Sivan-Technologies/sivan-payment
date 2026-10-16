@@ -4,6 +4,7 @@ import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import type { WalletChain } from '../wallets/types/wallet.types.js';
 import { networksServedByWallet } from '../wallets/chain-family.js';
+import { DEFAULT_NETWORK_CONTROLS } from '../controls/payment-controls.service.js';
 
 /**
  * ONE BALANCE, ASSEMBLED FROM THE CHAIN AND THE LEDGER.
@@ -149,14 +150,24 @@ async function readChainBalances(userId: string) {
    * Dynamically filter by networks enabled in admin controls.
    */
   const controlData = await db.readControlTables().catch(() => null);
-  const enabledAdminNetworks = controlData?.networkControls?.length
-    ? new Set(controlData.networkControls.filter((n) => n.enabled).map((n) => n.network.toLowerCase()))
-    : null;
+  const existingControls = controlData?.networkControls ?? [];
+  const mergedControls = DEFAULT_NETWORK_CONTROLS.map((def) => {
+    const existing = existingControls.find((c) => c.network.toLowerCase() === def.network.toLowerCase());
+    return existing ? { ...def, ...existing } : def;
+  });
+  for (const c of existingControls) {
+    if (!mergedControls.some((m) => m.network.toLowerCase() === c.network.toLowerCase())) {
+      mergedControls.push(c);
+    }
+  }
+  const enabledAdminNetworks = new Set(
+    mergedControls.filter((n) => n.enabled).map((n) => n.network.toLowerCase())
+  );
 
   const uniqueReads = new Map<string, { wallet: (typeof active)[0]; chain: string }>();
   for (const wallet of active) {
     const chains = networksServedByWallet(wallet.chain).filter(
-      (c) => !enabledAdminNetworks || enabledAdminNetworks.has(c.toLowerCase())
+      (c) => enabledAdminNetworks.has(c.toLowerCase())
     );
     for (const chain of chains) {
       const key = `${chain}:${wallet.address.toLowerCase()}`;
@@ -171,8 +182,9 @@ async function readChainBalances(userId: string) {
   return Promise.all(
     reads.map(async ({ wallet, chain }) => {
       try {
+        const provider = providerFor(wallet);
         const balances = await withTimeout(
-          providerFor(wallet).getBalances(
+          provider.getBalances(
             wallet.providerWalletId,
             wallet.customerId,
             wallet.address,
@@ -409,6 +421,6 @@ export async function getSpendable(userId: string, asset: string, network?: stri
     return Math.min(chainSpendable, num(row.spendable));
   }
 
-  if (row.chainUnavailable && num(row.chain) === 0 && num(row.credited) === 0) return null;
+  if (row.chainUnavailable && num(row.credited) === 0) return null;
   return num(row.spendable);
 }
