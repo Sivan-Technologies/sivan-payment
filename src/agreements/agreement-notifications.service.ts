@@ -6,9 +6,17 @@ import type { ServiceAgreementRecord } from '../database/types.js';
 import { resolveTelegramIdForAgreement, resolveWhatsAppPhoneForAgreement } from './agreement-identity.service.js';
 
 function getNotifyConfig() {
-  const telegramUrl = process.env.TELEGRAM_NOTIFICATION_URL;
-  const whatsappUrl = process.env.WHATSAPP_NOTIFICATION_URL;
-  const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+  const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
+  const gatewayUrl = (
+    process.env.CORE_API_BASE_URL ||
+    process.env.API_GATEWAY_URL ||
+    process.env.PUBLIC_API_GATEWAY_URL ||
+    (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
+  ).replace(/\/$/, '');
+
+  const telegramUrl = (process.env.TELEGRAM_NOTIFICATION_URL || `${gatewayUrl}/api/telegram`).replace(/\/$/, '');
+  const whatsappUrl = (process.env.WHATSAPP_NOTIFICATION_URL || process.env.WHATSAPP_BOT_URL || `${gatewayUrl}/api/whatsapp`).replace(/\/$/, '');
+  const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
   return { telegramUrl, whatsappUrl, secret };
 }
 
@@ -55,7 +63,11 @@ export async function notifyAgreementCreated(
           const tgId = await resolveTelegramIdForAgreement(sellerId);
           await fetch(`${telegramUrl.replace(/\/$/, '')}/api/notify`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-notify-secret': secret,
+              'x-target-service': 'telegram',
+            },
             body: JSON.stringify({
               telegramId: tgId || undefined,
               phone: tgId ? undefined : sellerId,
@@ -76,9 +88,13 @@ export async function notifyAgreementCreated(
           const phone = await resolveWhatsAppPhoneForAgreement(sellerId);
           if (phone) {
             const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
-            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+                'x-target-service': 'whatsapp-bot',
+              },
               body: JSON.stringify({ to: waPhone, message: sellerMsg }),
             });
           }
@@ -195,9 +211,13 @@ export async function notifyAgreementAccepted(
           const phone = await resolveWhatsAppPhoneForAgreement(buyerId);
           if (phone) {
             const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
-            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+                'x-target-service': 'whatsapp-bot',
+              },
               body: JSON.stringify({ to: waPhone, message: buyerMsg }),
             });
           }
@@ -303,9 +323,13 @@ export async function notifyAgreementFunded(
           const phone = await resolveWhatsAppPhoneForAgreement(sellerId);
           if (phone) {
             const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
-            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+                'x-target-service': 'whatsapp-bot',
+              },
               body: JSON.stringify({ to: waPhone, message: sellerMsg }),
             });
           }
@@ -404,9 +428,13 @@ export async function notifyAgreementDelivered(
           const phone = await resolveWhatsAppPhoneForAgreement(buyerId);
           if (phone) {
             const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
-            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+                'x-target-service': 'whatsapp-bot',
+              },
               body: JSON.stringify({ to: waPhone, message: buyerMsg }),
             });
           }
@@ -501,9 +529,13 @@ export async function notifyAgreementReleased(
           const phone = await resolveWhatsAppPhoneForAgreement(sellerId);
           if (phone) {
             const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
-            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+                'x-target-service': 'whatsapp-bot',
+              },
               body: JSON.stringify({ to: waPhone, message: sellerMsg }),
             });
           }
@@ -639,9 +671,13 @@ export async function notifyAgreementCancellation(
           const phone = await resolveWhatsAppPhoneForAgreement(counterpartyId);
           if (phone) {
             const waPhone = phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
-            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/send`, {
+            await fetch(`${whatsappUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-notify-secret': secret },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-notify-secret': secret,
+                'x-target-service': 'whatsapp-bot',
+              },
               body: JSON.stringify({ to: waPhone, message: counterpartyMsg }),
             });
           }
