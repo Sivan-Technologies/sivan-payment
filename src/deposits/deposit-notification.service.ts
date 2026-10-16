@@ -146,9 +146,16 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
-    const gatewayUrl = (process.env.API_GATEWAY_URL || process.env.PUBLIC_API_GATEWAY_URL || '').replace(/\/$/, '');
-    const defaultUrl = gatewayUrl ? `${gatewayUrl}/api/telegram` : 'https://api-staging.sivantech.online/api/telegram';
-    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL || defaultUrl;
+    const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
+    const gatewayUrl = (
+      process.env.CORE_API_BASE_URL ||
+      process.env.API_GATEWAY_URL ||
+      process.env.PUBLIC_API_GATEWAY_URL ||
+      (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
+    ).replace(/\/$/, '');
+    const defaultUrl = `${gatewayUrl}/api/telegram`;
+    const rawTgUrl = process.env.TELEGRAM_NOTIFICATION_URL || defaultUrl;
+    const notifyUrl = rawTgUrl.endsWith('/api/notify') ? rawTgUrl : `${rawTgUrl.replace(/\/$/, '')}/api/notify`;
     const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
     if (!notifyUrl || !secret) {
       return;
@@ -197,11 +204,12 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
       [{ text: '🏠 Main Menu', callback_data: 'v1:menu' }],
     ];
 
-    await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
+    await fetch(notifyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-notify-secret': secret,
+        'x-target-service': 'telegram',
       },
       body: JSON.stringify({
         telegramId: targetTelegramId,
@@ -230,11 +238,12 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
+    const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
     const gatewayUrl = (
       process.env.CORE_API_BASE_URL ||
       process.env.API_GATEWAY_URL ||
       process.env.PUBLIC_API_GATEWAY_URL ||
-      'https://api.sivantech.online'
+      (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
     ).replace(/\/$/, '');
     const defaultUrl = `${gatewayUrl}/api/whatsapp`;
     const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || process.env.WHATSAPP_BOT_URL || defaultUrl;
@@ -271,12 +280,13 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
       ? targetPhone
       : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
 
-    const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+    const waNotifyUrl = rawWaUrl.endsWith('/api/notify') ? rawWaUrl : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
     const resp = await fetch(waNotifyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-notify-secret': secret,
+        'x-target-service': 'whatsapp-bot',
       },
       body: JSON.stringify({
         to: formattedRecipient,
