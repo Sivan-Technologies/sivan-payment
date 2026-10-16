@@ -121,6 +121,7 @@ type LedgerMetadata = {
   network?: BalanceNetwork;
   destinationAddress?: string;
   transferId?: string;
+  txHash?: string;
 };
 
 type TransferMetadata = {
@@ -466,10 +467,21 @@ export async function createBalanceLedgerEntry(input: Omit<LedgerMetadata, 'entr
 }
 
 export async function listUserBalanceLedger(userId: string) {
+  const allTransfers = await transferLogs().catch(() => []);
+  const txHashMap = new Map<string, string>();
+  for (const item of allTransfers) {
+    if (item.transfer?.transferId && item.transfer?.txHash) {
+      txHashMap.set(item.transfer.transferId, item.transfer.txHash);
+    }
+  }
+
   // userId pushed into the query. The .filter below is kept as a belt-and-
   // braces check on the JSONB match, not as the primary filter.
   return (await ledgerLogs(userId))
-    .map((item) => ({ ...item.entry, createdAt: item.log.createdAt }))
+    .map((item) => {
+      const txHash = item.entry.txHash || (item.entry.transferId ? txHashMap.get(item.entry.transferId) : undefined);
+      return { ...item.entry, txHash, createdAt: item.log.createdAt };
+    })
     .filter((entry) => entry.userId === userId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -1156,6 +1168,7 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     sourceType: 'balance_transfer', sourceId: transfer.transferId,
     description: `On-chain transfer submitted to ${transfer.network}`,
     network: transfer.network, destinationAddress: transfer.destinationAddress, transferId: transfer.transferId,
+    txHash: result.txHash,
   }, { actorType: 'system', actorId: 'balance_transfer' });
 
   /**
