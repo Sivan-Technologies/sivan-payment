@@ -553,9 +553,13 @@ export class PostgresDatabase {
   }
 
   async findUserByWhatsappNumber(whatsappNumber: string) {
+    const clean = String(whatsappNumber || '').trim();
+    if (!clean) return undefined;
     const client = await this.pool.connect();
     try {
-      const result = await client.query('select * from users where whatsapp_number=$1 limit 1', [whatsappNumber]);
+      const digitsOnly = clean.replace(/\D/g, '');
+      const candidates = Array.from(new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`])).filter(Boolean);
+      const result = await client.query('select * from users where whatsapp_number = ANY($1) limit 1', [candidates]);
       return result.rows[0] ? mapUser(result.rows[0]) : undefined;
     } finally { client.release(); }
   }
@@ -585,7 +589,14 @@ export class PostgresDatabase {
       }
 
       const username = clean.replace(/^@/, '');
-      res = await client.query('select * from users where lower(username)=lower($1) or lower(telegram_username)=lower($1) limit 1', [username]);
+      res = await client.query(`
+        select * from users 
+        where lower(username)=lower($1) 
+           or lower(telegram_username)=lower($1)
+           or lower(replace(coalesce(first_name,'') || coalesce(last_name,''), ' ', '')) = lower($1)
+           or lower(replace(coalesce(first_name,'') || ' ' || coalesce(last_name,''), ' ', '')) = lower($1)
+        limit 1
+      `, [username]);
       if (res.rows[0]) {
         const userRec = mapUser(res.rows[0]);
         if (!userRec.telegramUserId) {
@@ -597,7 +608,8 @@ export class PostgresDatabase {
       }
 
       const digitsOnly = clean.replace(/\D/g, '');
-      res = await client.query('select * from users where whatsapp_number=$1 or whatsapp_number=$2 limit 1', [clean, `+${digitsOnly}`]);
+      const phoneCandidates = Array.from(new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`])).filter(Boolean);
+      res = await client.query('select * from users where whatsapp_number = ANY($1) limit 1', [phoneCandidates]);
       if (res.rows[0]) {
         const userRec = mapUser(res.rows[0]);
         if (!userRec.telegramUserId) {
@@ -614,9 +626,9 @@ export class PostgresDatabase {
       // Check customer_identity_links for linked Telegram accounts or phones
       const linkRes = await client.query(
         `select payment_user_id, telegram_user_id, telegram_username, whatsapp_number from customer_identity_links 
-         where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number=$3 or whatsapp_number=$4
+         where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number = ANY($3)
          order by linked_at desc nulls last limit 1`,
-        [username, clean, clean, `+${digitsOnly}`]
+        [username, clean, phoneCandidates]
       );
       if (linkRes.rows[0]?.payment_user_id) {
         const u = await client.query('select * from users where user_id=$1 limit 1', [linkRes.rows[0].payment_user_id]);
