@@ -20,16 +20,8 @@ function safeKeyEquals(provided: string, expected: string): boolean {
   const b = Buffer.from(expected);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
+
 function normalizeAdminAliasUrl(rawUrl = '') {
-  if (rawUrl.startsWith('/api/payment/api/')) {
-    return rawUrl.replace(/^\/api\/payment/, '');
-  }
-  if (rawUrl.startsWith('/api/payment/agreements')) {
-    return rawUrl.replace(/^\/api\/payment/, '/api');
-  }
-  if (rawUrl.startsWith('/api/payment/v1/')) {
-    return rawUrl.replace(/^\/api\/payment/, '/api');
-  }
   if (rawUrl.startsWith('/api/admin/api/admin/')) {
     return rawUrl.replace(/^\/api\/admin\/api\/admin\//, '/api/admin/');
   }
@@ -420,6 +412,16 @@ export async function buildApp() {
     const header = request.headers.authorization;
     const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
     if (!token) {
+      const stepUpToken = ((request.headers['x-step-up-token'] as string) || (request.body as any)?.stepUpToken) as string | undefined;
+      const targetUserId = getTargetUserId(request);
+      if (stepUpToken && targetUserId) {
+        const { isStepUpTokenValidForUser } = await import('./identity/withdrawal-pin.service.js');
+        const isValid = await isStepUpTokenValidForUser(targetUserId, stepUpToken);
+        if (isValid) {
+          (request as any).authUser = { sub: targetUserId, roles: ['user'] };
+          return;
+        }
+      }
       return reply.code(401).send({ error: { code: 'auth_required', message: 'Authentication required' } });
     }
     try {

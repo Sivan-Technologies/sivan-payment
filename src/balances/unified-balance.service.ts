@@ -146,12 +146,18 @@ async function readChainBalances(userId: string) {
    *
    * networksServedByWallet() answers from the key family, so it is correct for
    * a row filed under either name and cannot degrade to an empty list.
-   * We filter by activeSupportedChains to target active Phase 2 networks cleanly.
+   * Dynamically filter by networks enabled in admin controls.
    */
-  const activeSupportedChains = new Set(['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo', 'arbitrum', 'arc', 'starknet']);
+  const controlData = await db.readControlTables().catch(() => null);
+  const enabledAdminNetworks = controlData?.networkControls?.length
+    ? new Set(controlData.networkControls.filter((n) => n.enabled).map((n) => n.network.toLowerCase()))
+    : null;
+
   const uniqueReads = new Map<string, { wallet: (typeof active)[0]; chain: string }>();
   for (const wallet of active) {
-    const chains = networksServedByWallet(wallet.chain).filter((c) => activeSupportedChains.has(c.toLowerCase()));
+    const chains = networksServedByWallet(wallet.chain).filter(
+      (c) => !enabledAdminNetworks || enabledAdminNetworks.has(c.toLowerCase())
+    );
     for (const chain of chains) {
       const key = `${chain}:${wallet.address.toLowerCase()}`;
       if (!uniqueReads.has(key)) {
@@ -391,6 +397,7 @@ export async function getSpendable(userId: string, asset: string, network?: stri
     const chainAmount = balanceEntry ? num(balanceEntry.amount) : 0;
     const pooledCredits = num(row.credited);
     const held = num(row.held);
+
     // Funds outside this network's on-chain wallet that can absorb account-level holds
     const otherFunds = Math.max(0, num(row.chain) + pooledCredits - chainAmount);
     // Only the portion of held funds that cannot be covered by other wallets falls onto this chain

@@ -25,7 +25,7 @@ import {
   unlinkTelegramIdentity,
   unlinkWhatsappIdentity,
 } from './identity.service.js';
-import { verifyUserJwt } from '../auth/jwt.js';
+import { signUserJwt, verifyUserJwt } from '../auth/jwt.js';
 import {
   hasWithdrawalPin,
   setWithdrawalPin,
@@ -36,6 +36,7 @@ import {
   verifyWithdrawalPinSchema,
   verifyTmaPinStepUp,
   evaluatePinRequirement,
+  assertPinIsAcceptable,
 } from './withdrawal-pin.service.js';
 import {
   startChatEmailOtp,
@@ -946,7 +947,8 @@ export async function identityRoutes(app: FastifyInstance) {
         },
         { ipAddress: request.ip }
       );
-      return { data: result };
+      const authToken = signUserJwt({ userId: String(userId) });
+      return { data: { ...result, authToken } };
     } catch (err: any) {
       return reply.code(err.statusCode || 400).send({
         error: {
@@ -954,6 +956,35 @@ export async function identityRoutes(app: FastifyInstance) {
           code: err.details?.code || 'PIN_VERIFICATION_FAILED',
           details: err.details,
         },
+      });
+    }
+  });
+
+  /**
+   * Set initial transaction PIN from Telegram Mini-App (TMA).
+   * Only allowed if user has NO PIN configured yet (anti-takeover rule).
+   */
+  app.post('/api/identity/pin/tma-setup', async (request, reply) => {
+    const { userId, pin } = (request.body || {}) as { userId?: string; pin?: string };
+    if (!userId || !pin) {
+      return reply.code(400).send({ error: { message: 'Missing userId or pin' } });
+    }
+    const existing = await hasWithdrawalPin(String(userId));
+    if (existing) {
+      return reply.code(400).send({
+        error: { message: 'A PIN is already set for your account. Please use Web Settings to change or reset your PIN.' }
+      });
+    }
+    try {
+      assertPinIsAcceptable(String(pin));
+      const result = await setWithdrawalPin(String(userId), { pin: String(pin) }, {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      });
+      return { data: result };
+    } catch (err: any) {
+      return reply.code(err.statusCode || 400).send({
+        error: { message: err.message || 'Unable to configure PIN' }
       });
     }
   });
