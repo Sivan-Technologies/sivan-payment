@@ -17,12 +17,25 @@ import { getAuthUserId } from '../auth/jwt.js';
 import { id, nowIso } from '../shared/id.js';
 
 async function resolveTargetUserId(userIdParam: string, request: any): Promise<string> {
-  if (userIdParam === 'me') {
-    return getAuthUserId(request) || userIdParam;
+  if (!userIdParam) return userIdParam;
+  const decodedParam = decodeURIComponent(userIdParam).trim();
+  if (decodedParam === 'me') {
+    return getAuthUserId(request) || decodedParam;
   }
-  if (userIdParam.startsWith('+') || /^\d{10,14}$/.test(userIdParam) || userIdParam.startsWith('whatsapp:')) {
-    const rawClean = userIdParam.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
-    let user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) || (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) || (await db.findUserByWhatsappNumber(rawClean));
+
+  // Check if an existing user matches directly by ID or target (@username, full_name, etc.)
+  const directMatch = (await db.findUserById(decodedParam)) || (await db.findUserByTarget(decodedParam));
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  if (decodedParam.startsWith('+') || /^\d{10,14}$/.test(decodedParam) || decodedParam.startsWith('whatsapp:')) {
+    const rawClean = decodedParam.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    let user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) || 
+               (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) || 
+               (await db.findUserByWhatsappNumber(rawClean)) ||
+               (await db.findUserByTarget(`+${rawClean}`)) ||
+               (await db.findUserByTarget(rawClean));
     if (!user) {
       const now = nowIso();
       user = await db.insertUserRecord({
@@ -36,7 +49,7 @@ async function resolveTargetUserId(userIdParam: string, request: any): Promise<s
     }
     return user.id;
   }
-  return userIdParam;
+  return decodedParam;
 }
 
 const createUserWithLegalSchema = createUserSchema.extend({

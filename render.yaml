@@ -180,7 +180,9 @@ services:
       - key: TELEGRAM_MINIAPP_URL
         value: https://staging.sivantech.online/pin-pad
       - key: TELEGRAM_NOTIFICATION_URL
-        value: https://sivan-telegram-service.onrender.com
+        value: https://api-staging.sivantech.online/api/telegram
+      - key: WHATSAPP_NOTIFICATION_URL
+        value: https://api-staging.sivantech.online/api/whatsapp
       - key: TELEGRAM_OPS_BOT_TOKEN
         value: 8858372924:AAEUSgLNRZcHOYsCXv4rxMAVs2xuqHIgf1A
       - key: TELEGRAM_OPS_CHAT_ID
@@ -496,7 +498,9 @@ services:
       - key: TELEGRAM_MINIAPP_URL
         value: https://app.sivantech.online/pin-pad
       - key: TELEGRAM_NOTIFICATION_URL
-        value: https://telegram.sivantech.online
+        value: https://api.sivantech.online/api/telegram
+      - key: WHATSAPP_NOTIFICATION_URL
+        value: https://api.sivantech.online/api/whatsapp
       - key: TELEGRAM_OPS_BOT_TOKEN
         value: 8858372924:AAEUSgLNRZcHOYsCXv4rxMAVs2xuqHIgf1A
       - key: TELEGRAM_OPS_CHAT_ID

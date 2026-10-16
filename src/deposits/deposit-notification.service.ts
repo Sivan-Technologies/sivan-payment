@@ -146,8 +146,10 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
-    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
-    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    const gatewayUrl = (process.env.API_GATEWAY_URL || process.env.PUBLIC_API_GATEWAY_URL || '').replace(/\/$/, '');
+    const defaultUrl = gatewayUrl ? `${gatewayUrl}/api/telegram` : 'https://api-staging.sivantech.online/api/telegram';
+    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL || defaultUrl;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
     if (!notifyUrl || !secret) {
       return;
     }
@@ -228,10 +230,12 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
-    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL;
+    const gatewayUrl = (process.env.API_GATEWAY_URL || process.env.PUBLIC_API_GATEWAY_URL || '').replace(/\/$/, '');
+    const defaultUrl = gatewayUrl ? `${gatewayUrl}/api/whatsapp` : 'https://api-staging.sivantech.online/api/whatsapp';
+    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || process.env.WHATSAPP_BOT_URL || defaultUrl;
     if (!rawWaUrl) return;
 
-    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
     if (!secret) return;
 
     const user = await db.findUserById(userId);
@@ -243,14 +247,24 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
         .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
       targetPhone = activeWa[0]?.whatsappNumber;
     }
+    if (!targetPhone && user?.email && /^\+?\d{10,14}$/.test(user.email.split('@')[0])) {
+      targetPhone = `+${user.email.split('@')[0].replace(/\D/g, '')}`;
+    }
     if (!targetPhone) return;
 
-    const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
+    const prefs = await db.getUserPreferencesRecord(userId);
+    if (prefs && (prefs as any).whatsappNotificationsEnabled === false) return;
+
+    const userLabel = user?.username ? `@${user.username}` : (user?.fullName || 'your account');
     const amount = `${deposit.amount} ${deposit.asset}`;
     const network = humanNetwork(deposit.chain);
     const text = deposit.status === 'confirmed'
-      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
-      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
+      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).\n\nQuick reply:\n• Reply BALANCE to view updated funds\n• Reply TRANSFER to send funds\n• Reply CASHOUT to withdraw to bank\n• Reply SETTINGS to manage notification alerts`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.\n\nWe will notify you the moment it settles.`;
+
+    const formattedRecipient = targetPhone.startsWith('whatsapp:')
+      ? targetPhone
+      : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
 
     const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
     await fetch(waNotifyUrl, {
@@ -260,7 +274,7 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
         'x-notify-secret': secret,
       },
       body: JSON.stringify({
-        to: targetPhone,
+        to: formattedRecipient,
         message: text,
       }),
     });

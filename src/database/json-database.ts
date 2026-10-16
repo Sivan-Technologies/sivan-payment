@@ -279,7 +279,11 @@ export class JsonDatabase {
 
   async findUserByWhatsappNumber(whatsappNumber: string) {
     const data = await this.read();
-    return data.users.find((user) => user.whatsappNumber === whatsappNumber);
+    const clean = String(whatsappNumber || '').trim();
+    if (!clean) return undefined;
+    const digitsOnly = clean.replace(/\D/g, '');
+    const candidates = new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`]);
+    return data.users.find((user) => user.whatsappNumber && candidates.has(user.whatsappNumber));
   }
 
   async findUserByTelegramUserId(telegramUserId: string) {
@@ -312,15 +316,20 @@ export class JsonDatabase {
     let user = data.users.find((u) => u.id === clean);
     if (user) return backfillUser(user);
 
-    // 2. Username match (@username or username)
+    // 2. Username match (@username or username) or space-stripped full name
     const username = clean.replace(/^@/, '').toLowerCase();
-    user = data.users.find((u) => u.username?.toLowerCase() === username || (u as any).telegramUsername?.toLowerCase() === username);
+    user = data.users.find((u) =>
+      u.username?.toLowerCase() === username ||
+      (u as any).telegramUsername?.toLowerCase() === username ||
+      (u.fullName && u.fullName.replace(/\s+/g, '').toLowerCase() === username)
+    );
     if (user) return backfillUser(user);
 
     // 3. Phone / WhatsApp match (normalize to E.164 and local)
     const digitsOnly = clean.replace(/\D/g, '');
+    const phoneCandidates = new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`]);
     user = data.users.find((u) => {
-      if (u.whatsappNumber === clean || u.whatsappNumber === `+${digitsOnly}`) return true;
+      if (u.whatsappNumber && phoneCandidates.has(u.whatsappNumber)) return true;
       if (digitsOnly.length === 13 && digitsOnly.startsWith('234')) {
         return u.whatsappNumber === `+${digitsOnly}` || u.whatsappNumber === `0${digitsOnly.slice(3)}`;
       }
@@ -340,7 +349,7 @@ export class JsonDatabase {
     const matchedLink = links.find((l) =>
       (l.telegramUsername && l.telegramUsername.toLowerCase() === username) ||
       (l.telegramUserId && l.telegramUserId === clean) ||
-      (l.whatsappNumber && (l.whatsappNumber === clean || l.whatsappNumber === `+${digitsOnly}`))
+      (l.whatsappNumber && (phoneCandidates.has(l.whatsappNumber) || l.whatsappNumber === `+${digitsOnly}`))
     );
     if (matchedLink?.paymentUserId) {
       user = data.users.find((u) => u.id === matchedLink.paymentUserId);
