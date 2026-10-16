@@ -25,7 +25,7 @@ import {
   unlinkTelegramIdentity,
   unlinkWhatsappIdentity,
 } from './identity.service.js';
-import { verifyUserJwt } from '../auth/jwt.js';
+import { signUserJwt, verifyUserJwt } from '../auth/jwt.js';
 import {
   hasWithdrawalPin,
   setWithdrawalPin,
@@ -947,7 +947,8 @@ export async function identityRoutes(app: FastifyInstance) {
         },
         { ipAddress: request.ip }
       );
-      return { data: result };
+      const authToken = signUserJwt({ userId: String(userId) });
+      return { data: { ...result, authToken } };
     } catch (err: any) {
       return reply.code(err.statusCode || 400).send({
         error: {

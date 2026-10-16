@@ -595,3 +595,18 @@ export async function verifyTmaPinStepUp(
   };
 }
 
+/**
+ * Checks whether an unconsumed, non-expired step-up token exists for the given user.
+ * Used by preHandler auth gate to authenticate step-up transfer requests.
+ */
+export async function isStepUpTokenValidForUser(userId: string, token: string): Promise<boolean> {
+  if (!userId || !token) return false;
+  const tokens = await db.listWithdrawalStepUpTokens();
+  const hashed = tokenHash(token);
+  const record = tokens.find((item) => secureEqual(item.tokenHash, hashed));
+  if (!record) return false;
+  if (record.usedAt) return false;
+  if (Date.parse(record.expiresAt) <= Date.now()) return false;
+  return record.userId === userId;
+}
+

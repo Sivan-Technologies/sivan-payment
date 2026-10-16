@@ -285,6 +285,21 @@ async function runTmaPinTests() {
     const body = res.json();
     assert.equal(body.data.success, true);
     assert.ok(body.data.stepUpToken);
+    assert.ok(body.data.authToken);
+
+    // Verify transfer route authorizes via stepUpToken even without a user web session
+    const txResWithStepUp = await app.inject({
+      method: 'POST',
+      url: `/api/users/${httpUserId}/balance/p2p-transfer`,
+      payload: {
+        asset: 'usdc',
+        amount: 65,
+        recipientTarget: '+2348011223344',
+        stepUpToken: body.data.stepUpToken,
+      },
+    });
+    // Should NOT fail with 401 auth_required
+    assert.notEqual(txResWithStepUp.statusCode, 401, 'Should not fail with 401 auth_required');
   });
 
   console.log('\n==================================================');
