@@ -115,18 +115,86 @@ export function buildSivanBrandedEmail(input: Parameters<typeof brandShell>[0]) 
 
 export function buildOtpEmail(input: { code: string; expiresInMinutes: number; intent: 'signup' | 'signin' }) {
   const title = input.intent === 'signup' ? 'Verify your Sivan account' : 'Sign in to Sivan';
-  const text = `${title}\n\nYour verification code is ${input.code}. It expires in ${input.expiresInMinutes} minutes.\n\nIf you did not request this, you can ignore this email.`;
-  const html = `
-    <div style="font-family: Inter, Arial, sans-serif; background:#07090d; color:#eef3f7; padding:32px;">
-      <div style="max-width:560px; margin:0 auto; background:#0e141b; border:1px solid rgba(154,179,202,.18); border-radius:16px; padding:28px;">
-        <p style="color:#74ddbe; text-transform:uppercase; letter-spacing:.12em; font-size:12px; font-weight:800; margin:0 0 12px;">Sivan Payments</p>
-        <h1 style="margin:0 0 12px; font-size:28px; line-height:1.1;">${title}</h1>
-        <p style="color:#a9b8c7; line-height:1.6;">Use this code to ${input.intent === 'signup' ? 'verify your account' : 'sign in'}.</p>
-        <div style="font-size:34px; letter-spacing:.24em; font-weight:900; color:#74ddbe; background:rgba(116,221,190,.08); border:1px solid rgba(116,221,190,.28); border-radius:12px; padding:18px 20px; text-align:center; margin:24px 0;">${input.code}</div>
-        <p style="color:#a9b8c7;">This code expires in ${input.expiresInMinutes} minutes.</p>
-        <p style="color:#71809c; font-size:13px; line-height:1.6;">If you did not request this, you can safely ignore this email.</p>
+  const text = `${title}\n\nYour Sivan verification code is ${input.code}. It expires in ${input.expiresInMinutes} minutes.\n\nSivan staff will never ask for your code, PIN, or wallet seed phrase.\nIf you did not request this, you can safely ignore this email.`;
+
+  const digits = input.code.split('');
+  const formattedDigits = digits.length === 6
+    ? `<div style="text-align:center;margin:24px 0 20px;">
+        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[0])}</span>
+        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[1])}</span>
+        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[2])}</span>
+        <span style="display:inline-block;margin:0 6px;color:#4A6278;font-size:18px;font-weight:700;vertical-align:middle;">&bull;</span>
+        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[3])}</span>
+        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[4])}</span>
+        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[5])}</span>
+      </div>`
+    : `<div style="font-size:32px;letter-spacing:.28em;font-weight:900;color:#74ddbe;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:12px;padding:18px 20px;text-align:center;margin:24px 0;font-family:'SF Mono',Consolas,Menlo,monospace;">${escapeHtml(input.code)}</div>`;
+
+  const html = `<!doctype html>
+<html>
+  <body style="margin:0;padding:32px 14px;background:#06090e;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3;">
+    <div style="max-width:540px;margin:0 auto;">
+      
+      <!-- Brand Header -->
+      <div style="margin-bottom:20px;">
+        <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+          <tr>
+            <td style="vertical-align:middle;padding-right:12px;">
+              <img src="https://sivantech.online/sivan-logo.png" alt="Sivan Ai" width="34" height="34" style="display:block;border-radius:8px;border:0;" />
+            </td>
+            <td style="vertical-align:middle;">
+              <span style="font-size:18px;font-weight:900;letter-spacing:-.02em;color:#ffffff;">Sivan Ai</span>
+            </td>
+          </tr>
+        </table>
       </div>
-    </div>`;
+
+      <!-- Main Card -->
+      <div style="background:#0D141F;border:1px solid rgba(116,221,190,.22);border-radius:18px;padding:32px 28px;box-shadow:0 24px 60px rgba(0,0,0,.55);">
+        <div style="display:inline-block;color:#74ddbe;background:rgba(116,221,190,.12);border:1px solid rgba(116,221,190,.30);border-radius:999px;padding:4px 12px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px;">
+          Security &bull; Single-Use Code
+        </div>
+        
+        <h1 style="margin:0 0 10px;font-size:26px;font-weight:800;color:#ffffff;line-height:1.2;letter-spacing:-.02em;">${escapeHtml(title)}</h1>
+        <p style="margin:0 0 16px;color:#94A3B8;font-size:14px;line-height:1.6;">
+          Use the single-use verification code below to ${input.intent === 'signup' ? 'complete your registration' : 'sign in to your account'}:
+        </p>
+
+        ${formattedDigits}
+
+        <div style="text-align:center;color:#64748B;font-size:12px;font-weight:600;margin-bottom:24px;">
+          ⏱️ Valid for ${input.expiresInMinutes} minutes &bull; Single-use authorization
+        </div>
+
+        <!-- Security Shield Box -->
+        <div style="background:#090E17;border:1px solid rgba(148,163,184,.14);border-radius:12px;padding:16px;margin-top:20px;">
+          <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;">
+            <tr>
+              <td style="vertical-align:top;padding-right:10px;font-size:16px;line-height:1;">🛡️</td>
+              <td style="vertical-align:top;color:#94A3B8;font-size:12px;line-height:1.55;">
+                <strong style="color:#CBD5E1;">Security Notice:</strong> Sivan Ai will never ask for your verification code, transaction PIN, or wallet seed phrase via email, WhatsApp, or Telegram. If you did not request this code, you can safely disregard this message.
+              </td>
+            </tr>
+          </table>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div style="text-align:center;margin-top:24px;padding:0 8px;">
+        <p style="margin:0 0 6px;color:#64748B;font-size:12px;line-height:1.6;">
+          Sivan Ai &bull; Autonomous Web3 &amp; Fiat Payment Protocol
+        </p>
+        <p style="margin:0;color:#475569;font-size:11px;">
+          <a href="https://app.sivantech.online" style="color:#74ddbe;text-decoration:none;">Open Web App</a> &bull;
+          <a href="https://sivantech.online" style="color:#74ddbe;text-decoration:none;">Protocol Home</a> &bull;
+          <a href="mailto:sivantechnology@gmail.com" style="color:#74ddbe;text-decoration:none;">Support</a>
+        </p>
+      </div>
+
+    </div>
+  </body>
+</html>`;
+
   return { subject: title, text, html };
 }
 
