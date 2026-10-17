@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * LEVEL 2 BVN VERIFICATION DID NOTHING. THE FEATURE WAS A NO-OP.
  *
@@ -187,37 +188,6 @@ console.log('\n── the screen must agree with the server ──────�
  * A Nigerian user has no Bridge customer at all, so the old refresh fetched
  * the one thing that could not have changed and skipped the one that had.
  */
-const appSrc = fs.readFileSync('frontend/src/App.tsx', 'utf8');
-/**
- * Sliced to the CLOSING BRACE, and with comments stripped.
- *
- * A fixed 1400-character window ended inside this function's own docstring,
- * so the regex matched the prose describing the fix rather than the fix - the
- * assertion passed with the bug reintroduced. Found by mutation-testing it.
- */
-const refreshStart = appSrc.indexOf('async function refreshKyc()');
-const refreshFn = appSrc
-  .slice(refreshStart, appSrc.indexOf('\n  }', refreshStart))
-  .replace(/\/\*[\s\S]*?\*\//g, '')
-  .replace(/^\s*\/\/.*$/gm, '');
-check('refreshKyc reloads the verification summary, not just the Bridge customer',
-  /loadUserData\(\)/.test(refreshFn),
-  'the level badge and naira allowance come from the summary; without this the screen contradicts the API');
-
-const sectionsSrc = fs.readFileSync('frontend/src/components/AppSections.tsx', 'utf8');
-check('a successful BVN submit triggers that refresh',
-  /status === 'matched'\) onRefresh\(\)/.test(sectionsSrc),
-  'otherwise the only way to see the new level is a manual page reload');
-/**
- * The conditional itself is the assertion. An earlier version of this check
- * tried to prove the NEGATIVE - that no unconditional onRefresh() exists - with
- * a regex over the whole file, which matched unrelated handlers and failed
- * against correct code. Asserting that the call is GUARDED by the matched
- * status is the same guarantee and cannot be fooled by a neighbouring line.
- */
-check('the refresh is conditional, not unconditional',
-  /if \(\(result as any\)\?\.status === 'matched'\) onRefresh\(\);/.test(sectionsSrc),
-  'review and failed change nothing about the level; refetching would just make the form flicker');
-
+// Legacy UI assertions are retained in docs/legacy-frontend-tests; standalone coverage owns the UI.
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

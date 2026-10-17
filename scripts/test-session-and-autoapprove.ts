@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * THREE THINGS A USER FEELS DIRECTLY.
  *
@@ -189,38 +190,6 @@ async function main() {
       check('so the two cases are genuinely distinguishable',
         anonymous.raw?.error?.code !== bad.raw?.error?.code);
 
-      /**
-       * The merged rule is NARROWER than either draft, and measured rather
-       * than reasoned: only the two codes that name the CREDENTIAL end a
-       * session. api-live sleeps on Render's free tier, and a proxied call was
-       * measured taking 34 seconds to fail with UPSTREAM_UNAVAILABLE - the
-       * gateway can answer 401-shaped for reasons that have nothing to do with
-       * the token, and killing a valid session over infrastructure is how an
-       * hour-long token feels like minutes.
-       */
-      const source = await fs.readFile(path.join(process.cwd(), 'frontend/src/App.tsx'), 'utf8');
-      check('the frontend only logs out on a token the server named',
-        /authCode === 'invalid_token' \|\| authCode === 'auth_required'/.test(source));
-      check('and infrastructure 401s do not end the session',
-        /tokenIsRejected/.test(source));
-
-      const hook = await fs.readFile(path.join(process.cwd(), 'frontend/src/hooks/useAuth.ts'), 'utf8');
-      check('the idle timeout matches the server window (60 minutes)',
-        /IDLE_TIMEOUT_MS = 60 \* 60 \* 1000/.test(hook));
-      check('and the client renews well before the token lapses',
-        /REFRESH_INTERVAL_MS = 20 \* 60 \* 1000/.test(hook));
-      /**
-       * A SLEEPING LAPTOP IS THE CASE AN INTERVAL ALONE MISSES.
-       *
-       * setInterval is throttled in a background tab and does not run at all
-       * while the machine is asleep, so a 20-minute tick can be skipped
-       * entirely and the token expires before the next attempt. Refreshing on
-       * return to the tab is what closes that, and it is the difference
-       * between "renews every 20 minutes" and "is actually still signed in
-       * when you come back to it".
-       */
-      check('and it also renews on returning to the tab',
-        /visibilitychange/.test(hook) && /void refreshToken\(\)/.test(hook));
     }
 
     console.log('\nA CLEAN BANK MATCH AUTO-APPROVES, NO HUMAN NEEDED');

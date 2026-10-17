@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * THE DETECTOR, DRIVEN WITH REAL BALANCE CHANGES.
  *
@@ -150,10 +151,6 @@ check('the detector records through recordDeposit and not the database',
   src.includes('recordDeposit(') && !src.includes('insertWalletDepositIfNew'),
   'writing straight to the DB would bypass idempotency and auditing');
 
-const feed = fs.readFileSync(path.join(root, 'frontend/src/activityFeed.ts'), 'utf8');
-check('the activity feed does not branch on detectionSource',
-  !feed.includes('detectionSource'),
-  'if the feed cares how a deposit was found, the detector is no longer swappable');
 const notifier = fs.readFileSync(path.join(root, 'src/deposits/deposit-notification.service.ts'), 'utf8');
 check('the notifier does not branch on detectionSource',
   !notifier.includes('detectionSource'));

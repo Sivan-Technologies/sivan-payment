@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * TWO REPORTED PRODUCTION FAILURES.
  *
@@ -133,43 +134,6 @@ check('an EXPIRED bank check -> still refused', !expiredBank.eligible, expiredBa
 const bridgeNoBank = canProvisionWallet(state({ level: VerificationLevel.IDENTITY, bankStatus: CheckStatus.NOT_STARTED }));
 check('Bridge-approved with no payout account -> ALLOWED a wallet', bridgeNoBank.eligible,
   bridgeNoBank.reason);
-
-console.log('\n── the screen now asks the SAME question ──────────────────────');
-
-const receive = read('frontend/src/components/ReceiveView.tsx');
-const app = read('frontend/src/App.tsx');
-
-/**
- * THESE WERE SOURCE-REGEX ASSERTIONS AND TWO OF THEM PINNED THE OLD RULE.
- *
- * `/if \(!isVerified \|\| !hasPayoutAccount\)/` matched the literal text of a
- * condition, so it failed the moment the condition changed - which is the
- * point - but it could equally have passed against that line sitting inside a
- * comment or a dead branch. It asserts that code EXISTS, not that it RUNS,
- * which is a failure mode already recorded twice in this repo.
- *
- * The real behaviour - does a Bridge-approved user with no NUBAN get a deposit
- * address - is asserted in the browser by e2e/receive-gate.mjs, against the
- * rendered page. What is worth checking HERE, cheaply, is that the screen has
- * not drifted back to demanding a payout account for identity, and that the
- * server-side answer it mirrors is the one above.
- *
- * Comments are stripped first so a paragraph explaining the old rule cannot
- * satisfy a check about the new one.
- */
-const receiveCode = receive.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-check('ReceiveView no longer blocks a verified user for lacking a payout account',
-  !/if \(!isVerified \|\| !hasPayoutAccount\)/.test(receiveCode),
-  'the payout-account gate is back on the receive screen');
-check('ReceiveView still gates on verification',
-  /if \(!isVerified\)/.test(receiveCode));
-check('App passes the same hasBank the rest of the app uses',
-  app.includes('hasPayoutAccount={hasBank}'),
-  'a second source of truth here would drift from the server');
-check('the identity message is still shown when identity IS the gap',
-  receive.includes('Verify your identity first'));
-check('and adding a payout account is still offered as a route',
-  receive.includes('Add payout account'));
 
 console.log('\n── the Cloudflare gateway must allow the Render frontends ─────');
 

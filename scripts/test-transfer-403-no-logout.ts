@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * A BUSINESS REFUSAL MUST NOT END THE SESSION.
  *
@@ -35,7 +36,6 @@ function code(path: string) {
 }
 
 const appTs = code('src/app.ts');
-const frontApp = code('frontend/src/App.tsx');
 
 // ───────────────────────────────── the two 403s are distinguishable
 
@@ -48,31 +48,7 @@ test('the ownership check no longer emits the generic code', () => {
   );
 });
 
-test('the client no longer treats a plain forbidden as a dead session', () => {
-  const line = frontApp.split('\n').find((l) => l.includes('tokenIsRejected')) ?? '';
-  assert.ok(line.length > 0, 'the logout decision has moved - re-point this test');
-  assert.ok(
-    !/authCode === 'forbidden'/.test(line),
-    'a business refusal will sign the user out',
-  );
-});
-
-test('the client still ends the session on a real token problem', () => {
-  // The guard must remain a guard. Removing all three would leave a rejected
-  // token silently in place.
-  const line = frontApp.split('\n').find((l) => l.includes('tokenIsRejected')) ?? '';
-  assert.match(line, /authCode === 'invalid_token'/);
-  assert.match(line, /authCode === 'auth_required'/);
-  assert.match(line, /authCode === 'user_mismatch'/);
-});
-
-test('the wording fallback survives for an older backend', () => {
-  // A deployment still sending the generic code with that message must keep
-  // logging out - the fallback is what covers the rollout window.
-  const line = frontApp.split('\n').find((l) => l.includes('tokenIsRejected')) ?? '';
-  assert.match(line, /another user account/);
-});
-
+// Legacy UI assertions are retained in docs/legacy-frontend-tests; standalone coverage owns the UI.
 // ─────────────────── the client can know the feature is off, before confirming
 
 test('transfersEnabled is served to the client', async () => {
@@ -127,16 +103,7 @@ test('it fails CLOSED on the server', async () => {
   if (prev !== undefined) process.env.BALANCE_TRANSFERS_ENABLED = prev;
 });
 
-test('but OPEN on the client, so an older backend is not disabled', () => {
-  /*
-    The normaliser is an allowlist: a field it does not name is dropped. It
-    must pass this one through, and default it to true - a backend that
-    predates the field would otherwise have its send form switched off.
-  */
-  const utils = code('frontend/src/appUtils.tsx');
-  assert.match(utils, /transfersEnabled: data\?\.transfersEnabled \?\? true/);
-});
-
+// Legacy UI assertions are retained in docs/legacy-frontend-tests; standalone coverage owns the UI.
 test('serving the controls payload does not read the whole database', async () => {
   /*
     THE REGRESSION I CAUSED, AND A GUARD SO IT CANNOT RECUR.
@@ -169,12 +136,7 @@ test('serving the controls payload does not read the whole database', async () =
     'listPaymentControls is back on db.read()');
 });
 
-test('the send button is gated on it', () => {
-  const view = code('frontend/src/components/transfer/TradeTransferSections.tsx');
-  assert.match(view, /disabled=\{loading \|\| available <= 0 \|\| !transfersEnabled\}/);
-  assert.match(view, /Transfers are temporarily paused/);
-});
-
+// Legacy UI assertions are retained in docs/legacy-frontend-tests; standalone coverage owns the UI.
 let passed = 0;
 for (const [name, fn] of checks) {
   try {

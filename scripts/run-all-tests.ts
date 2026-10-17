@@ -8,6 +8,10 @@ interface TestSuite {
 
 const TEST_SUITES: TestSuite[] = [
   {
+    name: 'Frontend retirement dependency guard',
+    command: 'node --import tsx scripts/test-frontend-retirement.ts',
+  },
+  {
     name: 'NGN Agreement Ledger (isolated embedded PostgreSQL)',
     command: 'node --import tsx scripts/test-ngn-agreement-ledger.ts',
   },

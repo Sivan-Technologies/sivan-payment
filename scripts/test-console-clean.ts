@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * THE NORMAL CASE MUST NOT LOOK LIKE A FAILURE.
  *
@@ -183,28 +184,6 @@ async function main() {
         'with both directions, because Base can off-ramp but not on-ramp',
         Array.isArray(authed.body?.offramp) && Array.isArray(authed.body?.onramp),
         JSON.stringify(Object.keys(authed.body ?? {}))
-      );
-    }
-
-    console.log('\nTHE FRONTEND DOES NOT CALL IT BEFORE IT HAS A TOKEN');
-    {
-      // Asserted against the SOURCE, because the bug was structural - the call
-      // sat in the unconditional bootstrap effect next to genuinely public
-      // ones. A runtime test of the API cannot see that; only the wiring can.
-      const source = await fs.readFile(
-        path.join(process.cwd(), 'frontend/src/App.tsx'),
-        'utf8'
-      );
-      const gated = /if \(!authToken\) return;\s*\n\s*void loadNgnNetworks\(\);/.test(source);
-      check('loadNgnNetworks is gated on authToken', gated);
-
-      const bootstrap = /void loadFee\(\);\s*\n\s*void loadControls\(\);\s*\n\s*void loadUserData\(\);/.test(
-        source
-      );
-      check(
-        'and it is no longer in the unauthenticated bootstrap effect',
-        bootstrap,
-        'loadNgnNetworks still sits beside loadFee/loadControls'
       );
     }
 
