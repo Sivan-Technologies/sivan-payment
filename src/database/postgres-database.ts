@@ -611,16 +611,27 @@ export class PostgresDatabase {
       }
 
       const digitsOnly = clean.replace(/\D/g, '');
-      const phoneCandidates = Array.from(new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`])).filter(Boolean);
-      res = await client.query('select * from users where whatsapp_number = ANY($1) limit 1', [phoneCandidates]);
-      if (res.rows[0]) {
-        const userRec = mapUser(res.rows[0]);
-        if (!userRec.telegramUserId) {
-          const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
-          if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
-          if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+      const phoneCandidates = Array.from(new Set([
+        clean,
+        digitsOnly ? `+${digitsOnly}` : undefined,
+        digitsOnly || undefined,
+        digitsOnly ? `whatsapp:+${digitsOnly}` : undefined,
+        `whatsapp:${clean}`,
+        digitsOnly.startsWith('234') && digitsOnly.length >= 12 ? `0${digitsOnly.slice(3)}` : undefined,
+        digitsOnly.startsWith('0') && digitsOnly.length === 11 ? `+234${digitsOnly.slice(1)}` : undefined,
+      ])).filter(Boolean);
+
+      if (digitsOnly.length >= 7) {
+        res = await client.query('select * from users where whatsapp_number = ANY($1) limit 1', [phoneCandidates]);
+        if (res.rows[0]) {
+          const userRec = mapUser(res.rows[0]);
+          if (!userRec.telegramUserId) {
+            const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
+            if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
+            if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+          }
+          return userRec;
         }
-        return userRec;
       }
 
       res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
