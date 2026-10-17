@@ -150,24 +150,14 @@ async function readChainBalances(userId: string) {
    * Dynamically filter by networks enabled in admin controls.
    */
   const controlData = await db.readControlTables().catch(() => null);
-  const existingControls = controlData?.networkControls ?? [];
-  const mergedControls = DEFAULT_NETWORK_CONTROLS.map((def) => {
-    const existing = existingControls.find((c) => c.network.toLowerCase() === def.network.toLowerCase());
-    return existing ? { ...def, ...existing } : def;
-  });
-  for (const c of existingControls) {
-    if (!mergedControls.some((m) => m.network.toLowerCase() === c.network.toLowerCase())) {
-      mergedControls.push(c);
-    }
-  }
-  const enabledAdminNetworks = new Set(
-    mergedControls.filter((n) => n.enabled).map((n) => n.network.toLowerCase())
-  );
+  const enabledAdminNetworks = controlData?.networkControls?.length
+    ? new Set(controlData.networkControls.filter((n) => n.enabled).map((n) => n.network.toLowerCase()))
+    : null;
 
   const uniqueReads = new Map<string, { wallet: (typeof active)[0]; chain: string }>();
   for (const wallet of active) {
     const chains = networksServedByWallet(wallet.chain).filter(
-      (c) => enabledAdminNetworks.has(c.toLowerCase())
+      (c) => !enabledAdminNetworks || enabledAdminNetworks.has(c.toLowerCase())
     );
     for (const chain of chains) {
       const key = `${chain}:${wallet.address.toLowerCase()}`;
