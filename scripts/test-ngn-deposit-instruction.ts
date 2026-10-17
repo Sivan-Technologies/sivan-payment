@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * WHICH CHAIN, BY WHEN, AND HOW TO BACK OUT.
  *
@@ -50,9 +51,6 @@ function check(name: string, ok: unknown, detail = '') {
 const svc = code('src/ngn/service/ngn-transfers.service.ts');
 const routes = code('src/ngn/api/ngn.routes.ts');
 const recon = code('src/ngn/service/ngn-settlement-reconciler.ts');
-const ui = read('frontend/src/components/transactions/TransactionsSection.tsx');
-const css = read('frontend/src/styles.css');
-const types = read('frontend/src/types.ts');
 
 console.log('\n── the network reaches the API at all ─────────────────────────');
 
@@ -64,7 +62,6 @@ check('it is lowercased, so casing cannot vary per provider',
   /toLowerCase\(\)/.test(svc.slice(svc.indexOf('function decorate'))));
 check('an unknown network stays undefined rather than becoming a guess',
   /network = meta\?\.quoteMetadata\?\.network \? [\s\S]{0,60}: undefined/.test(svc));
-check('the frontend type declares network', /network\?: string;/.test(types.slice(types.indexOf('interface NgnTransferRecord'))));
 
 console.log('\n── the deadline is real, and matches the reconciler ───────────');
 
@@ -109,69 +106,6 @@ check('cancelled is its own status, distinct from expired',
 check('the cancel is audited', svc.includes("action: 'ngn.transfer_cancelled'"));
 check('the previous status is recorded, so the funnel stays readable',
   /previousStatus: transfer\.status/.test(svc));
-
-console.log('\n── the screen states the chain BEFORE the address ─────────────');
-
-const network_i = ui.indexOf('deposit-network-row');
-const address_i = ui.indexOf('deposit-address-value');
-check('a deposit instruction component exists', ui.includes('function DepositInstruction('));
-check('the network row is rendered ABOVE the address',
-  network_i > 0 && address_i > 0 && network_i < address_i,
-  'a user who has copied the address has stopped reading');
-check('the chain is named in the warning as well',
-  ui.includes('Send only {transaction.asset} on <b>{network.replaceAll'),
-  'the one mistake that cannot be undone is worth saying twice');
-check('the warning says funds cannot be recovered', ui.includes('cannot be recovered'));
-check('an unknown network is a WARNING, not a blank',
-  ui.includes('Not specified - check with support before sending'),
-  'silently omitting the chain is how the original bug read');
-check('the countdown is shown when there is one', ui.includes('deposit-countdown'));
-check('an elapsed countdown never renders as negative',
-  /if \(ms <= 0\) return \{ text: 'Closing now'/.test(ui));
-check('the user is told what expiry actually means for their money',
-  ui.includes('closes on its own and no funds move'));
-
-console.log('\n── cancelling is deliberate, and server-confirmed ─────────────');
-
-check('cancel is only offered when the SERVER says so',
-  ui.includes('transaction.cancellable && onCancel'),
-  'the client must not decide whether an order is still cancellable');
-check('it is two-step, so a mis-tap cannot destroy a live order',
-  ui.includes('setConfirming(true)') && ui.includes('Yes, cancel it') && ui.includes('Keep it open'));
-check('the list is re-read from the server afterwards',
-  /await onRefresh\?\.\(\)/.test(ui),
-  'the server may refuse; optimistic local state would show a false Cancelled');
-check('the button is disabled while the request is in flight',
-  /disabled=\{cancelling\}/.test(ui));
-
-console.log('\n── it holds together on a phone ───────────────────────────────');
-
-check('the instruction block has styles', css.includes('.deposit-instruction{'));
-check('the network chip is styled distinctly', css.includes('.deposit-network-chip{'));
-check('an unknown network is amber, not muted grey',
-  /\.deposit-network-unknown\{[^}]*f1bd72/.test(css));
-check('the countdown is neutral until it is urgent',
-  /\.deposit-countdown\{[^}]*a9b8c7/.test(css) && /\.deposit-countdown\.urgent\{[^}]*f1bd72/.test(css));
-check('a danger button style exists for the confirm step', css.includes('.danger-btn{'));
-check('it is keyboard-focusable with a visible ring', css.includes('.danger-btn:focus-visible'));
-/**
- * SCOPED TO ITS OWN SECTION, not "the last 640px media query".
- *
- * lastIndexOf was only ever correct while this happened to be the final block
- * in the file. Appending the transfer-confirm styles below it silently
- * repointed these assertions at unrelated CSS - the deposit rules were
- * untouched and present the whole time. Exactly the same trap that caught
- * test:block-explorer, which is why it is worth fixing here too rather than
- * once.
- */
-const depositSection = css.slice(css.indexOf('/* DEPOSIT INSTRUCTION'), css.indexOf('/* TRANSFER CONFIRM'));
-check('the deposit CSS section is findable', depositSection.length > 0, 'the section header comment moved or was removed');
-const mobile = depositSection.slice(depositSection.indexOf('@media(max-width:640px)'));
-check('mobile stacks the actions into one column',
-  /\.deposit-instruction-actions\{display:grid;grid-template-columns:1fr/.test(mobile),
-  'the destructive button must not sit a thumb-width from Copy');
-check('mobile buttons reach a real tap target', /min-height:40px/.test(mobile));
-check('the address is selectable in one tap', /user-select:all/.test(css.slice(css.indexOf('.deposit-instruction .deposit-address-value'))));
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

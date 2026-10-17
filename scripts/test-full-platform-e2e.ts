@@ -44,22 +44,8 @@ const baseEnv = {
 };
 
 const paymentSteps: Step[] = [
-  /**
-   * FRONTEND DEPS FIRST, BEFORE THE BACKEND TYPECHECK. Order matters here.
-   *
-   * `npm run typecheck` runs tsconfig.scripts.json as well as the API build,
-   * and the scripts config deliberately sees frontend source - the test suites
-   * assert against the real frontend modules rather than a stale copy. Those
-   * modules import react, qrcode-generator and others that live in
-   * frontend/node_modules.
-   *
-   * With the install further down the list, this step failed on any clean
-   * checkout with a wall of TS2307 "Cannot find module 'react'" - and passed
-   * on any machine that had run the frontend once, which is why it survived
-   * local runs and only broke in CI. Reproduced by moving frontend/node_modules
-   * aside and re-running.
-   */
-  { name: 'Frontend dependency install', cwd: paymentRoot, command: 'npm --prefix frontend ci' },
+  { name: 'Frontend retirement dependency guard', cwd: paymentRoot, command: 'npm run test:frontend-retirement' },
+  // Standalone user UI is validated in sivan-user-frontend CI.
   { name: 'Backend TypeScript typecheck', cwd: paymentRoot, command: 'npm run typecheck' },
   { name: 'Backend production build', cwd: paymentRoot, command: 'npm run build' },
   /**
@@ -86,21 +72,6 @@ const paymentSteps: Step[] = [
    * suites against devnet, then make this blocking again.
    */
   { name: 'Backend production dependency audit (advisory)', cwd: paymentRoot, command: 'npm audit --omit=dev', required: false },
-  /**
-   * ESLint, with react-hooks/rules-of-hooks as an ERROR.
-   *
-   * Ahead of the build on purpose: a hook-order violation typechecks and
-   * builds perfectly - React error #310 reached a user's browser that way -
-   * so the build passing tells you nothing about it. Lint is the only step
-   * that can catch it, so it should be the one that fails first and fastest.
-   *
-   * --max-warnings is a ratchet at the count that existed when linting was
-   * introduced. Errors always fail; NEW warnings fail too, so the debt can be
-   * paid down but not added to.
-   */
-  { name: 'Frontend lint (react-hooks rules-of-hooks)', cwd: paymentRoot, command: 'npm --prefix frontend run lint:ci' },
-  { name: 'Frontend production build', cwd: paymentRoot, command: 'npm --prefix frontend run build' },
-  { name: 'Frontend production dependency audit', cwd: paymentRoot, command: 'npm --prefix frontend audit --omit=dev' },
   { name: 'Webhook signature verification', cwd: paymentRoot, command: 'npm run test:webhook-signature' },
   { name: 'Admin/payment controls E2E', cwd: paymentRoot, command: 'npm run test:controls' },
   { name: 'On-ramp order/reconciliation E2E', cwd: paymentRoot, command: 'npm run test:onramp' },
@@ -207,13 +178,11 @@ const paymentSteps: Step[] = [
 
   // ---- Transfers: the path that lost money before ----
   { name: 'Transfer confirmation (nothing could finish a send)', cwd: paymentRoot, command: 'npm run test:transfer-confirmation' },
-  { name: 'Transfer confirm dialog', cwd: paymentRoot, command: 'npm run test:transfer-confirm' },
   { name: 'Wallet error honesty (no 500 that blames the user)', cwd: paymentRoot, command: 'npm run test:wallet-error-honesty' },
   { name: 'Wallet key quorum misconfiguration (a permanent fault must not say "try again")', cwd: paymentRoot, command: 'npm run test:wallet-quorum-misconfiguration' },
   { name: 'CORS methods (every verb the frontend sends must survive a preflight)', cwd: paymentRoot, command: 'npm run test:cors-methods' },
   { name: 'Per-user limits + balance RPC failover', cwd: paymentRoot, command: 'npm run test:user-limits' },
   { name: 'Approval self-service (superadmin) + risk queue latency', cwd: paymentRoot, command: 'npm run test:approval-self-service' },
-  { name: 'NGN withdraw timeline (the crash after the money moved)', cwd: paymentRoot, command: 'npm run test:ngn-withdraw-timeline' },
   { name: 'Off-ramp response latency (no chain call inside the request)', cwd: paymentRoot, command: 'npm run test:offramp-response-latency' },
   { name: 'NGN timeline advances with status (waiting-for-asset forever)', cwd: paymentRoot, command: 'npm run test:ngn-timeline-advances' },
   { name: 'Network mode drives balance reads (funds on the other chain read as zero)', cwd: paymentRoot, command: 'npm run test:network-mode-balance' },
@@ -225,7 +194,6 @@ const paymentSteps: Step[] = [
   { name: 'Transfer fee end-to-end (admin control is live)', cwd: paymentRoot, command: 'npm run test:transfer-fee-e2e' },
   { name: 'Transfer response deadline', cwd: paymentRoot, command: 'npm run test:transfer-response-deadline' },
   { name: 'Transfer toast honesty', cwd: paymentRoot, command: 'npm run test:transfer-toast-honesty' },
-  { name: 'Transfer ordering', cwd: paymentRoot, command: 'npm run test:transfer-order' },
   { name: 'Solana transfer', cwd: paymentRoot, command: 'npm run test:solana-transfer' },
   { name: 'No pooled settlement', cwd: paymentRoot, command: 'npm run test:no-pooled-settlement' },
   { name: 'Rail separation', cwd: paymentRoot, command: 'npm run test:rail-separation' },
@@ -253,7 +221,6 @@ const paymentSteps: Step[] = [
   { name: 'KYC policy', cwd: paymentRoot, command: 'npm run test:kyc-policy' },
   { name: 'KYC ledger', cwd: paymentRoot, command: 'npm run test:kyc-ledger' },
   { name: 'KYC NGN gate', cwd: paymentRoot, command: 'npm run test:kyc-ngn-gate' },
-  { name: 'KYC handoff', cwd: paymentRoot, command: 'npm run test:kyc-handoff' },
   { name: 'Admin verification limits', cwd: paymentRoot, command: 'npm run test:admin-verification-limits' },
   { name: 'Verification path', cwd: paymentRoot, command: 'npm run test:verification-path' },
   { name: 'Verification summary', cwd: paymentRoot, command: 'npm run test:verification-summary' },
@@ -267,17 +234,8 @@ const paymentSteps: Step[] = [
   { name: 'Virtual account fee limits', cwd: paymentRoot, command: 'npm run test:va-fee-limits' },
   { name: 'Virtual account reprovision', cwd: paymentRoot, command: 'npm run test:va-reprovision' },
 
-  // ---- Frontend behaviour ----
-  { name: 'Unified activity feed', cwd: paymentRoot, command: 'npm run test:activity-feed' },
-  { name: 'Activity chain marks', cwd: paymentRoot, command: 'npm run test:activity-network-logo' },
-  { name: 'Transaction detail panel (a selected row shows detail)', cwd: paymentRoot, command: 'npm run test:transaction-detail-panel' },
-  { name: 'Dashboard KPIs', cwd: paymentRoot, command: 'npm run test:dashboard-kpis' },
-  { name: 'Dashboard notice', cwd: paymentRoot, command: 'npm run test:dashboard-notice' },
-  { name: 'Dashboard setup card', cwd: paymentRoot, command: 'npm run test:dashboard-setup-card' },
-  { name: 'Receive screen', cwd: paymentRoot, command: 'npm run test:receive-screen' },
+  // ---- Backend capabilities used by the standalone frontend ----
   { name: 'Receive never shows a mock address', cwd: paymentRoot, command: 'npm run test:receive-no-mock' },
-  { name: 'Block explorer links', cwd: paymentRoot, command: 'npm run test:block-explorer' },
-  { name: 'Bank picker', cwd: paymentRoot, command: 'npm run test:bank-picker' },
   { name: 'Buy gate', cwd: paymentRoot, command: 'npm run test:buy-gate' },
   { name: 'Console clean (no leaked logging)', cwd: paymentRoot, command: 'npm run test:console-clean' },
 
@@ -304,7 +262,7 @@ const adminHubSteps: Step[] = [
 async function main() {
   console.log('\n════════════════════════════════════════════════════════════');
   console.log('  Sivan full platform E2E / deep regression suite');
-  console.log('  Scope: payment backend, user frontend, admin hub, identity, recovery, rails');
+  console.log('  Scope: payment backend, optional admin hub, identity, recovery, rails');
   console.log('════════════════════════════════════════════════════════════\n');
 
   const steps = [...paymentSteps, ...adminHubSteps].map((step) => ({ ...step, required: step.required ?? true, env: { ...baseEnv, ...(step.env || {}) } }));
@@ -342,7 +300,6 @@ async function main() {
     },
     coverage: [
       'Backend typecheck/build/audit',
-      'User frontend install/build/audit',
       'Admin Hub install/typecheck/build/audit',
       'Auth, legal acceptance, notification preferences',
       'Username, avatar upload, authenticator 2FA, 2FA recovery questions',

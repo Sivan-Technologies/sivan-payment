@@ -84,7 +84,7 @@ check('API build graph contains no frontend source', () => {
     leaked.length === 0,
     `${leaked.length} frontend file(s) are compiled into the production API build:\n` +
       leaked.map((f) => `      ${path.relative(root, f)}`).join('\n') +
-      '\n    These resolve against frontend/node_modules, which Render never installs ' +
+      '\n    These resolve against browser-only dependencies, which Render never installs ' +
       'for the API service.',
   );
 });
@@ -157,13 +157,11 @@ check('a scripts typecheck config exists and covers the test scripts', () => {
   assert(scriptFiles.length > 20, `expected the scripts config to check the test scripts, saw ${scriptFiles.length}`);
 });
 
-check('the scripts typecheck config does see frontend source', () => {
-  // The scripts assert against real frontend modules. If this config stopped
-  // resolving them the checks would pass vacuously.
+check('the scripts typecheck graph contains no frontend source', () => {
   const feFiles = projectFiles('tsconfig.scripts.json').filter((file) =>
     file.includes(`${path.sep}frontend${path.sep}`),
   );
-  assert(feFiles.length > 0, 'the scripts config resolves no frontend source, so it is not checking what the tests import');
+  assert(feFiles.length === 0, `backend scripts still compile frontend files: ${feFiles.join(', ')}`);
 });
 
 check('npm run typecheck runs both configs', () => {

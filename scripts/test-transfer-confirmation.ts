@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * "THE OTHER PART DID NOT GET HIS PAYMENT."
  *
@@ -170,32 +171,6 @@ check('it runs once at boot, when a missed confirmation is most likely',
   (server.match(/void tick\(\);/g) || []).length >= 2);
 check('it is NOT started from buildApp, so tests do not hit a live chain',
   !code('src/app.ts').includes('confirmBalanceTransfers'));
-
-console.log('\n── the history row no longer reads as a duplicate ─────────────');
-
-const ui = read('frontend/src/components/transfer/TradeTransferSections.tsx');
-const types = read('frontend/src/types.ts');
-
-check('the recipient is now labelled rather than bare',
-  ui.includes('To {shortRef(transfer.destinationAddress)}'),
-  'an unlabelled address reads as a transaction reference');
-/**
- * REPINNED, not weakened. These asserted the inline `Tx {shortRef(...)}` line
- * that the on-chain receipt component replaced - see test:block-explorer. The
- * BEHAVIOUR they guard is unchanged and still required: the identifier must be
- * shown, and a sponsored transfer must fall back to its user-operation hash.
- * Pointing them at the component keeps that guarantee instead of deleting it
- * because the markup moved.
- */
-check('the transaction identifier is shown when one exists',
-  ui.includes('<OnChainReceipt') && ui.includes('txHash={transfer.txHash}'));
-check('a sponsored transfer falls back to the user-operation hash',
-  ui.includes('userOperationHash={transfer.userOperationHash}')
-  && read('frontend/src/blockExplorer.ts').includes('return userOp || undefined;'));
-check('processing explains itself instead of just sitting there',
-  ui.includes('Submitted to the network'));
-check('the frontend type declares txHash', /txHash\?: string;/.test(types));
-check('and userOperationHash', /userOperationHash\?: string;/.test(types));
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

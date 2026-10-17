@@ -8,17 +8,18 @@ async function main() {
   console.log('Testing WhatsApp deposit notification...');
 
   // Setup a mock receiver on a local port
-  let receivedRequest: { headers: http.IncomingHttpHeaders; body: any } | null = null;
+  const requests: Array<{ headers: http.IncomingHttpHeaders; body: any }> = [];
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk;
     });
     req.on('end', () => {
-      receivedRequest = {
+      const receivedRequest = {
         headers: req.headers,
         body: JSON.parse(raw || '{}'),
       };
+      requests.push(receivedRequest);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'queued', to: receivedRequest.body.to }));
     });
@@ -51,19 +52,23 @@ async function main() {
   const depositRecord: WalletDepositRecord = {
     id: `dep_${Date.now()}`,
     userId: testUserId,
-    walletAddress: '0x1234567890123456789012345678901234567890',
+    walletId: 'wallet-notification-test',
+    address: '0x1234567890123456789012345678901234567890',
     chain: 'solana',
     asset: 'USDC',
     amount: '25.00',
     txHash: '5x123...test',
     status: 'confirmed',
-    detectedAt: new Date().toISOString(),
-    confirmedAt: new Date().toISOString(),
+    detectionSource: 'balance_poll',
+    idempotencyKey: `notification-test:${testUserId}`,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
 
   try {
     await notifyWhatsAppDeposit(testUserId, depositRecord);
 
+    const receivedRequest = requests[0];
     assert.ok(receivedRequest, 'Mock WhatsApp bot receiver should have received the POST request');
     const expectedSecret = process.env.NOTIFY_SECRET || process.env.CORE_API_SECRET;
     assert.equal(
