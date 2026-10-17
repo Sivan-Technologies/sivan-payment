@@ -104,6 +104,7 @@ export type TransferAuthorisation = {
   amount: number;
   destinationAddress: string;
   network?: string;
+  asset?: string;
   isP2p?: boolean;
   pin?: string;
   stepUpToken?: string;
@@ -114,20 +115,21 @@ export type TransferAuthorisation = {
  *
  * Risk-based step-up authentication matrix:
  * 1. New Sender (0 previous completed transfers): PIN required on 100% of transfers.
- * 2. High-Value Transfer (>= 15 USDC): PIN required.
+ * 2. High-Value Transfer (>= 15 USDC or >= 15,000 NGN): PIN required.
  * 3. New Recipient / Destination Address: PIN required.
- * 4. 24h Velocity Exceeded (>= 3 transfers or >= 30 USDC cumulative): PIN required.
- * 5. Frictionless Micro-Send (< 15 USDC to a known counterparty): Allowed without PIN.
+ * 4. 24h Velocity Exceeded (>= 3 transfers or >= 30 USDC / 30,000 NGN cumulative): PIN required.
+ * 5. Frictionless Micro-Send (< 15 USDC / 15,000 NGN to a known counterparty): Allowed without PIN.
  */
 export async function assertTransferAuthorised(input: TransferAuthorisation): Promise<void> {
-  const { userId, amount, destinationAddress, pin, stepUpToken } = input;
+  const { userId, amount, destinationAddress, asset, pin, stepUpToken } = input;
+  const isNgn = (asset || '').toLowerCase() === 'ngn';
 
   if (stepUpToken) {
     await consumeStepUpToken({
       token: stepUpToken,
       userId,
       amount: String(amount),
-      currency: 'USDC',
+      currency: isNgn ? 'NGN' : 'USDC',
       destinationRef: destinationAddress,
     });
     return;
@@ -154,12 +156,14 @@ export async function assertTransferAuthorised(input: TransferAuthorisation): Pr
     return dest === cleanDest;
   });
 
-  const isHighValue = amount >= 15;
+  const isHighValue = isNgn ? amount >= 15000 : amount >= 15;
 
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const recent24hSends = completedSends.filter((t: any) => t.createdAt && t.createdAt >= oneDayAgo);
   const recent24hVolume = recent24hSends.reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
-  const velocityExceeded = recent24hSends.length >= 3 || recent24hVolume >= 30;
+  const velocityExceeded = isNgn
+    ? (recent24hSends.length >= 3 || recent24hVolume >= 30000)
+    : (recent24hSends.length >= 3 || recent24hVolume >= 30);
 
   const requiresPin = isNewSender || !isKnownRecipient || isHighValue || velocityExceeded;
 
@@ -176,7 +180,7 @@ export async function assertTransferAuthorised(input: TransferAuthorisation): Pr
           : !isKnownRecipient
           ? 'New recipient destination requires 6-digit PIN verification.'
           : isHighValue
-          ? 'Transfers of $15 or more require 6-digit PIN verification.'
+          ? (isNgn ? 'Transfers of ₦15,000 or more require 6-digit PIN verification.' : 'Transfers of $15 or more require 6-digit PIN verification.')
           : '24-hour transfer volume cap reached. PIN verification required.',
       }
     );

@@ -1358,7 +1358,7 @@ export async function createAdminBalanceAdjustment(input: z.infer<typeof adminBa
 }
 
 export const createP2pTransferSchema = z.object({
-  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt'])).default('usdc'),
+  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt', 'ngn'])).default('usdc'),
   amount: z.coerce.number().positive(),
   recipientTarget: z.string().min(1).max(160),
   note: z.string().max(500).optional(),
@@ -1379,7 +1379,8 @@ export async function executeP2pTransfer(
     throw badRequest('Internal P2P transfers are disabled. Please send an on-chain transfer using the recipient\'s wallet address or Sivan Tag.');
   }
 
-  const minAmount = controls?.minimumSendAmount ?? 1;
+  const isNgn = input.asset.toLowerCase() === 'ngn';
+  const minAmount = isNgn ? 100 : (controls?.minimumSendAmount ?? 1);
   if (input.amount < minAmount) {
     throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
   }
@@ -1389,6 +1390,7 @@ export async function executeP2pTransfer(
     userId: senderUserId,
     amount: input.amount,
     destinationAddress: input.recipientTarget,
+    asset: input.asset,
     isP2p: true,
     pin: input.pin,
     stepUpToken: input.stepUpToken,
@@ -1399,7 +1401,7 @@ export async function executeP2pTransfer(
 
   // Check sender spendable balance
   const unified = await getUnifiedBalance(senderUserId);
-  const assetEntry = unified.balances.find((b) => b.asset === input.asset) ?? unified.balances[0];
+  const assetEntry = unified.balances.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
   const spendable = Number(assetEntry?.spendable ?? 0);
 
   if (spendable < input.amount) {

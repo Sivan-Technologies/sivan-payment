@@ -1,4 +1,4 @@
-export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' | 'breet' | 'textile';
+export type NgnProviderName = 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' | 'breet' | 'textile' | 'paystack';
 export type NgnDirection = 'onramp' | 'offramp';
 export type NgnOfframpRevenueMode = 'sivan_fee_wallet' | 'breet_markup' | 'disabled';
 export type NgnQuoteStatus = 'quote_created' | 'quote_accepted' | 'expired' | 'failed';

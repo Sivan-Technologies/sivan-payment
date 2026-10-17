@@ -64,6 +64,12 @@ import { getNgnReconciliationSummary } from '../service/ngn-reconciliation.servi
 import { listNgnSettlementQueue } from '../service/ngn-settlement.service.js';
 import { listNgnWebhooks, recordNgnWebhook } from '../service/ngn-webhooks.service.js';
 import { reconcileNgnSettlements } from '../service/ngn-settlement-reconciler.js';
+import {
+  listPaystackBanks,
+  resolvePaystackBankAccount,
+  executePaystackNgnBankTransfer,
+  executePaystackTransferSchema,
+} from '../service/paystack-outbound-transfer.service.js';
 
 function ensureOwnUser(request: any, userId: string) {
   const authUserId = request.authUser?.sub;
@@ -160,6 +166,45 @@ export async function ngnRoutes(app: FastifyInstance) {
     if (query.userId) ensureOwnUser(request, query.userId);
     if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
     return { data: await resolveNgnBankAccount(query.bankId, query.accountNumber, query.currency ?? 'ngn') };
+  });
+
+  /**
+   * List Nigerian banks via Paystack.
+   */
+  app.get('/api/ngn/paystack/banks', async (request) => {
+    const query = request.query as { currency?: string };
+    return { data: await listPaystackBanks(query.currency || 'NGN') };
+  });
+
+  /**
+   * Resolve a Nigerian bank account via Paystack.
+   */
+  app.get('/api/ngn/paystack/bank-account/resolve', async (request) => {
+    const query = request.query as {
+      bankCode?: string;
+      bank_code?: string;
+      accountNumber?: string;
+      account_number?: string;
+      userId?: string;
+    };
+    if (query.userId) ensureOwnUser(request, query.userId);
+    const bankCode = query.bankCode || query.bank_code;
+    const accountNumber = query.accountNumber || query.account_number;
+    if (!bankCode || !accountNumber) {
+      throw badRequest('bankCode and accountNumber are required');
+    }
+    return { data: await resolvePaystackBankAccount(bankCode, accountNumber) };
+  });
+
+  /**
+   * Outbound NGN transfer to any Nigerian bank account via Paystack Transfers API.
+   * Debits/holds internal Sivan NGN ledger balance atomically.
+   */
+  app.post('/api/users/:userId/ngn/bank-transfer', async (request) => {
+    const { userId } = request.params as { userId: string };
+    ensureOwnUser(request, userId);
+    const body = parseBody(executePaystackTransferSchema, request.body);
+    return { data: await executePaystackNgnBankTransfer(userId, body) };
   });
 
   /**

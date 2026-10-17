@@ -60,6 +60,16 @@ async function run() {
     'New sender with no PIN configured is prompted with PIN_NOT_SET'
   );
 
+  // Insert user to satisfy foreign key constraint for withdrawal_pins table
+  const { db } = await import('../src/database/json-database.js');
+  await db.insertUserRecord({
+    id: testUserId,
+    email: `${testUserId}@example.com`,
+    fullName: 'Test Transfer User',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+
   // Configure PIN for user
   await setWithdrawalPin(testUserId, { pin: '849201' });
   assert(await hasWithdrawalPin(testUserId), 'User now has withdrawal PIN configured');
@@ -96,25 +106,21 @@ async function run() {
   });
   assert(true, 'New sender providing correct PIN authorizes transfer successfully');
 
-  // Simulate established transfer history by creating an audit log of a completed transfer to knownRecipient
-  await createAuditLog({
-    actorType: 'user',
-    actorId: testUserId,
-    action: 'balance.transfer_confirmed',
-    resourceType: 'balance_transfer',
-    resourceId: 'btx_mock_1',
-    severity: 'info',
-    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
-    metadata: {
-      transferId: 'btx_mock_1',
-      userId: testUserId,
-      amount: '10',
-      asset: 'USDC',
-      network: 'base',
-      destinationAddress: knownRecipient,
-      status: 'completed',
-    },
-  });
+  // Simulate established transfer history by creating a ledger entry of a completed transfer to knownRecipient
+  const { createBalanceLedgerEntry } = await import('../src/balances/balance.service.js');
+  await createBalanceLedgerEntry({
+    userId: testUserId,
+    asset: 'usdc',
+    amount: '10.00',
+    kind: 'debit_transfer',
+    status: 'completed',
+    sourceType: 'p2p_transfer',
+    sourceId: `btx_mock_1_${testUserId}`,
+    description: 'P2P transfer',
+    destinationAddress: knownRecipient,
+    transferId: `btx_mock_1_${testUserId}`,
+    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+  } as any, { actorType: 'user', actorId: testUserId });
 
   // Test 5: Established sender sending $10 (< $15) to KNOWN recipient without PIN -> FRICTIONLESS PASS!
   await assertTransferAuthorised({
@@ -166,24 +172,19 @@ async function run() {
 
   // Test 10: Velocity Cap: Simulate 3 recent transfers in the last 24h
   for (let i = 1; i <= 3; i++) {
-    await createAuditLog({
-      actorType: 'user',
-      actorId: testUserId,
-      action: 'balance.transfer_confirmed',
-      resourceType: 'balance_transfer',
-      resourceId: `btx_mock_recent_${i}`,
-      severity: 'info',
+    await createBalanceLedgerEntry({
+      userId: testUserId,
+      asset: 'usdc',
+      amount: '8.00',
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: 'p2p_transfer',
+      sourceId: `btx_mock_recent_${i}_${testUserId}`,
+      description: `P2P transfer ${i}`,
+      destinationAddress: knownRecipient,
+      transferId: `btx_mock_recent_${i}_${testUserId}`,
       createdAt: new Date().toISOString(),
-      metadata: {
-        transferId: `btx_mock_recent_${i}`,
-        userId: testUserId,
-        amount: '8',
-        asset: 'USDC',
-        network: 'base',
-        destinationAddress: knownRecipient,
-        status: 'completed',
-      },
-    });
+    } as any, { actorType: 'user', actorId: testUserId });
   }
 
   // After 3 transfers in 24h, even a $5 send to a known recipient must require a PIN!
