@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { resolveUsername } from './username-resolution.js';
 import path from 'node:path';
 import { env } from '../config/env.js';
 import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord, StepUpVerificationRequestRecord } from './types.js';
@@ -274,7 +275,7 @@ export class JsonDatabase {
 
   async findUserByUsername(username: string) {
     const data = await this.read();
-    return data.users.find((user) => user.username?.toLowerCase() === username.toLowerCase());
+    return resolveUsername(data.users, username);
   }
 
   async findUserByWhatsappNumber(whatsappNumber: string) {
@@ -316,13 +317,9 @@ export class JsonDatabase {
     let user = data.users.find((u) => u.id === clean);
     if (user) return backfillUser(user);
 
-    // 2. Username match (@username or username) or space-stripped full name
+    // 2. Username match (@username or username)
     const username = clean.replace(/^@/, '').toLowerCase();
-    user = data.users.find((u) =>
-      u.username?.toLowerCase() === username ||
-      (u as any).telegramUsername?.toLowerCase() === username ||
-      (u.fullName && u.fullName.replace(/\s+/g, '').toLowerCase() === username)
-    );
+    user = resolveUsername(data.users, username);
     if (user) return backfillUser(user);
 
     // 3. Phone / WhatsApp match (normalize to E.164 and local)
@@ -1796,4 +1793,3 @@ export class JsonDatabase {
 export const db = (env.DATABASE_PROVIDER === 'postgres' && Boolean(env.DATABASE_URL))
   ? new PostgresDatabase()
   : new JsonDatabase();
-
