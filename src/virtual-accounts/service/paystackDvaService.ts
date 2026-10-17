@@ -34,7 +34,7 @@
 
 import crypto from 'node:crypto';
 import { db } from '../../database/json-database.js';
-import { paystackMode } from '../../config/paystackConfig.js';
+import { paystackMode, isPaystackLive } from '../../config/paystackConfig.js';
 import {
   createCustomer,
   validateCustomerBvnNin,
@@ -303,7 +303,9 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
   if (current.state === 'ready' || current.state === 'verifying') return current;
 
   // 2. Need identity details before anything can be created.
-  if (!input.legalName || !input.identifier) {
+  // In live mode, legalName and 11-digit BVN are strictly required for CBN compliance.
+  // In test mode, identifier is optional as Paystack sandbox does not interact with NIBSS.
+  if (!input.legalName || (isPaystackLive() && !input.identifier)) {
     return { state: 'awaiting_identity', reason: current.state === 'failed' ? 'not_verified' : 'no_account' };
   }
 
@@ -353,12 +355,19 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
     rawExtra: { customer_code: customer.customer_code },
   });
 
-  // 4. Submit identity to NIBSS. Returns ACCEPTANCE, not a verdict.
+  // 4. In test mode (Staging), bypass NIBSS BVN verification because Paystack test environment
+  // does not connect to NIBSS or emit customeridentification.success webhooks.
+  // Directly assign and persist the dedicated account.
+  if (!isPaystackLive()) {
+    return assignAndPersist(userId, customer.customer_code);
+  }
+
+  // 4b. Live mode: Submit identity to NIBSS. Returns ACCEPTANCE, not a verdict.
   try {
     await validateCustomerBvnNin(customer.customer_code, {
       country: 'NG',
       type: input.identifierType ?? 'bvn',
-      value: input.identifier,
+      value: input.identifier!,
       first_name,
       last_name,
     });
@@ -382,7 +391,7 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
   await persist(userId, { status: 'provisioning' });
 
   /**
-   * Deliberately NOT assigning the account here.
+   * Deliberately NOT assigning the account here in live mode.
    *
    * The 202 means NIBSS has started, not finished. Assigning now would issue
    * a bank account to an unverified customer, which is exactly the CBN

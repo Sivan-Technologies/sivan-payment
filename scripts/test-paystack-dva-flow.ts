@@ -50,10 +50,11 @@ function startStub(): Promise<http.Server> {
       res.setHeader('content-type', 'application/json');
 
       if (path === '/customer') {
+        const cusCode = 'CUS_' + Math.random().toString(36).slice(2, 10);
         res.writeHead(200);
         return res.end(JSON.stringify({
           status: true, message: 'Customer created',
-          data: { id: Date.now(), customer_code: stubCustomerCode, email: body.email,
+          data: { id: Date.now(), customer_code: cusCode, email: body.email,
                   first_name: body.first_name, last_name: body.last_name, phone: body.phone },
         }));
       }
@@ -67,11 +68,15 @@ function startStub(): Promise<http.Server> {
         return res.end(JSON.stringify({ status: true, message: 'Customer Identification in progress', data: {} }));
       }
       if (path === '/dedicated_account') {
+        const bankSlug = body.preferred_bank || 'test-bank';
+        const bankName = bankSlug === 'wema-bank' ? 'Wema Bank' : 'Test Bank';
+        const accId = Math.floor(10000000 + Math.random() * 90000000);
+        const accNum = '993000' + String(Math.floor(1000 + Math.random() * 9000));
         res.writeHead(200);
         return res.end(JSON.stringify({
           status: true, message: 'NUBAN successfully created',
-          data: { id: Date.now(), account_number: '9930000737', account_name: 'Sivan / Samson Micheal',
-                  bank: { name: 'Test Bank', id: 24, slug: 'test-bank' },
+          data: { id: accId, account_number: accNum, account_name: 'Sivan / Samson Micheal',
+                  bank: { name: bankName, id: 24, slug: bankSlug },
                   currency: 'NGN', active: true, assigned: true },
         }));
       }
@@ -90,7 +95,7 @@ async function main() {
   const server = await startStub();
   const port = (server.address() as AddressInfo).port;
 
-  process.env.PAYSTACK_SECRET_KEY = 'sk_test_' + 'a'.repeat(40);
+  process.env.PAYSTACK_SECRET_KEY = 'sk_live_' + 'a'.repeat(40);
   process.env.PAYSTACK_BASE_URL = `http://127.0.0.1:${port}`;
 
   /**
@@ -117,8 +122,8 @@ async function main() {
     updatedAt: now,
   });
 
-  // ── 1. Initial flow must stop at 'verifying' ────────────────────
-  console.log('\n══ 1. Identity Is Not Assumed Verified ══');
+  // ── 1. Live Mode: Initial flow must stop at 'verifying' ─────────
+  console.log('\n══ 1. Live Mode: Identity Is Not Assumed Verified ══');
 
   const first = await resolveOrCreateDva({
     userId, legalName: 'Samson Micheal', identifier: '22212345678', phone: '+2348012345678',
@@ -135,24 +140,25 @@ async function main() {
 
   // ── 2. Payload shape ────────────────────────────────────────────
   console.log('\n══ 2. Payload Shape ══');
-  check('the customer email is deterministic and namespaced for test',
-    String(bodies['/customer']?.email).startsWith('test-u_'), bodies['/customer']?.email);
+  check('the customer email is deterministic',
+    String(bodies['/customer']?.email).includes('user.sivantech.online'), bodies['/customer']?.email);
   check('the legal name was split into first and last',
     bodies['/customer']?.first_name === 'Samson' && bodies['/customer']?.last_name === 'Micheal');
 
-  // ── 3. Only the webhook releases the account ────────────────────
-  console.log('\n══ 3. Webhook Completes The Flow ══');
+  // ── 3. Only the webhook releases the account in live mode ──────
+  console.log('\n══ 3. Webhook Completes The Flow In Live Mode ══');
 
-  const done = await completeAfterIdentification(userId, stubCustomerCode);
+  const customerCodeToComplete = (first as any).customerCode;
+  const done = await completeAfterIdentification(userId, customerCodeToComplete);
   check('after the success verdict the account is ready', done.state === 'ready', done.state);
   check('NOW the dedicated account was assigned',
     calls.some((c) => c === 'POST /dedicated_account'));
-  check('test mode requested the test-bank slug',
-    bodies['/dedicated_account']?.preferred_bank === 'test-bank',
+  check('live mode requested the wema-bank slug',
+    bodies['/dedicated_account']?.preferred_bank === 'wema-bank',
     bodies['/dedicated_account']?.preferred_bank);
   if (done.state === 'ready') {
-    check('the account number is surfaced', done.account.accountNumber === '9930000737');
-    check('the mode is carried through as test', done.account.mode === 'test');
+    check('the account number is surfaced', Boolean(done.account.accountNumber));
+    check('the mode is carried through as live', done.account.mode === 'live');
   }
 
   // ── 4. Re-entry is idempotent ───────────────────────────────────
@@ -167,7 +173,7 @@ async function main() {
   check('getDvaState agrees the account is ready', state.state === 'ready');
 
   // ── 5. Failure path ─────────────────────────────────────────────
-  console.log('\n══ 5. Identification Failure ══');
+  console.log('\n══ 5. Identification Failure In Live Mode ══');
   identificationFails = true;
   const failUser = 'stub-fail-' + Date.now();
   await db.insertUserRecord({
@@ -185,6 +191,34 @@ async function main() {
     bad.state === 'failed' && /BVN/i.test(bad.reason), bad.state === 'failed' ? bad.reason : '');
   check('and NO account was assigned for the failed user',
     !calls.slice(before).some((c) => c === 'POST /dedicated_account'));
+
+  // ── 6. Test Mode (Staging): Direct Assignment Without BVN ─────────
+  console.log('\n══ 6. Test Mode (Staging): Direct Assignment Without BVN ══');
+  process.env.PAYSTACK_SECRET_KEY = 'sk_test_' + 'b'.repeat(40);
+  const testUser = 'stub-staging-user-' + Date.now();
+  await db.insertUserRecord({
+    id: testUser,
+    email: `${testUser}@user.sivantech.online`,
+    fullName: 'Staging Tester',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const testCallsBefore = calls.length;
+  const testDva = await resolveOrCreateDva({
+    userId: testUser,
+    legalName: 'Staging Tester',
+    // Deliberately NO identifier provided
+  });
+
+  check('test mode returns ready immediately without waiting for NIBSS', testDva.state === 'ready', testDva.state);
+  check('test mode DID NOT call /identification', !calls.slice(testCallsBefore).some((c) => /identification/.test(c)));
+  check('test mode assigned dedicated account directly', calls.slice(testCallsBefore).some((c) => c === 'POST /dedicated_account'));
+  check('test mode requested the test-bank slug', bodies['/dedicated_account']?.preferred_bank === 'test-bank', bodies['/dedicated_account']?.preferred_bank);
+  if (testDva.state === 'ready') {
+    check('test mode account number is returned', Boolean(testDva.account.accountNumber));
+    check('test mode reports mode as test', testDva.account.mode === 'test');
+  }
 
   server.close();
   console.log('\n' + '='.repeat(50));
