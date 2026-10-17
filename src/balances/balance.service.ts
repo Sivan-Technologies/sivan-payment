@@ -90,7 +90,25 @@ export const balanceTransferControlsSchema = z.object({
 
 export const createBalanceTransferSchema = z.object({
   asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt'])).default('usdc'),
-  network: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])),
+  network: z.preprocess((val) => {
+    if (typeof val === 'string') {
+      const s = val.trim().toLowerCase();
+      if (s.includes('stellar')) return 'stellar';
+      if (s.includes('solana') || s.includes('sol')) return 'solana';
+      if (s.includes('celo')) return 'celo';
+      if (s.includes('base')) return 'base';
+      if (s.includes('bsc') || s.includes('binance') || s.includes('bnb')) return 'bsc';
+      if (s.includes('arbitrum')) return 'arbitrum';
+      if (s.includes('polygon') || s.includes('matic')) return 'polygon';
+      if (s.includes('avalanche') || s.includes('avax')) return 'avalanche_c_chain';
+      if (s.includes('ethereum') || s.includes('eth')) return 'ethereum';
+      if (s.includes('starknet')) return 'starknet';
+      if (s.includes('tron')) return 'tron';
+      if (s.includes('arc')) return 'arc';
+      return s;
+    }
+    return val;
+  }, z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
