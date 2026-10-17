@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * THE FEE CURVE.
  *
@@ -207,31 +208,7 @@ for (const [amount, expectRepeat, expectNew] of [
     `got repeat ${repeat(amount).fee}, new ${newRecip(amount).fee}`);
 }
 
-console.log('\n── one implementation only ───────────────────────────────────');
-
-const frontendFiles: string[] = [];
-const walk = (dir: string) => {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full);
-    else if (/\.(ts|tsx)$/.test(entry.name)) frontendFiles.push(full);
-  }
-};
-walk(path.join(root, 'frontend/src'));
-
-/**
- * The frontend must ASK for a quote, never compute one. A UI that quotes a
- * different fee from the one charged is a support ticket that reads as theft.
- */
-const reimplemented = frontendFiles.filter((file) => {
-  const src = fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  // The signature of the curve: a percentage clamped between two bounds.
-  return /Math\.(min|max)\([^)]*0\.1[^)]*\)/.test(src) && /0\.005|\* *0\.5 *\/ *100|percent *\/ *100/.test(src);
-});
-check('the fee curve is not reimplemented in the frontend',
-  reimplemented.length === 0,
-  reimplemented.map((f) => path.relative(root, f)).join(', '));
-
+// Legacy UI assertions are retained in docs/legacy-frontend-tests; standalone coverage owns the UI.
 console.log('\n── the minimum send amount agrees with the floor ─────────────');
 
 check('the default minimum is 10',

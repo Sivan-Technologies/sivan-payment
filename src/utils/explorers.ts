@@ -22,6 +22,21 @@ export function getNetworkExplorer(
   const mode = (modeInput || resolveNetworkMode() || 'testnet').toLowerCase();
   const isMainnet = mode === 'mainnet' || mode === 'live';
 
+  /**
+   * Starknet. Placed first by convention, not by necessity: every
+   * net.includes(...) pattern in this resolver was checked against the string
+   * 'starknet' and only 'starknet' itself matches. In particular 'starknet'
+   * contains 'ark', NOT 'arc', so the arc branch below does not capture it.
+   *
+   * Explorer is Starkscan. Voyager is the other common choice but returns 403
+   * to automated requests, so Starkscan is what we can actually verify.
+   */
+  if (net.includes('starknet') || net.includes('strk')) {
+    const snDomain = isMainnet ? 'https://starkscan.co' : 'https://sepolia.starkscan.co';
+    const url = rawTxHash ? `${snDomain}/tx/${rawTxHash}` : rawAddr ? `${snDomain}/contract/${rawAddr}` : snDomain;
+    return { name: 'Starkscan', url };
+  }
+
   if (net.includes('arc')) {
     const arcDomain = isMainnet ? 'https://explorer.arc.io' : 'https://testnet.arcscan.app';
     const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;

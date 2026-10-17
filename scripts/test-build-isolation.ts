@@ -84,7 +84,7 @@ check('API build graph contains no frontend source', () => {
     leaked.length === 0,
     `${leaked.length} frontend file(s) are compiled into the production API build:\n` +
       leaked.map((f) => `      ${path.relative(root, f)}`).join('\n') +
-      '\n    These resolve against frontend/node_modules, which Render never installs ' +
+      '\n    These resolve against browser-only dependencies, which Render never installs ' +
       'for the API service.',
   );
 });
@@ -139,25 +139,8 @@ check('backend does not depend on frontend-only packages', () => {
   }
 });
 
-check('frontend declares the packages its own source imports', () => {
-  const fe = JSON.parse(readFileSync(path.join(root, 'frontend', 'package.json'), 'utf8'));
-  const deps = { ...(fe.dependencies ?? {}), ...(fe.devDependencies ?? {}) };
-  assert(
-    'qrcode-generator' in deps,
-    'frontend/src/qrCode.ts imports qrcode-generator but frontend/package.json ' +
-      'does not declare it - the frontend static build would fail',
-  );
-});
-
-check('frontend lockfile pins qrcode-generator', () => {
-  // `npm install` on Render uses the lockfile. A dependency present in
-  // package.json but absent from the lock is a build failure on a clean box.
-  const lock = readFileSync(path.join(root, 'frontend', 'package-lock.json'), 'utf8');
-  assert(
-    lock.includes('node_modules/qrcode-generator'),
-    'frontend/package-lock.json has no qrcode-generator entry - run npm install and commit the lock',
-  );
-});
+// QR dependency and lockfile checks moved to the standalone frontend's
+// ci-safety.test.ts. The API graph and backend dependency guards remain here.
 
 // ---------------------------------------------------------------------------
 // 3. Scripts are still typechecked. Removing them from the shipped build must
@@ -174,13 +157,11 @@ check('a scripts typecheck config exists and covers the test scripts', () => {
   assert(scriptFiles.length > 20, `expected the scripts config to check the test scripts, saw ${scriptFiles.length}`);
 });
 
-check('the scripts typecheck config does see frontend source', () => {
-  // The scripts assert against real frontend modules. If this config stopped
-  // resolving them the checks would pass vacuously.
+check('the scripts typecheck graph contains no frontend source', () => {
   const feFiles = projectFiles('tsconfig.scripts.json').filter((file) =>
     file.includes(`${path.sep}frontend${path.sep}`),
   );
-  assert(feFiles.length > 0, 'the scripts config resolves no frontend source, so it is not checking what the tests import');
+  assert(feFiles.length === 0, `backend scripts still compile frontend files: ${feFiles.join(', ')}`);
 });
 
 check('npm run typecheck runs both configs', () => {

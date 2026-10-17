@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { parseDeliveryDeadline } from '../src/agreements/deadline-parser.js';
 import { getCountdownLabel } from '../src/agreements/agreement.service.js';
 import { sweepDeadlineAlerts } from '../src/agreements/deadline-sweeper.service.js';
+import { updateAgreementControls } from '../src/agreements/agreement-controls.service.js';
 import { buildApp } from '../src/app.js';
 import type { ServiceAgreementRecord } from '../src/database/types.js';
 
@@ -54,6 +55,7 @@ function hoursFromNow(hours: number): string {
 
 export async function runServiceAgreementTest() {
   console.log('\n--- Service Agreement Deadline Tracking Tests ---');
+  await updateAgreementControls({ creationEnabled: true, maintenanceMessage: '' }, 'test_runner');
   let passed = 0;
   let failed = 0;
 

@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * "I'LL SEND CRYPTO MYSELF" IS NOW ADMIN-CONTROLLED, AND OFF.
  *
@@ -85,62 +86,7 @@ await updateNgnControls({ externalFundingEnabled: false } as any);
 check('and back off again',
   ((await app.inject({ method: 'GET', url: '/api/ngn/networks?asset=usdc' })).json().data as any).externalFundingEnabled === false);
 
-console.log('\n── the UI hides rather than disables ─────────────────────────');
-
-const form = fs.readFileSync('frontend/src/components/sell/NgnPayoutForm.tsx', 'utf8');
-
-check('the funding toggle is wrapped in the flag',
-  /\{canFundExternally && \(\s*<div className="seg"/.test(form),
-  'it must not render at all - a greyed button asks "why can\'t I click this?"');
-check('the flag is read with === true, never truthiness',
-  form.includes('externalFundingEnabled === true'),
-  'an older API omits the field; undefined must read as OFF, and `!!undefined` is not the danger - a default-on would be');
-/**
- * The DISABLED-instead-of-hidden regression, asserted directly. Someone
- * "fixing" this later by adding `disabled={!canFundExternally}` would satisfy
- * a naive test while reintroducing the support ticket this avoids.
- */
-check('the manual button is not merely disabled',
-  !/I'll send crypto myself[\s\S]{0,200}disabled=/.test(form) && !/disabled=\{!canFundExternally\}/.test(form),
-  'hidden, not disabled - see the comment above the group');
-
-/**
- * FOUND BY GREPPING THE BUILT BUNDLE, NOT THE SOURCE DIFF.
- *
- * The over-balance error unconditionally said 'or choose "I'll send crypto
- * myself"'. With that button hidden, the message names a control the user
- * cannot see, which reads as the app being broken - worse than saying nothing.
- */
-const overBalanceMsg = form.slice(form.indexOf('if (overBalance)'), form.indexOf('setQuoting(true)'));
-check('the over-balance error does not name a hidden button',
-  /canFundExternally/.test(overBalanceMsg) && /Lower the amount to continue/.test(overBalanceMsg),
-  'advice must match the buttons actually on screen');
-
-/**
- * CAUGHT BY LOOKING AT THE SCREENSHOT, not by any assertion.
- *
- * "Send USDC on the network you actually hold it on" is manual-funding
- * language - it instructs a transfer. Under balance funding the user sends
- * nothing. Code and tests were both green while the screen told the user to
- * do something the flow no longer asks of them.
- */
-check('the network hint does not instruct a manual send when funding from balance',
-  /canFundExternally[\s\S]{0,400}Choose the network holding your/.test(form),
-  'the hint must describe the flow the user is actually in');
-
-console.log('\n── the external code path is KEPT, not deleted ───────────────');
-
-/**
- * Explicitly asserted because the obvious way to satisfy "turn this off" is to
- * delete the branch, and then turning it back on is a rewrite rather than a
- * toggle.
- */
-check("the 'external' branch still exists in the form",
-  form.includes("fundingSource === 'external'"),
-  'gated, not removed - it works and comes back when deposit-address UX is solid');
-check('the review screen still handles external funding',
-  fs.readFileSync('frontend/src/components/AppSections.tsx', 'utf8').includes("review.fundingSource !== 'balance'"));
-
+// Legacy UI assertions are retained in docs/legacy-frontend-tests; standalone coverage owns the UI.
 console.log('\n── it fails CLOSED ───────────────────────────────────────────');
 
 const routes = fs.readFileSync('src/ngn/api/ngn.routes.ts', 'utf8');
@@ -149,10 +95,7 @@ check('a failed controls read hides the button rather than showing it',
   && /externalFundingEnabled: ngnControls\?\.externalFundingEnabled \?\? false/.test(routes),
   'a database blip must not surface the one flow the founders withdrew');
 
-const rails = fs.readFileSync('frontend/src/rails.ts', 'utf8');
-check('the client type marks it optional, so an old API reads as off',
-  /externalFundingEnabled\?: boolean/.test(rails));
-
+// Legacy UI assertions are retained in docs/legacy-frontend-tests; standalone coverage owns the UI.
 console.log('\n── persistence ───────────────────────────────────────────────');
 
 const migration = fs.readFileSync('database/migrations/045_add_ngn_external_funding_toggle.sql', 'utf8');

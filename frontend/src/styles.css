@@ -2733,6 +2733,20 @@ button.activity-row:focus-visible{outline:2px solid rgba(0, 122, 199, .55);outli
 /* NGN Level 2 BVN verification form */
 .ngn-level2-card{display:grid;gap:13px;margin-top:12px;padding:16px;border:1px solid rgba(0, 122, 199, .22);border-radius:18px;background:linear-gradient(180deg,rgba(0, 122, 199, .075),rgba(255, 255, 255, .95));box-shadow:inset 0 1px 0 rgba(24, 52, 94, 0.0403)}.ngn-level2-card h3{margin:2px 0 5px;color:#10182b}.ngn-level2-card .muted{margin:0;line-height:1.5}.ngn-level2-card input{min-height:44px;border-radius:13px}.ngn-level2-card .success-note span{display:block;margin-top:4px;color:#5a6678}@media(max-width:760px){.ngn-level2-card .split{grid-template-columns:1fr}.ngn-level2-card .primary-btn{width:100%}}.ngn-consent-steps{display:grid;gap:10px;padding:14px;border:1px solid var(--border-control);border-radius:14px;background:rgba(1,142,232,.05)}.ngn-consent-steps .ordered-steps{margin:0}.ngn-consent-steps .consent-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}.ngn-consent-steps .consent-actions>.primary-btn,.ngn-consent-steps .consent-actions>.secondary-btn{flex:0 0 auto;width:auto;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}.ngn-consent-steps small{line-height:1.5}@media(max-width:760px){.ngn-consent-steps .consent-actions{flex-direction:column;align-items:stretch}.ngn-consent-steps .consent-actions>*{width:100%;text-align:center}}
 
+/* 3-Part Date of Birth Selector */
+.dob-selector-container{display:grid;gap:8px;width:100%}
+.dob-header-row{display:flex;align-items:center;justify-content:space-between}
+.dob-header-label{font-size:13px;font-weight:600;color:#10182b}
+.dob-badge-18{font-size:11px;font-weight:700;color:#007ac7;background:rgba(0,122,199,.09);padding:3px 8px;border-radius:999px;border:1px solid rgba(0,122,199,.2);letter-spacing:.02em}
+.dob-dropdowns-row{display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:10px;width:100%}
+.dob-select-wrap{display:flex;flex-direction:column;gap:4px}
+.dob-sublabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#5a6678}
+.dob-native-select{appearance:none;-webkit-appearance:none;-moz-appearance:none;width:100%;min-height:46px;padding:10px 30px 10px 12px;font-size:13.5px;font-weight:500;font-family:inherit;color:#10182b;background-color:#ffffff;border:1px solid rgba(1,142,232,.22);border-radius:13px;box-shadow:inset 0 1px 0 rgba(24,52,94,.03);cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,background-color .16s ease;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23007ac7' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:13px 13px}
+.dob-native-select:focus{outline:none;border-color:rgba(0,122,199,.7);box-shadow:0 0 0 3px rgba(0,122,199,.12)}
+.dob-native-select:disabled{opacity:.6;cursor:not-allowed}
+.dob-caption{font-size:11.5px;color:#5a6678;line-height:1.4;margin-top:2px}
+@media(max-width:480px){.dob-dropdowns-row{grid-template-columns:1fr 1.3fr 1fr;gap:6px}.dob-native-select{padding-left:8px;padding-right:22px;font-size:12.5px;min-height:44px;background-position:right 6px center}}
+
 /* ---------------------------------------------------------------------------
    Theme toggle
    The control is themed by tokens, so it inherits both palettes automatically.

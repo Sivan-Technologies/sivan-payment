@@ -6,9 +6,19 @@ import { resolveActiveWalletProvider } from '../wallet-controls.service.js';
 import { db } from '../../database/json-database.js';
 
 export class EvmAdapter implements IChainAdapter {
-  readonly chain: 'base' | 'ethereum' | 'bsc' | 'bnb';
+  readonly chain: 'base' | 'ethereum' | 'bsc' | 'bnb' | 'arbitrum' | 'arc';
 
-  constructor(chain: 'base' | 'ethereum' | 'bsc' | 'bnb' = 'base') {
+  /**
+   * Arbitrum and Arc are ordinary EVM chains from this adapter's point of
+   * view: same secp256k1 key, same 0x address, same JSON-RPC. They were
+   * missing from this union, which is why the registry could not construct an
+   * adapter for either and the Developer Gateway threw on both.
+   *
+   * Arc note: its USDC is the NATIVE gas token rather than an ERC-20, so a
+   * balance read on Arc must go through nativeBalanceOf, not erc20BalanceOf.
+   * That distinction lives in evm-rpc.ts behind usesNativeStablecoin().
+   */
+  constructor(chain: 'base' | 'ethereum' | 'bsc' | 'bnb' | 'arbitrum' | 'arc' = 'base') {
     this.chain = chain;
   }
 
@@ -67,6 +77,7 @@ export class EvmAdapter implements IChainAdapter {
     if (!wallet) throw new Error(`Could not resolve ${this.chain} wallet for user: ${params.fromUserId}`);
 
     const transfer = await provider.createTransfer({
+      userId: params.fromUserId,
       providerWalletId: wallet.providerWalletId,
       providerCustomerId: wallet.customerId,
       chain: this.chain,
@@ -75,6 +86,7 @@ export class EvmAdapter implements IChainAdapter {
       toAddress: params.toAddress,
       idempotencyKey: params.idempotencyKey,
       reference: params.idempotencyKey,
+      feeAmount: params.feeAmount,
     });
 
     return {

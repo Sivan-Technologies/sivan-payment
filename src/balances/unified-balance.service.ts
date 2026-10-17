@@ -4,6 +4,7 @@ import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
 import type { WalletChain } from '../wallets/types/wallet.types.js';
 import { networksServedByWallet } from '../wallets/chain-family.js';
+import { DEFAULT_NETWORK_CONTROLS } from '../controls/payment-controls.service.js';
 
 /**
  * ONE BALANCE, ASSEMBLED FROM THE CHAIN AND THE LEDGER.
@@ -146,12 +147,28 @@ async function readChainBalances(userId: string) {
    *
    * networksServedByWallet() answers from the key family, so it is correct for
    * a row filed under either name and cannot degrade to an empty list.
-   * We filter by activeSupportedChains to target active Phase 2 networks cleanly.
+   * Dynamically filter by networks enabled in admin controls.
    */
-  const activeSupportedChains = new Set(['solana', 'base', 'bsc', 'bnb', 'stellar', 'celo', 'arbitrum', 'arc']);
+  const controlData = await db.readControlTables().catch(() => null);
+  const existingControls = controlData?.networkControls ?? [];
+  const mergedControls = DEFAULT_NETWORK_CONTROLS.map((def) => {
+    const existing = existingControls.find((c) => c.network.toLowerCase() === def.network.toLowerCase());
+    return existing ? { ...def, ...existing } : def;
+  });
+  for (const c of existingControls) {
+    if (!mergedControls.some((m) => m.network.toLowerCase() === c.network.toLowerCase())) {
+      mergedControls.push(c);
+    }
+  }
+  const enabledAdminNetworks = new Set(
+    mergedControls.filter((n) => n.enabled).map((n) => n.network.toLowerCase())
+  );
+
   const uniqueReads = new Map<string, { wallet: (typeof active)[0]; chain: string }>();
   for (const wallet of active) {
-    const chains = networksServedByWallet(wallet.chain).filter((c) => activeSupportedChains.has(c.toLowerCase()));
+    const chains = networksServedByWallet(wallet.chain).filter(
+      (c) => enabledAdminNetworks.has(c.toLowerCase())
+    );
     for (const chain of chains) {
       const key = `${chain}:${wallet.address.toLowerCase()}`;
       if (!uniqueReads.has(key)) {
@@ -165,8 +182,9 @@ async function readChainBalances(userId: string) {
   return Promise.all(
     reads.map(async ({ wallet, chain }) => {
       try {
+        const provider = providerFor(wallet);
         const balances = await withTimeout(
-          providerFor(wallet).getBalances(
+          provider.getBalances(
             wallet.providerWalletId,
             wallet.customerId,
             wallet.address,
@@ -272,6 +290,23 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
     (wallet) => wallet.balancesUnavailable && spendableNetworks.has(String(wallet.chain).toLowerCase())
   );
 
+  /**
+   * STABLECOIN-ONLY BALANCE.
+   *
+   * Sivan is a stablecoin payment platform. The USD balance the user sees
+   * must answer one question: "how much can I withdraw?". Native gas tokens
+   * (XLM, SOL, BNB, ETH, MATIC, etc.) are NOT pegged to the dollar, and
+   * treating 1 XLM as $1 produces nonsense totals (e.g. 9,999 XLM became
+   * $9,999 on the dashboard).
+   *
+   * Rule: only assets in this set are counted toward the USD balance total.
+   * Non-stablecoins are still present in wallet.balances (passed through to
+   * the Receive page so the user can see their gas balance), but they never
+   * enter the byAsset financial map and therefore never appear in Unified
+   * Balance, Available, or On Hold.
+   */
+  const STABLECOIN_ASSETS = new Set(['usdc', 'usdt', 'usdm', 'cusd']);
+
   // Chain first: it is the truth, and it decides which assets exist at all.
   for (const wallet of wallets) {
     if (wallet.balancesUnavailable) continue;
@@ -295,6 +330,9 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
        * not depend on every present and future adapter being well behaved.
        */
       if (entry.chain && String(entry.chain).toLowerCase() !== String(wallet.chain).toLowerCase()) continue;
+      // Skip non-stablecoin assets (XLM, SOL, BNB, ETH, etc.) — gas tokens
+      // are not USD-pegged and must never be counted in the financial balance.
+      if (!STABLECOIN_ASSETS.has(String(entry.asset).toLowerCase())) continue;
       const row = ensure(String(entry.asset).toLowerCase());
       row.chain = money(num(row.chain) + num(entry.amount));
     }
@@ -371,9 +409,18 @@ export async function getSpendable(userId: string, asset: string, network?: stri
     const chainAmount = balanceEntry ? num(balanceEntry.amount) : 0;
     const pooledCredits = num(row.credited);
     const held = num(row.held);
-    return Math.max(0, chainAmount + pooledCredits - held);
+
+    // Funds outside this network's on-chain wallet that can absorb account-level holds
+    const otherFunds = Math.max(0, num(row.chain) + pooledCredits - chainAmount);
+    // Only the portion of held funds that cannot be covered by other wallets falls onto this chain
+    const uncoveredHold = Math.max(0, held - otherFunds);
+    const chainSpendable = Math.max(0, chainAmount - uncoveredHold);
+
+    // Network spendable cannot exceed what is physically on this chain,
+    // nor the user's global unencumbered spendable balance
+    return Math.min(chainSpendable, num(row.spendable));
   }
 
-  if (row.chainUnavailable && num(row.chain) === 0 && num(row.credited) === 0) return null;
+  if (row.chainUnavailable && num(row.credited) === 0) return null;
   return num(row.spendable);
 }

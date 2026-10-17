@@ -117,6 +117,8 @@ export const TYPICAL_GAS_USD: Record<string, number> = {
   ethereum: 5,
   arbitrum: 0.05,
   arc: 0.0001,
+  stellar: 0.0001,
+  starknet: 0.005,
   polygon: 0.01,
 };
 

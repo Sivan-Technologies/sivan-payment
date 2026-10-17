@@ -143,7 +143,7 @@ export default function App() {
   });
 
   const [feePolicy, setFeePolicy] = useState<FeePolicy | null>(null);
-  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: [], sourceNetworks: [], supplierPayoutsEnabled: true });
+  const [paymentControls, setPaymentControls] = useState<OfframpControls>({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: [], sourceNetworks: [], supplierPayoutsEnabled: false });
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({ id: 'global', mode: 'active', updatedAt: new Date().toISOString() });
   const [depositResult, setDepositResult] = useState<DepositResponse | null>(null);
   // The shape was written out inline here AND in AppSections, two copies of
@@ -974,7 +974,7 @@ export default function App() {
     loadControlsPromiseRef.current = (async () => {
       try {
         const [controls, status] = await Promise.all([
-          api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks, supplierPayoutsEnabled: true })),
+          api<unknown>('/api/offramp/controls').then(normalizeOfframpControls).catch(() => ({ customerTypes: fallbackCustomerTypes, payoutCurrencies: [], virtualAccounts: fallbackVirtualAccounts, sourceAssets: fallbackSourceAssets, sourceNetworks: fallbackSourceNetworks, supplierPayoutsEnabled: false })),
           api<SystemStatus>('/api/system/status').catch(() => systemStatus)
         ]);
         setPaymentControls(controls);
@@ -1093,14 +1093,18 @@ export default function App() {
   useEffect(() => {
     if (view === 'receive') {
       void loadControls();
+      void throttledLoadUserData(3000);
+      void loadUserWallets();
       const interval = setInterval(() => {
         if (document.visibilityState === 'visible') {
           void loadControls();
+          void throttledLoadUserData(5000);
+          void loadUserWallets();
         }
-      }, 10000);
+      }, 8000);
       return () => clearInterval(interval);
     }
-  }, [view, loadControls]);
+  }, [view, loadControls, throttledLoadUserData, loadUserWallets]);
 
   useEffect(() => {
     const handleAgreementsRefresh = () => {
@@ -1232,6 +1236,31 @@ export default function App() {
     }
     return undefined;
   }, [ngnNetwork, ngnNetworkOptionsWithBalances, ngnNetworkBalances, unifiedBalance]);
+
+  const stellarSpendable = useMemo(() => {
+    const allWallets = [
+      ...(unifiedBalance?.wallets || []),
+      ...(userWallets || [])
+    ];
+    for (const w of allWallets) {
+      if (!w) continue;
+      const chain = String(w.chain || '').toLowerCase();
+      if (chain === 'stellar') {
+        if (Array.isArray(w.balances)) {
+          for (const b of w.balances) {
+            if (!b) continue;
+            if (String(b.asset || '').toLowerCase() === 'usdc') {
+              const parsed = typeof b.amount === 'number' ? b.amount : parseFloat(String(b.amount || '0'));
+              if (Number.isFinite(parsed)) return parsed;
+            }
+          }
+        }
+      }
+    }
+    const fromMap = ngnNetworkBalances.get('stellar');
+    if (typeof fromMap === 'number') return fromMap;
+    return 0;
+  }, [unifiedBalance, userWallets, ngnNetworkBalances]);
 
   useEffect(() => {
     const options = ngnNetworkOptionsWithBalances;
@@ -2880,7 +2909,7 @@ export default function App() {
 
             <div className="dashboard-actions-row">
               <button className="dashboard-action-card sell" onClick={() => goToView('withdraw')}><span>↗</span><div><strong>Withdraw</strong><small>Cash out to your bank account</small></div><em>→</em></button>
-              <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>Send settled USDC or pay suppliers</small></div><em>→</em></button>
+              <button className="dashboard-action-card buy" onClick={() => goToView('buy')}><span>↙</span><div><strong>Buy crypto</strong><small>Buy stablecoins with fiat via transfer or card</small></div><em>→</em></button><button className="dashboard-action-card transfer" onClick={() => goToView('transfer')}><span>⇆</span><div><strong>Transfer & pay</strong><small>{paymentControls.supplierPayoutsEnabled ? 'Send settled stablecoins or pay suppliers' : 'Send settled stablecoins'}</small></div><em>→</em></button>
             </div>
 
             <div className="dashboard-kpis">
@@ -3101,6 +3130,7 @@ export default function App() {
              * because "we could not check" is not "you have nothing".
              */
             ngnSpendable={selectedNetworkSpendable !== undefined ? selectedNetworkSpendable : selectedNgnSpendable}
+            stellarSpendable={stellarSpendable}
             ngnWindowDays={verificationSummary?.windowDays}
             /* From GET /api/ngn/networks, which this screen already awaits.
                Undefined until it answers, which reads as OFF - the withdraw
@@ -3111,6 +3141,8 @@ export default function App() {
             onExitNgn={() => { setNgnMode(false); setWithdrawalReview(null); }}
             onEnterNgn={() => setNgnMode(true)}
             ngnAvailable={(ngnNetworks?.offramp.length ?? 0) > 0}
+            userFullName={user?.fullName}
+            userPhone={user?.whatsappNumber}
             onClose={() => {
               setDepositResult(null);
               goToView('overview');
@@ -3122,9 +3154,9 @@ export default function App() {
           />
         )}
 
-        {view === 'receive' && <ReceiveView wallets={userWallets} unifiedBalance={unifiedBalance} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} />}
+        {view === 'receive' && <ReceiveView wallets={userWallets} unifiedBalance={unifiedBalance} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} isVerified={isVerified} hasPayoutAccount={hasBank} onAddBank={() => goToView('banks')} loading={loading} walletsEnabled onCreateWallet={handleCreateWallet} onRefresh={handleRefreshAll} userFullName={user?.fullName} userPhone={user?.whatsappNumber} userId={user?.id} />}
         {view === 'buy' && <BuyCryptoView hasUser={hasUser} isVerified={isVerified} bridgeBlockedReason={buyBlockedReason} onVerifyWithId={openBridgeVerification} feePercent={feePolicy?.percent || '1.25'} enabledControls={enabledControls} enabledAssets={enabledAssets} enabledNetworks={enabledNetworks} orders={onrampOrders} loading={loading} onSubmit={handleOnramp} onSell={() => goToView('withdraw')} onContinue={() => goToView(hasUser ? isVerified ? 'banks' : 'kyc' : 'signup')} onSupport={() => goToView('help')} onRefreshOrders={loadUserData} />}
-        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={paymentControls.supplierPayoutsEnabled !== false} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
+        {view === 'transfer' && <TransferCryptoView hasUser={hasUser} isVerified={isVerified} supplierPayoutsEnabled={Boolean(paymentControls.supplierPayoutsEnabled)} transfersEnabled={paymentControls.transfersEnabled !== false} api={api} enabledAssets={enabledAssets} balance={balance} unifiedBalance={unifiedBalance} transfers={balanceTransfers} suppliers={suppliers} supplierPayments={supplierPayments} enabledNetworks={enabledNetworks} networkMode={userPreferences?.networkMode} loading={loading} onSubmit={handleBalanceTransfer} onCreateSupplier={handleCreateSupplier} onSupplierPayment={handleSupplierPayment} onContinue={() => goToView(hasUser ? isVerified ? 'buy' : 'kyc' : 'signup')} onRefresh={loadUserData} />}
 
         {view === 'history' && <TransactionsView user={user} api={api} withdrawals={withdrawals} onrampOrders={onrampOrders} ngnTransfers={ngnTransfers} balanceTransfers={balanceTransfers} supplierPayments={supplierPayments} virtualAccountTransactions={virtualAccountTransactions} walletDeposits={walletDeposits} serviceAgreements={serviceAgreements} networkMode={userPreferences?.networkMode} initialSelectedId={selectedActivityId} onStart={() => goToView('withdraw')} onBuy={() => goToView('buy')} onRefresh={loadUserData} />}
 

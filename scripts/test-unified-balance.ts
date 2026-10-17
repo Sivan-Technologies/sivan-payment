@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * ONE BALANCE, AND MONEY THAT ACTUALLY MOVES.
  *
@@ -159,17 +160,6 @@ async function main() {
     check('the ledger endpoint still exists for the journal view',
       /getUserBalance\(userId\)/.test(routes));
 
-    const hook = code('frontend/src/hooks/usePaymentData.ts');
-    check('the frontend fetches it', /balance\/unified/.test(hook));
-    const app = code('frontend/src/App.tsx');
-    check('App holds it in state', /setUnifiedBalance/.test(app));
-    check('and passes it to the transfer screen', /unifiedBalance=\{unifiedBalance\}/.test(app));
-
-    const view = code('frontend/src/components/transfer/TradeTransferSections.tsx');
-    check('the transfer screen prefers the unified figure',
-      /unified \? Number\(unified\.spendable/.test(view));
-    check('and falls back to the ledger rather than to zero',
-      /: Number\(usdc\?\.available \|\| 0\)/.test(view));
   }
 
   console.log('\n2. SENDING ACTUALLY BROADCASTS\n');

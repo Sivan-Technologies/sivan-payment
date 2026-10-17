@@ -39,9 +39,41 @@ export async function notifyOpsTelegram(
     const constraintStr = err?.constraint ? `\nConstraint: \`${err.constraint}\`` : '';
     const detailStr = err?.detail ? `\nDetail: ${err.detail}` : '';
 
+    const stack = (err?.stack || '') || (new Error().stack || '');
+    const stackLines = stack.split('\n');
+    const frame = stackLines.find((line) => {
+      const isApp =
+        line.includes('/src/') ||
+        line.includes('src/') ||
+        line.includes('/dist/') ||
+        line.includes('dist/');
+      const isExcluded =
+        line.includes('node_modules') ||
+        line.includes('telegram-ops-alert.');
+      return isApp && !isExcluded;
+    });
+
+    let locationStr = '';
+    let callerStr = '';
+    if (frame) {
+      const namedMatch = frame.match(/at\s+(?:async\s+)?([^\s(]+)\s+\((?:.*\/)?((?:src|dist)\/[^:]+):(\d+)(?::\d+)?\)/);
+      if (namedMatch) {
+        callerStr = namedMatch[1];
+        locationStr = `${namedMatch[2]}:${namedMatch[3]}`;
+      } else {
+        const anonMatch = frame.match(/at\s+(?:.*\/)?((?:src|dist)\/[^:]+):(\d+)(?::\d+)?/);
+        if (anonMatch) {
+          callerStr = 'anonymous';
+          locationStr = `${anonMatch[1]}:${anonMatch[2]}`;
+        }
+      }
+    }
+
     const text = [
       `🚨 *SIVAN PAYMENT SERVER ERROR*`,
-      ``,
+      `*Service:* \`sivan-payment\``,
+      locationStr ? `*Location:* \`${locationStr}\`` : '',
+      callerStr && callerStr !== 'anonymous' ? `*Caller:* \`${callerStr}()\`` : '',
       `*Error:* \`${errName}${codeStr}\``,
       `*Message:* \`${rawMessage.slice(0, 300)}\`${constraintStr}${detailStr}`,
       context.method && context.url ? `*Endpoint:* \`${context.method} ${context.url}\`` : '',

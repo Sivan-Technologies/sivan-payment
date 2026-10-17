@@ -59,6 +59,9 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
     currency: propCurrency || 'USDC',
     recipient: propRecipient || 'Recipient',
     destinationRef: propDestinationRef || '',
+    mode: 'verify',
+    txType: '',
+    network: '',
   });
 
   const [pin, setPin] = useState<string>('');
@@ -66,6 +69,7 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [shake, setShake] = useState<boolean>(false);
   const [success, setSuccess] = useState<boolean>(false);
+  const [successMessage, setSuccessMessage] = useState<string>('✓ Authenticated! Authorizing transaction...');
 
   useEffect(() => {
     // Notify Telegram Mini-App readiness
@@ -83,6 +87,9 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
         currency: (urlParams.get('currency') || 'USDC').toUpperCase(),
         recipient: urlParams.get('recipient') || urlParams.get('destination') || 'Recipient',
         destinationRef: urlParams.get('destinationRef') || urlParams.get('recipient') || '',
+        mode: urlParams.get('mode') || 'verify',
+        txType: urlParams.get('txType') || '',
+        network: urlParams.get('network') || '',
       });
     }
   }, [propUserId, propAmount, propCurrency, propRecipient, propDestinationRef]);
@@ -133,9 +140,10 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
           if (!res.ok) throw new Error(json.error?.message || 'Biometric verification failed');
 
           triggerHaptic('success');
+          setSuccessMessage('✓ Biometric authentication verified!');
           setSuccess(true);
           if (onSuccess) onSuccess(json.data.stepUpToken);
-          setTimeout(() => window.Telegram?.WebApp?.close(), 900);
+          setTimeout(() => window.Telegram?.WebApp?.close(), 1000);
         } catch (err: any) {
           triggerHaptic('error');
           setErrorMessage(err.message || 'Biometric authentication failed');
@@ -181,6 +189,35 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
       setErrorMessage(null);
 
       try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const isSetup = (params.mode || urlParams.get('mode')) === 'setup';
+
+        if (isSetup) {
+          const setupRes = await fetch('/api/identity/pin/tma-setup', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: params.userId,
+              pin: completedPin,
+              channel: 'telegram',
+            }),
+          });
+          const setupJson = await setupRes.json();
+          if (!setupRes.ok) {
+            throw new Error(setupJson.error?.message || setupJson.error || 'Failed to configure PIN');
+          }
+
+          triggerHaptic('success');
+          setSuccessMessage('✓ 6-digit Sivan PIN configured successfully!');
+          setSuccess(true);
+          setTimeout(() => {
+            if (window.Telegram?.WebApp) {
+              window.Telegram.WebApp.close();
+            }
+          }, 1200);
+          return;
+        }
+
         const response = await fetch('/api/identity/pin/verify-step-up', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -200,11 +237,50 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
           throw new Error(json.error?.message || 'Invalid PIN entered');
         }
 
+        const stepUpToken = json.data?.stepUpToken;
+
+        // Auto-execute transfer if amount and recipient are provided
+        if (params.userId && stepUpToken && Number(params.amount) > 0 && (params.destinationRef || params.recipient)) {
+          const txType = params.txType || urlParams.get('txType');
+          const network = params.network || urlParams.get('network');
+          const isP2P = txType === 'p2p' || (!network && (params.destinationRef.startsWith('@') || params.destinationRef.startsWith('+') || params.destinationRef.length < 32));
+
+          const transferUrl = isP2P
+            ? `/api/users/${encodeURIComponent(params.userId)}/balance/p2p-transfer`
+            : `/api/users/${encodeURIComponent(params.userId)}/balance/transfers`;
+
+          const transferBody = isP2P
+            ? {
+                asset: params.currency.toLowerCase(),
+                amount: Number(params.amount),
+                recipientTarget: params.destinationRef || params.recipient,
+                stepUpToken,
+              }
+            : {
+                asset: params.currency.toLowerCase(),
+                amount: Number(params.amount),
+                network: network || 'solana',
+                destinationAddress: params.destinationRef || params.recipient,
+                stepUpToken,
+              };
+
+          const txRes = await fetch(transferUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(transferBody),
+          });
+          const txJson = await txRes.json();
+          if (!txRes.ok) {
+            throw new Error(txJson.error?.message || txJson.error || 'Transfer execution failed');
+          }
+        }
+
         triggerHaptic('success');
+        setSuccessMessage('✓ Transfer authorized and broadcast!');
         setSuccess(true);
 
         if (onSuccess) {
-          onSuccess(json.data.stepUpToken);
+          onSuccess(stepUpToken);
         }
 
         // Auto close TMA modal after brief success state
@@ -212,7 +288,7 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
           if (window.Telegram?.WebApp) {
             window.Telegram.WebApp.close();
           }
-        }, 900);
+        }, 1200);
       } catch (err: any) {
         triggerHaptic('error');
         setShake(true);
@@ -261,7 +337,7 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
         />
 
         <div style={{ fontSize: '13px', fontWeight: 600, color: '#4CD8C8', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-          Security Authentication
+          {params.mode === 'setup' ? 'Security Setup' : 'Security Authentication'}
         </div>
 
         {/* Transaction Summary Card */}
@@ -275,20 +351,30 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
           }}
         >
-          <div style={{ fontSize: '12px', color: '#8A99AB' }}>Confirm High-Value Transfer</div>
-          <div style={{ fontSize: '26px', fontWeight: 700, color: '#FFFFFF', marginTop: '4px' }}>
-            {params.amount} <span style={{ color: '#4CD8C8', fontSize: '18px' }}>{params.currency}</span>
+          <div style={{ fontSize: '12px', color: '#8A99AB' }}>
+            {params.mode === 'setup' ? 'Create Sivan Transaction PIN' : 'Confirm High-Value Transfer'}
           </div>
-          <div style={{ fontSize: '13px', color: '#C7D2DE', marginTop: '4px' }}>
-            To: <span style={{ fontFamily: 'monospace', color: '#4B8BF4' }}>{params.recipient}</span>
-          </div>
+          {params.mode === 'setup' ? (
+            <div style={{ fontSize: '13px', color: '#C7D2DE', marginTop: '6px' }}>
+              Choose a 6-digit PIN to secure your wallet and authorize payments
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: '26px', fontWeight: 700, color: '#FFFFFF', marginTop: '4px' }}>
+                {params.amount} <span style={{ color: '#4CD8C8', fontSize: '18px' }}>{params.currency}</span>
+              </div>
+              <div style={{ fontSize: '13px', color: '#C7D2DE', marginTop: '4px' }}>
+                To: <span style={{ fontFamily: 'monospace', color: '#4B8BF4' }}>{params.recipient}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
       {/* 6 Masked PIN Dots & Status */}
       <div style={{ textAlign: 'center', margin: '20px 0' }}>
         <div style={{ fontSize: '14px', color: '#8A99AB', marginBottom: '14px' }}>
-          Enter your 6-digit Sivan Transaction PIN
+          {params.mode === 'setup' ? 'Enter 6 numbers for your new PIN' : 'Enter your 6-digit Sivan Transaction PIN'}
         </div>
 
         <div
@@ -327,7 +413,7 @@ export const PinPadModal: React.FC<PinPadModalProps> = ({
 
         {success && (
           <div style={{ marginTop: '12px', color: '#2ECC71', fontSize: '14px', fontWeight: 600 }}>
-            ✓ Authenticated! Authorizing transaction...
+            {successMessage}
           </div>
         )}
       </div>

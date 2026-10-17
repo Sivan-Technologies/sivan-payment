@@ -19,8 +19,12 @@ import { getOperationalHealth } from '../monitoring/operational-health.service.j
 import { onrampOrdersRoutes } from '../onramp/api/onramp-orders.routes.js';
 import { identityRoutes } from '../identity/identity.routes.js';
 import { virtualAccountsRoutes } from '../virtual-accounts/api/virtual-accounts.routes.js';
+import { paystackDvaRoutes } from '../virtual-accounts/api/paystackDvaRoutes.js';
 import { aceSupportRoutes } from '../ace/api/ace-support.routes.js';
 import { ngnRoutes } from '../ngn/api/ngn.routes.js';
+import { paystackUtilityRoutes } from '../ngn/api/paystackUtilityRoutes.js';
+import { ghsRoutes } from '../ghs/api/ghs.routes.js';
+import { ghsAdminRoutes } from '../ghs/api/ghs.admin.routes.js';
 import { balanceRoutes } from '../balances/balance.routes.js';
 import { supplierRoutes } from '../suppliers/supplier.routes.js';
 import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
@@ -28,10 +32,13 @@ import { metamapKycRoutes } from '../kyc/api/metamap.routes.js';
 
 import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
 import { agreementRoutes } from '../agreements/agreement.routes.js';
+import { registerNgnBalanceRuntime } from '../ngn/balance-agreements/runtime.js';
+import { agreementControlsRoutes } from '../agreements/agreement-controls.routes.js';
 import { passkeyRoutes } from '../identity/passkey.routes.js';
 import { fraudSecurityRoutes } from '../security/fraud.routes.js';
 import { celoCashoutRoutes } from '../offramp/api/celo-cashout.routes.js';
 import { textileBuyRoutes } from '../offramp/api/textile-buy.routes.js';
+import { moneygramRoutes } from '../moneygram/routes/moneygram.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -84,6 +91,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await usersRoutes(app);
   await identityRoutes(app);
   await virtualAccountsRoutes(app);
+  await paystackDvaRoutes(app);
   await customersRoutes(app);
   await externalAccountsRoutes(app);
   await liquidationAddressesRoutes(app);
@@ -96,6 +104,9 @@ export async function registerRoutes(app: FastifyInstance) {
   await paymentControlsRoutes(app);
   await systemStatusRoutes(app);
   await ngnRoutes(app);
+  await paystackUtilityRoutes(app);
+  await ghsRoutes(app);
+  await ghsAdminRoutes(app);
   await balanceRoutes(app);
   await supplierRoutes(app);
   await kycLevelRoutes(app);
@@ -104,8 +115,11 @@ export async function registerRoutes(app: FastifyInstance) {
   await aceSupportRoutes(app);
   await adminRoutes(app);
   await webhooksRoutes(app);
+  await moneygramRoutes(app);
   await app.register(developerGatewayRoutes);
   await agreementRoutes(app);
+  await registerNgnBalanceRuntime(app);
+  await agreementControlsRoutes(app);
   await passkeyRoutes(app);
   await fraudSecurityRoutes(app);
   await celoCashoutRoutes(app);

@@ -18,6 +18,20 @@ import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInvento
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
 import { previewOnrampFees, validateTiers } from './fee-policy.js';
 import { getCustomerKycDiagnostics, getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, getBusinessKpis, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
+import {
+  getMoneyGramControls,
+  updateMoneyGramControls,
+  listMoneyGramTransactions,
+  getUtilitiesControls,
+  updateUtilitiesControls,
+  listUtilitiesTransactions,
+  getPublicFeatureStatus,
+} from './feature-controls.service.js';
+import {
+  createStepUpVerificationRequest,
+  listAllStepUpVerificationRequests,
+  reviewStepUpVerificationRequest,
+} from './verification-request.service.js';
 
 
 function listOptions(request: any) {
@@ -424,5 +438,98 @@ export async function adminRoutes(app: FastifyInstance) {
       metadata: { summary: result.summary, filters: body }
     });
     return { data: result };
+  });
+
+  // Feature Controls: MoneyGram
+  regGet('/moneygram/controls', async () => ({ data: await getMoneyGramControls() }));
+  regPut('/moneygram/controls', async (request) => {
+    const body = (request.body || {}) as any;
+    const updated = await updateMoneyGramControls(body, 'admin_api_key');
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: 'admin_api_key',
+      action: 'moneygram.controls_updated',
+      resourceType: 'moneygram_controls',
+      resourceId: 'global',
+      severity: 'warning',
+      metadata: { controls: updated },
+    }).catch(() => {});
+    return { data: updated };
+  });
+  regGet('/moneygram/transactions', async (request) => {
+    const query = (request.query || {}) as Record<string, string>;
+    return { data: await listMoneyGramTransactions(query.userAddressOrId) };
+  });
+
+  // Feature Controls: Sivan Utilities (Everyday Bills & Direct Spend)
+  regGet('/utilities/controls', async () => ({ data: await getUtilitiesControls() }));
+  regPut('/utilities/controls', async (request) => {
+    const body = (request.body || {}) as any;
+    const updated = await updateUtilitiesControls(body, 'admin_api_key');
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: 'admin_api_key',
+      action: 'utilities.controls_updated',
+      resourceType: 'utilities_controls',
+      resourceId: 'global',
+      severity: 'warning',
+      metadata: { controls: updated },
+    }).catch(() => {});
+    return { data: updated };
+  });
+  regGet('/utilities/transactions', async (request) => {
+    const query = (request.query || {}) as Record<string, string>;
+    return { data: await listUtilitiesTransactions(query.userAddressOrId) };
+  });
+
+  // Public Feature Status Resolver (for MiniPay, Telegram, WhatsApp, Web App)
+  app.get('/api/features/status', async () => ({ data: await getPublicFeatureStatus() }));
+  app.get('/features/status', async () => ({ data: await getPublicFeatureStatus() }));
+
+  // Step-Up Verification Requests (Admin Compliance Links)
+  regPost('/verification-requests', async (request) => {
+    const body = z
+      .object({
+        userId: z.string().min(1, 'userId is required'),
+        requestedModules: z.array(z.enum(['nin', 'proof_of_address', 'source_of_funds', 'global_passport'])).min(1),
+        reason: z.string().min(1, 'reason is required'),
+        expiresInHours: z.number().int().positive().optional(),
+      })
+      .parse(request.body);
+
+    const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
+    const result = await createStepUpVerificationRequest({
+      adminId,
+      userId: body.userId,
+      requestedModules: body.requestedModules,
+      reason: body.reason,
+      expiresInHours: body.expiresInHours,
+    });
+    return { data: result };
+  });
+
+  regGet('/verification-requests', async (request) => {
+    const query = (request.query || {}) as Record<string, string>;
+    const requests = await listAllStepUpVerificationRequests(query.userId);
+    return { data: requests };
+  });
+
+  regPost('/verification-requests/:id/review', async (request) => {
+    const params = request.params as { id: string };
+    const body = z
+      .object({
+        decision: z.enum(['approved', 'rejected']),
+        reviewNotes: z.string().optional(),
+      })
+      .parse(request.body);
+
+    const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
+    const reviewed = await reviewStepUpVerificationRequest(
+      adminId,
+      params.id,
+      body.decision,
+      body.reviewNotes
+    );
+    return { data: reviewed };
   });
 }

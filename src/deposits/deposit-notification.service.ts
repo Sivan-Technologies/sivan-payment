@@ -115,7 +115,8 @@ export function humanNetwork(chain: string): string {
     bsc: 'BNB Chain',
     bnb: 'BNB Chain',
     stellar: 'Stellar',
-    avalanche_c_chain: 'Avalanche'
+    avalanche_c_chain: 'Avalanche',
+    starknet: 'Starknet',
   };
   return map[chain] ?? chain.replaceAll('_', ' ');
 }
@@ -145,28 +146,43 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
       return;
     }
 
-    const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
-    if (!notifyUrl) {
-      console.warn('[deposit-notification] TELEGRAM_NOTIFICATION_URL is not set — skipping Telegram deposit notification.');
+    const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
+    const gatewayUrl = (
+      process.env.CORE_API_BASE_URL ||
+      process.env.API_GATEWAY_URL ||
+      process.env.PUBLIC_API_GATEWAY_URL ||
+      (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
+    ).replace(/\/$/, '');
+    const defaultUrl = `${gatewayUrl}/api/telegram`;
+    const rawTgUrl = process.env.TELEGRAM_NOTIFICATION_URL || defaultUrl;
+    const notifyUrl = rawTgUrl.endsWith('/api/notify') ? rawTgUrl : `${rawTgUrl.replace(/\/$/, '')}/api/notify`;
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
+    if (!notifyUrl || !secret) {
       return;
     }
-    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
-    if (!secret) {
-      console.warn('[deposit-notification] NOTIFICATION_SECRET is not set — skipping Telegram deposit notification.');
-      return;
-    }
+
+    const user = await db.findUserById(userId);
+    let targetTelegramId: string | null = null;
 
     const links = await db.listCustomerIdentityLinks();
     const activeLinks = links
       .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
       .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
 
-    const telegramLink = activeLinks[0];
-    if (!telegramLink?.telegramUserId) return;
+    if (activeLinks[0]?.telegramUserId) {
+      targetTelegramId = activeLinks[0].telegramUserId;
+    } else if (user?.telegramUserId) {
+      targetTelegramId = user.telegramUserId;
+    } else {
+      const { resolveTelegramIdForAgreement } = await import('../agreements/agreement-identity.service.js');
+      targetTelegramId = await resolveTelegramIdForAgreement(userId);
+    }
+
+    if (!targetTelegramId) return;
 
     // Verify this Telegram ID has not been superseded by a newer link to a different user
     const allLinksForTg = links
-      .filter((l) => l.telegramUserId === telegramLink.telegramUserId && l.status === 'linked')
+      .filter((l) => l.telegramUserId === targetTelegramId && l.status === 'linked')
       .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
 
     if (allLinksForTg.length > 0 && allLinksForTg[0].paymentUserId !== userId) {
@@ -176,28 +192,115 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
     const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && prefs.telegramNotificationsEnabled === false) return;
 
-    const user = await db.findUserById(userId);
     const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
-
     const amount = `${deposit.amount} ${deposit.asset}`;
     const network = humanNetwork(deposit.chain);
     const text = deposit.status === 'confirmed'
       ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
       : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
 
-    await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
+    const depositKeyboard = [
+      [{ text: '💰 View Balance', callback_data: 'v1:balance' }],
+      [{ text: '🏠 Main Menu', callback_data: 'v1:menu' }],
+    ];
+
+    await fetch(notifyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-notify-secret': secret,
+        'x-target-service': 'telegram',
       },
       body: JSON.stringify({
-        telegramId: telegramLink.telegramUserId,
+        telegramId: targetTelegramId,
         message: text,
+        keyboard: depositKeyboard,
       }),
     });
   } catch {
     // Non-blocking notification enhancement
+  }
+}
+
+/**
+ * Deliver WhatsApp deposit notification if user has linked WhatsApp.
+ */
+export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepositRecord): Promise<void> {
+  try {
+    if (
+      userId.startsWith('usr_dev_') ||
+      userId.startsWith('usr_test_') ||
+      userId.includes('mock') ||
+      userId.includes('test_agent') ||
+      userId.includes('buyer_test') ||
+      userId.includes('seller_test')
+    ) {
+      return;
+    }
+
+    const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
+    const gatewayUrl = (
+      process.env.CORE_API_BASE_URL ||
+      process.env.API_GATEWAY_URL ||
+      process.env.PUBLIC_API_GATEWAY_URL ||
+      (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
+    ).replace(/\/$/, '');
+    const defaultUrl = `${gatewayUrl}/api/whatsapp`;
+    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || process.env.WHATSAPP_BOT_URL || defaultUrl;
+    if (!rawWaUrl) return;
+
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
+    if (!secret) return;
+
+    const user = await db.findUserById(userId);
+    let targetPhone = user?.whatsappNumber;
+    if (!targetPhone) {
+      const links = await db.listCustomerIdentityLinks();
+      const activeWa = links
+        .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.whatsappNumber))
+        .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+      targetPhone = activeWa[0]?.whatsappNumber;
+    }
+    if (!targetPhone && user?.email && /^\+?\d{10,14}$/.test(user.email.split('@')[0])) {
+      targetPhone = `+${user.email.split('@')[0].replace(/\D/g, '')}`;
+    }
+    if (!targetPhone) return;
+
+    const prefs = await db.getUserPreferencesRecord(userId);
+    if (prefs && (prefs as any).whatsappNotificationsEnabled === false) return;
+
+    const userLabel = user?.username ? `@${user.username}` : (user?.fullName || 'your account');
+    const amount = `${deposit.amount} ${deposit.asset}`;
+    const network = humanNetwork(deposit.chain);
+    const text = deposit.status === 'confirmed'
+      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).\n\nQuick reply:\n• Reply BALANCE to view updated funds\n• Reply TRANSFER to send funds\n• Reply CASHOUT to withdraw to bank\n• Reply SETTINGS to manage notification alerts`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.\n\nWe will notify you the moment it settles.`;
+
+    const formattedRecipient = targetPhone.startsWith('whatsapp:')
+      ? targetPhone
+      : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
+
+    const waNotifyUrl = rawWaUrl.endsWith('/api/notify') ? rawWaUrl : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+    const resp = await fetch(waNotifyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-notify-secret': secret,
+        'x-target-service': 'whatsapp-bot',
+      },
+      body: JSON.stringify({
+        to: formattedRecipient,
+        message: text,
+      }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.error(`WhatsApp deposit notify failed [${resp.status}]: ${errText}`);
+    } else {
+      console.log(`WhatsApp deposit notify delivered successfully to ${formattedRecipient}`);
+    }
+  } catch (err: any) {
+    console.error('WhatsApp deposit notification error:', err?.message || err);
   }
 }
 
@@ -227,6 +330,9 @@ export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> 
 
     // Deliver Telegram notification if linked & enabled
     void notifyTelegramDeposit(deposit.userId, deposit);
+
+    // Deliver WhatsApp notification if linked & enabled
+    void notifyWhatsAppDeposit(deposit.userId, deposit);
 
     if (!user?.email) {
       outcome.skipped += 1;

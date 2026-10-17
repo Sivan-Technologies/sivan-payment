@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { normalizeLookupUsername, uniqueUsernameMatch } from './username-resolution.js';
 import { env } from '../config/env.js';
 import { networksServedByWallet } from '../wallets/chain-family.js';
 import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
@@ -9,6 +10,7 @@ import type {
   WalletDepositRecord,
   NgnIdentityVerificationRecord,
   NgnPayoutAccountRecord,
+  StepUpVerificationRequestRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
   AceSupportSessionRecord,
@@ -56,8 +58,10 @@ import type {
   ServiceAgreementRecord,
   PasskeyCredentialRecord,
   PasskeyChallengeRecord,
+  AgreementControlsRecord,
 } from './types.js';
 import type { NgnControlsRecord, NgnQuoteRecord, NgnTransferRecord, NgnWebhookRecord } from '../ngn/types/ngn.types.js';
+import type { GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord } from './types.js';
 import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountRequestRecord, VirtualAccountTransactionRecord } from '../virtual-accounts/types/virtual-account.types.js';
 
 const { Pool } = pg;
@@ -301,6 +305,7 @@ export class PostgresDatabase {
       const paymentControls = await client.query('select * from payments_control_settings order by currency asc');
       const virtualAccountControls = await optionalQuery(client, 'select * from payments_virtual_account_controls order by currency asc');
       const assetControls = await client.query('select * from payments_asset_controls order by asset asc');
+      await ensureNetworkControlsSchema(client);
       const networkControls = await client.query('select * from payments_network_controls order by sort_order asc');
       const systemStatus = await client.query('select * from payments_system_status order by id asc');
       const systemIncidents = await optionalQuery(client, 'select * from payments_system_incidents order by started_at desc, created_at desc');
@@ -541,17 +546,24 @@ export class PostgresDatabase {
 
 
   async findUserByUsername(username: string) {
+    const clean = normalizeLookupUsername(username);
+    if (!clean) return undefined;
     const client = await this.pool.connect();
     try {
-      const result = await optionalQuery(client, 'select * from users where lower(username)=lower($1) limit 1', [username]);
-      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+      const result = await client.query('select * from users where lower(username)=lower($1) or lower(telegram_username)=lower($1) limit 2', [clean]);
+      const row = uniqueUsernameMatch(result.rows);
+      return row ? mapUser(row) : undefined;
     } finally { client.release(); }
   }
 
   async findUserByWhatsappNumber(whatsappNumber: string) {
+    const clean = String(whatsappNumber || '').trim();
+    if (!clean) return undefined;
     const client = await this.pool.connect();
     try {
-      const result = await client.query('select * from users where whatsapp_number=$1 limit 1', [whatsappNumber]);
+      const digitsOnly = clean.replace(/\D/g, '');
+      const candidates = Array.from(new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`])).filter(Boolean);
+      const result = await client.query('select * from users where whatsapp_number = ANY($1) limit 1', [candidates]);
       return result.rows[0] ? mapUser(result.rows[0]) : undefined;
     } finally { client.release(); }
   }
@@ -570,29 +582,83 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try {
       let res = await client.query('select * from users where user_id=$1 limit 1', [clean]);
-      if (res.rows[0]) return mapUser(res.rows[0]);
+      if (res.rows[0]) {
+        const userRec = mapUser(res.rows[0]);
+        if (!userRec.telegramUserId) {
+          const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
+          if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
+          if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+        }
+        return userRec;
+      }
 
       const username = clean.replace(/^@/, '');
-      res = await client.query('select * from users where lower(username)=lower($1) or lower(telegram_username)=lower($1) limit 1', [username]);
-      if (res.rows[0]) return mapUser(res.rows[0]);
+      res = await client.query(`
+        select * from users 
+        where lower(username)=lower($1) 
+           or lower(telegram_username)=lower($1)
+        limit 2
+      `, [username]);
+      uniqueUsernameMatch(res.rows);
+      if (res.rows[0]) {
+        const userRec = mapUser(res.rows[0]);
+        if (!userRec.telegramUserId) {
+          const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
+          if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
+          if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+        }
+        return userRec;
+      }
 
       const digitsOnly = clean.replace(/\D/g, '');
-      res = await client.query('select * from users where whatsapp_number=$1 or whatsapp_number=$2 limit 1', [clean, `+${digitsOnly}`]);
-      if (res.rows[0]) return mapUser(res.rows[0]);
+      const phoneCandidates = Array.from(new Set([
+        clean,
+        digitsOnly ? `+${digitsOnly}` : undefined,
+        digitsOnly || undefined,
+        digitsOnly ? `whatsapp:+${digitsOnly}` : undefined,
+        `whatsapp:${clean}`,
+        digitsOnly.startsWith('234') && digitsOnly.length >= 12 ? `0${digitsOnly.slice(3)}` : undefined,
+        digitsOnly.startsWith('0') && digitsOnly.length === 11 ? `+234${digitsOnly.slice(1)}` : undefined,
+      ])).filter(Boolean);
+
+      if (digitsOnly.length >= 7) {
+        res = await client.query('select * from users where whatsapp_number = ANY($1) limit 1', [phoneCandidates]);
+        if (res.rows[0]) {
+          const userRec = mapUser(res.rows[0]);
+          if (!userRec.telegramUserId) {
+            const link = await client.query('select telegram_user_id, telegram_username from customer_identity_links where payment_user_id=$1 and telegram_user_id is not null order by linked_at desc nulls last limit 1', [userRec.id]);
+            if (link.rows[0]?.telegram_user_id) userRec.telegramUserId = String(link.rows[0].telegram_user_id);
+            if (link.rows[0]?.telegram_username) userRec.telegramUsername = String(link.rows[0].telegram_username);
+          }
+          return userRec;
+        }
+      }
 
       res = await client.query('select * from users where telegram_user_id=$1 limit 1', [clean]);
       if (res.rows[0]) return mapUser(res.rows[0]);
 
-      // Check payments_customer_identity_links for linked Telegram accounts or phones
+      // Check customer_identity_links for linked Telegram accounts or phones
       const linkRes = await client.query(
-        `select payment_user_id from payments_customer_identity_links 
-         where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number=$3 or whatsapp_number=$4
+        `select payment_user_id, telegram_user_id, telegram_username, whatsapp_number from customer_identity_links 
+         where lower(telegram_username)=lower($1) or telegram_user_id=$2 or whatsapp_number = ANY($3)
          order by linked_at desc nulls last limit 1`,
-        [username, clean, clean, `+${digitsOnly}`]
+        [username, clean, phoneCandidates]
       );
       if (linkRes.rows[0]?.payment_user_id) {
         const u = await client.query('select * from users where user_id=$1 limit 1', [linkRes.rows[0].payment_user_id]);
-        if (u.rows[0]) return mapUser(u.rows[0]);
+        if (u.rows[0]) {
+          const userRec = mapUser(u.rows[0]);
+          if (!userRec.telegramUserId && linkRes.rows[0].telegram_user_id) {
+            userRec.telegramUserId = String(linkRes.rows[0].telegram_user_id);
+          }
+          if (!userRec.telegramUsername && linkRes.rows[0].telegram_username) {
+            userRec.telegramUsername = String(linkRes.rows[0].telegram_username);
+          }
+          if (!userRec.whatsappNumber && linkRes.rows[0].whatsapp_number) {
+            userRec.whatsappNumber = String(linkRes.rows[0].whatsapp_number);
+          }
+          return userRec;
+        }
       }
 
       return undefined;
@@ -1249,6 +1315,128 @@ export class PostgresDatabase {
     const client = await this.pool.connect();
     try { await upsertNgnWebhook(client, record); return record; } finally { client.release(); }
   }
+
+  // ------------------------------------------------------------------
+  // GHS corridor (Ghana off-ramp)
+  // ------------------------------------------------------------------
+  // GHS tables are not yet promoted to dedicated Postgres columns, so
+  // we store/retrieve using the shared payments_json_store key-value
+  // table (same pattern as early NGN records before migration).
+
+  async listGhsTransfers(filter?: { userId?: string }): Promise<GhsTransferRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, `
+        SELECT value FROM payments_json_store
+        WHERE key LIKE 'ghs_transfer:%'
+        ORDER BY (value->>'createdAt') ASC
+      `);
+      let rows: GhsTransferRecord[] = result.rows.map((r) => r.value as GhsTransferRecord);
+      if (filter?.userId) rows = rows.filter((t) => t.userId === filter.userId);
+      return rows;
+    } finally { client.release(); }
+  }
+
+  async findGhsTransferById(id: string): Promise<GhsTransferRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client,
+        `SELECT value FROM payments_json_store WHERE key = $1`,
+        [`ghs_transfer:${id}`]
+      );
+      return result.rows.length ? result.rows[0].value as GhsTransferRecord : null;
+    } finally { client.release(); }
+  }
+
+  async upsertGhsTransferRecord(record: GhsTransferRecord): Promise<GhsTransferRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_json_store (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [`ghs_transfer:${record.id}`, JSON.stringify(record)]
+      );
+      return record;
+    } finally { client.release(); }
+  }
+
+  async listGhsPayoutAccounts(userId?: string): Promise<GhsPayoutAccountRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, `
+        SELECT value FROM payments_json_store
+        WHERE key LIKE 'ghs_payout_account:%'
+        ORDER BY (value->>'createdAt') ASC
+      `);
+      let rows: GhsPayoutAccountRecord[] = result.rows.map((r) => r.value as GhsPayoutAccountRecord);
+      if (userId) rows = rows.filter((a) => a.userId === userId);
+      return rows;
+    } finally { client.release(); }
+  }
+
+  async findGhsPayoutAccountById(id: string): Promise<GhsPayoutAccountRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client,
+        `SELECT value FROM payments_json_store WHERE key = $1`,
+        [`ghs_payout_account:${id}`]
+      );
+      return result.rows.length ? result.rows[0].value as GhsPayoutAccountRecord : null;
+    } finally { client.release(); }
+  }
+
+  async upsertGhsPayoutAccountRecord(record: GhsPayoutAccountRecord): Promise<GhsPayoutAccountRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_json_store (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [`ghs_payout_account:${record.id}`, JSON.stringify(record)]
+      );
+      return record;
+    } finally { client.release(); }
+  }
+
+  async listGhsQuotes(userId?: string): Promise<GhsQuoteRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client, `
+        SELECT value FROM payments_json_store
+        WHERE key LIKE 'ghs_quote:%'
+        ORDER BY (value->>'createdAt') ASC
+      `);
+      let rows: GhsQuoteRecord[] = result.rows.map((r) => r.value as GhsQuoteRecord);
+      if (userId) rows = rows.filter((q) => q.userId === userId);
+      return rows;
+    } finally { client.release(); }
+  }
+
+  async findGhsQuoteById(id: string): Promise<GhsQuoteRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await optionalQuery(client,
+        `SELECT value FROM payments_json_store WHERE key = $1`,
+        [`ghs_quote:${id}`]
+      );
+      return result.rows.length ? result.rows[0].value as GhsQuoteRecord : null;
+    } finally { client.release(); }
+  }
+
+  async upsertGhsQuoteRecord(record: GhsQuoteRecord): Promise<GhsQuoteRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        `INSERT INTO payments_json_store (key, value)
+         VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [`ghs_quote:${record.id}`, JSON.stringify(record)]
+      );
+      return record;
+    } finally { client.release(); }
+  }
+
   async insertSupportTicketRecord(record: SupportTicketRecord) {
     const client = await this.pool.connect();
     try { await upsertSupportTicket(client, record); return record; } finally { client.release(); }
@@ -1930,6 +2118,15 @@ export class PostgresDatabase {
         `insert into payments_ngn_identity_verifications
            (id, user_id, check_type, status, provider, provider_reference, bvn_last4, bvn_hash, matched_fields, verified_at, created_at, updated_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         on conflict (id) do update set
+           status = excluded.status,
+           provider = excluded.provider,
+           provider_reference = coalesce(excluded.provider_reference, payments_ngn_identity_verifications.provider_reference),
+           bvn_last4 = coalesce(excluded.bvn_last4, payments_ngn_identity_verifications.bvn_last4),
+           bvn_hash = coalesce(excluded.bvn_hash, payments_ngn_identity_verifications.bvn_hash),
+           matched_fields = coalesce(excluded.matched_fields, payments_ngn_identity_verifications.matched_fields),
+           verified_at = coalesce(excluded.verified_at, payments_ngn_identity_verifications.verified_at),
+           updated_at = excluded.updated_at
          returning *`,
         [
           record.id, record.userId, record.checkType, record.status, record.provider,
@@ -2180,14 +2377,22 @@ export class PostgresDatabase {
         `INSERT INTO payments_service_agreements
           (id, buyer_user_id, seller_user_id, title, description, amount_usdc, currency, network,
            status, deadline_days, delivery_due_at, reminder_6h_sent, overdue_notice_sent,
-           funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, channel, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+           funded_at, delivered_at, released_at, funding_tx_hash, release_tx_hash, vault_address, channel,
+           fee_amount_usdc, seller_net_amount_usdc, buyer_total_payable_usdc, fee_payer, fee_percent, fee_tx_hash,
+           created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
          ON CONFLICT (id) DO UPDATE SET
            status=EXCLUDED.status,
            deadline_days=EXCLUDED.deadline_days,
            delivery_due_at=COALESCE(EXCLUDED.delivery_due_at, payments_service_agreements.delivery_due_at),
            funded_at=COALESCE(EXCLUDED.funded_at, payments_service_agreements.funded_at),
            funding_tx_hash=COALESCE(EXCLUDED.funding_tx_hash, payments_service_agreements.funding_tx_hash),
+           fee_amount_usdc=COALESCE(EXCLUDED.fee_amount_usdc, payments_service_agreements.fee_amount_usdc),
+           seller_net_amount_usdc=COALESCE(EXCLUDED.seller_net_amount_usdc, payments_service_agreements.seller_net_amount_usdc),
+           buyer_total_payable_usdc=COALESCE(EXCLUDED.buyer_total_payable_usdc, payments_service_agreements.buyer_total_payable_usdc),
+           fee_payer=COALESCE(EXCLUDED.fee_payer, payments_service_agreements.fee_payer),
+           fee_percent=COALESCE(EXCLUDED.fee_percent, payments_service_agreements.fee_percent),
+           fee_tx_hash=COALESCE(EXCLUDED.fee_tx_hash, payments_service_agreements.fee_tx_hash),
            updated_at=EXCLUDED.updated_at`,
         [
           record.id, record.buyerUserId, record.sellerUserId, record.title, record.description,
@@ -2196,6 +2401,12 @@ export class PostgresDatabase {
           record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
           record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
           record.channel || 'web',
+          record.feeAmountUsdc ?? null,
+          record.sellerNetAmountUsdc ?? null,
+          record.buyerTotalPayableUsdc ?? null,
+          record.feePayer ?? null,
+          record.feePercent ?? null,
+          record.feeTxHash ?? null,
           record.createdAt, record.updatedAt,
         ]
       );
@@ -2213,7 +2424,14 @@ export class PostgresDatabase {
            status=$2, deadline_days=$3, delivery_due_at=$4,
            reminder_6h_sent=$5, overdue_notice_sent=$6,
            funded_at=$7, delivered_at=$8, released_at=$9,
-           funding_tx_hash=$10, release_tx_hash=$11, vault_address=$12, channel=$13, updated_at=$14
+           funding_tx_hash=$10, release_tx_hash=$11, vault_address=$12, channel=$13,
+           fee_amount_usdc=COALESCE($14, fee_amount_usdc),
+           seller_net_amount_usdc=COALESCE($15, seller_net_amount_usdc),
+           buyer_total_payable_usdc=COALESCE($16, buyer_total_payable_usdc),
+           fee_payer=COALESCE($17, fee_payer),
+           fee_percent=COALESCE($18, fee_percent),
+           fee_tx_hash=COALESCE($19, fee_tx_hash),
+           updated_at=$20
          WHERE id=$1`,
         [
           record.id, record.status, record.deadlineDays, record.deliveryDueAt ?? null,
@@ -2221,6 +2439,12 @@ export class PostgresDatabase {
           record.fundedAt ?? null, record.deliveredAt ?? null, record.releasedAt ?? null,
           record.fundingTxHash ?? null, record.releaseTxHash ?? null, record.vaultAddress ?? null,
           record.channel || 'web',
+          record.feeAmountUsdc ?? null,
+          record.sellerNetAmountUsdc ?? null,
+          record.buyerTotalPayableUsdc ?? null,
+          record.feePayer ?? null,
+          record.feePercent ?? null,
+          record.feeTxHash ?? null,
           record.updatedAt,
         ]
       );
@@ -2267,6 +2491,21 @@ export class PostgresDatabase {
         [id]
       );
       return result.rows[0] ? mapServiceAgreement(result.rows[0]) : null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listServiceAgreements(limit = 200): Promise<ServiceAgreementRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT * FROM payments_service_agreements
+         ORDER BY created_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+      return result.rows.map(mapServiceAgreement);
     } finally {
       client.release();
     }
@@ -2522,6 +2761,215 @@ export class PostgresDatabase {
       client.release();
     }
   }
+
+  async createVerificationRequest(record: StepUpVerificationRequestRecord): Promise<StepUpVerificationRequestRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS payments_verification_requests (
+          id VARCHAR(64) PRIMARY KEY,
+          user_id VARCHAR(64) NOT NULL,
+          admin_id VARCHAR(64) NOT NULL,
+          requested_modules JSONB NOT NULL,
+          reason VARCHAR(255) NOT NULL,
+          status VARCHAR(32) NOT NULL DEFAULT 'pending',
+          token_hash VARCHAR(128) NOT NULL UNIQUE,
+          expires_at TIMESTAMPTZ NOT NULL,
+          submitted_at TIMESTAMPTZ,
+          submission_data JSONB,
+          reviewed_at TIMESTAMPTZ,
+          reviewed_by VARCHAR(64),
+          review_notes TEXT,
+          metadata JSONB DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await client.query(
+        `INSERT INTO payments_verification_requests
+         (id, user_id, admin_id, requested_modules, reason, status, token_hash, expires_at, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          record.id,
+          record.userId,
+          record.adminId,
+          JSON.stringify(record.requestedModules),
+          record.reason,
+          record.status,
+          record.tokenHash,
+          record.expiresAt,
+          record.createdAt,
+          record.updatedAt,
+        ]
+      );
+      return record;
+    } catch {
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getVerificationRequestById(id: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_verification_requests WHERE id = $1 LIMIT 1', [id]);
+      if (!result.rows.length) return undefined;
+      return this.mapVerificationRequest(result.rows[0]);
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getVerificationRequestByTokenHash(tokenHash: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query('SELECT * FROM payments_verification_requests WHERE token_hash = $1 LIMIT 1', [tokenHash]);
+      if (!result.rows.length) return undefined;
+      return this.mapVerificationRequest(result.rows[0]);
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listVerificationRequests(userId?: string): Promise<StepUpVerificationRequestRecord[]> {
+    const client = await this.pool.connect();
+    try {
+      const query = userId
+        ? 'SELECT * FROM payments_verification_requests WHERE user_id = $1 ORDER BY created_at DESC'
+        : 'SELECT * FROM payments_verification_requests ORDER BY created_at DESC';
+      const params = userId ? [userId] : [];
+      const result = await client.query(query, params);
+      return result.rows.map((r) => this.mapVerificationRequest(r));
+    } catch {
+      return [];
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateVerificationRequest(
+    id: string,
+    patch: Partial<StepUpVerificationRequestRecord>
+  ): Promise<StepUpVerificationRequestRecord | undefined> {
+    const client = await this.pool.connect();
+    try {
+      const current = await this.getVerificationRequestById(id);
+      if (!current) return undefined;
+      const merged = { ...current, ...patch, updatedAt: new Date().toISOString() };
+      await client.query(
+        `UPDATE payments_verification_requests SET
+          status = $1,
+          submitted_at = $2,
+          submission_data = $3,
+          reviewed_at = $4,
+          reviewed_by = $5,
+          review_notes = $6,
+          metadata = $7,
+          updated_at = $8
+         WHERE id = $9`,
+        [
+          merged.status,
+          merged.submittedAt || null,
+          merged.submissionData ? JSON.stringify(merged.submissionData) : null,
+          merged.reviewedAt || null,
+          merged.reviewedBy || null,
+          merged.reviewNotes || null,
+          JSON.stringify(merged.metadata || {}),
+          merged.updatedAt,
+          id,
+        ]
+      );
+      return merged;
+    } catch {
+      return undefined;
+    } finally {
+      client.release();
+    }
+  }
+
+  private mapVerificationRequest(r: any): StepUpVerificationRequestRecord {
+    return {
+      id: r.id,
+      userId: r.user_id,
+      adminId: r.admin_id,
+      requestedModules: typeof r.requested_modules === 'string' ? JSON.parse(r.requested_modules) : (r.requested_modules || []),
+      reason: r.reason,
+      status: r.status,
+      tokenHash: r.token_hash,
+      expiresAt: r.expires_at?.toISOString?.() || r.expires_at,
+      submittedAt: r.submitted_at?.toISOString?.() || r.submitted_at,
+      submissionData: typeof r.submission_data === 'string' ? JSON.parse(r.submission_data) : r.submission_data,
+      reviewedAt: r.reviewed_at?.toISOString?.() || r.reviewed_at,
+      reviewedBy: r.reviewed_by,
+      reviewNotes: r.review_notes,
+      metadata: typeof r.metadata === 'string' ? JSON.parse(r.metadata) : (r.metadata || {}),
+      createdAt: r.created_at?.toISOString?.() || r.created_at,
+      updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+    };
+  }
+
+  async getAgreementControls(): Promise<AgreementControlsRecord | null> {
+    const client = await this.pool.connect();
+    try {
+      await ensureAgreementControlsSchema(client);
+      const result = await client.query(
+        'SELECT * FROM payments_agreement_controls WHERE id = $1 LIMIT 1',
+        ['default_controls']
+      );
+      if (!result.rows.length) return null;
+      return mapAgreementControls(result.rows[0]);
+    } catch (err) {
+      console.warn('[postgres.getAgreementControls]', err);
+      return null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveAgreementControls(record: AgreementControlsRecord): Promise<AgreementControlsRecord> {
+    const client = await this.pool.connect();
+    try {
+      await ensureAgreementControlsSchema(client);
+      await client.query(
+        `INSERT INTO payments_agreement_controls
+           (id, creation_enabled, servicing_enabled, emergency_halt, pilot_whitelist_only, allowed_networks, maintenance_message, updated_by_admin_id, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+         ON CONFLICT (id) DO UPDATE SET
+           creation_enabled     = EXCLUDED.creation_enabled,
+           servicing_enabled    = EXCLUDED.servicing_enabled,
+           emergency_halt       = EXCLUDED.emergency_halt,
+           pilot_whitelist_only = EXCLUDED.pilot_whitelist_only,
+           allowed_networks     = EXCLUDED.allowed_networks,
+           maintenance_message  = EXCLUDED.maintenance_message,
+           updated_by_admin_id  = EXCLUDED.updated_by_admin_id,
+           updated_at           = EXCLUDED.updated_at`,
+        [
+          record.id,
+          record.creationEnabled,
+          record.servicingEnabled,
+          record.emergencyHalt,
+          record.pilotWhitelistOnly,
+          JSON.stringify(record.allowedNetworks),
+          record.maintenanceMessage,
+          record.updatedByAdminId ?? null,
+          record.updatedAt,
+        ]
+      );
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
 }
 
 
@@ -2536,7 +2984,13 @@ async function ensureServiceAgreementsSchema(client: pg.PoolClient) {
       ADD COLUMN IF NOT EXISTS funding_tx_hash TEXT,
       ADD COLUMN IF NOT EXISTS release_tx_hash TEXT,
       ADD COLUMN IF NOT EXISTS vault_address TEXT,
-      ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'web';
+      ADD COLUMN IF NOT EXISTS channel VARCHAR(50) DEFAULT 'web',
+      ADD COLUMN IF NOT EXISTS fee_amount_usdc NUMERIC,
+      ADD COLUMN IF NOT EXISTS seller_net_amount_usdc NUMERIC,
+      ADD COLUMN IF NOT EXISTS buyer_total_payable_usdc NUMERIC,
+      ADD COLUMN IF NOT EXISTS fee_payer VARCHAR(20) DEFAULT 'seller',
+      ADD COLUMN IF NOT EXISTS fee_percent NUMERIC,
+      ADD COLUMN IF NOT EXISTS fee_tx_hash TEXT;
 
       ALTER TABLE payments_service_agreements
       DROP CONSTRAINT IF EXISTS payments_service_agreements_buyer_user_id_fkey,
@@ -2546,6 +3000,67 @@ async function ensureServiceAgreementsSchema(client: pg.PoolClient) {
   } catch (err) {
     console.warn('[postgres.migration.service_agreements]', err);
   }
+}
+
+let agreementControlsSchemaMigrated = false;
+async function ensureAgreementControlsSchema(client: pg.PoolClient) {
+  if (agreementControlsSchemaMigrated) return;
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS payments_agreement_controls (
+        id TEXT PRIMARY KEY DEFAULT 'default_controls',
+        creation_enabled BOOLEAN NOT NULL DEFAULT false,
+        servicing_enabled BOOLEAN NOT NULL DEFAULT true,
+        emergency_halt BOOLEAN NOT NULL DEFAULT false,
+        pilot_whitelist_only BOOLEAN NOT NULL DEFAULT false,
+        allowed_networks JSONB NOT NULL DEFAULT '[]',
+        maintenance_message TEXT NOT NULL DEFAULT 'Service Agreement creation is reserved for verified pilot partners during mainnet staging. Active agreements continue to settle normally.',
+        updated_by_admin_id TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    agreementControlsSchemaMigrated = true;
+  } catch (err) {
+    console.warn('[postgres.migration.agreement_controls]', err);
+  }
+}
+
+let networkControlsSchemaMigrated = false;
+async function ensureNetworkControlsSchema(client: pg.PoolClient) {
+  if (networkControlsSchemaMigrated) return;
+  try {
+    await client.query(`
+      ALTER TABLE payments_network_controls ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false;
+      INSERT INTO payments_network_controls (network, enabled, is_default, label, sort_order, updated_by, updated_at)
+      VALUES
+        ('solana', true, true, 'Solana', 10, 'system', NOW()),
+        ('base', true, false, 'Base', 20, 'system', NOW()),
+        ('bsc', true, false, 'BNB Chain', 25, 'system', NOW()),
+        ('arc', true, false, 'Arc', 26, 'system', NOW()),
+        ('arbitrum', true, false, 'Arbitrum', 27, 'system', NOW()),
+        ('stellar', true, false, 'Stellar', 28, 'system', NOW()),
+        ('celo', true, false, 'Celo', 29, 'system', NOW()),
+        ('starknet', true, false, 'Starknet', 30, 'system', NOW())
+      ON CONFLICT (network) DO NOTHING;
+    `);
+    networkControlsSchemaMigrated = true;
+  } catch (err) {
+    console.warn('[postgres.migration.network_controls]', err);
+  }
+}
+
+function mapAgreementControls(row: any): AgreementControlsRecord {
+  return {
+    id: 'default_controls',
+    creationEnabled: Boolean(row.creation_enabled),
+    servicingEnabled: Boolean(row.servicing_enabled),
+    emergencyHalt: Boolean(row.emergency_halt),
+    pilotWhitelistOnly: Boolean(row.pilot_whitelist_only),
+    allowedNetworks: Array.isArray(row.allowed_networks) ? row.allowed_networks : JSON.parse(row.allowed_networks ?? '[]'),
+    maintenanceMessage: row.maintenance_message ?? '',
+    updatedByAdminId: row.updated_by_admin_id ?? undefined,
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
 }
 
 function mapServiceAgreement(row: any): ServiceAgreementRecord {
@@ -2570,6 +3085,12 @@ function mapServiceAgreement(row: any): ServiceAgreementRecord {
     releaseTxHash: row.release_tx_hash ?? null,
     vaultAddress: row.vault_address ?? null,
     channel: row.channel || 'web',
+    feeAmountUsdc: row.fee_amount_usdc != null ? Number(row.fee_amount_usdc) : undefined,
+    sellerNetAmountUsdc: row.seller_net_amount_usdc != null ? Number(row.seller_net_amount_usdc) : undefined,
+    buyerTotalPayableUsdc: row.buyer_total_payable_usdc != null ? Number(row.buyer_total_payable_usdc) : undefined,
+    feePayer: row.fee_payer ?? undefined,
+    feePercent: row.fee_percent != null ? Number(row.fee_percent) : undefined,
+    feeTxHash: row.fee_tx_hash ?? null,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
@@ -3552,6 +4073,19 @@ async function upsertVirtualAccountRequest(client: pg.PoolClient, item: VirtualA
 }
 
 async function upsertVirtualAccount(client: pg.PoolClient, item: VirtualAccountRecord) {
+  // Defensive guard: Ensure foreign key target exists in users table
+  const userCheck = await client.query('select 1 from users where user_id = $1 limit 1', [item.userId]);
+  if (userCheck.rowCount === 0) {
+    const now = new Date().toISOString();
+    const fallbackEmail = `${String(item.userId).replace(/[^a-zA-Z0-9_-]/g, '_')}@user.sivantech.online`;
+    await client.query(
+      `insert into users (user_id, email, first_name, last_name, role_history, primary_channel, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       on conflict (user_id) do nothing`,
+      [item.userId, fallbackEmail, 'Sivan', 'User', JSON.stringify(['payments_user']), 'whatsapp', now, now]
+    );
+  }
+
   await client.query(
     `insert into payments_virtual_accounts (id, request_id, user_id, payments_customer_id, provider, provider_account_id, currency, country, bank_name, account_name, account_number_masked, routing_number_masked, iban_masked, status, raw_provider_payload, created_at, updated_at)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
@@ -3750,6 +4284,19 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
 }
 
 async function upsertCustomer(client: pg.PoolClient, item: CustomerRecord) {
+  // Defensive guard: Ensure foreign key target exists in users table
+  const userCheck = await client.query('select 1 from users where user_id = $1 limit 1', [item.userId]);
+  if (userCheck.rowCount === 0) {
+    const now = new Date().toISOString();
+    const fallbackEmail = `${String(item.userId).replace(/[^a-zA-Z0-9_-]/g, '_')}@user.sivantech.online`;
+    await client.query(
+      `insert into users (user_id, email, first_name, last_name, role_history, primary_channel, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       on conflict (user_id) do nothing`,
+      [item.userId, fallbackEmail, 'Sivan', 'User', JSON.stringify(['payments_user']), 'whatsapp', now, now]
+    );
+  }
+
   await client.query(
     `insert into payments_customers (id, user_id, provider, provider_customer_id, customer_type, kyc_link_id, kyc_link, tos_link, kyc_status, tos_status, onboarding_cost_usd, onboarding_cost_type, onboarding_cost_recorded_at, raw_payload, created_at, updated_at)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)

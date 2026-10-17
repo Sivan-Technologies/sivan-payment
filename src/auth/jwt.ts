@@ -63,3 +63,17 @@ export function verifyUserJwt(token: string): UserJwtPayload {
   if (payload.iss !== 'sivan-payments-api' || payload.aud !== 'sivan-payments-user' || payload.typ !== 'user') throw new Error('Invalid token');
   return payload;
 }
+
+export function getAuthUserId(request: any): string | undefined {
+  if (request?.authUser?.sub) return request.authUser.sub;
+  if (request?.user?.id) return request.user.id;
+  const header = request?.headers?.authorization;
+  const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+  if (token) {
+    try {
+      const payload = verifyUserJwt(token);
+      return payload.sub;
+    } catch {}
+  }
+  return undefined;
+}
