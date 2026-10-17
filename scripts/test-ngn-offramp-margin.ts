@@ -88,13 +88,20 @@ const quote = await req(
   { headers: authHeaders }
 );
 
-const rate = Number(quote.rate);
-const source = Number(quote.sourceAmount);
 const fees = quote.metadata.fees;
-const grossNgn = source * rate;
+const grossRate = Number(fees.grossRate ?? quote.rate);
+const netRate = Number(quote.rate);
+const source = Number(quote.sourceAmount);
+const grossNgn = source * grossRate;
 
-assert.ok(rate > 0, `quote must carry a rate, got ${quote.rate}`);
+assert.ok(netRate > 0, `quote must carry a rate, got ${quote.rate}`);
+assert.ok(netRate < grossRate, `quote.rate ${netRate} should be net rate embedding deductions from gross ${grossRate}`);
 assert.equal(fees.revenueMode, 'sivan_fee_wallet', `expected wallet-fee revenue mode, got ${fees.revenueMode}`);
+assert.equal(fees.allInclusive, true, 'expected allInclusive fees flag');
+assert.equal(quote.feeAmount, '0.00', 'quote.feeAmount must be 0.00 for all-inclusive model');
+assert.equal(fees.userFee, '0.00', 'fees.userFee must be 0.00');
+assert.equal(fees.userFeeNgn, '0.00', 'fees.userFeeNgn must be 0.00');
+assert.equal(fees.reconciliationDrift, '0.00', 'internal reconciliation drift must be 0.00');
 
 /**
  * 1. THE MARGIN HAS EXPLICIT UNITS.
@@ -110,8 +117,8 @@ assert.ok(
   `sivanMarginNgn should be naira (~${expectedMarginNgn.toFixed(2)}), got ${fees.sivanMarginNgn}.`
 );
 assert.ok(
-  Math.abs(Number(fees.sivanMarginAsset) - (Number(fees.sivanMarginNgn) / rate)) < 0.000001,
-  `sivanMarginAsset ${fees.sivanMarginAsset} should equal sivanMarginNgn / rate`
+  Math.abs(Number(fees.sivanMarginAsset) - (Number(fees.sivanMarginNgn) / grossRate)) < 0.000001,
+  `sivanMarginAsset ${fees.sivanMarginAsset} should equal sivanMarginNgn / grossRate`
 );
 
 /**
@@ -162,10 +169,6 @@ assert.ok(
   `effectivePercent ${fees.effectivePercent} should equal totalFeeNgn / grossNgn`
 );
 assert.ok(
-  Math.abs(Number(quote.feeAmount) - Number(fees.totalFeeAsset)) < 0.000001,
-  `quote.feeAmount ${quote.feeAmount} should be the source-asset total ${fees.totalFeeAsset}`
-);
-assert.ok(
   Number(fees.effectivePercent) > 0 && Number(fees.effectivePercent) < 20,
   `effectivePercent ${fees.effectivePercent} is not a believable fee percentage`
 );
@@ -182,12 +185,13 @@ assert.equal(Number(noRevenueQuote.metadata.fees.sivanMarginAsset), 0);
 assert.equal(Number(noRevenueQuote.metadata.fees.sivanMarginNgn), 0);
 
 console.log('ngn off-ramp margin:');
-console.log(`  gross            ${grossNgn.toFixed(2)} NGN  (${source} @ ${rate})`);
+console.log(`  gross            ${grossNgn.toFixed(2)} NGN  (${source} @ gross ${grossRate}, net ${netRate})`);
 console.log(`  provider fee     ${Number(fees.providerFeeNgn).toFixed(2)} NGN / ${Number(fees.providerFeeAsset).toFixed(6)} asset`);
 console.log(`  sivan margin     ${Number(fees.sivanMarginNgn).toFixed(2)} NGN / ${Number(fees.sivanMarginAsset).toFixed(6)} asset`);
 console.log(`  total fee        ${Number(fees.totalFeeNgn).toFixed(2)} NGN / ${Number(fees.totalFeeAsset).toFixed(6)} asset`);
 console.log(`  user receives    ${Number(quote.destinationAmount).toFixed(2)} NGN`);
 console.log(`  effective        ${fees.effectivePercent}%`);
-console.log('PASS test:ngn-offramp-margin (9 assertions)');
+console.log(`  drift            ${fees.reconciliationDrift} NGN`);
+console.log('PASS test:ngn-offramp-margin (all assertions passed, zero drift)');
 
 await app.close();
