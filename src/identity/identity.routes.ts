@@ -801,6 +801,7 @@ export async function identityRoutes(app: FastifyInstance) {
           email: `reset_${user.id}_${Date.now()}@sivantech.online`,
           whatsappNumber: undefined,
           telegramUserId: undefined,
+          username: undefined,
           updatedAt: nowIso(),
         });
         unlinkedPhone = true;
@@ -1097,7 +1098,15 @@ export async function identityRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: { message: 'Missing target query parameter' } });
     }
 
-    const user = await db.findUserByTarget(target);
+    let user = await db.findUserByTarget(target);
+    if (!user) {
+      const rawClean = target.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+      if (rawClean.length >= 7 && /^\d+$/.test(rawClean)) {
+        user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) ||
+               (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) ||
+               (await db.findUserByWhatsappNumber(rawClean));
+      }
+    }
     if (!user) {
       return { data: { found: false, target } };
     }
