@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolveUsername } from '../database/username-resolution.js';
 import { db } from '../database/json-database.js';
 import type { UserRecord } from '../database/types.js';
 import { createAuditLog } from '../audit/audit.service.js';
@@ -34,7 +35,7 @@ async function findUsernameOwner(username: string): Promise<UserRecord | undefin
   const finder = (db as any).findUserByUsername as undefined | ((name: string) => Promise<UserRecord | undefined>);
   if (finder) return finder.call(db, username);
   const data = await db.read();
-  return data.users.find((user) => user.username?.toLowerCase() === username.toLowerCase());
+  return resolveUsername(data.users, username);
 }
 
 async function usernameLocked(userId: string, user: UserRecord) {

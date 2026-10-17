@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { normalizeLookupUsername, uniqueUsernameMatch } from './username-resolution.js';
 import { env } from '../config/env.js';
 import { networksServedByWallet } from '../wallets/chain-family.js';
 import { NGN_LIMIT_CONSUMING_STATUSES } from '../ngn/types/ngn.types.js';
@@ -545,10 +546,13 @@ export class PostgresDatabase {
 
 
   async findUserByUsername(username: string) {
+    const clean = normalizeLookupUsername(username);
+    if (!clean) return undefined;
     const client = await this.pool.connect();
     try {
-      const result = await optionalQuery(client, 'select * from users where lower(username)=lower($1) limit 1', [username]);
-      return result.rows[0] ? mapUser(result.rows[0]) : undefined;
+      const result = await client.query('select * from users where lower(username)=lower($1) or lower(telegram_username)=lower($1) limit 2', [clean]);
+      const row = uniqueUsernameMatch(result.rows);
+      return row ? mapUser(row) : undefined;
     } finally { client.release(); }
   }
 
@@ -593,10 +597,9 @@ export class PostgresDatabase {
         select * from users 
         where lower(username)=lower($1) 
            or lower(telegram_username)=lower($1)
-           or lower(replace(coalesce(first_name,'') || coalesce(last_name,''), ' ', '')) = lower($1)
-           or lower(replace(coalesce(first_name,'') || ' ' || coalesce(last_name,''), ' ', '')) = lower($1)
-        limit 1
+        limit 2
       `, [username]);
+      uniqueUsernameMatch(res.rows);
       if (res.rows[0]) {
         const userRec = mapUser(res.rows[0]);
         if (!userRec.telegramUserId) {
