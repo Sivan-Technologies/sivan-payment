@@ -347,13 +347,20 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
    * risk here precisely because nothing credits the ledger from an on-chain
    * deposit, which is the bug that started this.
    */
+  const unabsorbedHoldsByAsset = new Map<string, number>();
+
   for (const entry of ledger.balances) {
-    const row = ensure(String(entry.asset).toLowerCase());
+    const assetKey = String(entry.asset).toLowerCase();
+    const row = ensure(assetKey);
     // Only positive ledger credits (from virtual accounts or admin adjustments)
     // represent off-chain funds in pooled custody that add to the user's chain balance.
     // Negative ledger available caused by on-chain wallet debits (which have no ledger credit)
     // must NEVER drag down on-chain balances that have already been debited by the blockchain consensus.
-    const pooledCredits = Math.max(0, num(entry.available));
+    const ledgerAvailable = num(entry.available);
+    const pooledCredits = Math.max(0, ledgerAvailable);
+    const unabsorbedHoldAgainstChain = Math.max(0, -ledgerAvailable);
+    unabsorbedHoldsByAsset.set(assetKey, unabsorbedHoldAgainstChain);
+
     row.credited = money(pooledCredits);
     row.held = money(num(entry.held));
     row.pending = money(num(entry.pending));
@@ -369,11 +376,15 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
 
   for (const row of byAsset.values()) {
     if (anyChainUnavailable) row.chainUnavailable = true;
+    const unabsorbed = unabsorbedHoldsByAsset.get(row.asset) ?? (num(row.credited) === 0 ? num(row.held) : 0);
+    const chainSpendable = Math.max(0, num(row.chain) - unabsorbed);
     // Floored at zero: a hold larger than the readable balance is possible
     // mid-settlement, and a negative spendable figure is never useful to show.
+    // row.credited is already net of ledger-absorbed holds. Only holds exceeding
+    // the ledger reduce on-chain balances.
     row.spendable = row.chainUnavailable && num(row.chain) === 0
-      ? money(Math.max(num(row.credited) - num(row.held), 0))
-      : money(Math.max(num(row.chain) + num(row.credited) - num(row.held), 0));
+      ? money(num(row.credited))
+      : money(chainSpendable + num(row.credited));
   }
 
   const result: UnifiedBalance = {

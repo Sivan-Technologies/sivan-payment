@@ -37,6 +37,7 @@ function pruneExpiredDedupKeys(): void {
 }
 import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
+import { createUser } from '../users/users.service.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { getSpendable, getUnifiedBalance, invalidateUnifiedBalanceCache } from './unified-balance.service.js';
@@ -1929,5 +1930,186 @@ export async function fundServiceAgreementFromBalance(
     amount: input.amount,
     currency: input.currency.toUpperCase(),
     ledgerEntryId: entry.entryId,
+  };
+}
+
+export const releaseAgreementSchema = z.object({
+  agreementId: z.string().min(1),
+  buyerUserId: z.string().optional(),
+  sellerUserId: z.string().min(1),
+  amount: z.number().positive(),
+  sellerNetAmount: z.number().positive().optional(),
+  feeAmount: z.number().min(0).optional(),
+  currency: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['ngn', 'usdc', 'usdt'])).default('ngn'),
+});
+
+export async function releaseServiceAgreementFromBalance(
+  userId: string,
+  input: z.infer<typeof releaseAgreementSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  let resolvedBuyerId = input.buyerUserId || userId;
+  const rawBuyerClean = resolvedBuyerId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (resolvedBuyerId.startsWith('+') || resolvedBuyerId.startsWith('whatsapp:') || /^\d{7,15}$/.test(resolvedBuyerId)) {
+    const user = (await db.findUserByWhatsappNumber(`+${rawBuyerClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawBuyerClean).catch(() => null))
+      || (await db.findUserById(resolvedBuyerId).catch(() => null));
+    if (user) resolvedBuyerId = user.id;
+  }
+
+  let resolvedSellerId = input.sellerUserId;
+  const rawSellerClean = resolvedSellerId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (resolvedSellerId.startsWith('+') || resolvedSellerId.startsWith('whatsapp:') || /^\d{7,15}$/.test(resolvedSellerId)) {
+    let user = (await db.findUserByWhatsappNumber(`+${rawSellerClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawSellerClean).catch(() => null))
+      || (await db.findUserById(resolvedSellerId).catch(() => null));
+    if (!user) {
+      user = await createUser({
+        fullName: `Freelancer ${rawSellerClean.slice(-4) || 'User'}`,
+        whatsappNumber: `+${rawSellerClean}`,
+        primaryChannel: 'whatsapp'
+      }).catch(() => null) as any;
+    }
+    if (user) resolvedSellerId = user.id;
+  }
+
+  const cleanAsset = input.currency.toLowerCase() as BalanceAsset;
+
+  const existingLedger = await listUserBalanceLedger(resolvedBuyerId).catch(() => []);
+  const alreadySettled = existingLedger.some(
+    (e) => (e.sourceType === 'service_agreement_settlement' || e.transferId === `agr_settle_${input.agreementId}`) && e.sourceId === input.agreementId
+  );
+  if (alreadySettled) {
+    return {
+      success: true,
+      alreadySettled: true,
+      agreementId: input.agreementId,
+      amount: input.amount,
+      currency: input.currency.toUpperCase(),
+    };
+  }
+
+  const totalAmount = input.amount;
+  let fee = input.feeAmount !== undefined ? input.feeAmount : 0;
+  let sellerNet = input.sellerNetAmount !== undefined ? input.sellerNetAmount : (totalAmount - fee);
+  if (sellerNet <= 0 || fee < 0) {
+    fee = Math.max(0, totalAmount - (input.sellerNetAmount ?? totalAmount));
+    sellerNet = totalAmount - fee;
+  }
+
+  const paymentReference = `agr_settle_${input.agreementId}`;
+
+  await createBalanceLedgerEntry(
+    {
+      userId: resolvedBuyerId,
+      asset: cleanAsset,
+      amount: sellerNet.toFixed(2),
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: 'service_agreement_settlement',
+      sourceId: input.agreementId,
+      description: `Service Agreement ${input.agreementId} release payout`,
+      destinationAddress: resolvedSellerId,
+      transferId: paymentReference,
+    },
+    { actorType: 'system', actorId: 'agreement_settlement' }
+  );
+
+  if (fee > 0) {
+    await createBalanceLedgerEntry(
+      {
+        userId: resolvedBuyerId,
+        asset: cleanAsset,
+        amount: fee.toFixed(2),
+        kind: 'fee',
+        status: 'completed',
+        sourceType: 'service_agreement_fee',
+        sourceId: input.agreementId,
+        description: `Service Agreement ${input.agreementId} platform fee`,
+        transferId: `agr_fee_${input.agreementId}`,
+      },
+      { actorType: 'system', actorId: 'agreement_settlement' }
+    );
+  }
+
+  await createBalanceLedgerEntry(
+    {
+      userId: resolvedSellerId,
+      asset: cleanAsset,
+      amount: sellerNet.toFixed(2),
+      kind: 'credit_available',
+      status: 'available',
+      sourceType: 'service_agreement_payout',
+      sourceId: input.agreementId,
+      description: `Payment received for Service Agreement ${input.agreementId}`,
+      transferId: `agr_payout_${input.agreementId}`,
+    },
+    { actorType: 'system', actorId: 'agreement_settlement' }
+  );
+
+  return {
+    success: true,
+    agreementId: input.agreementId,
+    totalAmount,
+    sellerNetAmount: sellerNet,
+    feeAmount: fee,
+    currency: input.currency.toUpperCase(),
+    buyerUserId: resolvedBuyerId,
+    sellerUserId: resolvedSellerId,
+  };
+}
+
+export const refundAgreementSchema = z.object({
+  agreementId: z.string().min(1),
+  buyerUserId: z.string().optional(),
+  amount: z.number().positive(),
+  currency: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['ngn', 'usdc', 'usdt'])).default('ngn'),
+  reason: z.string().optional(),
+});
+
+export async function refundServiceAgreementFromBalance(
+  userId: string,
+  input: z.infer<typeof refundAgreementSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  let resolvedBuyerId = input.buyerUserId || userId;
+  const rawBuyerClean = resolvedBuyerId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (resolvedBuyerId.startsWith('+') || resolvedBuyerId.startsWith('whatsapp:') || /^\d{7,15}$/.test(resolvedBuyerId)) {
+    const user = (await db.findUserByWhatsappNumber(`+${rawBuyerClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawBuyerClean).catch(() => null))
+      || (await db.findUserById(resolvedBuyerId).catch(() => null));
+    if (user) resolvedBuyerId = user.id;
+  }
+  const cleanAsset = input.currency.toLowerCase() as BalanceAsset;
+
+  const existingLedger = await listUserBalanceLedger(resolvedBuyerId).catch(() => []);
+  const alreadyRefunded = existingLedger.some(
+    (e) => (e.sourceType === 'service_agreement_refund' || e.transferId === `agr_refund_${input.agreementId}`) && e.sourceId === input.agreementId
+  );
+  if (alreadyRefunded) {
+    return { success: true, alreadyRefunded: true, agreementId: input.agreementId };
+  }
+
+  await createBalanceLedgerEntry(
+    {
+      userId: resolvedBuyerId,
+      asset: cleanAsset,
+      amount: input.amount.toFixed(2),
+      kind: 'hold_release',
+      status: 'available',
+      sourceType: 'service_agreement_refund',
+      sourceId: input.agreementId,
+      description: `Refund hold for Service Agreement ${input.agreementId}: ${input.reason || 'Cancelled'}`,
+      transferId: `agr_refund_${input.agreementId}`,
+    },
+    { actorType: 'system', actorId: 'agreement_refund' }
+  );
+
+  return {
+    success: true,
+    agreementId: input.agreementId,
+    amount: input.amount,
+    currency: input.currency.toUpperCase(),
+    buyerUserId: resolvedBuyerId,
   };
 }
