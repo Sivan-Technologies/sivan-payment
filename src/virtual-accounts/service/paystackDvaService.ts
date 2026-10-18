@@ -127,11 +127,11 @@ function toPublicView(record: VirtualAccountRecord): PublicDvaView | undefined {
   const accountNumber = raw?.account_number;
   if (!accountNumber) return undefined;
   return {
-    bankName: record.bankName ?? raw?.bank?.name ?? 'Bank',
+    bankName: record.bankName ?? raw?.bank?.name ?? (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
     accountNumber,
     accountName: record.accountName ?? raw?.account_name ?? '',
     currency: 'NGN',
-    active: record.status === 'active',
+    active: record.status === 'active' || (!isPaystackLive() && !!accountNumber),
     mode: (raw?.__mode as 'live' | 'test') ?? paystackMode(),
   };
 }
@@ -238,14 +238,39 @@ export async function getDvaState(userId: string): Promise<DvaState> {
       customerCode: record.customerId,
     };
   }
+
+  // In test / staging mode, NIBSS verification does not exist.
+  // If we already have an account number stored, mark active and return ready!
+  if (!isPaystackLive() && raw?.account_number) {
+    if (record.status !== 'active') {
+      await persist(userId, { status: 'active' });
+      record.status = 'active';
+    }
+    const view = toPublicView(record);
+    if (view) return { state: 'ready', account: view };
+  }
+
   if (record.status === 'provisioning' || record.status === 'under_review') {
     // ACTIVE SYNC: Instead of leaving user stranded in "verifying", poll Paystack directly!
     // If Paystack or NIBSS completed verification or assigned the dedicated account,
     // immediately transition state to 'ready' and deliver details.
     try {
       const synced = await syncDvaWithPaystack(userId);
+      if (synced.state === 'ready') return synced;
+      if (!isPaystackLive() && record.customerId) {
+        const assigned = await assignAndPersist(userId, record.customerId).catch(() => null);
+        if (assigned && assigned.state === 'ready') return assigned;
+      }
       return synced;
     } catch (_err) {
+      if (!isPaystackLive() && record.customerId) {
+        try {
+          const direct = await assignAndPersist(userId, record.customerId);
+          if (direct.state === 'ready') return direct;
+        } catch (_assignErr) {
+          // ignore
+        }
+      }
       return { state: 'verifying', customerCode: record.customerId ?? '' };
     }
   }
@@ -310,7 +335,9 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
 
   // 1. Already have it? Cheapest path, no network.
   const current = await getDvaState(userId);
-  if (current.state === 'ready' || current.state === 'verifying') return current;
+  if (current.state === 'ready') return current;
+  if (isPaystackLive() && current.state === 'verifying') return current;
+
 
   // 2. Need identity details before anything can be created.
   // In live mode, legalName and 11-digit BVN are strictly required for CBN compliance.
@@ -455,9 +482,31 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
 
     /** Paystack refuses a second account for one customer. That is success. */
     if (/already has a dedicated/i.test(reason)) {
+      const accounts = await fetchCustomerDedicatedAccounts(customerCode).catch(() => []);
+      const matched = accounts.find((a) => !!a.account_number);
+      if (matched?.account_number) {
+        const persisted = await persist(userId, {
+          customerId: customerCode,
+          providerAccountId: String(matched.id),
+          status: 'active',
+          bankName: matched.bank?.name || (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
+          accountName: matched.account_name,
+          accountNumberMasked: `****${matched.account_number.slice(-4)}`,
+          rawProviderPayload: matched as unknown as Record<string, unknown>,
+        });
+        const view = toPublicView(persisted);
+        if (view) return { state: 'ready', account: view };
+      }
+
       const again = await findDvaRecord(userId);
-      const view = again ? toPublicView(again) : undefined;
-      if (view) return { state: 'ready', account: view };
+      if (again) {
+        if (!isPaystackLive() && again.status !== 'active') {
+          again.status = 'active';
+          await persist(userId, { status: 'active' });
+        }
+        const view = toPublicView(again);
+        if (view) return { state: 'ready', account: view };
+      }
     }
     await persist(userId, { status: 'rejected', rawExtra: { __identificationFailureReason: reason } });
     return { state: 'failed', reason, customerCode };
@@ -470,14 +519,14 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
   const record = await persist(userId, {
     customerId: customerCode,
     providerAccountId: String(account.id),
-    status: account.active ? 'active' : 'provisioning',
-    bankName: account.bank?.name,
+    status: account.active || !isPaystackLive() ? 'active' : 'provisioning',
+    bankName: account.bank?.name || (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
     accountName: account.account_name,
     accountNumberMasked: `****${account.account_number.slice(-4)}`,
     rawProviderPayload: account as unknown as Record<string, unknown>,
   });
 
-  if (!account.active) {
+  if (!account.active && isPaystackLive()) {
     return { state: 'verifying', customerCode };
   }
   const view = toPublicView(record);
@@ -522,17 +571,20 @@ export async function syncDvaWithPaystack(userId: string): Promise<DvaState> {
     }
 
     if (assignedAccount?.account_number) {
+      // Test mode has no NIBSS step to activate the account, so an assigned
+      // sandbox account is usable as soon as it exists. Live stays strict.
+      const usable = assignedAccount.active || !isPaystackLive();
       const persisted = await persist(canonicalUserId, {
         customerId: customerCode,
         providerAccountId: String(assignedAccount.id),
-        status: assignedAccount.active ? 'active' : 'provisioning',
-        bankName: assignedAccount.bank?.name || 'Wema Bank',
+        status: usable ? 'active' : 'provisioning',
+        bankName: assignedAccount.bank?.name || (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
         accountName: assignedAccount.account_name,
         accountNumberMasked: `****${assignedAccount.account_number.slice(-4)}`,
         rawProviderPayload: assignedAccount as unknown as Record<string, unknown>,
       });
 
-      if (assignedAccount.active) {
+      if (usable) {
         const view = toPublicView(persisted);
         if (view) return { state: 'ready', account: view };
       }
@@ -545,8 +597,8 @@ export async function syncDvaWithPaystack(userId: string): Promise<DvaState> {
       (customer.identifications &&
         customer.identifications.some((i: any) => i.status === 'success'));
 
-    if (isIdentified) {
-      // Identity was verified! Assign dedicated account now
+    if (!isPaystackLive() || isIdentified) {
+      // In staging/test mode or when verified by NIBSS: assign dedicated account now!
       return assignAndPersist(canonicalUserId, customerCode);
     }
 
