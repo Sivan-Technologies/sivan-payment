@@ -1505,9 +1505,9 @@ export async function executeP2pTransfer(
   }
 
   const now = new Date();
-  const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const dayStr = String(now.getDate()).padStart(3, '0');
   const rand = Math.random().toString(36).substring(2, 7).toUpperCase();
-  const transferId = `SIV-TXN-${dateStr}-${rand}`;
+  const transferId = `TXN-${dayStr}-${rand}`;
   const amountStr = input.amount.toFixed(2);
 
   // 1. Debit sender ledger
@@ -1614,7 +1614,7 @@ export async function executeP2pTransfer(
     `• Amount: ${formattedAmount}`,
     `• Sender: ${senderDisplayName}`,
     `• Reference: ${transferId}${availableLine}`,
-    '• Settlement Rail: Sivan Internal (0.15s) ⚡',
+    '• Settlement Rail: Sivan Instant ⚡',
     '',
     'Your funds are immediately available for transfers and withdrawals.',
   ].join('\n');
@@ -1681,7 +1681,7 @@ export async function executeP2pTransfer(
                   body: creditAlertBody,
                   actions: [
                     { id: `receipt_${transferId}`, title: '🧾 View Receipt', action: `receipt_${transferId}` },
-                    { id: 'balance', title: '💳 Check Balance', action: 'balance' },
+                    { id: 'act_recharge_airtime', title: '⚡ Recharge Airtime', action: 'airtime' },
                     { id: 'menu', title: '⚡ Main Menu', action: 'menu' },
                   ],
                 },
