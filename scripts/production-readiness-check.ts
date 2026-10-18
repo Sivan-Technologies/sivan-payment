@@ -4,7 +4,7 @@ type Check = { name: string; ok: boolean; detail?: unknown; severity?: 'pass' | 
 const liveBackend = process.env.LIVE_API_BASE_URL || 'https://sivan-payments-api-live.onrender.com';
 const testBackend = process.env.TEST_API_BASE_URL || 'https://sivan-payments-api-test.onrender.com';
 const liveUserApp = process.env.LIVE_USER_APP_URL || 'https://app.sivantech.online';
-const testUserApp = process.env.TEST_USER_APP_URL || 'https://sivan-payments-user-test.vercel.app';
+const testUserApp = process.env.TEST_USER_APP_URL || 'https://staging.sivantech.online';
 const adminApp = process.env.ADMIN_APP_URL || 'https://sivan-admin-hub-test.vercel.app';
 const homepage = process.env.HOMEPAGE_URL || 'https://www.sivantech.online';
 

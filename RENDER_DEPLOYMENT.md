@@ -85,7 +85,7 @@ Required Render env vars:
 APP_ENV=staging
 PORT=10000
 APP_URL=https://sivan-payments-api-test.onrender.com
-CORS_ORIGIN=https://sivan-payments-user-test.vercel.app,https://sivan-admin-hub-test.vercel.app
+CORS_ORIGIN=https://staging.sivantech.online,https://admin.sivantech.online
 LOG_LEVEL=info
 
 DATABASE_PROVIDER=postgres

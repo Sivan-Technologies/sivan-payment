@@ -86,7 +86,7 @@ curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' \
 
 # CORS actually answers for the origin you expect
 curl -s -D- -o /dev/null -X OPTIONS \
-  -H 'Origin: https://sivan-payments-user-test.vercel.app' \
+  -H 'Origin: https://staging.sivantech.online' \
   -H 'Access-Control-Request-Method: PUT' \
   https://test-sivan.sivantech.online/api/payment/health | grep -i access-control
 

@@ -24,7 +24,7 @@
 import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 
-const FRONTEND = process.env.E2E_FRONTEND ?? 'https://sivan-payments-user-test.vercel.app';
+const FRONTEND = process.env.E2E_FRONTEND ?? 'https://staging.sivantech.online';
 const API = process.env.E2E_API ?? 'https://test-sivan.sivantech.online/api/payment';
 const SHOTS = new URL('./shots/failures/', import.meta.url).pathname;
 
