@@ -129,11 +129,32 @@ export interface NotifyOutcome {
   failed: number;
 }
 
+const notifiedDepositCache = new Set<string>();
+
+export function shouldNotifyDepositOnce(channel: string, depositId: string): boolean {
+  const key = `${channel}:${depositId}`;
+  if (notifiedDepositCache.has(key)) return false;
+  if (notifiedDepositCache.size > 5000) {
+    notifiedDepositCache.clear();
+  }
+  notifiedDepositCache.add(key);
+  return true;
+}
+
 /**
  * Deliver Telegram deposit notification if user has linked Telegram.
  */
 export async function notifyTelegramDeposit(userId: string, deposit: WalletDepositRecord): Promise<void> {
   try {
+    // Only send Deposit Received once confirmed — never send unconfirmed "Deposit Detected"
+    if (deposit.status !== 'confirmed') {
+      return;
+    }
+
+    if (!shouldNotifyDepositOnce('telegram', deposit.id)) {
+      return;
+    }
+
     // Ignore synthetic or test users during background sweeps
     if (
       userId.startsWith('usr_dev_') ||
@@ -210,26 +231,19 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
       // fallback
     }
 
-    const text = deposit.status === 'confirmed'
-      ? `✅ Deposit Received\n\n${amount} on ${network} has arrived for ${recipientName}.\n\nStatus: Confirmed\nSpendable Balance: ${spendableFormatted}\n\nWhat would you like to do?\n• Reply TRANSFER to send\n• Reply CASHOUT to withdraw to bank\n• Reply AGREEMENT to fund a Service agreement`
-      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${recipientName}.\n\nStatus: Confirming\nWe will notify you the moment it settles.`;
+    const text = `✅ Deposit Received\n\n${amount} on ${network} has arrived for ${recipientName}.\n\nStatus: Confirmed\nSpendable Balance: ${spendableFormatted}\n\nWhat would you like to do?\n• Reply TRANSFER to send\n• Reply CASHOUT to withdraw to bank\n• Reply AGREEMENT to fund a Service agreement`;
 
-    const depositKeyboard = deposit.status === 'confirmed'
-      ? [
-          [
-            { text: '💸 Transfer', callback_data: 'v1:transfer' },
-            { text: '🏦 Cashout', callback_data: 'v1:cashout' },
-            { text: '🤝 Agreement', callback_data: 'v1:agreement' },
-          ],
-          [
-            { text: '💰 View Balance', callback_data: 'v1:balance' },
-            { text: '🏠 Main Menu', callback_data: 'v1:menu' },
-          ],
-        ]
-      : [
-          [{ text: '💰 View Balance', callback_data: 'v1:balance' }],
-          [{ text: '🏠 Main Menu', callback_data: 'v1:menu' }],
-        ];
+    const depositKeyboard = [
+      [
+        { text: '💸 Transfer', callback_data: 'v1:transfer' },
+        { text: '🏦 Cashout', callback_data: 'v1:cashout' },
+        { text: '🤝 Agreement', callback_data: 'v1:agreement' },
+      ],
+      [
+        { text: '💰 View Balance', callback_data: 'v1:balance' },
+        { text: '🏠 Main Menu', callback_data: 'v1:menu' },
+      ],
+    ];
 
     await fetch(notifyUrl, {
       method: 'POST',
@@ -254,6 +268,15 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
  */
 export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepositRecord): Promise<void> {
   try {
+    // Only send Deposit Received once confirmed — never send unconfirmed "Deposit Detected"
+    if (deposit.status !== 'confirmed') {
+      return;
+    }
+
+    if (!shouldNotifyDepositOnce('whatsapp', deposit.id)) {
+      return;
+    }
+
     if (
       userId.startsWith('usr_dev_') ||
       userId.startsWith('usr_test_') ||
@@ -314,9 +337,7 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
       // fallback
     }
 
-    const text = deposit.status === 'confirmed'
-      ? `✅ Deposit Received\n\n${amount} on ${network} has arrived for ${recipientName}.\n\nStatus: Confirmed\nSpendable Balance: ${spendableFormatted}\n\nWhat would you like to do?\n• Reply TRANSFER to send\n• Reply CASHOUT to withdraw to bank\n• Reply AGREEMENT to fund a Service agreement`
-      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${recipientName}.\n\nStatus: Confirming\nWe will notify you the moment it settles.`;
+    const text = `✅ Deposit Received\n\n${amount} on ${network} has arrived for ${recipientName}.\n\nStatus: Confirmed\nSpendable Balance: ${spendableFormatted}\n\nWhat would you like to do?\n• Reply TRANSFER to send\n• Reply CASHOUT to withdraw to bank\n• Reply AGREEMENT to fund a Service agreement`;
 
     const formattedRecipient = targetPhone.startsWith('whatsapp:')
       ? targetPhone
@@ -326,18 +347,15 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
     const requestBody: Record<string, any> = {
       to: formattedRecipient,
       message: text,
-    };
-
-    if (deposit.status === 'confirmed') {
-      requestBody.menuCard = {
+      menuCard: {
         body: text,
         actions: [
           { id: 'act_transfer', title: '💸 Transfer', action: 'TRANSFER' },
           { id: 'act_cashout', title: '🏦 Cashout', action: 'CASHOUT' },
           { id: 'act_agreement', title: '🤝 Agreement', action: 'AGREEMENT' },
         ],
-      };
-    }
+      },
+    };
 
     const resp = await fetch(waNotifyUrl, {
       method: 'POST',

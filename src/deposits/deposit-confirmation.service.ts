@@ -446,6 +446,12 @@ export async function confirmDeposits(limit = 100): Promise<DepositConfirmationO
       const updated = await db.updateWalletDepositStatus(deposit.id, 'confirmed', nowIso());
       if (updated) {
         outcome.confirmed.push(deposit.id);
+        void import('./deposit-notification.service.js')
+          .then(({ notifyTelegramDeposit, notifyWhatsAppDeposit }) => {
+            void notifyTelegramDeposit(updated.userId, updated);
+            void notifyWhatsAppDeposit(updated.userId, updated);
+          })
+          .catch(() => undefined);
         await createAuditLog({
           action: 'deposit.confirmed',
           resourceType: 'wallet_deposit',
