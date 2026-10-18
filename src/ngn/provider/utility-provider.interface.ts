@@ -11,9 +11,11 @@ import type {
   DiscoCode,
   MeterType,
   ElectricityInquiryResponse,
+  DataPlanOption,
+  AirtimeCashRate,
 } from '../types/paystackUtilityTypes.js';
 
-export type UtilityProviderName = 'paystack' | 'nomba' | 'flutterwave' | 'vtu_ng';
+export type UtilityProviderName = 'paystack' | 'nomba' | 'flutterwave' | 'vtu_ng' | string;
 
 export interface ProviderAirtimeResult {
   reference: string;
@@ -50,8 +52,40 @@ export interface ProviderElectricityResult {
   rawPayload: unknown;
 }
 
+export interface AirtimeCashInitiateInput {
+  phone: string;
+  operator: TelcoOperator;
+  amountNgn: number;
+}
+
+export interface AirtimeCashInitiateResult {
+  sessionId: string;
+  rate: number;
+  payoutAmountNgn: number;
+  message: string;
+  rawPayload?: unknown;
+}
+
+export interface AirtimeCashConfirmInput {
+  sessionId: string;
+  otp: string;
+  sharePin: string;
+}
+
+export interface AirtimeCashConfirmResult {
+  reference: string;
+  creditedAmountNgn: number;
+  status: 'success' | 'failed';
+  message: string;
+  rawPayload?: unknown;
+}
+
 export interface IUtilityProvider {
   readonly name: UtilityProviderName;
+  /** Higher priority numbers are tried first in the failover chain (default 10) */
+  readonly priority?: number;
+
+  listDataPlans(operator: TelcoOperator): Promise<DataPlanOption[]>;
 
   purchaseAirtime(
     phone: string,
@@ -79,4 +113,8 @@ export interface IUtilityProvider {
     amountNgn: number,
     customerName?: string
   ): Promise<ProviderElectricityResult>;
+
+  getAirtimeCashRate?(operator: TelcoOperator): Promise<AirtimeCashRate>;
+  initiateAirtimeToCash?(input: AirtimeCashInitiateInput): Promise<AirtimeCashInitiateResult>;
+  confirmAirtimeToCash?(input: AirtimeCashConfirmInput): Promise<AirtimeCashConfirmResult>;
 }

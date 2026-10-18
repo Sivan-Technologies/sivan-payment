@@ -5,6 +5,12 @@ import { badRequest } from '../../shared/errors.js';
 import {
   getDvaState,
   resolveOrCreateDva,
+  syncDvaWithPaystack,
+  adminGetDvaDetails,
+  adminSyncUserDva,
+  adminAssignUserDva,
+  adminResetUserDva,
+  adminOverrideUserDva,
   type DvaState,
 } from '../service/paystackDvaService.js';
 import type { IdentificationType } from '../types/paystackDvaTypes.js';
@@ -31,6 +37,17 @@ const createDvaSchema = z
       });
     }
   });
+
+const adminOverrideSchema = z.object({
+  accountNumber: z.string().min(8, 'accountNumber is required'),
+  bankName: z.string().optional(),
+  accountName: z.string().optional(),
+  status: z.enum(['active', 'provisioning', 'rejected']).optional(),
+});
+
+const adminResetSchema = z.object({
+  reason: z.string().optional(),
+});
 
 /**
  * Extracts a clean phone number from explicit phone input or WhatsApp userId.
@@ -62,6 +79,30 @@ export async function paystackDvaRoutes(app: FastifyInstance) {
       }
 
       const state: DvaState = await getDvaState(userId);
+      return reply.code(200).send({
+        status: 'success',
+        data: {
+          ...state,
+          mode: paystackMode(),
+        },
+      });
+    }
+  );
+
+  /**
+   * POST /api/virtual-accounts/paystack/user/:userId/sync
+   * Actively polls Paystack to check if BVN identity verification has resolved
+   * or if a dedicated account has been assigned.
+   */
+  app.post(
+    '/api/virtual-accounts/paystack/user/:userId/sync',
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const { userId } = request.params;
+      if (!userId || !userId.trim()) {
+        throw badRequest('userId parameter is required');
+      }
+
+      const state: DvaState = await syncDvaWithPaystack(userId);
       return reply.code(200).send({
         status: 'success',
         data: {
@@ -124,4 +165,91 @@ export async function paystackDvaRoutes(app: FastifyInstance) {
       });
     }
   );
+
+  /**
+   * ADMIN ROUTES: Virtual Account Diagnostics & Resolution
+   */
+
+  /**
+   * GET /api/admin/virtual-accounts/paystack/user/:userId
+   * Full diagnostics of user's Paystack DVA state, DB records, and upstream Paystack account.
+   */
+  app.get(
+    '/api/admin/virtual-accounts/paystack/user/:userId',
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const { userId } = request.params;
+      const details = await adminGetDvaDetails(userId);
+      return reply.code(200).send({
+        status: 'success',
+        data: details,
+      });
+    }
+  );
+
+  /**
+   * POST /api/admin/virtual-accounts/paystack/user/:userId/sync
+   * Admin triggers live Paystack sync to auto-resolve pending NIBSS verifications.
+   */
+  app.post(
+    '/api/admin/virtual-accounts/paystack/user/:userId/sync',
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const { userId } = request.params;
+      const result = await adminSyncUserDva(userId);
+      return reply.code(200).send({
+        status: 'success',
+        data: result,
+      });
+    }
+  );
+
+  /**
+   * POST /api/admin/virtual-accounts/paystack/user/:userId/assign
+   * Admin triggers dedicated virtual account assignment for an already identified customer.
+   */
+  app.post(
+    '/api/admin/virtual-accounts/paystack/user/:userId/assign',
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const { userId } = request.params;
+      const state = await adminAssignUserDva(userId);
+      return reply.code(200).send({
+        status: 'success',
+        data: state,
+      });
+    }
+  );
+
+  /**
+   * POST /api/admin/virtual-accounts/paystack/user/:userId/reset
+   * Admin resets stuck/failed DVA record so the user can re-enter BVN in chat.
+   */
+  app.post(
+    '/api/admin/virtual-accounts/paystack/user/:userId/reset',
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const { userId } = request.params;
+      const body = request.body ? parseBody(adminResetSchema, request.body) : {};
+      const res = await adminResetUserDva(userId, body.reason);
+      return reply.code(200).send({
+        status: 'success',
+        data: res,
+      });
+    }
+  );
+
+  /**
+   * POST /api/admin/virtual-accounts/paystack/user/:userId/override
+   * Admin manually fixes/overrides virtual account details for the naira flow.
+   */
+  app.post(
+    '/api/admin/virtual-accounts/paystack/user/:userId/override',
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const { userId } = request.params;
+      const body = parseBody(adminOverrideSchema, request.body);
+      const state = await adminOverrideUserDva(userId, body);
+      return reply.code(200).send({
+        status: 'success',
+        data: state,
+      });
+    }
+  );
 }
+

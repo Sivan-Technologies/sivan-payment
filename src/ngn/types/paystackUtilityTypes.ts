@@ -68,9 +68,42 @@ export interface ElectricityPaymentRequest {
   providerName?: string;
 }
 
+export interface DataPlanOption {
+  planId: string;
+  name: string;
+  size: string;
+  validity: string;
+  wholesalePriceNgn: number;
+  retailPriceNgn: number;
+  operator: TelcoOperator;
+  type: 'sme' | 'direct' | 'corporate_gifting';
+}
+
+export interface AirtimeCashRate {
+  operator: TelcoOperator;
+  rate: number;
+  percent: string;
+  minAmountNgn: number;
+  maxAmountNgn: number;
+}
+
+export interface AirtimeCashSession {
+  sessionId: string;
+  userId: string;
+  phone: string;
+  operator: TelcoOperator;
+  amountNgn: number;
+  rate: number;
+  payoutAmountNgn: number;
+  status: 'AWAITING_OTP' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
+  reference?: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 export interface UtilityReceipt {
   success: boolean;
-  serviceType: 'airtime' | 'data' | 'electricity';
+  serviceType: 'airtime' | 'data' | 'electricity' | 'airtime_cash';
   providerName: string;
   operatorOrDisco: string;
   recipientOrMeter: string;

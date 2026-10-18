@@ -14,6 +14,8 @@
 import crypto from 'node:crypto';
 import { db } from '../../database/json-database.js';
 import { badRequest } from '../../shared/errors.js';
+import { getUnifiedBalance } from '../../balances/unified-balance.service.js';
+import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
 import {
   type TelcoOperator,
   type DiscoCode,
@@ -24,6 +26,7 @@ import {
   type ElectricityInquiryResponse,
   type ElectricityPaymentRequest,
   type UtilityReceipt,
+  type DataPlanOption,
   detectTelcoOperator,
   normalizeDomesticPhone,
   DISCO_DISPLAY_NAMES,
@@ -33,6 +36,8 @@ import {
   registerUtilityProvider,
   listUtilityProviders,
   getActiveUtilityProviderName,
+  executeUtilityWithFailover,
+  getUtilityProviderChain,
 } from '../provider/utility-registry.js';
 import type { IUtilityProvider } from '../provider/utility-provider.interface.js';
 import type { VirtualAccountTransactionRecord } from '../../virtual-accounts/types/virtual-account.types.js';
@@ -42,6 +47,8 @@ export {
   registerUtilityProvider,
   listUtilityProviders,
   getActiveUtilityProviderName,
+  executeUtilityWithFailover,
+  getUtilityProviderChain,
   IUtilityProvider,
 };
 
@@ -59,20 +66,39 @@ function formatTimestamp(isoString: string): string {
  * Calculates current spendable NGN balance for a user from their virtual account ledger.
  */
 export async function getUserNgnBalance(userId: string): Promise<number> {
+  try {
+    const unified = await getUnifiedBalance(userId);
+    const ngnBal = (unified.balances as any[]).find((b) => String(b.asset).toLowerCase() === 'ngn');
+    const available = Number(ngnBal?.availableBalance ?? ngnBal?.spendable ?? 0);
+    if (available > 0) return available;
+  } catch (_err) {
+    // Fall back to virtual account transaction tally
+  }
+
   const allTx = await db.listVirtualAccountTransactions();
   const userTxs = allTx.filter((tx) => tx.userId === userId && tx.status === 'completed');
 
   let balance = 0;
   for (const tx of userTxs) {
     const amount = Number(tx.destinationAmount || 0);
-    // Inflows are positive, debits (utility purchases) are recorded as negative destinationAmount
     balance += amount;
   }
   return Math.max(0, Math.round(balance * 100) / 100);
 }
 
 /**
- * Records an atomic debit transaction on the user's ledger.
+ * Lists available data plans for a given telco operator through the active or preferred utility provider.
+ */
+export async function fetchDataPlans(
+  operator: TelcoOperator,
+  preferredProviderName?: string
+): Promise<DataPlanOption[]> {
+  const provider = getUtilityProvider(preferredProviderName);
+  return provider.listDataPlans(operator);
+}
+
+/**
+ * Records an atomic debit transaction on the user's ledger and updates balance ledger.
  */
 async function recordUtilityDebit(input: {
   userId: string;
@@ -101,6 +127,24 @@ async function recordUtilityDebit(input: {
     completedAt: now,
   };
   await db.upsertVirtualAccountTransactionRecord(txRecord);
+
+  // Record in unified balance ledger
+  await createBalanceLedgerEntry(
+    {
+      userId: input.userId,
+      asset: 'ngn',
+      amount: input.amountNgn.toFixed(2),
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: `utility_${input.serviceType}`,
+      sourceId: input.reference,
+      description: `Utility purchase (${input.serviceType}) via ${input.providerName.toUpperCase()}: ${input.amountNgn} NGN`,
+      transferId: input.reference,
+    },
+    { actorType: 'user', actorId: input.userId }
+  ).catch((err) => {
+    console.warn('[sivanUtilityService] Failed to record ledger entry for utility purchase:', err);
+  });
 }
 
 /**
@@ -132,16 +176,16 @@ export async function executeAirtimePurchase(
     );
   }
 
-  // 2. Resolve active utility provider via registry
-  const provider = getUtilityProvider(req.providerName);
-
-  // 3. Upstream provider execution
-  const result = await provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator);
+  // 2 & 3. Upstream provider execution with automated failover
+  const { result, providerName } = await executeUtilityWithFailover(
+    (provider) => provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator),
+    req.providerName
+  );
 
   // 4. Atomic ledger debit
   await recordUtilityDebit({
     userId: req.userId,
-    providerName: provider.name,
+    providerName,
     serviceType: 'airtime',
     reference: result.reference,
     amountNgn: req.amountNgn,
@@ -160,7 +204,7 @@ export async function executeAirtimePurchase(
     'Platform Fee: 0 NGN (Free)',
     `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
     `Remaining Balance: ${remaining.toLocaleString()} NGN`,
-    `Fulfillment Rail: ${provider.name.toUpperCase()}`,
+    `Fulfillment Rail: ${providerName.toUpperCase()}`,
     `Status: Delivered Successfully`,
     `Reference: ${result.reference}`,
     `Date: ${formatTimestamp(now)}`,
@@ -170,7 +214,7 @@ export async function executeAirtimePurchase(
   return {
     success: true,
     serviceType: 'airtime',
-    providerName: provider.name,
+    providerName,
     operatorOrDisco: operator.toUpperCase(),
     recipientOrMeter: normalizedPhone,
     amountNgn: req.amountNgn,
@@ -206,12 +250,14 @@ export async function executeDataPurchase(
     );
   }
 
-  const provider = getUtilityProvider(req.providerName);
-  const result = await provider.purchaseDataBundle(normalizedPhone, req.planCode, req.amountNgn, operator);
+  const { result, providerName } = await executeUtilityWithFailover(
+    (provider) => provider.purchaseDataBundle(normalizedPhone, req.planCode, req.amountNgn, operator),
+    req.providerName
+  );
 
   await recordUtilityDebit({
     userId: req.userId,
-    providerName: provider.name,
+    providerName,
     serviceType: 'data',
     reference: result.reference,
     amountNgn: req.amountNgn,
@@ -231,7 +277,7 @@ export async function executeDataPurchase(
     'Platform Fee: 0 NGN (Free)',
     `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
     `Remaining Balance: ${remaining.toLocaleString()} NGN`,
-    `Fulfillment Rail: ${provider.name.toUpperCase()}`,
+    `Fulfillment Rail: ${providerName.toUpperCase()}`,
     `Status: Activated Successfully`,
     `Reference: ${result.reference}`,
     `Date: ${formatTimestamp(now)}`,
@@ -241,7 +287,7 @@ export async function executeDataPurchase(
   return {
     success: true,
     serviceType: 'data',
-    providerName: provider.name,
+    providerName,
     operatorOrDisco: operator.toUpperCase(),
     recipientOrMeter: normalizedPhone,
     amountNgn: req.amountNgn,
@@ -268,12 +314,14 @@ export async function executeElectricityInquiry(
     throw badRequest(`Unknown electricity distribution company: ${req.disco}`);
   }
 
-  const provider = getUtilityProvider(req.providerName);
-  const inquiry = await provider.inquireElectricityMeter(req.meterNumber.trim(), req.disco, req.meterType);
+  const { result: inquiry, providerName } = await executeUtilityWithFailover(
+    (provider) => provider.inquireElectricityMeter(req.meterNumber.trim(), req.disco, req.meterType),
+    req.providerName
+  );
   return {
     ...inquiry,
     discoName,
-    providerName: provider.name,
+    providerName,
   };
 }
 
@@ -298,18 +346,20 @@ export async function executeElectricityPayment(
     );
   }
 
-  const provider = getUtilityProvider(req.providerName);
-  const result = await provider.payElectricityBill(
-    req.meterNumber.trim(),
-    req.disco,
-    req.meterType,
-    req.amountNgn,
-    req.customerName
+  const { result, providerName } = await executeUtilityWithFailover(
+    (provider) => provider.payElectricityBill(
+      req.meterNumber.trim(),
+      req.disco,
+      req.meterType,
+      req.amountNgn,
+      req.customerName
+    ),
+    req.providerName
   );
 
   await recordUtilityDebit({
     userId: req.userId,
-    providerName: provider.name,
+    providerName,
     serviceType: 'electricity',
     reference: result.reference,
     amountNgn: req.amountNgn,
@@ -340,7 +390,7 @@ export async function executeElectricityPayment(
     'Platform Fee: 0 NGN (Free)',
     `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
     `Remaining Balance: ${remaining.toLocaleString()} NGN`,
-    `Fulfillment Rail: ${provider.name.toUpperCase()}`,
+    `Fulfillment Rail: ${providerName.toUpperCase()}`,
     'Status: Payment Confirmed',
     `Reference: ${result.reference}`,
     `Date: ${formatTimestamp(now)}`,
@@ -350,7 +400,7 @@ export async function executeElectricityPayment(
   return {
     success: true,
     serviceType: 'electricity',
-    providerName: provider.name,
+    providerName,
     operatorOrDisco: discoName,
     recipientOrMeter: req.meterNumber,
     customerName: result.customerName,

@@ -19,7 +19,17 @@ import {
   executeElectricityInquiry,
   executeElectricityPayment,
   getUserNgnBalance,
+  fetchDataPlans,
 } from '../service/sivanUtilityService.js';
+import {
+  getAirtimeConversionRate,
+  initiateAirtimeCashConversion,
+  confirmAirtimeCashConversion,
+  cashoutAirtimeToBank,
+  initiateAirtimeCashSchema,
+  confirmAirtimeCashSchema,
+  cashoutAirtimeCashSchema,
+} from '../service/airtime-cash.service.js';
 import type { TelcoOperator, DiscoCode, MeterType } from '../types/paystackUtilityTypes.js';
 
 const airtimeSchema = z.object({
@@ -188,4 +198,93 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       data: receipt,
     });
   });
+
+  /**
+   * GET /api/ngn/utility/data/plans
+   * Fetches available data bundles across plug-and-play aggregator providers.
+   */
+  app.get(
+    '/api/ngn/utility/data/plans',
+    async (
+      request: FastifyRequest<{ Querystring: { operator: TelcoOperator; providerName?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { operator, providerName } = request.query;
+      if (!operator || !['mtn', 'airtel', 'glo', '9mobile'].includes(operator)) {
+        throw badRequest('Valid operator (mtn, airtel, glo, 9mobile) is required in query params');
+      }
+
+      const plans = await fetchDataPlans(operator, providerName);
+      return reply.code(200).send({
+        status: 'success',
+        data: {
+          operator,
+          plans,
+        },
+      });
+    }
+  );
+
+  /**
+   * GET /api/ngn/utility/airtime-cash/rates
+   * Fetches current conversion rate for turning airtime into cash.
+   */
+  app.get(
+    '/api/ngn/utility/airtime-cash/rates',
+    async (
+      request: FastifyRequest<{ Querystring: { operator: TelcoOperator; providerName?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { operator, providerName } = request.query;
+      if (!operator || !['mtn', 'airtel', 'glo', '9mobile'].includes(operator)) {
+        throw badRequest('Valid operator (mtn, airtel, glo, 9mobile) is required in query params');
+      }
+
+      const rate = await getAirtimeConversionRate(operator, providerName);
+      return reply.code(200).send({
+        status: 'success',
+        data: rate,
+      });
+    }
+  );
+
+  /**
+   * POST /api/ngn/utility/airtime-cash/initiate
+   * Quotes conversion and creates an airtime-to-cash session.
+   */
+  app.post('/api/ngn/utility/airtime-cash/initiate', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(initiateAirtimeCashSchema, request.body);
+    const session = await initiateAirtimeCashConversion(body);
+    return reply.code(200).send({
+      status: 'success',
+      data: session,
+    });
+  });
+
+  /**
+   * POST /api/ngn/utility/airtime-cash/confirm
+   * Confirms airtime transfer and credits the user's NGN ledger balance.
+   */
+  app.post('/api/ngn/utility/airtime-cash/confirm', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(confirmAirtimeCashSchema, request.body);
+    const receipt = await confirmAirtimeCashConversion(body);
+    return reply.code(200).send({
+      status: 'success',
+      data: receipt,
+    });
+  });
+
+  /**
+   * POST /api/ngn/utility/airtime-cash/cashout
+   * Cashes out NGN balance to Nigerian bank with strict verified name matching anti-fraud check.
+   */
+  app.post('/api/ngn/utility/airtime-cash/cashout', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(cashoutAirtimeCashSchema, request.body);
+    const payout = await cashoutAirtimeToBank(body);
+    return reply.code(200).send({
+      status: 'success',
+      data: payout,
+    });
+  });
 }
+

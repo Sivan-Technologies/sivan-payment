@@ -348,3 +348,51 @@ export async function pingPaystack(options: RequestOptions = {}): Promise<{
     return { reachable: false, authenticated: false, mode, message: String(error) };
   }
 }
+
+/**
+ * Retrieves a customer directly from Paystack by customer code or email.
+ * Includes KYC identification status and any existing dedicated account.
+ */
+export async function fetchCustomer(
+  customerCodeOrEmail: string,
+  options: RequestOptions = {}
+): Promise<CustomerData & {
+  identified?: boolean;
+  dedicated_account?: DvaAssignedAccount;
+  identifications?: Array<{ type: string; value: string; status: string }>;
+}> {
+  if (!customerCodeOrEmail?.trim()) {
+    throw new Error('fetchCustomer requires a customer code or email.');
+  }
+  const res = await paystackRequest<CustomerData & {
+    identified?: boolean;
+    dedicated_account?: DvaAssignedAccount;
+    identifications?: Array<{ type: string; value: string; status: string }>;
+  }>(
+    'GET',
+    `/customer/${encodeURIComponent(customerCodeOrEmail.trim())}`,
+    undefined,
+    options
+  );
+  return res.data;
+}
+
+/**
+ * Retrieves all dedicated virtual accounts assigned to a customer code on Paystack.
+ */
+export async function fetchCustomerDedicatedAccounts(
+  customerCode: string,
+  options: RequestOptions = {}
+): Promise<DvaAssignedAccount[]> {
+  if (!customerCode?.startsWith('CUS_')) {
+    throw new Error(`Expected a Paystack customer code starting with CUS_, got: ${customerCode}`);
+  }
+  const res = await paystackRequest<DvaAssignedAccount[]>(
+    'GET',
+    `/dedicated_account?customer=${encodeURIComponent(customerCode)}`,
+    undefined,
+    options
+  );
+  return res.data ?? [];
+}
+
