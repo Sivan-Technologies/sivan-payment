@@ -1371,8 +1371,9 @@ export async function executeP2pTransfer(
   input: z.infer<typeof createP2pTransferSchema>,
   context: { ipAddress?: string; userAgent?: string } = {}
 ) {
-  const sender = await db.findUserById(senderUserId);
+  const sender = (await db.findUserById(senderUserId)) || (await db.findUserByTarget(senderUserId));
   if (!sender) throw notFound('Sender User');
+  senderUserId = sender.id;
 
   const controls = await getBalanceTransferControls().catch(() => null);
   if (!controls || controls.p2pTransfersEnabled === false) {
