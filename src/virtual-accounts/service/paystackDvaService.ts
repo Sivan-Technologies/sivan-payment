@@ -34,17 +34,26 @@
 
 import crypto from 'node:crypto';
 import { db } from '../../database/json-database.js';
-import { paystackMode } from '../../config/paystackConfig.js';
+import { paystackMode, isPaystackLive } from '../../config/paystackConfig.js';
 import {
   createCustomer,
   validateCustomerBvnNin,
   assignDedicatedAccount,
   preferredBankForMode,
   PaystackApiError,
+  fetchCustomer,
+  fetchCustomerDedicatedAccounts,
 } from '../provider/paystackDvaProvider.js';
 import type { CustomerData, DvaAssignedAccount, IdentificationType } from '../types/paystackDvaTypes.js';
-import type { VirtualAccountRecord } from '../types/virtual-account.types.js';
+import type {
+  VirtualAccountRecord,
+  VirtualAccountTransactionRecord,
+  VirtualAccountEventRecord,
+} from '../types/virtual-account.types.js';
 import type { UserRecord } from '../../database/types.js';
+import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
+import { invalidateUnifiedBalanceCache } from '../../balances/unified-balance.service.js';
+import { getNgnAgreementLedger } from '../../ngn/balance-agreements/runtime.js';
 
 /**
  * The email domain Paystack customers are keyed under.
@@ -125,11 +134,11 @@ function toPublicView(record: VirtualAccountRecord): PublicDvaView | undefined {
   const accountNumber = raw?.account_number;
   if (!accountNumber) return undefined;
   return {
-    bankName: record.bankName ?? raw?.bank?.name ?? 'Bank',
+    bankName: record.bankName ?? raw?.bank?.name ?? (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
     accountNumber,
     accountName: record.accountName ?? raw?.account_name ?? '',
     currency: 'NGN',
-    active: record.status === 'active',
+    active: record.status === 'active' || (!isPaystackLive() && !!accountNumber),
     mode: (raw?.__mode as 'live' | 'test') ?? paystackMode(),
   };
 }
@@ -227,7 +236,12 @@ export async function getDvaState(userId: string): Promise<DvaState> {
 
   if (record.status === 'active') {
     const view = toPublicView(record);
-    if (view) return { state: 'ready', account: view };
+    if (view) {
+      if (!isPaystackLive()) {
+        await grantStagingDvaTestCredit(userId).catch(() => false);
+      }
+      return { state: 'ready', account: view };
+    }
   }
   if (record.status === 'rejected') {
     return {
@@ -236,8 +250,44 @@ export async function getDvaState(userId: string): Promise<DvaState> {
       customerCode: record.customerId,
     };
   }
+
+  // In test / staging mode, NIBSS verification does not exist.
+  // If we already have an account number stored, mark active and return ready!
+  if (!isPaystackLive() && raw?.account_number) {
+    if (record.status !== 'active') {
+      await persist(userId, { status: 'active' });
+      record.status = 'active';
+    }
+    const view = toPublicView(record);
+    if (view) {
+      await grantStagingDvaTestCredit(userId).catch(() => false);
+      return { state: 'ready', account: view };
+    }
+  }
+
   if (record.status === 'provisioning' || record.status === 'under_review') {
-    return { state: 'verifying', customerCode: record.customerId ?? '' };
+    // ACTIVE SYNC: Instead of leaving user stranded in "verifying", poll Paystack directly!
+    // If Paystack or NIBSS completed verification or assigned the dedicated account,
+    // immediately transition state to 'ready' and deliver details.
+    try {
+      const synced = await syncDvaWithPaystack(userId);
+      if (synced.state === 'ready') return synced;
+      if (!isPaystackLive() && record.customerId) {
+        const assigned = await assignAndPersist(userId, record.customerId).catch(() => null);
+        if (assigned && assigned.state === 'ready') return assigned;
+      }
+      return synced;
+    } catch (_err) {
+      if (!isPaystackLive() && record.customerId) {
+        try {
+          const direct = await assignAndPersist(userId, record.customerId);
+          if (direct.state === 'ready') return direct;
+        } catch (_assignErr) {
+          // ignore
+        }
+      }
+      return { state: 'verifying', customerCode: record.customerId ?? '' };
+    }
   }
   return { state: 'awaiting_identity', reason: 'not_verified' };
 }
@@ -300,10 +350,14 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
 
   // 1. Already have it? Cheapest path, no network.
   const current = await getDvaState(userId);
-  if (current.state === 'ready' || current.state === 'verifying') return current;
+  if (current.state === 'ready') return current;
+  if (isPaystackLive() && current.state === 'verifying') return current;
+
 
   // 2. Need identity details before anything can be created.
-  if (!input.legalName || !input.identifier) {
+  // In live mode, legalName and 11-digit BVN are strictly required for CBN compliance.
+  // In test mode, identifier is optional as Paystack sandbox does not interact with NIBSS.
+  if (!input.legalName || (isPaystackLive() && !input.identifier)) {
     return { state: 'awaiting_identity', reason: current.state === 'failed' ? 'not_verified' : 'no_account' };
   }
 
@@ -353,12 +407,19 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
     rawExtra: { customer_code: customer.customer_code },
   });
 
-  // 4. Submit identity to NIBSS. Returns ACCEPTANCE, not a verdict.
+  // 4. In test mode (Staging), bypass NIBSS BVN verification because Paystack test environment
+  // does not connect to NIBSS or emit customeridentification.success webhooks.
+  // Directly assign and persist the dedicated account.
+  if (!isPaystackLive()) {
+    return assignAndPersist(userId, customer.customer_code);
+  }
+
+  // 4b. Live mode: Submit identity to NIBSS. Returns ACCEPTANCE, not a verdict.
   try {
     await validateCustomerBvnNin(customer.customer_code, {
       country: 'NG',
       type: input.identifierType ?? 'bvn',
-      value: input.identifier,
+      value: input.identifier!,
       first_name,
       last_name,
     });
@@ -382,7 +443,7 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
   await persist(userId, { status: 'provisioning' });
 
   /**
-   * Deliberately NOT assigning the account here.
+   * Deliberately NOT assigning the account here in live mode.
    *
    * The 202 means NIBSS has started, not finished. Assigning now would issue
    * a bank account to an unverified customer, which is exactly the CBN
@@ -420,7 +481,12 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
   const existing = await findDvaRecord(userId);
   if (existing?.status === 'active') {
     const view = toPublicView(existing);
-    if (view) return { state: 'ready', account: view };
+    if (view) {
+      if (!isPaystackLive()) {
+        await grantStagingDvaTestCredit(userId).catch(() => false);
+      }
+      return { state: 'ready', account: view };
+    }
   }
 
   let account: DvaAssignedAccount;
@@ -436,9 +502,41 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
 
     /** Paystack refuses a second account for one customer. That is success. */
     if (/already has a dedicated/i.test(reason)) {
+      const accounts = await fetchCustomerDedicatedAccounts(customerCode).catch(() => []);
+      const matched = accounts.find((a) => !!a.account_number);
+      if (matched?.account_number) {
+        const persisted = await persist(userId, {
+          customerId: customerCode,
+          providerAccountId: String(matched.id),
+          status: 'active',
+          bankName: matched.bank?.name || (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
+          accountName: matched.account_name,
+          accountNumberMasked: `****${matched.account_number.slice(-4)}`,
+          rawProviderPayload: matched as unknown as Record<string, unknown>,
+        });
+        const view = toPublicView(persisted);
+        if (view) {
+          if (!isPaystackLive()) {
+            await grantStagingDvaTestCredit(userId).catch(() => false);
+          }
+          return { state: 'ready', account: view };
+        }
+      }
+
       const again = await findDvaRecord(userId);
-      const view = again ? toPublicView(again) : undefined;
-      if (view) return { state: 'ready', account: view };
+      if (again) {
+        if (!isPaystackLive() && again.status !== 'active') {
+          again.status = 'active';
+          await persist(userId, { status: 'active' });
+        }
+        const view = toPublicView(again);
+        if (view) {
+          if (!isPaystackLive()) {
+            await grantStagingDvaTestCredit(userId).catch(() => false);
+          }
+          return { state: 'ready', account: view };
+        }
+      }
     }
     await persist(userId, { status: 'rejected', rawExtra: { __identificationFailureReason: reason } });
     return { state: 'failed', reason, customerCode };
@@ -451,16 +549,429 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
   const record = await persist(userId, {
     customerId: customerCode,
     providerAccountId: String(account.id),
-    status: account.active ? 'active' : 'provisioning',
-    bankName: account.bank?.name,
+    status: account.active || !isPaystackLive() ? 'active' : 'provisioning',
+    bankName: account.bank?.name || (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
     accountName: account.account_name,
     accountNumberMasked: `****${account.account_number.slice(-4)}`,
     rawProviderPayload: account as unknown as Record<string, unknown>,
   });
 
-  if (!account.active) {
+  if (!account.active && isPaystackLive()) {
     return { state: 'verifying', customerCode };
   }
   const view = toPublicView(record);
+  if (view && !isPaystackLive()) {
+    await grantStagingDvaTestCredit(userId).catch(() => false);
+  }
   return view ? { state: 'ready', account: view } : { state: 'verifying', customerCode };
 }
+
+/**
+ * Actively syncs a user's DVA status with live Paystack data.
+ * Checks whether NIBSS BVN validation has succeeded, whether Paystack assigned an account,
+ * or whether the account requires immediate assignment.
+ */
+export async function syncDvaWithPaystack(userId: string): Promise<DvaState> {
+  const canonicalUserId = await ensureUserForDva(userId);
+  const record = await findDvaRecord(canonicalUserId);
+
+  let customerCode = record?.customerId;
+  const email = paystackCustomerEmail(canonicalUserId);
+
+  if (!customerCode) {
+    try {
+      const fetched = await fetchCustomer(email);
+      if (fetched?.customer_code) {
+        customerCode = fetched.customer_code;
+      }
+    } catch {
+      return { state: 'awaiting_identity', reason: 'no_account' };
+    }
+  }
+
+  if (!customerCode) {
+    return { state: 'awaiting_identity', reason: 'no_account' };
+  }
+
+  try {
+    const customer = await fetchCustomer(customerCode);
+
+    // 1. Check if Paystack already has an assigned dedicated virtual account
+    let assignedAccount: DvaAssignedAccount | undefined = customer.dedicated_account;
+    if (!assignedAccount?.account_number) {
+      const accounts = await fetchCustomerDedicatedAccounts(customerCode).catch(() => []);
+      assignedAccount = accounts.find((a) => !!a.account_number);
+    }
+
+    if (assignedAccount?.account_number) {
+      // Test mode has no NIBSS step to activate the account, so an assigned
+      // sandbox account is usable as soon as it exists. Live stays strict.
+      const usable = assignedAccount.active || !isPaystackLive();
+      const persisted = await persist(canonicalUserId, {
+        customerId: customerCode,
+        providerAccountId: String(assignedAccount.id),
+        status: usable ? 'active' : 'provisioning',
+        bankName: assignedAccount.bank?.name || (isPaystackLive() ? 'Wema Bank' : 'Test Bank'),
+        accountName: assignedAccount.account_name,
+        accountNumberMasked: `****${assignedAccount.account_number.slice(-4)}`,
+        rawProviderPayload: assignedAccount as unknown as Record<string, unknown>,
+      });
+
+      if (usable) {
+        const view = toPublicView(persisted);
+        if (view) {
+          if (!isPaystackLive()) {
+            await grantStagingDvaTestCredit(canonicalUserId).catch(() => false);
+          }
+          return { state: 'ready', account: view };
+        }
+      }
+      return { state: 'verifying', customerCode };
+    }
+
+    // 2. Check if customer identity was verified on Paystack
+    const isIdentified =
+      customer.identified === true ||
+      (customer.identifications &&
+        customer.identifications.some((i: any) => i.status === 'success'));
+
+    if (!isPaystackLive() || isIdentified) {
+      // In staging/test mode or when verified by NIBSS: assign dedicated account now!
+      return assignAndPersist(canonicalUserId, customerCode);
+    }
+
+    // 3. Check if identification failed
+    const failedIdentification = customer.identifications?.find((i: any) => i.status === 'failed');
+    if (failedIdentification) {
+      const reason = (failedIdentification as any).reason || 'Identity verification was not successful at NIBSS.';
+      await persist(canonicalUserId, {
+        customerId: customerCode,
+        status: 'rejected',
+        rawExtra: { __identificationFailureReason: reason },
+      });
+      return { state: 'failed', reason, customerCode };
+    }
+
+    return { state: 'verifying', customerCode };
+  } catch (err: any) {
+    console.warn(`[syncDvaWithPaystack] Failed to sync customer ${customerCode}:`, err?.message || err);
+    if (record?.status === 'active') {
+      const view = toPublicView(record);
+      if (view) return { state: 'ready', account: view };
+    }
+    return { state: 'verifying', customerCode: customerCode || '' };
+  }
+}
+
+/**
+ * ADMIN: Get complete DVA diagnostics for a user.
+ * Fetches database records, user profile, and live Paystack customer data.
+ */
+export async function adminGetDvaDetails(userId: string): Promise<Record<string, unknown>> {
+  const canonicalUserId = await ensureUserForDva(userId);
+  const record = await findDvaRecord(canonicalUserId);
+  const user = await db.findUserById(canonicalUserId);
+  const email = paystackCustomerEmail(canonicalUserId);
+
+  let paystackCustomer: any = null;
+  let paystackDedicatedAccounts: any[] = [];
+  let paystackError: string | null = null;
+
+  const customerCode = record?.customerId;
+  try {
+    if (customerCode) {
+      paystackCustomer = await fetchCustomer(customerCode);
+      paystackDedicatedAccounts = await fetchCustomerDedicatedAccounts(customerCode).catch(() => []);
+    } else {
+      paystackCustomer = await fetchCustomer(email).catch(() => null);
+    }
+  } catch (err: any) {
+    paystackError = err?.paystackMessage || err?.message || String(err);
+  }
+
+  const dvaState = await getDvaState(canonicalUserId);
+
+  return {
+    userId: canonicalUserId,
+    email,
+    user: user
+      ? { id: user.id, fullName: user.fullName, phone: user.whatsappNumber, email: user.email }
+      : null,
+    localRecord: record || null,
+    dvaState,
+    paystack: {
+      mode: paystackMode(),
+      customer: paystackCustomer,
+      dedicatedAccounts: paystackDedicatedAccounts,
+      error: paystackError,
+    },
+  };
+}
+
+/**
+ * ADMIN: Force-sync user with Paystack and auto-activate if verified.
+ */
+export async function adminSyncUserDva(userId: string): Promise<{
+  success: boolean;
+  dvaState: DvaState;
+  details: Record<string, unknown>;
+}> {
+  const dvaState = await syncDvaWithPaystack(userId);
+  const details = await adminGetDvaDetails(userId);
+  return {
+    success: dvaState.state === 'ready',
+    dvaState,
+    details,
+  };
+}
+
+/**
+ * ADMIN: Force account assignment on Paystack.
+ */
+export async function adminAssignUserDva(userId: string): Promise<DvaState> {
+  const canonicalUserId = await ensureUserForDva(userId);
+  const record = await findDvaRecord(canonicalUserId);
+  const customerCode = record?.customerId;
+  if (!customerCode) {
+    throw new Error(`User ${userId} does not have a Paystack customer code yet.`);
+  }
+  return assignAndPersist(canonicalUserId, customerCode);
+}
+
+/**
+ * ADMIN: Reset stuck DVA state so the user can re-enter BVN/Name in chat.
+ */
+export async function adminResetUserDva(
+  userId: string,
+  reason?: string
+): Promise<{ success: boolean; message: string }> {
+  const canonicalUserId = await ensureUserForDva(userId);
+  const existing = await findDvaRecord(canonicalUserId);
+  if (!existing) {
+    return { success: true, message: 'No existing virtual account record found for this user.' };
+  }
+
+  const now = new Date().toISOString();
+  await db.upsertVirtualAccountRecord({
+    ...existing,
+    status: 'requested',
+    updatedAt: now,
+    rawProviderPayload: {
+      ...((existing.rawProviderPayload as object) ?? {}),
+      __adminResetAt: now,
+      __adminResetReason: reason || 'Manual reset by admin',
+      __identificationFailureReason: undefined,
+    },
+  });
+
+  return {
+    success: true,
+    message: `Virtual account record for user ${userId} reset to requested state. User can now re-enter BVN in chat.`,
+  };
+}
+
+/**
+ * ADMIN: Manually override and activate virtual account details for a user.
+ */
+export async function adminOverrideUserDva(
+  userId: string,
+  override: {
+    accountNumber: string;
+    bankName?: string;
+    accountName?: string;
+    status?: 'active' | 'provisioning' | 'rejected';
+  }
+): Promise<DvaState> {
+  const canonicalUserId = await ensureUserForDva(userId, override.accountName);
+  const existing = await findDvaRecord(canonicalUserId);
+  const now = new Date().toISOString();
+  const rawPayload = {
+    account_number: override.accountNumber,
+    account_name: override.accountName || 'Sivan Verified User',
+    bank: { name: override.bankName || 'Wema Bank' },
+    active: override.status !== 'rejected',
+    __mode: paystackMode(),
+    __adminOverrideAt: now,
+  };
+
+  const customerId = existing?.customerId || `CUS_manual_${Date.now()}`;
+  try {
+    await db.insertCustomerRecord({
+      id: customerId,
+      userId: canonicalUserId,
+      provider: PROVIDER,
+      providerCustomerId: customerId,
+      customerType: 'individual',
+      kycStatus: 'kyc_approved',
+      tosStatus: 'approved',
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (_ignored) {}
+
+  const persisted = await persist(canonicalUserId, {
+    customerId,
+    providerAccountId: existing?.providerAccountId || `act_manual_${Date.now()}`,
+    status: override.status || 'active',
+    bankName: override.bankName || 'Wema Bank',
+    accountName: override.accountName || 'Sivan Verified User',
+    accountNumberMasked: `****${override.accountNumber.slice(-4)}`,
+    rawProviderPayload: rawPayload,
+  });
+
+  const view = toPublicView(persisted);
+  if (view && persisted.status === 'active') {
+    if (!isPaystackLive()) {
+      await grantStagingDvaTestCredit(canonicalUserId).catch(() => false);
+    }
+    return { state: 'ready', account: view };
+  }
+  return { state: 'failed', reason: 'Admin override set to inactive or rejected' };
+}
+
+/**
+ * STAGING ONLY: Welcome test credit facility.
+ *
+ * Automatically grants 50,000 NGN internal balance to users creating a DVA in test/staging.
+ * Strict invariants:
+ * 1. Hard blocked in production (process.env.APP_ENV === 'production' or isPaystackLive()).
+ * 2. Idempotent: will never credit the same user twice.
+ * 3. Auditable: tagged with sourceType: 'sandbox_test_credit'.
+ * 4. Updates both the internal balance ledger and authoritative NGN agreement accounts.
+ */
+export async function grantStagingDvaTestCredit(userId: string): Promise<boolean> {
+  // 1. Strict production isolation guard
+  if (isPaystackLive() || process.env.APP_ENV === 'production') {
+    return false;
+  }
+
+  // 2. Ensure canonical user ID
+  const canonicalUserId = await ensureUserForDva(userId).catch(() => userId);
+
+  // 3. Check idempotency: have we already granted a sandbox test credit to this user?
+  const existingTxs = await db.listVirtualAccountTransactions();
+  const alreadyCredited = existingTxs.some(
+    (tx) =>
+      (tx.userId === canonicalUserId || tx.userId === userId) &&
+      ((tx.rawPayload as any)?.sourceType === 'sandbox_test_credit' ||
+        tx.depositId?.startsWith(`sandbox_credit_${canonicalUserId}`) ||
+        tx.depositId?.startsWith(`sandbox_credit_${userId}`))
+  );
+
+  if (alreadyCredited) {
+    return false;
+  }
+
+  // 4. Correlate with DVA record
+  const matchingAccount = await findDvaRecord(canonicalUserId);
+  const now = new Date().toISOString();
+  const ref = `sandbox_credit_${canonicalUserId}_${Date.now()}`;
+  const amountNgn = '50000.00';
+
+  // 5. Upsert Virtual Account Transaction
+  const txRecord: VirtualAccountTransactionRecord = {
+    id: `vatx_sandbox_${crypto.createHash('sha256').update(ref).digest('hex').slice(0, 24)}`,
+    provider: PROVIDER,
+    virtualAccountId: matchingAccount?.id || `dva_${canonicalUserId}`,
+    providerAccountId: matchingAccount?.providerAccountId || 'sandbox_dva',
+    depositId: ref,
+    userId: canonicalUserId,
+    customerId: matchingAccount?.customerId || `sandbox_cust_${canonicalUserId}`,
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: amountNgn,
+    destinationAmount: amountNgn,
+    paymentRail: 'nibss_paystack_dva',
+    status: 'completed',
+    depositReference: ref,
+    rawPayload: {
+      channel: 'dedicated_nuban',
+      sourceType: 'sandbox_test_credit',
+      purpose: 'Staging welcome test credit facility',
+      amountKobo: 5000000,
+      currency: 'NGN',
+      grantedAt: now,
+    },
+    createdAt: now,
+    updatedAt: now,
+    completedAt: now,
+  };
+  await db.upsertVirtualAccountTransactionRecord(txRecord);
+
+  // 6. Upsert Virtual Account Event
+  const eventRecord: VirtualAccountEventRecord = {
+    id: `vaev_sandbox_${crypto.createHash('sha256').update(`${ref}_${now}`).digest('hex').slice(0, 24)}`,
+    provider: PROVIDER,
+    providerEventId: ref,
+    virtualAccountId: matchingAccount?.id || `dva_${canonicalUserId}`,
+    providerAccountId: matchingAccount?.providerAccountId || 'sandbox_dva',
+    depositId: ref,
+    eventType: 'funds_received',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: amountNgn,
+    destinationAmount: amountNgn,
+    paymentRail: 'nibss_paystack_dva',
+    status: 'completed',
+    depositReference: ref,
+    rawPayload: { sourceType: 'sandbox_test_credit', amountNgn: 50000 },
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.upsertVirtualAccountEventRecord(eventRecord);
+
+  // 7. Record Unified Balance Ledger Entry
+  await createBalanceLedgerEntry(
+    {
+      userId: canonicalUserId,
+      asset: 'ngn',
+      amount: amountNgn,
+      kind: 'credit_available',
+      status: 'available',
+      sourceType: 'sandbox_test_credit',
+      sourceId: txRecord.id,
+      description: 'Staging welcome test credit facility (50,000 NGN)',
+      transferId: txRecord.id,
+    },
+    { actorType: 'system', actorId: 'staging_test_credit_facility' }
+  );
+
+  // 8. Credit NGN Agreement Ledger if active
+  try {
+    const agreementLedger = getNgnAgreementLedger();
+    if (agreementLedger) {
+      await agreementLedger.creditVerifiedDeposit(ref);
+    }
+  } catch (_err) {
+    // Non-blocking in test environment
+  }
+
+  // 9. Evict cached balance
+  invalidateUnifiedBalanceCache(canonicalUserId);
+  return true;
+}
+
+/**
+ * Backfills test credits for all existing staging virtual accounts and wallets.
+ * Strictly blocked in production.
+ */
+export async function backfillStagingDvaTestCredits(): Promise<{ funded: string[]; skipped: string[] }> {
+  if (isPaystackLive() || process.env.APP_ENV === 'production') {
+    return { funded: [], skipped: [] };
+  }
+
+  const accounts = await db.listVirtualAccounts();
+  const funded: string[] = [];
+  const skipped: string[] = [];
+
+  for (const acc of accounts) {
+    if (acc.userId) {
+      const ok = await grantStagingDvaTestCredit(acc.userId);
+      if (ok) funded.push(acc.userId);
+      else skipped.push(acc.userId);
+    }
+  }
+  return { funded, skipped };
+}
+
+
