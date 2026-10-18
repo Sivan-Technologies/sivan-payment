@@ -1504,7 +1504,10 @@ export async function executeP2pTransfer(
     throw badRequest('You cannot send a P2P transfer to yourself');
   }
 
-  const transferId = `p2p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+  const rand = Math.random().toString(36).substring(2, 7).toUpperCase();
+  const transferId = `SIV-TXN-${dateStr}-${rand}`;
   const amountStr = input.amount.toFixed(2);
 
   // 1. Debit sender ledger
