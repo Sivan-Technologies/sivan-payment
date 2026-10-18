@@ -45,8 +45,15 @@ import {
   fetchCustomerDedicatedAccounts,
 } from '../provider/paystackDvaProvider.js';
 import type { CustomerData, DvaAssignedAccount, IdentificationType } from '../types/paystackDvaTypes.js';
-import type { VirtualAccountRecord } from '../types/virtual-account.types.js';
+import type {
+  VirtualAccountRecord,
+  VirtualAccountTransactionRecord,
+  VirtualAccountEventRecord,
+} from '../types/virtual-account.types.js';
 import type { UserRecord } from '../../database/types.js';
+import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
+import { invalidateUnifiedBalanceCache } from '../../balances/unified-balance.service.js';
+import { getNgnAgreementLedger } from '../../ngn/balance-agreements/runtime.js';
 
 /**
  * The email domain Paystack customers are keyed under.
@@ -229,7 +236,12 @@ export async function getDvaState(userId: string): Promise<DvaState> {
 
   if (record.status === 'active') {
     const view = toPublicView(record);
-    if (view) return { state: 'ready', account: view };
+    if (view) {
+      if (!isPaystackLive()) {
+        await grantStagingDvaTestCredit(userId).catch(() => false);
+      }
+      return { state: 'ready', account: view };
+    }
   }
   if (record.status === 'rejected') {
     return {
@@ -247,7 +259,10 @@ export async function getDvaState(userId: string): Promise<DvaState> {
       record.status = 'active';
     }
     const view = toPublicView(record);
-    if (view) return { state: 'ready', account: view };
+    if (view) {
+      await grantStagingDvaTestCredit(userId).catch(() => false);
+      return { state: 'ready', account: view };
+    }
   }
 
   if (record.status === 'provisioning' || record.status === 'under_review') {
@@ -466,7 +481,12 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
   const existing = await findDvaRecord(userId);
   if (existing?.status === 'active') {
     const view = toPublicView(existing);
-    if (view) return { state: 'ready', account: view };
+    if (view) {
+      if (!isPaystackLive()) {
+        await grantStagingDvaTestCredit(userId).catch(() => false);
+      }
+      return { state: 'ready', account: view };
+    }
   }
 
   let account: DvaAssignedAccount;
@@ -495,7 +515,12 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
           rawProviderPayload: matched as unknown as Record<string, unknown>,
         });
         const view = toPublicView(persisted);
-        if (view) return { state: 'ready', account: view };
+        if (view) {
+          if (!isPaystackLive()) {
+            await grantStagingDvaTestCredit(userId).catch(() => false);
+          }
+          return { state: 'ready', account: view };
+        }
       }
 
       const again = await findDvaRecord(userId);
@@ -505,7 +530,12 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
           await persist(userId, { status: 'active' });
         }
         const view = toPublicView(again);
-        if (view) return { state: 'ready', account: view };
+        if (view) {
+          if (!isPaystackLive()) {
+            await grantStagingDvaTestCredit(userId).catch(() => false);
+          }
+          return { state: 'ready', account: view };
+        }
       }
     }
     await persist(userId, { status: 'rejected', rawExtra: { __identificationFailureReason: reason } });
@@ -530,6 +560,9 @@ async function assignAndPersist(userId: string, customerCode: string): Promise<D
     return { state: 'verifying', customerCode };
   }
   const view = toPublicView(record);
+  if (view && !isPaystackLive()) {
+    await grantStagingDvaTestCredit(userId).catch(() => false);
+  }
   return view ? { state: 'ready', account: view } : { state: 'verifying', customerCode };
 }
 
@@ -586,7 +619,12 @@ export async function syncDvaWithPaystack(userId: string): Promise<DvaState> {
 
       if (usable) {
         const view = toPublicView(persisted);
-        if (view) return { state: 'ready', account: view };
+        if (view) {
+          if (!isPaystackLive()) {
+            await grantStagingDvaTestCredit(canonicalUserId).catch(() => false);
+          }
+          return { state: 'ready', account: view };
+        }
       }
       return { state: 'verifying', customerCode };
     }
@@ -783,8 +821,157 @@ export async function adminOverrideUserDva(
 
   const view = toPublicView(persisted);
   if (view && persisted.status === 'active') {
+    if (!isPaystackLive()) {
+      await grantStagingDvaTestCredit(canonicalUserId).catch(() => false);
+    }
     return { state: 'ready', account: view };
   }
   return { state: 'failed', reason: 'Admin override set to inactive or rejected' };
 }
+
+/**
+ * STAGING ONLY: Welcome test credit facility.
+ *
+ * Automatically grants 50,000 NGN internal balance to users creating a DVA in test/staging.
+ * Strict invariants:
+ * 1. Hard blocked in production (process.env.APP_ENV === 'production' or isPaystackLive()).
+ * 2. Idempotent: will never credit the same user twice.
+ * 3. Auditable: tagged with sourceType: 'sandbox_test_credit'.
+ * 4. Updates both the internal balance ledger and authoritative NGN agreement accounts.
+ */
+export async function grantStagingDvaTestCredit(userId: string): Promise<boolean> {
+  // 1. Strict production isolation guard
+  if (isPaystackLive() || process.env.APP_ENV === 'production') {
+    return false;
+  }
+
+  // 2. Ensure canonical user ID
+  const canonicalUserId = await ensureUserForDva(userId).catch(() => userId);
+
+  // 3. Check idempotency: have we already granted a sandbox test credit to this user?
+  const existingTxs = await db.listVirtualAccountTransactions();
+  const alreadyCredited = existingTxs.some(
+    (tx) =>
+      (tx.userId === canonicalUserId || tx.userId === userId) &&
+      ((tx.rawPayload as any)?.sourceType === 'sandbox_test_credit' ||
+        tx.depositId?.startsWith(`sandbox_credit_${canonicalUserId}`) ||
+        tx.depositId?.startsWith(`sandbox_credit_${userId}`))
+  );
+
+  if (alreadyCredited) {
+    return false;
+  }
+
+  // 4. Correlate with DVA record
+  const matchingAccount = await findDvaRecord(canonicalUserId);
+  const now = new Date().toISOString();
+  const ref = `sandbox_credit_${canonicalUserId}_${Date.now()}`;
+  const amountNgn = '50000.00';
+
+  // 5. Upsert Virtual Account Transaction
+  const txRecord: VirtualAccountTransactionRecord = {
+    id: `vatx_sandbox_${crypto.createHash('sha256').update(ref).digest('hex').slice(0, 24)}`,
+    provider: PROVIDER,
+    virtualAccountId: matchingAccount?.id || `dva_${canonicalUserId}`,
+    providerAccountId: matchingAccount?.providerAccountId || 'sandbox_dva',
+    depositId: ref,
+    userId: canonicalUserId,
+    customerId: matchingAccount?.customerId || `sandbox_cust_${canonicalUserId}`,
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: amountNgn,
+    destinationAmount: amountNgn,
+    paymentRail: 'nibss_paystack_dva',
+    status: 'completed',
+    depositReference: ref,
+    rawPayload: {
+      channel: 'dedicated_nuban',
+      sourceType: 'sandbox_test_credit',
+      purpose: 'Staging welcome test credit facility',
+      amountKobo: 5000000,
+      currency: 'NGN',
+      grantedAt: now,
+    },
+    createdAt: now,
+    updatedAt: now,
+    completedAt: now,
+  };
+  await db.upsertVirtualAccountTransactionRecord(txRecord);
+
+  // 6. Upsert Virtual Account Event
+  const eventRecord: VirtualAccountEventRecord = {
+    id: `vaev_sandbox_${crypto.createHash('sha256').update(`${ref}_${now}`).digest('hex').slice(0, 24)}`,
+    provider: PROVIDER,
+    providerEventId: ref,
+    virtualAccountId: matchingAccount?.id || `dva_${canonicalUserId}`,
+    providerAccountId: matchingAccount?.providerAccountId || 'sandbox_dva',
+    depositId: ref,
+    eventType: 'funds_received',
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: amountNgn,
+    destinationAmount: amountNgn,
+    paymentRail: 'nibss_paystack_dva',
+    status: 'completed',
+    depositReference: ref,
+    rawPayload: { sourceType: 'sandbox_test_credit', amountNgn: 50000 },
+    createdAt: now,
+    updatedAt: now,
+  };
+  await db.upsertVirtualAccountEventRecord(eventRecord);
+
+  // 7. Record Unified Balance Ledger Entry
+  await createBalanceLedgerEntry(
+    {
+      userId: canonicalUserId,
+      asset: 'ngn',
+      amount: amountNgn,
+      kind: 'credit_available',
+      status: 'available',
+      sourceType: 'sandbox_test_credit',
+      sourceId: txRecord.id,
+      description: 'Staging welcome test credit facility (50,000 NGN)',
+      transferId: txRecord.id,
+    },
+    { actorType: 'system', actorId: 'staging_test_credit_facility' }
+  );
+
+  // 8. Credit NGN Agreement Ledger if active
+  try {
+    const agreementLedger = getNgnAgreementLedger();
+    if (agreementLedger) {
+      await agreementLedger.creditVerifiedDeposit(ref);
+    }
+  } catch (_err) {
+    // Non-blocking in test environment
+  }
+
+  // 9. Evict cached balance
+  invalidateUnifiedBalanceCache(canonicalUserId);
+  return true;
+}
+
+/**
+ * Backfills test credits for all existing staging virtual accounts and wallets.
+ * Strictly blocked in production.
+ */
+export async function backfillStagingDvaTestCredits(): Promise<{ funded: string[]; skipped: string[] }> {
+  if (isPaystackLive() || process.env.APP_ENV === 'production') {
+    return { funded: [], skipped: [] };
+  }
+
+  const accounts = await db.listVirtualAccounts();
+  const funded: string[] = [];
+  const skipped: string[] = [];
+
+  for (const acc of accounts) {
+    if (acc.userId) {
+      const ok = await grantStagingDvaTestCredit(acc.userId);
+      if (ok) funded.push(acc.userId);
+      else skipped.push(acc.userId);
+    }
+  }
+  return { funded, skipped };
+}
+
 

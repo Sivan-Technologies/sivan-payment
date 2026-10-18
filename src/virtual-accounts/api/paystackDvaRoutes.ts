@@ -11,6 +11,8 @@ import {
   adminAssignUserDva,
   adminResetUserDva,
   adminOverrideUserDva,
+  grantStagingDvaTestCredit,
+  backfillStagingDvaTestCredits,
   type DvaState,
 } from '../service/paystackDvaService.js';
 import type { IdentificationType } from '../types/paystackDvaTypes.js';
@@ -251,5 +253,39 @@ export async function paystackDvaRoutes(app: FastifyInstance) {
       });
     }
   );
+
+  /**
+   * POST /api/admin/virtual-accounts/paystack/fund-staging-wallets
+   * Backfills 50,000 NGN test credit facility across existing staging users with DVAs.
+   * Strictly blocked in production.
+   */
+  app.post(
+    '/api/admin/virtual-accounts/paystack/fund-staging-wallets',
+    async (_request: FastifyRequest, reply: FastifyReply) => {
+      const result = await backfillStagingDvaTestCredits();
+      return reply.code(200).send({
+        status: 'success',
+        data: result,
+      });
+    }
+  );
+
+  /**
+   * POST /api/admin/virtual-accounts/paystack/user/:userId/test-credit
+   * Grants 50,000 NGN test credit facility to a specific user in staging.
+   * Strictly blocked in production.
+   */
+  app.post(
+    '/api/admin/virtual-accounts/paystack/user/:userId/test-credit',
+    async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      const { userId } = request.params;
+      const funded = await grantStagingDvaTestCredit(userId);
+      return reply.code(200).send({
+        status: 'success',
+        data: { userId, funded },
+      });
+    }
+  );
 }
+
 
