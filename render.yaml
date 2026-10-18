@@ -168,7 +168,7 @@ services:
       # frontends against one API means a fix deployed to one is invisible on
       # the other, and users will be on whichever link they were sent.
       - key: CORS_ORIGIN
-        value: https://staging.sivantech.online,https://api-staging.sivantech.online,https://sivan-payments-user-test.vercel.app,http://localhost:5173
+        value: https://staging.sivantech.online,https://api-staging.sivantech.online,http://localhost:5173
       - key: CUSTOMER_APP_URL
         value: https://staging.sivantech.online
       - key: ESCROW_AGENT_URL
