@@ -1587,6 +1587,38 @@ export async function executeP2pTransfer(
     }
   }
 
+  // Fetch recipient's updated available balance for the credit alert
+  let recipientAvailableStr = '';
+  try {
+    const recBal = await getUserBalance(recipient.id);
+    const assetRow = recBal?.balances?.find((b: any) => b.asset.toLowerCase() === input.asset.toLowerCase());
+    if (assetRow && assetRow.available !== undefined) {
+      const availNum = Number(assetRow.available);
+      recipientAvailableStr = input.asset.toLowerCase() === 'ngn'
+        ? `₦${availNum.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : `${availNum.toFixed(2)} ${input.asset.toUpperCase()}`;
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  const formattedAmount = input.asset.toLowerCase() === 'ngn'
+    ? `₦${input.amount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `${input.amount.toFixed(2)} ${input.asset.toUpperCase()}`;
+
+  const availableLine = recipientAvailableStr ? `\n• Available: ${recipientAvailableStr}` : '';
+
+  const creditAlertBody = [
+    '📥 Sivan Ai . Payment Received',
+    '',
+    `• Amount: ${formattedAmount}`,
+    `• Sender: ${senderDisplayName}`,
+    `• Reference: ${transferId}${availableLine}`,
+    '• Settlement Rail: Sivan Internal (0.15s) ⚡',
+    '',
+    'Your funds are immediately available for transfers and withdrawals.',
+  ].join('\n');
+
   try {
     const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
     const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
@@ -1599,7 +1631,6 @@ export async function executeP2pTransfer(
             .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
           const tgLink = activeLinks[0];
           if (tgLink?.telegramUserId) {
-            const tgText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
             await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
               headers: {
@@ -1608,7 +1639,7 @@ export async function executeP2pTransfer(
               },
               body: JSON.stringify({
                 telegramId: tgLink.telegramUserId,
-                message: tgText,
+                message: creditAlertBody,
               }),
             });
           }
@@ -1636,7 +1667,6 @@ export async function executeP2pTransfer(
             targetPhone = activeWa[0]?.whatsappNumber;
           }
           if (targetPhone) {
-            const waText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
             const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
             await fetch(waNotifyUrl, {
               method: 'POST',
@@ -1646,7 +1676,15 @@ export async function executeP2pTransfer(
               },
               body: JSON.stringify({
                 to: targetPhone,
-                message: waText,
+                message: creditAlertBody,
+                menuCard: {
+                  body: creditAlertBody,
+                  actions: [
+                    { id: `receipt_${transferId}`, title: '🧾 View Receipt', action: `receipt_${transferId}` },
+                    { id: 'balance', title: '💳 Check Balance', action: 'balance' },
+                    { id: 'menu', title: '⚡ Main Menu', action: 'menu' },
+                  ],
+                },
               }),
             });
           }
