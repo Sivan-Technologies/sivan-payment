@@ -1816,3 +1816,76 @@ export async function redeemP2pClaim(
     claimedAt: claim.claimedAt,
   };
 }
+
+export const fundAgreementSchema = z.object({
+  agreementId: z.string().min(1).max(128),
+  amount: z.coerce.number().positive(),
+  currency: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['ngn', 'usdc', 'usdt'])).default('ngn'),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
+});
+
+export async function fundServiceAgreementFromBalance(
+  userId: string,
+  input: z.infer<typeof fundAgreementSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  let resolvedUserId = userId;
+  const rawClean = userId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (userId.startsWith('+') || userId.startsWith('whatsapp:') || /^\d{7,15}$/.test(userId)) {
+    const user = (await db.findUserByWhatsappNumber(`+${rawClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawClean).catch(() => null))
+      || (await db.findUserById(userId).catch(() => null));
+    if (user) resolvedUserId = user.id;
+  }
+
+  const cleanAsset = input.currency.toLowerCase() as BalanceAsset;
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId: resolvedUserId,
+    amount: input.amount,
+    destinationAddress: input.agreementId,
+    network: 'base',
+    asset: cleanAsset,
+    isP2p: false,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
+
+  const unified = await getUnifiedBalance(resolvedUserId);
+  const assetEntry = unified.balances.find((b) => b.asset.toLowerCase() === cleanAsset);
+  const spendable = Number(assetEntry?.spendable ?? 0);
+
+  if (spendable < input.amount) {
+    throw badRequest(`Insufficient ${input.currency.toUpperCase()} balance. Available: ${spendable} ${input.currency.toUpperCase()}, Required: ${input.amount} ${input.currency.toUpperCase()}`);
+  }
+
+  const paymentReference = `agr_fund_${input.agreementId}`;
+  const amountStr = input.amount.toFixed(2);
+
+  const entry = await createBalanceLedgerEntry(
+    {
+      userId: resolvedUserId,
+      asset: cleanAsset,
+      amount: amountStr,
+      kind: 'debit_transfer',
+      status: 'completed',
+      sourceType: 'service_agreement_fund',
+      sourceId: input.agreementId,
+      description: `Fund Service Agreement ${input.agreementId}`,
+      destinationAddress: input.agreementId,
+      transferId: paymentReference,
+    },
+    { actorType: 'user', actorId: resolvedUserId }
+  );
+
+  return {
+    success: true,
+    paymentReference,
+    agreementId: input.agreementId,
+    amount: input.amount,
+    currency: input.currency.toUpperCase(),
+    ledgerEntryId: entry.entryId,
+  };
+}

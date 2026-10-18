@@ -62,12 +62,44 @@ function formatTimestamp(isoString: string): string {
   return d.toLocaleString('en-NG', { timeZone: 'Africa/Lagos' });
 }
 
+async function resolvePaymentUserId(target: string): Promise<string> {
+  if (!target) return target;
+  const rawClean = target.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  const withPlus = `+${rawClean}`;
+  const withWhatsapp = `whatsapp:+${rawClean}`;
+
+  const directUser = await db.findUserById(target).catch(() => null);
+  if (directUser) return directUser.id;
+
+  const user = (await db.findUserByWhatsappNumber(withPlus).catch(() => null))
+    || (await db.findUserByWhatsappNumber(withWhatsapp).catch(() => null))
+    || (await db.findUserByWhatsappNumber(rawClean).catch(() => null))
+    || (rawClean ? await db.findUserByTelegramUserId(rawClean).catch(() => null) : null)
+    || (await db.findUserByTarget(target).catch(() => null));
+
+  if (user) return user.id;
+
+  const identityLinks = await db.listCustomerIdentityLinks().catch(() => []);
+  const link = identityLinks.find(
+    (l) => l.status === 'linked' && (
+      l.whatsappNumber === withPlus ||
+      l.whatsappNumber === withWhatsapp ||
+      l.whatsappNumber === rawClean ||
+      l.telegramUserId === rawClean
+    )
+  );
+  if (link?.paymentUserId) return link.paymentUserId;
+
+  return target;
+}
+
 /**
  * Calculates current spendable NGN balance for a user from their virtual account ledger.
  */
 export async function getUserNgnBalance(userId: string): Promise<number> {
+  const resolvedUserId = await resolvePaymentUserId(userId).catch(() => userId);
   try {
-    const unified = await getUnifiedBalance(userId);
+    const unified = await getUnifiedBalance(resolvedUserId);
     const ngnBal = (unified.balances as any[]).find((b) => String(b.asset).toLowerCase() === 'ngn');
     const available = Number(ngnBal?.availableBalance ?? ngnBal?.spendable ?? 0);
     if (available > 0) return available;
@@ -76,7 +108,7 @@ export async function getUserNgnBalance(userId: string): Promise<number> {
   }
 
   const allTx = await db.listVirtualAccountTransactions();
-  const userTxs = allTx.filter((tx) => tx.userId === userId && tx.status === 'completed');
+  const userTxs = allTx.filter((tx) => (tx.userId === resolvedUserId || tx.userId === userId) && tx.status === 'completed');
 
   let balance = 0;
   for (const tx of userTxs) {

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, getBalanceTransferControls, getP2pClaimDetails, redeemP2pClaim, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
+import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, fundAgreementSchema, fundServiceAgreementFromBalance, getBalanceTransferControls, getP2pClaimDetails, redeemP2pClaim, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
 import { quoteTransfer } from './balance.service.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
@@ -322,6 +322,16 @@ export async function balanceRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = parseBody(createP2pTransferSchema, request.body);
     return { data: await executeP2pTransfer(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Dedicated endpoint to commit funding for a Service Agreement atomically from balance.
+   */
+  app.post('/api/users/:userId/balance/fund-agreement', async (request) => {
+    requireIdentityServiceSecret(request as any);
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(fundAgreementSchema, request.body);
+    return { data: await fundServiceAgreementFromBalance(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   /**
