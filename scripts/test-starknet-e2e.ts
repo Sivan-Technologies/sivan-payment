@@ -245,7 +245,7 @@ async function run() {
 
   await notifyWhatsAppDeposit(testUserId, confirmedDeposit);
   check('WhatsApp deposit notification invoked for linked user', waCalled);
-  check('WhatsApp payload targets linked phone number', waPayload?.to === testWhatsAppPhone);
+  check('WhatsApp payload targets linked phone number', Boolean(waPayload?.to?.includes(testWhatsAppPhone)));
   check('WhatsApp message text mentions Starknet and amount', waPayload?.message.includes('Starknet') && waPayload?.message.includes('25.000000 USDC'));
 
   // Restore fetch

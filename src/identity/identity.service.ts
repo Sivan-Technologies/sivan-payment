@@ -513,6 +513,59 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
 }
 
 /**
+ * Resolve a WhatsApp phone number to its Sivan identity.
+ * Normalizes phone formats and resolves through active identity links
+ * to ensure chat channels always reach the canonical payment user account.
+ */
+export async function lookupWhatsappIdentity(whatsappNumber: string) {
+  const rawClean = String(whatsappNumber || '').trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  const withPlus = `+${rawClean}`;
+  const withWhatsapp = `whatsapp:+${rawClean}`;
+
+  const candidates = [withPlus, withWhatsapp, rawClean];
+
+  // 1. Check identity links for linked payment user
+  const identityLinks = await db.listCustomerIdentityLinks();
+  const whatsappLink = identityLinks.find(
+    (l) => l.status === 'linked' && candidates.includes(String(l.whatsappNumber || ''))
+  );
+  if (whatsappLink) {
+    const user = await db.findUserById(whatsappLink.paymentUserId);
+    if (user) {
+      return {
+        linked: true as const,
+        paymentUserId: user.id,
+        escrowUserId: whatsappLink.escrowUserId || user.id,
+        email: user.email,
+        fullName: user.fullName,
+        whatsappNumber: user.whatsappNumber || withPlus,
+        canTransact: true,
+      };
+    }
+  }
+
+  // 2. Check direct user records by phone variants
+  let user = await db.findUserByWhatsappNumber(withPlus);
+  if (!user) user = await db.findUserByWhatsappNumber(withWhatsapp);
+  if (!user) user = await db.findUserByWhatsappNumber(rawClean);
+  if (!user) user = await db.findUserByTarget(rawClean);
+
+  if (user) {
+    return {
+      linked: true as const,
+      paymentUserId: user.id,
+      escrowUserId: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      whatsappNumber: user.whatsappNumber || withPlus,
+      canTransact: true,
+    };
+  }
+
+  return { linked: false as const };
+}
+
+/**
  * Resolve a phone number to its Sivan identity, including Telegram user ID.
  */
 export async function lookupPhoneIdentity(phone: string) {
@@ -530,5 +583,6 @@ export async function lookupPhoneIdentity(phone: string) {
   }
   return { linked: false as const };
 }
+
 
 

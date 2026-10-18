@@ -16,6 +16,7 @@ import {
   getIdentityStatus,
   redeemIdentityLinkSchema,
   lookupTelegramIdentity,
+  lookupWhatsappIdentity,
   lookupPhoneIdentity,
   redeemTelegramLink,
   redeemTelegramLinkSchema,
@@ -77,8 +78,8 @@ async function resolveChatIdentity(channel: string, identity: string): Promise<s
     return result.linked ? result.paymentUserId : undefined;
   }
   if (channel === 'whatsapp') {
-    const user = await db.findUserByWhatsappNumber(identity.trim());
-    return user?.id;
+    const result = await lookupWhatsappIdentity(identity);
+    return result.linked ? result.paymentUserId : undefined;
   }
   // An unrecognised channel resolves to nobody. Falling through to a default
   // lookup here would let a new channel authorise payouts before anyone had

@@ -13,10 +13,14 @@ import {
   adminOverrideUserDva,
   grantStagingDvaTestCredit,
   backfillStagingDvaTestCredits,
+  findDvaRecord,
   type DvaState,
 } from '../service/paystackDvaService.js';
 import type { IdentificationType } from '../types/paystackDvaTypes.js';
-import { isPaystackLive, paystackMode } from '../../config/paystackConfig.js';
+import crypto from 'node:crypto';
+import { db } from '../../database/json-database.js';
+import { isPaystackLive, paystackMode, paystackWebhookSecret } from '../../config/paystackConfig.js';
+import { processPaystackWebhook } from '../../webhooks/paystackWebhookHandler.js';
 
 const createDvaSchema = z
   .object({
@@ -286,6 +290,94 @@ export async function paystackDvaRoutes(app: FastifyInstance) {
       });
     }
   );
+
+  /**
+   * POST /api/virtual-accounts/sandbox/simulate-inflow
+   * POST /api/virtual-accounts/paystack/sandbox/simulate-inflow
+   * Option B: Test Checkout Simulation Route (Simulate Payment & Catch Webhook).
+   * STRICTLY BLOCKED in production.
+   * Generates an authentic signed Paystack charge.success webhook for dedicated_nuban
+   * and processes it through the authoritative Paystack webhook handler.
+   */
+  const simulateInflowHandler = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (isPaystackLive() || process.env.APP_ENV === 'production' || process.env.DATABASE_MODE === 'live') {
+      return reply.code(403).send({
+        status: 'forbidden',
+        error: 'Simulation routes are strictly disabled in production mode.',
+        mode: 'production',
+      });
+    }
+
+    const body = (request.body as any) || {};
+    const amount = Number(body.amount || 50000);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw badRequest('Amount must be a positive number');
+    }
+
+    const allAccounts = await db.listVirtualAccounts();
+    let account = allAccounts.find(
+      (acc) =>
+        (body.userId && acc.userId === body.userId) ||
+        (body.accountNumber && acc.accountNumberMasked?.endsWith(body.accountNumber.slice(-4))) ||
+        (body.customerCode && acc.customerId === body.customerCode)
+    );
+
+    if (!account && body.userId) {
+      account = (await findDvaRecord(body.userId)) ?? undefined;
+    }
+
+    if (!account) {
+      throw badRequest('Could not locate an active virtual account for the provided userId, customerCode, or accountNumber');
+    }
+
+    const user = await db.findUserById(account.userId);
+    const customerCode = account.customerId || `CUS_test_${account.userId}`;
+    const amountKobo = Math.round(amount * 100);
+    const reference = `sim_inflow_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+    const eventPayload = {
+      event: 'charge.success',
+      data: {
+        id: Date.now(),
+        domain: 'test',
+        status: 'success',
+        reference,
+        amount: amountKobo,
+        currency: 'NGN',
+        channel: 'dedicated_nuban',
+        customer: {
+          id: 123456,
+          customer_code: customerCode,
+          email: user?.email || `${account.userId}@sivan.test`,
+          first_name: user?.fullName?.split(' ')[0] || 'Staging',
+          last_name: user?.fullName?.split(' ').slice(1).join(' ') || 'Tester',
+          phone: user?.whatsappNumber || '',
+        },
+        paid_at: new Date().toISOString(),
+      },
+    };
+
+    const rawBody = Buffer.from(JSON.stringify(eventPayload), 'utf8');
+    const secret = paystackWebhookSecret();
+    const signature = crypto.createHmac('sha512', secret).update(rawBody).digest('hex');
+
+    const result = await processPaystackWebhook(eventPayload, rawBody, signature);
+
+    return reply.code(200).send({
+      status: 'success',
+      environment: 'staging',
+      simulation: true,
+      mode: 'sandbox',
+      reference,
+      amount,
+      currency: 'NGN',
+      creditedUserId: account.userId,
+      webhookResult: result,
+    });
+  };
+
+  app.post('/api/virtual-accounts/sandbox/simulate-inflow', simulateInflowHandler);
+  app.post('/api/virtual-accounts/paystack/sandbox/simulate-inflow', simulateInflowHandler);
 }
 
 

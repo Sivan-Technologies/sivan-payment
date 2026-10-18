@@ -192,17 +192,44 @@ export async function notifyTelegramDeposit(userId: string, deposit: WalletDepos
     const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && prefs.telegramNotificationsEnabled === false) return;
 
-    const userLabel = user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account');
-    const amount = `${deposit.amount} ${deposit.asset}`;
+    const recipientName = user?.fullName || (user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account'));
+    const amount = `${deposit.amount} ${deposit.asset.toUpperCase()}`;
     const network = humanNetwork(deposit.chain);
-    const text = deposit.status === 'confirmed'
-      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).`
-      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.`;
 
-    const depositKeyboard = [
-      [{ text: '💰 View Balance', callback_data: 'v1:balance' }],
-      [{ text: '🏠 Main Menu', callback_data: 'v1:menu' }],
-    ];
+    let spendableFormatted = `$${Number(deposit.amount).toFixed(2)}`;
+    try {
+      const { getUnifiedBalance } = await import('../balances/unified-balance.service.js');
+      const unified = await getUnifiedBalance(userId);
+      const isNgn = deposit.asset.toLowerCase() === 'ngn';
+      const assetBal = unified.balances.find((b) => b.asset.toLowerCase() === deposit.asset.toLowerCase());
+      if (assetBal) {
+        const val = Number(assetBal.spendable || 0);
+        spendableFormatted = isNgn ? `₦${val.toLocaleString()}` : `$${val.toFixed(2)}`;
+      }
+    } catch {
+      // fallback
+    }
+
+    const text = deposit.status === 'confirmed'
+      ? `✅ Deposit Received\n\n${amount} on ${network} has arrived for ${recipientName}.\n\nStatus: Confirmed\nSpendable Balance: ${spendableFormatted}\n\nWhat would you like to do?\n• Reply TRANSFER to send\n• Reply CASHOUT to withdraw to bank\n• Reply AGREEMENT to fund a Service agreement`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${recipientName}.\n\nStatus: Confirming\nWe will notify you the moment it settles.`;
+
+    const depositKeyboard = deposit.status === 'confirmed'
+      ? [
+          [
+            { text: '💸 Transfer', callback_data: 'v1:transfer' },
+            { text: '🏦 Cashout', callback_data: 'v1:cashout' },
+            { text: '🤝 Agreement', callback_data: 'v1:agreement' },
+          ],
+          [
+            { text: '💰 View Balance', callback_data: 'v1:balance' },
+            { text: '🏠 Main Menu', callback_data: 'v1:menu' },
+          ],
+        ]
+      : [
+          [{ text: '💰 View Balance', callback_data: 'v1:balance' }],
+          [{ text: '🏠 Main Menu', callback_data: 'v1:menu' }],
+        ];
 
     await fetch(notifyUrl, {
       method: 'POST',
@@ -269,18 +296,49 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
     const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && (prefs as any).whatsappNotificationsEnabled === false) return;
 
-    const userLabel = user?.username ? `@${user.username}` : (user?.fullName || 'your account');
-    const amount = `${deposit.amount} ${deposit.asset}`;
+    const recipientName = user?.fullName || (user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account'));
+    const amount = `${deposit.amount} ${deposit.asset.toUpperCase()}`;
     const network = humanNetwork(deposit.chain);
+
+    let spendableFormatted = `$${Number(deposit.amount).toFixed(2)}`;
+    try {
+      const { getUnifiedBalance } = await import('../balances/unified-balance.service.js');
+      const unified = await getUnifiedBalance(userId);
+      const isNgn = deposit.asset.toLowerCase() === 'ngn';
+      const assetBal = unified.balances.find((b) => b.asset.toLowerCase() === deposit.asset.toLowerCase());
+      if (assetBal) {
+        const val = Number(assetBal.spendable || 0);
+        spendableFormatted = isNgn ? `₦${val.toLocaleString()}` : `$${val.toFixed(2)}`;
+      }
+    } catch {
+      // fallback
+    }
+
     const text = deposit.status === 'confirmed'
-      ? `💰 Deposit Confirmed\n\n${amount} on ${network} has settled into your Sivan balance (${userLabel}).\n\nQuick reply:\n• Reply BALANCE to view updated funds\n• Reply TRANSFER to send funds\n• Reply CASHOUT to withdraw to bank\n• Reply SETTINGS to manage notification alerts`
-      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${userLabel}.\n\nWe will notify you the moment it settles.`;
+      ? `✅ Deposit Received\n\n${amount} on ${network} has arrived for ${recipientName}.\n\nStatus: Confirmed\nSpendable Balance: ${spendableFormatted}\n\nWhat would you like to do?\n• Reply TRANSFER to send\n• Reply CASHOUT to withdraw to bank\n• Reply AGREEMENT to fund a Service agreement`
+      : `⏳ Deposit Detected\n\n${amount} on ${network} is confirming on-chain for ${recipientName}.\n\nStatus: Confirming\nWe will notify you the moment it settles.`;
 
     const formattedRecipient = targetPhone.startsWith('whatsapp:')
       ? targetPhone
       : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
 
     const waNotifyUrl = rawWaUrl.endsWith('/api/notify') ? rawWaUrl : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+    const requestBody: Record<string, any> = {
+      to: formattedRecipient,
+      message: text,
+    };
+
+    if (deposit.status === 'confirmed') {
+      requestBody.menuCard = {
+        body: text,
+        actions: [
+          { id: 'act_transfer', title: '💸 Transfer', action: 'TRANSFER' },
+          { id: 'act_cashout', title: '🏦 Cashout', action: 'CASHOUT' },
+          { id: 'act_agreement', title: '🤝 Agreement', action: 'AGREEMENT' },
+        ],
+      };
+    }
+
     const resp = await fetch(waNotifyUrl, {
       method: 'POST',
       headers: {
@@ -288,10 +346,7 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
         'x-notify-secret': secret,
         'x-target-service': 'whatsapp-bot',
       },
-      body: JSON.stringify({
-        to: formattedRecipient,
-        message: text,
-      }),
+      body: JSON.stringify(requestBody),
     });
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');

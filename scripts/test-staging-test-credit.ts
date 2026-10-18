@@ -40,7 +40,7 @@ async function run() {
     id: testUserId,
     email: `${testUserId}@user.sivantech.online`,
     fullName: 'Test Credit User',
-    primaryChannel: 'web',
+    primaryChannel: 'email',
     createdAt: now,
     updatedAt: now,
   });

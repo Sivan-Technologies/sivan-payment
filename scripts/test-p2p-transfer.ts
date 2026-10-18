@@ -52,17 +52,26 @@ export async function runP2pTransferTest() {
   const senderUser = senderSignup.user;
   const recipUser = recipSignup.user;
 
-  // Credit sender with 50 USDC via admin adjustment
+  // Set sender PIN
+  const setPinRes = await app.inject({
+    method: 'POST',
+    url: '/api/users/me/withdrawal-pin',
+    headers: { Authorization: `Bearer ${senderSignup.token}` },
+    payload: { pin: '829471' },
+  });
+  assert.equal(setPinRes.statusCode, 200, 'Sender PIN setup succeeded');
+
+  // Credit sender with 50,000 NGN via admin adjustment (backed by Paystack float)
   const creditRes = await app.inject({
     method: 'POST',
     url: '/api/admin/balance/adjustments',
     headers: { 'x-admin-api-key': env.ADMIN_API_KEY },
     payload: {
       userId: senderUser.id,
-      asset: 'usdc',
-      amount: 50,
+      asset: 'ngn',
+      amount: 50000,
       status: 'available',
-      reason: 'Initial test funding for P2P test',
+      reason: 'Initial test funding for NGN P2P test',
     },
   });
   assert.equal(creditRes.statusCode, 200, 'Admin funding succeeded');
@@ -98,8 +107,8 @@ export async function runP2pTransferTest() {
   assert.equal(resolveIdJson.data.user.userId, recipUser.id);
   console.log(`✅ Verified: Resolved recipient by userId ${recipUser.id}`);
 
-  // Test 3: Execute P2P Transfer (15.00 USDC) with $0 Fee
-  const transferRes = await app.inject({
+  // Test 2b: USDC internal transfer is blocked (requires on-chain send via blockchain resolver)
+  const usdcAttempt = await app.inject({
     method: 'POST',
     url: `/api/users/${senderUser.id}/balance/p2p-transfer`,
     headers: { Authorization: `Bearer ${senderSignup.token}` },
@@ -107,19 +116,34 @@ export async function runP2pTransferTest() {
       asset: 'usdc',
       amount: 15,
       recipientTarget: `@${recipUsername}`,
+      pin: '829471',
+    },
+  });
+  assert.equal(usdcAttempt.statusCode, 400, 'USDC internal P2P is blocked');
+  console.log('✅ Verified: Internal USDC P2P blocked (on-chain transfer required for crypto)');
+
+  // Test 3: Execute NGN P2P Transfer (15,000 NGN) with $0 Fee
+  const transferRes = await app.inject({
+    method: 'POST',
+    url: `/api/users/${senderUser.id}/balance/p2p-transfer`,
+    headers: { Authorization: `Bearer ${senderSignup.token}` },
+    payload: {
+      asset: 'ngn',
+      amount: 15000,
+      recipientTarget: `@${recipUsername}`,
       note: 'Payment for design consultation',
+      pin: '829471',
     },
   });
   assert.equal(transferRes.statusCode, 200, `P2P transfer succeeded: ${transferRes.body}`);
   const transferJson = transferRes.json();
   assert.equal(transferJson.data.status, 'completed');
   assert.equal(transferJson.data.fee, 0, 'Internal P2P transfer fee is $0.00');
-  assert.equal(transferJson.data.netAmount, 15, 'Net amount matches exact requested amount');
+  assert.equal(transferJson.data.netAmount, 15000, 'Net amount matches exact requested amount');
   assert.equal(transferJson.data.recipient.userId, recipUser.id);
-  console.log('✅ Verified: Executed 15.00 USDC P2P transfer with $0.00 fee');
+  console.log('✅ Verified: Executed 15,000 NGN P2P transfer with $0.00 fee');
 
-
-  // Test 4: Verify Recipient Received 15 USDC
+  // Test 4: Verify Recipient Received 15,000 NGN
   const recipBalRes = await app.inject({
     method: 'GET',
     url: `/api/users/${recipUser.id}/balance`,
@@ -127,11 +151,11 @@ export async function runP2pTransferTest() {
   });
   assert.equal(recipBalRes.statusCode, 200);
   const recipBal = recipBalRes.json();
-  const recipUsdc = recipBal.data.balances?.find((b: any) => b.asset === 'usdc') ?? recipBal.data;
-  assert.equal(Number(recipUsdc.available), 15, 'Recipient balance is 15 USDC');
-  console.log('✅ Verified: Recipient ledger credited with 15.00 USDC');
+  const recipNgn = recipBal.data.balances?.find((b: any) => b.asset === 'ngn') ?? recipBal.data;
+  assert.equal(Number(recipNgn.available), 15000, 'Recipient balance is 15,000 NGN');
+  console.log('✅ Verified: Recipient ledger credited with 15,000 NGN');
 
-  // Test 5: Verify Sender Remaining Balance is 35 USDC
+  // Test 5: Verify Sender Remaining Balance is 35,000 NGN
   const senderBalRes = await app.inject({
     method: 'GET',
     url: `/api/users/${senderUser.id}/balance`,
@@ -139,9 +163,9 @@ export async function runP2pTransferTest() {
   });
   assert.equal(senderBalRes.statusCode, 200);
   const senderBal = senderBalRes.json();
-  const senderUsdc = senderBal.data.balances?.find((b: any) => b.asset === 'usdc') ?? senderBal.data;
-  assert.equal(Number(senderUsdc.available), 35, 'Sender balance is 35 USDC');
-  console.log('✅ Verified: Sender balance deducted by exact 15.00 USDC');
+  const senderNgn = senderBal.data.balances?.find((b: any) => b.asset === 'ngn') ?? senderBal.data;
+  assert.equal(Number(senderNgn.available), 35000, 'Sender balance is 35,000 NGN');
+  console.log('✅ Verified: Sender balance deducted by exact 15,000 NGN');
 
   // Test 6: Case B - Create P2P Claim Vault for Unregistered Phone
   const unregPhone = `+1415${String(runId).slice(-7)}`;
@@ -150,10 +174,11 @@ export async function runP2pTransferTest() {
     url: `/api/users/${senderUser.id}/balance/p2p-transfer`,
     headers: { Authorization: `Bearer ${senderSignup.token}` },
     payload: {
-      asset: 'usdc',
-      amount: 10,
+      asset: 'ngn',
+      amount: 10000,
       recipientTarget: unregPhone,
       note: 'Invite bonus test',
+      pin: '829471',
     },
   });
   assert.equal(claimRes.statusCode, 200, `Claim vault creation succeeded: ${claimRes.body}`);
@@ -172,8 +197,8 @@ export async function runP2pTransferTest() {
   });
   assert.equal(inspectRes.statusCode, 200, 'Claim inspection succeeded');
   const inspectJson = inspectRes.json();
-  assert.equal(inspectJson.data.amount, 10);
-  assert.equal(inspectJson.data.asset, 'usdc');
+  assert.equal(inspectJson.data.amount, 10000);
+  assert.equal(inspectJson.data.asset, 'ngn');
   assert.equal(inspectJson.data.status, 'pending');
   assert.equal(inspectJson.data.recipientPhone, unregPhone);
   console.log('✅ Verified: Inspected claim via GET /api/claims/:token');
@@ -191,7 +216,7 @@ export async function runP2pTransferTest() {
   const redeemJson = redeemRes.json();
   assert.equal(redeemJson.data.success, true);
   assert.equal(redeemJson.data.status, 'claimed');
-  assert.equal(redeemJson.data.amount, 10);
+  assert.equal(redeemJson.data.amount, 10000);
   assert.equal(redeemJson.data.creditedToUserId, newUser.id);
   console.log('✅ Verified: Successfully redeemed claim into newly registered account');
 
@@ -203,8 +228,8 @@ export async function runP2pTransferTest() {
   });
   assert.equal(newBalRes.statusCode, 200);
   const newBal = newBalRes.json();
-  const newUsdc = newBal.data.balances?.find((b: any) => b.asset === 'usdc') ?? newBal.data;
-  assert.equal(Number(newUsdc.available), 10, 'New user balance is 10 USDC');
+  const newNgn = newBal.data.balances?.find((b: any) => b.asset === 'ngn') ?? newBal.data;
+  assert.equal(Number(newNgn.available), 10000, 'New user balance is 10,000 NGN');
 
   // Verify Phone Auto-Linked to New User Profile
   const resolveNewPhoneRes = await app.inject({

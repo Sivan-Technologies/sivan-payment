@@ -118,7 +118,7 @@ export const createBalanceTransferSchema = z.object({
 
 export const adminBalanceAdjustmentSchema = z.object({
   userId: z.string().min(1),
-  asset: z.enum(['usdc', 'usdt']).default('usdc'),
+  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt', 'ngn'])).default('usdc'),
   amount: z.coerce.number(),
   status: z.enum(['pending', 'available']).default('available'),
   reason: z.string().min(5).max(1000),
@@ -1380,6 +1380,9 @@ export async function executeP2pTransfer(
   }
 
   const isNgn = input.asset.toLowerCase() === 'ngn';
+  if (!isNgn) {
+    throw badRequest('Internal off-chain transfers are only supported for NGN. For USDC and crypto assets, please send an on-chain transfer to the recipient\'s Sivan Tag or wallet address.');
+  }
   const minAmount = isNgn ? 100 : (controls?.minimumSendAmount ?? 1);
   if (input.amount < minAmount) {
     throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
