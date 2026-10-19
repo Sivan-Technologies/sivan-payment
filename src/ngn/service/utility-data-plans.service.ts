@@ -25,7 +25,9 @@ import {
 export interface UtilityDataPlanRecord {
   id: string;
   bundleSize: string; // '1GB', '2GB', '5GB', '10GB'
-  amountNgn: number;
+  costPriceNgn: number; // Wholesale cost from provider (e.g. 350)
+  markupNgn: number; // Sivan profit markup (e.g. 80)
+  amountNgn: number; // Final customer price = costPriceNgn + markupNgn (e.g. 430)
   network: string; // 'all' | 'mtn' | 'airtel' | 'glo' | '9mobile'
   isActive: boolean;
   planCode?: string;
@@ -38,7 +40,9 @@ export const DEFAULT_DATA_PLANS: UtilityDataPlanRecord[] = [
   {
     id: 'plan_1gb_all',
     bundleSize: '1GB',
-    amountNgn: 350,
+    costPriceNgn: 350,
+    markupNgn: 80,
+    amountNgn: 430,
     network: 'all',
     isActive: true,
     planCode: 'DATA_1GB',
@@ -49,7 +53,9 @@ export const DEFAULT_DATA_PLANS: UtilityDataPlanRecord[] = [
   {
     id: 'plan_2gb_all',
     bundleSize: '2GB',
-    amountNgn: 700,
+    costPriceNgn: 700,
+    markupNgn: 120,
+    amountNgn: 820,
     network: 'all',
     isActive: true,
     planCode: 'DATA_2GB',
@@ -60,7 +66,9 @@ export const DEFAULT_DATA_PLANS: UtilityDataPlanRecord[] = [
   {
     id: 'plan_5gb_all',
     bundleSize: '5GB',
-    amountNgn: 1750,
+    costPriceNgn: 1750,
+    markupNgn: 250,
+    amountNgn: 2000,
     network: 'all',
     isActive: true,
     planCode: 'DATA_5GB',
@@ -71,7 +79,9 @@ export const DEFAULT_DATA_PLANS: UtilityDataPlanRecord[] = [
   {
     id: 'plan_10gb_all',
     bundleSize: '10GB',
-    amountNgn: 3500,
+    costPriceNgn: 3500,
+    markupNgn: 450,
+    amountNgn: 3950,
     network: 'all',
     isActive: true,
     planCode: 'DATA_10GB',
@@ -88,7 +98,9 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 export const updateDataPlanSchema = z.object({
   bundleSize: z.string().min(1, 'bundleSize is required'),
-  amountNgn: z.number().int().min(100, 'Minimum price is 100 NGN'),
+  costPriceNgn: z.number().int().min(0, 'Cost price cannot be negative').optional(),
+  markupNgn: z.number().int().min(0, 'Markup cannot be negative').optional(),
+  amountNgn: z.number().int().min(100, 'Minimum price is 100 NGN').optional(),
   network: z.string().optional().default('all'),
   isActive: z.boolean().optional().default(true),
   planCode: z.string().optional(),
@@ -126,9 +138,22 @@ export async function getUtilityDataPlans(options?: {
 
     const saved = (latestAudit?.metadata as any)?.plans as UtilityDataPlanRecord[] | undefined;
     if (saved && Array.isArray(saved) && saved.length > 0) {
-      cachedPlans = saved;
+      cachedPlans = saved.map((p) => {
+        const def = DEFAULT_DATA_PLANS.find(
+          (d) => d.bundleSize.toUpperCase() === p.bundleSize.toUpperCase()
+        );
+        const costPriceNgn = p.costPriceNgn ?? def?.costPriceNgn ?? 350;
+        const markupNgn = p.markupNgn ?? def?.markupNgn ?? 80;
+        const amountNgn = costPriceNgn + markupNgn;
+        return {
+          ...p,
+          costPriceNgn,
+          markupNgn,
+          amountNgn,
+        };
+      });
       lastCacheTime = now;
-      return filterPlans(saved, options);
+      return filterPlans(cachedPlans, options);
     }
   } catch (err) {
     console.warn('[utility-data-plans] Failed to read persisted plans from DB, using defaults:', err);
@@ -202,10 +227,32 @@ export async function updateUtilityDataPlans(
     const id = `plan_${cleanSize.toLowerCase()}_${cleanNet}`;
 
     const existing = planMap.get(key);
+    const defaultCost = DEFAULT_DATA_PLANS.find((d) => d.bundleSize.toUpperCase() === cleanSize)?.costPriceNgn ?? 350;
+    const defaultMarkup = DEFAULT_DATA_PLANS.find((d) => d.bundleSize.toUpperCase() === cleanSize)?.markupNgn ?? 80;
+
+    let costPrice = input.costPriceNgn ?? existing?.costPriceNgn ?? defaultCost;
+    let markup = input.markupNgn ?? existing?.markupNgn ?? defaultMarkup;
+    let amount = input.amountNgn;
+
+    if (input.costPriceNgn !== undefined && input.markupNgn !== undefined) {
+      amount = input.costPriceNgn + input.markupNgn;
+    } else if (input.markupNgn !== undefined && input.amountNgn === undefined) {
+      amount = costPrice + input.markupNgn;
+    } else if (input.costPriceNgn !== undefined && input.amountNgn === undefined) {
+      amount = input.costPriceNgn + markup;
+    } else if (input.amountNgn !== undefined) {
+      amount = input.amountNgn;
+      markup = Math.max(0, amount - costPrice);
+    } else {
+      amount = costPrice + markup;
+    }
+
     planMap.set(key, {
       id,
       bundleSize: cleanSize,
-      amountNgn: input.amountNgn,
+      costPriceNgn: costPrice,
+      markupNgn: markup,
+      amountNgn: amount,
       network: cleanNet,
       isActive: input.isActive ?? (existing ? existing.isActive : true),
       planCode: input.planCode || existing?.planCode || `DATA_${cleanSize}`,

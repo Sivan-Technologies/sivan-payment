@@ -16,55 +16,67 @@ test('Utility Data Plans Service — returns default plans with 1GB, 2GB, 5GB, 1
 
   const p1 = plans.find((p) => p.bundleSize === '1GB');
   assert.ok(p1);
-  assert.strictEqual(p1.amountNgn, 350);
+  assert.strictEqual(p1.costPriceNgn, 350);
+  assert.strictEqual(p1.markupNgn, 80);
+  assert.strictEqual(p1.amountNgn, 430);
   assert.strictEqual(p1.isActive, true);
 
   const p2 = plans.find((p) => p.bundleSize === '2GB');
   assert.ok(p2);
-  assert.strictEqual(p2.amountNgn, 700);
+  assert.strictEqual(p2.costPriceNgn, 700);
+  assert.strictEqual(p2.amountNgn, p2.costPriceNgn + p2.markupNgn);
 
   const p5 = plans.find((p) => p.bundleSize === '5GB');
   assert.ok(p5);
-  assert.strictEqual(p5.amountNgn, 1750);
+  assert.strictEqual(p5.costPriceNgn, 1750);
+  assert.strictEqual(p5.amountNgn, p5.costPriceNgn + p5.markupNgn);
 
   const p10 = plans.find((p) => p.bundleSize === '10GB');
   assert.ok(p10);
-  assert.strictEqual(p10.amountNgn, 3500);
+  assert.strictEqual(p10.costPriceNgn, 3500);
+  assert.strictEqual(p10.amountNgn, p10.costPriceNgn + p10.markupNgn);
 });
 
 test('Utility Data Plans Service — getUtilityDataPlanBySize finds plan case-insensitively', async () => {
   const plan1 = await getUtilityDataPlanBySize('1gb');
   assert.ok(plan1);
   assert.strictEqual(plan1.bundleSize, '1GB');
-  assert.strictEqual(plan1.amountNgn, 350);
+  assert.strictEqual(plan1.amountNgn, plan1.costPriceNgn + plan1.markupNgn);
 
   const plan5 = await getUtilityDataPlanBySize('5GB');
   assert.ok(plan5);
   assert.strictEqual(plan5.bundleSize, '5GB');
-  assert.strictEqual(plan5.amountNgn, 1750);
+  assert.strictEqual(plan5.amountNgn, plan5.costPriceNgn + plan5.markupNgn);
 });
 
 test('Utility Data Plans Service — updateUtilityDataPlans updates price dynamically with audit trail', async () => {
+  // Test setting wholesale cost 350 + markup 80 = 430
   const updated = await updateUtilityDataPlans([
-    { bundleSize: '1GB', amountNgn: 400, network: 'all', isActive: true },
-    { bundleSize: '2GB', amountNgn: 800, network: 'all', isActive: true },
+    { bundleSize: '1GB', costPriceNgn: 350, markupNgn: 80, network: 'all', isActive: true },
+    { bundleSize: '2GB', costPriceNgn: 700, markupNgn: 150, network: 'all', isActive: true },
   ], 'admin_test_user');
 
   assert.ok(Array.isArray(updated));
   const p1 = updated.find((p) => p.bundleSize === '1GB');
   assert.ok(p1);
-  assert.strictEqual(p1.amountNgn, 400);
+  assert.strictEqual(p1.costPriceNgn, 350);
+  assert.strictEqual(p1.markupNgn, 80);
+  assert.strictEqual(p1.amountNgn, 430);
   assert.strictEqual(p1.updatedBy, 'admin_test_user');
+
+  const p2 = updated.find((p) => p.bundleSize === '2GB');
+  assert.ok(p2);
+  assert.strictEqual(p2.amountNgn, 850); // 700 + 150
 
   // Verify getUtilityDataPlanBySize returns the updated live price
   const live = await getUtilityDataPlanBySize('1GB');
   assert.ok(live);
-  assert.strictEqual(live.amountNgn, 400);
+  assert.strictEqual(live.amountNgn, 430);
 
   // Restore defaults
   await updateUtilityDataPlans([
-    { bundleSize: '1GB', amountNgn: 350, network: 'all', isActive: true },
-    { bundleSize: '2GB', amountNgn: 700, network: 'all', isActive: true },
+    { bundleSize: '1GB', costPriceNgn: 350, markupNgn: 80, network: 'all', isActive: true },
+    { bundleSize: '2GB', costPriceNgn: 700, markupNgn: 120, network: 'all', isActive: true },
   ], 'admin_test_restore');
 });
 
