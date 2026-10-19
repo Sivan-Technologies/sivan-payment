@@ -1975,9 +1975,9 @@ export async function releaseServiceAgreementFromBalance(
 
   const cleanAsset = input.currency.toLowerCase() as BalanceAsset;
 
-  const existingLedger = await listUserBalanceLedger(resolvedBuyerId).catch(() => []);
-  const alreadySettled = existingLedger.some(
-    (e) => (e.sourceType === 'service_agreement_settlement' || e.transferId === `agr_settle_${input.agreementId}`) && e.sourceId === input.agreementId
+  const sellerLedger = await listUserBalanceLedger(resolvedSellerId).catch(() => []);
+  const alreadySettled = sellerLedger.some(
+    (e) => (e.sourceType === 'service_agreement_payout' || e.transferId === `agr_payout_${input.agreementId}`) && e.sourceId === input.agreementId
   );
   if (alreadySettled) {
     return {
@@ -1999,39 +1999,48 @@ export async function releaseServiceAgreementFromBalance(
 
   const paymentReference = `agr_settle_${input.agreementId}`;
 
-  await createBalanceLedgerEntry(
-    {
-      userId: resolvedBuyerId,
-      asset: cleanAsset,
-      amount: sellerNet.toFixed(2),
-      kind: 'debit_transfer',
-      status: 'completed',
-      sourceType: 'service_agreement_settlement',
-      sourceId: input.agreementId,
-      description: `Service Agreement ${input.agreementId} release payout`,
-      destinationAddress: resolvedSellerId,
-      transferId: paymentReference,
-    },
-    { actorType: 'system', actorId: 'agreement_settlement' }
+  // Check if buyer funded via internal balance hold; only debit if a hold exists
+  const buyerLedger = await listUserBalanceLedger(resolvedBuyerId).catch(() => []);
+  const buyerHoldEntry = buyerLedger.find(
+    (e) => e.kind === 'hold' && (e.sourceId === input.agreementId || e.transferId === `agr_hold_${input.agreementId}`)
   );
 
-  if (fee > 0) {
+  if (buyerHoldEntry) {
     await createBalanceLedgerEntry(
       {
         userId: resolvedBuyerId,
         asset: cleanAsset,
-        amount: fee.toFixed(2),
-        kind: 'fee',
+        amount: sellerNet.toFixed(2),
+        kind: 'debit_transfer',
         status: 'completed',
-        sourceType: 'service_agreement_fee',
+        sourceType: 'service_agreement_settlement',
         sourceId: input.agreementId,
-        description: `Service Agreement ${input.agreementId} platform fee`,
-        transferId: `agr_fee_${input.agreementId}`,
+        description: `Service Agreement ${input.agreementId} release payout`,
+        destinationAddress: resolvedSellerId,
+        transferId: paymentReference,
       },
       { actorType: 'system', actorId: 'agreement_settlement' }
     );
+
+    if (fee > 0) {
+      await createBalanceLedgerEntry(
+        {
+          userId: resolvedBuyerId,
+          asset: cleanAsset,
+          amount: fee.toFixed(2),
+          kind: 'fee',
+          status: 'completed',
+          sourceType: 'service_agreement_fee',
+          sourceId: input.agreementId,
+          description: `Service Agreement ${input.agreementId} platform fee`,
+          transferId: `agr_fee_${input.agreementId}`,
+        },
+        { actorType: 'system', actorId: 'agreement_settlement' }
+      );
+    }
   }
 
+  // Atomically credit seller spendable available balance
   await createBalanceLedgerEntry(
     {
       userId: resolvedSellerId,
