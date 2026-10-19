@@ -72,21 +72,40 @@ async function resolvePaymentUserId(target: string): Promise<string> {
   const directUser = await db.findUserById(target).catch(() => null);
   if (directUser) return directUser.id;
 
-  const user = (await db.findUserByWhatsappNumber(withPlus).catch(() => null))
-    || (await db.findUserByWhatsappNumber(withWhatsapp).catch(() => null))
-    || (await db.findUserByWhatsappNumber(rawClean).catch(() => null))
-    || (rawClean ? await db.findUserByTelegramUserId(rawClean).catch(() => null) : null)
-    || (await db.findUserByTarget(target).catch(() => null));
+  const phoneVariants: string[] = [withPlus, withWhatsapp, rawClean];
+  if (rawClean.startsWith('234') && rawClean.length === 13) {
+    const local0 = `0${rawClean.slice(3)}`;
+    phoneVariants.push(local0, `whatsapp:${local0}`);
+  } else if (rawClean.startsWith('0') && rawClean.length === 11) {
+    const intl = `234${rawClean.slice(1)}`;
+    phoneVariants.push(`+${intl}`, intl, `whatsapp:+${intl}`);
+  }
 
-  if (user) return user.id;
+  for (const variant of phoneVariants) {
+    const user = await db.findUserByWhatsappNumber(variant).catch(() => null);
+    if (user) return user.id;
+  }
+
+  if (target.includes('@')) {
+    const userByEmail = await db.findUserByEmail(target.trim().toLowerCase()).catch(() => null);
+    if (userByEmail) return userByEmail.id;
+  }
+
+  if (rawClean) {
+    const userByTg = await db.findUserByTelegramUserId(rawClean).catch(() => null);
+    if (userByTg) return userByTg.id;
+  }
+
+  const userByTarget = await db.findUserByTarget(target).catch(() => null);
+  if (userByTarget) return userByTarget.id;
 
   const identityLinks = await db.listCustomerIdentityLinks().catch(() => []);
   const link = identityLinks.find(
     (l) => l.status === 'linked' && (
-      l.whatsappNumber === withPlus ||
-      l.whatsappNumber === withWhatsapp ||
-      l.whatsappNumber === rawClean ||
-      l.telegramUserId === rawClean
+      phoneVariants.includes(l.whatsappNumber || '') ||
+      phoneVariants.includes(l.telegramUserId || '') ||
+      l.telegramUserId === rawClean ||
+      l.email?.toLowerCase() === target.trim().toLowerCase()
     )
   );
   if (link?.paymentUserId) return link.paymentUserId;
@@ -141,12 +160,28 @@ async function recordUtilityDebit(input: {
   amountNgn: number;
   rawPayload: unknown;
 }): Promise<void> {
+  const resolvedUserId = await resolvePaymentUserId(input.userId).catch(() => input.userId);
+  const user = await db.findUserById(resolvedUserId).catch(() => null);
+  const isPostgres = (process.env.DATABASE_PROVIDER || '').toLowerCase() === 'postgres';
+  // In PostgreSQL, user_id must be a valid user ID (or undefined) to satisfy foreign key constraint
+  const validUserId = user ? user.id : (isPostgres ? (resolvedUserId.startsWith('usr_') ? resolvedUserId : undefined) : resolvedUserId);
+
+  let virtualAccountId: string | undefined = undefined;
+  if (validUserId) {
+    const vas = await db.listVirtualAccounts().catch(() => []);
+    const userVa = vas.find((va) => va.userId === validUserId && va.status === 'active');
+    if (userVa) {
+      virtualAccountId = userVa.id;
+    }
+  }
+
   const now = new Date().toISOString();
   const txRecord: VirtualAccountTransactionRecord = {
     id: `vatx_debit_${crypto.createHash('sha256').update(input.reference).digest('hex').slice(0, 24)}`,
     provider: 'paystack',
+    virtualAccountId,
     depositId: input.reference,
-    userId: input.userId,
+    userId: validUserId,
     sourceCurrency: 'ngn',
     destinationCurrency: 'ngn',
     sourceAmount: input.amountNgn.toFixed(2),
@@ -159,25 +194,40 @@ async function recordUtilityDebit(input: {
     updatedAt: now,
     completedAt: now,
   };
-  await db.upsertVirtualAccountTransactionRecord(txRecord);
+
+  try {
+    await db.upsertVirtualAccountTransactionRecord(txRecord);
+  } catch (err) {
+    console.warn('[sivanUtilityService] Failed to upsert virtual account transaction record:', err);
+    // If it failed due to foreign key or constraint, retry with null userId/virtualAccountId so the transaction audit record is preserved
+    if (txRecord.userId || txRecord.virtualAccountId) {
+      txRecord.userId = undefined;
+      txRecord.virtualAccountId = undefined;
+      await db.upsertVirtualAccountTransactionRecord(txRecord).catch((retryErr) => {
+        console.error('[sivanUtilityService] Critical: failed fallback virtual account transaction upsert:', retryErr);
+      });
+    }
+  }
 
   // Record in unified balance ledger
-  await createBalanceLedgerEntry(
-    {
-      userId: input.userId,
-      asset: 'ngn',
-      amount: input.amountNgn.toFixed(2),
-      kind: 'debit_transfer',
-      status: 'completed',
-      sourceType: `utility_${input.serviceType}`,
-      sourceId: input.reference,
-      description: `Utility purchase (${input.serviceType}) via ${input.providerName.toUpperCase()}: ${input.amountNgn} NGN`,
-      transferId: input.reference,
-    },
-    { actorType: 'user', actorId: input.userId }
-  ).catch((err) => {
-    console.warn('[sivanUtilityService] Failed to record ledger entry for utility purchase:', err);
-  });
+  if (validUserId) {
+    await createBalanceLedgerEntry(
+      {
+        userId: validUserId,
+        asset: 'ngn',
+        amount: input.amountNgn.toFixed(2),
+        kind: 'debit_transfer',
+        status: 'completed',
+        sourceType: `utility_${input.serviceType}`,
+        sourceId: input.reference,
+        description: `Utility purchase (${input.serviceType}) via ${input.providerName.toUpperCase()}: ${input.amountNgn} NGN`,
+        transferId: input.reference,
+      },
+      { actorType: 'user', actorId: validUserId }
+    ).catch((err) => {
+      console.warn('[sivanUtilityService] Failed to record ledger entry for utility purchase:', err);
+    });
+  }
 }
 
 /**
@@ -202,7 +252,8 @@ export async function executeAirtimePurchase(
   }
 
   // 1. Balance verification
-  const balance = await getUserNgnBalance(req.userId);
+  const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
+  const balance = await getUserNgnBalance(resolvedUserId);
   if (balance < req.amountNgn) {
     throw badRequest(
       `Insufficient balance (${balance.toLocaleString()} NGN). You need ${req.amountNgn.toLocaleString()} NGN for this purchase. Please deposit NGN into your Sivan account.`
@@ -217,7 +268,7 @@ export async function executeAirtimePurchase(
 
   // 4. Atomic ledger debit
   await recordUtilityDebit({
-    userId: req.userId,
+    userId: resolvedUserId,
     providerName,
     serviceType: 'airtime',
     reference: result.reference,
@@ -282,7 +333,8 @@ export async function executeDataPurchase(
     throw badRequest('Invalid data bundle amount.');
   }
 
-  const balance = await getUserNgnBalance(req.userId);
+  const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
+  const balance = await getUserNgnBalance(resolvedUserId);
   if (balance < amountNgn) {
     throw badRequest(
       `Insufficient balance (${balance.toLocaleString()} NGN). You need ${amountNgn.toLocaleString()} NGN.`
@@ -295,7 +347,7 @@ export async function executeDataPurchase(
   );
 
   await recordUtilityDebit({
-    userId: req.userId,
+    userId: resolvedUserId,
     providerName,
     serviceType: 'data',
     reference: result.reference,
@@ -378,7 +430,8 @@ export async function executeElectricityPayment(
 
   const discoName = DISCO_DISPLAY_NAMES[req.disco] || req.disco.toUpperCase();
 
-  const balance = await getUserNgnBalance(req.userId);
+  const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
+  const balance = await getUserNgnBalance(resolvedUserId);
   if (balance < req.amountNgn) {
     throw badRequest(
       `Insufficient balance (${balance.toLocaleString()} NGN). You need ${req.amountNgn.toLocaleString()} NGN.`
@@ -397,7 +450,7 @@ export async function executeElectricityPayment(
   );
 
   await recordUtilityDebit({
-    userId: req.userId,
+    userId: resolvedUserId,
     providerName,
     serviceType: 'electricity',
     reference: result.reference,
