@@ -33,6 +33,7 @@ import {
 import {
   getUtilityDataPlans,
   updateUtilityDataPlans,
+  deleteUtilityDataPlan,
   getActiveUtilityProviderInfo,
   setUtilityProvider,
   updateDataPlanSchema,
@@ -339,14 +340,14 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   /**
    * PUT /api/admin/utilities/data-plans
    * Admin endpoint: update price for any bundle size with audit trail.
-   * Supports updating a single plan object or a batch of plans.
+   * Supports updating a single plan object or a batch of plans (with full list sync).
    */
   app.put('/api/admin/utilities/data-plans', async (request: FastifyRequest, reply: FastifyReply) => {
     const body: any = request.body;
     let updatedPlans;
     if (body && Array.isArray(body.plans)) {
       const parsedBatch = parseBody(updateDataPlansBatchSchema, body);
-      updatedPlans = await updateUtilityDataPlans(parsedBatch.plans, parsedBatch.updatedBy);
+      updatedPlans = await updateUtilityDataPlans(parsedBatch.plans, parsedBatch.updatedBy, { replaceAll: true });
     } else {
       const parsedSingle = parseBody(updateDataPlanSchema, body);
       updatedPlans = await updateUtilityDataPlans([parsedSingle], parsedSingle.updatedBy);
@@ -358,6 +359,29 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       },
     });
   });
+
+  /**
+   * DELETE /api/admin/utilities/data-plans/:target
+   * Admin endpoint: removes a bundle plan tier by bundle size or plan id.
+   */
+  app.delete(
+    '/api/admin/utilities/data-plans/:target',
+    async (
+      request: FastifyRequest<{ Params: { target: string }; Querystring: { network?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { target } = request.params;
+      const { network } = request.query;
+      const remainingPlans = await deleteUtilityDataPlan(target, network || 'all');
+      return reply.code(200).send({
+        status: 'success',
+        data: {
+          plans: remainingPlans,
+          deletedTarget: target,
+        },
+      });
+    }
+  );
 
   /**
    * GET /api/admin/utilities/provider

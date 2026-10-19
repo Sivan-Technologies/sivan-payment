@@ -209,14 +209,17 @@ export async function getUtilityDataPlanBySize(
  */
 export async function updateUtilityDataPlans(
   inputPlans: Array<z.infer<typeof updateDataPlanSchema>>,
-  updatedBy = 'admin_api_key'
+  updatedBy = 'admin_api_key',
+  options: { replaceAll?: boolean } = {}
 ): Promise<UtilityDataPlanRecord[]> {
   const current = await getUtilityDataPlans();
   const planMap = new Map<string, UtilityDataPlanRecord>();
 
-  for (const p of current) {
-    const key = `${p.bundleSize.toUpperCase()}_${p.network.toLowerCase()}`;
-    planMap.set(key, p);
+  if (!options.replaceAll) {
+    for (const p of current) {
+      const key = `${p.bundleSize.toUpperCase()}_${p.network.toLowerCase()}`;
+      planMap.set(key, p);
+    }
   }
 
   const now = nowIso();
@@ -226,7 +229,9 @@ export async function updateUtilityDataPlans(
     const key = `${cleanSize}_${cleanNet}`;
     const id = `plan_${cleanSize.toLowerCase()}_${cleanNet}`;
 
-    const existing = planMap.get(key);
+    const existing = current.find(
+      (p) => `${p.bundleSize.toUpperCase()}_${p.network.toLowerCase()}` === key
+    );
     const defaultCost = DEFAULT_DATA_PLANS.find((d) => d.bundleSize.toUpperCase() === cleanSize)?.costPriceNgn ?? 350;
     const defaultMarkup = DEFAULT_DATA_PLANS.find((d) => d.bundleSize.toUpperCase() === cleanSize)?.markupNgn ?? 80;
 
@@ -269,7 +274,7 @@ export async function updateUtilityDataPlans(
   await createAuditLog({
     actorType: 'admin',
     actorId: updatedBy,
-    action: 'utility.data_plans.updated',
+    action: options.replaceAll ? 'utility.data_plans.synced' : 'utility.data_plans.updated',
     resourceType: 'utility_data_plans',
     resourceId: 'global',
     severity: 'warning',
@@ -282,6 +287,47 @@ export async function updateUtilityDataPlans(
   });
 
   return nextPlans;
+}
+
+/**
+ * Removes a specific data plan bundle by size or id.
+ */
+export async function deleteUtilityDataPlan(
+  bundleSizeOrId: string,
+  network = 'all',
+  updatedBy = 'admin_api_key'
+): Promise<UtilityDataPlanRecord[]> {
+  const current = await getUtilityDataPlans();
+  const cleanTarget = bundleSizeOrId.trim().toLowerCase().replace(/\s+/g, '');
+  const cleanNet = network.trim().toLowerCase();
+
+  const filtered = current.filter((p) => {
+    const idMatch = p.id.toLowerCase() === cleanTarget;
+    const sizeMatch = p.bundleSize.toLowerCase().replace(/\s+/g, '') === cleanTarget;
+    const netMatch = cleanNet === 'all' || p.network.toLowerCase() === cleanNet;
+    return !(idMatch || (sizeMatch && netMatch));
+  });
+
+  cachedPlans = filtered;
+  lastCacheTime = Date.now();
+
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: updatedBy,
+    action: 'utility.data_plan.deleted',
+    resourceType: 'utility_data_plans',
+    resourceId: bundleSizeOrId,
+    severity: 'warning',
+    metadata: {
+      deletedTarget: bundleSizeOrId,
+      remainingCount: filtered.length,
+      plans: filtered,
+    },
+  }).catch((err) => {
+    console.warn('[utility-data-plans] Failed to record audit log:', err);
+  });
+
+  return filtered;
 }
 
 /**
