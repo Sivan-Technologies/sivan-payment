@@ -29,12 +29,14 @@ export function registerUtilityProvider(provider: IUtilityProvider): void {
   registry.set(provider.name.toLowerCase(), provider);
 }
 
+let runtimeActiveProvider: string | null = null;
+
 /**
  * Returns the active or requested utility provider.
  * Sourced dynamically from environment variable or explicit override.
  */
 export function getUtilityProvider(name?: string): IUtilityProvider {
-  const targetName = (name || process.env.UTILITY_PROVIDER || 'paystack').toLowerCase();
+  const targetName = (name || getActiveUtilityProviderName()).toLowerCase();
   const provider = registry.get(targetName);
 
   if (provider) {
@@ -106,8 +108,20 @@ export function listUtilityProviders(): string[] {
 }
 
 /**
+ * Sets the active utility provider at runtime.
+ */
+export function setActiveUtilityProviderName(name: string): void {
+  const clean = name.toLowerCase().trim();
+  if (registry.has(clean)) {
+    runtimeActiveProvider = clean;
+  } else {
+    throw new Error(`Provider "${name}" is not registered in Sivan utility registry.`);
+  }
+}
+
+/**
  * Resolves the currently active utility provider name.
  */
 export function getActiveUtilityProviderName(): string {
-  return (process.env.UTILITY_PROVIDER || 'paystack').toLowerCase();
+  return runtimeActiveProvider || (process.env.UTILITY_PROVIDER || 'paystack').toLowerCase();
 }

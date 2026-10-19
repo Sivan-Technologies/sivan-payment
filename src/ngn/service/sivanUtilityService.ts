@@ -41,6 +41,7 @@ import {
 } from '../provider/utility-registry.js';
 import type { IUtilityProvider } from '../provider/utility-provider.interface.js';
 import type { VirtualAccountTransactionRecord } from '../../virtual-accounts/types/virtual-account.types.js';
+import { getUtilityDataPlanBySize } from './utility-data-plans.service.js';
 
 export {
   getUtilityProvider,
@@ -271,19 +272,25 @@ export async function executeDataPurchase(
     throw badRequest(`Please specify a valid telco operator: MTN, Airtel, Glo, or 9mobile.`);
   }
 
-  if (req.amountNgn <= 0) {
+  let amountNgn = req.amountNgn;
+  const bundlePlan = await getUtilityDataPlanBySize(req.planCode, operator);
+  if (bundlePlan) {
+    amountNgn = bundlePlan.amountNgn;
+  }
+
+  if (amountNgn <= 0) {
     throw badRequest('Invalid data bundle amount.');
   }
 
   const balance = await getUserNgnBalance(req.userId);
-  if (balance < req.amountNgn) {
+  if (balance < amountNgn) {
     throw badRequest(
-      `Insufficient balance (${balance.toLocaleString()} NGN). You need ${req.amountNgn.toLocaleString()} NGN.`
+      `Insufficient balance (${balance.toLocaleString()} NGN). You need ${amountNgn.toLocaleString()} NGN.`
     );
   }
 
   const { result, providerName } = await executeUtilityWithFailover(
-    (provider) => provider.purchaseDataBundle(normalizedPhone, req.planCode, req.amountNgn, operator),
+    (provider) => provider.purchaseDataBundle(normalizedPhone, bundlePlan?.planCode || req.planCode, amountNgn, operator),
     req.providerName
   );
 
@@ -292,12 +299,12 @@ export async function executeDataPurchase(
     providerName,
     serviceType: 'data',
     reference: result.reference,
-    amountNgn: req.amountNgn,
+    amountNgn,
     rawPayload: result.rawPayload,
   });
 
   const now = new Date().toISOString();
-  const remaining = balance - req.amountNgn;
+  const remaining = balance - amountNgn;
 
   const formattedText = [
     'Sivan Payment Ai: Mobile Data Receipt',

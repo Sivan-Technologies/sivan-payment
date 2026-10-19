@@ -30,6 +30,15 @@ import {
   confirmAirtimeCashSchema,
   cashoutAirtimeCashSchema,
 } from '../service/airtime-cash.service.js';
+import {
+  getUtilityDataPlans,
+  updateUtilityDataPlans,
+  getActiveUtilityProviderInfo,
+  setUtilityProvider,
+  updateDataPlanSchema,
+  updateDataPlansBatchSchema,
+  updateUtilityProviderSchema,
+} from '../service/utility-data-plans.service.js';
 import type { TelcoOperator, DiscoCode, MeterType } from '../types/paystackUtilityTypes.js';
 
 const airtimeSchema = z.object({
@@ -284,6 +293,94 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
     return reply.code(200).send({
       status: 'success',
       data: payout,
+    });
+  });
+
+  /**
+   * GET /api/utilities/data/plans (and alias /api/ngn/utility/data-plans)
+   * Public/Bot endpoint: read-only active data bundle tiers and retail rates with sub-millisecond caching.
+   */
+  const getDataPlansHandler = async (
+    request: FastifyRequest<{ Querystring: { network?: string } }>,
+    reply: FastifyReply
+  ) => {
+    const { network } = request.query;
+    const plans = await getUtilityDataPlans({ activeOnly: true, network });
+    const providerInfo = await getActiveUtilityProviderInfo();
+    return reply.code(200).send({
+      status: 'success',
+      data: {
+        plans,
+        activeProvider: providerInfo.activeProvider,
+      },
+    });
+  };
+
+  app.get('/api/utilities/data/plans', getDataPlansHandler);
+  app.get('/api/ngn/utility/data-plans', getDataPlansHandler);
+
+  /**
+   * GET /api/admin/utilities/data-plans
+   * Admin endpoint: fetch all bundle tiers and prices.
+   */
+  app.get('/api/admin/utilities/data-plans', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const plans = await getUtilityDataPlans();
+    const providerInfo = await getActiveUtilityProviderInfo();
+    return reply.code(200).send({
+      status: 'success',
+      data: {
+        plans,
+        activeProvider: providerInfo.activeProvider,
+        availableProviders: providerInfo.availableProviders,
+      },
+    });
+  });
+
+  /**
+   * PUT /api/admin/utilities/data-plans
+   * Admin endpoint: update price for any bundle size with audit trail.
+   * Supports updating a single plan object or a batch of plans.
+   */
+  app.put('/api/admin/utilities/data-plans', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body: any = request.body;
+    let updatedPlans;
+    if (body && Array.isArray(body.plans)) {
+      const parsedBatch = parseBody(updateDataPlansBatchSchema, body);
+      updatedPlans = await updateUtilityDataPlans(parsedBatch.plans, parsedBatch.updatedBy);
+    } else {
+      const parsedSingle = parseBody(updateDataPlanSchema, body);
+      updatedPlans = await updateUtilityDataPlans([parsedSingle], parsedSingle.updatedBy);
+    }
+    return reply.code(200).send({
+      status: 'success',
+      data: {
+        plans: updatedPlans,
+      },
+    });
+  });
+
+  /**
+   * GET /api/admin/utilities/provider
+   * Admin endpoint: retrieves the currently active utility fulfillment provider.
+   */
+  app.get('/api/admin/utilities/provider', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const info = await getActiveUtilityProviderInfo();
+    return reply.code(200).send({
+      status: 'success',
+      data: info,
+    });
+  });
+
+  /**
+   * PUT /api/admin/utilities/provider
+   * Admin endpoint: switches active utility provider (e.g. 'paystack' or 'vtu_ng') with audit trail.
+   */
+  app.put('/api/admin/utilities/provider', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(updateUtilityProviderSchema, request.body);
+    const result = await setUtilityProvider(body.provider, body.updatedBy);
+    return reply.code(200).send({
+      status: 'success',
+      data: result,
     });
   });
 }
