@@ -392,7 +392,7 @@ export function resolveRoute(request, url) {
     if (url.pathname.startsWith("/api/admin/payment")) {
       upstreamPath = url.pathname.replace(/^\/api\/admin\/payment/, "/api/admin") || "/api/admin";
     } else if (url.pathname.startsWith("/api/payment")) {
-      upstreamPath = url.pathname.replace(/^\/api\/payment/, "/api") || "/api";
+      upstreamPath = url.pathname.replace(/^\/api\/payment(\/api)?/, "/api") || "/api";
     } else {
       upstreamPath = url.pathname || "/";
     }
