@@ -1698,6 +1698,19 @@ export async function executeP2pTransfer(
     console.warn('[p2p.whatsapp_notify] Notification error:', err);
   }
 
+  // Query the sender's post-debit spendable balance.
+  // createBalanceLedgerEntry already called invalidateUnifiedBalanceCache(senderUserId)
+  // synchronously before returning, so this read hits the live ledger with zero cache risk.
+  let senderRemainingBalance: number | undefined;
+  try {
+    const postDebitSpendable = await getSpendable(senderUserId, input.asset);
+    if (postDebitSpendable !== null && Number.isFinite(postDebitSpendable)) {
+      senderRemainingBalance = Math.max(0, postDebitSpendable);
+    }
+  } catch {
+    // Non-fatal: whatsapp-bot will fall back to its own balance query
+  }
+
   return {
     transferId,
     amount: input.amount,
@@ -1705,6 +1718,7 @@ export async function executeP2pTransfer(
     fee: 0,
     netAmount: input.amount,
     status: 'completed',
+    senderRemainingBalance,
     sender: {
       userId: sender.id,
       username: sender.username,
