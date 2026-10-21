@@ -98,6 +98,10 @@ function limitEnforcementEnabled(controls: NgnControlsRecord, flow: 'onramp' | '
 }
 
 async function requireSivanVerified(userId: string, input: NgnQuoteInput, providerName: NgnProviderName, controls: NgnControlsRecord) {
+  // Rate queries (price check probes) are read-only and must not be blocked by user compliance limits
+  if (userId === 'rate_query' || userId.startsWith('rate_query') || userId === 'public') {
+    return { allowed: true as const, reason: 'rate query bypass' };
+  }
   const state = await getVerificationState(userId);
   const flow: 'onramp' | 'offramp' = input.direction === 'onramp' ? 'onramp' : 'offramp';
 

@@ -22,6 +22,7 @@ import { virtualAccountsRoutes } from '../virtual-accounts/api/virtual-accounts.
 import { paystackDvaRoutes } from '../virtual-accounts/api/paystackDvaRoutes.js';
 import { aceSupportRoutes } from '../ace/api/ace-support.routes.js';
 import { ngnRoutes } from '../ngn/api/ngn.routes.js';
+import { ratesRoutes } from '../rates/api/rates.routes.js';
 import { paystackUtilityRoutes } from '../ngn/api/paystackUtilityRoutes.js';
 import { ghsRoutes } from '../ghs/api/ghs.routes.js';
 import { ghsAdminRoutes } from '../ghs/api/ghs.admin.routes.js';
@@ -104,6 +105,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await paymentControlsRoutes(app);
   await systemStatusRoutes(app);
   await ngnRoutes(app);
+  await ratesRoutes(app);
   await paystackUtilityRoutes(app);
   await ghsRoutes(app);
   await ghsAdminRoutes(app);
