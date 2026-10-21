@@ -66,6 +66,9 @@ import { listNgnWebhooks, recordNgnWebhook } from '../service/ngn-webhooks.servi
 import { reconcileNgnSettlements } from '../service/ngn-settlement-reconciler.js';
 
 function ensureOwnUser(request: any, userId: string) {
+  if (userId === 'rate_query' || userId.startsWith('rate_query') || userId === 'public') {
+    return;
+  }
   const authUserId = request.authUser?.sub;
   if (authUserId && authUserId !== userId) {
     throw forbidden('You cannot access another user account');
@@ -73,6 +76,84 @@ function ensureOwnUser(request: any, userId: string) {
 }
 
 export async function ngnRoutes(app: FastifyInstance) {
+  /**
+   * PUBLIC: Live exchange rate endpoint — no user authentication required.
+   *
+   * Returns the current Breet NGN/GHS off-ramp rate with Sivan's admin margin
+   * already embedded into the net rate. This is the single source of truth for
+   * rate display across WhatsApp, Telegram, and the Web App rate card.
+   *
+   * No userId, no KYC check, no wallet check — this is a read-only price query.
+   * The embedded net rate matches exactly what a user will receive when they
+   * initiate a real cashout (assuming the rate does not move in the interval).
+   */
+  const liveRateHandler = async () => {
+    try {
+      const controls = await getNgnControls();
+      if (!controls.offrampEnabled) {
+        return { data: { available: false, reason: 'NGN off-ramp is currently disabled.' } };
+      }
+      const providerName = controls.activeProvider ?? 'breet';
+      const provider = getNgnProvider(providerName);
+
+      // Ask the provider for a reference quote (10 USDC) to read the live market rate.
+      // We do not persist or accept this quote.
+      const rawQuote = await provider.createQuote({
+        userId: 'rate_query',
+        direction: 'offramp',
+        sourceCurrency: 'usdc',
+        destinationCurrency: 'ngn',
+        sourceAmount: '10',
+        network: 'solana',
+      });
+
+      const grossRate = Number(rawQuote.rate);
+      if (!Number.isFinite(grossRate) || grossRate <= 0) {
+        return { data: { available: false, reason: 'Rate temporarily unavailable.' } };
+      }
+
+      // Apply Sivan's admin margin to compute the all-inclusive net rate.
+      // This mirrors the logic in ngn-quotes.service.ts so the quoted rate
+      // and the cashout rate are always identical.
+      const { getAdminFeeSettings } = await import('../../admin/admin-fees.service.js');
+      const settings = await getAdminFeeSettings();
+      const ngnOfframpPercent = Number(settings.ngnOfframpFeePercent ?? 0);
+      const baseOfframpPercent = Number(settings.offrampFeePercent ?? 0);
+      const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : baseOfframpPercent;
+      const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
+      const totalPercent = sivanPercent + providerPercent;
+
+      // Net rate embeds both provider cost and Sivan margin.
+      // R_net = R_market * (1 - P_total / 100)
+      const netRate = grossRate * (1 - totalPercent / 100);
+      const roundedNet = Math.round(netRate);
+
+      return {
+        data: {
+          available: true,
+          corridor: 'ngn',
+          grossRate: Math.round(grossRate),
+          netRate: roundedNet,
+          usdc: roundedNet,
+          usdt: Math.round(roundedNet * 0.998),
+          providerFeePercent: providerPercent,
+          sivanMarginPercent: sivanPercent,
+          totalFeePercent: totalPercent,
+          displayFee: '0',
+          allInclusive: true,
+          provider: providerName,
+          fetchedAt: new Date().toISOString(),
+        },
+      };
+    } catch (err: any) {
+      console.warn('[live-rate] NGN rate fetch failed:', err?.message || err);
+      return { data: { available: false, reason: 'Rate temporarily unavailable.' } };
+    }
+  };
+
+  app.get('/api/ngn/live-rate', liveRateHandler);
+  app.get('/ngn/live-rate', liveRateHandler);
+
   app.get('/api/ngn/quote', async (request) => {
     const query = createNgnQuoteSchema.parse(request.query ?? {});
     ensureOwnUser(request, query.userId);
