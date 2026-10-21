@@ -4286,30 +4286,60 @@ async function upsertWithdrawalStepUpToken(client: pg.PoolClient, item: Withdraw
 async function upsertUser(client: pg.PoolClient, user: UserRecord) {
   const { firstName, lastName } = splitName(user.fullName);
   const primaryChannel = user.primaryChannel ?? inferPrimaryChannel(user.email, user.whatsappNumber);
-  await client.query(
-    `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, date_of_birth, role_history, primary_channel, username, username_updated_at, telegram_user_id, telegram_username, telegram_verified_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-     on conflict (user_id) do update set
-       whatsapp_number = excluded.whatsapp_number,
-       email = excluded.email,
-       first_name = excluded.first_name,
-       last_name = excluded.last_name,
-       country = excluded.country,
-       date_of_birth = excluded.date_of_birth,
-       primary_channel = excluded.primary_channel,
-       username = excluded.username,
-       username_updated_at = excluded.username_updated_at,
-       telegram_user_id = excluded.telegram_user_id,
-       telegram_username = excluded.telegram_username,
-       telegram_verified_at = excluded.telegram_verified_at,
-       avatar_url = excluded.avatar_url,
-       avatar_object_key = excluded.avatar_object_key,
-       avatar_updated_at = excluded.avatar_updated_at,
-       email_verified_at = excluded.email_verified_at,
-       whatsapp_verified_at = excluded.whatsapp_verified_at,
-       updated_at = excluded.updated_at`,
-    [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, user.dateOfBirth ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.telegramUserId ?? null, user.telegramUsername ?? null, user.telegramVerifiedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
-  );
+  try {
+    await client.query(
+      `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, date_of_birth, role_history, primary_channel, username, username_updated_at, telegram_user_id, telegram_username, telegram_verified_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+       on conflict (user_id) do update set
+         whatsapp_number = excluded.whatsapp_number,
+         email = excluded.email,
+         first_name = excluded.first_name,
+         last_name = excluded.last_name,
+         country = excluded.country,
+         date_of_birth = excluded.date_of_birth,
+         primary_channel = excluded.primary_channel,
+         username = excluded.username,
+         username_updated_at = excluded.username_updated_at,
+         telegram_user_id = excluded.telegram_user_id,
+         telegram_username = excluded.telegram_username,
+         telegram_verified_at = excluded.telegram_verified_at,
+         avatar_url = excluded.avatar_url,
+         avatar_object_key = excluded.avatar_object_key,
+         avatar_updated_at = excluded.avatar_updated_at,
+         email_verified_at = excluded.email_verified_at,
+         whatsapp_verified_at = excluded.whatsapp_verified_at,
+         updated_at = excluded.updated_at`,
+      [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, user.dateOfBirth ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.telegramUserId ?? null, user.telegramUsername ?? null, user.telegramVerifiedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
+    );
+  } catch (err: any) {
+    if (err?.code === '23505' && (err?.constraint === 'users_email_key' || String(err?.message).includes('users_email_key')) && user.email) {
+      await client.query(
+        `update users set
+           whatsapp_number = coalesce($1, whatsapp_number),
+           first_name = coalesce($2, first_name),
+           last_name = coalesce($3, last_name),
+           telegram_user_id = coalesce($4, telegram_user_id),
+           updated_at = $5
+         where lower(email) = lower($6)`,
+        [user.whatsappNumber ?? null, firstName, lastName, user.telegramUserId ?? null, user.updatedAt, user.email]
+      );
+      return;
+    }
+    if (err?.code === '23505' && (err?.constraint === 'users_whatsapp_number_key' || String(err?.message).includes('users_whatsapp_number_key')) && user.whatsappNumber) {
+      await client.query(
+        `update users set
+           email = coalesce($1, email),
+           first_name = coalesce($2, first_name),
+           last_name = coalesce($3, last_name),
+           telegram_user_id = coalesce($4, telegram_user_id),
+           updated_at = $5
+         where whatsapp_number = $6`,
+        [user.email || null, firstName, lastName, user.telegramUserId ?? null, user.updatedAt, user.whatsappNumber]
+      );
+      return;
+    }
+    throw err;
+  }
 }
 
 async function upsertCustomer(client: pg.PoolClient, item: CustomerRecord) {

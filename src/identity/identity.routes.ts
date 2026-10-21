@@ -692,6 +692,9 @@ export async function identityRoutes(app: FastifyInstance) {
     if (!user) {
       user = await db.findUserByWhatsappNumber(`whatsapp:${normalized}`);
     }
+    if (!user) {
+      user = await db.findUserByWhatsappNumber(cleanPhone);
+    }
     if (!user && cleanTelegramId) {
       user = await db.findUserByTelegramUserId(cleanTelegramId);
     }
@@ -716,15 +719,36 @@ export async function identityRoutes(app: FastifyInstance) {
     }
 
     if (!user) {
-      user = await db.insertUserRecord({
-        id: id('usr'),
-        email: targetEmail,
-        fullName,
-        whatsappNumber: normalized,
-        telegramUserId: cleanTelegramId,
-        createdAt: now,
-        updatedAt: now,
-      });
+      try {
+        user = await db.insertUserRecord({
+          id: id('usr'),
+          email: targetEmail,
+          fullName,
+          whatsappNumber: normalized,
+          telegramUserId: cleanTelegramId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch (insertErr: any) {
+        if (insertErr?.code === '23505' || String(insertErr?.message).includes('unique constraint') || String(insertErr?.message).includes('duplicate key')) {
+          user = (await db.findUserByEmail(targetEmail))
+            || (await db.findUserByWhatsappNumber(normalized))
+            || (await db.findUserByWhatsappNumber(cleanPhone));
+          if (user) {
+            user = await db.updateUserRecord({
+              ...user,
+              fullName: user.fullName || fullName,
+              whatsappNumber: normalized,
+              telegramUserId: cleanTelegramId || user.telegramUserId,
+              updatedAt: now,
+            });
+          } else {
+            throw insertErr;
+          }
+        } else {
+          throw insertErr;
+        }
+      }
     } else {
       user = await db.updateUserRecord({
         ...user,
