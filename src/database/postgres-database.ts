@@ -1317,15 +1317,36 @@ export class PostgresDatabase {
   }
 
   // ------------------------------------------------------------------
+  // ------------------------------------------------------------------
   // GHS corridor (Ghana off-ramp)
   // ------------------------------------------------------------------
-  // GHS tables are not yet promoted to dedicated Postgres columns, so
-  // we store/retrieve using the shared payments_json_store key-value
-  // table (same pattern as early NGN records before migration).
+  // GHS tables use the payments_json_store key-value table. We auto-ensure
+  // the table exists so queries never fail with 42P01 relation does not exist.
+
+  private paymentsJsonStoreEnsured = false;
+  private async ensurePaymentsJsonStore(client: pg.PoolClient): Promise<void> {
+    if (this.paymentsJsonStoreEnsured) return;
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS payments_json_store (
+          key VARCHAR(255) PRIMARY KEY,
+          value JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_payments_json_store_key_prefix
+          ON payments_json_store (key text_pattern_ops);
+      `);
+      this.paymentsJsonStoreEnsured = true;
+    } catch {
+      this.paymentsJsonStoreEnsured = true;
+    }
+  }
 
   async listGhsTransfers(filter?: { userId?: string }): Promise<GhsTransferRecord[]> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       const result = await optionalQuery(client, `
         SELECT value FROM payments_json_store
         WHERE key LIKE 'ghs_transfer:%'
@@ -1340,6 +1361,7 @@ export class PostgresDatabase {
   async findGhsTransferById(id: string): Promise<GhsTransferRecord | null> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       const result = await optionalQuery(client,
         `SELECT value FROM payments_json_store WHERE key = $1`,
         [`ghs_transfer:${id}`]
@@ -1351,6 +1373,7 @@ export class PostgresDatabase {
   async upsertGhsTransferRecord(record: GhsTransferRecord): Promise<GhsTransferRecord> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       await client.query(
         `INSERT INTO payments_json_store (key, value)
          VALUES ($1, $2::jsonb)
@@ -1364,6 +1387,7 @@ export class PostgresDatabase {
   async listGhsPayoutAccounts(userId?: string): Promise<GhsPayoutAccountRecord[]> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       const result = await optionalQuery(client, `
         SELECT value FROM payments_json_store
         WHERE key LIKE 'ghs_payout_account:%'
@@ -1378,6 +1402,7 @@ export class PostgresDatabase {
   async findGhsPayoutAccountById(id: string): Promise<GhsPayoutAccountRecord | null> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       const result = await optionalQuery(client,
         `SELECT value FROM payments_json_store WHERE key = $1`,
         [`ghs_payout_account:${id}`]
@@ -1389,6 +1414,7 @@ export class PostgresDatabase {
   async upsertGhsPayoutAccountRecord(record: GhsPayoutAccountRecord): Promise<GhsPayoutAccountRecord> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       await client.query(
         `INSERT INTO payments_json_store (key, value)
          VALUES ($1, $2::jsonb)
@@ -1402,6 +1428,7 @@ export class PostgresDatabase {
   async listGhsQuotes(userId?: string): Promise<GhsQuoteRecord[]> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       const result = await optionalQuery(client, `
         SELECT value FROM payments_json_store
         WHERE key LIKE 'ghs_quote:%'
@@ -1416,6 +1443,7 @@ export class PostgresDatabase {
   async findGhsQuoteById(id: string): Promise<GhsQuoteRecord | null> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       const result = await optionalQuery(client,
         `SELECT value FROM payments_json_store WHERE key = $1`,
         [`ghs_quote:${id}`]
@@ -1427,6 +1455,7 @@ export class PostgresDatabase {
   async upsertGhsQuoteRecord(record: GhsQuoteRecord): Promise<GhsQuoteRecord> {
     const client = await this.pool.connect();
     try {
+      await this.ensurePaymentsJsonStore(client);
       await client.query(
         `INSERT INTO payments_json_store (key, value)
          VALUES ($1, $2::jsonb)
