@@ -26,10 +26,11 @@ async function fetchLiveMarketRates(): Promise<any> {
   try {
     const controls = await getNgnControls();
     if (controls.offrampEnabled) {
-      const providerName = controls.activeProvider ?? 'breet';
+      const breetConfigured = Boolean(env.BREET_APP_ID && env.BREET_APP_SECRET);
+      const providerName = breetConfigured ? 'breet' : (controls.activeProvider ?? 'breet');
       const provider = getNgnProvider(providerName);
 
-      const rawQuote = await provider.createQuote({
+      const rawQuoteUsdc = await provider.createQuote({
         userId: 'rate_query',
         direction: 'offramp',
         sourceCurrency: 'usdc',
@@ -38,17 +39,33 @@ async function fetchLiveMarketRates(): Promise<any> {
         network: 'solana',
       });
 
-      const grossRate = Number(rawQuote.rate);
+      let rawQuoteUsdt = rawQuoteUsdc;
+      try {
+        rawQuoteUsdt = await provider.createQuote({
+          userId: 'rate_query',
+          direction: 'offramp',
+          sourceCurrency: 'usdt',
+          destinationCurrency: 'ngn',
+          sourceAmount: '10',
+          network: 'solana',
+        });
+      } catch {
+        rawQuoteUsdt = rawQuoteUsdc;
+      }
+
+      const grossRate = Number(rawQuoteUsdc.rate);
+      const usdtGross = Number(rawQuoteUsdt.rate) || grossRate;
+
       if (Number.isFinite(grossRate) && grossRate > 0) {
         const settings = await getAdminFeeSettings();
         const ngnOfframpPercent = Number(settings.ngnOfframpFeePercent ?? 0);
         const baseOfframpPercent = Number(settings.offrampFeePercent ?? 0);
-        const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : baseOfframpPercent;
+        const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : (baseOfframpPercent > 0 ? baseOfframpPercent : 1);
         const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
         const totalPercent = sivanPercent + providerPercent;
 
         const netRate = Math.round(grossRate * (1 - totalPercent / 100));
-        const usdtSell = Math.round(netRate * 0.998);
+        const usdtSell = Math.round(usdtGross * (1 - totalPercent / 100));
 
         result.ngn = {
           usdc: {
@@ -58,8 +75,8 @@ async function fetchLiveMarketRates(): Promise<any> {
           },
           usdt: {
             sell: usdtSell,
-            buy: Math.round(grossRate * 0.988),
-            mid: Math.round((grossRate + usdtSell) / 2),
+            buy: Math.round(usdtGross * 0.99),
+            mid: Math.round((usdtGross + usdtSell) / 2),
           },
           grossRate: Math.round(grossRate),
           netRate,
@@ -95,7 +112,6 @@ async function fetchLiveMarketRates(): Promise<any> {
 
       if (Number.isFinite(netGhsRate) && netGhsRate > 0) {
         const roundedGhs = parseFloat(netGhsRate.toFixed(2));
-        const usdtGhs = parseFloat((netGhsRate * 0.998).toFixed(2));
         result.ghs = {
           usdc: {
             sell: roundedGhs,
@@ -103,9 +119,9 @@ async function fetchLiveMarketRates(): Promise<any> {
             mid: roundedGhs,
           },
           usdt: {
-            sell: usdtGhs,
-            buy: parseFloat((usdtGhs * 0.99).toFixed(2)),
-            mid: usdtGhs,
+            sell: roundedGhs,
+            buy: parseFloat((roundedGhs * 0.99).toFixed(2)),
+            mid: roundedGhs,
           },
           grossRate: parseFloat(Number(ghsQuote.rate).toFixed(2)),
           netRate: roundedGhs,

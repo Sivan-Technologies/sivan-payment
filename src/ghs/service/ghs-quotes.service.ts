@@ -4,6 +4,7 @@ import { badRequest, notFound } from '../../shared/errors.js';
 import { id, nowIso } from '../../shared/id.js';
 import { env } from '../../config/env.js';
 import { BreetNgnProvider } from '../../ngn/provider/breet.provider.js';
+import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import type { GhsQuoteRecord } from '../../database/types.js';
 
 export const createGhsQuoteSchema = z.object({
@@ -59,7 +60,9 @@ export async function createGhsQuote(input: z.infer<typeof createGhsQuoteSchema>
           body: JSON.stringify({ amountInUSD: 1, currency: 'ghs' }),
         });
         const body: any = await response.json().catch(() => ({}));
-        const parsedRate = Number(body?.data?.rate);
+        const ghsAmount = Number(body?.data?.GHSAmount);
+        const calcRate = Number(body?.data?.rate);
+        const parsedRate = Number.isFinite(ghsAmount) && ghsAmount > 0 ? ghsAmount : calcRate;
         if (Number.isFinite(parsedRate) && parsedRate > 0) {
           rate = parsedRate;
         }
@@ -69,8 +72,11 @@ export async function createGhsQuote(input: z.infer<typeof createGhsQuoteSchema>
     }
   }
 
-  // Sivan fee: 0.5% platform routing fee
-  const feePercent = 0.005;
+  // Margin from admin settings (e.g. 1% platform fee + provider 0.5%)
+  const settings = await getAdminFeeSettings().catch(() => ({} as any));
+  const sivanMarginPercent = Number(settings?.ghsOfframpFeePercent ?? settings?.offrampFeePercent ?? 1);
+  const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
+  const feePercent = (sivanMarginPercent + providerPercent) / 100;
   let destinationAmount: number;
   let feeAmount: number;
 
