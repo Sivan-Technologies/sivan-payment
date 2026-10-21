@@ -160,8 +160,13 @@ export async function ngnRoutes(app: FastifyInstance) {
   app.get('/api/ngn/live-rate', liveRateHandler);
   app.get('/ngn/live-rate', liveRateHandler);
 
-  app.get('/api/ngn/quote', async (request) => {
-    const query = createNgnQuoteSchema.parse(request.query ?? {});
+  app.get('/api/ngn/quote', async (request, reply) => {
+    const parsed = createNgnQuoteSchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      return reply.status(400).send({ error: 'INVALID_QUERY', message: issues });
+    }
+    const query = parsed.data;
     ensureOwnUser(request, query.userId);
     return { data: await createNgnQuote(query) };
   });
