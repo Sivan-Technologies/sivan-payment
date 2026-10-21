@@ -790,6 +790,22 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/ghs/payout-accounts')) return false;
   if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile' || url === '/api/identity/reset-test-user')) return false;
 
+  /**
+   * PUBLIC: Live exchange rate endpoints — no user authentication required.
+   *
+   * These are read-only price display endpoints used by WhatsApp, Telegram,
+   * and the Web App rate card. They return no user data, move no money, and
+   * are the sole source of truth for the displayed off-ramp rate.
+   *
+   * /api/ngn/live-rate  — NGN corridor live rate (Breet engine, net of fees)
+   * /api/rates/live     — Multi-corridor rate aggregator (NGN + GHS)
+   *
+   * Both must be publicly accessible so the rate card displays correctly
+   * without requiring a user session.
+   */
+  if (method === 'GET' && (url.startsWith('/api/ngn/live-rate') || url.startsWith('/ngn/live-rate'))) return false;
+  if (method === 'GET' && (url.startsWith('/api/rates/live') || url.startsWith('/rates/live') || url.startsWith('/api/payment/rates/live'))) return false;
+
   if (url === '/api/customers') return true;
 
   const protectedPatterns = [
