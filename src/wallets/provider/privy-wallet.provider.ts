@@ -567,16 +567,23 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
     testnet: '0x01C5C0122039549AD1493B8220cABEdD739BC44E',
   },
   'celo:usdt': {
+    // Tether native USDT on Celo — verified from official Celo docs and Tether.io
+    // Mainnet: https://celoscan.io/token/0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e
+    // Testnet: Celo Sepolia USDT — https://celoscan.io/token/0xd077A400968890Eacc75cdc901F0356c943e4fDb
     mainnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
-    testnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
+    testnet: '0xd077A400968890Eacc75cdc901F0356c943e4fDb',
   },
   'celo:cusd': {
+    // Mento cUSD — verified from official Celo docs
     mainnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
     testnet: '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1',
   },
   'celo:usdm': {
+    // Mento USDm (US Dollar) — verified from official Celo docs
+    // Mainnet: https://celoscan.io/token/0x765DE816845861e75A25fCA122bb6898B8B1282a
+    // Testnet: Celo Sepolia USDm — https://celoscan.io/token/0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b
     mainnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
-    testnet: '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1',
+    testnet: '0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b',
   },
   'bsc:usdc': {
     mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
