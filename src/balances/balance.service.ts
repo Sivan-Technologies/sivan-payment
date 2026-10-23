@@ -2113,11 +2113,35 @@ export async function refundServiceAgreementFromBalance(
     return { success: true, alreadyRefunded: true, agreementId: input.agreementId };
   }
 
+  // This endpoint used to credit whatever amount it was handed, without
+  // checking that there was anything to give back. That makes it a way to
+  // mint balance, and it makes the obvious caller (cancel an agreement)
+  // unsafe to wire up. Refund only what is actually still held.
+  const settled = existingLedger.some(
+    (e) => e.sourceId === input.agreementId && e.sourceType === 'service_agreement_settlement'
+  );
+  if (settled) {
+    return { success: true, alreadySettled: true, nothingToRefund: true, agreementId: input.agreementId };
+  }
+
+  const holdEntries = existingLedger.filter(
+    (e) => e.sourceId === input.agreementId && e.sourceType === 'service_agreement_fund' && e.kind === 'hold'
+  );
+  if (holdEntries.length === 0) {
+    return { success: true, nothingToRefund: true, agreementId: input.agreementId };
+  }
+
+  const heldTotal = holdEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const refundAmount = Math.min(Number(input.amount), heldTotal);
+  if (!(refundAmount > 0)) {
+    return { success: true, nothingToRefund: true, agreementId: input.agreementId };
+  }
+
   await createBalanceLedgerEntry(
     {
       userId: resolvedBuyerId,
       asset: cleanAsset,
-      amount: input.amount.toFixed(2),
+      amount: refundAmount.toFixed(2),
       kind: 'hold_release',
       status: 'available',
       sourceType: 'service_agreement_refund',
@@ -2131,7 +2155,8 @@ export async function refundServiceAgreementFromBalance(
   return {
     success: true,
     agreementId: input.agreementId,
-    amount: input.amount,
+    amount: refundAmount,
+    requestedAmount: input.amount,
     currency: input.currency.toUpperCase(),
     buyerUserId: resolvedBuyerId,
   };
