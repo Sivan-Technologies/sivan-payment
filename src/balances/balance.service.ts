@@ -465,9 +465,21 @@ export async function updateBalanceTransferControls(input: z.infer<typeof balanc
 }
 
 export async function createBalanceLedgerEntry(input: Omit<LedgerMetadata, 'entryId'> & { entryId?: string }, context: { actorType?: 'system' | 'user' | 'admin' | 'provider'; actorId?: string } = {}) {
-  const existing = await ledgerLogs();
-  if (existing.some((item) => item.entry.sourceType === input.sourceType && item.entry.sourceId === input.sourceId && item.entry.kind === input.kind)) {
-    return existing.find((item) => item.entry.sourceType === input.sourceType && item.entry.sourceId === input.sourceId && item.entry.kind === input.kind)!.entry;
+  // Deduplication decides whether money moves, so the key has to be the thing
+  // that identifies one attempt. Keying on sourceType+sourceId+kind alone meant
+  // a second funding of the same agreement always matched the first and
+  // returned it, reporting success while holding nothing. That is how
+  // SIV-928041-E012 reached IN_PROGRESS with the buyer holding nothing.
+  // transferId identifies the attempt, and kind keeps the separate legs of one
+  // transfer (debit and fee) from collapsing into each other.
+  const existing = await ledgerLogs(input.userId || undefined);
+  const isDuplicate = (entry: LedgerMetadata) =>
+    input.transferId
+      ? entry.transferId === input.transferId && entry.kind === input.kind
+      : entry.sourceType === input.sourceType && entry.sourceId === input.sourceId && entry.kind === input.kind;
+  const duplicate = existing.find((item) => isDuplicate(item.entry));
+  if (duplicate) {
+    return duplicate.entry;
   }
   const entry: LedgerMetadata = { ...input, entryId: input.entryId || id('bal') };
   await createAuditLog({
@@ -1918,7 +1930,42 @@ export async function fundServiceAgreementFromBalance(
     throw badRequest(`Insufficient ${input.currency.toUpperCase()} balance. Available: ${spendable} ${input.currency.toUpperCase()}, Required: ${input.amount} ${input.currency.toUpperCase()}`);
   }
 
-  const paymentReference = `agr_fund_${input.agreementId}`;
+  // A buyer can legitimately fund an agreement again after a previous hold was
+  // refunded. Each funding cycle therefore needs its own reference, otherwise
+  // the retry is swallowed as a duplicate of the cycle that was already
+  // returned. Still derived, not random, so a genuine retry of the same
+  // attempt stays idempotent.
+  const agreementLedger = await listUserBalanceLedger(resolvedUserId).catch(() => []);
+  const forThisAgreement = agreementLedger.filter((e) => e.sourceId === input.agreementId);
+
+  if (forThisAgreement.some((e) => e.sourceType === 'service_agreement_settlement')) {
+    throw badRequest(`Service Agreement ${input.agreementId} has already been settled and cannot be funded again.`);
+  }
+
+  const holdCount = forThisAgreement.filter(
+    (e) => e.sourceType === 'service_agreement_fund' && e.kind === 'hold'
+  ).length;
+  const refundCount = forThisAgreement.filter((e) => e.sourceType === 'service_agreement_refund').length;
+
+  if (holdCount > refundCount) {
+    // A hold for this agreement is already outstanding. This is a real retry,
+    // so report the existing hold rather than taking the money twice.
+    const current = forThisAgreement.find(
+      (e) => e.sourceType === 'service_agreement_fund' && e.kind === 'hold'
+    );
+    return {
+      success: true,
+      alreadyHeld: true,
+      paymentReference: current?.transferId || `agr_fund_${input.agreementId}`,
+      agreementId: input.agreementId,
+      amount: input.amount,
+      currency: input.currency.toUpperCase(),
+      ledgerEntryId: current?.entryId,
+    };
+  }
+
+  const paymentReference =
+    refundCount > 0 ? `agr_fund_${input.agreementId}_r${refundCount}` : `agr_fund_${input.agreementId}`;
   const amountStr = input.amount.toFixed(2);
 
   const entry = await createBalanceLedgerEntry(
