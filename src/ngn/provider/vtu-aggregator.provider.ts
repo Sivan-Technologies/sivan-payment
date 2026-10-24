@@ -50,6 +50,23 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     this.apiKey = config.apiKey || process.env.AGGREGATOR_SECRET_KEY || '';
   }
 
+  /**
+   * An unconfigured provider must fail, not pretend.
+   *
+   * Each method below does the real call only when an API key is present and
+   * otherwise fell through to a hand-built success object. With no key set
+   * that meant a customer was debited and nothing was ever vended. Refusing
+   * here is the only safe answer; the fabricated branches are now
+   * unreachable and should be deleted in a follow-up.
+   */
+  private requireKey(): void {
+    if (!this.apiKey) {
+      throw new Error(
+        `Aggregator "${this.name}" has no API key configured. Set AGGREGATOR_SECRET_KEY before routing traffic to it.`
+      );
+    }
+  }
+
   private headers(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
@@ -123,6 +140,7 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     operator: TelcoOperator,
     idempotencyKey: string
   ): Promise<ProviderAirtimeResult> {
+    this.requireKey();
     const reference = `vtu_air_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     if (this.apiKey) {
       const res = await fetch(`${this.baseUrl}/airtime/vend`, {
@@ -164,6 +182,7 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     operator: TelcoOperator,
     idempotencyKey: string
   ): Promise<ProviderDataResult> {
+    this.requireKey();
     const reference = `vtu_dat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     if (this.apiKey) {
       const res = await fetch(`${this.baseUrl}/data/vend`, {
@@ -205,6 +224,7 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     disco: DiscoCode,
     meterType: MeterType
   ): Promise<ElectricityInquiryResponse> {
+    this.requireKey();
     if (this.apiKey) {
       const res = await fetch(`${this.baseUrl}/electricity/validate`, {
         method: 'POST',
@@ -246,6 +266,7 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     customerName: string | undefined,
     idempotencyKey: string
   ): Promise<ProviderElectricityResult> {
+    this.requireKey();
     const reference = `vtu_elec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     if (this.apiKey) {
       const res = await fetch(`${this.baseUrl}/electricity/vend`, {
