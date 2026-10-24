@@ -23,14 +23,29 @@
  * Missing token returns { status: 'fail', msg: 'Your authorization token is
  * required.' } and a bad one returns 'Invalid or inactive authorization token.'
  *
- * NOTE ON THE TWO PURCHASE BODIES: /api/airtime/ and /api/data/ require a
- * live token before they will describe their own payload, and the dashboard
- * documentation sits behind a login. The field names below follow the
- * convention this API family uses and are marked as unconfirmed. They are
- * isolated in buildAirtimeBody and buildDataBody so correcting them is a
- * one-place change. Nothing here fabricates a success: any response that is
- * not an explicit upstream success throws, so a wrong field name surfaces as
- * a failed purchase, never as a silent fake one.
+ * PURCHASE PAYLOADS, CONFIRMED against the live API on 2026-10-24 by walking
+ * the validation chain with a funded-but-empty wallet, so every field could be
+ * checked without a purchase ever completing:
+ *
+ *   POST /api/airtime/  { network, amount, mobile_number }
+ *     - the key is `network`, NOT `network_id`: sending network_id alone
+ *       returns "Network Id Required", and an out-of-range value returns
+ *       "The Network id is invalid"
+ *     - omitting mobile_number returns "Phone Is Required"
+ *     - omitting amount returns "Amount Is Required"
+ *     - airtime_type is optional; the request succeeds without it
+ *
+ *   POST /api/data/     { network, mobile_number, plan }
+ *     - the key is `plan`; `plan_id` returns "Data Plan ID Is Required"
+ *     - `plan` carries the numeric id from /api/dataplans/
+ *
+ * A fully valid body stops at "Insufficient balance fund your wallet and try
+ * again", which is how each field above was proven to pass validation.
+ *
+ * STILL UNVERIFIED: the success response body. The wallet holds 0.00 NGN, so
+ * no purchase has ever returned 200 with a receipt. Reference extraction
+ * falls back to the idempotency key, and nothing here fabricates a success -
+ * any response that is not an explicit upstream success throws.
  */
 
 import type {
@@ -146,7 +161,7 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
       }));
   }
 
-  /** UNCONFIRMED payload shape - see the file header. */
+  /** Confirmed against the live API - see the file header. */
   private buildAirtimeBody(phone: string, amountNgn: number, operator: TelcoOperator, idempotencyKey: string) {
     return {
       network: this.networkId(operator),
@@ -158,7 +173,7 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
     };
   }
 
-  /** UNCONFIRMED payload shape - see the file header. */
+  /** Confirmed against the live API - see the file header. */
   private buildDataBody(phone: string, planCode: string, operator: TelcoOperator, idempotencyKey: string) {
     return {
       network: this.networkId(operator),
@@ -233,7 +248,8 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
     const res = await fetch(`${this.baseUrl}/user/`, { method: 'GET', headers: this.headers() });
     const body = (await res.json().catch(() => ({}))) as any;
     this.assertOk(body, 'wallet balance lookup');
-    const raw = body?.data?.wallet_balance ?? body?.data?.balance ?? body?.wallet_balance;
+    // Confirmed live: the response is flat, { name, balance: "0.00", status }.
+    const raw = body?.balance ?? body?.data?.balance ?? body?.wallet_balance;
     return Number(raw ?? 0);
   }
 }
