@@ -77,6 +77,13 @@ export interface DataPlanOption {
   retailPriceNgn: number;
   operator: TelcoOperator;
   type: 'sme' | 'direct' | 'corporate_gifting';
+  /**
+   * The provider's own plan family, verbatim, e.g. 'SME2' or 'Corporate'.
+   * The normalised `type` above collapses SME and SME2 into one bucket, but
+   * they are different products at different prices on the same network, so
+   * the raw label has to survive for an admin to map the right one.
+   */
+  providerPlanType?: string;
 }
 
 export interface AirtimeCashRate {

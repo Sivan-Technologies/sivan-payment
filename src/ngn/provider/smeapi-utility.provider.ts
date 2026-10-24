@@ -158,6 +158,7 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
         retailPriceNgn: Number(row.price),
         operator,
         type: mapPlanType(row.type),
+        providerPlanType: row.type,
       }));
   }
 

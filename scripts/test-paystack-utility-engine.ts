@@ -45,6 +45,9 @@ async function main() {
     getUtilityProvider,
     listUtilityProviders,
   } = await import('../src/ngn/service/sivanUtilityService.js');
+  const { updateUtilityDataPlans, getUtilityDataPlanBySize } = await import(
+    '../src/ngn/service/utility-data-plans.service.js'
+  );
   const {
     setUtilityRouting,
     getProviderChainForService,
@@ -209,11 +212,62 @@ async function main() {
 
   // ─── 6. Mobile Data Bundle Purchase ───────────────────────────────
   console.log('\n══ 6. Data Bundle Purchase ══');
+
+  // A bundle nobody has configured cannot be sold. Previously an unknown plan
+  // code fell through to the caller's own amountNgn, which let a client both
+  // invent a product and set its price.
+  await assert.rejects(
+    () =>
+      executeDataPurchase({
+        userId: testUserId,
+        phone: '08021234567',
+        planCode: 'NOT_A_REAL_BUNDLE',
+        amountNgn: 2500,
+      }),
+    /No data plan .* is configured/
+  );
+  ok('an unconfigured bundle is refused instead of being priced by the caller');
+
+  // A bundle that is priced but deliberately never mapped to any provider.
+  // Mappings are merged and never removed, so this stays unmapped on re-runs.
+  await updateUtilityDataPlans(
+    [{ bundleSize: '7GB', costPriceNgn: 2600, amountNgn: 3000, network: 'airtel', isActive: true }],
+    'utility_engine_test'
+  );
+  await assert.rejects(
+    () =>
+      executeDataPurchase({
+        userId: testUserId,
+        phone: '08021234567',
+        planCode: '7GB',
+        amountNgn: 3000,
+      }),
+    /has no plan code mapped for provider/
+  );
+  ok('a bundle with no provider plan code is refused, not sent upstream blind');
+
+  // The sellable bundle: priced, and mapped to the identifier the provider
+  // itself uses. Both halves are required before anything can be dispatched.
+  await updateUtilityDataPlans(
+    [
+      {
+        bundleSize: '5GB',
+        costPriceNgn: 2000,
+        amountNgn: 2500,
+        network: 'airtel',
+        isActive: true,
+        providerPlanCodes: { paystack: 'AIRTEL_5GB_MONTHLY' },
+      },
+    ],
+    'utility_engine_test'
+  );
+
   const dataReceipt = await executeDataPurchase({
     userId: testUserId,
     phone: '08021234567', // Auto-detected as Airtel
-    planCode: 'AIRTEL_5GB_MONTHLY',
-    amountNgn: 2500,
+    planCode: '5GB',
+    // Deliberately wrong: the catalogue price must win over the caller's figure.
+    amountNgn: 9999,
   });
 
   assert.equal(dataReceipt.success, true);
@@ -221,11 +275,17 @@ async function main() {
   assert.equal(dataReceipt.amountNgn, 2500);
   assert.match(dataReceipt.formattedText, /AIRTEL_5GB_MONTHLY/);
   assert.match(dataReceipt.formattedText, /Remaining Balance: 20,500 NGN/);
-  ok('data bundle purchased and debited');
+  ok('data bundle purchased at the catalogue price, not the caller-supplied one');
 
   const balanceAfterData = await getUserNgnBalance(testUserId);
   assert.equal(balanceAfterData, 20500);
   ok('user balance atomically debited by 2,500 NGN');
+
+  const configuredPlan = await getUtilityDataPlanBySize('5GB', 'airtel');
+  assert.ok(configuredPlan);
+  assert.equal(configuredPlan.costPriceNgn, 2000);
+  assert.equal(configuredPlan.markupNgn, 500);
+  ok('margin is derived from the real synced cost, never typed in');
 
   // ─── 7. Electricity Pre-flight Inquiry & Payment ──────────────────
   console.log('\n══ 7. Electricity DisCo Inquiry & Token Issuance ══');

@@ -55,7 +55,7 @@ function newIdempotencyKey(service: string, userId: string): string {
   return `sivan_${service}_${crypto.randomUUID()}_${crypto.createHash('sha256').update(userId).digest('hex').slice(0, 8)}`;
 }
 import type { VirtualAccountTransactionRecord } from '../../virtual-accounts/types/virtual-account.types.js';
-import { getUtilityDataPlanBySize } from './utility-data-plans.service.js';
+import { getUtilityDataPlanBySize, resolveProviderPlanCode } from './utility-data-plans.service.js';
 
 export {
   getUtilityProvider,
@@ -348,11 +348,17 @@ export async function executeDataPurchase(
     throw badRequest(`Please specify a valid telco operator: MTN, Airtel, Glo, or 9mobile.`);
   }
 
-  let amountNgn = req.amountNgn;
+  // The catalogue is authoritative for price. Previously an unknown planCode
+  // fell through to the client-supplied amountNgn, so a caller could pay 500
+  // for a 430 bundle, or name a plan that does not exist and set its own price.
   const bundlePlan = await getUtilityDataPlanBySize(req.planCode, operator);
-  if (bundlePlan) {
-    amountNgn = bundlePlan.amountNgn;
+  if (!bundlePlan) {
+    throw badRequest(
+      `No data plan "${req.planCode}" is configured for ${operator.toUpperCase()}. ` +
+        `An admin must add it in the admin hub before it can be sold.`
+    );
   }
+  const amountNgn = bundlePlan.amountNgn;
 
   if (amountNgn <= 0) {
     throw badRequest('Invalid data bundle amount.');
@@ -368,9 +374,21 @@ export async function executeDataPurchase(
 
   await ensureUtilityRoutingLoaded();
   const dataKey = newIdempotencyKey('data', resolvedUserId);
-  const { result, providerName } = await executeForService('data', 'purchaseDataBundle', (provider) =>
-    provider.purchaseDataBundle(normalizedPhone, bundlePlan?.planCode || req.planCode, amountNgn, operator, dataKey)
-  );
+  let dispatchedPlanCode = '';
+  const { result, providerName } = await executeForService('data', 'purchaseDataBundle', (provider) => {
+    // Each provider has its own plan namespace, so translate before dispatch.
+    // Refusing here is deliberate: sending Sivan's own code upstream is what
+    // made SME API data purchases fail.
+    const providerPlanCode = resolveProviderPlanCode(bundlePlan, provider.name);
+    if (!providerPlanCode) {
+      throw badRequest(
+        `Data plan "${bundlePlan.bundleSize}" (${bundlePlan.network}) has no plan code mapped for ` +
+          `provider "${provider.name}". Map it in the admin hub, or route data to a provider that has one.`
+      );
+    }
+    dispatchedPlanCode = providerPlanCode;
+    return provider.purchaseDataBundle(normalizedPhone, providerPlanCode, amountNgn, operator, dataKey);
+  });
 
   await recordUtilityDebit({
     userId: resolvedUserId,
@@ -388,11 +406,15 @@ export async function executeDataPurchase(
     'Sivan Payment Ai: Mobile Data Receipt',
     '----------------------------------------',
     `Operator: ${operator.toUpperCase()}`,
-    `Plan: ${req.planCode}`,
+    `Plan: ${bundlePlan.bundleSize} (${bundlePlan.network.toUpperCase()})`,
+    `Provider Plan: ${dispatchedPlanCode}`,
     `Recipient: ${normalizedPhone}`,
-    `Amount: ${req.amountNgn.toLocaleString()} NGN`,
+    // The catalogue price, which is what the ledger is actually debited by.
+    // These previously disagreed: the ledger took the catalogue price while
+    // the receipt quoted whatever the caller had asked for.
+    `Amount: ${amountNgn.toLocaleString()} NGN`,
     'Platform Fee: 0 NGN (Free)',
-    `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
+    `Total Debited: ${amountNgn.toLocaleString()} NGN`,
     `Remaining Balance: ${remaining.toLocaleString()} NGN`,
     `Fulfillment Rail: ${providerName.toUpperCase()}`,
     `Status: Activated Successfully`,
@@ -407,9 +429,9 @@ export async function executeDataPurchase(
     providerName,
     operatorOrDisco: operator.toUpperCase(),
     recipientOrMeter: normalizedPhone,
-    amountNgn: req.amountNgn,
+    amountNgn,
     feeNgn: 0,
-    totalDebitedNgn: req.amountNgn,
+    totalDebitedNgn: amountNgn,
     reference: result.reference,
     timestamp: now,
     formattedText,

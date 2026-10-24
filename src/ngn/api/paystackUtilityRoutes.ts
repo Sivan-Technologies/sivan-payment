@@ -32,6 +32,7 @@ import {
 } from '../service/airtime-cash.service.js';
 import {
   getUtilityDataPlans,
+  getProviderPlanCatalogue,
   updateUtilityDataPlans,
   deleteUtilityDataPlan,
   getActiveUtilityProviderInfo,
@@ -412,6 +413,31 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       data: result,
     });
   });
+
+  /**
+   * GET /api/admin/utilities/provider-catalogue?provider=smeapi&operator=mtn
+   * The provider's own live plan list, with the wholesale price that provider
+   * actually charges this account. This is what the admin hub prices against,
+   * so margins are computed from a real cost rather than a remembered one.
+   */
+  app.get(
+    '/api/admin/utilities/provider-catalogue',
+    async (
+      request: FastifyRequest<{ Querystring: { provider?: string; operator?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const providerName = (request.query.provider || '').trim();
+      const operator = (request.query.operator || '').trim().toLowerCase() as TelcoOperator;
+      if (!providerName) {
+        return reply.code(400).send({ status: 'error', message: 'provider query parameter is required.' });
+      }
+      if (!operator) {
+        return reply.code(400).send({ status: 'error', message: 'operator query parameter is required.' });
+      }
+      const catalogue = await getProviderPlanCatalogue(providerName, operator);
+      return reply.code(200).send({ status: 'success', data: catalogue });
+    }
+  );
 
   /**
    * GET /api/admin/utilities/routing
