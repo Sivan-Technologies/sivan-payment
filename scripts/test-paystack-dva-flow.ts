@@ -55,6 +55,8 @@ function startStub(): Promise<http.Server> {
         return res.end(JSON.stringify({
           status: true, message: 'Customer created',
           data: { id: Date.now(), customer_code: cusCode, email: body.email,
+=======
+          data: { id: Date.now(), customer_code: stubCustomerCode, email: body.email,
                   first_name: body.first_name, last_name: body.last_name, phone: body.phone },
         }));
       }
@@ -77,6 +79,9 @@ function startStub(): Promise<http.Server> {
           status: true, message: 'NUBAN successfully created',
           data: { id: accId, account_number: accNum, account_name: 'Sivan / Samson Micheal',
                   bank: { name: bankName, id: 24, slug: bankSlug },
+=======
+          data: { id: Date.now(), account_number: '9930000737', account_name: 'Sivan / Samson Micheal',
+                  bank: { name: 'Test Bank', id: 24, slug: 'test-bank' },
                   currency: 'NGN', active: true, assigned: true },
         }));
       }
@@ -150,6 +155,8 @@ async function main() {
 
   const customerCodeToComplete = (first as any).customerCode;
   const done = await completeAfterIdentification(userId, customerCodeToComplete);
+=======
+  const done = await completeAfterIdentification(userId, stubCustomerCode);
   check('after the success verdict the account is ready', done.state === 'ready', done.state);
   check('NOW the dedicated account was assigned',
     calls.some((c) => c === 'POST /dedicated_account'));

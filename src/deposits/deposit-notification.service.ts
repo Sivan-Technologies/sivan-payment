@@ -319,6 +319,7 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
     const prefs = await db.getUserPreferencesRecord(userId);
     if (prefs && (prefs as any).whatsappNotificationsEnabled === false) return;
 
+
     const recipientName = user?.fullName || (user?.username ? `@${user.username}` : (user?.email ? user.email : 'your account'));
     const amount = `${deposit.amount} ${deposit.asset.toUpperCase()}`;
     const network = humanNetwork(deposit.chain);
@@ -338,6 +339,7 @@ export async function notifyWhatsAppDeposit(userId: string, deposit: WalletDepos
     }
 
     const text = `✅ Deposit Received\n\n${amount} on ${network} has arrived for ${recipientName}.\n\nStatus: Confirmed\nSpendable Balance: ${spendableFormatted}\n\nWhat would you like to do?\n• Reply TRANSFER to send\n• Reply CASHOUT to withdraw to bank\n• Reply AGREEMENT to fund a Service agreement`;
+
 
     const formattedRecipient = targetPhone.startsWith('whatsapp:')
       ? targetPhone

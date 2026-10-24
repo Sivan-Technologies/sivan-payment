@@ -3,7 +3,6 @@
 Document Identifier: FUTURE_BUILD_MASTER_ROADMAP
 Status: Phase 1 Code Freeze Active (Multichain Implementation Verified Live)
 Founder and Author: Samson Micheal (Founder, CEO, Technical Founder, Product Engineer)
-Location: Abuja, Nigeria
 Official URLs:
 - Landing: https://sivantech.online
 - Payment App: https://app.sivantech.online

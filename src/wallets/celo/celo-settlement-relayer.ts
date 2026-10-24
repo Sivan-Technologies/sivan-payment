@@ -44,6 +44,7 @@ export interface CeloSettlementResult {
  */
 export function getCeloAgentPrivateKey(): `0x${string}` | null {
   const rawKey = (
+    process.env.CELO_RELAY_AGENT_PRIVATE_KEY ||
     process.env.CELO_AGENT_PRIVATE_KEY ||
     process.env.CELO_RELAY_AGENT_PRIVATE_KEY ||
     process.env.SETTLEMENT_PRIVATE_KEY ||

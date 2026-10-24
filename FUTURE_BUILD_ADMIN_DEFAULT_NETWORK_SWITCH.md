@@ -5,7 +5,7 @@ This specification defines the architectural capability for Sivan administrators
 
 Document Version: 1.0.0
 Status: Backend API & Settings ✅ COMPLETED; Admin Dashboard UI Radio ⏳ QUEUED FOR PHASE 2
-Author: Samson Micheal, Founder & CEO (Abuja, Nigeria)
+Author: Samson Micheal, Founder & CEO
 Platform: Sivan Ai / Sivan Payment Ai
 
 ---

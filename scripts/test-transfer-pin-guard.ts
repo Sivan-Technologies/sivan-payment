@@ -70,6 +70,7 @@ async function run() {
     updatedAt: new Date().toISOString(),
   });
 
+=======
   // Configure PIN for user
   await setWithdrawalPin(testUserId, { pin: '849201' });
   assert(await hasWithdrawalPin(testUserId), 'User now has withdrawal PIN configured');
@@ -121,6 +122,26 @@ async function run() {
     transferId: `btx_mock_1_${testUserId}`,
     createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
   } as any, { actorType: 'user', actorId: testUserId });
+=======
+  // Simulate established transfer history by creating an audit log of a completed transfer to knownRecipient
+  await createAuditLog({
+    actorType: 'user',
+    actorId: testUserId,
+    action: 'balance.transfer_confirmed',
+    resourceType: 'balance_transfer',
+    resourceId: 'btx_mock_1',
+    severity: 'info',
+    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
+    metadata: {
+      transferId: 'btx_mock_1',
+      userId: testUserId,
+      amount: '10',
+      asset: 'USDC',
+      network: 'base',
+      destinationAddress: knownRecipient,
+      status: 'completed',
+    },
+  });
 
   // Test 5: Established sender sending $10 (< $15) to KNOWN recipient without PIN -> FRICTIONLESS PASS!
   await assertTransferAuthorised({
@@ -185,6 +206,25 @@ async function run() {
       transferId: `btx_mock_recent_${i}_${testUserId}`,
       createdAt: new Date().toISOString(),
     } as any, { actorType: 'user', actorId: testUserId });
+=======
+    await createAuditLog({
+      actorType: 'user',
+      actorId: testUserId,
+      action: 'balance.transfer_confirmed',
+      resourceType: 'balance_transfer',
+      resourceId: `btx_mock_recent_${i}`,
+      severity: 'info',
+      createdAt: new Date().toISOString(),
+      metadata: {
+        transferId: `btx_mock_recent_${i}`,
+        userId: testUserId,
+        amount: '8',
+        asset: 'USDC',
+        network: 'base',
+        destinationAddress: knownRecipient,
+        status: 'completed',
+      },
+    });
   }
 
   // After 3 transfers in 24h, even a $5 send to a known recipient must require a PIN!
