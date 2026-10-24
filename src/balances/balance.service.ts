@@ -2038,6 +2038,7 @@ export const releaseAgreementSchema = z.object({
   sellerNetAmount: z.number().positive().optional(),
   feeAmount: z.number().min(0).optional(),
   currency: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['ngn', 'usdc', 'usdt'])).default('ngn'),
+  payoutDestination: z.enum(['balance', 'bank']).optional().default('balance'),
 });
 
 export async function releaseServiceAgreementFromBalance(
@@ -2137,21 +2138,25 @@ export async function releaseServiceAgreementFromBalance(
     }
   }
 
-  // Atomically credit seller spendable available balance
-  await createBalanceLedgerEntry(
-    {
-      userId: resolvedSellerId,
-      asset: cleanAsset,
-      amount: sellerNet.toFixed(2),
-      kind: 'credit_available',
-      status: 'available',
-      sourceType: 'service_agreement_payout',
-      sourceId: input.agreementId,
-      description: `Payment received for Service Agreement ${input.agreementId}`,
-      transferId: `agr_payout_${input.agreementId}`,
-    },
-    { actorType: 'system', actorId: 'agreement_settlement' }
-  );
+  // Atomically credit seller spendable available balance if payout destination is balance.
+  // If destination is 'bank', the payout was already transferred to seller's external bank account
+  // (e.g. via Paystack/NIP rails). We do not credit seller's Sivan app balance to avoid double disbursement.
+  if (input.payoutDestination !== 'bank') {
+    await createBalanceLedgerEntry(
+      {
+        userId: resolvedSellerId,
+        asset: cleanAsset,
+        amount: sellerNet.toFixed(2),
+        kind: 'credit_available',
+        status: 'available',
+        sourceType: 'service_agreement_payout',
+        sourceId: input.agreementId,
+        description: `Payment received for Service Agreement ${input.agreementId}`,
+        transferId: `agr_payout_${input.agreementId}`,
+      },
+      { actorType: 'system', actorId: 'agreement_settlement' }
+    );
+  }
 
   return {
     success: true,
