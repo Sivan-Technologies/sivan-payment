@@ -24,6 +24,12 @@ process.env.UTILITY_ROUTING = JSON.stringify({
 });
 
 import assert from 'node:assert/strict';
+import {
+  classifySmeApiMessage,
+  canFailOver,
+  statusForReason,
+  customerMessageForReason,
+} from '../src/ngn/provider/utility-provider.error.js';
 
 async function main() {
   console.log('\n==================================================');
@@ -446,6 +452,72 @@ async function main() {
   assert.equal(payRes.statusCode, 200);
   assert.ok(payRes.json().data.token);
   ok('POST /api/ngn/utility/electricity/pay endpoint succeeds');
+
+  // ===========================================================================
+  // SECTION 7: Provider failure classification
+  //
+  // Every upstream string asserted here was produced by the live SME API, not
+  // copied from its documentation. The provider reports business failures as
+  // HTTP 200 with { status: 'fail', msg }, so this prose is the only signal
+  // available and these tests are what stop it drifting unnoticed.
+  // ===========================================================================
+  console.log('\n--- Section 7: provider failure classification ---');
+
+  assert.equal(
+    classifySmeApiMessage('Your wallet balance is insufficient for this purchase. Please fund your wallet and try again.'),
+    'provider_float_exhausted'
+  );
+  assert.equal(
+    classifySmeApiMessage('Insufficient balance fund your wallet and try again'),
+    'provider_float_exhausted'
+  );
+  ok('both live phrasings of an empty float classify as provider_float_exhausted');
+
+  assert.equal(classifySmeApiMessage('Please enter a valid 11 digit phone number'), 'invalid_recipient');
+  assert.equal(classifySmeApiMessage('The Data Plan ID : 999999 is invalid '), 'invalid_plan');
+  assert.equal(classifySmeApiMessage('Invalid or inactive authorization token.'), 'provider_auth_failed');
+  ok('recipient, plan and auth failures are told apart');
+
+  /**
+   * THE ASSERTION THIS WHOLE SECTION EXISTS FOR.
+   *
+   * When the provider says "insufficient balance" it means OUR wallet with
+   * them. A customer holding plenty of naira who is told they have
+   * insufficient funds will not retry - they will stop trusting the ledger.
+   * So no provider-side failure may produce a message that talks about money
+   * the customer holds, and none may repeat the vendor's own sentence.
+   */
+  for (const reason of [
+    'provider_float_exhausted',
+    'provider_auth_failed',
+    'provider_unavailable',
+    'provider_timeout',
+    'upstream_declined',
+  ] as const) {
+    const message = customerMessageForReason(reason).toLowerCase();
+    assert.ok(!message.includes('balance'), `${reason} message must not mention balance: "${message}"`);
+    assert.ok(!message.includes('insufficient'), `${reason} message must not say insufficient: "${message}"`);
+    assert.ok(!message.includes('wallet'), `${reason} message must not mention a wallet: "${message}"`);
+    assert.ok(!message.includes('sme'), `${reason} message must not name the provider: "${message}"`);
+    assert.ok(statusForReason(reason) !== 500, `${reason} must not be reported as a server crash`);
+  }
+  ok('no provider-side failure message mentions the customer balance or names the vendor');
+
+  /**
+   * Failing over after a timeout can pay twice for one sale: the first
+   * provider may already have delivered and simply not told us.
+   */
+  assert.equal(canFailOver('provider_timeout'), false);
+  assert.equal(canFailOver('invalid_recipient'), false);
+  assert.equal(canFailOver('invalid_plan'), false);
+  assert.equal(canFailOver('provider_float_exhausted'), true);
+  assert.equal(canFailOver('upstream_declined'), true);
+  ok('ambiguous and deterministic failures are not retried on another provider');
+
+  assert.equal(statusForReason('invalid_recipient'), 400);
+  assert.equal(statusForReason('invalid_plan'), 409);
+  assert.equal(statusForReason('provider_float_exhausted'), 503);
+  ok('each failure maps to a status that matches whose problem it is');
 
   await app.close();
 

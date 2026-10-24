@@ -13,6 +13,12 @@ import { checkRateLimit } from './shared/rate-limit.js';
 import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './system/system-status.service.js';
 import { getAdminPlatformSettings, isPlatformMutationBlocked } from './admin/admin-settings.service.js';
 import { getActiveRestrictionForUser } from './admin/admin-hardening.service.js';
+import {
+  UtilityProviderError,
+  statusForReason,
+  customerMessageForReason,
+  codeForReason,
+} from './ngn/provider/utility-provider.error.js';
 
 /** Constant-time admin key comparison, length-guarded so it cannot throw. */
 function safeKeyEquals(provided: string, expected: string): boolean {
@@ -565,6 +571,45 @@ export async function buildApp() {
    * on the code, and rewriting it would break the frontend's own handling.
    */
   app.setErrorHandler((error, request, reply) => {
+    /**
+     * A PROVIDER DECLINING IS NOT A CRASH.
+     *
+     * Utility adapters used to throw a bare Error carrying the vendor's own
+     * sentence. Nothing caught it, so it fell through to the generic branch
+     * below and became a 500 with the body "Internal server error" - plus a
+     * Sentry capture and an ops Telegram page, for events like a customer
+     * mistyping a phone number.
+     *
+     * These are classified at the adapter, where the vendor's dialect is
+     * understood, and answered with a status that matches whose problem it is
+     * and a message the customer can act on. The vendor's raw text stays in
+     * the log and never reaches the response: for a provider-side shortfall it
+     * would read as though the CUSTOMER were out of funds, which is both false
+     * and the fastest way to lose their trust in the ledger.
+     */
+    if (error instanceof UtilityProviderError) {
+      const statusCode = statusForReason(error.reason);
+      request.log.error(
+        {
+          provider: error.provider,
+          reason: error.reason,
+          context: error.context,
+          upstream: error.upstreamMessage,
+          url: request.url,
+          requestId: request.id,
+        },
+        'utility provider failure'
+      );
+      return reply.code(statusCode).send({
+        error: {
+          code: codeForReason(error.reason),
+          message: customerMessageForReason(error.reason),
+          details: { code: codeForReason(error.reason), reason: error.reason },
+          requestId: String(request.id),
+        },
+      });
+    }
+
     if (error instanceof AppError) {
       if (error.statusCode >= 500) {
         captureError(error, { requestId: request.id, url: request.url, method: request.method, code: error.code, details: error.details });

@@ -41,6 +41,12 @@ import { PaystackUtilityProvider } from './paystack-utility.provider.js';
 import { VtuAggregatorProvider } from './vtu-aggregator.provider.js';
 import { SmeApiUtilityProvider } from './smeapi-utility.provider.js';
 import { MockUtilityProvider } from './mock-utility.provider.js';
+import {
+  UtilityProviderError,
+  canFailOver,
+  type UtilityFailureReason,
+} from './utility-provider.error.js';
+import { alertFloatExhausted } from '../../monitoring/float-alert.js';
 
 const registry = new Map<string, IUtilityProvider>();
 
@@ -77,6 +83,52 @@ export function listUtilityProviderCapabilities(): Array<{
     supports: provider.supports ?? [],
     priority: provider.priority ?? 10,
   }));
+}
+
+/**
+ * What each provider is actually holding, so the float stops being invisible.
+ *
+ * getWalletBalanceNgn is deliberately NOT on IUtilityProvider: a provider we
+ * pay per transaction has a float, one we settle with later does not, and
+ * forcing a balance onto every adapter would mean inventing a number for the
+ * ones that have none. So it is probed structurally and reported honestly -
+ * "not applicable" is a real answer here, and so is "we could not reach them".
+ *
+ * Failures are captured per provider rather than thrown, because a dashboard
+ * that shows nothing when one upstream is down is worse than one that shows
+ * three balances and an error.
+ */
+export async function getProviderFloatBalances(): Promise<
+  Array<{
+    provider: string;
+    supportsFloat: boolean;
+    balanceNgn: number | null;
+    checkedAt: string;
+    error: string | null;
+  }>
+> {
+  const entries = Array.from(registry.entries());
+  return Promise.all(
+    entries.map(async ([name, provider]) => {
+      const probe = (provider as { getWalletBalanceNgn?: () => Promise<number> }).getWalletBalanceNgn;
+      const checkedAt = new Date().toISOString();
+      if (typeof probe !== 'function') {
+        return { provider: name, supportsFloat: false, balanceNgn: null, checkedAt, error: null };
+      }
+      try {
+        const balanceNgn = await probe.call(provider);
+        return { provider: name, supportsFloat: true, balanceNgn, checkedAt, error: null };
+      } catch (err: any) {
+        return {
+          provider: name,
+          supportsFloat: true,
+          balanceNgn: null,
+          checkedAt,
+          error: String(err?.message || err),
+        };
+      }
+    })
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +272,48 @@ export async function executeForService<K extends keyof IUtilityProvider, T>(
     } catch (err: any) {
       lastError = err;
       const next = chain[i + 1];
+      const reason: UtilityFailureReason | null =
+        err instanceof UtilityProviderError ? err.reason : null;
+
+      /**
+       * An empty float is a treasury problem, so it pages a human even when a
+       * fallback absorbs it: the customer is served, but we are now one
+       * provider deep with no margin, and nobody finds out unless we say so.
+       */
+      if (reason === 'provider_float_exhausted' && err instanceof UtilityProviderError) {
+        void alertFloatExhausted({
+          provider: provider.name,
+          service,
+          upstreamMessage: err.upstreamMessage,
+          failedOverTo: next ? next.name : null,
+        });
+      }
+
+      /**
+       * NOT EVERY FAILURE MAY BE RETRIED ELSEWHERE.
+       *
+       * This loop used to treat any thrown value as a reason to try the next
+       * provider. Two of those cases are wrong and one of them costs money:
+       *
+       *   - A timeout means we never learned the outcome. The first provider
+       *     may already have delivered, so sending the same purchase to a
+       *     second one risks paying twice for one sale. We stop and surface it
+       *     for reconciliation instead of guessing.
+       *   - A malformed phone number or an unmapped plan code is deterministic.
+       *     The next provider rejects it for the same reason, so failing over
+       *     only doubles the customer's wait before the identical answer.
+       *
+       * Everything else here is a provider that answered and declined, which
+       * tells us it delivered nothing, so retrying elsewhere is safe.
+       */
+      if (reason && !canFailOver(reason)) {
+        console.error(
+          `[utility-failover] "${provider.name}" failed on ${service} with reason="${reason}". ` +
+            `Not retrying on another provider: ${err?.message || err}`
+        );
+        throw err;
+      }
+
       if (next) {
         console.warn(
           `[utility-failover] "${provider.name}" failed on ${service}: ${err?.message || err}. Trying "${next.name}".`

@@ -9,6 +9,7 @@
  * - User NGN spendable balance lookup
  */
 
+import { getProviderFloatBalances } from '../provider/utility-registry.js';
 import { z } from 'zod';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { parseBody } from '../../shared/validation.js';
@@ -510,6 +511,19 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   app.get('/api/admin/utilities/routing', async (_request: FastifyRequest, reply: FastifyReply) => {
     const info = await getUtilityRoutingInfo();
     return reply.code(200).send({ status: 'success', data: info });
+  });
+
+  /**
+   * GET /api/admin/utilities/float
+   *
+   * Live wallet balance at each provider that holds one. This is the number
+   * that decides whether traffic routed to an aggregator can actually be
+   * fulfilled, and until now it existed only as an unused method on one
+   * adapter - so the float could run dry with nothing on any screen saying so.
+   */
+  app.get('/api/admin/utilities/float', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const balances = await getProviderFloatBalances();
+    return reply.code(200).send({ status: 'success', data: { balances } });
   });
 
   /**

@@ -56,6 +56,10 @@ import type {
   ProviderDataResult,
 } from './utility-provider.interface.js';
 import type { TelcoOperator, DataPlanOption } from '../types/paystackUtilityTypes.js';
+import {
+  UtilityProviderError,
+  classifySmeApiMessage,
+} from './utility-provider.error.js';
 
 export interface SmeApiConfig {
   name?: string;
@@ -89,6 +93,9 @@ interface SmeApiPlanRow {
   price: number;
 }
 
+/** Upstream is a small aggregator; past this we stop waiting and reconcile. */
+const SMEAPI_TIMEOUT_MS = 20_000;
+
 export class SmeApiUtilityProvider implements IUtilityProvider {
   readonly name: UtilityProviderName;
   readonly priority: number;
@@ -114,7 +121,12 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
 
   private requireKey(): void {
     if (!this.apiKey) {
-      throw new Error('SME API token is not configured. Set SMEAPI_TOKEN before routing traffic to "smeapi".');
+      throw new UtilityProviderError({
+        reason: 'provider_auth_failed',
+        provider: 'smeapi',
+        context: 'configuration',
+        upstreamMessage: 'SMEAPI_TOKEN is not set.',
+      });
     }
   }
 
@@ -133,14 +145,54 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
   private assertOk(body: any, context: string): void {
     const status = String(body?.status ?? '').toLowerCase();
     if (status !== 'success' && status !== 'successful') {
-      throw new Error(`SME API ${context} failed: ${body?.msg || body?.message || 'unknown upstream error'}`);
+      const upstreamMessage = String(body?.msg || body?.message || 'unknown upstream error');
+      throw new UtilityProviderError({
+        reason: classifySmeApiMessage(upstreamMessage),
+        provider: 'smeapi',
+        context,
+        upstreamMessage,
+      });
     }
+  }
+
+  /**
+   * One place where a network-level failure becomes a typed one.
+   *
+   * The distinction encoded here is the expensive one: a request that never
+   * left (DNS, refused connection) delivered nothing and is safe to retry
+   * elsewhere, while one that was sent and then timed out may well have put
+   * airtime on a phone. Collapsing both into "it failed" is how an aggregator
+   * integration ends up paying twice for one sale.
+   */
+  private async requestJson(url: string, init: RequestInit, context: string): Promise<any> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SMEAPI_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(url, { ...init, signal: controller.signal });
+    } catch (err: any) {
+      const aborted = err?.name === 'AbortError' || controller.signal.aborted;
+      throw new UtilityProviderError({
+        reason: aborted ? 'provider_timeout' : 'provider_unavailable',
+        provider: 'smeapi',
+        context,
+        upstreamMessage: aborted
+          ? `No response within ${SMEAPI_TIMEOUT_MS}ms.`
+          : String(err?.message || err),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    return (await res.json().catch(() => ({}))) as any;
   }
 
   async listDataPlans(operator: TelcoOperator): Promise<DataPlanOption[]> {
     const networkId = this.networkId(operator);
-    const res = await fetch(`${this.baseUrl}/dataplans/`, { method: 'GET', headers: this.headers() });
-    const body = (await res.json().catch(() => ({}))) as any;
+    const body = await this.requestJson(
+      `${this.baseUrl}/dataplans/`,
+      { method: 'GET', headers: this.headers() },
+      'data plan listing'
+    );
     this.assertOk(body, 'data plan listing');
 
     const rows = (Array.isArray(body.data) ? body.data : []) as SmeApiPlanRow[];
@@ -192,12 +244,15 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
     idempotencyKey: string
   ): Promise<ProviderAirtimeResult> {
     this.requireKey();
-    const res = await fetch(`${this.baseUrl}/airtime/`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(this.buildAirtimeBody(phone, amountNgn, operator, idempotencyKey)),
-    });
-    const body = (await res.json().catch(() => ({}))) as any;
+    const body = await this.requestJson(
+      `${this.baseUrl}/airtime/`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(this.buildAirtimeBody(phone, amountNgn, operator, idempotencyKey)),
+      },
+      'airtime purchase'
+    );
     this.assertOk(body, 'airtime purchase');
 
     return {
@@ -219,12 +274,15 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
     idempotencyKey: string
   ): Promise<ProviderDataResult> {
     this.requireKey();
-    const res = await fetch(`${this.baseUrl}/data/`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify(this.buildDataBody(phone, planCode, operator, idempotencyKey)),
-    });
-    const body = (await res.json().catch(() => ({}))) as any;
+    const body = await this.requestJson(
+      `${this.baseUrl}/data/`,
+      {
+        method: 'POST',
+        headers: this.headers(),
+        body: JSON.stringify(this.buildDataBody(phone, planCode, operator, idempotencyKey)),
+      },
+      'data purchase'
+    );
     this.assertOk(body, 'data purchase');
 
     return {
@@ -246,8 +304,11 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
    */
   async getWalletBalanceNgn(): Promise<number> {
     this.requireKey();
-    const res = await fetch(`${this.baseUrl}/user/`, { method: 'GET', headers: this.headers() });
-    const body = (await res.json().catch(() => ({}))) as any;
+    const body = await this.requestJson(
+      `${this.baseUrl}/user/`,
+      { method: 'GET', headers: this.headers() },
+      'wallet balance lookup'
+    );
     this.assertOk(body, 'wallet balance lookup');
     // Confirmed live: the response is flat, { name, balance: "0.00", status }.
     const raw = body?.balance ?? body?.data?.balance ?? body?.wallet_balance;
