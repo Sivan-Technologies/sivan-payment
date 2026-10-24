@@ -5,7 +5,7 @@
  * 1. Telco prefix auto-detection (MTN, Airtel, Glo, 9mobile) & phone normalization.
  * 2. Balance enforcement & atomic ledger debit.
  * 3. Airtime top-up execution & formatted receipt generation (Paystack default).
- * 4. Pluggable provider routing (routing via Nomba / failover IUtilityProvider).
+ * 4. Per-service provider routing, capability refusal and scoped failover.
  * 5. Data bundle purchase execution.
  * 6. Electricity DisCo pre-flight meter inquiry (customer name resolution).
  * 7. Electricity bill payment & 20-digit prepaid token generation.
@@ -17,6 +17,10 @@ process.env.DATABASE_PROVIDER = 'json';
 process.env.DATABASE_FILE = '.data/test-paystack-utility-engine.json';
 process.env.PAYSTACK_SECRET_KEY = 'sk_test_mock_secret_key_1234567890';
 process.env.NODE_ENV = 'test';
+process.env.UTILITY_ROUTING = JSON.stringify({
+  routes: { airtime: ['paystack'], data: ['paystack'], electricity: ['paystack'] },
+  failover: { airtime: false, data: false, electricity: false },
+});
 
 import assert from 'node:assert/strict';
 
@@ -41,6 +45,12 @@ async function main() {
     getUtilityProvider,
     listUtilityProviders,
   } = await import('../src/ngn/service/sivanUtilityService.js');
+  const {
+    setUtilityRouting,
+    getProviderChainForService,
+    listUtilityProviderCapabilities,
+  } = await import('../src/ngn/provider/utility-registry.js');
+  const { setUtilityRoutingConfig } = await import('../src/ngn/service/utility-routing.service.js');
 
   let passed = 0;
   function ok(msg: string) {
@@ -118,16 +128,25 @@ async function main() {
   console.log('\n══ 3. Pluggable Provider Registry ══');
   const availableProviders = listUtilityProviders();
   assert.ok(availableProviders.includes('paystack'));
-  assert.ok(availableProviders.includes('nomba'));
-  ok('registry lists paystack and nomba providers');
+  assert.ok(availableProviders.includes('vtu_ng'));
+  assert.ok(availableProviders.includes('smeapi'));
+  ok('registry lists the real fulfilment providers');
+
+  // The simulator fabricates a successful vend, so reaching it in production
+  // means debiting a customer who receives nothing. It is opt in only.
+  assert.ok(!availableProviders.includes('nomba'));
+  assert.ok(!availableProviders.includes('mock'));
+  ok('simulator absent unless UTILITY_ENABLE_MOCK_PROVIDER is set');
 
   const defaultProv = getUtilityProvider();
   assert.equal(defaultProv.name, 'paystack');
   ok('default provider resolves to paystack');
 
-  const nombaProv = getUtilityProvider('nomba');
-  assert.equal(nombaProv.name, 'nomba');
-  ok('explicit provider request resolves to nomba');
+  const capabilities = listUtilityProviderCapabilities();
+  const smeapiCap = capabilities.find((c) => c.name === 'smeapi');
+  assert.ok(smeapiCap);
+  assert.deepEqual([...smeapiCap!.supports].sort(), ['airtime', 'data']);
+  ok('smeapi declares airtime and data only, never electricity');
 
   // ─── 4. Airtime Execution & Atomic Debit (Default Rail) ───────────
   console.log('\n══ 4. Airtime Execution & Atomic Debit ══');
@@ -152,22 +171,41 @@ async function main() {
   ok('user balance atomically debited by exactly 1,000 NGN');
 
   // ─── 5. Multi-Provider Routing (Fulfillment via Nomba Rail) ───────
-  console.log('\n══ 5. Multi-Provider Failover/Routing (Nomba Rail) ══');
-  const nombaAirtimeReceipt = await executeAirtimePurchase({
+  console.log('\n══ 5. Per-Service Routing, Capability Refusal & Scoped Failover ══');
+
+  // A telco-only aggregator must never be handed a meter. The registry
+  // refuses the configuration rather than discovering it at purchase time.
+  await assert.rejects(
+    () => setUtilityRoutingConfig({ routes: { electricity: ['smeapi'] } }, 'test-suite'),
+    /does not support electricity/
+  );
+  ok('routing electricity to an airtime-only provider is refused');
+
+  setUtilityRouting({
+    routes: { airtime: ['paystack'], data: ['paystack'], electricity: ['paystack'] },
+    failover: { airtime: true, data: true, electricity: false },
+  });
+  assert.equal(getProviderChainForService('airtime')[0].name, 'paystack');
+  ok('each service resolves to its own configured primary');
+
+  // Failover is opt in per service: electricity issues a token, so a blind
+  // second attempt elsewhere is how a customer pays twice for one token.
+  assert.equal(getProviderChainForService('electricity').length, 1);
+  ok('electricity runs with failover disabled');
+
+  const routedAirtimeReceipt = await executeAirtimePurchase({
     userId: testUserId,
     phone: '08021234567', // Airtel
     amountNgn: 1000,
-    providerName: 'nomba', // Route explicitly to Nomba
   });
 
-  assert.equal(nombaAirtimeReceipt.success, true);
-  assert.equal(nombaAirtimeReceipt.providerName, 'nomba');
-  assert.match(nombaAirtimeReceipt.formattedText, /Fulfillment Rail: NOMBA/);
-  ok('airtime routed to secondary provider (Nomba) without modifying core engine');
+  assert.equal(routedAirtimeReceipt.success, true);
+  assert.equal(routedAirtimeReceipt.providerName, 'paystack');
+  ok('airtime fulfils through the routed provider, not a caller-supplied one');
 
-  const balanceAfterNomba = await getUserNgnBalance(testUserId);
-  assert.equal(balanceAfterNomba, 23000);
-  ok('user balance debited accurately across alternative provider rail');
+  const balanceAfterRouted = await getUserNgnBalance(testUserId);
+  assert.equal(balanceAfterRouted, 23000);
+  ok('user balance debited accurately across the routed rail');
 
   // ─── 6. Mobile Data Bundle Purchase ───────────────────────────────
   console.log('\n══ 6. Data Bundle Purchase ══');

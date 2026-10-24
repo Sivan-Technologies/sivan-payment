@@ -1,86 +1,279 @@
 /**
  * SIVAN UTILITY PROVIDER REGISTRY
  *
- * Pluggable registry for daily utility fulfillment rails.
- * Decouples Sivan payment Ai from any single vendor.
- * Dynamically resolves active provider (Paystack, Nomba, Flutterwave, VTU)
- * and enables sub-second failover when upstream telco aggregators time out.
+ * Pluggable registry for daily utility fulfilment rails.
+ *
+ * ROUTING IS PER SERVICE, NOT GLOBAL.
+ *
+ * There is no single "active provider" any more. Each of the three services -
+ * airtime, data, electricity - has its own ordered chain of providers, so
+ * airtime and data can be moved between aggregators while electricity stays
+ * where it is. The chain is persisted (see utility-routing.service) rather
+ * than held in a module variable, so a switch survives a restart and applies
+ * to every instance.
+ *
+ * Three rules the old registry did not enforce:
+ *
+ *  1. CAPABILITY. A provider is only eligible for a service it declares in
+ *     `supports` and for which it actually implements the method. That is what
+ *     stops an airtime-only aggregator being handed an electricity meter and
+ *     replying with placeholder data.
+ *
+ *  2. FAILOVER IS OPT IN, PER SERVICE. Previously every operation walked every
+ *     registered provider by priority, so electricity would silently fall over
+ *     to a telco aggregator. Now a service with failover disabled attempts its
+ *     primary only, and a failure is a failure.
+ *
+ *  3. NO SIMULATOR IN THE CHAIN. The mock provider used to sit in the live
+ *     chain under the name "nomba", so an outage at the real providers ended
+ *     in a fabricated success and a real debit. It is now registered only when
+ *     UTILITY_ENABLE_MOCK_PROVIDER is explicitly set, and only under the name
+ *     "mock".
  */
 
 import type {
   IUtilityProvider,
   UtilityProviderName,
+  UtilityServiceType,
 } from './utility-provider.interface.js';
+import { UTILITY_SERVICE_TYPES } from './utility-provider.interface.js';
 import { PaystackUtilityProvider } from './paystack-utility.provider.js';
 import { VtuAggregatorProvider } from './vtu-aggregator.provider.js';
+import { SmeApiUtilityProvider } from './smeapi-utility.provider.js';
 import { MockUtilityProvider } from './mock-utility.provider.js';
 
 const registry = new Map<string, IUtilityProvider>();
 
-// Register out-of-the-box providers with default priorities
 registry.set('paystack', new PaystackUtilityProvider());
 registry.set('vtu_ng', new VtuAggregatorProvider({ name: 'vtu_ng', priority: 15 }));
-registry.set('nomba', new MockUtilityProvider());
+registry.set('smeapi', new SmeApiUtilityProvider());
 
 /**
- * Registers or overrides a utility provider adapter.
+ * The simulator is opt in. It fabricates successful fulfilment, so if it ever
+ * reaches production traffic the customer is debited for nothing.
  */
+if (String(process.env.UTILITY_ENABLE_MOCK_PROVIDER || '').toLowerCase() === 'true') {
+  registry.set('mock', new MockUtilityProvider());
+}
+
+/** Registers or overrides a utility provider adapter. */
 export function registerUtilityProvider(provider: IUtilityProvider): void {
   registry.set(provider.name.toLowerCase(), provider);
 }
 
-let runtimeActiveProvider: string | null = null;
+/** Lists all registered utility providers. */
+export function listUtilityProviders(): string[] {
+  return Array.from(registry.keys());
+}
+
+/** Lists providers together with the services each one can actually fulfil. */
+export function listUtilityProviderCapabilities(): Array<{
+  name: string;
+  supports: readonly UtilityServiceType[];
+  priority: number;
+}> {
+  return Array.from(registry.entries()).map(([name, provider]) => ({
+    name,
+    supports: provider.supports ?? [],
+    priority: provider.priority ?? 10,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Routing configuration
+// ---------------------------------------------------------------------------
+
+export interface UtilityRoutingConfig {
+  /** Ordered chains. Index 0 is the primary; the rest are fallbacks. */
+  routes: Record<UtilityServiceType, string[]>;
+  /** Whether a service may walk past its primary. */
+  failover: Record<UtilityServiceType, boolean>;
+}
+
+export const DEFAULT_UTILITY_ROUTING: UtilityRoutingConfig = {
+  routes: {
+    airtime: ['vtu_ng', 'smeapi'],
+    data: ['vtu_ng', 'smeapi'],
+    electricity: ['paystack'],
+  },
+  failover: {
+    airtime: true,
+    data: true,
+    // Electricity issues a meter token. A blind second attempt at another
+    // provider is how a customer ends up paying twice for one token.
+    electricity: false,
+  },
+};
+
+let runtimeRouting: UtilityRoutingConfig | null = null;
 
 /**
- * Returns the active or requested utility provider.
- * Sourced dynamically from environment variable or explicit override.
+ * Normalises any stored or submitted routing config: unknown provider names
+ * and providers that cannot serve the service are dropped, so a bad entry
+ * degrades to the remaining chain instead of failing at purchase time.
  */
-export function getUtilityProvider(name?: string): IUtilityProvider {
-  const targetName = (name || getActiveUtilityProviderName()).toLowerCase();
-  const provider = registry.get(targetName);
+export function normaliseUtilityRouting(input: Partial<UtilityRoutingConfig> | null | undefined): UtilityRoutingConfig {
+  const routes = {} as Record<UtilityServiceType, string[]>;
+  const failover = {} as Record<UtilityServiceType, boolean>;
 
-  if (provider) {
-    return provider;
+  for (const service of UTILITY_SERVICE_TYPES) {
+    const requested = input?.routes?.[service];
+    const chain = (Array.isArray(requested) ? requested : DEFAULT_UTILITY_ROUTING.routes[service])
+      .map((name) => String(name).toLowerCase().trim())
+      .filter((name, index, all) => name && all.indexOf(name) === index)
+      .filter((name) => {
+        const provider = registry.get(name);
+        return Boolean(provider && providerServes(provider, service));
+      });
+
+    routes[service] = chain.length > 0 ? chain : [];
+    const requestedFailover = input?.failover?.[service];
+    failover[service] =
+      typeof requestedFailover === 'boolean' ? requestedFailover : DEFAULT_UTILITY_ROUTING.failover[service];
   }
 
-  // Graceful fallback to default Paystack provider
-  const defaultProvider = registry.get('paystack');
-  if (defaultProvider) {
-    return defaultProvider;
-  }
+  return { routes, failover };
+}
 
-  throw new Error(`No utility provider registered in Sivan registry for "${targetName}"`);
+export function getUtilityRouting(): UtilityRoutingConfig {
+  if (runtimeRouting) return runtimeRouting;
+  const fromEnv = process.env.UTILITY_ROUTING;
+  if (fromEnv) {
+    try {
+      return normaliseUtilityRouting(JSON.parse(fromEnv));
+    } catch {
+      console.warn('[utility-registry] UTILITY_ROUTING is not valid JSON, falling back to defaults.');
+    }
+  }
+  return normaliseUtilityRouting(DEFAULT_UTILITY_ROUTING);
+}
+
+/** Applies a routing config in memory. Persistence lives in utility-routing.service. */
+export function setUtilityRouting(config: Partial<UtilityRoutingConfig>): UtilityRoutingConfig {
+  runtimeRouting = normaliseUtilityRouting(config);
+  return runtimeRouting;
+}
+
+// ---------------------------------------------------------------------------
+// Capability-aware resolution
+// ---------------------------------------------------------------------------
+
+const METHOD_FOR_SERVICE: Record<UtilityServiceType, Array<keyof IUtilityProvider>> = {
+  airtime: ['purchaseAirtime'],
+  data: ['purchaseDataBundle'],
+  electricity: ['inquireElectricityMeter', 'payElectricityBill'],
+};
+
+/** True when a provider both declares a service and implements its methods. */
+export function providerServes(provider: IUtilityProvider, service: UtilityServiceType): boolean {
+  const declared = (provider.supports ?? []).includes(service);
+  if (!declared) return false;
+  return METHOD_FOR_SERVICE[service].every((method) => typeof (provider as any)[method] === 'function');
 }
 
 /**
- * Returns all active providers sorted by priority descending.
- * If preferredName is provided, it is placed at the head of the chain.
+ * Resolves the chain for a service: the configured providers in order, trimmed
+ * to the primary when failover is off for that service.
  */
+export function getProviderChainForService(service: UtilityServiceType): IUtilityProvider[] {
+  const routing = getUtilityRouting();
+  const names = routing.routes[service] ?? [];
+  const chain = names
+    .map((name) => registry.get(name))
+    .filter((p): p is IUtilityProvider => Boolean(p && providerServes(p, service)));
+
+  if (chain.length === 0) {
+    throw new Error(
+      `No provider is routed to "${service}". Configure it with PUT /api/admin/utilities/routing.`
+    );
+  }
+  return routing.failover[service] ? chain : [chain[0]];
+}
+
+type ProviderWith<K extends keyof IUtilityProvider> = IUtilityProvider & Required<Pick<IUtilityProvider, K>>;
+
+/**
+ * Runs an operation against the chain configured for one service.
+ *
+ * Only providers that can serve the service are attempted, and the chain stops
+ * at the primary unless failover is enabled for that service.
+ */
+export async function executeForService<K extends keyof IUtilityProvider, T>(
+  service: UtilityServiceType,
+  method: K,
+  operation: (provider: ProviderWith<K>) => Promise<T>
+): Promise<{ result: T; providerName: string }> {
+  const chain = getProviderChainForService(service).filter(
+    (provider) => typeof (provider as any)[method] === 'function'
+  );
+
+  if (chain.length === 0) {
+    throw new Error(`No provider routed to "${service}" implements ${String(method)}.`);
+  }
+
+  let lastError: any = null;
+  for (let i = 0; i < chain.length; i++) {
+    const provider = chain[i];
+    try {
+      const result = await operation(provider as ProviderWith<K>);
+      return { result, providerName: provider.name };
+    } catch (err: any) {
+      lastError = err;
+      const next = chain[i + 1];
+      if (next) {
+        console.warn(
+          `[utility-failover] "${provider.name}" failed on ${service}: ${err?.message || err}. Trying "${next.name}".`
+        );
+      } else {
+        console.error(`[utility-failover] "${provider.name}" failed on ${service} with no fallback: ${err?.message || err}`);
+      }
+    }
+  }
+  throw lastError || new Error(`All providers routed to "${service}" failed.`);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns a named provider, or the primary for a service when no name is
+ * given. Retained for callers that predate per-service routing.
+ */
+export function getUtilityProvider(name?: string): IUtilityProvider {
+  const target = (name || '').toLowerCase();
+  if (target) {
+    const provider = registry.get(target);
+    if (provider) return provider;
+  }
+  // No name given: prefer the long-standing default rather than whichever
+  // service chain happens to be first, so legacy callers keep their provider.
+  const paystack = registry.get('paystack');
+  if (paystack) return paystack;
+  const firstRouted = getUtilityRouting().routes.data[0] || getUtilityRouting().routes.airtime[0];
+  const fallback = firstRouted ? registry.get(firstRouted) : undefined;
+  if (fallback) return fallback;
+  throw new Error(`No utility provider registered in Sivan registry for "${target}"`);
+}
+
+/** Priority-ordered chain across every provider. Used by airtime-to-cash. */
 export function getUtilityProviderChain(preferredName?: string): IUtilityProvider[] {
   const all = Array.from(registry.values());
   const sorted = [...all].sort((a, b) => (b.priority ?? 10) - (a.priority ?? 10));
-
   if (!preferredName) return sorted;
-
   const target = preferredName.toLowerCase();
   const preferred = sorted.find((p) => p.name.toLowerCase() === target);
   if (!preferred) return sorted;
-
   return [preferred, ...sorted.filter((p) => p.name.toLowerCase() !== target)];
 }
 
-/**
- * Executes a utility operation with automated multi-aggregator failover.
- * If the primary provider fails due to timeout, insufficient float, or upstream outage,
- * Sivan payment Ai automatically attempts the next registered provider in the chain.
- */
+/** Generic failover across the priority chain. Used by airtime-to-cash. */
 export async function executeUtilityWithFailover<T>(
   operation: (provider: IUtilityProvider) => Promise<T>,
   preferredName?: string
 ): Promise<{ result: T; providerName: string }> {
   const chain = getUtilityProviderChain(preferredName);
   let lastError: any = null;
-
   for (let i = 0; i < chain.length; i++) {
     const provider = chain[i];
     try {
@@ -88,40 +281,37 @@ export async function executeUtilityWithFailover<T>(
       return { result, providerName: provider.name };
     } catch (err: any) {
       lastError = err;
-      const nextProvider = chain[i + 1];
-      if (nextProvider) {
-        console.warn(
-          `[utility-failover] Provider "${provider.name}" failed: ${err?.message || err}. Failing over to "${nextProvider.name}"...`
-        );
-      }
     }
   }
-
   throw lastError || new Error('All registered utility providers failed.');
 }
 
 /**
- * Lists all registered utility providers.
- */
-export function listUtilityProviders(): string[] {
-  return Array.from(registry.keys());
-}
-
-/**
- * Sets the active utility provider at runtime.
- */
-export function setActiveUtilityProviderName(name: string): void {
-  const clean = name.toLowerCase().trim();
-  if (registry.has(clean)) {
-    runtimeActiveProvider = clean;
-  } else {
-    throw new Error(`Provider "${name}" is not registered in Sivan utility registry.`);
-  }
-}
-
-/**
- * Resolves the currently active utility provider name.
+ * The old global active provider. Reported as the data primary so existing
+ * admin reads keep working; writes now go through the routing endpoints.
  */
 export function getActiveUtilityProviderName(): string {
-  return runtimeActiveProvider || (process.env.UTILITY_PROVIDER || 'paystack').toLowerCase();
+  const routing = getUtilityRouting();
+  return routing.routes.data[0] || routing.routes.airtime[0] || 'paystack';
+}
+
+export function setActiveUtilityProviderName(name: string): void {
+  const clean = name.toLowerCase().trim();
+  if (!registry.has(clean)) {
+    throw new Error(`Provider "${name}" is not registered in Sivan utility registry.`);
+  }
+  const current = getUtilityRouting();
+  const next: UtilityRoutingConfig = {
+    routes: { ...current.routes },
+    failover: { ...current.failover },
+  };
+  // Only the telco rails follow the legacy switch. Electricity keeps its own
+  // route, which is the entire point of per-service routing.
+  for (const service of ['airtime', 'data'] as UtilityServiceType[]) {
+    const provider = registry.get(clean);
+    if (provider && providerServes(provider, service)) {
+      next.routes[service] = [clean, ...current.routes[service].filter((n) => n !== clean)];
+    }
+  }
+  setUtilityRouting(next);
 }

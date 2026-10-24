@@ -16,6 +16,7 @@ import type {
 import type {
   IUtilityProvider,
   UtilityProviderName,
+  UtilityServiceType,
   ProviderAirtimeResult,
   ProviderDataResult,
   ProviderElectricityResult,
@@ -26,8 +27,9 @@ import type {
 } from './utility-provider.interface.js';
 
 export class MockUtilityProvider implements IUtilityProvider {
-  readonly name: UtilityProviderName = 'nomba'; // Or fallback aggregator
+  readonly name: UtilityProviderName = 'mock'; // simulator - registered only when UTILITY_ENABLE_MOCK_PROVIDER=true
   readonly priority = 5;
+  readonly supports: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity'];
 
   async listDataPlans(operator: TelcoOperator): Promise<DataPlanOption[]> {
     const plans: Record<TelcoOperator, DataPlanOption[]> = {
@@ -107,7 +109,8 @@ export class MockUtilityProvider implements IUtilityProvider {
   async purchaseAirtime(
     phone: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderAirtimeResult> {
     const reference = `mock_airtime_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     return {
@@ -125,7 +128,8 @@ export class MockUtilityProvider implements IUtilityProvider {
     phone: string,
     planCode: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderDataResult> {
     const reference = `mock_data_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     return {
@@ -161,7 +165,8 @@ export class MockUtilityProvider implements IUtilityProvider {
     disco: DiscoCode,
     meterType: MeterType,
     amountNgn: number,
-    customerName?: string
+    customerName: string | undefined,
+    idempotencyKey: string
   ): Promise<ProviderElectricityResult> {
     const reference = `mock_disco_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     return {

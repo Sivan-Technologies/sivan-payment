@@ -25,6 +25,7 @@ import type {
 import type {
   IUtilityProvider,
   UtilityProviderName,
+  UtilityServiceType,
   ProviderAirtimeResult,
   ProviderDataResult,
   ProviderElectricityResult,
@@ -78,7 +79,8 @@ async function postPaystack<T>(path: string, payload: unknown): Promise<T> {
 export async function purchaseAirtime(
   phone: string,
   amountNgn: number,
-  operator: TelcoOperator
+  operator: TelcoOperator,
+    idempotencyKey: string
 ): Promise<ProviderAirtimeResult> {
   const reference = `airtime_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -121,7 +123,8 @@ export async function purchaseDataBundle(
   phone: string,
   planCode: string,
   amountNgn: number,
-  operator: TelcoOperator
+  operator: TelcoOperator,
+    idempotencyKey: string
 ): Promise<ProviderDataResult> {
   const reference = `data_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -215,7 +218,8 @@ export async function payElectricityBill(
   disco: DiscoCode,
   meterType: MeterType,
   amountNgn: number,
-  customerName?: string
+  customerName: string | undefined,
+    idempotencyKey: string
 ): Promise<ProviderElectricityResult> {
   const reference = `disco_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -268,6 +272,7 @@ export async function payElectricityBill(
 export class PaystackUtilityProvider implements IUtilityProvider {
   readonly name: UtilityProviderName = 'paystack';
   readonly priority = 20;
+  readonly supports: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity'];
 
   async listDataPlans(operator: TelcoOperator): Promise<DataPlanOption[]> {
     const plans: Record<TelcoOperator, DataPlanOption[]> = {
@@ -347,18 +352,20 @@ export class PaystackUtilityProvider implements IUtilityProvider {
   async purchaseAirtime(
     phone: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderAirtimeResult> {
-    return purchaseAirtime(phone, amountNgn, operator);
+    return purchaseAirtime(phone, amountNgn, operator, idempotencyKey);
   }
 
   async purchaseDataBundle(
     phone: string,
     planCode: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderDataResult> {
-    return purchaseDataBundle(phone, planCode, amountNgn, operator);
+    return purchaseDataBundle(phone, planCode, amountNgn, operator, idempotencyKey);
   }
 
   async inquireElectricityMeter(
@@ -374,8 +381,9 @@ export class PaystackUtilityProvider implements IUtilityProvider {
     disco: DiscoCode,
     meterType: MeterType,
     amountNgn: number,
-    customerName?: string
+    customerName: string | undefined,
+    idempotencyKey: string
   ): Promise<ProviderElectricityResult> {
-    return payElectricityBill(meterNumber, disco, meterType, amountNgn, customerName);
+    return payElectricityBill(meterNumber, disco, meterType, amountNgn, customerName, idempotencyKey);
   }
 }

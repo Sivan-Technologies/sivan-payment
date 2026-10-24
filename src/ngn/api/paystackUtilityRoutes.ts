@@ -41,13 +41,25 @@ import {
   updateUtilityProviderSchema,
 } from '../service/utility-data-plans.service.js';
 import type { TelcoOperator, DiscoCode, MeterType } from '../types/paystackUtilityTypes.js';
+import {
+  getUtilityRoutingInfo,
+  setUtilityRoutingConfig,
+  updateUtilityRoutingSchema,
+} from '../service/utility-routing.service.js';
 
+/**
+ * Which provider fulfils a purchase is an operational decision, not a
+ * customer one. These schemas deliberately omit providerName: it used to be
+ * accepted from the request body, so a caller could pick their own rail and,
+ * on endpoints with no authentication, steer traffic at will. Routing now
+ * comes from the persisted per-service map. The admin endpoints below are the
+ * only way to change it.
+ */
 const airtimeSchema = z.object({
   userId: z.string().min(1, 'userId is required'),
   phone: z.string().min(10, 'phone is required'),
   amountNgn: z.number().int().min(100, 'Minimum airtime is 100 NGN').max(50000, 'Maximum airtime is 50,000 NGN'),
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
-  providerName: z.string().optional(),
 });
 
 const dataSchema = z.object({
@@ -56,7 +68,6 @@ const dataSchema = z.object({
   planCode: z.string().min(1, 'planCode is required'),
   amountNgn: z.number().int().min(100, 'Minimum amount is 100 NGN'),
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
-  providerName: z.string().optional(),
 });
 
 const electricityInquirySchema = z.object({
@@ -76,7 +87,6 @@ const electricityInquirySchema = z.object({
     'yola',
   ]),
   meterType: z.enum(['prepaid', 'postpaid']).default('prepaid'),
-  providerName: z.string().optional(),
 });
 
 const electricityPaymentSchema = z.object({
@@ -98,7 +108,6 @@ const electricityPaymentSchema = z.object({
   meterType: z.enum(['prepaid', 'postpaid']).default('prepaid'),
   amountNgn: z.number().int().min(1000, 'Minimum electricity recharge is 1,000 NGN'),
   customerName: z.string().optional(),
-  providerName: z.string().optional(),
 });
 
 export async function paystackUtilityRoutes(app: FastifyInstance) {
@@ -137,7 +146,6 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       phone: body.phone,
       amountNgn: body.amountNgn,
       operator: body.operator as TelcoOperator | undefined,
-      providerName: body.providerName,
     });
 
     return reply.code(200).send({
@@ -158,7 +166,6 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       planCode: body.planCode,
       amountNgn: body.amountNgn,
       operator: body.operator as TelcoOperator | undefined,
-      providerName: body.providerName,
     });
 
     return reply.code(200).send({
@@ -178,7 +185,6 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       meterNumber: body.meterNumber,
       disco: body.disco as DiscoCode,
       meterType: body.meterType as MeterType,
-      providerName: body.providerName,
     });
 
     return reply.code(200).send({
@@ -200,7 +206,6 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       meterType: body.meterType as MeterType,
       amountNgn: body.amountNgn,
       customerName: body.customerName,
-      providerName: body.providerName,
     });
 
     return reply.code(200).send({
@@ -406,6 +411,33 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       status: 'success',
       data: result,
     });
+  });
+
+  /**
+   * GET /api/admin/utilities/routing
+   * Current per-service routing, the defaults, and which services each
+   * registered provider can actually fulfil.
+   */
+  app.get('/api/admin/utilities/routing', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const info = await getUtilityRoutingInfo();
+    return reply.code(200).send({ status: 'success', data: info });
+  });
+
+  /**
+   * PUT /api/admin/utilities/routing
+   * Repoints one or more services at different providers, persisted so the
+   * change survives a restart and reaches every instance.
+   *
+   * Body: { routes?: { airtime?: string[], data?: string[], electricity?: string[] },
+   *         failover?: { airtime?: boolean, data?: boolean, electricity?: boolean },
+   *         updatedBy?: string }
+   *
+   * A chain naming a provider that cannot serve that service is rejected.
+   */
+  app.put('/api/admin/utilities/routing', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(updateUtilityRoutingSchema, request.body);
+    const routing = await setUtilityRoutingConfig(body, body.updatedBy);
+    return reply.code(200).send({ status: 'success', data: { routing } });
   });
 }
 

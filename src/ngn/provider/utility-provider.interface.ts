@@ -80,38 +80,65 @@ export interface AirtimeCashConfirmResult {
   rawPayload?: unknown;
 }
 
+/** The three fulfilment rails a provider can serve. Routing is per service. */
+export type UtilityServiceType = 'airtime' | 'data' | 'electricity';
+
+export const UTILITY_SERVICE_TYPES: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity'];
+
 export interface IUtilityProvider {
   readonly name: UtilityProviderName;
-  /** Higher priority numbers are tried first in the failover chain (default 10) */
+  /** Higher priority numbers are tried first when a routing chain is not configured (default 10) */
   readonly priority?: number;
 
-  listDataPlans(operator: TelcoOperator): Promise<DataPlanOption[]>;
+  /**
+   * The services this provider can actually fulfil.
+   *
+   * Declaring a service is a promise that the matching method is implemented
+   * and talks to a real upstream. The registry refuses to route a service to
+   * a provider that does not declare it, which is what stops an airtime-only
+   * aggregator from being handed an electricity meter and answering with a
+   * placeholder.
+   */
+  readonly supports: readonly UtilityServiceType[];
 
-  purchaseAirtime(
+  /**
+   * Every method is optional. A provider implements only the rails it serves
+   * and omits the rest, instead of stubbing them out with invented data.
+   *
+   * idempotencyKey is generated once per purchase and reused for every
+   * attempt in a failover chain, so a provider that already vended on a
+   * timed-out request can recognise the retry rather than vend twice.
+   */
+  listDataPlans?(operator: TelcoOperator): Promise<DataPlanOption[]>;
+
+  purchaseAirtime?(
     phone: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderAirtimeResult>;
 
-  purchaseDataBundle(
+  purchaseDataBundle?(
     phone: string,
     planCode: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderDataResult>;
 
-  inquireElectricityMeter(
+  inquireElectricityMeter?(
     meterNumber: string,
     disco: DiscoCode,
     meterType: MeterType
   ): Promise<ElectricityInquiryResponse>;
 
-  payElectricityBill(
+  payElectricityBill?(
     meterNumber: string,
     disco: DiscoCode,
     meterType: MeterType,
     amountNgn: number,
-    customerName?: string
+    customerName: string | undefined,
+    idempotencyKey: string
   ): Promise<ProviderElectricityResult>;
 
   getAirtimeCashRate?(operator: TelcoOperator): Promise<AirtimeCashRate>;

@@ -19,6 +19,7 @@ import type {
 import type {
   IUtilityProvider,
   UtilityProviderName,
+  UtilityServiceType,
   ProviderAirtimeResult,
   ProviderDataResult,
   ProviderElectricityResult,
@@ -38,6 +39,7 @@ export interface VtuAggregatorConfig {
 export class VtuAggregatorProvider implements IUtilityProvider {
   readonly name: UtilityProviderName;
   readonly priority: number;
+  readonly supports: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity'];
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
@@ -118,7 +120,8 @@ export class VtuAggregatorProvider implements IUtilityProvider {
   async purchaseAirtime(
     phone: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderAirtimeResult> {
     const reference = `vtu_air_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     if (this.apiKey) {
@@ -158,7 +161,8 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     phone: string,
     planCode: string,
     amountNgn: number,
-    operator: TelcoOperator
+    operator: TelcoOperator,
+    idempotencyKey: string
   ): Promise<ProviderDataResult> {
     const reference = `vtu_dat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     if (this.apiKey) {
@@ -239,7 +243,8 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     disco: DiscoCode,
     meterType: MeterType,
     amountNgn: number,
-    customerName?: string
+    customerName: string | undefined,
+    idempotencyKey: string
   ): Promise<ProviderElectricityResult> {
     const reference = `vtu_elec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     if (this.apiKey) {

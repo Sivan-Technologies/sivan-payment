@@ -38,8 +38,22 @@ import {
   getActiveUtilityProviderName,
   executeUtilityWithFailover,
   getUtilityProviderChain,
+  executeForService,
+  getProviderChainForService,
 } from '../provider/utility-registry.js';
 import type { IUtilityProvider } from '../provider/utility-provider.interface.js';
+import { ensureUtilityRoutingLoaded } from './utility-routing.service.js';
+
+/**
+ * One key per purchase, reused for every attempt in a failover chain.
+ *
+ * Without it a provider that vended successfully but answered too slowly gets
+ * retried on the next provider and the customer receives the value twice
+ * while being debited once.
+ */
+function newIdempotencyKey(service: string, userId: string): string {
+  return `sivan_${service}_${crypto.randomUUID()}_${crypto.createHash('sha256').update(userId).digest('hex').slice(0, 8)}`;
+}
 import type { VirtualAccountTransactionRecord } from '../../virtual-accounts/types/virtual-account.types.js';
 import { getUtilityDataPlanBySize } from './utility-data-plans.service.js';
 
@@ -145,8 +159,18 @@ export async function fetchDataPlans(
   operator: TelcoOperator,
   preferredProviderName?: string
 ): Promise<DataPlanOption[]> {
-  const provider = getUtilityProvider(preferredProviderName);
-  return provider.listDataPlans(operator);
+  await ensureUtilityRoutingLoaded();
+  if (preferredProviderName) {
+    const provider = getUtilityProvider(preferredProviderName);
+    if (!provider.listDataPlans) {
+      throw badRequest(`Provider "${preferredProviderName}" does not publish a data plan catalogue.`);
+    }
+    return provider.listDataPlans(operator);
+  }
+  const { result } = await executeForService('data', 'listDataPlans', (provider) =>
+    provider.listDataPlans(operator)
+  );
+  return result;
 }
 
 /**
@@ -260,10 +284,11 @@ export async function executeAirtimePurchase(
     );
   }
 
-  // 2 & 3. Upstream provider execution with automated failover
-  const { result, providerName } = await executeUtilityWithFailover(
-    (provider) => provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator),
-    req.providerName
+  // 2 & 3. Upstream fulfilment through the chain configured for airtime
+  await ensureUtilityRoutingLoaded();
+  const airtimeKey = newIdempotencyKey('airtime', resolvedUserId);
+  const { result, providerName } = await executeForService('airtime', 'purchaseAirtime', (provider) =>
+    provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator, airtimeKey)
   );
 
   // 4. Atomic ledger debit
@@ -341,9 +366,10 @@ export async function executeDataPurchase(
     );
   }
 
-  const { result, providerName } = await executeUtilityWithFailover(
-    (provider) => provider.purchaseDataBundle(normalizedPhone, bundlePlan?.planCode || req.planCode, amountNgn, operator),
-    req.providerName
+  await ensureUtilityRoutingLoaded();
+  const dataKey = newIdempotencyKey('data', resolvedUserId);
+  const { result, providerName } = await executeForService('data', 'purchaseDataBundle', (provider) =>
+    provider.purchaseDataBundle(normalizedPhone, bundlePlan?.planCode || req.planCode, amountNgn, operator, dataKey)
   );
 
   await recordUtilityDebit({
@@ -405,9 +431,11 @@ export async function executeElectricityInquiry(
     throw badRequest(`Unknown electricity distribution company: ${req.disco}`);
   }
 
-  const { result: inquiry, providerName } = await executeUtilityWithFailover(
-    (provider) => provider.inquireElectricityMeter(req.meterNumber.trim(), req.disco, req.meterType),
-    req.providerName
+  await ensureUtilityRoutingLoaded();
+  const { result: inquiry, providerName } = await executeForService(
+    'electricity',
+    'inquireElectricityMeter',
+    (provider) => provider.inquireElectricityMeter(req.meterNumber.trim(), req.disco, req.meterType)
   );
   return {
     ...inquiry,
@@ -438,15 +466,17 @@ export async function executeElectricityPayment(
     );
   }
 
-  const { result, providerName } = await executeUtilityWithFailover(
-    (provider) => provider.payElectricityBill(
+  await ensureUtilityRoutingLoaded();
+  const electricityKey = newIdempotencyKey('electricity', resolvedUserId);
+  const { result, providerName } = await executeForService('electricity', 'payElectricityBill', (provider) =>
+    provider.payElectricityBill(
       req.meterNumber.trim(),
       req.disco,
       req.meterType,
       req.amountNgn,
-      req.customerName
-    ),
-    req.providerName
+      req.customerName,
+      electricityKey
+    )
   );
 
   await recordUtilityDebit({
