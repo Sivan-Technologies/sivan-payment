@@ -287,8 +287,13 @@ export async function executeAirtimePurchase(
   // 2 & 3. Upstream fulfilment through the chain configured for airtime
   await ensureUtilityRoutingLoaded();
   const airtimeKey = newIdempotencyKey('airtime', resolvedUserId);
-  const { result, providerName } = await executeForService('airtime', 'purchaseAirtime', (provider) =>
-    provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator, airtimeKey)
+  const { result, providerName } = await executeForService(
+    'airtime',
+    'purchaseAirtime',
+    (provider) => provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator, airtimeKey),
+    // Airtime costs us close to face value, so the amount is a fair proxy for
+    // what it draws from the float.
+    { costNgn: req.amountNgn }
   );
 
   // 4. Atomic ledger debit
@@ -388,7 +393,15 @@ export async function executeDataPurchase(
     }
     dispatchedPlanCode = providerPlanCode;
     return provider.purchaseDataBundle(normalizedPhone, providerPlanCode, amountNgn, operator, dataKey);
-  });
+  },
+  /**
+   * The float is drawn down by the WHOLESALE cost, not the retail price, so
+   * the markup must not count toward affordability. When the cost has never
+   * been synced it is left undefined rather than substituted: skipping a
+   * provider over a number we invented is exactly what this is meant to
+   * prevent.
+   */
+  typeof bundlePlan.costPriceNgn === 'number' ? { costNgn: bundlePlan.costPriceNgn } : {});
 
   await recordUtilityDebit({
     userId: resolvedUserId,

@@ -30,6 +30,14 @@ import {
   statusForReason,
   customerMessageForReason,
 } from '../src/ngn/provider/utility-provider.error.js';
+import {
+  canAfford,
+  recordFloatProbe,
+  recordFloatSpend,
+  recordFloatExhausted,
+  __resetFloatCache,
+} from '../src/ngn/provider/provider-float-cache.js';
+import { listUtilityProviders } from '../src/ngn/provider/utility-registry.js';
 
 async function main() {
   console.log('\n==================================================');
@@ -518,6 +526,66 @@ async function main() {
   assert.equal(statusForReason('invalid_plan'), 409);
   assert.equal(statusForReason('provider_float_exhausted'), 503);
   ok('each failure maps to a status that matches whose problem it is');
+
+  // ===========================================================================
+  // SECTION 8: Pre-flight float check
+  //
+  // The whole design constraint here is that this must never be the thing that
+  // refuses a sale. These assertions are mostly about what it DOES NOT do.
+  // ===========================================================================
+  console.log('\n--- Section 8: pre-flight float check ---');
+
+  __resetFloatCache();
+  assert.equal(canAfford('smeapi', 395), 'unknown');
+  ok('an empty cache answers unknown, never no');
+
+  recordFloatProbe('smeapi', 10_000);
+  assert.equal(canAfford('smeapi', 395), 'yes');
+  recordFloatProbe('smeapi', 100);
+  assert.equal(canAfford('smeapi', 395), 'no');
+  ok('a measured balance decides affordability in both directions');
+
+  recordFloatProbe('smeapi', 10_000);
+  recordFloatExhausted('smeapi');
+  assert.equal(canAfford('smeapi', 1), 'no');
+  ok('a provider declining for want of funds overrides a healthy earlier reading');
+
+  /**
+   * An estimate derived by subtracting spends is not a measurement, so it only
+   * refuses when it is clear of the line. Otherwise drift, or any spend we
+   * failed to observe, would eventually take a healthy provider out of
+   * rotation with no upstream ever having complained.
+   */
+  __resetFloatCache();
+  recordFloatProbe('smeapi', 1_000);
+  recordFloatSpend('smeapi', 400);
+  assert.equal(canAfford('smeapi', 500), 'no');
+  assert.equal(canAfford('smeapi', 50), 'yes');
+  ok('an optimistic estimate keeps a safety margin before refusing');
+
+  /**
+   * THE GUARANTEE THAT MATTERS.
+   *
+   * With every routed provider marked broke, a purchase must still be
+   * attempted. A cache that is stale, wrong, or simply never populated must
+   * not be able to refuse traffic the provider would have accepted - the
+   * fallback is the behaviour we had before the cache existed.
+   */
+  __resetFloatCache();
+  for (const name of listUtilityProviders()) recordFloatExhausted(name);
+  const failOpen = await app.inject({
+    method: 'POST',
+    url: '/api/ngn/utility/airtime',
+    headers: SECRET,
+    payload: { userId: testUserId, phone: '08051234567', amountNgn: 100, pin: TEST_PIN },
+  });
+  assert.equal(
+    failOpen.statusCode,
+    200,
+    `fail-open violated: cache said every provider was broke and the purchase was refused (${failOpen.body})`
+  );
+  ok('a purchase still goes through when the cache claims every provider is broke');
+  __resetFloatCache();
 
   await app.close();
 

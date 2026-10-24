@@ -47,6 +47,13 @@ import {
   type UtilityFailureReason,
 } from './utility-provider.error.js';
 import { alertFloatExhausted } from '../../monitoring/float-alert.js';
+import {
+  canAfford,
+  recordFloatProbe,
+  recordFloatSpend,
+  recordFloatExhausted,
+  refreshFloatInBackground,
+} from './provider-float-cache.js';
 
 const registry = new Map<string, IUtilityProvider>();
 
@@ -117,6 +124,9 @@ export async function getProviderFloatBalances(): Promise<
       }
       try {
         const balanceNgn = await probe.call(provider);
+        // An admin opening the dashboard warms the same cache routing reads,
+        // so looking at the float also makes the next purchase better informed.
+        recordFloatProbe(name, balanceNgn);
         return { provider: name, supportsFloat: true, balanceNgn, checkedAt, error: null };
       } catch (err: any) {
         return {
@@ -253,11 +263,61 @@ type ProviderWith<K extends keyof IUtilityProvider> = IUtilityProvider & Require
 export async function executeForService<K extends keyof IUtilityProvider, T>(
   service: UtilityServiceType,
   method: K,
-  operation: (provider: ProviderWith<K>) => Promise<T>
+  operation: (provider: ProviderWith<K>) => Promise<T>,
+  options: {
+    /**
+     * What this purchase will cost US at the provider, when it is known.
+     * Omitted for reads, and omitted when the wholesale cost has never been
+     * synced - guessing it would mean skipping a provider over a number we
+     * invented.
+     */
+    costNgn?: number;
+  } = {}
 ): Promise<{ result: T; providerName: string }> {
-  const chain = getProviderChainForService(service).filter(
+  const fullChain = getProviderChainForService(service).filter(
     (provider) => typeof (provider as any)[method] === 'function'
   );
+
+  /**
+   * PRE-FLIGHT: skip a provider we already know cannot pay.
+   *
+   * This reads cached balances only and never calls the provider, so it adds
+   * no latency and cannot fail. A refresh is kicked off in the background for
+   * anything stale and this request does not wait for it.
+   *
+   * The guard below is the important half. "Unknown" is treated as yes, and
+   * if the filter would empty the chain we fall back to the full one: a cache
+   * that is wrong, stale or simply never populated must never be able to
+   * refuse traffic that the provider would have accepted. The worst case is
+   * the behaviour we had before - dispatch and be declined.
+   */
+  for (const provider of fullChain) {
+    const probe = (provider as { getWalletBalanceNgn?: () => Promise<number> }).getWalletBalanceNgn;
+    if (typeof probe === 'function') {
+      refreshFloatInBackground(provider.name, () => probe.call(provider));
+    }
+  }
+
+  const costNgn = options.costNgn;
+  let chain = fullChain;
+  if (typeof costNgn === 'number' && costNgn > 0 && fullChain.length > 0) {
+    const affordable = fullChain.filter((provider) => canAfford(provider.name, costNgn) !== 'no');
+    if (affordable.length > 0 && affordable.length < fullChain.length) {
+      const skipped = fullChain.filter((p) => !affordable.includes(p)).map((p) => p.name);
+      console.warn(
+        `[utility-float] Skipping ${skipped.join(', ')} for ${service}: ` +
+          `known float below the ${costNgn} NGN this purchase costs us.`
+      );
+      chain = affordable;
+    } else if (affordable.length === 0) {
+      // Every provider looks unaffordable. Attempt anyway rather than refusing
+      // a customer on the strength of cached numbers that may all be stale.
+      console.warn(
+        `[utility-float] Every provider for ${service} looks short of ${costNgn} NGN. ` +
+          `Attempting anyway rather than refusing on cached figures.`
+      );
+    }
+  }
 
   if (chain.length === 0) {
     throw new Error(`No provider routed to "${service}" implements ${String(method)}.`);
@@ -268,6 +328,11 @@ export async function executeForService<K extends keyof IUtilityProvider, T>(
     const provider = chain[i];
     try {
       const result = await operation(provider as ProviderWith<K>);
+      // Keep the estimate moving between probes so a drain shows up early
+      // rather than at the moment a customer is declined.
+      if (typeof costNgn === 'number' && costNgn > 0) {
+        recordFloatSpend(provider.name, costNgn);
+      }
       return { result, providerName: provider.name };
     } catch (err: any) {
       lastError = err;
@@ -281,6 +346,9 @@ export async function executeForService<K extends keyof IUtilityProvider, T>(
        * provider deep with no margin, and nobody finds out unless we say so.
        */
       if (reason === 'provider_float_exhausted' && err instanceof UtilityProviderError) {
+        // The provider declining for want of funds is the most reliable float
+        // reading available, and it costs nothing extra to believe it.
+        recordFloatExhausted(provider.name);
         void alertFloatExhausted({
           provider: provider.name,
           service,
