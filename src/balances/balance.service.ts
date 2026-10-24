@@ -521,6 +521,32 @@ export async function getUserBalance(userId: string) {
   const entries = await listUserBalanceLedger(userId);
   const byAsset: Record<string, { asset: string; pending: number; available: number; held: number; spent: number; totalCredited: number }> = {};
   const ensure = (asset: string) => byAsset[asset] ||= { asset, pending: 0, available: 0, held: 0, spent: 0, totalCredited: 0 };
+  /**
+   * HELD MONEY IS NOT SPENDABLE.
+   *
+   * A hold moves money out of available and into held, so available is
+   * already the spendable figure: 50,000 credited with 15,000 held reads as
+   * 35,000 available. Settling that hold must therefore draw from held, not
+   * from available, because the money left available when the hold was
+   * placed. Drawing from available again would debit the user twice.
+   *
+   * That reasoning only holds for the debit that settles the hold. The
+   * previous rule drew EVERY debit from held first, so an unrelated spend -
+   * a utility purchase, a p2p transfer - quietly consumed money committed to
+   * somebody else's agreement and left available untouched. Since every
+   * insufficient-funds guard reads available, nothing ever refused the
+   * spend: a user with no free money could keep buying airtime out of their
+   * counterparty's escrow until the hold was gone.
+   *
+   * A debit now consumes held only up to the hold recorded against its own
+   * sourceId. A hold and the debits that settle it share that id - an
+   * agreement uses SIV-..., a balance transfer uses btx_... - so settlement
+   * still works exactly as before. Anything with no hold of its own, which
+   * is every p2p transfer and every utility purchase, comes out of available
+   * and is refused once available runs out.
+   */
+  const heldBySource = new Map<string, number>();
+  const sourceKey = (entry: { asset: string; sourceId: string }) => `${entry.asset}::${entry.sourceId}`;
   const chronologicalEntries = [...entries].reverse();
   for (const entry of chronologicalEntries) {
     const row = ensure(entry.asset);
@@ -529,16 +555,26 @@ export async function getUserBalance(userId: string) {
       row.available += value;
       row.totalCredited += Math.max(value, 0);
     }
-    if (entry.kind === 'hold') { row.available -= value; row.held += value; }
+    if (entry.kind === 'hold') {
+      row.available -= value;
+      row.held += value;
+      heldBySource.set(sourceKey(entry), (heldBySource.get(sourceKey(entry)) || 0) + value);
+    }
     if (entry.kind === 'hold_release') {
       row.available += value;
       const releaseFromHeld = Math.min(Math.max(0, row.held), value);
       const releaseFromSpent = value - releaseFromHeld;
       row.held -= releaseFromHeld;
       row.spent = Math.max(0, row.spent - releaseFromSpent);
+      // Some flows release under a different id than they held under, so the
+      // global held figure stays authoritative and this only tidies the map.
+      const tracked = heldBySource.get(sourceKey(entry)) || 0;
+      if (tracked > 0) heldBySource.set(sourceKey(entry), Math.max(0, tracked - value));
     }
     if (entry.kind === 'debit_transfer' || entry.kind === 'fee') {
-      const debitFromHeld = Math.min(Math.max(0, row.held), value);
+      const tracked = Math.max(0, heldBySource.get(sourceKey(entry)) || 0);
+      const debitFromHeld = Math.min(tracked, Math.max(0, row.held), value);
+      if (debitFromHeld > 0) heldBySource.set(sourceKey(entry), tracked - debitFromHeld);
       row.held -= debitFromHeld;
       const unheldDebit = value - debitFromHeld;
       row.available -= unheldDebit;
