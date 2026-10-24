@@ -42,6 +42,8 @@ import {
   updateUtilityProviderSchema,
 } from '../service/utility-data-plans.service.js';
 import type { TelcoOperator, DiscoCode, MeterType } from '../types/paystackUtilityTypes.js';
+import { requireIdentityServiceSecret } from '../../shared/service-auth.js';
+import { verifyPinForUserId, hasWithdrawalPin } from '../../identity/withdrawal-pin.service.js';
 import {
   getUtilityRoutingInfo,
   setUtilityRoutingConfig,
@@ -61,6 +63,7 @@ const airtimeSchema = z.object({
   phone: z.string().min(10, 'phone is required'),
   amountNgn: z.number().int().min(100, 'Minimum airtime is 100 NGN').max(50000, 'Maximum airtime is 50,000 NGN'),
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
+  pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
 });
 
 const dataSchema = z.object({
@@ -69,6 +72,7 @@ const dataSchema = z.object({
   planCode: z.string().min(1, 'planCode is required'),
   amountNgn: z.number().int().min(100, 'Minimum amount is 100 NGN'),
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
+  pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
 });
 
 const electricityInquirySchema = z.object({
@@ -109,7 +113,57 @@ const electricityPaymentSchema = z.object({
   meterType: z.enum(['prepaid', 'postpaid']).default('prepaid'),
   amountNgn: z.number().int().min(1000, 'Minimum electricity recharge is 1,000 NGN'),
   customerName: z.string().optional(),
+  pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
 });
+
+/**
+ * Authenticates the CALLER (a bot or the web backend), not the person.
+ *
+ * Every /api/ngn/utility route is exempt from user-JWT auth in app.ts because
+ * a WhatsApp thread has no user session to produce a token. That exemption was
+ * never paired with a service-secret check here, so the entire namespace -
+ * including the endpoints that spend a user's balance - was reachable
+ * anonymously from the internet. app.ts:770-782 states the rule this violated:
+ * nothing that moves money may be exempted without the handler checking the
+ * service secret itself.
+ */
+function requireServiceCaller(request: FastifyRequest): void {
+  requireIdentityServiceSecret(request as unknown as { headers: Record<string, unknown> });
+}
+
+/**
+ * Authenticates the PERSON, for anything that spends their balance.
+ *
+ * The service secret proves the request came from our own bot; it cannot show
+ * that the account holder intended to spend. verifyPinForUserId carries its own
+ * attempt counter and lockout, so brute force is handled there.
+ */
+async function requireSpendAuthorization(
+  request: FastifyRequest,
+  userId: string,
+  pin?: string
+): Promise<void> {
+  requireServiceCaller(request);
+
+  if (pin) {
+    await verifyPinForUserId(userId, pin, { ipAddress: request.ip });
+    return;
+  }
+
+  /**
+   * Same contract as assertWithdrawalAuthorised, so the chat bots' existing
+   * PIN flow router handles these without new client code. The two cases are
+   * told apart on purpose: someone who has never set a PIN needs Settings,
+   * someone who has one just needs to be asked for it.
+   */
+  const configured = await hasWithdrawalPin(userId);
+  throw badRequest(
+    configured
+      ? 'Enter your Sivan PIN to approve this purchase.'
+      : 'Set a Sivan PIN before buying airtime, data or electricity.',
+    { code: configured ? 'PIN_REQUIRED' : 'PIN_NOT_SET' }
+  );
+}
 
 export async function paystackUtilityRoutes(app: FastifyInstance) {
   /**
@@ -119,6 +173,8 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   app.get(
     '/api/ngn/utility/balance/:userId',
     async (request: FastifyRequest<{ Params: { userId: string } }>, reply: FastifyReply) => {
+      // Any user's balance was readable by anyone who knew their id.
+      requireServiceCaller(request);
       const { userId } = request.params;
       if (!userId || !userId.trim()) {
         throw badRequest('userId is required');
@@ -142,6 +198,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    */
   app.post('/api/ngn/utility/airtime', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(airtimeSchema, request.body);
+    await requireSpendAuthorization(request, body.userId, body.pin);
     const receipt = await executeAirtimePurchase({
       userId: body.userId,
       phone: body.phone,
@@ -161,6 +218,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    */
   app.post('/api/ngn/utility/data', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(dataSchema, request.body);
+    await requireSpendAuthorization(request, body.userId, body.pin);
     const receipt = await executeDataPurchase({
       userId: body.userId,
       phone: body.phone,
@@ -180,6 +238,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    * Pre-flight inquiry: retrieves registered customer name for the meter.
    */
   app.post('/api/ngn/utility/electricity/inquire', async (request: FastifyRequest, reply: FastifyReply) => {
+    requireServiceCaller(request);
     const body = parseBody(electricityInquirySchema, request.body);
     const inquiry = await executeElectricityInquiry({
       userId: body.userId,
@@ -200,6 +259,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    */
   app.post('/api/ngn/utility/electricity/pay', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(electricityPaymentSchema, request.body);
+    await requireSpendAuthorization(request, body.userId, body.pin);
     const receipt = await executeElectricityPayment({
       userId: body.userId,
       meterNumber: body.meterNumber,
@@ -269,6 +329,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    * Quotes conversion and creates an airtime-to-cash session.
    */
   app.post('/api/ngn/utility/airtime-cash/initiate', async (request: FastifyRequest, reply: FastifyReply) => {
+    requireServiceCaller(request);
     const body = parseBody(initiateAirtimeCashSchema, request.body);
     const session = await initiateAirtimeCashConversion(body);
     return reply.code(200).send({
@@ -282,6 +343,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    * Confirms airtime transfer and credits the user's NGN ledger balance.
    */
   app.post('/api/ngn/utility/airtime-cash/confirm', async (request: FastifyRequest, reply: FastifyReply) => {
+    requireServiceCaller(request);
     const body = parseBody(confirmAirtimeCashSchema, request.body);
     const receipt = await confirmAirtimeCashConversion(body);
     return reply.code(200).send({
@@ -295,6 +357,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    * Cashes out NGN balance to Nigerian bank with strict verified name matching anti-fraud check.
    */
   app.post('/api/ngn/utility/airtime-cash/cashout', async (request: FastifyRequest, reply: FastifyReply) => {
+    requireServiceCaller(request);
     const body = parseBody(cashoutAirtimeCashSchema, request.body);
     const payout = await cashoutAirtimeToBank(body);
     return reply.code(200).send({

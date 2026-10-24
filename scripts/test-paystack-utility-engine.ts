@@ -17,6 +17,7 @@ process.env.DATABASE_PROVIDER = 'json';
 process.env.DATABASE_FILE = '.data/test-paystack-utility-engine.json';
 process.env.PAYSTACK_SECRET_KEY = 'sk_test_mock_secret_key_1234567890';
 process.env.NODE_ENV = 'test';
+process.env.IDENTITY_LINK_SERVICE_SECRET = 'test_service_secret_for_utility_routes';
 process.env.UTILITY_ROUTING = JSON.stringify({
   routes: { airtime: ['paystack'], data: ['paystack'], electricity: ['paystack'] },
   failover: { airtime: false, data: false, electricity: false },
@@ -48,6 +49,7 @@ async function main() {
   const { updateUtilityDataPlans, getUtilityDataPlanBySize } = await import(
     '../src/ngn/service/utility-data-plans.service.js'
   );
+  const { setWithdrawalPin } = await import('../src/identity/withdrawal-pin.service.js');
   const {
     setUtilityRouting,
     getProviderChainForService,
@@ -330,10 +332,63 @@ async function main() {
   console.log('\n══ 8. Fastify HTTP Endpoints ══');
   const app = await buildApp();
 
+  const SECRET = { 'x-sivan-identity-link-secret': 'test_service_secret_for_utility_routes' };
+  const TEST_PIN = '135790';
+
+  // ─── Authentication: the namespace must not be reachable anonymously ──
+  const anonBal = await app.inject({
+    method: 'GET',
+    url: `/api/ngn/utility/balance/${testUserId}`,
+  });
+  assert.equal(anonBal.statusCode, 403);
+  ok('anonymous balance read is refused');
+
+  const anonAirtime = await app.inject({
+    method: 'POST',
+    url: '/api/ngn/utility/airtime',
+    payload: { userId: testUserId, phone: '08051234567', amountNgn: 500 },
+  });
+  assert.equal(anonAirtime.statusCode, 403);
+  ok('anonymous airtime purchase is refused, so money cannot move unauthenticated');
+
+  // ─── PIN: the service secret authenticates the bot, not the person ────
+  const noPin = await app.inject({
+    method: 'POST',
+    url: '/api/ngn/utility/airtime',
+    headers: SECRET,
+    payload: { userId: testUserId, phone: '08051234567', amountNgn: 500 },
+  });
+  assert.equal(noPin.statusCode, 400);
+  // The bots read details.code, same as the p2p transfer flow does.
+  assert.equal(noPin.json().error?.details?.code, 'PIN_NOT_SET');
+  ok('a user with no PIN is told to set one rather than being charged');
+
+  await setWithdrawalPin(testUserId, { pin: TEST_PIN });
+
+  const stillNoPin = await app.inject({
+    method: 'POST',
+    url: '/api/ngn/utility/airtime',
+    headers: SECRET,
+    payload: { userId: testUserId, phone: '08051234567', amountNgn: 500 },
+  });
+  assert.equal(stillNoPin.statusCode, 400);
+  assert.equal(stillNoPin.json().error?.details?.code, 'PIN_REQUIRED');
+  ok('a user who has a PIN is asked for it, not sent to settings');
+
+  const wrongPin = await app.inject({
+    method: 'POST',
+    url: '/api/ngn/utility/airtime',
+    headers: SECRET,
+    payload: { userId: testUserId, phone: '08051234567', amountNgn: 500, pin: '000000' },
+  });
+  assert.ok(wrongPin.statusCode >= 400, 'an incorrect PIN must not purchase');
+  ok('an incorrect PIN is rejected');
+
   // Balance Check Route
   const balRes = await app.inject({
     method: 'GET',
     url: `/api/ngn/utility/balance/${testUserId}`,
+    headers: SECRET,
   });
   assert.equal(balRes.statusCode, 200);
   const balJson = balRes.json();
@@ -345,10 +400,12 @@ async function main() {
   const airtimeRes = await app.inject({
     method: 'POST',
     url: '/api/ngn/utility/airtime',
+    headers: SECRET,
     payload: {
       userId: testUserId,
       phone: '08051234567', // Glo
       amountNgn: 500,
+      pin: TEST_PIN,
     },
   });
   assert.equal(airtimeRes.statusCode, 200);
@@ -360,6 +417,7 @@ async function main() {
   const inqRes = await app.inject({
     method: 'POST',
     url: '/api/ngn/utility/electricity/inquire',
+    headers: SECRET,
     payload: {
       userId: testUserId,
       meterNumber: '01234567890',
@@ -375,12 +433,14 @@ async function main() {
   const payRes = await app.inject({
     method: 'POST',
     url: '/api/ngn/utility/electricity/pay',
+    headers: SECRET,
     payload: {
       userId: testUserId,
       meterNumber: '01234567890',
       disco: 'abuja',
       meterType: 'prepaid',
       amountNgn: 2000,
+      pin: TEST_PIN,
     },
   });
   assert.equal(payRes.statusCode, 200);
