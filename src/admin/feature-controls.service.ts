@@ -105,7 +105,7 @@ const utilityTransactions: UtilityTransactionRecord[] = [];
 
 export async function getMoneyGramControls(): Promise<MoneyGramControls> {
   try {
-    const latest = await db.latestAuditLogByAction('moneygram.controls.updated').catch(() => null);
+    const latest = await db.latestAuditLogByAction('moneygram.controls.updated');
     const saved = (latest?.metadata as any)?.settings as Partial<MoneyGramControls> | undefined;
     if (saved) {
       moneyGramControls = {
@@ -113,10 +113,20 @@ export async function getMoneyGramControls(): Promise<MoneyGramControls> {
         ...saved,
       };
     }
+    return { ...moneyGramControls };
   } catch (err) {
-    console.warn('[feature-controls] Could not read persisted moneygram controls:', err);
+    console.error('[feature-controls] Could not read persisted moneygram controls from database, failing closed:', err);
+    return {
+      ...moneyGramControls,
+      enabled: false,
+      minipayEnabled: false,
+      telegramEnabled: false,
+      whatsappEnabled: false,
+      webappEnabled: false,
+      maintenanceMode: true,
+      maintenanceReason: 'Database temporarily unavailable. Service suspended.',
+    };
   }
-  return { ...moneyGramControls };
 }
 
 export async function updateMoneyGramControls(
@@ -145,7 +155,7 @@ export async function updateMoneyGramControls(
 
 export async function getUtilitiesControls(): Promise<UtilitiesControls> {
   try {
-    const latest = await db.latestAuditLogByAction('utilities.controls.updated').catch(() => null);
+    const latest = await db.latestAuditLogByAction('utilities.controls.updated');
     const saved = (latest?.metadata as any)?.settings as Partial<UtilitiesControls> | undefined;
     if (saved) {
       utilitiesControls = {
@@ -158,10 +168,20 @@ export async function getUtilitiesControls(): Promise<UtilitiesControls> {
       utilitiesControls.primaryProvider = routing.routes.airtime[0];
       utilitiesControls.fallbackProvider = routing.routes.airtime[1] || 'none';
     }
+    return { ...utilitiesControls };
   } catch (err) {
-    console.warn('[feature-controls] Could not read persisted utilities controls:', err);
+    console.error('[feature-controls] Could not read persisted utilities controls from database, failing closed:', err);
+    return {
+      ...utilitiesControls,
+      enabled: false,
+      airtimeEnabled: false,
+      dataEnabled: false,
+      electricityEnabled: false,
+      cableTvEnabled: false,
+      maintenanceMode: true,
+      maintenanceReason: 'Database temporarily unavailable. Purchases suspended.',
+    };
   }
-  return { ...utilitiesControls };
 }
 
 export async function updateUtilitiesControls(

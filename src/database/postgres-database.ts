@@ -2340,6 +2340,22 @@ export class PostgresDatabase {
     try { await upsertTransactionReference(client, record); return record; } finally { client.release(); }
   }
 
+  async withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('begin');
+      await client.query('select pg_advisory_xact_lock(hashtext($1))', [userId.toLowerCase().trim()]);
+      const result = await fn();
+      await client.query('commit');
+      return result;
+    } catch (err) {
+      await client.query('rollback').catch(() => null);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async insertUnifiedWebhookLogRecord(record: UnifiedWebhookLogRecord) {
     const client = await this.pool.connect();
     try { await upsertUnifiedWebhookLog(client, record); return record; } finally { client.release(); }

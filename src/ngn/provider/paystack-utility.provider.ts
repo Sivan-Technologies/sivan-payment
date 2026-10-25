@@ -80,9 +80,9 @@ export async function purchaseAirtime(
   phone: string,
   amountNgn: number,
   operator: TelcoOperator,
-    idempotencyKey: string
+  idempotencyKey?: string,
 ): Promise<ProviderAirtimeResult> {
-  const reference = `airtime_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const reference = idempotencyKey?.trim() || `airtime_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   const payload = {
     phone,
@@ -111,9 +111,9 @@ export async function purchaseDataBundle(
   planCode: string,
   amountNgn: number,
   operator: TelcoOperator,
-    idempotencyKey: string
+  idempotencyKey?: string,
 ): Promise<ProviderDataResult> {
-  const reference = `data_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const reference = idempotencyKey?.trim() || `data_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   const payload = {
     phone,
@@ -181,9 +181,9 @@ export async function payElectricityBill(
   meterType: MeterType,
   amountNgn: number,
   customerName: string | undefined,
-    idempotencyKey: string
+  idempotencyKey?: string,
 ): Promise<ProviderElectricityResult> {
-  const reference = `disco_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const reference = idempotencyKey?.trim() || `disco_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
   const payload = {
     meter_number: meterNumber,

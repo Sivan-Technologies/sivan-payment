@@ -21,6 +21,7 @@ import {
   executeElectricityPayment,
   getUserNgnBalance,
   fetchDataPlans,
+  reconcileUnsettledUtilityPurchases,
 } from '../service/sivanUtilityService.js';
 import {
   getAirtimeConversionRate,
@@ -429,6 +430,12 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
     app.delete(fullPath, handler);
   };
 
+  const regAdminPost = (path: string, handler: any) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.post(`/api/admin${fullPath}`, handler);
+    app.post(fullPath, handler);
+  };
+
   /**
    * GET /api/admin/utilities/data-plans (and /utilities/data-plans)
    * Admin endpoint: fetch all bundle tiers and prices.
@@ -580,6 +587,15 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
     const body = parseBody(updateUtilityRoutingSchema, request.body);
     const routing = await setUtilityRoutingConfig(body, body.updatedBy);
     return reply.code(200).send({ status: 'success', data: { routing } });
+  });
+
+  /**
+   * POST /api/admin/utilities/reconcile (and /utilities/reconcile)
+   * Triggers authoritative reconciliation of unsettled and pending utility purchases.
+   */
+  regAdminPost('/utilities/reconcile', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const outcome = await reconcileUnsettledUtilityPurchases();
+    return reply.code(200).send({ status: 'success', data: outcome });
   });
 }
 

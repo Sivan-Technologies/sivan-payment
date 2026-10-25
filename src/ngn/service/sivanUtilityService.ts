@@ -13,7 +13,7 @@
 
 import crypto from 'node:crypto';
 import { db } from '../../database/json-database.js';
-import { badRequest } from '../../shared/errors.js';
+import { badRequest, conflict, forbidden, serviceUnavailable } from '../../shared/errors.js';
 import { getUnifiedBalance } from '../../balances/unified-balance.service.js';
 import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
 import {
@@ -91,7 +91,128 @@ function getUserMutex(userId: string): UserMutex {
 }
 
 /**
- * In-flight reservation tracker per user to prevent concurrent double-spending in memory.
+ * Canonical purchase fingerprinting to bind idempotency keys to their specific parameters.
+ */
+export function computePurchaseFingerprint(input: {
+  serviceType: string;
+  userId: string;
+  recipient: string;
+  amountNgn: number;
+  operatorOrDisco: string;
+  planCode?: string;
+}): string {
+  const parts = [
+    input.serviceType.toLowerCase().trim(),
+    input.userId.toLowerCase().trim(),
+    input.recipient.toLowerCase().trim(),
+    Math.round(input.amountNgn).toString(),
+    input.operatorOrDisco.toLowerCase().trim(),
+    (input.planCode || '').toLowerCase().trim(),
+  ];
+  return crypto.createHash('sha256').update(parts.join(':')).digest('hex');
+}
+
+/**
+ * Distinguishes explicit provider rejections from network timeouts or unknown states.
+ */
+export function isTimeoutOrNetworkError(err: any): boolean {
+  if (!err) return false;
+  if (err.name === 'AbortError' || err.name === 'TimeoutError') return true;
+  const msg = String(err.message || '').toLowerCase();
+  const code = String(err.code || err.details?.code || err.reason || '').toLowerCase();
+  if (
+    code === 'etimedout' ||
+    code === 'econnreset' ||
+    code === 'econnrefused' ||
+    code === 'enotfound' ||
+    code === 'timeout' ||
+    code === 'provider_timeout'
+  ) {
+    return true;
+  }
+  if (
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('econnreset') ||
+    msg.includes('network error') ||
+    msg.includes('gateway timeout') ||
+    msg.includes('service unavailable')
+  ) {
+    return true;
+  }
+  const status = Number(err.status || err.statusCode || err.details?.status || 0);
+  if (status === 502 || status === 504 || status === 503) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Authoritative rejections are explicit client errors or business refusal codes
+ * confirming that the upstream provider did not and will not fulfill the purchase.
+ * Any other error (unhandled exceptions, 5xx server errors, socket crashes) is unknown
+ * and MUST retain the balance hold pending authoritative reconciliation.
+ */
+export function isAuthoritativeRejection(err: any): boolean {
+  if (!err) return false;
+  if (isTimeoutOrNetworkError(err)) return false;
+
+  const status = Number(err.statusCode || err.status || err.details?.status || 0);
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+    return true;
+  }
+
+  const code = String(err.code || err.details?.code || err.reason || '').toLowerCase();
+  const knownRejectionCodes = [
+    'invalid_recipient',
+    'invalid_meter',
+    'invalid_account',
+    'meter_not_found',
+    'operator_rejected',
+    'insufficient_balance',
+    'insufficient_provider_float',
+    'bad_request',
+    'pin_not_set',
+    'pin_required',
+    'pin_invalid',
+  ];
+  if (knownRejectionCodes.includes(code)) return true;
+
+  const msg = String(err.message || '').toLowerCase();
+  const knownRejectionPhrases = [
+    'invalid mobile number',
+    'invalid recipient',
+    'invalid meter',
+    'meter number is invalid',
+    'unsupported operator',
+    'unknown electricity distribution',
+    'no data plan',
+    'insufficient balance',
+    'insufficient float',
+    'pin',
+  ];
+  if (knownRejectionPhrases.some((phrase) => msg.includes(phrase))) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Distributed user lock runner.
+ * In PostgreSQL, uses pg_advisory_xact_lock to synchronize across all server instances.
+ * In memory/JSON tests, uses the local UserMutex.
+ */
+export async function runWithUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  if (typeof (db as any).withUserLock === 'function') {
+    return (db as any).withUserLock(userId, fn);
+  }
+  const userMutex = getUserMutex(userId);
+  return userMutex.runExclusive(fn);
+}
+
+/**
+ * In-flight reservation tracker per user to serialize concurrent balance checks.
  */
 const userInFlightSpend = new Map<string, number>();
 
@@ -102,6 +223,8 @@ const userInFlightSpend = new Map<string, number>();
 interface CachedIdempotencyEntry {
   receipt: UtilityReceipt;
   expiresAt: number;
+  userId?: string;
+  fingerprint?: string;
 }
 const idempotencyReceiptCache = new Map<string, CachedIdempotencyEntry>();
 
@@ -117,64 +240,179 @@ export async function getCachedReceipt(key?: string): Promise<UtilityReceipt | n
     }
   }
 
-  // Check persistent storage across restarts
+  // Check persistent storage across restarts (FAIL CLOSED on database error)
+  let allTx: VirtualAccountTransactionRecord[];
   try {
-    const allTx = await db.listVirtualAccountTransactions();
-    const match = allTx.find((tx) => {
-      if (tx.status !== 'completed') return false;
-      if (tx.depositReference === clean || tx.depositId === clean) return true;
-      const raw = (tx.rawPayload || {}) as any;
-      return raw.idempotencyKey === clean || raw.reference === clean;
-    });
-
-    if (match) {
-      const raw = (match.rawPayload || {}) as any;
-      if (raw.cachedReceipt) {
-        cacheReceipt(clean, raw.cachedReceipt);
-        return raw.cachedReceipt;
-      }
-    }
+    allTx = await db.listVirtualAccountTransactions();
   } catch (err) {
-    console.warn('[sivanUtilityService] Could not check persistent idempotency cache:', err);
+    console.error('[sivanUtilityService] Could not check persistent idempotency cache:', err);
+    throw serviceUnavailable('Database error while checking idempotency cache. Purchase halted for safety.');
+  }
+
+  const match = allTx.find((tx) => {
+    if (tx.status !== 'completed') return false;
+    if (tx.depositReference === clean || tx.depositId === clean) return true;
+    const raw = (tx.rawPayload || {}) as any;
+    return raw.idempotencyKey === clean || raw.reference === clean;
+  });
+
+  if (match) {
+    const raw = (match.rawPayload || {}) as any;
+    if (raw.cachedReceipt) {
+      cacheReceipt(clean, raw.cachedReceipt, match.userId, raw.fingerprint);
+      return raw.cachedReceipt;
+    }
   }
 
   return null;
 }
 
-export function cacheReceipt(key: string | undefined, receipt: UtilityReceipt): void {
+export function cacheReceipt(
+  key: string | undefined,
+  receipt: UtilityReceipt,
+  userId?: string,
+  fingerprint?: string
+): void {
   if (!key) return;
   const clean = key.trim();
   idempotencyReceiptCache.set(clean, {
     receipt,
     expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    userId,
+    fingerprint,
   });
 }
 
 /**
- * Atomic balance reservation:
- * 1. Serializes check & hold inside UserMutex.
- * 2. Deducts in-flight spend in memory immediately.
- * 3. Persists durable pending reservation to database (virtual account transaction record + ledger hold).
- * 4. Releases hold on abort/failure or finalizes on successful debit.
+ * Validates idempotency key ownership and payload fingerprint consistency.
+ * FAILS CLOSED on database lookup errors.
+ */
+export async function validateAndResolveIdempotency(input: {
+  idempotencyKey?: string;
+  userId: string;
+  serviceType: string;
+  recipient: string;
+  amountNgn: number;
+  operatorOrDisco: string;
+  planCode?: string;
+}): Promise<{
+  cachedReceipt: UtilityReceipt | null;
+  fingerprint: string;
+}> {
+  const fingerprint = computePurchaseFingerprint(input);
+  if (!input.idempotencyKey) {
+    return { cachedReceipt: null, fingerprint };
+  }
+
+  const cleanKey = input.idempotencyKey.trim();
+
+  // 1. In-memory fast cache check with ownership and fingerprint validation
+  const entry = idempotencyReceiptCache.get(cleanKey);
+  if (entry) {
+    if (Date.now() <= entry.expiresAt) {
+      // Cross-user reuse check
+      if (entry.userId && entry.userId.toLowerCase() !== input.userId.toLowerCase()) {
+        throw forbidden('Idempotency key belongs to another user.');
+      }
+      // Conflicting purchase parameters check
+      if (entry.fingerprint && entry.fingerprint !== fingerprint) {
+        throw conflict('Idempotency key reused with conflicting purchase parameters.');
+      }
+      return { cachedReceipt: entry.receipt, fingerprint };
+    } else {
+      idempotencyReceiptCache.delete(cleanKey);
+    }
+  }
+
+  // 2. Persistent storage validation (FAIL CLOSED on database error)
+  let allTx: VirtualAccountTransactionRecord[];
+  try {
+    allTx = await db.listVirtualAccountTransactions();
+  } catch (dbErr) {
+    console.error('[sivanUtilityService] Could not check persistent idempotency records:', dbErr);
+    throw serviceUnavailable('Database error while verifying idempotency records. Purchase halted for safety.');
+  }
+
+  const match = allTx.find(
+    (tx) => tx.depositReference === cleanKey || tx.depositId === cleanKey || ((tx.rawPayload as any)?.idempotencyKey === cleanKey)
+  );
+
+  if (match) {
+    const raw = (match.rawPayload || {}) as any;
+
+    // Cross-user reuse check
+    if (match.userId && match.userId.toLowerCase() !== input.userId.toLowerCase()) {
+      throw forbidden('Idempotency key belongs to another user.');
+    }
+
+    // Conflicting purchase parameters check
+    const storedFingerprint = raw.fingerprint || (raw.cachedReceipt as any)?.fingerprint;
+    if (storedFingerprint && storedFingerprint !== fingerprint) {
+      throw conflict('Idempotency key reused with conflicting purchase parameters.');
+    }
+
+    // Status check
+    if (match.status === 'completed') {
+      if (raw.cachedReceipt) {
+        cacheReceipt(cleanKey, raw.cachedReceipt, match.userId, storedFingerprint);
+        return { cachedReceipt: raw.cachedReceipt, fingerprint };
+      }
+    } else if (
+      match.status === 'submitted' ||
+      match.status === ('pending_reconciliation' as any) ||
+      match.status === ('delivery_confirmed_unsettled' as any)
+    ) {
+      throw conflict(`A purchase with this idempotency key is already in flight or pending settlement (status: ${match.status}).`);
+    }
+  }
+
+  return { cachedReceipt: null, fingerprint };
+}
+
+/**
+ * Atomic and durable balance reservation:
+ * 1. Checks available balance against ledger and active reservations.
+ * 2. Persists durable pending reservation record in database (fail-closed if DB write fails).
+ * 3. Persists durable ledger hold entry (fail-closed if write fails, rolling back reservation).
+ * 4. Preserves unknown outcomes: timeouts retain the hold and transition to pending_reconciliation.
+ * 5. Rejection releases hold atomically.
  */
 async function withBalanceReservation<T>(
   resolvedUserId: string,
   amountNgn: number,
   reservationId: string,
   serviceType: string,
+  fingerprint: string,
   idempotencyKey: string | undefined,
+  input: {
+    recipient: string;
+    operatorOrDisco: string;
+    planCode?: string;
+  },
   work: (availableBalance: number) => Promise<T>
 ): Promise<T> {
-  const userMutex = getUserMutex(resolvedUserId);
   let available = 0;
   const reservationRecordId = `vatx_res_${crypto.createHash('sha256').update(reservationId).digest('hex').slice(0, 24)}`;
   const now = new Date().toISOString();
 
-  // 1. Critical section: atomic balance check and reservation
-  await userMutex.runExclusive(async () => {
-    const currentInFlight = userInFlightSpend.get(resolvedUserId) || 0;
-    const currentBalance = await getUserNgnBalance(resolvedUserId);
-    available = currentBalance - currentInFlight;
+  // 1. Critical section under distributed lock (PostgreSQL pg_advisory_xact_lock in production, mutex in tests)
+  const cached = await runWithUserLock(resolvedUserId, async () => {
+    // A. Validate idempotency INSIDE the lock to close any TOCTOU race window
+    const idCheck = await validateAndResolveIdempotency({
+      idempotencyKey,
+      userId: resolvedUserId,
+      serviceType,
+      recipient: input.recipient,
+      amountNgn,
+      operatorOrDisco: input.operatorOrDisco,
+      planCode: input.planCode,
+    });
+    if (idCheck.cachedReceipt) {
+      return idCheck.cachedReceipt;
+    }
+
+    // B. Calculate current spendable balance
+    available = await getUserNgnBalance(resolvedUserId);
 
     if (available < amountNgn) {
       throw badRequest(
@@ -182,9 +420,7 @@ async function withBalanceReservation<T>(
       );
     }
 
-    userInFlightSpend.set(resolvedUserId, currentInFlight + amountNgn);
-
-    // Durable DB reservation
+    // C. Persist durable DB reservation record (fail-closed)
     try {
       await db.upsertVirtualAccountTransactionRecord({
         id: reservationRecordId,
@@ -203,47 +439,34 @@ async function withBalanceReservation<T>(
           amountNgn,
           expiresAt: Date.now() + 5 * 60 * 1000,
           idempotencyKey,
+          fingerprint,
         },
         createdAt: now,
         updatedAt: now,
       });
     } catch (err) {
-      console.warn('[sivanUtilityService] Could not persist durable reservation record to DB:', err);
+      console.error('[sivanUtilityService] Could not persist durable reservation record to DB:', err);
+      throw new Error(`Failed to persist balance reservation to database: ${err instanceof Error ? err.message : String(err)}. Purchase halted.`);
     }
 
-    // Ledger hold
-    await createBalanceLedgerEntry(
-      {
-        userId: resolvedUserId,
-        asset: 'ngn',
-        amount: amountNgn.toFixed(2),
-        kind: 'hold',
-        status: 'completed',
-        sourceType: 'utility_reservation',
-        sourceId: reservationId,
-        description: `In-flight utility reservation: ${amountNgn} NGN`,
-        transferId: reservationId,
-      },
-      { actorType: 'system', actorId: resolvedUserId }
-    ).catch(() => null);
-  });
-
-  let succeeded = false;
-  try {
-    const res = await work(available);
-    succeeded = true;
-    return res;
-  } finally {
-    // Release in-flight spend
-    const remaining = (userInFlightSpend.get(resolvedUserId) || 0) - amountNgn;
-    if (remaining <= 0) {
-      userInFlightSpend.delete(resolvedUserId);
-    } else {
-      userInFlightSpend.set(resolvedUserId, remaining);
-    }
-
-    if (!succeeded) {
-      // Purchase failed or aborted: release reservation record and ledger hold
+    // D. Persist durable ledger hold entry (fail-closed)
+    try {
+      await createBalanceLedgerEntry(
+        {
+          userId: resolvedUserId,
+          asset: 'ngn',
+          amount: amountNgn.toFixed(2),
+          kind: 'hold',
+          status: 'completed',
+          sourceType: 'utility_reservation',
+          sourceId: reservationId,
+          description: `In-flight utility reservation: ${amountNgn} NGN`,
+          transferId: reservationId,
+        },
+        { actorType: 'system', actorId: resolvedUserId }
+      );
+    } catch (err) {
+      console.error('[sivanUtilityService] Could not persist balance ledger hold:', err);
       try {
         await db.upsertVirtualAccountTransactionRecord({
           id: reservationRecordId,
@@ -261,23 +484,24 @@ async function withBalanceReservation<T>(
           updatedAt: new Date().toISOString(),
         });
       } catch {}
+      throw new Error(`Failed to persist balance ledger hold: ${err instanceof Error ? err.message : String(err)}. Purchase halted.`);
+    }
 
-      await createBalanceLedgerEntry(
-        {
-          userId: resolvedUserId,
-          asset: 'ngn',
-          amount: amountNgn.toFixed(2),
-          kind: 'hold_release',
-          status: 'completed',
-          sourceType: 'utility_reservation',
-          sourceId: reservationId,
-          description: `Release utility reservation: ${amountNgn} NGN`,
-          transferId: `rel_${reservationId}`,
-        },
-        { actorType: 'system', actorId: resolvedUserId }
-      ).catch(() => null);
-    } else {
-      // Purchase succeeded: mark reservation record completed
+    return null;
+  });
+
+  if (cached) {
+    return cached as unknown as T;
+  }
+
+  // 2. Dispatch work outside the reservation lock and preserve three-way outcome
+  let workResult: T;
+  try {
+    workResult = await work(available);
+  } catch (err: any) {
+    if (isAuthoritativeRejection(err)) {
+      // Branch A: Confirmed Rejection
+      // Release reservation record and atomically release ledger hold
       try {
         await db.upsertVirtualAccountTransactionRecord({
           id: reservationRecordId,
@@ -289,14 +513,119 @@ async function withBalanceReservation<T>(
           sourceAmount: amountNgn.toFixed(2),
           destinationAmount: '0.00',
           paymentRail: 'utility_reservation',
-          status: 'completed',
+          status: 'failed',
           depositReference: idempotencyKey || reservationId,
+          rawPayload: {
+            service: serviceType,
+            amountNgn,
+            idempotencyKey,
+            fingerprint,
+            error: err?.message || String(err),
+          },
           createdAt: now,
           updatedAt: new Date().toISOString(),
         });
       } catch {}
+
+      try {
+        await createBalanceLedgerEntry(
+          {
+            userId: resolvedUserId,
+            asset: 'ngn',
+            amount: amountNgn.toFixed(2),
+            kind: 'hold_release',
+            status: 'completed',
+            sourceType: 'utility_reservation',
+            sourceId: reservationId,
+            description: `Release rejected utility reservation: ${amountNgn} NGN`,
+            transferId: `rel_${reservationId}`,
+          },
+          { actorType: 'system', actorId: resolvedUserId }
+        );
+      } catch (relErr) {
+        console.error('[sivanUtilityService] Failed to release hold on rejected utility purchase:', relErr);
+      }
+
+      throw err;
+    } else {
+      // Branch B: Unknown outcome (timeouts, 5xx server errors, unhandled exceptions, socket drops)
+      // DEFAULT TO SAFE UNKNOWN: Retain the hold! Mark as pending_reconciliation
+      try {
+        await db.upsertVirtualAccountTransactionRecord({
+          id: reservationRecordId,
+          provider: 'paystack',
+          depositId: reservationId,
+          userId: resolvedUserId,
+          sourceCurrency: 'ngn',
+          destinationCurrency: 'ngn',
+          sourceAmount: amountNgn.toFixed(2),
+          destinationAmount: (-amountNgn).toFixed(2), // Hold is preserved!
+          paymentRail: 'utility_reservation',
+          status: 'pending_reconciliation' as any,
+          depositReference: idempotencyKey || reservationId,
+          rawPayload: {
+            service: serviceType,
+            amountNgn,
+            idempotencyKey,
+            fingerprint,
+            error: err?.message || String(err),
+            heldAt: new Date().toISOString(),
+          },
+          createdAt: now,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch (recErr) {
+        console.error('[sivanUtilityService] Failed to mark reservation pending_reconciliation:', recErr);
+      }
+
+      await createSystemIncident({
+        provider: 'utility_aggregator',
+        affectedService: 'virtual_accounts',
+        severity: 'critical',
+        message: `Utility purchase outcome unknown for user ${resolvedUserId} (${amountNgn} NGN). Balance held pending reconciliation. Error: ${err?.message || String(err)}`,
+        createdBy: 'utility_outcome_guard',
+        metadata: {
+          reservationId,
+          userId: resolvedUserId,
+          amountNgn,
+          service: serviceType,
+          error: err?.message || String(err),
+        },
+      }).catch(() => null);
+
+      throw badRequest(
+        `Purchase outcome unconfirmed with network. Your balance of ${amountNgn.toLocaleString()} NGN is held safely while we verify fulfillment. Ref: ${reservationId}`
+      );
     }
   }
+
+  // Branch C: Confirmed Fulfilled
+  // Mark reservation completed in DB
+  try {
+    await db.upsertVirtualAccountTransactionRecord({
+      id: reservationRecordId,
+      provider: 'paystack',
+      depositId: reservationId,
+      userId: resolvedUserId,
+      sourceCurrency: 'ngn',
+      destinationCurrency: 'ngn',
+      sourceAmount: amountNgn.toFixed(2),
+      destinationAmount: '0.00',
+      paymentRail: 'utility_reservation',
+      status: 'completed',
+      depositReference: idempotencyKey || reservationId,
+      rawPayload: {
+        service: serviceType,
+        amountNgn,
+        idempotencyKey,
+        fingerprint,
+      },
+      createdAt: now,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch {}
+
+  return workResult;
 }
 import type { VirtualAccountTransactionRecord } from '../../virtual-accounts/types/virtual-account.types.js';
 import { getUtilityDataPlanBySize, resolveProviderPlanCode } from './utility-data-plans.service.js';
@@ -377,33 +706,42 @@ async function resolvePaymentUserId(target: string): Promise<string> {
  */
 export async function getUserNgnBalance(userId: string): Promise<number> {
   const resolvedUserId = await resolvePaymentUserId(userId).catch(() => userId);
+  let available = 0;
   try {
-    const unified = await getUnifiedBalance(resolvedUserId);
+    const unified = await getUnifiedBalance(resolvedUserId, true);
     const ngnBal = (unified.balances as any[]).find((b) => String(b.asset).toLowerCase() === 'ngn');
-    const available = Number(ngnBal?.availableBalance ?? ngnBal?.spendable ?? 0);
-    if (available > 0) return available;
+    available = Number(ngnBal?.availableBalance ?? ngnBal?.spendable ?? 0);
   } catch (_err) {
-    // Fall back to virtual account transaction tally
+    available = 0;
   }
 
-  const allTx = await db.listVirtualAccountTransactions();
+  const allTx = await db.listVirtualAccountTransactions().catch(() => []);
   const userTxs = allTx.filter((tx) => (tx.userId === resolvedUserId || tx.userId === userId));
 
-  let balance = 0;
+  let txBalance = 0;
   const nowMs = Date.now();
   for (const tx of userTxs) {
     if (tx.status === 'completed') {
-      balance += Number(tx.destinationAmount || 0);
+      txBalance += Number(tx.destinationAmount || 0);
     } else if (tx.status === 'submitted' && tx.paymentRail === 'utility_reservation') {
       const createdAtMs = new Date(tx.createdAt).getTime();
       const expiresAtMs = (tx.rawPayload as any)?.expiresAt || (createdAtMs + 5 * 60 * 1000);
       if (nowMs < expiresAtMs) {
         // destinationAmount is negative (-amountNgn)
-        balance += Number(tx.destinationAmount || 0);
+        txBalance += Number(tx.destinationAmount || 0);
       }
+    } else if (tx.status === ('pending_reconciliation' as any) && tx.paymentRail === 'utility_reservation') {
+      txBalance += Number(tx.destinationAmount || 0);
+    } else if (tx.status === ('delivery_confirmed_unsettled' as any)) {
+      txBalance += Number(tx.destinationAmount || 0);
     }
   }
-  return Math.max(0, Math.round(balance * 100) / 100);
+  const cleanTxBalance = Math.max(0, Math.round(txBalance * 100) / 100);
+
+  if (available > 0 && cleanTxBalance > 0) {
+    return Math.min(available, cleanTxBalance);
+  }
+  return available > 0 ? available : cleanTxBalance;
 }
 
 /**
@@ -543,16 +881,33 @@ export async function executeAirtimePurchase(
   }
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
-  if (req.idempotencyKey) {
-    const cached = await getCachedReceipt(req.idempotencyKey);
-    if (cached) return cached;
-  }
+
+  const { cachedReceipt, fingerprint } = await validateAndResolveIdempotency({
+    idempotencyKey: req.idempotencyKey,
+    userId: resolvedUserId,
+    serviceType: 'airtime',
+    recipient: normalizedPhone,
+    amountNgn: req.amountNgn,
+    operatorOrDisco: operator,
+  });
+  if (cachedReceipt) return cachedReceipt;
 
   const reservationId = req.idempotencyKey
     ? `res_${req.idempotencyKey}`
     : `res_${crypto.randomUUID()}`;
 
-  return withBalanceReservation(resolvedUserId, req.amountNgn, reservationId, 'airtime', req.idempotencyKey, async (balance) => {
+  return withBalanceReservation(
+    resolvedUserId,
+    req.amountNgn,
+    reservationId,
+    'airtime',
+    fingerprint,
+    req.idempotencyKey,
+    {
+      recipient: normalizedPhone,
+      operatorOrDisco: operator,
+    },
+    async (balance) => {
     // 2 & 3. Upstream fulfilment through the chain configured for airtime
     await ensureUtilityRoutingLoaded();
     const airtimeKey = req.idempotencyKey
@@ -569,7 +924,7 @@ export async function executeAirtimePurchase(
     const remaining = balance - req.amountNgn;
 
     const formattedText = [
-      'Sivan Payment Ai: Airtime Receipt',
+      'Sivan Payment Ai . Airtime Receipt',
       '----------------------------------------',
       `Operator: ${operator.toUpperCase()}`,
       `Recipient: ${normalizedPhone}`,
@@ -597,7 +952,7 @@ export async function executeAirtimePurchase(
       timestamp: now,
       formattedText,
     };
-    cacheReceipt(req.idempotencyKey, receipt);
+    cacheReceipt(req.idempotencyKey, receipt, resolvedUserId, fingerprint);
 
     // 4. Atomic ledger debit with recoverable incident logging
     try {
@@ -612,6 +967,7 @@ export async function executeAirtimePurchase(
         rawPayload: {
           ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
           idempotencyKey: req.idempotencyKey,
+          fingerprint,
           cachedReceipt: receipt,
         },
       });
@@ -634,11 +990,45 @@ export async function executeAirtimePurchase(
         `[sivanUtilityService] CRITICAL: Airtime vended upstream (${result.reference}) but post-delivery ledger recording failed:`,
         dbErr
       );
+
+      // Recoverable Accounting Failure:
+      // Update transaction status to delivery_confirmed_unsettled and retain hold
+      try {
+        await db.upsertVirtualAccountTransactionRecord({
+          id: `vatx_unsettled_${crypto.createHash('sha256').update(result.reference).digest('hex').slice(0, 24)}`,
+          provider: providerName as any,
+          depositId: result.reference,
+          userId: resolvedUserId,
+          sourceCurrency: 'ngn',
+          destinationCurrency: 'ngn',
+          sourceAmount: req.amountNgn.toFixed(2),
+          destinationAmount: (-req.amountNgn).toFixed(2), // Hold remains active
+          paymentRail: `utility_${providerName}_airtime`,
+          status: 'delivery_confirmed_unsettled' as any,
+          depositReference: req.idempotencyKey || result.reference,
+          rawPayload: {
+            service: 'airtime',
+            operator,
+            phone: normalizedPhone,
+            amountNgn: req.amountNgn,
+            reservationId,
+            idempotencyKey: req.idempotencyKey,
+            fingerprint,
+            cachedReceipt: receipt,
+            dbError: dbErr instanceof Error ? dbErr.message : String(dbErr),
+          },
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch (txErr) {
+        console.error('[sivanUtilityService] Failed to record delivery_confirmed_unsettled record:', txErr);
+      }
+
       await createSystemIncident({
         provider: providerName,
         affectedService: 'virtual_accounts',
         severity: 'critical',
-        message: `Post-delivery utility recording failed for airtime reference ${result.reference} (${req.amountNgn} NGN). Delivery succeeded upstream.`,
+        message: `Post-delivery utility recording failed for airtime reference ${result.reference} (${req.amountNgn} NGN). Delivery succeeded upstream. Transaction marked delivery_confirmed_unsettled.`,
         createdBy: 'utility_service_recovery',
         metadata: {
           service: 'airtime',
@@ -694,16 +1084,35 @@ export async function executeDataPurchase(
   }
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
-  if (req.idempotencyKey) {
-    const cached = await getCachedReceipt(req.idempotencyKey);
-    if (cached) return cached;
-  }
+
+  const { cachedReceipt, fingerprint } = await validateAndResolveIdempotency({
+    idempotencyKey: req.idempotencyKey,
+    userId: resolvedUserId,
+    serviceType: 'data',
+    recipient: normalizedPhone,
+    amountNgn,
+    operatorOrDisco: operator,
+    planCode: bundlePlan.bundleSize,
+  });
+  if (cachedReceipt) return cachedReceipt;
 
   const reservationId = req.idempotencyKey
     ? `res_${req.idempotencyKey}`
     : `res_${crypto.randomUUID()}`;
 
-  return withBalanceReservation(resolvedUserId, amountNgn, reservationId, 'data', req.idempotencyKey, async (balance) => {
+  return withBalanceReservation(
+    resolvedUserId,
+    amountNgn,
+    reservationId,
+    'data',
+    fingerprint,
+    req.idempotencyKey,
+    {
+      recipient: normalizedPhone,
+      operatorOrDisco: operator,
+      planCode: bundlePlan.bundleSize,
+    },
+    async (balance) => {
     await ensureUtilityRoutingLoaded();
     const dataKey = req.idempotencyKey
       ? `sivan_data_${req.idempotencyKey}`
@@ -729,7 +1138,7 @@ export async function executeDataPurchase(
     const remaining = balance - amountNgn;
 
     const formattedText = [
-      'Sivan Payment Ai: Mobile Data Receipt',
+      'Sivan Payment Ai . Mobile Data Receipt',
       '----------------------------------------',
       `Operator: ${operator.toUpperCase()}`,
       `Plan: ${bundlePlan.bundleSize} (${bundlePlan.network.toUpperCase()})`,
@@ -759,7 +1168,7 @@ export async function executeDataPurchase(
       timestamp: now,
       formattedText,
     };
-    cacheReceipt(req.idempotencyKey, receipt);
+    cacheReceipt(req.idempotencyKey, receipt, resolvedUserId, fingerprint);
 
     // 4. Atomic ledger debit with recoverable incident logging
     try {
@@ -774,6 +1183,7 @@ export async function executeDataPurchase(
         rawPayload: {
           ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
           idempotencyKey: req.idempotencyKey,
+          fingerprint,
           cachedReceipt: receipt,
         },
       });
@@ -796,11 +1206,45 @@ export async function executeDataPurchase(
         `[sivanUtilityService] CRITICAL: Data vended upstream (${result.reference}) but post-delivery ledger recording failed:`,
         dbErr
       );
+
+      // Transition to delivery_confirmed_unsettled and retain hold
+      try {
+        await db.upsertVirtualAccountTransactionRecord({
+          id: `vatx_unsettled_${crypto.createHash('sha256').update(result.reference).digest('hex').slice(0, 24)}`,
+          provider: providerName as any,
+          depositId: result.reference,
+          userId: resolvedUserId,
+          sourceCurrency: 'ngn',
+          destinationCurrency: 'ngn',
+          sourceAmount: amountNgn.toFixed(2),
+          destinationAmount: (-amountNgn).toFixed(2), // Hold remains active
+          paymentRail: `utility_${providerName}_data`,
+          status: 'delivery_confirmed_unsettled' as any,
+          depositReference: req.idempotencyKey || result.reference,
+          rawPayload: {
+            service: 'data',
+            operator,
+            phone: normalizedPhone,
+            plan: bundlePlan.bundleSize,
+            amountNgn,
+            reservationId,
+            idempotencyKey: req.idempotencyKey,
+            fingerprint,
+            cachedReceipt: receipt,
+            dbError: dbErr instanceof Error ? dbErr.message : String(dbErr),
+          },
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch (txErr) {
+        console.error('[sivanUtilityService] Failed to record delivery_confirmed_unsettled record:', txErr);
+      }
+
       await createSystemIncident({
         provider: providerName,
         affectedService: 'virtual_accounts',
         severity: 'critical',
-        message: `Post-delivery utility recording failed for data bundle reference ${result.reference} (${amountNgn} NGN). Delivery succeeded upstream.`,
+        message: `Post-delivery utility recording failed for data bundle reference ${result.reference} (${amountNgn} NGN). Delivery succeeded upstream. Transaction marked delivery_confirmed_unsettled.`,
         createdBy: 'utility_service_recovery',
         metadata: {
           service: 'data',
@@ -878,16 +1322,33 @@ export async function executeElectricityPayment(
   const discoName = DISCO_DISPLAY_NAMES[req.disco] || req.disco.toUpperCase();
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
-  if (req.idempotencyKey) {
-    const cached = await getCachedReceipt(req.idempotencyKey);
-    if (cached) return cached;
-  }
+
+  const { cachedReceipt, fingerprint } = await validateAndResolveIdempotency({
+    idempotencyKey: req.idempotencyKey,
+    userId: resolvedUserId,
+    serviceType: 'electricity',
+    recipient: req.meterNumber.trim(),
+    amountNgn: req.amountNgn,
+    operatorOrDisco: req.disco,
+  });
+  if (cachedReceipt) return cachedReceipt;
 
   const reservationId = req.idempotencyKey
     ? `res_${req.idempotencyKey}`
     : `res_${crypto.randomUUID()}`;
 
-  return withBalanceReservation(resolvedUserId, req.amountNgn, reservationId, 'electricity', req.idempotencyKey, async (balance) => {
+  return withBalanceReservation(
+    resolvedUserId,
+    req.amountNgn,
+    reservationId,
+    'electricity',
+    fingerprint,
+    req.idempotencyKey,
+    {
+      recipient: req.meterNumber.trim(),
+      operatorOrDisco: req.disco,
+    },
+    async (balance) => {
     await ensureUtilityRoutingLoaded();
     const electricityKey = req.idempotencyKey
       ? `sivan_electricity_${req.idempotencyKey}`
@@ -907,7 +1368,7 @@ export async function executeElectricityPayment(
     const remaining = balance - req.amountNgn;
 
     const lines = [
-      'Sivan Payment Ai: Electricity Receipt',
+      'Sivan Payment Ai . Electricity Receipt',
       '----------------------------------------',
       `DisCo: ${discoName}`,
       `Meter Number: ${req.meterNumber}`,
@@ -950,7 +1411,7 @@ export async function executeElectricityPayment(
       timestamp: now,
       formattedText: lines.join('\n'),
     };
-    cacheReceipt(req.idempotencyKey, receipt);
+    cacheReceipt(req.idempotencyKey, receipt, resolvedUserId, fingerprint);
 
     // 4. Atomic ledger debit with recoverable incident logging
     try {
@@ -965,6 +1426,7 @@ export async function executeElectricityPayment(
         rawPayload: {
           ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
           idempotencyKey: req.idempotencyKey,
+          fingerprint,
           cachedReceipt: receipt,
         },
       });
@@ -987,11 +1449,45 @@ export async function executeElectricityPayment(
         `[sivanUtilityService] CRITICAL: Electricity token vended upstream (${result.reference}) but post-delivery ledger recording failed:`,
         dbErr
       );
+
+      // Transition to delivery_confirmed_unsettled and retain hold
+      try {
+        await db.upsertVirtualAccountTransactionRecord({
+          id: `vatx_unsettled_${crypto.createHash('sha256').update(result.reference).digest('hex').slice(0, 24)}`,
+          provider: providerName as any,
+          depositId: result.reference,
+          userId: resolvedUserId,
+          sourceCurrency: 'ngn',
+          destinationCurrency: 'ngn',
+          sourceAmount: req.amountNgn.toFixed(2),
+          destinationAmount: (-req.amountNgn).toFixed(2), // Hold remains active
+          paymentRail: `utility_${providerName}_electricity`,
+          status: 'delivery_confirmed_unsettled' as any,
+          depositReference: req.idempotencyKey || result.reference,
+          rawPayload: {
+            service: 'electricity',
+            meterNumber: req.meterNumber,
+            disco: discoName,
+            token: result.token,
+            amountNgn: req.amountNgn,
+            reservationId,
+            idempotencyKey: req.idempotencyKey,
+            fingerprint,
+            cachedReceipt: receipt,
+            dbError: dbErr instanceof Error ? dbErr.message : String(dbErr),
+          },
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch (txErr) {
+        console.error('[sivanUtilityService] Failed to record delivery_confirmed_unsettled record:', txErr);
+      }
+
       await createSystemIncident({
         provider: providerName,
         affectedService: 'virtual_accounts',
         severity: 'critical',
-        message: `Post-delivery utility recording failed for electricity reference ${result.reference} (${req.amountNgn} NGN). Delivery succeeded upstream.`,
+        message: `Post-delivery utility recording failed for electricity reference ${result.reference} (${req.amountNgn} NGN). Delivery succeeded upstream. Transaction marked delivery_confirmed_unsettled.`,
         createdBy: 'utility_service_recovery',
         metadata: {
           service: 'electricity',
@@ -1009,3 +1505,67 @@ export async function executeElectricityPayment(
     return receipt;
   });
 }
+
+/**
+ * Reconciles and finalizes debits for utility purchases that successfully vended upstream
+ * but encountered transient database errors during initial post-delivery settlement.
+ */
+export async function reconcileUnsettledUtilityPurchases(): Promise<{
+  settled: string[];
+  failed: string[];
+  pendingReconciliation: string[];
+}> {
+  let allTx: VirtualAccountTransactionRecord[];
+  try {
+    allTx = await db.listVirtualAccountTransactions();
+  } catch (err) {
+    console.error('[reconcileUnsettled] Could not load virtual account transactions for reconciliation:', err);
+    return { settled: [], failed: [], pendingReconciliation: [] };
+  }
+
+  const unsettled = allTx.filter((tx) => tx.status === ('delivery_confirmed_unsettled' as any));
+  const pending = allTx.filter((tx) => tx.status === ('pending_reconciliation' as any));
+  const settled: string[] = [];
+  const failed: string[] = [];
+  const pendingReconciliation: string[] = [];
+
+  // 1. Settle delivery_confirmed_unsettled (post-delivery debit finalization)
+  for (const tx of unsettled) {
+    try {
+      const raw = (tx.rawPayload || {}) as any;
+      const amountNgn = Math.abs(Number(tx.sourceAmount || tx.destinationAmount || 0));
+      const resolvedUserId = tx.userId;
+      if (!resolvedUserId) continue;
+
+      await recordUtilityDebit({
+        userId: resolvedUserId,
+        providerName: tx.provider || 'unknown',
+        serviceType: raw.service || 'airtime',
+        reference: tx.depositId,
+        amountNgn,
+        reservationId: raw.reservationId || tx.depositId,
+        idempotencyKey: tx.depositReference,
+        rawPayload: tx.rawPayload,
+      });
+
+      await db.upsertVirtualAccountTransactionRecord({
+        ...tx,
+        status: 'completed',
+        destinationAmount: '0.00',
+        updatedAt: new Date().toISOString(),
+      });
+      settled.push(tx.depositId);
+    } catch (err) {
+      console.error(`[reconcileUnsettled] Could not finalize debit for ${tx.depositId}:`, err);
+      failed.push(tx.depositId);
+    }
+  }
+
+  // 2. Track and review pending_reconciliation (timeouts / ambiguous states)
+  for (const tx of pending) {
+    pendingReconciliation.push(tx.depositId);
+  }
+
+  return { settled, failed, pendingReconciliation };
+}
+

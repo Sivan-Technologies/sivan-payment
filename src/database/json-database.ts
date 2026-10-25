@@ -1247,6 +1247,27 @@ export class JsonDatabase {
     });
   }
 
+  private userMutexMap = new Map<string, Promise<void>>();
+
+  async withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const key = (userId || 'global').toLowerCase().trim();
+    const current = this.userMutexMap.get(key) || Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.userMutexMap.set(key, current.then(() => next));
+    await current;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.userMutexMap.get(key) === current.then(() => next)) {
+        this.userMutexMap.delete(key);
+      }
+    }
+  }
+
   async insertUnifiedWebhookLogRecord(record: any) {
     return this.mutate((data) => {
       data.unifiedWebhookLogs = data.unifiedWebhookLogs ?? [];

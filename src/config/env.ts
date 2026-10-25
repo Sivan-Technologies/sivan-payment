@@ -406,6 +406,10 @@ const envSchema = z.object({
    * on chain within seconds still read "Processing" hours later. 0 disables.
    */
   TRANSFER_CONFIRM_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  /**
+   * How often to reconcile unsettled and pending utility purchases, in seconds. 0 disables.
+   */
+  UTILITY_RECONCILE_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
   /** Age at which an unconfirmed send is escalated to a human, in minutes. */
   TRANSFER_CONFIRM_STALE_MINUTES: z.coerce.number().int().positive().default(30),
   /**

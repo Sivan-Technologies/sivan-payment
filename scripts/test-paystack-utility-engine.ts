@@ -23,9 +23,14 @@ process.env.UTILITY_ROUTING = JSON.stringify({
   failover: { airtime: false, data: false, electricity: false },
 });
 
+import fs from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert/strict';
+
+if (fs.existsSync(process.env.DATABASE_FILE!)) {
+  try { fs.rmSync(process.env.DATABASE_FILE!, { force: true }); } catch {}
+}
 import {
   classifySmeApiMessage,
   canFailOver,
@@ -279,7 +284,7 @@ async function main() {
     userId: testUserId,
     phone: '08021234567', // Airtel
     amountNgn: 1000,
-    idempotencyKey: 'idem_routed_airtime_1',
+    idempotencyKey: `idem_routed_airtime_${testUserId}`,
   });
 
   assert.equal(routedAirtimeReceipt.success, true);
@@ -291,7 +296,7 @@ async function main() {
     userId: testUserId,
     phone: '08021234567',
     amountNgn: 1000,
-    idempotencyKey: 'idem_routed_airtime_1',
+    idempotencyKey: `idem_routed_airtime_${testUserId}`,
   });
   assert.equal(repeatedReceipt.reference, routedAirtimeReceipt.reference);
   ok('repeated airtime purchase with same idempotencyKey returns cached receipt');
