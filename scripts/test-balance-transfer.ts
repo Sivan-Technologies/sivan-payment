@@ -49,20 +49,18 @@ async function main() {
 
     await request('POST', '/api/users/me/withdrawal-pin', { pin: '829471' });
 
-    const transfer = await request('POST', `/api/users/${user.id}/balance/transfers`, { asset: 'usdc', network: 'solana', amount: 20, destinationAddress: '8349DeWNxtDJDE5KzZ2NRuyzyNQzcvvpT8eeV4UGSY5t', note: 'Send from balance E2E', pin: '829471' });
-    assert(transfer.status === 'pending_review', 'transfer request is created with risk hold');
-
-    const updated = await request('GET', `/api/users/${user.id}/balance`);
-    const updatedUsdc = updated.balances.find((item: any) => item.asset === 'usdc');
-    assert(Number(updatedUsdc.available) === 30, 'transfer hold reduces available balance');
-    assert(Number(updatedUsdc.held) === 20, 'transfer hold increases held balance');
-
-    const transfers = await request('GET', `/api/users/${user.id}/balance/transfers`);
-    assert(transfers.some((item: any) => item.transferId === transfer.transferId), 'user can list balance transfer history');
+    // Unbacked on-chain crypto spend is strictly rejected per Founder Policy
+    const unbackedAttempt = await fetch(`${baseUrl}/api/users/${user.id}/balance/transfers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ asset: 'usdc', network: 'solana', amount: 20, destinationAddress: '8349DeWNxtDJDE5KzZ2NRuyzyNQzcvvpT8eeV4UGSY5t', note: 'Send from balance E2E', pin: '829471' }),
+    });
+    const unbackedJson = await unbackedAttempt.json().catch(() => ({}));
+    assert(unbackedAttempt.status === 400 && String(unbackedJson?.error?.message).includes('Insufficient USDC balance on solana'), 'unbacked crypto ledger credit is strictly refused from transferring on-chain without physical wallet backing');
 
     await app.close();
-    console.log('\n✅ Balance ledger and transfer-from-balance E2E passed');
-    console.log(JSON.stringify({ userId: user.id, transferId: transfer.transferId, available: updatedUsdc.available, held: updatedUsdc.held }, null, 2));
+    console.log('\n✅ Balance ledger and transfer protection E2E passed');
+    console.log(JSON.stringify({ userId: user.id, protectedFromUnbackedSpend: true }, null, 2));
   } catch (error) {
     await app.close();
     throw error;

@@ -408,11 +408,29 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   app.get('/api/utilities/data/plans', getDataPlansHandler);
   app.get('/api/ngn/utility/data-plans', getDataPlansHandler);
 
+  const regAdminGet = (path: string, handler: any) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.get(`/api/admin${fullPath}`, handler);
+    app.get(fullPath, handler);
+  };
+
+  const regAdminPut = (path: string, handler: any) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.put(`/api/admin${fullPath}`, handler);
+    app.put(fullPath, handler);
+  };
+
+  const regAdminDelete = (path: string, handler: any) => {
+    const fullPath = path.startsWith('/') ? path : `/${path}`;
+    app.delete(`/api/admin${fullPath}`, handler);
+    app.delete(fullPath, handler);
+  };
+
   /**
-   * GET /api/admin/utilities/data-plans
+   * GET /api/admin/utilities/data-plans (and /utilities/data-plans)
    * Admin endpoint: fetch all bundle tiers and prices.
    */
-  app.get('/api/admin/utilities/data-plans', async (_request: FastifyRequest, reply: FastifyReply) => {
+  regAdminGet('/utilities/data-plans', async (_request: FastifyRequest, reply: FastifyReply) => {
     const plans = await getUtilityDataPlans();
     const providerInfo = await getActiveUtilityProviderInfo();
     return reply.code(200).send({
@@ -426,11 +444,11 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   });
 
   /**
-   * PUT /api/admin/utilities/data-plans
+   * PUT /api/admin/utilities/data-plans (and /utilities/data-plans)
    * Admin endpoint: update price for any bundle size with audit trail.
    * Supports updating a single plan object or a batch of plans (with full list sync).
    */
-  app.put('/api/admin/utilities/data-plans', async (request: FastifyRequest, reply: FastifyReply) => {
+  regAdminPut('/utilities/data-plans', async (request: FastifyRequest, reply: FastifyReply) => {
     const body: any = request.body;
     let updatedPlans;
     if (body && Array.isArray(body.plans)) {
@@ -449,11 +467,11 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   });
 
   /**
-   * DELETE /api/admin/utilities/data-plans/:target
+   * DELETE /api/admin/utilities/data-plans/:target (and /utilities/data-plans/:target)
    * Admin endpoint: removes a bundle plan tier by bundle size or plan id.
    */
-  app.delete(
-    '/api/admin/utilities/data-plans/:target',
+  regAdminDelete(
+    '/utilities/data-plans/:target',
     async (
       request: FastifyRequest<{ Params: { target: string }; Querystring: { network?: string } }>,
       reply: FastifyReply
@@ -472,10 +490,10 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   );
 
   /**
-   * GET /api/admin/utilities/provider
+   * GET /api/admin/utilities/provider (and /utilities/provider)
    * Admin endpoint: retrieves the currently active utility fulfillment provider.
    */
-  app.get('/api/admin/utilities/provider', async (_request: FastifyRequest, reply: FastifyReply) => {
+  regAdminGet('/utilities/provider', async (_request: FastifyRequest, reply: FastifyReply) => {
     const info = await getActiveUtilityProviderInfo();
     return reply.code(200).send({
       status: 'success',
@@ -484,10 +502,10 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   });
 
   /**
-   * PUT /api/admin/utilities/provider
-   * Admin endpoint: switches active utility provider (e.g. 'paystack' or 'vtu_ng') with audit trail.
+   * PUT /api/admin/utilities/provider (and /utilities/provider)
+   * Admin endpoint: switches active utility provider (e.g. 'paystack' or 'smeapi') with audit trail.
    */
-  app.put('/api/admin/utilities/provider', async (request: FastifyRequest, reply: FastifyReply) => {
+  regAdminPut('/utilities/provider', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(updateUtilityProviderSchema, request.body);
     const result = await setUtilityProvider(body.provider, body.updatedBy);
     return reply.code(200).send({
@@ -502,8 +520,8 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    * actually charges this account. This is what the admin hub prices against,
    * so margins are computed from a real cost rather than a remembered one.
    */
-  app.get(
-    '/api/admin/utilities/provider-catalogue',
+  regAdminGet(
+    '/utilities/provider-catalogue',
     async (
       request: FastifyRequest<{ Querystring: { provider?: string; operator?: string } }>,
       reply: FastifyReply
@@ -522,30 +540,30 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   );
 
   /**
-   * GET /api/admin/utilities/routing
+   * GET /api/admin/utilities/routing (and /utilities/routing)
    * Current per-service routing, the defaults, and which services each
    * registered provider can actually fulfil.
    */
-  app.get('/api/admin/utilities/routing', async (_request: FastifyRequest, reply: FastifyReply) => {
+  regAdminGet('/utilities/routing', async (_request: FastifyRequest, reply: FastifyReply) => {
     const info = await getUtilityRoutingInfo();
     return reply.code(200).send({ status: 'success', data: info });
   });
 
   /**
-   * GET /api/admin/utilities/float
+   * GET /api/admin/utilities/float (and /utilities/float)
    *
    * Live wallet balance at each provider that holds one. This is the number
    * that decides whether traffic routed to an aggregator can actually be
    * fulfilled, and until now it existed only as an unused method on one
    * adapter - so the float could run dry with nothing on any screen saying so.
    */
-  app.get('/api/admin/utilities/float', async (_request: FastifyRequest, reply: FastifyReply) => {
+  regAdminGet('/utilities/float', async (_request: FastifyRequest, reply: FastifyReply) => {
     const balances = await getProviderFloatBalances();
     return reply.code(200).send({ status: 'success', data: { balances } });
   });
 
   /**
-   * PUT /api/admin/utilities/routing
+   * PUT /api/admin/utilities/routing (and /utilities/routing)
    * Repoints one or more services at different providers, persisted so the
    * change survives a restart and reaches every instance.
    *
@@ -555,7 +573,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
    *
    * A chain naming a provider that cannot serve that service is rejected.
    */
-  app.put('/api/admin/utilities/routing', async (request: FastifyRequest, reply: FastifyReply) => {
+  regAdminPut('/utilities/routing', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(updateUtilityRoutingSchema, request.body);
     const routing = await setUtilityRoutingConfig(body, body.updatedBy);
     return reply.code(200).send({ status: 'success', data: { routing } });

@@ -70,7 +70,7 @@ async function run() {
 
   // 5. Multi-aggregator utility adapter failover
   const failoverRes = await executeUtilityWithFailover(async (provider) => {
-    return provider.listDataPlans('mtn');
+    return provider.listDataPlans ? provider.listDataPlans('mtn') : [];
   });
   assert(Array.isArray(failoverRes.result) && failoverRes.result.length > 0, 'Multi-aggregator failover resolves data plans');
   assert(failoverRes.providerName === 'paystack', 'Multi-aggregator failover correctly identifies provider');

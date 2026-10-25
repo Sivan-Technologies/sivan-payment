@@ -321,7 +321,7 @@ async function main() {
   // A bundle that is priced but deliberately never mapped to any provider.
   // Mappings are merged and never removed, so this stays unmapped on re-runs.
   await updateUtilityDataPlans(
-    [{ bundleSize: '7GB', costPriceNgn: 2600, amountNgn: 3000, network: 'airtel', isActive: true }],
+    [{ bundleSize: '7GB', costPriceNgn: 2600, amountNgn: 3000, network: 'airtel', isActive: true, updatedBy: 'utility_engine_test' }],
     'utility_engine_test'
   );
   await assert.rejects(
@@ -347,6 +347,7 @@ async function main() {
         network: 'airtel',
         isActive: true,
         providerPlanCodes: { paystack: 'AIRTEL_5GB_MONTHLY' },
+        updatedBy: 'utility_engine_test',
       },
     ],
     'utility_engine_test'
