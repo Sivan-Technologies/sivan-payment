@@ -50,6 +50,11 @@ export class VtuAggregatorProvider implements IUtilityProvider {
     this.apiKey = config.apiKey || process.env.AGGREGATOR_SECRET_KEY || '';
   }
 
+  /** No key means no real vending, so do not let the UI present this as a choice. */
+  isConfigured(): boolean {
+    return Boolean(this.apiKey);
+  }
+
   /**
    * An unconfigured provider must fail, not pretend.
    *

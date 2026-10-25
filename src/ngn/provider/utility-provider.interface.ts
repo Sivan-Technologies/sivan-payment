@@ -102,6 +102,17 @@ export interface IUtilityProvider {
   readonly supports: readonly UtilityServiceType[];
 
   /**
+   * Whether this adapter holds the credentials it needs to do real work.
+   *
+   * An adapter can be registered and still be unusable. Without this the admin
+   * UI offered every registered name as an equal choice, including one with no
+   * API key and a placeholder base URL, so an operator could route live
+   * traffic to something guaranteed to fail. Omit it and the provider is
+   * assumed configured, so existing adapters are unaffected.
+   */
+  isConfigured?(): boolean;
+
+  /**
    * Every method is optional. A provider implements only the rails it serves
    * and omits the rest, instead of stubbing them out with invented data.
    *

@@ -111,6 +111,10 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
     this.apiKey = config.apiKey || process.env.SMEAPI_TOKEN || '';
   }
 
+  isConfigured(): boolean {
+    return Boolean(this.apiKey);
+  }
+
   private headers(): Record<string, string> {
     return {
       'Content-Type': 'application/json',

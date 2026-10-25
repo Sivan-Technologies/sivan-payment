@@ -84,11 +84,15 @@ export function listUtilityProviderCapabilities(): Array<{
   name: string;
   supports: readonly UtilityServiceType[];
   priority: number;
+  configured: boolean;
 }> {
   return Array.from(registry.entries()).map(([name, provider]) => ({
     name,
     supports: provider.supports ?? [],
     priority: provider.priority ?? 10,
+    // Registered is not the same as usable. An adapter with no credentials
+    // must be visibly unavailable rather than quietly selectable.
+    configured: typeof provider.isConfigured === 'function' ? provider.isConfigured() : true,
   }));
 }
 
@@ -154,8 +158,12 @@ export interface UtilityRoutingConfig {
 
 export const DEFAULT_UTILITY_ROUTING: UtilityRoutingConfig = {
   routes: {
-    airtime: ['vtu_ng', 'smeapi'],
-    data: ['vtu_ng', 'smeapi'],
+    // Only providers that are actually credentialed here. These defaults
+    // previously led with vtu_ng, which has no API key anywhere in the repo
+    // or in render.yaml and whose base URL does not resolve, so any service
+    // falling back to defaults would have routed first to a certain failure.
+    airtime: ['smeapi', 'paystack'],
+    data: ['smeapi', 'paystack'],
     electricity: ['paystack'],
   },
   failover: {

@@ -13,6 +13,7 @@ import {
   paystackBaseUrl,
   paystackHeaders,
   paystackMode,
+  isPaystackConfigured,
 } from '../../config/paystackConfig.js';
 import type {
   TelcoOperator,
@@ -273,6 +274,10 @@ export class PaystackUtilityProvider implements IUtilityProvider {
   readonly name: UtilityProviderName = 'paystack';
   readonly priority = 20;
   readonly supports: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity'];
+
+  isConfigured(): boolean {
+    return isPaystackConfigured();
+  }
 
   async listDataPlans(operator: TelcoOperator): Promise<DataPlanOption[]> {
     const plans: Record<TelcoOperator, DataPlanOption[]> = {
