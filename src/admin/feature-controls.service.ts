@@ -2,6 +2,7 @@ import { nowIso } from '../shared/id.js';
 import { MONEYGRAM_GLOBAL_CORRIDORS } from '../moneygram/data/corridors.data.js';
 import { db } from '../database/json-database.js';
 import { createAuditLog } from '../audit/audit.service.js';
+import { getUtilityRouting } from '../ngn/provider/utility-registry.js';
 
 export interface MoneyGramControls {
   enabled: boolean;
@@ -27,8 +28,8 @@ export interface UtilitiesControls {
   dataEnabled: boolean;
   electricityEnabled: boolean;
   cableTvEnabled: boolean;
-  primaryProvider: 'vtpass' | 'baxi' | 'reloadly';
-  fallbackProvider: 'vtpass' | 'baxi' | 'reloadly' | 'none';
+  primaryProvider: 'paystack' | 'smeapi' | string;
+  fallbackProvider: 'paystack' | 'smeapi' | 'none' | string;
   maintenanceMode: boolean;
   maintenanceReason: string;
   discountPercent: number;
@@ -91,7 +92,7 @@ let utilitiesControls: UtilitiesControls = {
   electricityEnabled: true,
   cableTvEnabled: false,
   primaryProvider: 'paystack',
-  fallbackProvider: 'vtu_ng',
+  fallbackProvider: 'smeapi',
   maintenanceMode: false,
   maintenanceReason: 'Bill payment aggregators undergoing scheduled maintenance.',
   discountPercent: 1.0,
@@ -152,6 +153,11 @@ export async function getUtilitiesControls(): Promise<UtilitiesControls> {
         ...utilitiesControls,
         ...saved,
       };
+    }
+    const routing = getUtilityRouting();
+    if (routing?.routes?.airtime?.[0]) {
+      utilitiesControls.primaryProvider = routing.routes.airtime[0];
+      utilitiesControls.fallbackProvider = routing.routes.airtime[1] || 'none';
     }
   } catch (err) {
     console.warn('[feature-controls] Could not read persisted utilities controls:', err);

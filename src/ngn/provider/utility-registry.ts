@@ -58,7 +58,6 @@ import {
 const registry = new Map<string, IUtilityProvider>();
 
 registry.set('paystack', new PaystackUtilityProvider());
-registry.set('vtu_ng', new VtuAggregatorProvider({ name: 'vtu_ng', priority: 15 }));
 registry.set('smeapi', new SmeApiUtilityProvider());
 
 /**

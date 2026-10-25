@@ -114,16 +114,17 @@ test('Utility Data Plans Service — resolveProviderPlanCode refuses rather than
   );
 });
 
-test('Utility Provider Toggle — get and switch active provider between paystack and vtu_ng', async () => {
+test('Utility Provider Toggle — get and switch active provider between paystack and smeapi', async () => {
   const info = await getActiveUtilityProviderInfo();
   assert.ok(info.availableProviders.includes('paystack'));
-  assert.ok(info.availableProviders.includes('vtu_ng'));
+  assert.ok(info.availableProviders.includes('smeapi'));
+  assert.ok(!info.availableProviders.includes('vtu_ng'));
 
-  const switched = await setUtilityProvider('vtu_ng', 'admin_test');
-  assert.strictEqual(switched.activeProvider, 'vtu_ng');
+  const switched = await setUtilityProvider('smeapi', 'admin_test');
+  assert.strictEqual(switched.activeProvider, 'smeapi');
 
   const check = await getActiveUtilityProviderInfo();
-  assert.strictEqual(check.activeProvider, 'vtu_ng');
+  assert.strictEqual(check.activeProvider, 'smeapi');
 
   // Switch back to paystack
   const restored = await setUtilityProvider('paystack', 'admin_test');

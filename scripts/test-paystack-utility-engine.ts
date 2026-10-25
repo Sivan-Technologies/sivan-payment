@@ -210,9 +210,9 @@ async function main() {
   console.log('\n══ 3. Pluggable Provider Registry ══');
   const availableProviders = listUtilityProviders();
   assert.ok(availableProviders.includes('paystack'));
-  assert.ok(availableProviders.includes('vtu_ng'));
   assert.ok(availableProviders.includes('smeapi'));
-  ok('registry lists the real fulfilment providers');
+  assert.ok(!availableProviders.includes('vtu_ng'));
+  ok('registry lists the real fulfilment providers (paystack, smeapi)');
 
   // The simulator fabricates a successful vend, so reaching it in production
   // means debiting a customer who receives nothing. It is opt in only.
