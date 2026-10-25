@@ -92,7 +92,7 @@ export async function balanceRoutes(app: FastifyInstance) {
    */
   app.get('/api/users/whatsapp-balance', async (request, reply) => {
     requireIdentityServiceSecret(request as any);
-    const { whatsapp } = request.query as { whatsapp?: string };
+    const { whatsapp, ensureChain } = request.query as { whatsapp?: string; ensureChain?: string };
     if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
     let user: any = await findUserByChannelPhone(whatsapp);
     if (!user) {
@@ -112,18 +112,13 @@ export async function balanceRoutes(app: FastifyInstance) {
     }
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
 
-    let unified = await getUnifiedBalance(user.id);
-    const existingChains = (unified.wallets || []).map((w) => w.chain);
-    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc', 'starknet'];
-    const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
-
-    if (missingChains.length > 0) {
+    const cleanEnsureChain = ensureChain ? String(ensureChain).trim().toLowerCase() : undefined;
+    if (cleanEnsureChain) {
       const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-      await Promise.all(
-        missingChains.map((chain) => ensureUserWallet(user.id, chain as any).catch(() => null))
-      );
-      unified = await getUnifiedBalance(user.id);
+      await ensureUserWallet(user.id, cleanEnsureChain as any);
     }
+
+    const unified = await getUnifiedBalance(user.id);
 
     /**
      * A FAILED CHAIN READ MUST NOT LEAVE AS A CONFIDENT ZERO.
@@ -136,7 +131,7 @@ export async function balanceRoutes(app: FastifyInstance) {
      * instead of telling a funded user their balance is empty.
      */
     const hasAnyFunds = unified.balances.some((b) => Number(b.spendable) > 0 || Number(b.chain) > 0);
-    const unreadable = !hasAnyFunds && (unified.balances.length
+    const unreadable = !hasAnyFunds && !cleanEnsureChain && (unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
       : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable));
     if (unreadable) {

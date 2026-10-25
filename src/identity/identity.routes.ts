@@ -1059,21 +1059,16 @@ export async function identityRoutes(app: FastifyInstance) {
     const userId = await resolveChatIdentity(channel, String(identity));
     if (!userId) return reply.code(404).send({ error: { message: 'Chat identity is not linked to a Sivan Payment account.' } });
 
-    let unified = await getUnifiedBalance(userId);
-    const existingChains = (unified.wallets || []).map((w) => w.chain);
-    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc', 'starknet'];
-    const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
-
-    if (missingChains.length > 0) {
+    const cleanEnsureChain = rawBody.ensureChain ? String(rawBody.ensureChain).trim().toLowerCase() : undefined;
+    if (cleanEnsureChain) {
       const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-      await Promise.all(
-        missingChains.map((chain) => ensureUserWallet(userId, chain as any).catch(() => null))
-      );
-      unified = await getUnifiedBalance(userId);
+      await ensureUserWallet(userId, cleanEnsureChain as any);
     }
 
+    const unified = await getUnifiedBalance(userId);
+
     const hasAnyFunds = unified.balances.some((b) => Number(b.spendable) > 0 || Number(b.chain) > 0);
-    const unreadable = !hasAnyFunds && (unified.balances.length
+    const unreadable = !hasAnyFunds && !cleanEnsureChain && (unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
       : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable));
     if (unreadable) {
@@ -1136,22 +1131,16 @@ export async function identityRoutes(app: FastifyInstance) {
       return { data: { found: false, target } };
     }
 
+    const userWallets = await db.listUserWallets(user.id).catch(() => []);
     let targetAddress: string | undefined;
     const requestedChain = chain ? String(chain).trim().toLowerCase() : undefined;
 
     if (requestedChain) {
-      try {
-        const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-        const wallet = await ensureUserWallet(user.id, requestedChain as any);
-        if (wallet?.address) {
-          targetAddress = wallet.address;
-        }
-      } catch (err) {
-        console.warn('[resolve-target.wallet_error]', err);
+      const match = userWallets.find((w) => w.chain?.toLowerCase() === requestedChain);
+      if (match?.address) {
+        targetAddress = match.address;
       }
     }
-
-    const userWallets = await db.listUserWallets(user.id).catch(() => []);
 
     return {
       data: {
