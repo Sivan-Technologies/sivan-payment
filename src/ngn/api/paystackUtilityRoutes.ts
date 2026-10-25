@@ -66,6 +66,7 @@ const airtimeSchema = z.object({
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
+  channel: z.enum(['minipay', 'telegram', 'whatsapp', 'webapp']).optional().default('webapp'),
 });
 
 const dataSchema = z.object({
@@ -76,6 +77,7 @@ const dataSchema = z.object({
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
+  channel: z.enum(['minipay', 'telegram', 'whatsapp', 'webapp']).optional().default('webapp'),
 });
 
 const electricityInquirySchema = z.object({
@@ -118,6 +120,7 @@ const electricityPaymentSchema = z.object({
   customerName: z.string().optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
+  channel: z.enum(['minipay', 'telegram', 'whatsapp', 'webapp']).optional().default('webapp'),
 });
 
 /**

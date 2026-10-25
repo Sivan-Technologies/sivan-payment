@@ -129,9 +129,7 @@ export async function setUtilityRoutingConfig(
     },
   };
 
-  const applied = setUtilityRouting(merged);
-  lastLoadedAt = Date.now();
-
+  // 1. Persist to audit log first. If DB write fails, memory is not mutated.
   await createAuditLog({
     actorType: 'admin',
     actorId: updatedBy,
@@ -139,8 +137,12 @@ export async function setUtilityRoutingConfig(
     resourceType: 'utility_routing',
     resourceId: 'global',
     severity: 'info',
-    metadata: { routing: applied, previous: current },
+    metadata: { routing: merged, previous: current },
   });
+
+  // 2. Activate in memory only after persistence succeeded
+  const applied = setUtilityRouting(merged);
+  lastLoadedAt = Date.now();
 
   return applied;
 }

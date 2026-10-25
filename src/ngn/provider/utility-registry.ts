@@ -381,9 +381,30 @@ export async function executeForService<K extends keyof IUtilityProvider, T>(
        * Everything else here is a provider that answered and declined, which
        * tells us it delivered nothing, so retrying elsewhere is safe.
        */
-      if (reason && !canFailOver(reason)) {
+      const isTimeout =
+        reason === 'provider_timeout' ||
+        err?.name === 'AbortError' ||
+        err?.name === 'TimeoutError' ||
+        /timeout|timed out|etimedout|esockettimedout/i.test(err?.message || '');
+
+      if (isTimeout) {
         console.error(
-          `[utility-failover] "${provider.name}" failed on ${service} with reason="${reason}". ` +
+          `[utility-failover] "${provider.name}" timed out on ${service}. ` +
+            `Outcome unknown: not retrying on another provider to prevent duplicate fulfillment: ${err?.message || err}`
+        );
+        throw (err instanceof UtilityProviderError
+          ? err
+          : new UtilityProviderError({
+              provider: provider.name,
+              reason: 'provider_timeout',
+              context: 'utility_dispatch',
+              upstreamMessage: `Timeout communicating with ${provider.name}. Outcome is unknown: ${err?.message || err}`,
+            }));
+      }
+
+      if (!reason || !canFailOver(reason)) {
+        console.error(
+          `[utility-failover] "${provider.name}" failed on ${service} with ${reason ? `reason="${reason}"` : 'unknown outcome'}. ` +
             `Not retrying on another provider: ${err?.message || err}`
         );
         throw err;
@@ -450,6 +471,18 @@ export async function executeUtilityWithFailover<T>(
       return { result, providerName: provider.name };
     } catch (err: any) {
       lastError = err;
+      const isTimeout =
+        (err instanceof UtilityProviderError && err.reason === 'provider_timeout') ||
+        err?.name === 'AbortError' ||
+        err?.name === 'TimeoutError' ||
+        /timeout|timed out|etimedout|esockettimedout/i.test(err?.message || '');
+      if (isTimeout) {
+        throw err;
+      }
+      const reason = err instanceof UtilityProviderError ? err.reason : null;
+      if (reason && !canFailOver(reason)) {
+        throw err;
+      }
     }
   }
   throw lastError || new Error('All registered utility providers failed.');

@@ -221,40 +221,6 @@ export class PaystackUtilityProvider implements IUtilityProvider {
     return isPaystackConfigured();
   }
 
-  async listDataPlans(operator: TelcoOperator): Promise<DataPlanOption[]> {
-    const plans: Record<TelcoOperator, DataPlanOption[]> = {
-      mtn: [
-        { planId: 'mtn_500mb', name: 'MTN SME 500MB', size: '500MB', validity: '30 Days', wholesalePriceNgn: 130, retailPriceNgn: 160, operator: 'mtn', type: 'sme' },
-        { planId: 'mtn_1gb', name: 'MTN SME 1GB', size: '1GB', validity: '30 Days', wholesalePriceNgn: 245, retailPriceNgn: 290, operator: 'mtn', type: 'sme' },
-        { planId: 'mtn_2gb', name: 'MTN SME 2GB', size: '2GB', validity: '30 Days', wholesalePriceNgn: 490, retailPriceNgn: 580, operator: 'mtn', type: 'sme' },
-        { planId: 'mtn_5gb', name: 'MTN SME 5GB', size: '5GB', validity: '30 Days', wholesalePriceNgn: 1225, retailPriceNgn: 1400, operator: 'mtn', type: 'sme' },
-        { planId: 'mtn_10gb', name: 'MTN SME 10GB', size: '10GB', validity: '30 Days', wholesalePriceNgn: 2450, retailPriceNgn: 2800, operator: 'mtn', type: 'sme' },
-      ],
-      airtel: [
-        { planId: 'airtel_500mb', name: 'Airtel Gifting 500MB', size: '500MB', validity: '30 Days', wholesalePriceNgn: 140, retailPriceNgn: 175, operator: 'airtel', type: 'corporate_gifting' },
-        { planId: 'airtel_1gb', name: 'Airtel Gifting 1GB', size: '1GB', validity: '30 Days', wholesalePriceNgn: 260, retailPriceNgn: 310, operator: 'airtel', type: 'corporate_gifting' },
-        { planId: 'airtel_2gb', name: 'Airtel Gifting 2GB', size: '2GB', validity: '30 Days', wholesalePriceNgn: 520, retailPriceNgn: 620, operator: 'airtel', type: 'corporate_gifting' },
-        { planId: 'airtel_5gb', name: 'Airtel Gifting 5GB', size: '5GB', validity: '30 Days', wholesalePriceNgn: 1300, retailPriceNgn: 1500, operator: 'airtel', type: 'corporate_gifting' },
-        { planId: 'airtel_10gb', name: 'Airtel Gifting 10GB', size: '10GB', validity: '30 Days', wholesalePriceNgn: 2600, retailPriceNgn: 3000, operator: 'airtel', type: 'corporate_gifting' },
-      ],
-      glo: [
-        { planId: 'glo_500mb', name: 'Glo SME 500MB', size: '500MB', validity: '30 Days', wholesalePriceNgn: 135, retailPriceNgn: 165, operator: 'glo', type: 'sme' },
-        { planId: 'glo_1gb', name: 'Glo SME 1GB', size: '1GB', validity: '30 Days', wholesalePriceNgn: 250, retailPriceNgn: 300, operator: 'glo', type: 'sme' },
-        { planId: 'glo_2gb', name: 'Glo SME 2GB', size: '2GB', validity: '30 Days', wholesalePriceNgn: 500, retailPriceNgn: 600, operator: 'glo', type: 'sme' },
-        { planId: 'glo_5gb', name: 'Glo SME 5GB', size: '5GB', validity: '30 Days', wholesalePriceNgn: 1250, retailPriceNgn: 1450, operator: 'glo', type: 'sme' },
-        { planId: 'glo_10gb', name: 'Glo SME 10GB', size: '10GB', validity: '30 Days', wholesalePriceNgn: 2500, retailPriceNgn: 2900, operator: 'glo', type: 'sme' },
-      ],
-      '9mobile': [
-        { planId: '9mobile_500mb', name: '9mobile SME 500MB', size: '500MB', validity: '30 Days', wholesalePriceNgn: 120, retailPriceNgn: 150, operator: '9mobile', type: 'sme' },
-        { planId: '9mobile_1gb', name: '9mobile SME 1GB', size: '1GB', validity: '30 Days', wholesalePriceNgn: 220, retailPriceNgn: 270, operator: '9mobile', type: 'sme' },
-        { planId: '9mobile_2gb', name: '9mobile SME 2GB', size: '2GB', validity: '30 Days', wholesalePriceNgn: 440, retailPriceNgn: 540, operator: '9mobile', type: 'sme' },
-        { planId: '9mobile_5gb', name: '9mobile SME 5GB', size: '5GB', validity: '30 Days', wholesalePriceNgn: 1100, retailPriceNgn: 1350, operator: '9mobile', type: 'sme' },
-        { planId: '9mobile_10gb', name: '9mobile SME 10GB', size: '10GB', validity: '30 Days', wholesalePriceNgn: 2200, retailPriceNgn: 2700, operator: '9mobile', type: 'sme' },
-      ],
-    };
-    return plans[operator] || plans.mtn;
-  }
-
   async getAirtimeCashRate(_operator: TelcoOperator): Promise<AirtimeCashRate> {
     throw new PaystackUtilityApiError(
       'Airtime to cash is not supported on Paystack rails',

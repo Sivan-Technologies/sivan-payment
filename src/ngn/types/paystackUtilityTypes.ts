@@ -29,6 +29,7 @@ export interface AirtimePurchaseRequest {
   operator?: TelcoOperator;
   providerName?: string;
   idempotencyKey?: string;
+  channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | string;
 }
 
 export interface DataBundlePurchaseRequest {
@@ -39,6 +40,7 @@ export interface DataBundlePurchaseRequest {
   amountNgn: number;
   providerName?: string;
   idempotencyKey?: string;
+  channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | string;
 }
 
 export interface ElectricityInquiryRequest {
@@ -69,6 +71,7 @@ export interface ElectricityPaymentRequest {
   customerName?: string;
   providerName?: string;
   idempotencyKey?: string;
+  channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | string;
 }
 
 export interface DataPlanOption {

@@ -55,8 +55,43 @@ function newIdempotencyKey(service: string, userId: string): string {
   return `sivan_${service}_${crypto.randomUUID()}_${crypto.createHash('sha256').update(userId).digest('hex').slice(0, 8)}`;
 }
 
+import { createSystemIncident } from '../../incidents/system-incidents.service.js';
+
 /**
- * In-flight reservation tracker per user to prevent concurrent double-spending.
+ * Asynchronous per-user mutex to serialize balance checks and reservations.
+ * Eliminates race windows where concurrent requests both read unreserved balances.
+ */
+class UserMutex {
+  private queue: Promise<void> = Promise.resolve();
+
+  async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    let release: () => void = () => {};
+    const wait = this.queue;
+    this.queue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await wait;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+}
+
+const userMutexMap = new Map<string, UserMutex>();
+
+function getUserMutex(userId: string): UserMutex {
+  let mutex = userMutexMap.get(userId);
+  if (!mutex) {
+    mutex = new UserMutex();
+    userMutexMap.set(userId, mutex);
+  }
+  return mutex;
+}
+
+/**
+ * In-flight reservation tracker per user to prevent concurrent double-spending in memory.
  */
 const userInFlightSpend = new Map<string, number>();
 
@@ -70,19 +105,43 @@ interface CachedIdempotencyEntry {
 }
 const idempotencyReceiptCache = new Map<string, CachedIdempotencyEntry>();
 
-function getCachedReceipt(key?: string): UtilityReceipt | null {
+export async function getCachedReceipt(key?: string): Promise<UtilityReceipt | null> {
   if (!key) return null;
   const clean = key.trim();
   const entry = idempotencyReceiptCache.get(clean);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    idempotencyReceiptCache.delete(clean);
-    return null;
+  if (entry) {
+    if (Date.now() > entry.expiresAt) {
+      idempotencyReceiptCache.delete(clean);
+    } else {
+      return entry.receipt;
+    }
   }
-  return entry.receipt;
+
+  // Check persistent storage across restarts
+  try {
+    const allTx = await db.listVirtualAccountTransactions();
+    const match = allTx.find((tx) => {
+      if (tx.status !== 'completed') return false;
+      if (tx.depositReference === clean || tx.depositId === clean) return true;
+      const raw = (tx.rawPayload || {}) as any;
+      return raw.idempotencyKey === clean || raw.reference === clean;
+    });
+
+    if (match) {
+      const raw = (match.rawPayload || {}) as any;
+      if (raw.cachedReceipt) {
+        cacheReceipt(clean, raw.cachedReceipt);
+        return raw.cachedReceipt;
+      }
+    }
+  } catch (err) {
+    console.warn('[sivanUtilityService] Could not check persistent idempotency cache:', err);
+  }
+
+  return null;
 }
 
-function cacheReceipt(key: string | undefined, receipt: UtilityReceipt): void {
+export function cacheReceipt(key: string | undefined, receipt: UtilityReceipt): void {
   if (!key) return;
   const clean = key.trim();
   idempotencyReceiptCache.set(clean, {
@@ -91,30 +150,151 @@ function cacheReceipt(key: string | undefined, receipt: UtilityReceipt): void {
   });
 }
 
+/**
+ * Atomic balance reservation:
+ * 1. Serializes check & hold inside UserMutex.
+ * 2. Deducts in-flight spend in memory immediately.
+ * 3. Persists durable pending reservation to database (virtual account transaction record + ledger hold).
+ * 4. Releases hold on abort/failure or finalizes on successful debit.
+ */
 async function withBalanceReservation<T>(
   resolvedUserId: string,
   amountNgn: number,
+  reservationId: string,
+  serviceType: string,
+  idempotencyKey: string | undefined,
   work: (availableBalance: number) => Promise<T>
 ): Promise<T> {
-  const currentInFlight = userInFlightSpend.get(resolvedUserId) || 0;
-  const currentBalance = await getUserNgnBalance(resolvedUserId);
-  const available = currentBalance - currentInFlight;
+  const userMutex = getUserMutex(resolvedUserId);
+  let available = 0;
+  const reservationRecordId = `vatx_res_${crypto.createHash('sha256').update(reservationId).digest('hex').slice(0, 24)}`;
+  const now = new Date().toISOString();
 
-  if (available < amountNgn) {
-    throw badRequest(
-      `Insufficient balance (${available.toLocaleString()} NGN). You need ${amountNgn.toLocaleString()} NGN for this purchase. Please deposit NGN into your Sivan account.`
-    );
-  }
+  // 1. Critical section: atomic balance check and reservation
+  await userMutex.runExclusive(async () => {
+    const currentInFlight = userInFlightSpend.get(resolvedUserId) || 0;
+    const currentBalance = await getUserNgnBalance(resolvedUserId);
+    available = currentBalance - currentInFlight;
 
-  userInFlightSpend.set(resolvedUserId, currentInFlight + amountNgn);
+    if (available < amountNgn) {
+      throw badRequest(
+        `Insufficient balance (${available.toLocaleString()} NGN). You need ${amountNgn.toLocaleString()} NGN for this purchase. Please deposit NGN into your Sivan account.`
+      );
+    }
+
+    userInFlightSpend.set(resolvedUserId, currentInFlight + amountNgn);
+
+    // Durable DB reservation
+    try {
+      await db.upsertVirtualAccountTransactionRecord({
+        id: reservationRecordId,
+        provider: 'paystack',
+        depositId: reservationId,
+        userId: resolvedUserId,
+        sourceCurrency: 'ngn',
+        destinationCurrency: 'ngn',
+        sourceAmount: amountNgn.toFixed(2),
+        destinationAmount: (-amountNgn).toFixed(2),
+        paymentRail: 'utility_reservation',
+        status: 'submitted',
+        depositReference: idempotencyKey || reservationId,
+        rawPayload: {
+          service: serviceType,
+          amountNgn,
+          expiresAt: Date.now() + 5 * 60 * 1000,
+          idempotencyKey,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+    } catch (err) {
+      console.warn('[sivanUtilityService] Could not persist durable reservation record to DB:', err);
+    }
+
+    // Ledger hold
+    await createBalanceLedgerEntry(
+      {
+        userId: resolvedUserId,
+        asset: 'ngn',
+        amount: amountNgn.toFixed(2),
+        kind: 'hold',
+        status: 'completed',
+        sourceType: 'utility_reservation',
+        sourceId: reservationId,
+        description: `In-flight utility reservation: ${amountNgn} NGN`,
+        transferId: reservationId,
+      },
+      { actorType: 'system', actorId: resolvedUserId }
+    ).catch(() => null);
+  });
+
+  let succeeded = false;
   try {
-    return await work(available);
+    const res = await work(available);
+    succeeded = true;
+    return res;
   } finally {
+    // Release in-flight spend
     const remaining = (userInFlightSpend.get(resolvedUserId) || 0) - amountNgn;
     if (remaining <= 0) {
       userInFlightSpend.delete(resolvedUserId);
     } else {
       userInFlightSpend.set(resolvedUserId, remaining);
+    }
+
+    if (!succeeded) {
+      // Purchase failed or aborted: release reservation record and ledger hold
+      try {
+        await db.upsertVirtualAccountTransactionRecord({
+          id: reservationRecordId,
+          provider: 'paystack',
+          depositId: reservationId,
+          userId: resolvedUserId,
+          sourceCurrency: 'ngn',
+          destinationCurrency: 'ngn',
+          sourceAmount: amountNgn.toFixed(2),
+          destinationAmount: '0.00',
+          paymentRail: 'utility_reservation',
+          status: 'failed',
+          depositReference: idempotencyKey || reservationId,
+          createdAt: now,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch {}
+
+      await createBalanceLedgerEntry(
+        {
+          userId: resolvedUserId,
+          asset: 'ngn',
+          amount: amountNgn.toFixed(2),
+          kind: 'hold_release',
+          status: 'completed',
+          sourceType: 'utility_reservation',
+          sourceId: reservationId,
+          description: `Release utility reservation: ${amountNgn} NGN`,
+          transferId: `rel_${reservationId}`,
+        },
+        { actorType: 'system', actorId: resolvedUserId }
+      ).catch(() => null);
+    } else {
+      // Purchase succeeded: mark reservation record completed
+      try {
+        await db.upsertVirtualAccountTransactionRecord({
+          id: reservationRecordId,
+          provider: 'paystack',
+          depositId: reservationId,
+          userId: resolvedUserId,
+          sourceCurrency: 'ngn',
+          destinationCurrency: 'ngn',
+          sourceAmount: amountNgn.toFixed(2),
+          destinationAmount: '0.00',
+          paymentRail: 'utility_reservation',
+          status: 'completed',
+          depositReference: idempotencyKey || reservationId,
+          createdAt: now,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch {}
     }
   }
 }
@@ -207,12 +387,21 @@ export async function getUserNgnBalance(userId: string): Promise<number> {
   }
 
   const allTx = await db.listVirtualAccountTransactions();
-  const userTxs = allTx.filter((tx) => (tx.userId === resolvedUserId || tx.userId === userId) && tx.status === 'completed');
+  const userTxs = allTx.filter((tx) => (tx.userId === resolvedUserId || tx.userId === userId));
 
   let balance = 0;
+  const nowMs = Date.now();
   for (const tx of userTxs) {
-    const amount = Number(tx.destinationAmount || 0);
-    balance += amount;
+    if (tx.status === 'completed') {
+      balance += Number(tx.destinationAmount || 0);
+    } else if (tx.status === 'submitted' && tx.paymentRail === 'utility_reservation') {
+      const createdAtMs = new Date(tx.createdAt).getTime();
+      const expiresAtMs = (tx.rawPayload as any)?.expiresAt || (createdAtMs + 5 * 60 * 1000);
+      if (nowMs < expiresAtMs) {
+        // destinationAmount is negative (-amountNgn)
+        balance += Number(tx.destinationAmount || 0);
+      }
+    }
   }
   return Math.max(0, Math.round(balance * 100) / 100);
 }
@@ -247,6 +436,8 @@ async function recordUtilityDebit(input: {
   serviceType: string;
   reference: string;
   amountNgn: number;
+  reservationId?: string;
+  idempotencyKey?: string;
   rawPayload: unknown;
 }): Promise<void> {
   const resolvedUserId = await resolvePaymentUserId(input.userId).catch(() => input.userId);
@@ -277,7 +468,7 @@ async function recordUtilityDebit(input: {
     destinationAmount: (-input.amountNgn).toFixed(2), // Debit is recorded as negative
     paymentRail: `utility_${input.providerName}_${input.serviceType}`,
     status: 'completed',
-    depositReference: input.reference,
+    depositReference: input.idempotencyKey || input.reference,
     rawPayload: input.rawPayload,
     createdAt: now,
     updatedAt: now,
@@ -294,11 +485,14 @@ async function recordUtilityDebit(input: {
       txRecord.virtualAccountId = undefined;
       await db.upsertVirtualAccountTransactionRecord(txRecord).catch((retryErr) => {
         console.error('[sivanUtilityService] Critical: failed fallback virtual account transaction upsert:', retryErr);
+        throw retryErr;
       });
+    } else {
+      throw err;
     }
   }
 
-  // Record in unified balance ledger
+  // Record in unified balance ledger - consumes the hold using matching reservation sourceId
   if (validUserId) {
     await createBalanceLedgerEntry(
       {
@@ -307,8 +501,8 @@ async function recordUtilityDebit(input: {
         amount: input.amountNgn.toFixed(2),
         kind: 'debit_transfer',
         status: 'completed',
-        sourceType: `utility_${input.serviceType}`,
-        sourceId: input.reference,
+        sourceType: 'utility_reservation',
+        sourceId: input.reservationId || input.reference,
         description: `Utility purchase (${input.serviceType}) via ${input.providerName.toUpperCase()}: ${input.amountNgn} NGN`,
         transferId: input.reference,
       },
@@ -350,11 +544,15 @@ export async function executeAirtimePurchase(
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
   if (req.idempotencyKey) {
-    const cached = getCachedReceipt(req.idempotencyKey);
+    const cached = await getCachedReceipt(req.idempotencyKey);
     if (cached) return cached;
   }
 
-  return withBalanceReservation(resolvedUserId, req.amountNgn, async (balance) => {
+  const reservationId = req.idempotencyKey
+    ? `res_${req.idempotencyKey}`
+    : `res_${crypto.randomUUID()}`;
+
+  return withBalanceReservation(resolvedUserId, req.amountNgn, reservationId, 'airtime', req.idempotencyKey, async (balance) => {
     // 2 & 3. Upstream fulfilment through the chain configured for airtime
     await ensureUtilityRoutingLoaded();
     const airtimeKey = req.idempotencyKey
@@ -364,34 +562,8 @@ export async function executeAirtimePurchase(
       'airtime',
       'purchaseAirtime',
       (provider) => provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator, airtimeKey),
-      // Airtime costs us close to face value, so the amount is a fair proxy for
-      // what it draws from the float.
       { costNgn: req.amountNgn }
     );
-
-    // 4. Atomic ledger debit
-    await recordUtilityDebit({
-      userId: resolvedUserId,
-      providerName,
-      serviceType: 'airtime',
-      reference: result.reference,
-      amountNgn: req.amountNgn,
-      rawPayload: result.rawPayload,
-    });
-
-    await recordUtilityTransaction({
-      id: result.reference,
-      category: 'airtime',
-      provider: providerName,
-      serviceId: operator,
-      accountOrPhone: normalizedPhone,
-      amountNgn: req.amountNgn,
-      amountUsdc: Math.round((req.amountNgn / 1600) * 100) / 100,
-      channel: 'webapp',
-      userAddressOrId: resolvedUserId,
-      tokenOrReceipt: result.reference,
-      status: 'success',
-    }).catch(() => null);
 
     const now = new Date().toISOString();
     const remaining = balance - req.amountNgn;
@@ -426,6 +598,60 @@ export async function executeAirtimePurchase(
       formattedText,
     };
     cacheReceipt(req.idempotencyKey, receipt);
+
+    // 4. Atomic ledger debit with recoverable incident logging
+    try {
+      await recordUtilityDebit({
+        userId: resolvedUserId,
+        providerName,
+        serviceType: 'airtime',
+        reference: result.reference,
+        amountNgn: req.amountNgn,
+        reservationId,
+        idempotencyKey: req.idempotencyKey,
+        rawPayload: {
+          ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
+          idempotencyKey: req.idempotencyKey,
+          cachedReceipt: receipt,
+        },
+      });
+
+      await recordUtilityTransaction({
+        id: result.reference,
+        category: 'airtime',
+        provider: providerName,
+        serviceId: operator,
+        accountOrPhone: normalizedPhone,
+        amountNgn: req.amountNgn,
+        amountUsdc: 0,
+        channel: (req.channel as any) || 'webapp',
+        userAddressOrId: resolvedUserId,
+        tokenOrReceipt: result.reference,
+        status: 'success',
+      }).catch(() => null);
+    } catch (dbErr: any) {
+      console.error(
+        `[sivanUtilityService] CRITICAL: Airtime vended upstream (${result.reference}) but post-delivery ledger recording failed:`,
+        dbErr
+      );
+      await createSystemIncident({
+        provider: providerName,
+        affectedService: 'virtual_accounts',
+        severity: 'critical',
+        message: `Post-delivery utility recording failed for airtime reference ${result.reference} (${req.amountNgn} NGN). Delivery succeeded upstream.`,
+        createdBy: 'utility_service_recovery',
+        metadata: {
+          service: 'airtime',
+          reference: result.reference,
+          phone: normalizedPhone,
+          operator,
+          amountNgn: req.amountNgn,
+          userId: resolvedUserId,
+          error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+        },
+      }).catch(() => null);
+    }
+
     return receipt;
   });
 }
@@ -469,11 +695,15 @@ export async function executeDataPurchase(
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
   if (req.idempotencyKey) {
-    const cached = getCachedReceipt(req.idempotencyKey);
+    const cached = await getCachedReceipt(req.idempotencyKey);
     if (cached) return cached;
   }
 
-  return withBalanceReservation(resolvedUserId, amountNgn, async (balance) => {
+  const reservationId = req.idempotencyKey
+    ? `res_${req.idempotencyKey}`
+    : `res_${crypto.randomUUID()}`;
+
+  return withBalanceReservation(resolvedUserId, amountNgn, reservationId, 'data', req.idempotencyKey, async (balance) => {
     await ensureUtilityRoutingLoaded();
     const dataKey = req.idempotencyKey
       ? `sivan_data_${req.idempotencyKey}`
@@ -493,37 +723,7 @@ export async function executeDataPurchase(
       dispatchedPlanCode = providerPlanCode;
       return provider.purchaseDataBundle(normalizedPhone, providerPlanCode, amountNgn, operator, dataKey);
     },
-    /**
-     * The float is drawn down by the WHOLESALE cost, not the retail price, so
-     * the markup must not count toward affordability. When the cost has never
-     * been synced it is left undefined rather than substituted: skipping a
-     * provider over a number we invented is exactly what this is meant to
-     * prevent.
-     */
     typeof bundlePlan.costPriceNgn === 'number' ? { costNgn: bundlePlan.costPriceNgn } : {});
-
-    await recordUtilityDebit({
-      userId: resolvedUserId,
-      providerName,
-      serviceType: 'data',
-      reference: result.reference,
-      amountNgn,
-      rawPayload: result.rawPayload,
-    });
-
-    await recordUtilityTransaction({
-      id: result.reference,
-      category: 'data',
-      provider: providerName,
-      serviceId: bundlePlan.bundleSize,
-      accountOrPhone: normalizedPhone,
-      amountNgn,
-      amountUsdc: Math.round((amountNgn / 1600) * 100) / 100,
-      channel: 'webapp',
-      userAddressOrId: resolvedUserId,
-      tokenOrReceipt: result.reference,
-      status: 'success',
-    }).catch(() => null);
 
     const now = new Date().toISOString();
     const remaining = balance - amountNgn;
@@ -535,9 +735,6 @@ export async function executeDataPurchase(
       `Plan: ${bundlePlan.bundleSize} (${bundlePlan.network.toUpperCase()})`,
       `Provider Plan: ${dispatchedPlanCode}`,
       `Recipient: ${normalizedPhone}`,
-      // The catalogue price, which is what the ledger is actually debited by.
-      // These previously disagreed: the ledger took the catalogue price while
-      // the receipt quoted whatever the caller had asked for.
       `Amount: ${amountNgn.toLocaleString()} NGN`,
       'Platform Fee: 0 NGN (Free)',
       `Total Debited: ${amountNgn.toLocaleString()} NGN`,
@@ -563,6 +760,61 @@ export async function executeDataPurchase(
       formattedText,
     };
     cacheReceipt(req.idempotencyKey, receipt);
+
+    // 4. Atomic ledger debit with recoverable incident logging
+    try {
+      await recordUtilityDebit({
+        userId: resolvedUserId,
+        providerName,
+        serviceType: 'data',
+        reference: result.reference,
+        amountNgn,
+        reservationId,
+        idempotencyKey: req.idempotencyKey,
+        rawPayload: {
+          ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
+          idempotencyKey: req.idempotencyKey,
+          cachedReceipt: receipt,
+        },
+      });
+
+      await recordUtilityTransaction({
+        id: result.reference,
+        category: 'data',
+        provider: providerName,
+        serviceId: bundlePlan.bundleSize,
+        accountOrPhone: normalizedPhone,
+        amountNgn,
+        amountUsdc: 0,
+        channel: (req.channel as any) || 'webapp',
+        userAddressOrId: resolvedUserId,
+        tokenOrReceipt: result.reference,
+        status: 'success',
+      }).catch(() => null);
+    } catch (dbErr: any) {
+      console.error(
+        `[sivanUtilityService] CRITICAL: Data vended upstream (${result.reference}) but post-delivery ledger recording failed:`,
+        dbErr
+      );
+      await createSystemIncident({
+        provider: providerName,
+        affectedService: 'virtual_accounts',
+        severity: 'critical',
+        message: `Post-delivery utility recording failed for data bundle reference ${result.reference} (${amountNgn} NGN). Delivery succeeded upstream.`,
+        createdBy: 'utility_service_recovery',
+        metadata: {
+          service: 'data',
+          reference: result.reference,
+          phone: normalizedPhone,
+          operator,
+          plan: bundlePlan.bundleSize,
+          amountNgn,
+          userId: resolvedUserId,
+          error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+        },
+      }).catch(() => null);
+    }
+
     return receipt;
   });
 }
@@ -627,11 +879,15 @@ export async function executeElectricityPayment(
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
   if (req.idempotencyKey) {
-    const cached = getCachedReceipt(req.idempotencyKey);
+    const cached = await getCachedReceipt(req.idempotencyKey);
     if (cached) return cached;
   }
 
-  return withBalanceReservation(resolvedUserId, req.amountNgn, async (balance) => {
+  const reservationId = req.idempotencyKey
+    ? `res_${req.idempotencyKey}`
+    : `res_${crypto.randomUUID()}`;
+
+  return withBalanceReservation(resolvedUserId, req.amountNgn, reservationId, 'electricity', req.idempotencyKey, async (balance) => {
     await ensureUtilityRoutingLoaded();
     const electricityKey = req.idempotencyKey
       ? `sivan_electricity_${req.idempotencyKey}`
@@ -646,29 +902,6 @@ export async function executeElectricityPayment(
         electricityKey
       )
     );
-
-    await recordUtilityDebit({
-      userId: resolvedUserId,
-      providerName,
-      serviceType: 'electricity',
-      reference: result.reference,
-      amountNgn: req.amountNgn,
-      rawPayload: result.rawPayload,
-    });
-
-    await recordUtilityTransaction({
-      id: result.reference,
-      category: 'electricity',
-      provider: providerName,
-      serviceId: req.disco,
-      accountOrPhone: req.meterNumber,
-      amountNgn: req.amountNgn,
-      amountUsdc: Math.round((req.amountNgn / 1600) * 100) / 100,
-      channel: 'webapp',
-      userAddressOrId: resolvedUserId,
-      tokenOrReceipt: result.token || result.reference,
-      status: 'success',
-    }).catch(() => null);
 
     const now = new Date().toISOString();
     const remaining = balance - req.amountNgn;
@@ -718,6 +951,61 @@ export async function executeElectricityPayment(
       formattedText: lines.join('\n'),
     };
     cacheReceipt(req.idempotencyKey, receipt);
+
+    // 4. Atomic ledger debit with recoverable incident logging
+    try {
+      await recordUtilityDebit({
+        userId: resolvedUserId,
+        providerName,
+        serviceType: 'electricity',
+        reference: result.reference,
+        amountNgn: req.amountNgn,
+        reservationId,
+        idempotencyKey: req.idempotencyKey,
+        rawPayload: {
+          ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
+          idempotencyKey: req.idempotencyKey,
+          cachedReceipt: receipt,
+        },
+      });
+
+      await recordUtilityTransaction({
+        id: result.reference,
+        category: 'electricity',
+        provider: providerName,
+        serviceId: req.disco,
+        accountOrPhone: req.meterNumber,
+        amountNgn: req.amountNgn,
+        amountUsdc: 0,
+        channel: (req.channel as any) || 'webapp',
+        userAddressOrId: resolvedUserId,
+        tokenOrReceipt: result.token || result.reference,
+        status: 'success',
+      }).catch(() => null);
+    } catch (dbErr: any) {
+      console.error(
+        `[sivanUtilityService] CRITICAL: Electricity token vended upstream (${result.reference}) but post-delivery ledger recording failed:`,
+        dbErr
+      );
+      await createSystemIncident({
+        provider: providerName,
+        affectedService: 'virtual_accounts',
+        severity: 'critical',
+        message: `Post-delivery utility recording failed for electricity reference ${result.reference} (${req.amountNgn} NGN). Delivery succeeded upstream.`,
+        createdBy: 'utility_service_recovery',
+        metadata: {
+          service: 'electricity',
+          reference: result.reference,
+          meterNumber: req.meterNumber,
+          disco: discoName,
+          token: result.token,
+          amountNgn: req.amountNgn,
+          userId: resolvedUserId,
+          error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+        },
+      }).catch(() => null);
+    }
+
     return receipt;
   });
 }

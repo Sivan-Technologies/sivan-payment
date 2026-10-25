@@ -124,7 +124,7 @@ export async function updateMoneyGramControls(
   updatedBy = 'admin'
 ): Promise<MoneyGramControls> {
   const current = await getMoneyGramControls();
-  moneyGramControls = {
+  const nextControls: MoneyGramControls = {
     ...current,
     ...patch,
     updatedAt: nowIso(),
@@ -137,10 +137,9 @@ export async function updateMoneyGramControls(
     resourceType: 'moneygram_controls',
     resourceId: 'global',
     severity: 'info',
-    metadata: { settings: moneyGramControls },
-  }).catch((err) => {
-    console.warn('[feature-controls] Failed to persist moneygram controls audit log:', err);
+    metadata: { settings: nextControls },
   });
+  moneyGramControls = nextControls;
   return { ...moneyGramControls };
 }
 
@@ -170,7 +169,7 @@ export async function updateUtilitiesControls(
   updatedBy = 'admin'
 ): Promise<UtilitiesControls> {
   const current = await getUtilitiesControls();
-  utilitiesControls = {
+  const nextControls: UtilitiesControls = {
     ...current,
     ...patch,
     updatedAt: nowIso(),
@@ -183,10 +182,9 @@ export async function updateUtilitiesControls(
     resourceType: 'utilities_controls',
     resourceId: 'global',
     severity: 'info',
-    metadata: { settings: utilitiesControls },
-  }).catch((err) => {
-    console.warn('[feature-controls] Failed to persist utilities controls audit log:', err);
+    metadata: { settings: nextControls },
   });
+  utilitiesControls = nextControls;
   return { ...utilitiesControls };
 }
 
@@ -278,8 +276,8 @@ export async function listUtilitiesTransactions(userAddressOrId?: string): Promi
         serviceId: tx.depositReference || 'unknown',
         accountOrPhone,
         amountNgn: absAmountNgn,
-        amountUsdc: Math.round((absAmountNgn / 1600) * 100) / 100,
-        channel: 'webapp',
+        amountUsdc: 0,
+        channel: (rawPayload?.channel || 'webapp') as any,
         userAddressOrId: tx.userId || 'N/A',
         tokenOrReceipt: rawPayload?.token || rawPayload?.receipt || tx.depositReference,
         status: tx.status === 'completed' ? 'success' : (tx.status === 'failed' ? 'failed' : 'pending'),
