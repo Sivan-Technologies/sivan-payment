@@ -12,7 +12,6 @@
 import {
   paystackBaseUrl,
   paystackHeaders,
-  paystackMode,
   isPaystackConfigured,
 } from '../../config/paystackConfig.js';
 import type {
@@ -85,19 +84,6 @@ export async function purchaseAirtime(
 ): Promise<ProviderAirtimeResult> {
   const reference = `airtime_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  // In test mode, return deterministic sandbox fulfillment
-  if (paystackMode() === 'test') {
-    return {
-      reference,
-      amountNgn,
-      phone,
-      operator,
-      status: 'success',
-      message: `${operator.toUpperCase()} ${amountNgn} NGN airtime successfully delivered to ${phone}`,
-      rawPayload: { mode: 'test', operator, phone, amountNgn, reference },
-    };
-  }
-
   const payload = {
     phone,
     amount: amountNgn * 100, // Paystack operates in Kobo
@@ -129,19 +115,6 @@ export async function purchaseDataBundle(
 ): Promise<ProviderDataResult> {
   const reference = `data_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  if (paystackMode() === 'test') {
-    return {
-      reference,
-      amountNgn,
-      phone,
-      operator,
-      planCode,
-      status: 'success',
-      message: `${operator.toUpperCase()} data bundle (${planCode}) credited to ${phone}`,
-      rawPayload: { mode: 'test', operator, phone, planCode, amountNgn, reference },
-    };
-  }
-
   const payload = {
     phone,
     amount: amountNgn * 100,
@@ -171,18 +144,6 @@ export async function inquireElectricityMeter(
   disco: DiscoCode,
   meterType: MeterType
 ): Promise<ElectricityInquiryResponse> {
-  if (paystackMode() === 'test') {
-    return {
-      meterNumber,
-      disco,
-      discoName: disco.toUpperCase(),
-      meterType,
-      customerName: 'ADEKUNLE OLA (SIVAN TEST HOLDER)',
-      customerAddress: '14 Bwari Road, Kubwa, Abuja',
-      minimumAmountNgn: 1000,
-    };
-  }
-
   const url = `${paystackBaseUrl()}/bill/validate?meter_number=${encodeURIComponent(meterNumber)}&service_type=${encodeURIComponent(disco)}&type=${encodeURIComponent(meterType)}`;
   const response = await fetch(url, {
     method: 'GET',
@@ -223,25 +184,6 @@ export async function payElectricityBill(
     idempotencyKey: string
 ): Promise<ProviderElectricityResult> {
   const reference = `disco_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-  if (paystackMode() === 'test') {
-    const token = '4521-8930-1124-7839-9021';
-    const units = `${(amountNgn / 110).toFixed(1)} kWh`;
-
-    return {
-      reference,
-      amountNgn,
-      meterNumber,
-      disco,
-      meterType,
-      customerName: customerName || 'ADEKUNLE OLA (SIVAN TEST HOLDER)',
-      token: meterType === 'prepaid' ? token : undefined,
-      units: meterType === 'prepaid' ? units : undefined,
-      status: 'success',
-      message: `Electricity payment of ${amountNgn} NGN successful`,
-      rawPayload: { mode: 'test', meterNumber, disco, amountNgn, token, units },
-    };
-  }
 
   const payload = {
     meter_number: meterNumber,
@@ -313,45 +255,28 @@ export class PaystackUtilityProvider implements IUtilityProvider {
     return plans[operator] || plans.mtn;
   }
 
-  async getAirtimeCashRate(operator: TelcoOperator): Promise<AirtimeCashRate> {
-    const rates: Record<TelcoOperator, number> = {
-      mtn: 0.85,
-      airtel: 0.82,
-      glo: 0.78,
-      '9mobile': 0.75,
-    };
-    const rate = rates[operator] || 0.80;
-    return {
-      operator,
-      rate,
-      percent: `${Math.round(rate * 100)}%`,
-      minAmountNgn: 1000,
-      maxAmountNgn: 20000,
-    };
+  async getAirtimeCashRate(_operator: TelcoOperator): Promise<AirtimeCashRate> {
+    throw new PaystackUtilityApiError(
+      'Airtime to cash is not supported on Paystack rails',
+      '/bill/airtime-cash',
+      501
+    );
   }
 
-  async initiateAirtimeToCash(input: AirtimeCashInitiateInput): Promise<AirtimeCashInitiateResult> {
-    const rateObj = await this.getAirtimeCashRate(input.operator);
-    const payoutAmountNgn = Math.round(input.amountNgn * rateObj.rate);
-    const sessionId = `aircash_ps_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    return {
-      sessionId,
-      rate: rateObj.rate,
-      payoutAmountNgn,
-      message: `OTP sent to ${input.phone}. Please submit OTP to confirm conversion of ${input.amountNgn} NGN to ${payoutAmountNgn} NGN cash.`,
-      rawPayload: { provider: 'paystack', sessionId, input },
-    };
+  async initiateAirtimeToCash(_input: AirtimeCashInitiateInput): Promise<AirtimeCashInitiateResult> {
+    throw new PaystackUtilityApiError(
+      'Airtime to cash is not supported on Paystack rails',
+      '/bill/airtime-cash/initiate',
+      501
+    );
   }
 
-  async confirmAirtimeToCash(input: AirtimeCashConfirmInput): Promise<AirtimeCashConfirmResult> {
-    const reference = `aircash_tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    return {
-      reference,
-      creditedAmountNgn: 8200,
-      status: 'success',
-      message: 'Airtime converted successfully and credited to wallet.',
-      rawPayload: { provider: 'paystack', reference, sessionId: input.sessionId },
-    };
+  async confirmAirtimeToCash(_input: AirtimeCashConfirmInput): Promise<AirtimeCashConfirmResult> {
+    throw new PaystackUtilityApiError(
+      'Airtime to cash is not supported on Paystack rails',
+      '/bill/airtime-cash/confirm',
+      501
+    );
   }
 
   async purchaseAirtime(

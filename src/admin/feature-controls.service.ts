@@ -1,5 +1,7 @@
 import { nowIso } from '../shared/id.js';
 import { MONEYGRAM_GLOBAL_CORRIDORS } from '../moneygram/data/corridors.data.js';
+import { db } from '../database/json-database.js';
+import { createAuditLog } from '../audit/audit.service.js';
 
 export interface MoneyGramControls {
   enabled: boolean;
@@ -87,9 +89,9 @@ let utilitiesControls: UtilitiesControls = {
   airtimeEnabled: true,
   dataEnabled: true,
   electricityEnabled: true,
-  cableTvEnabled: true,
-  primaryProvider: 'vtpass',
-  fallbackProvider: 'baxi',
+  cableTvEnabled: false,
+  primaryProvider: 'paystack',
+  fallbackProvider: 'vtu_ng',
   maintenanceMode: false,
   maintenanceReason: 'Bill payment aggregators undergoing scheduled maintenance.',
   discountPercent: 1.0,
@@ -97,82 +99,22 @@ let utilitiesControls: UtilitiesControls = {
   updatedBy: 'system',
 };
 
-const moneyGramTransactions: MoneyGramTransactionRecord[] = [
-  {
-    id: 'mg_tx_1727781001',
-    mode: 'withdraw',
-    amountUsdc: 25.00,
-    targetCurrency: 'NGN',
-    targetAmount: 40500,
-    channel: 'minipay',
-    userAddressOrId: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
-    pickupPin: '4829-1049',
-    status: 'ready_for_pickup',
-    moreInfoUrl: 'https://ext-stellar.moneygram.com/stellarsepservice/sep24/transaction/more_info?id=mg_tx_1727781001',
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-    updatedAt: new Date(Date.now() - 1800000).toISOString(),
-  },
-  {
-    id: 'mg_tx_1727778500',
-    mode: 'withdraw',
-    amountUsdc: 45.00,
-    targetCurrency: 'KES',
-    targetAmount: 5841,
-    channel: 'telegram',
-    userAddressOrId: 'tg_9827104',
-    pickupPin: '9012-7741',
-    status: 'completed',
-    moreInfoUrl: 'https://ext-stellar.moneygram.com/stellarsepservice/sep24/transaction/more_info?id=mg_tx_1727778500',
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    updatedAt: new Date(Date.now() - 82800000).toISOString(),
-  },
-  {
-    id: 'mg_tx_1727764200',
-    mode: 'deposit',
-    amountUsdc: 30.00,
-    targetCurrency: 'GHS',
-    targetAmount: 465,
-    channel: 'whatsapp',
-    userAddressOrId: 'wa_233501234567',
-    status: 'completed',
-    moreInfoUrl: 'https://ext-stellar.moneygram.com/stellarsepservice/sep24/transaction/more_info?id=mg_tx_1727764200',
-    createdAt: new Date(Date.now() - 172800000).toISOString(),
-    updatedAt: new Date(Date.now() - 172000000).toISOString(),
-  }
-];
-
-const utilityTransactions: UtilityTransactionRecord[] = [
-  {
-    id: 'util_98124',
-    category: 'airtime',
-    provider: 'vtpass',
-    serviceId: 'mtn',
-    accountOrPhone: '08031234567',
-    amountNgn: 2000,
-    amountUsdc: 1.25,
-    channel: 'telegram',
-    userAddressOrId: 'tg_9827104',
-    tokenOrReceipt: 'RC-99881122',
-    status: 'success',
-    createdAt: new Date(Date.now() - 7200000).toISOString(),
-  },
-  {
-    id: 'util_98125',
-    category: 'electricity',
-    provider: 'vtpass',
-    serviceId: 'ikeja-electric',
-    accountOrPhone: '11029482910',
-    amountNgn: 10000,
-    amountUsdc: 6.20,
-    channel: 'minipay',
-    userAddressOrId: '0x4a1A9cf30A86b2b333D1a743181aAE71a50BAFBc',
-    tokenOrReceipt: 'TOKEN: 4892-1092-4820-1940-2810',
-    status: 'success',
-    createdAt: new Date(Date.now() - 14400000).toISOString(),
-  }
-];
+const moneyGramTransactions: MoneyGramTransactionRecord[] = [];
+const utilityTransactions: UtilityTransactionRecord[] = [];
 
 export async function getMoneyGramControls(): Promise<MoneyGramControls> {
+  try {
+    const latest = await db.latestAuditLogByAction('moneygram.controls.updated').catch(() => null);
+    const saved = (latest?.metadata as any)?.settings as Partial<MoneyGramControls> | undefined;
+    if (saved) {
+      moneyGramControls = {
+        ...moneyGramControls,
+        ...saved,
+      };
+    }
+  } catch (err) {
+    console.warn('[feature-controls] Could not read persisted moneygram controls:', err);
+  }
   return { ...moneyGramControls };
 }
 
@@ -180,16 +122,40 @@ export async function updateMoneyGramControls(
   patch: Partial<MoneyGramControls>,
   updatedBy = 'admin'
 ): Promise<MoneyGramControls> {
+  const current = await getMoneyGramControls();
   moneyGramControls = {
-    ...moneyGramControls,
+    ...current,
     ...patch,
     updatedAt: nowIso(),
     updatedBy,
   };
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: updatedBy,
+    action: 'moneygram.controls.updated',
+    resourceType: 'moneygram_controls',
+    resourceId: 'global',
+    severity: 'info',
+    metadata: { settings: moneyGramControls },
+  }).catch((err) => {
+    console.warn('[feature-controls] Failed to persist moneygram controls audit log:', err);
+  });
   return { ...moneyGramControls };
 }
 
 export async function getUtilitiesControls(): Promise<UtilitiesControls> {
+  try {
+    const latest = await db.latestAuditLogByAction('utilities.controls.updated').catch(() => null);
+    const saved = (latest?.metadata as any)?.settings as Partial<UtilitiesControls> | undefined;
+    if (saved) {
+      utilitiesControls = {
+        ...utilitiesControls,
+        ...saved,
+      };
+    }
+  } catch (err) {
+    console.warn('[feature-controls] Could not read persisted utilities controls:', err);
+  }
   return { ...utilitiesControls };
 }
 
@@ -197,12 +163,24 @@ export async function updateUtilitiesControls(
   patch: Partial<UtilitiesControls>,
   updatedBy = 'admin'
 ): Promise<UtilitiesControls> {
+  const current = await getUtilitiesControls();
   utilitiesControls = {
-    ...utilitiesControls,
+    ...current,
     ...patch,
     updatedAt: nowIso(),
     updatedBy,
   };
+  await createAuditLog({
+    actorType: 'admin',
+    actorId: updatedBy,
+    action: 'utilities.controls.updated',
+    resourceType: 'utilities_controls',
+    resourceId: 'global',
+    severity: 'info',
+    metadata: { settings: utilitiesControls },
+  }).catch((err) => {
+    console.warn('[feature-controls] Failed to persist utilities controls audit log:', err);
+  });
   return { ...utilitiesControls };
 }
 
@@ -270,13 +248,58 @@ export async function recordMoneyGramTransaction(
 }
 
 export async function listUtilitiesTransactions(userAddressOrId?: string): Promise<UtilityTransactionRecord[]> {
+  const dbTxList = await db.listVirtualAccountTransactions().catch(() => []);
+  const mappedDbRecords: UtilityTransactionRecord[] = dbTxList
+    .filter((tx) => (tx.paymentRail || '').startsWith('utility_'))
+    .map((tx) => {
+      const parts = (tx.paymentRail || '').split('_');
+      // paymentRail format: utility_{provider}_{serviceType}
+      const provider = parts[1] || tx.provider || 'unknown';
+      const category = (parts[2] || 'airtime') as UtilityTransactionRecord['category'];
+      const rawPayload = (tx.rawPayload || {}) as any;
+      const accountOrPhone = String(
+        rawPayload?.phone ||
+        rawPayload?.meterNumber ||
+        rawPayload?.recipientOrMeter ||
+        rawPayload?.accountOrPhone ||
+        'N/A'
+      );
+      const absAmountNgn = Math.abs(Number(tx.sourceAmount || tx.destinationAmount || 0));
+      return {
+        id: tx.depositId || tx.id,
+        category,
+        provider,
+        serviceId: tx.depositReference || 'unknown',
+        accountOrPhone,
+        amountNgn: absAmountNgn,
+        amountUsdc: Math.round((absAmountNgn / 1600) * 100) / 100,
+        channel: 'webapp',
+        userAddressOrId: tx.userId || 'N/A',
+        tokenOrReceipt: rawPayload?.token || rawPayload?.receipt || tx.depositReference,
+        status: tx.status === 'completed' ? 'success' : (tx.status === 'failed' ? 'failed' : 'pending'),
+        createdAt: tx.createdAt,
+      };
+    });
+
+  const merged = [...utilityTransactions, ...mappedDbRecords];
+  const seen = new Set<string>();
+  const deduplicated: UtilityTransactionRecord[] = [];
+  for (const item of merged) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      deduplicated.push(item);
+    }
+  }
+
+  deduplicated.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
   if (userAddressOrId) {
-    const normalized = userAddressOrId.toLowerCase();
-    return utilityTransactions.filter(
-      (tx) => tx.userAddressOrId.toLowerCase() === normalized
+    const normalized = userAddressOrId.toLowerCase().trim();
+    return deduplicated.filter(
+      (tx) => tx.userAddressOrId.toLowerCase().trim() === normalized
     );
   }
-  return [...utilityTransactions];
+  return deduplicated;
 }
 
 export async function recordUtilityTransaction(

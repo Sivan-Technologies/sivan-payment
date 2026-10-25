@@ -46,28 +46,28 @@ export const updateUtilityRoutingSchema = z.object({
   updatedBy: z.string().optional(),
 });
 
-let loaded = false;
+let lastLoadedAt = 0;
+const ROUTING_CACHE_TTL_MS = 10_000;
 
 /**
- * Loads persisted routing into the registry once per process.
+ * Loads persisted routing into the registry with a 10s TTL cache.
  *
- * Called before any purchase so a provider switch made on another instance is
- * picked up rather than silently ignored.
+ * Called before purchases and admin operations so provider switches made
+ * on other instances are picked up without requiring server restart.
  */
-export async function ensureUtilityRoutingLoaded(): Promise<UtilityRoutingConfig> {
-  if (loaded) return getUtilityRouting();
+export async function ensureUtilityRoutingLoaded(forceReload = false): Promise<UtilityRoutingConfig> {
+  const now = Date.now();
+  if (!forceReload && now - lastLoadedAt < ROUTING_CACHE_TTL_MS) {
+    return getUtilityRouting();
+  }
   try {
-    const data = await db.read();
-    const latest = (data.auditLogs ?? [])
-      .filter((log) => log.action === ROUTING_AUDIT_ACTION)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-
+    const latest = await db.latestAuditLogByAction(ROUTING_AUDIT_ACTION).catch(() => null);
     const saved = (latest?.metadata as any)?.routing as Partial<UtilityRoutingConfig> | undefined;
     if (saved) setUtilityRouting(saved);
   } catch (err) {
     console.warn('[utility-routing] Could not read persisted routing, using defaults:', err);
   }
-  loaded = true;
+  lastLoadedAt = Date.now();
   return getUtilityRouting();
 }
 
@@ -130,6 +130,7 @@ export async function setUtilityRoutingConfig(
   };
 
   const applied = setUtilityRouting(merged);
+  lastLoadedAt = Date.now();
 
   await createAuditLog({
     actorType: 'admin',

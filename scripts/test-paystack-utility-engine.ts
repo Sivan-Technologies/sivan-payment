@@ -23,6 +23,8 @@ process.env.UTILITY_ROUTING = JSON.stringify({
   failover: { airtime: false, data: false, electricity: false },
 });
 
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import assert from 'node:assert/strict';
 import {
   classifySmeApiMessage,
@@ -39,10 +41,71 @@ import {
 } from '../src/ngn/provider/provider-float-cache.js';
 import { listUtilityProviders } from '../src/ngn/provider/utility-registry.js';
 
+function startPaystackStub(): Promise<http.Server> {
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const path = url.pathname;
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const body = raw ? JSON.parse(raw) : {};
+      res.setHeader('content-type', 'application/json');
+
+      if (path === '/bill/charge') {
+        const isElectricity = !!body.meter_number;
+        const ref = body.reference || `paystack_ref_${Date.now()}`;
+        res.writeHead(200);
+        return res.end(
+          JSON.stringify({
+            status: true,
+            message: isElectricity ? 'Electricity charged' : 'Charge successful',
+            data: {
+              reference: ref,
+              amount: body.amount,
+              customer_name: isElectricity ? 'ADEKUNLE OLA (SIVAN TEST HOLDER)' : undefined,
+              token: isElectricity ? '4521-8930-1124-7839-9021' : undefined,
+              units: isElectricity ? '34.2' : undefined,
+              plan: body.plan,
+            },
+          })
+        );
+      }
+
+      if (path === '/bill/validate') {
+        const disco = url.searchParams.get('service_type') || '';
+        const discoName = disco.toLowerCase() === 'abuja' ? 'Abuja Electricity' : 'Ikeja Electric';
+        res.writeHead(200);
+        return res.end(
+          JSON.stringify({
+            status: true,
+            message: 'Meter validated',
+            data: {
+              meter_number: url.searchParams.get('meter_number') || '45012345678',
+              provider_name: discoName,
+              customer_name: 'ADEKUNLE OLA (SIVAN TEST HOLDER)',
+              address: '12 Marina, Lagos',
+              minimum_amount: 1000,
+            },
+          })
+        );
+      }
+
+      res.writeHead(404);
+      res.end(JSON.stringify({ status: false, message: `stub: unknown path ${path}` }));
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
 async function main() {
   console.log('\n==================================================');
   console.log('🔷 SIVAN MULTI-PROVIDER UTILITY ENGINE TEST SUITE');
   console.log('==================================================\n');
+
+  const stubServer = await startPaystackStub();
+  const stubPort = (stubServer.address() as AddressInfo).port;
+  process.env.PAYSTACK_ALLOW_INSECURE_BASE_URL = 'true';
+  process.env.PAYSTACK_BASE_URL = `http://127.0.0.1:${stubPort}`;
 
   // Dynamic import ensures process.env is applied prior to module evaluation
   const { buildApp } = await import('../src/app.js');
@@ -216,15 +279,26 @@ async function main() {
     userId: testUserId,
     phone: '08021234567', // Airtel
     amountNgn: 1000,
+    idempotencyKey: 'idem_routed_airtime_1',
   });
 
   assert.equal(routedAirtimeReceipt.success, true);
   assert.equal(routedAirtimeReceipt.providerName, 'paystack');
   ok('airtime fulfils through the routed provider, not a caller-supplied one');
 
+  // Exact same key returns cached receipt without double debiting
+  const repeatedReceipt = await executeAirtimePurchase({
+    userId: testUserId,
+    phone: '08021234567',
+    amountNgn: 1000,
+    idempotencyKey: 'idem_routed_airtime_1',
+  });
+  assert.equal(repeatedReceipt.reference, routedAirtimeReceipt.reference);
+  ok('repeated airtime purchase with same idempotencyKey returns cached receipt');
+
   const balanceAfterRouted = await getUserNgnBalance(testUserId);
   assert.equal(balanceAfterRouted, 23000);
-  ok('user balance debited accurately across the routed rail');
+  ok('user balance debited accurately across the routed rail exactly once');
 
   // ─── 6. Mobile Data Bundle Purchase ───────────────────────────────
   console.log('\n══ 6. Data Bundle Purchase ══');
@@ -588,6 +662,7 @@ async function main() {
   __resetFloatCache();
 
   await app.close();
+  await new Promise<void>((resolve) => stubServer.close(() => resolve()));
 
   console.log('\n==================================================');
   console.log(`📊 RESULTS: ${passed} passed, 0 failed`);

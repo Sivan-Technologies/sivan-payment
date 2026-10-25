@@ -962,6 +962,7 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
   if (url.startsWith('/api/admin/ghs')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/approvals')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.includes('/sync') || url.includes('/reconciliation') || url.includes('/webhooks')) return ['ops', 'operator', 'engineering'].includes(role);
+  if (url.startsWith('/api/admin/utilities') || url.startsWith('/api/admin/moneygram')) return ['ops', 'operator', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/customers') && url.includes('/kyc-status')) return ['ops', 'operator', 'compliance'].includes(role);
 
   return false;

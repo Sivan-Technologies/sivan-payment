@@ -1,12 +1,16 @@
+// MUST be configured before any app modules are loaded
+process.env.DATABASE_PROVIDER = 'json';
+process.env.DATABASE_FILE = '.data/test-feature-controls.json';
 process.env.DATABASE_MODE = 'test';
-process.env.DATABASE_URL = '';
-import Fastify from 'fastify';
-import { adminRoutes } from '../src/admin/admin.routes.js';
-import { moneygramRoutes } from '../src/moneygram/routes/moneygram.routes.js';
-import { updateMoneyGramControls } from '../src/admin/feature-controls.service.js';
+process.env.NODE_ENV = 'test';
 
 async function run() {
   console.log('SIVAN PAYMENT — FEATURE CONTROLS & DYNAMIC FLAG TEST SUITE\n');
+
+  const { default: Fastify } = await import('fastify');
+  const { adminRoutes } = await import('../src/admin/admin.routes.js');
+  const { moneygramRoutes } = await import('../src/moneygram/routes/moneygram.routes.js');
+  const { updateMoneyGramControls } = await import('../src/admin/feature-controls.service.js');
 
   const app = Fastify();
   await adminRoutes(app);

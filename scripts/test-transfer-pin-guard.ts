@@ -70,7 +70,6 @@ async function run() {
     updatedAt: new Date().toISOString(),
   });
 
-=======
   // Configure PIN for user
   await setWithdrawalPin(testUserId, { pin: '849201' });
   assert(await hasWithdrawalPin(testUserId), 'User now has withdrawal PIN configured');
@@ -107,22 +106,6 @@ async function run() {
   });
   assert(true, 'New sender providing correct PIN authorizes transfer successfully');
 
-  // Simulate established transfer history by creating a ledger entry of a completed transfer to knownRecipient
-  const { createBalanceLedgerEntry } = await import('../src/balances/balance.service.js');
-  await createBalanceLedgerEntry({
-    userId: testUserId,
-    asset: 'usdc',
-    amount: '10.00',
-    kind: 'debit_transfer',
-    status: 'completed',
-    sourceType: 'p2p_transfer',
-    sourceId: `btx_mock_1_${testUserId}`,
-    description: 'P2P transfer',
-    destinationAddress: knownRecipient,
-    transferId: `btx_mock_1_${testUserId}`,
-    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-  } as any, { actorType: 'user', actorId: testUserId });
-=======
   // Simulate established transfer history by creating an audit log of a completed transfer to knownRecipient
   await createAuditLog({
     actorType: 'user',
@@ -193,20 +176,6 @@ async function run() {
 
   // Test 10: Velocity Cap: Simulate 3 recent transfers in the last 24h
   for (let i = 1; i <= 3; i++) {
-    await createBalanceLedgerEntry({
-      userId: testUserId,
-      asset: 'usdc',
-      amount: '8.00',
-      kind: 'debit_transfer',
-      status: 'completed',
-      sourceType: 'p2p_transfer',
-      sourceId: `btx_mock_recent_${i}_${testUserId}`,
-      description: `P2P transfer ${i}`,
-      destinationAddress: knownRecipient,
-      transferId: `btx_mock_recent_${i}_${testUserId}`,
-      createdAt: new Date().toISOString(),
-    } as any, { actorType: 'user', actorId: testUserId });
-=======
     await createAuditLog({
       actorType: 'user',
       actorId: testUserId,

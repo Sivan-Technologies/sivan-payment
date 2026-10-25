@@ -28,6 +28,7 @@ export interface AirtimePurchaseRequest {
   amountNgn: number;
   operator?: TelcoOperator;
   providerName?: string;
+  idempotencyKey?: string;
 }
 
 export interface DataBundlePurchaseRequest {
@@ -37,6 +38,7 @@ export interface DataBundlePurchaseRequest {
   planCode: string;
   amountNgn: number;
   providerName?: string;
+  idempotencyKey?: string;
 }
 
 export interface ElectricityInquiryRequest {
@@ -66,6 +68,7 @@ export interface ElectricityPaymentRequest {
   amountNgn: number;
   customerName?: string;
   providerName?: string;
+  idempotencyKey?: string;
 }
 
 export interface DataPlanOption {

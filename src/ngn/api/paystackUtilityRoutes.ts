@@ -65,6 +65,7 @@ const airtimeSchema = z.object({
   amountNgn: z.number().int().min(100, 'Minimum airtime is 100 NGN').max(50000, 'Maximum airtime is 50,000 NGN'),
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
 });
 
 const dataSchema = z.object({
@@ -74,6 +75,7 @@ const dataSchema = z.object({
   amountNgn: z.number().int().min(100, 'Minimum amount is 100 NGN'),
   operator: z.enum(['mtn', 'airtel', 'glo', '9mobile']).optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
 });
 
 const electricityInquirySchema = z.object({
@@ -115,6 +117,7 @@ const electricityPaymentSchema = z.object({
   amountNgn: z.number().int().min(1000, 'Minimum electricity recharge is 1,000 NGN'),
   customerName: z.string().optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
 });
 
 /**
@@ -200,11 +203,16 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   app.post('/api/ngn/utility/airtime', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(airtimeSchema, request.body);
     await requireSpendAuthorization(request, body.userId, body.pin);
+    const idempotencyKey =
+      body.idempotencyKey ||
+      (request.headers['x-idempotency-key'] as string | undefined) ||
+      (request.headers['idempotency-key'] as string | undefined);
     const receipt = await executeAirtimePurchase({
       userId: body.userId,
       phone: body.phone,
       amountNgn: body.amountNgn,
       operator: body.operator as TelcoOperator | undefined,
+      idempotencyKey,
     });
 
     return reply.code(200).send({
@@ -220,12 +228,17 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   app.post('/api/ngn/utility/data', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(dataSchema, request.body);
     await requireSpendAuthorization(request, body.userId, body.pin);
+    const idempotencyKey =
+      body.idempotencyKey ||
+      (request.headers['x-idempotency-key'] as string | undefined) ||
+      (request.headers['idempotency-key'] as string | undefined);
     const receipt = await executeDataPurchase({
       userId: body.userId,
       phone: body.phone,
       planCode: body.planCode,
       amountNgn: body.amountNgn,
       operator: body.operator as TelcoOperator | undefined,
+      idempotencyKey,
     });
 
     return reply.code(200).send({
@@ -261,6 +274,10 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   app.post('/api/ngn/utility/electricity/pay', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = parseBody(electricityPaymentSchema, request.body);
     await requireSpendAuthorization(request, body.userId, body.pin);
+    const idempotencyKey =
+      body.idempotencyKey ||
+      (request.headers['x-idempotency-key'] as string | undefined) ||
+      (request.headers['idempotency-key'] as string | undefined);
     const receipt = await executeElectricityPayment({
       userId: body.userId,
       meterNumber: body.meterNumber,
@@ -268,6 +285,7 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       meterType: body.meterType as MeterType,
       amountNgn: body.amountNgn,
       customerName: body.customerName,
+      idempotencyKey,
     });
 
     return reply.code(200).send({

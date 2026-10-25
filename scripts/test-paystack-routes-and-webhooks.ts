@@ -605,8 +605,6 @@ async function main() {
   // Test 3: Excessive amount exceeding tier limit is rejected with LIMIT_EXCEEDED
   await assert.rejects(
     () => assertFundingLimits(verifiedUserId, '1500000000'), // 15,000,000 NGN (exceeds 10M uplift ceiling)
-=======
-    () => assertFundingLimits(verifiedUserId, '60000000'), // 600,000 NGN (exceeds 500k Level 1 limit)
     (err: any) => err.code === 'LIMIT_EXCEEDED'
   );
   ok('assertFundingLimits rejects amounts exceeding tier cumulative ceiling with LIMIT_EXCEEDED');

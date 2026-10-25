@@ -54,8 +54,73 @@ import { ensureUtilityRoutingLoaded } from './utility-routing.service.js';
 function newIdempotencyKey(service: string, userId: string): string {
   return `sivan_${service}_${crypto.randomUUID()}_${crypto.createHash('sha256').update(userId).digest('hex').slice(0, 8)}`;
 }
+
+/**
+ * In-flight reservation tracker per user to prevent concurrent double-spending.
+ */
+const userInFlightSpend = new Map<string, number>();
+
+/**
+ * Idempotency receipt cache (keyed by caller idempotencyKey or reference) to ensure
+ * network retries return the exact authoritative receipt without re-executing or double-debiting.
+ */
+interface CachedIdempotencyEntry {
+  receipt: UtilityReceipt;
+  expiresAt: number;
+}
+const idempotencyReceiptCache = new Map<string, CachedIdempotencyEntry>();
+
+function getCachedReceipt(key?: string): UtilityReceipt | null {
+  if (!key) return null;
+  const clean = key.trim();
+  const entry = idempotencyReceiptCache.get(clean);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    idempotencyReceiptCache.delete(clean);
+    return null;
+  }
+  return entry.receipt;
+}
+
+function cacheReceipt(key: string | undefined, receipt: UtilityReceipt): void {
+  if (!key) return;
+  const clean = key.trim();
+  idempotencyReceiptCache.set(clean, {
+    receipt,
+    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+  });
+}
+
+async function withBalanceReservation<T>(
+  resolvedUserId: string,
+  amountNgn: number,
+  work: (availableBalance: number) => Promise<T>
+): Promise<T> {
+  const currentInFlight = userInFlightSpend.get(resolvedUserId) || 0;
+  const currentBalance = await getUserNgnBalance(resolvedUserId);
+  const available = currentBalance - currentInFlight;
+
+  if (available < amountNgn) {
+    throw badRequest(
+      `Insufficient balance (${available.toLocaleString()} NGN). You need ${amountNgn.toLocaleString()} NGN for this purchase. Please deposit NGN into your Sivan account.`
+    );
+  }
+
+  userInFlightSpend.set(resolvedUserId, currentInFlight + amountNgn);
+  try {
+    return await work(available);
+  } finally {
+    const remaining = (userInFlightSpend.get(resolvedUserId) || 0) - amountNgn;
+    if (remaining <= 0) {
+      userInFlightSpend.delete(resolvedUserId);
+    } else {
+      userInFlightSpend.set(resolvedUserId, remaining);
+    }
+  }
+}
 import type { VirtualAccountTransactionRecord } from '../../virtual-accounts/types/virtual-account.types.js';
 import { getUtilityDataPlanBySize, resolveProviderPlanCode } from './utility-data-plans.service.js';
+import { getUtilitiesControls, recordUtilityTransaction } from '../../admin/feature-controls.service.js';
 
 export {
   getUtilityProvider,
@@ -260,6 +325,14 @@ async function recordUtilityDebit(input: {
 export async function executeAirtimePurchase(
   req: AirtimePurchaseRequest
 ): Promise<UtilityReceipt> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+  if (!controls.airtimeEnabled) {
+    throw badRequest('Airtime top-up service is currently disabled.');
+  }
+
   const normalizedPhone = normalizeDomesticPhone(req.phone);
   const operator: TelcoOperator | undefined = req.operator || detectTelcoOperator(normalizedPhone);
 
@@ -275,69 +348,86 @@ export async function executeAirtimePurchase(
     );
   }
 
-  // 1. Balance verification
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
-  const balance = await getUserNgnBalance(resolvedUserId);
-  if (balance < req.amountNgn) {
-    throw badRequest(
-      `Insufficient balance (${balance.toLocaleString()} NGN). You need ${req.amountNgn.toLocaleString()} NGN for this purchase. Please deposit NGN into your Sivan account.`
-    );
+  if (req.idempotencyKey) {
+    const cached = getCachedReceipt(req.idempotencyKey);
+    if (cached) return cached;
   }
 
-  // 2 & 3. Upstream fulfilment through the chain configured for airtime
-  await ensureUtilityRoutingLoaded();
-  const airtimeKey = newIdempotencyKey('airtime', resolvedUserId);
-  const { result, providerName } = await executeForService(
-    'airtime',
-    'purchaseAirtime',
-    (provider) => provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator, airtimeKey),
-    // Airtime costs us close to face value, so the amount is a fair proxy for
-    // what it draws from the float.
-    { costNgn: req.amountNgn }
-  );
+  return withBalanceReservation(resolvedUserId, req.amountNgn, async (balance) => {
+    // 2 & 3. Upstream fulfilment through the chain configured for airtime
+    await ensureUtilityRoutingLoaded();
+    const airtimeKey = req.idempotencyKey
+      ? `sivan_airtime_${req.idempotencyKey}`
+      : newIdempotencyKey('airtime', resolvedUserId);
+    const { result, providerName } = await executeForService(
+      'airtime',
+      'purchaseAirtime',
+      (provider) => provider.purchaseAirtime(normalizedPhone, req.amountNgn, operator, airtimeKey),
+      // Airtime costs us close to face value, so the amount is a fair proxy for
+      // what it draws from the float.
+      { costNgn: req.amountNgn }
+    );
 
-  // 4. Atomic ledger debit
-  await recordUtilityDebit({
-    userId: resolvedUserId,
-    providerName,
-    serviceType: 'airtime',
-    reference: result.reference,
-    amountNgn: req.amountNgn,
-    rawPayload: result.rawPayload,
+    // 4. Atomic ledger debit
+    await recordUtilityDebit({
+      userId: resolvedUserId,
+      providerName,
+      serviceType: 'airtime',
+      reference: result.reference,
+      amountNgn: req.amountNgn,
+      rawPayload: result.rawPayload,
+    });
+
+    await recordUtilityTransaction({
+      id: result.reference,
+      category: 'airtime',
+      provider: providerName,
+      serviceId: operator,
+      accountOrPhone: normalizedPhone,
+      amountNgn: req.amountNgn,
+      amountUsdc: Math.round((req.amountNgn / 1600) * 100) / 100,
+      channel: 'webapp',
+      userAddressOrId: resolvedUserId,
+      tokenOrReceipt: result.reference,
+      status: 'success',
+    }).catch(() => null);
+
+    const now = new Date().toISOString();
+    const remaining = balance - req.amountNgn;
+
+    const formattedText = [
+      'Sivan Payment Ai: Airtime Receipt',
+      '----------------------------------------',
+      `Operator: ${operator.toUpperCase()}`,
+      `Recipient: ${normalizedPhone}`,
+      `Amount: ${req.amountNgn.toLocaleString()} NGN`,
+      'Platform Fee: 0 NGN (Free)',
+      `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
+      `Remaining Balance: ${remaining.toLocaleString()} NGN`,
+      `Fulfillment Rail: ${providerName.toUpperCase()}`,
+      `Status: Delivered Successfully`,
+      `Reference: ${result.reference}`,
+      `Date: ${formatTimestamp(now)}`,
+      '----------------------------------------',
+    ].join('\n');
+
+    const receipt: UtilityReceipt = {
+      success: true,
+      serviceType: 'airtime',
+      providerName,
+      operatorOrDisco: operator.toUpperCase(),
+      recipientOrMeter: normalizedPhone,
+      amountNgn: req.amountNgn,
+      feeNgn: 0,
+      totalDebitedNgn: req.amountNgn,
+      reference: result.reference,
+      timestamp: now,
+      formattedText,
+    };
+    cacheReceipt(req.idempotencyKey, receipt);
+    return receipt;
   });
-
-  const now = new Date().toISOString();
-  const remaining = balance - req.amountNgn;
-
-  const formattedText = [
-    'Sivan Payment Ai: Airtime Receipt',
-    '----------------------------------------',
-    `Operator: ${operator.toUpperCase()}`,
-    `Recipient: ${normalizedPhone}`,
-    `Amount: ${req.amountNgn.toLocaleString()} NGN`,
-    'Platform Fee: 0 NGN (Free)',
-    `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
-    `Remaining Balance: ${remaining.toLocaleString()} NGN`,
-    `Fulfillment Rail: ${providerName.toUpperCase()}`,
-    `Status: Delivered Successfully`,
-    `Reference: ${result.reference}`,
-    `Date: ${formatTimestamp(now)}`,
-    '----------------------------------------',
-  ].join('\n');
-
-  return {
-    success: true,
-    serviceType: 'airtime',
-    providerName,
-    operatorOrDisco: operator.toUpperCase(),
-    recipientOrMeter: normalizedPhone,
-    amountNgn: req.amountNgn,
-    feeNgn: 0,
-    totalDebitedNgn: req.amountNgn,
-    reference: result.reference,
-    timestamp: now,
-    formattedText,
-  };
 }
 
 /**
@@ -346,6 +436,14 @@ export async function executeAirtimePurchase(
 export async function executeDataPurchase(
   req: DataBundlePurchaseRequest
 ): Promise<UtilityReceipt> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+  if (!controls.dataEnabled) {
+    throw badRequest('Mobile data service is currently disabled.');
+  }
+
   const normalizedPhone = normalizeDomesticPhone(req.phone);
   const operator = req.operator || detectTelcoOperator(normalizedPhone);
 
@@ -370,85 +468,103 @@ export async function executeDataPurchase(
   }
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
-  const balance = await getUserNgnBalance(resolvedUserId);
-  if (balance < amountNgn) {
-    throw badRequest(
-      `Insufficient balance (${balance.toLocaleString()} NGN). You need ${amountNgn.toLocaleString()} NGN.`
-    );
+  if (req.idempotencyKey) {
+    const cached = getCachedReceipt(req.idempotencyKey);
+    if (cached) return cached;
   }
 
-  await ensureUtilityRoutingLoaded();
-  const dataKey = newIdempotencyKey('data', resolvedUserId);
-  let dispatchedPlanCode = '';
-  const { result, providerName } = await executeForService('data', 'purchaseDataBundle', (provider) => {
-    // Each provider has its own plan namespace, so translate before dispatch.
-    // Refusing here is deliberate: sending Sivan's own code upstream is what
-    // made SME API data purchases fail.
-    const providerPlanCode = resolveProviderPlanCode(bundlePlan, provider.name);
-    if (!providerPlanCode) {
-      throw badRequest(
-        `Data plan "${bundlePlan.bundleSize}" (${bundlePlan.network}) has no plan code mapped for ` +
-          `provider "${provider.name}". Map it in the admin hub, or route data to a provider that has one.`
-      );
-    }
-    dispatchedPlanCode = providerPlanCode;
-    return provider.purchaseDataBundle(normalizedPhone, providerPlanCode, amountNgn, operator, dataKey);
-  },
-  /**
-   * The float is drawn down by the WHOLESALE cost, not the retail price, so
-   * the markup must not count toward affordability. When the cost has never
-   * been synced it is left undefined rather than substituted: skipping a
-   * provider over a number we invented is exactly what this is meant to
-   * prevent.
-   */
-  typeof bundlePlan.costPriceNgn === 'number' ? { costNgn: bundlePlan.costPriceNgn } : {});
+  return withBalanceReservation(resolvedUserId, amountNgn, async (balance) => {
+    await ensureUtilityRoutingLoaded();
+    const dataKey = req.idempotencyKey
+      ? `sivan_data_${req.idempotencyKey}`
+      : newIdempotencyKey('data', resolvedUserId);
+    let dispatchedPlanCode = '';
+    const { result, providerName } = await executeForService('data', 'purchaseDataBundle', (provider) => {
+      // Each provider has its own plan namespace, so translate before dispatch.
+      // Refusing here is deliberate: sending Sivan's own code upstream is what
+      // made SME API data purchases fail.
+      const providerPlanCode = resolveProviderPlanCode(bundlePlan, provider.name);
+      if (!providerPlanCode) {
+        throw badRequest(
+          `Data plan "${bundlePlan.bundleSize}" (${bundlePlan.network}) has no plan code mapped for ` +
+            `provider "${provider.name}". Map it in the admin hub, or route data to a provider that has one.`
+        );
+      }
+      dispatchedPlanCode = providerPlanCode;
+      return provider.purchaseDataBundle(normalizedPhone, providerPlanCode, amountNgn, operator, dataKey);
+    },
+    /**
+     * The float is drawn down by the WHOLESALE cost, not the retail price, so
+     * the markup must not count toward affordability. When the cost has never
+     * been synced it is left undefined rather than substituted: skipping a
+     * provider over a number we invented is exactly what this is meant to
+     * prevent.
+     */
+    typeof bundlePlan.costPriceNgn === 'number' ? { costNgn: bundlePlan.costPriceNgn } : {});
 
-  await recordUtilityDebit({
-    userId: resolvedUserId,
-    providerName,
-    serviceType: 'data',
-    reference: result.reference,
-    amountNgn,
-    rawPayload: result.rawPayload,
+    await recordUtilityDebit({
+      userId: resolvedUserId,
+      providerName,
+      serviceType: 'data',
+      reference: result.reference,
+      amountNgn,
+      rawPayload: result.rawPayload,
+    });
+
+    await recordUtilityTransaction({
+      id: result.reference,
+      category: 'data',
+      provider: providerName,
+      serviceId: bundlePlan.bundleSize,
+      accountOrPhone: normalizedPhone,
+      amountNgn,
+      amountUsdc: Math.round((amountNgn / 1600) * 100) / 100,
+      channel: 'webapp',
+      userAddressOrId: resolvedUserId,
+      tokenOrReceipt: result.reference,
+      status: 'success',
+    }).catch(() => null);
+
+    const now = new Date().toISOString();
+    const remaining = balance - amountNgn;
+
+    const formattedText = [
+      'Sivan Payment Ai: Mobile Data Receipt',
+      '----------------------------------------',
+      `Operator: ${operator.toUpperCase()}`,
+      `Plan: ${bundlePlan.bundleSize} (${bundlePlan.network.toUpperCase()})`,
+      `Provider Plan: ${dispatchedPlanCode}`,
+      `Recipient: ${normalizedPhone}`,
+      // The catalogue price, which is what the ledger is actually debited by.
+      // These previously disagreed: the ledger took the catalogue price while
+      // the receipt quoted whatever the caller had asked for.
+      `Amount: ${amountNgn.toLocaleString()} NGN`,
+      'Platform Fee: 0 NGN (Free)',
+      `Total Debited: ${amountNgn.toLocaleString()} NGN`,
+      `Remaining Balance: ${remaining.toLocaleString()} NGN`,
+      `Fulfillment Rail: ${providerName.toUpperCase()}`,
+      `Status: Activated Successfully`,
+      `Reference: ${result.reference}`,
+      `Date: ${formatTimestamp(now)}`,
+      '----------------------------------------',
+    ].join('\n');
+
+    const receipt: UtilityReceipt = {
+      success: true,
+      serviceType: 'data',
+      providerName,
+      operatorOrDisco: operator.toUpperCase(),
+      recipientOrMeter: normalizedPhone,
+      amountNgn,
+      feeNgn: 0,
+      totalDebitedNgn: amountNgn,
+      reference: result.reference,
+      timestamp: now,
+      formattedText,
+    };
+    cacheReceipt(req.idempotencyKey, receipt);
+    return receipt;
   });
-
-  const now = new Date().toISOString();
-  const remaining = balance - amountNgn;
-
-  const formattedText = [
-    'Sivan Payment Ai: Mobile Data Receipt',
-    '----------------------------------------',
-    `Operator: ${operator.toUpperCase()}`,
-    `Plan: ${bundlePlan.bundleSize} (${bundlePlan.network.toUpperCase()})`,
-    `Provider Plan: ${dispatchedPlanCode}`,
-    `Recipient: ${normalizedPhone}`,
-    // The catalogue price, which is what the ledger is actually debited by.
-    // These previously disagreed: the ledger took the catalogue price while
-    // the receipt quoted whatever the caller had asked for.
-    `Amount: ${amountNgn.toLocaleString()} NGN`,
-    'Platform Fee: 0 NGN (Free)',
-    `Total Debited: ${amountNgn.toLocaleString()} NGN`,
-    `Remaining Balance: ${remaining.toLocaleString()} NGN`,
-    `Fulfillment Rail: ${providerName.toUpperCase()}`,
-    `Status: Activated Successfully`,
-    `Reference: ${result.reference}`,
-    `Date: ${formatTimestamp(now)}`,
-    '----------------------------------------',
-  ].join('\n');
-
-  return {
-    success: true,
-    serviceType: 'data',
-    providerName,
-    operatorOrDisco: operator.toUpperCase(),
-    recipientOrMeter: normalizedPhone,
-    amountNgn,
-    feeNgn: 0,
-    totalDebitedNgn: amountNgn,
-    reference: result.reference,
-    timestamp: now,
-    formattedText,
-  };
 }
 
 /**
@@ -457,6 +573,14 @@ export async function executeDataPurchase(
 export async function executeElectricityInquiry(
   req: ElectricityInquiryRequest
 ): Promise<ElectricityInquiryResponse> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+  if (!controls.electricityEnabled) {
+    throw badRequest('Electricity service is currently disabled.');
+  }
+
   if (!req.meterNumber || req.meterNumber.trim().length < 6) {
     throw badRequest('Please provide a valid electricity meter number.');
   }
@@ -485,6 +609,14 @@ export async function executeElectricityInquiry(
 export async function executeElectricityPayment(
   req: ElectricityPaymentRequest
 ): Promise<UtilityReceipt> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+  if (!controls.electricityEnabled) {
+    throw badRequest('Electricity service is currently disabled.');
+  }
+
   if (req.amountNgn < MIN_ELECTRICITY_NGN || req.amountNgn > MAX_ELECTRICITY_NGN) {
     throw badRequest(
       `Electricity payment amount must be between ${MIN_ELECTRICITY_NGN.toLocaleString()} NGN and ${MAX_ELECTRICITY_NGN.toLocaleString()} NGN.`
@@ -494,80 +626,98 @@ export async function executeElectricityPayment(
   const discoName = DISCO_DISPLAY_NAMES[req.disco] || req.disco.toUpperCase();
 
   const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
-  const balance = await getUserNgnBalance(resolvedUserId);
-  if (balance < req.amountNgn) {
-    throw badRequest(
-      `Insufficient balance (${balance.toLocaleString()} NGN). You need ${req.amountNgn.toLocaleString()} NGN.`
+  if (req.idempotencyKey) {
+    const cached = getCachedReceipt(req.idempotencyKey);
+    if (cached) return cached;
+  }
+
+  return withBalanceReservation(resolvedUserId, req.amountNgn, async (balance) => {
+    await ensureUtilityRoutingLoaded();
+    const electricityKey = req.idempotencyKey
+      ? `sivan_electricity_${req.idempotencyKey}`
+      : newIdempotencyKey('electricity', resolvedUserId);
+    const { result, providerName } = await executeForService('electricity', 'payElectricityBill', (provider) =>
+      provider.payElectricityBill(
+        req.meterNumber.trim(),
+        req.disco,
+        req.meterType,
+        req.amountNgn,
+        req.customerName,
+        electricityKey
+      )
     );
-  }
 
-  await ensureUtilityRoutingLoaded();
-  const electricityKey = newIdempotencyKey('electricity', resolvedUserId);
-  const { result, providerName } = await executeForService('electricity', 'payElectricityBill', (provider) =>
-    provider.payElectricityBill(
-      req.meterNumber.trim(),
-      req.disco,
-      req.meterType,
-      req.amountNgn,
-      req.customerName,
-      electricityKey
-    )
-  );
+    await recordUtilityDebit({
+      userId: resolvedUserId,
+      providerName,
+      serviceType: 'electricity',
+      reference: result.reference,
+      amountNgn: req.amountNgn,
+      rawPayload: result.rawPayload,
+    });
 
-  await recordUtilityDebit({
-    userId: resolvedUserId,
-    providerName,
-    serviceType: 'electricity',
-    reference: result.reference,
-    amountNgn: req.amountNgn,
-    rawPayload: result.rawPayload,
+    await recordUtilityTransaction({
+      id: result.reference,
+      category: 'electricity',
+      provider: providerName,
+      serviceId: req.disco,
+      accountOrPhone: req.meterNumber,
+      amountNgn: req.amountNgn,
+      amountUsdc: Math.round((req.amountNgn / 1600) * 100) / 100,
+      channel: 'webapp',
+      userAddressOrId: resolvedUserId,
+      tokenOrReceipt: result.token || result.reference,
+      status: 'success',
+    }).catch(() => null);
+
+    const now = new Date().toISOString();
+    const remaining = balance - req.amountNgn;
+
+    const lines = [
+      'Sivan Payment Ai: Electricity Receipt',
+      '----------------------------------------',
+      `DisCo: ${discoName}`,
+      `Meter Number: ${req.meterNumber}`,
+      `Meter Type: ${req.meterType === 'prepaid' ? 'Prepaid' : 'Postpaid'}`,
+      `Customer Name: ${result.customerName}`,
+    ];
+
+    if (result.token) {
+      lines.push(`Token: ${result.token}`);
+    }
+    if (result.units) {
+      lines.push(`Units: ${result.units}`);
+    }
+
+    lines.push(
+      `Amount Paid: ${req.amountNgn.toLocaleString()} NGN`,
+      'Platform Fee: 0 NGN (Free)',
+      `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
+      `Remaining Balance: ${remaining.toLocaleString()} NGN`,
+      `Fulfillment Rail: ${providerName.toUpperCase()}`,
+      'Status: Payment Confirmed',
+      `Reference: ${result.reference}`,
+      `Date: ${formatTimestamp(now)}`,
+      '----------------------------------------'
+    );
+
+    const receipt: UtilityReceipt = {
+      success: true,
+      serviceType: 'electricity',
+      providerName,
+      operatorOrDisco: discoName,
+      recipientOrMeter: req.meterNumber,
+      customerName: result.customerName,
+      token: result.token,
+      units: result.units,
+      amountNgn: req.amountNgn,
+      feeNgn: 0,
+      totalDebitedNgn: req.amountNgn,
+      reference: result.reference,
+      timestamp: now,
+      formattedText: lines.join('\n'),
+    };
+    cacheReceipt(req.idempotencyKey, receipt);
+    return receipt;
   });
-
-  const now = new Date().toISOString();
-  const remaining = balance - req.amountNgn;
-
-  const lines = [
-    'Sivan Payment Ai: Electricity Receipt',
-    '----------------------------------------',
-    `DisCo: ${discoName}`,
-    `Meter Number: ${req.meterNumber}`,
-    `Meter Type: ${req.meterType === 'prepaid' ? 'Prepaid' : 'Postpaid'}`,
-    `Customer Name: ${result.customerName}`,
-  ];
-
-  if (result.token) {
-    lines.push(`Token: ${result.token}`);
-  }
-  if (result.units) {
-    lines.push(`Units: ${result.units}`);
-  }
-
-  lines.push(
-    `Amount Paid: ${req.amountNgn.toLocaleString()} NGN`,
-    'Platform Fee: 0 NGN (Free)',
-    `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
-    `Remaining Balance: ${remaining.toLocaleString()} NGN`,
-    `Fulfillment Rail: ${providerName.toUpperCase()}`,
-    'Status: Payment Confirmed',
-    `Reference: ${result.reference}`,
-    `Date: ${formatTimestamp(now)}`,
-    '----------------------------------------'
-  );
-
-  return {
-    success: true,
-    serviceType: 'electricity',
-    providerName,
-    operatorOrDisco: discoName,
-    recipientOrMeter: req.meterNumber,
-    customerName: result.customerName,
-    token: result.token,
-    units: result.units,
-    amountNgn: req.amountNgn,
-    feeNgn: 0,
-    totalDebitedNgn: req.amountNgn,
-    reference: result.reference,
-    timestamp: now,
-    formattedText: lines.join('\n'),
-  };
 }
