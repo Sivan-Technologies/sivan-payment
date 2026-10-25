@@ -113,6 +113,11 @@ import type {
  */
 const PRIVY_BASE = (process.env.PRIVY_API_BASE_URL || env.PRIVY_API_BASE_URL || 'https://api.privy.io/v1').replace(/\/+$/, '');
 
+export function normalizePrivyWalletId(id: string | undefined): string {
+  if (!id) return '';
+  return id.split(':')[0];
+}
+
 /** Privy's chain vocabulary, keyed by Sivan's. */
 const CHAIN_TYPE: Record<WalletChain, string> = {
   ethereum: 'ethereum',
@@ -284,11 +289,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKey?: string } = {}): Promise<T> {
   const { idempotencyKey, ...rest } = init;
+  const sanitizedPath = path.replace(/\/wallets\/([^/]+)/, (_match, walletId) => {
+    return `/wallets/${encodeURIComponent(normalizePrivyWalletId(decodeURIComponent(walletId)))}`;
+  });
 
   let lastError: AppError | undefined;
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    const response = await fetch(`${PRIVY_BASE}${path}`, {
+    const response = await fetch(`${PRIVY_BASE}${sanitizedPath}`, {
       ...rest,
       headers: { ...headers(idempotencyKey), ...(rest.headers ?? {}) },
     });
@@ -1369,7 +1377,8 @@ export class PrivyWalletProvider implements WalletProvider {
       throw forbidden(`No ${input.asset.toUpperCase()} contract known for ${input.chain}.`);
     }
 
-    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
 
     const body = {
       method: 'eth_sendTransaction',
@@ -1534,7 +1543,8 @@ export class PrivyWalletProvider implements WalletProvider {
     const decimals = decimalsForChainAsset(input.chain, input.asset);
     const value = '0x' + toBaseUnits(input.amount, decimals).toString(16);
 
-    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
 
     const numericChainId = Number(caip2.replace(/^eip155:/, ''));
     const body: Record<string, unknown> = {
@@ -1796,7 +1806,8 @@ export class PrivyWalletProvider implements WalletProvider {
     // ── 2. Privy signs the SNIP-12 hash ────────────────────────────
     const messageHash = computeTypedDataHash(typedData, from);
 
-    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
     const body = { method: 'raw_sign', params: { hash: messageHash } };
     const { appId } = credentials();
 
@@ -1975,7 +1986,8 @@ export class PrivyWalletProvider implements WalletProvider {
         : {}),
     });
 
-    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
     const body = {
       method: 'signAndSendTransaction',
       caip2,
@@ -2271,7 +2283,8 @@ export class PrivyWalletProvider implements WalletProvider {
     // -------------------------------------------------------------------
     // Step 2: Privy secp256k1_sign — Privy signs the hash inside HSM
     // -------------------------------------------------------------------
-    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
     const rawSignBody = {
       method: 'secp256k1_sign',
       params: { hash: signingHash },

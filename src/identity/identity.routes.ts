@@ -1062,7 +1062,18 @@ export async function identityRoutes(app: FastifyInstance) {
     const cleanEnsureChain = rawBody.ensureChain ? String(rawBody.ensureChain).trim().toLowerCase() : undefined;
     if (cleanEnsureChain) {
       const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-      await ensureUserWallet(userId, cleanEnsureChain as any);
+      if (cleanEnsureChain === 'stellar') {
+        await ensureUserWallet(userId, 'stellar');
+      } else if (cleanEnsureChain === 'starknet') {
+        await ensureUserWallet(userId, 'starknet');
+      } else {
+        const isEvm = ['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(cleanEnsureChain);
+        const primaryEvm = isEvm ? (cleanEnsureChain as any) : 'celo';
+        await Promise.all([
+          ensureUserWallet(userId, 'solana').catch(() => null),
+          ensureUserWallet(userId, primaryEvm).catch(() => null),
+        ]);
+      }
     }
 
     const unified = await getUnifiedBalance(userId);

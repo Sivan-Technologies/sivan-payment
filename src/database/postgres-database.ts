@@ -1960,12 +1960,13 @@ export class PostgresDatabase {
   async findWalletByProviderWalletId(providerWalletId: string): Promise<UserWalletRecord | undefined> {
     const client = await this.pool.connect();
     try {
+      const cleanId = providerWalletId.split(':')[0];
       const result = await optionalQuery(
         client,
         `select * from payments_user_wallets
-          where provider_wallet_id = $1 and status <> 'closed'
+          where (provider_wallet_id = $1 or provider_wallet_id = $2 or provider_wallet_id like $3) and status <> 'closed'
           order by created_at asc limit 1`,
-        [providerWalletId]
+        [providerWalletId, cleanId, `${cleanId}:%`]
       );
       return result.rows[0] ? mapUserWallet(result.rows[0]) : undefined;
     } finally { client.release(); }

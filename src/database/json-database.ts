@@ -940,7 +940,14 @@ export class JsonDatabase {
    */
   async findWalletByProviderWalletId(providerWalletId: string): Promise<UserWalletRecord | undefined> {
     const data = await this.read();
-    return (data.userWallets ?? []).find((w) => w.providerWalletId === providerWalletId && w.status !== 'closed');
+    const cleanId = providerWalletId.split(':')[0];
+    return (data.userWallets ?? []).find(
+      (w) =>
+        (w.providerWalletId === providerWalletId ||
+          w.providerWalletId === cleanId ||
+          w.providerWalletId.startsWith(`${cleanId}:`)) &&
+        w.status !== 'closed'
+    );
   }
 
   /**

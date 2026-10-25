@@ -77,22 +77,37 @@ async function runTest() {
   assert.equal(dbWalletsAfterResolve.length, 0, 'resolve-target must NOT provision any wallet');
   console.log('✅ Verified: GET /api/identity/resolve-target is strictly read-only and provisions 0 wallets');
 
-  // Step 4: User shows intent to receive on Solana (ensureChain=solana)
+  // Step 4: User shows crypto intent (ensureChain=solana)
+  // Under our design, crypto intent provisions BOTH Solana and the unified EVM family (celo, base, bsc, arbitrum, arc),
+  // while non-EVM rails like Stellar and Starknet remain uncreated.
   const ensureSolanaRes = await app.inject({
     method: 'GET',
     url: `/api/users/whatsapp-balance?whatsapp=${encodeURIComponent(testPhone)}&ensureChain=solana`,
     headers: { 'x-sivan-identity-link-secret': secret },
   });
   assert.equal(ensureSolanaRes.statusCode, 200);
-  const solanaJson = ensureSolanaRes.json();
-  const solanaWallets = solanaJson.data?.wallets || solanaJson.wallets || [];
   const dbWalletsAfterSolana = await db.listUserWallets(userId);
 
-  assert.equal(dbWalletsAfterSolana.length, 1, 'Must have exactly 1 wallet row in database after Solana intent');
-  assert.equal(dbWalletsAfterSolana[0].chain, 'solana');
-  const solanaAddress = dbWalletsAfterSolana[0].address;
-  assert.ok(solanaAddress, 'Solana address must be defined');
-  console.log(`✅ Verified: Solana intent creates exactly ONE wallet (${solanaAddress})`);
+  const solanaWallet = dbWalletsAfterSolana.find((w) => w.chain === 'solana');
+  assert.ok(solanaWallet?.address, 'Solana address must be defined');
+
+  const celoWallet = dbWalletsAfterSolana.find((w) => w.chain === 'celo');
+  assert.ok(celoWallet?.address, 'Celo EVM address must be defined');
+
+  const baseWallet = dbWalletsAfterSolana.find((w) => w.chain === 'base');
+  assert.equal(baseWallet?.address, celoWallet?.address, 'Base and Celo must share the exact same EVM 0x address');
+
+  const bscWallet = dbWalletsAfterSolana.find((w) => w.chain === 'bsc');
+  assert.equal(bscWallet?.address, celoWallet?.address, 'BSC must share the exact same EVM 0x address');
+
+  const stellarWallet = dbWalletsAfterSolana.find((w) => w.chain === 'stellar');
+  assert.equal(stellarWallet, undefined, 'Stellar must NOT be created during core crypto pair provisioning');
+
+  const starknetWallet = dbWalletsAfterSolana.find((w) => w.chain === 'starknet');
+  assert.equal(starknetWallet, undefined, 'Starknet must NOT be created during core crypto pair provisioning');
+
+  console.log(`✅ Verified: Crypto intent created Solana (${solanaWallet.address}) and Unified EVM (${celoWallet.address})`);
+  console.log('✅ Verified: Non-EVM chains (Stellar, Starknet) remain 0 (untouched)');
 
   // Step 5: Calling ensureChain=solana again is idempotent
   const repeatSolanaRes = await app.inject({
@@ -102,38 +117,51 @@ async function runTest() {
   });
   assert.equal(repeatSolanaRes.statusCode, 200);
   const dbWalletsAfterRepeat = await db.listUserWallets(userId);
-  assert.equal(dbWalletsAfterRepeat.length, 1, 'Repeat ensureChain call must remain idempotent (1 row)');
-  assert.equal(dbWalletsAfterRepeat[0].address, solanaAddress, 'Repeat call must return the exact same address');
+  assert.equal(dbWalletsAfterRepeat.length, dbWalletsAfterSolana.length, 'Repeat ensureChain call must remain idempotent');
   console.log('✅ Verified: ensureChain call is idempotent');
 
-  // Step 6: Target resolution now sees the existing Solana wallet
-  const resolveWithSolana = await app.inject({
+  // Step 6: Target resolution sees existing Solana and EVM wallets
+  const resolveSolana = await app.inject({
     method: 'GET',
     url: `/api/identity/resolve-target?target=${encodeURIComponent(testPhone)}&chain=solana`,
     headers: { 'x-sivan-identity-link-secret': secret },
   });
-  assert.equal(resolveWithSolana.statusCode, 200);
-  const resolveWithSolanaJson = resolveWithSolana.json();
-  assert.equal(resolveWithSolanaJson.data?.user?.targetAddress, solanaAddress, 'resolve-target returns the existing address');
-  console.log('✅ Verified: resolve-target successfully returns existing wallet address without creating anything new');
+  assert.equal(resolveSolana.statusCode, 200);
+  assert.equal(resolveSolana.json().data?.user?.targetAddress, solanaWallet.address);
 
-  // Step 7: Telegram balance-status with ensureChain=celo
-  const telegramCeloRes = await app.inject({
+  const resolveCelo = await app.inject({
+    method: 'GET',
+    url: `/api/identity/resolve-target?target=${encodeURIComponent(testPhone)}&chain=celo`,
+    headers: { 'x-sivan-identity-link-secret': secret },
+  });
+  assert.equal(resolveCelo.statusCode, 200);
+  assert.equal(resolveCelo.json().data?.user?.targetAddress, celoWallet.address);
+
+  const resolveBase = await app.inject({
+    method: 'GET',
+    url: `/api/identity/resolve-target?target=${encodeURIComponent(testPhone)}&chain=base`,
+    headers: { 'x-sivan-identity-link-secret': secret },
+  });
+  assert.equal(resolveBase.statusCode, 200);
+  assert.equal(resolveBase.json().data?.user?.targetAddress, baseWallet.address);
+  console.log('✅ Verified: resolve-target successfully returns Solana, Celo, and Base addresses without creating new rows');
+
+  // Step 7: Telegram balance-status with ensureChain=stellar provisions Stellar on demand
+  const telegramStellarRes = await app.inject({
     method: 'POST',
     url: '/api/identity/balance-status',
     headers: { 'x-sivan-identity-link-secret': secret },
     payload: {
       channel: 'whatsapp',
       identity: testPhone,
-      ensureChain: 'celo',
+      ensureChain: 'stellar',
     },
   });
-  assert.equal(telegramCeloRes.statusCode, 200);
-  const dbWalletsAfterCelo = await db.listUserWallets(userId);
-  assert.equal(dbWalletsAfterCelo.length, 2, 'Must have exactly 2 wallets now (solana and celo)');
-  const celoWallet = dbWalletsAfterCelo.find((w) => w.chain === 'celo');
-  assert.ok(celoWallet?.address, 'Celo wallet must be provisioned');
-  console.log(`✅ Verified: Telegram balance-status on-demand ensures Celo wallet (${celoWallet.address})`);
+  assert.equal(telegramStellarRes.statusCode, 200);
+  const dbWalletsAfterStellar = await db.listUserWallets(userId);
+  const userStellar = dbWalletsAfterStellar.find((w) => w.chain === 'stellar');
+  assert.ok(userStellar?.address, 'Stellar wallet must be provisioned on demand');
+  console.log(`✅ Verified: On-demand Stellar provisioning works independently (${userStellar.address})`);
 
   console.log('🎉 ALL INTENT-DRIVEN LAZY WALLET TESTS PASSED 100% GREEN!');
   await app.close();

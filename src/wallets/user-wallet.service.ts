@@ -194,10 +194,20 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
       || await db.findUserWallet(userId, 'arbitrum')
       || await db.findUserWallet(userId, 'arc');
     if (evmWallet) {
-      return {
-        ...evmWallet,
-        chain,
-      };
+      const thisRow = await db.findUserWallet(userId, chain);
+      if (!thisRow) {
+        const baseProviderId = evmWallet.providerWalletId.split(':')[0];
+        const record: UserWalletRecord = {
+          ...evmWallet,
+          id: id('uw'),
+          chain,
+          providerWalletId: `${baseProviderId}:${chain}`,
+          updatedAt: nowIso(),
+        };
+        const inserted = await db.insertUserWallet(record).catch(() => null);
+        return inserted || { ...evmWallet, chain, providerWalletId: `${baseProviderId}:${chain}` };
+      }
+      return thisRow;
     }
   }
 
@@ -231,6 +241,29 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
   };
 
   const saved = await db.insertUserWallet(record);
+
+  // When EVM wallet is provisioned, automatically populate sibling EVM chain rows
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(chain)) {
+    const siblingEvmChains: WalletChain[] = ['base', 'celo', 'bsc', 'arbitrum', 'arc'];
+    const baseProviderId = record.providerWalletId.split(':')[0];
+    for (const sib of siblingEvmChains) {
+      if (sib !== chain) {
+        const exists = await db.findUserWallet(userId, sib);
+        if (!exists) {
+          const sibRecord: UserWalletRecord = {
+            ...record,
+            id: id('uw'),
+            chain: sib,
+            providerWalletId: `${baseProviderId}:${sib}`,
+          };
+          await db.insertUserWallet(sibRecord).catch((err) => {
+            console.warn('[insertSiblingWallet.error]', sib, err?.message);
+            return null;
+          });
+        }
+      }
+    }
+  }
 
   await createAuditLog({
     actorType: 'system',
