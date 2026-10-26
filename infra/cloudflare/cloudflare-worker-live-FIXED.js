@@ -191,7 +191,7 @@ export default {
       );
     }
 
-    const route = resolveRoute(request, url);
+    const route = await resolveRoute(request, url);
     const requestId =
       request.headers.get("x-sivan-request-id") || `siv-req-${crypto.randomUUID()}`;
 
@@ -226,7 +226,7 @@ export default {
   },
 };
 
-export function resolveRoute(request, url) {
+export async function resolveRoute(request, url) {
   const targetService = request.headers.get("x-sivan-target-service");
   let host = LIVE_ESCROW;
   let upstreamPath = url.pathname;
@@ -266,14 +266,40 @@ export function resolveRoute(request, url) {
       : url.pathname;
     serviceName = "whatsapp-bot";
   }
-  // 4. Fiat & Escrow Inbound Webhooks
+  // 4a. Paystack Single-Endpoint Smart Dispatcher (Unified Multi-Service Webhook Pipeline)
+  else if (
+    url.pathname === "/webhooks/paystack" ||
+    url.pathname === "/api/webhooks/paystack"
+  ) {
+    let isEscrowAgreement = false;
+    if (request && request.method === "POST") {
+      try {
+        const bodyClone = await request.clone().json();
+        const metadata = bodyClone?.data?.metadata;
+        if (metadata && (metadata.escrowId || metadata.dealId || metadata.agreementId)) {
+          isEscrowAgreement = true;
+        }
+      } catch {
+        // Non-JSON or empty payload defaults to payments backend
+      }
+    }
+
+    if (isEscrowAgreement) {
+      host = LIVE_ESCROW;
+      upstreamPath = url.pathname;
+      serviceName = "escrow-backend";
+    } else {
+      host = LIVE_PAYMENTS;
+      upstreamPath = "/api/webhooks/paystack";
+      serviceName = "payments-api";
+    }
+  }
+  // 4b. Other Inbound Fiat Webhooks & Callbacks
   else if (
     url.pathname.startsWith("/webhooks/monnify") ||
     url.pathname.startsWith("/webhooks/palmpay") ||
     url.pathname.startsWith("/webhooks/flutterwave") ||
     url.pathname.startsWith("/webhooks/nomba") ||
-    url.pathname.startsWith("/webhooks/paystack") ||
-    url.pathname.startsWith("/api/webhooks/paystack") ||
     url.pathname.startsWith("/payment/callback")
   ) {
     host = LIVE_ESCROW;
