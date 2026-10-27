@@ -190,7 +190,9 @@ const envSchema = z.object({
   STELLAR_MAX_FEE_STROOPS: z.coerce.number().optional().default(1000),
   STELLAR_SPONSORED_RESERVES: z.coerce.boolean().optional().default(true),
   BALANCE_TRANSFERS_ENABLED: z.coerce.boolean().default(true),
-  P2P_TRANSFERS_ENABLED: booleanFromEnv.default(false),
+  P2P_TRANSFERS_ENABLED: booleanFromEnv.default(true),
+  NGN_INTERNAL_TRANSFERS_ENABLED: booleanFromEnv.default(true),
+  MINIMUM_NGN_SEND_AMOUNT: positiveIntFromEnv.default(10),
   WEBHOOK_MAX_AGE_MS: positiveIntFromEnv.default(10 * 60 * 1000),
   /**
    * 1.25%, not 0.

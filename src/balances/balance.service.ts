@@ -79,8 +79,10 @@ export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing
 
 export const balanceTransferControlsSchema = z.object({
   transfersEnabled: z.boolean().default(true),
-  p2pTransfersEnabled: z.boolean().default(false),
+  p2pTransfersEnabled: z.boolean().default(true),
+  ngnInternalTransfersEnabled: z.boolean().default(true),
   minimumSendAmount: z.coerce.number().positive().default(0.1),
+  minimumNgnSendAmount: z.coerce.number().positive().default(10),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
   supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet']),
@@ -329,7 +331,9 @@ export async function getBalanceTransferControls() {
 
   return {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
-    p2pTransfersEnabled: saved?.p2pTransfersEnabled ?? (process.env.P2P_TRANSFERS_ENABLED === 'true'),
+    p2pTransfersEnabled: saved?.p2pTransfersEnabled ?? (process.env.P2P_TRANSFERS_ENABLED !== 'false'),
+    ngnInternalTransfersEnabled: saved?.ngnInternalTransfersEnabled ?? (process.env.NGN_INTERNAL_TRANSFERS_ENABLED !== 'false'),
+    minimumNgnSendAmount: saved?.minimumNgnSendAmount ?? Number(process.env.MINIMUM_NGN_SEND_AMOUNT || 10),
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
@@ -1424,18 +1428,20 @@ export async function executeP2pTransfer(
   if (!sender) throw notFound('Sender User');
   senderUserId = sender.id;
 
-  const controls = await getBalanceTransferControls().catch(() => null);
-  if (!controls || controls.p2pTransfersEnabled === false) {
-    throw badRequest('Internal P2P transfers are disabled. Please send an on-chain transfer using the recipient\'s wallet address or Sivan Tag.');
-  }
-
   const isNgn = input.asset.toLowerCase() === 'ngn';
   if (!isNgn) {
     throw badRequest('Internal off-chain transfers are only supported for NGN. For USDC and crypto assets, please send an on-chain transfer to the recipient\'s Sivan Tag or wallet address.');
   }
-  const minAmount = isNgn ? 100 : (controls?.minimumSendAmount ?? 1);
+
+  const controls = await getBalanceTransferControls().catch(() => null);
+  const isEnabled = (controls as any)?.ngnInternalTransfersEnabled ?? controls?.p2pTransfersEnabled ?? true;
+  if (!isEnabled) {
+    throw badRequest('Internal NGN transfers are temporarily paused by administration. Please try again shortly.');
+  }
+
+  const minAmount = (controls as any)?.minimumNgnSendAmount ?? 10;
   if (input.amount < minAmount) {
-    throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
+    throw badRequest(`Internal NGN transfer amount must be at least ${minAmount} NGN`);
   }
 
   const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
