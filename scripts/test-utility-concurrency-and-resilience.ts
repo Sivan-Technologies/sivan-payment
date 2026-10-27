@@ -708,6 +708,7 @@ async function run(): Promise<void> {
 
   // Pre-flight inquiry
   const inquiry = await executeElectricityInquiry({
+    userId: 'utility_resilience_user',
     meterNumber: '01423456789',
     disco: 'ikeja',
     meterType: 'prepaid',

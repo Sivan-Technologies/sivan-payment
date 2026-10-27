@@ -329,6 +329,9 @@ export interface ResolveDvaInput {
   userId: string;
   /** Required only when no verified customer exists yet. */
   legalName?: string;
+  /** Preferred over splitting legalName — avoids Nigerian name-order errors with NIBSS */
+  firstName?: string;
+  lastName?: string;
   /** EPHEMERAL. Forwarded to Paystack, never stored. */
   identifier?: string;
   identifierType?: IdentificationType;
@@ -355,15 +358,27 @@ export async function resolveOrCreateDva(input: ResolveDvaInput): Promise<DvaSta
 
 
   // 2. Need identity details before anything can be created.
-  // In live mode, legalName and 11-digit BVN are strictly required for CBN compliance.
-  // In test mode, identifier is optional as Paystack sandbox does not interact with NIBSS.
-  if (!input.legalName || (isPaystackLive() && !input.identifier)) {
+  if (!input.legalName && !(input.firstName && input.lastName)) {
+    return { state: 'awaiting_identity', reason: current.state === 'failed' ? 'not_verified' : 'no_account' };
+  }
+  if (isPaystackLive() && !input.identifier) {
     return { state: 'awaiting_identity', reason: current.state === 'failed' ? 'not_verified' : 'no_account' };
   }
 
-  const { first_name, last_name } = splitLegalName(input.legalName);
+  // Prefer explicit firstName/lastName; fall back to splitting legalName as last resort
+  let first_name: string;
+  let last_name: string;
+  if (input.firstName && input.lastName) {
+    first_name = input.firstName.trim();
+    last_name = input.lastName.trim();
+  } else {
+    const split = splitLegalName(input.legalName!);
+    first_name = split.first_name;
+    last_name = split.last_name;
+  }
+  // Derive a consistent legalName for storage purposes
+  const resolvedLegalName = `${first_name} ${last_name}`;
   const email = paystackCustomerEmail(userId);
-
   // 3. Customer record. Paystack returns the existing one for a known email,
   //    so this is safe to re-run.
   let customer: CustomerData;

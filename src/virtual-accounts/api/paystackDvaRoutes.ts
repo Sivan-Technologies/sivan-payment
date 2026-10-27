@@ -26,6 +26,8 @@ const createDvaSchema = z
   .object({
     userId: z.string().min(1, 'userId is required'),
     legalName: z.string().min(2, 'legalName is required'),
+    firstName: z.string().min(1).optional(),
+    lastName: z.string().min(1).optional(),
     identifier: z
       .string()
       .regex(/^\d{11}$/, 'Identifier (BVN) must be exactly 11 digits')
@@ -134,6 +136,8 @@ export async function paystackDvaRoutes(app: FastifyInstance) {
       const state: DvaState = await resolveOrCreateDva({
         userId: body.userId,
         legalName: body.legalName,
+        firstName: body.firstName || undefined,
+        lastName: body.lastName || undefined,
         identifier: body.identifier || undefined,
         identifierType: body.identifierType as IdentificationType,
         phone,
