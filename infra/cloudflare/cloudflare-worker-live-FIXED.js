@@ -45,11 +45,9 @@ const LIVE_TELEGRAM = "https://telegram.sivantech.online";
 // Prefer a Cloudflare Worker secret named PROXY_SECRET.
 const PROXY_SECRET_FALLBACK = "vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU";
 
-// Whitelisted origin patterns
+// Whitelisted origin patterns strictly for LIVE production
 const ALLOWED_ORIGIN_PATTERNS = [
   /^https:\/\/app\.sivantech\.online$/i,
-  /^https:\/\/staging\.sivantech\.online$/i,
-  /^https:\/\/api-staging\.sivantech\.online$/i,
   /^https:\/\/api\.sivantech\.online$/i,
   /^https:\/\/admin\.sivantech\.online$/i,
   /^https:\/\/sivantech\.online$/i,
@@ -64,11 +62,12 @@ const ALLOWED_ORIGIN_PATTERNS = [
 ];
 
 const COMMON_ALLOWED_HEADERS =
-  "Content-Type, Authorization, x-admin-api-key, x-admin-key, x-sivan-request-id, " +
-  "x-sivan-target-service, x-sivan-admin-email, x-sivan-admin-role, x-sivan-admin-module, " +
+  "Content-Type, Authorization, x-admin-api-key, x-admin-key, x-core-api-key, x-core-api-secret, " +
+  "x-sivan-request-id, x-sivan-target-service, x-sivan-admin-email, x-sivan-admin-role, x-sivan-admin-module, " +
   "x-sivan-admin-hub, x-sivan-ai-key, x-sivan-identity-link-secret, sentry-trace, baggage, " +
   "x-mg-signature, x-mg-timestamp, x-mg-time, x-moneygram-signature, x-signature, x-webhook-signature, " +
-  "x-step-up-token, x-telegram-bot-api-secret-token";
+  "x-hub-signature-256, x-hub-signature, x-step-up-token, x-telegram-bot-api-secret-token";
+
 
 const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
