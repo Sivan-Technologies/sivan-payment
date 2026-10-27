@@ -11,6 +11,7 @@ import {
   clearPairingAttempts,
   recordFailedPairingAttempt
 } from './pairing-attempts.js';
+import { hasWithdrawalPin } from './withdrawal-pin.service.js';
 
 const TOKEN_PREFIX = 'SVP';
 
@@ -302,13 +303,69 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
   if (!user) throw notFound('Payment user');
 
   const linkForWhatsapp = await activeLinkForWhatsapp(whatsappNumber);
-  if (linkForWhatsapp && linkForWhatsapp.paymentUserId !== user.id) rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
-  const linkForUser = await activeLinkForPaymentUser(user.id, 'whatsapp');
-  if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) rejectPairing('whatsapp', whatsappNumber, 'This Sivan payment account is already linked to another WhatsApp number.');
-
   const existingUserWithWhatsapp = await db.findUserByWhatsappNumber(whatsappNumber);
-  if (existingUserWithWhatsapp && existingUserWithWhatsapp.id !== user.id) {
+
+  // An auto-created chat placeholder user lacks verified email or has default placeholder identity
+  const isPlaceholderChatUser = Boolean(
+    existingUserWithWhatsapp &&
+    existingUserWithWhatsapp.id !== user.id &&
+    (!existingUserWithWhatsapp.emailVerifiedAt ||
+      existingUserWithWhatsapp.email.endsWith('@sivantech.online') ||
+      existingUserWithWhatsapp.fullName === 'Sivan User') &&
+    (!linkForWhatsapp || linkForWhatsapp.paymentUserId === existingUserWithWhatsapp.id)
+  );
+
+  if (linkForWhatsapp && linkForWhatsapp.paymentUserId !== user.id && !isPlaceholderChatUser) {
     rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
+  }
+
+  const linkForUser = await activeLinkForPaymentUser(user.id, 'whatsapp');
+  if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) {
+    rejectPairing('whatsapp', whatsappNumber, 'This Sivan payment account is already linked to another WhatsApp number.');
+  }
+
+  if (existingUserWithWhatsapp && existingUserWithWhatsapp.id !== user.id) {
+    if (isPlaceholderChatUser) {
+      // Merge placeholder chat user into authenticated dashboard user
+      const chatHasPin = await hasWithdrawalPin(existingUserWithWhatsapp.id);
+      const canonicalHasPin = await hasWithdrawalPin(user.id);
+      if (chatHasPin && !canonicalHasPin) {
+        const pins = await db.listWithdrawalPins();
+        const chatPin = pins.find((p) => p.userId === existingUserWithWhatsapp.id);
+        if (chatPin) {
+          await db.upsertWithdrawalPinRecord({
+            ...chatPin,
+            userId: user.id,
+            updatedAt: now,
+          });
+        }
+      }
+
+      // Re-point any identity links from placeholder to canonical user
+      const links = await db.listCustomerIdentityLinks();
+      for (const l of links) {
+        if (l.paymentUserId === existingUserWithWhatsapp.id || (l.whatsappNumber === whatsappNumber && l.channel === 'whatsapp')) {
+          await db.upsertCustomerIdentityLinkRecord({
+            ...l,
+            paymentUserId: user.id,
+            email: normalizeEmail(user.email),
+            status: 'linked',
+            linkedAt: l.linkedAt || now,
+            updatedAt: now,
+          });
+        }
+      }
+
+      // Free whatsappNumber from the placeholder user record to prevent PostgreSQL unique constraint collision
+      await db.updateUserRecord({
+        ...existingUserWithWhatsapp,
+        email: `merged_${existingUserWithWhatsapp.id}_${Date.now()}@sivantech.online`,
+        whatsappNumber: undefined,
+        updatedAt: now,
+      });
+    } else {
+      rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
+    }
   }
 
 
