@@ -320,6 +320,15 @@ export async function processPaystackWebhook(
         }
       }
 
+      // 8. Notify user — NGN DVA path only, completely isolated from crypto notifications
+      const senderName = String(eventData.authorization?.sender_name || '').trim() || undefined;
+      const senderBank = String(eventData.authorization?.sender_bank || '').trim() || undefined;
+      void import('../deposits/deposit-notification.service.js')
+        .then(({ notifyNgnDvaDeposit }) => {
+          void notifyNgnDvaDeposit(userId, grossNgn, reference, senderName, senderBank);
+        })
+        .catch(() => undefined);
+
       return {
         status: 'processed',
         event: eventType,
@@ -333,6 +342,7 @@ export async function processPaystackWebhook(
         },
       };
     }
+
 
     case 'transfer.success': {
       const reference = String(eventData.reference || '').trim();

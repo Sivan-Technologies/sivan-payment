@@ -425,3 +425,216 @@ export async function notifyPendingDeposits(limit = 50): Promise<NotifyOutcome> 
 
   return outcome;
 }
+
+/**
+ * NGN DVA DEPOSIT NOTIFICATION — STANDALONE, DO NOT MERGE WITH CRYPTO PATH.
+ *
+ * Called directly from paystackWebhookHandler after a charge.success DVA event
+ * is fully processed and the balance ledger has been credited. This function
+ * has no dependency on WalletDepositRecord because NGN DVA deposits do not
+ * produce one — they go through VirtualAccountTransactionRecord instead.
+ *
+ * notifyWhatsAppDeposit and notifyTelegramDeposit must NOT be called for NGN
+ * DVA deposits. Those functions serve crypto wallet deposits exclusively.
+ * Merging the two paths would either break the crypto notification format or
+ * require NGN-specific conditionals inside the crypto function, both of which
+ * are worse than this clean separation.
+ *
+ * Sender name and bank come from Paystack's authorization.sender_name and
+ * authorization.sender_bank fields on the charge.success payload — real NIBSS
+ * data, not inferred. They are optional; the notification degrades cleanly if
+ * absent.
+ */
+export async function notifyNgnDvaDeposit(
+  userId: string,
+  grossNgn: number,
+  reference: string,
+  senderName?: string,
+  senderBank?: string,
+): Promise<void> {
+  try {
+    // Idempotency: fire once per Paystack reference across all channels
+    if (!shouldNotifyDepositOnce('ngn_dva', reference)) return;
+
+    // Skip synthetic and test users
+    if (
+      userId.startsWith('usr_dev_') ||
+      userId.startsWith('usr_test_') ||
+      userId.includes('mock') ||
+      userId.includes('test_agent') ||
+      userId.includes('buyer_test') ||
+      userId.includes('seller_test')
+    ) {
+      return;
+    }
+
+    const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
+    const gatewayUrl = (
+      process.env.CORE_API_BASE_URL ||
+      process.env.API_GATEWAY_URL ||
+      process.env.PUBLIC_API_GATEWAY_URL ||
+      (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
+    ).replace(/\/$/, '');
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
+    if (!secret) return;
+
+    const user = await db.findUserById(userId);
+    if (!user) return;
+
+    // Fetch total NGN spendable balance after the deposit has been credited to the ledger
+    const amountFormatted = `₦${grossNgn.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    let spendableFormatted = amountFormatted;
+    try {
+      const { getUnifiedBalance } = await import('../balances/unified-balance.service.js');
+      const unified = await getUnifiedBalance(userId);
+      const ngnBal = unified.balances.find((b) => b.asset.toLowerCase() === 'ngn');
+      if (ngnBal) {
+        const val = Number(ngnBal.spendable || 0);
+        spendableFormatted = `₦${val.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+    } catch {
+      // fallback: show deposit amount as the balance estimate
+    }
+
+    // Build sender line — only included when Paystack provides sender data
+    const fromLine = senderName
+      ? `From . ${senderName}${senderBank ? ` (${senderBank})` : ''}\n\n`
+      : '';
+
+    // Information body (used as the WhatsApp menuCard header and Telegram message)
+    const bodyText =
+      `✅ Deposit Received\n\n` +
+      `${amountFormatted} has arrived.\n\n` +
+      `${fromLine}` +
+      `Status . Confirmed\n` +
+      `Spendable Balance . ${spendableFormatted}`;
+
+    // Full prompt text (fallback for plain-text channels without button support)
+    const promptText =
+      `${bodyText}\n\n` +
+      `What would you like to do?\n` +
+      `1 . Withdraw to bank\n` +
+      `2 . Transfer\n` +
+      `3 . Pay Bills`;
+
+    // ── WhatsApp ──────────────────────────────────────────────────────────────
+    void (async () => {
+      try {
+        let targetPhone = user.whatsappNumber;
+        if (!targetPhone) {
+          const links = await db.listCustomerIdentityLinks();
+          const activeWa = links
+            .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.whatsappNumber))
+            .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+          targetPhone = activeWa[0]?.whatsappNumber;
+        }
+        if (!targetPhone) return;
+
+        const prefs = await db.getUserPreferencesRecord(userId);
+        if (prefs && (prefs as any).whatsappNotificationsEnabled === false) return;
+
+        const rawWaUrl =
+          process.env.WHATSAPP_NOTIFICATION_URL ||
+          process.env.WHATSAPP_BOT_URL ||
+          `${gatewayUrl}/api/whatsapp`;
+        const waNotifyUrl = rawWaUrl.endsWith('/api/notify')
+          ? rawWaUrl
+          : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+
+        const formattedPhone = targetPhone.startsWith('whatsapp:')
+          ? targetPhone
+          : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
+
+        const resp = await fetch(waNotifyUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-notify-secret': secret,
+            'x-target-service': 'whatsapp-bot',
+          },
+          body: JSON.stringify({
+            to: formattedPhone,
+            message: promptText,
+            menuCard: {
+              body: bodyText,
+              actions: [
+                { id: 'act_cashout', title: '🏧 Withdraw to Bank', action: 'CASHOUT' },
+                { id: 'act_transfer', title: '💸 Transfer', action: 'TRANSFER' },
+                { id: 'act_utility', title: '⚡ Pay Bills', action: 'UTILITY' },
+              ],
+            },
+          }),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          console.error(`NGN DVA WhatsApp notify failed [${resp.status}]: ${errText}`);
+        } else {
+          console.log(`NGN DVA WhatsApp notify delivered to ${formattedPhone} (ref: ${reference})`);
+        }
+      } catch (err: any) {
+        console.error('NGN DVA WhatsApp notification error:', err?.message || err);
+      }
+    })();
+
+    // ── Telegram ──────────────────────────────────────────────────────────────
+    void (async () => {
+      try {
+        let targetTelegramId: string | null = null;
+        const links = await db.listCustomerIdentityLinks();
+        const activeLinks = links
+          .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.telegramUserId))
+          .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+
+        if (activeLinks[0]?.telegramUserId) {
+          targetTelegramId = activeLinks[0].telegramUserId;
+        } else if (user.telegramUserId) {
+          targetTelegramId = user.telegramUserId;
+        }
+        if (!targetTelegramId) return;
+
+        // Verify this Telegram ID is still the current owner, not superseded by a newer link
+        const allLinksForTg = links
+          .filter((l) => l.telegramUserId === targetTelegramId && l.status === 'linked')
+          .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+        if (allLinksForTg.length > 0 && allLinksForTg[0].paymentUserId !== userId) return;
+
+        const prefs = await db.getUserPreferencesRecord(userId);
+        if (prefs && prefs.telegramNotificationsEnabled === false) return;
+
+        const rawTgUrl =
+          process.env.TELEGRAM_NOTIFICATION_URL ||
+          `${gatewayUrl}/api/telegram`;
+        const tgNotifyUrl = rawTgUrl.endsWith('/api/notify')
+          ? rawTgUrl
+          : `${rawTgUrl.replace(/\/$/, '')}/api/notify`;
+
+        await fetch(tgNotifyUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-notify-secret': secret,
+            'x-target-service': 'telegram',
+          },
+          body: JSON.stringify({
+            telegramId: targetTelegramId,
+            message: promptText,
+            keyboard: [
+              [
+                { text: '🏧 Withdraw to Bank', callback_data: 'v1:cashout' },
+                { text: '💸 Transfer', callback_data: 'v1:transfer' },
+              ],
+              [
+                { text: '⚡ Pay Bills', callback_data: 'v1:utility' },
+                { text: '💰 View Balance', callback_data: 'v1:balance' },
+              ],
+            ],
+          }),
+        });
+      } catch (err: any) {
+        console.error('NGN DVA Telegram notification error:', err?.message || err);
+      }
+    })();
+  } catch (err: any) {
+    console.error('NGN DVA deposit notification error:', err?.message || err);
+  }
+}
