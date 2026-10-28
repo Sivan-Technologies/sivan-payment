@@ -496,26 +496,43 @@ export async function notifyNgnDvaDeposit(
       // fallback: show deposit amount as the balance estimate
     }
 
-    // Build sender line — only included when Paystack provides sender data
-    const fromLine = senderName
-      ? `From . ${senderName}${senderBank ? ` (${senderBank})` : ''}\n\n`
+    // Build sender display — title-case name, short bank name only
+    const toTitleCase = (str: string) =>
+      str.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+    // Shorten bank name: strip long legal suffixes, keep recognisable short form
+    const shortenBank = (bank: string): string => {
+      // If the bank string already contains a short name in parentheses e.g.
+      // "OPay Digital Services Limited (OPay)" — extract that inner short name
+      const inner = bank.match(/\(([^)]+)\)\s*$/);
+      if (inner) return inner[1].trim();
+      // Otherwise strip common Nigerian legal suffixes
+      return bank
+        .replace(/\s*(Digital Services Limited|Digital Services|Financial Services Limited|Microfinance Bank|Commercial Bank|Bank Nigeria|Nigeria Limited|Limited)\s*/gi, '')
+        .trim();
+    };
+
+    const senderDisplay = senderName ? toTitleCase(senderName) : '';
+    const bankDisplay   = senderBank ? shortenBank(senderBank) : '';
+
+    const fromLine = senderDisplay
+      ? `From: ${senderDisplay}${bankDisplay ? ` (${bankDisplay})` : ''}\n`
       : '';
+
+    const refLine = reference ? `Ref: ${reference}\n` : '';
 
     // Information body (used as the WhatsApp menuCard header and Telegram message)
     const bodyText =
-      `✅ Deposit Received\n\n` +
+      `✅ Deposit from Bank\n\n` +
       `${amountFormatted} has arrived.\n\n` +
       `${fromLine}` +
-      `Status . Confirmed\n` +
-      `Spendable Balance . ${spendableFormatted}`;
+      `${refLine}` +
+      `Balance: ${spendableFormatted}`;
 
     // Full prompt text (fallback for plain-text channels without button support)
     const promptText =
       `${bodyText}\n\n` +
-      `What would you like to do?\n` +
-      `1 . Withdraw to bank\n` +
-      `2 . Transfer\n` +
-      `3 . Pay Bills`;
+      `Withdraw to Bank . Transfer . Pay Bills`;
 
     // ── WhatsApp ──────────────────────────────────────────────────────────────
     void (async () => {
