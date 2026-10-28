@@ -1124,7 +1124,7 @@ export async function identityRoutes(app: FastifyInstance) {
    * Universal recipient target resolver (@username, +phone, or userId) for instant P2P transfers and multi-chain resolution.
    */
   app.get('/api/identity/resolve-target', async (request, reply) => {
-    const { target, chain } = request.query as { target?: string; chain?: string };
+    const { target, chain, provision, ensureWallet } = request.query as { target?: string; chain?: string; provision?: string; ensureWallet?: string };
     if (!target || typeof target !== 'string') {
       return reply.code(400).send({ error: { message: 'Missing target query parameter' } });
     }
@@ -1142,7 +1142,7 @@ export async function identityRoutes(app: FastifyInstance) {
       return { data: { found: false, target } };
     }
 
-    const userWallets = await db.listUserWallets(user.id).catch(() => []);
+    const userWallets: any[] = await db.listUserWallets(user.id).catch(() => []);
     let targetAddress: string | undefined;
     const requestedChain = chain ? String(chain).trim().toLowerCase() : undefined;
 
@@ -1150,6 +1150,17 @@ export async function identityRoutes(app: FastifyInstance) {
       const match = userWallets.find((w) => w.chain?.toLowerCase() === requestedChain);
       if (match?.address) {
         targetAddress = match.address;
+      } else if (provision === 'true' || ensureWallet === 'true') {
+        try {
+          const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+          const created = await ensureUserWallet(user.id, requestedChain as any);
+          if (created?.address) {
+            targetAddress = created.address;
+            userWallets.push(created);
+          }
+        } catch (err: any) {
+          request.log.warn({ err: err?.message, userId: user.id, chain: requestedChain }, '[resolve-target] Auto-provision wallet on chain failed');
+        }
       }
     }
 
