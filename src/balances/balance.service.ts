@@ -1661,17 +1661,15 @@ export async function executeP2pTransfer(
     ? `₦${input.amount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : `${input.amount.toFixed(2)} ${input.asset.toUpperCase()}`;
 
-  const availableLine = recipientAvailableStr ? `\n• Available: ${recipientAvailableStr}` : '';
+  const availableLine = recipientAvailableStr ? `\n\nBalance: ${recipientAvailableStr}` : '';
 
   const creditAlertBody = [
-    '📥 Sivan Ai . Payment Received',
+    '📥 Payment Received from Sivan',
     '',
-    `• Amount: ${formattedAmount}`,
-    `• Sender: ${senderDisplayName}`,
-    `• Reference: ${transferId}${availableLine}`,
-    '• Settlement Rail: Sivan Instant ⚡',
+    `${formattedAmount} has arrived.`,
     '',
-    'Your funds are immediately available for transfers and withdrawals.',
+    `Sender: ${senderDisplayName}`,
+    `Ref: ${transferId}${availableLine}`,
   ].join('\n');
 
   try {
@@ -1731,13 +1729,13 @@ export async function executeP2pTransfer(
               },
               body: JSON.stringify({
                 to: targetPhone,
-                message: creditAlertBody,
+                message: `${creditAlertBody}\n\nWithdraw . View Receipt . New Deal`,
                 menuCard: {
                   body: creditAlertBody,
                   actions: [
+                    { id: 'act_cashout', title: '🏧 Withdraw', action: 'CASHOUT' },
                     { id: `receipt_${transferId}`, title: '🧾 View Receipt', action: `receipt_${transferId}` },
-                    { id: 'act_recharge_airtime', title: '⚡ Recharge Airtime', action: 'airtime' },
-                    { id: 'menu', title: '⚡ Main Menu', action: 'menu' },
+                    { id: 'create service agreement', title: '🤝 New Deal', action: 'create service agreement' },
                   ],
                 },
               }),

@@ -49,6 +49,24 @@ export type ExecutePaystackTransferInput = z.infer<typeof executePaystackTransfe
 // In-memory cache for bank list to avoid hitting Paystack API repeatedly
 let cachedBanks: PaystackBank[] | null = null;
 let cacheExpiresAt = 0;
+
+/**
+ * In-flight duplicate transfer guard (30-second dedup window).
+ * Prevents double-spending when network jitter or double-taps occur.
+ */
+const recentBankTransferKeys = new Map<string, number>();
+const BANK_TRANSFER_DEDUP_MS = 30_000;
+
+function bankTransferDedupKey(userId: string, amount: number, destinationNuban: string): string {
+  return `${userId}:${amount}:${destinationNuban}`;
+}
+
+function pruneExpiredBankTransferKeys(): void {
+  const now = Date.now();
+  for (const [key, ts] of recentBankTransferKeys.entries()) {
+    if (now - ts > BANK_TRANSFER_DEDUP_MS) recentBankTransferKeys.delete(key);
+  }
+}
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 const POPULAR_BANK_CODES = [
@@ -216,12 +234,21 @@ export async function executePaystackNgnBankTransfer(
     );
   }
 
-  // 3. Stable Identifiers
+  // 3. Guard: In-Flight Duplicate Transfer Check (30-second dedup window)
+  pruneExpiredBankTransferKeys();
+  const dedup = bankTransferDedupKey(userId, input.amount, input.accountNumber);
+  const inFlightAt = recentBankTransferKeys.get(dedup);
+  if (inFlightAt && Date.now() - inFlightAt < BANK_TRANSFER_DEDUP_MS) {
+    throw badRequest('A transfer with the same amount and recipient is already in flight. Please wait 30 seconds.');
+  }
+  recentBankTransferKeys.set(dedup, Date.now());
+
+  // 4. Stable Identifiers
   const transferId = `ngntx_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
   const providerRef = `ps_out_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
   const now = new Date().toISOString();
 
-  // 4. Atomic Ledger Hold
+  // 5. Atomic Ledger Hold
   await createBalanceLedgerEntry(
     {
       userId,
@@ -299,6 +326,7 @@ export async function executePaystackNgnBankTransfer(
     });
   } catch (err: any) {
     // Immediate Rejection by Paystack -> Release Hold Atomically
+    recentBankTransferKeys.delete(dedup);
     await createBalanceLedgerEntry(
       {
         userId,
