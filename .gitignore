@@ -52,3 +52,16 @@ e2e/shots/
 # Scratch scripts
 scratch/
 
+# Credential-bearing legacy worker: ignore local copies; tracked history requires remediation.
+/infra/cloudflare/cloudflare-worker-live-FIXED.js
+
+# Local private-key material
+*.key
+*.p12
+*.pfx
+private.pem
+*-private.pem
+*_private.pem
+.dev.vars
+.dev.vars.*
+
