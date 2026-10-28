@@ -4,11 +4,12 @@ import { badRequest } from '../../shared/errors.js';
 import { db } from '../../database/json-database.js';
 import { env } from '../../config/env.js';
 import { paystackBaseUrl, paystackHeaders, paystackMode } from '../../config/paystackConfig.js';
-import { getUnifiedBalance } from '../../balances/unified-balance.service.js';
+import { getUnifiedBalance, invalidateUnifiedBalanceCache } from '../../balances/unified-balance.service.js';
 import { createBalanceLedgerEntry } from '../../balances/balance.service.js';
 import { assertWithdrawalAuthorised } from '../../identity/withdrawal-pin.guard.js';
 import { hasWithdrawalPin } from '../../identity/withdrawal-pin.service.js';
 import { getBankingRailAdapter } from '../../banking-rail/banking-rail-registry.js';
+import { resolvePaymentUserId, getUserNgnBalance } from './sivanUtilityService.js';
 import type { NgnTransferRecord, NgnQuoteRecord } from '../types/ngn.types.js';
 import type { TransferRecord } from '../../banking-rail/banking-rail.adapter.js';
 
@@ -210,24 +211,43 @@ export async function executePaystackNgnBankTransfer(
   rawInput: ExecutePaystackTransferInput
 ) {
   const input = executePaystackTransferSchema.parse(rawInput);
+  const canonicalUserId = await resolvePaymentUserId(userId).catch(() => userId);
 
   // 1. PIN / Authorization Check
-  const configured = await hasWithdrawalPin(userId);
+  const configured = (await hasWithdrawalPin(canonicalUserId)) || (await hasWithdrawalPin(userId));
   if (configured || env.WITHDRAWAL_PIN_ENFORCED || input.pin || input.stepUpToken) {
-    await assertWithdrawalAuthorised({
-      userId,
-      pin: input.pin,
-      stepUpToken: input.stepUpToken,
-      amount: input.amount.toFixed(2),
-      currency: 'NGN',
-      destinationRef: `${input.bankCode}:${input.accountNumber}`,
-    });
+    try {
+      await assertWithdrawalAuthorised({
+        userId: canonicalUserId,
+        pin: input.pin,
+        stepUpToken: input.stepUpToken,
+        amount: input.amount.toFixed(2),
+        currency: 'NGN',
+        destinationRef: `${input.bankCode}:${input.accountNumber}`,
+      });
+    } catch (authErr: any) {
+      if (canonicalUserId !== userId) {
+        await assertWithdrawalAuthorised({
+          userId,
+          pin: input.pin,
+          stepUpToken: input.stepUpToken,
+          amount: input.amount.toFixed(2),
+          currency: 'NGN',
+          destinationRef: `${input.bankCode}:${input.accountNumber}`,
+        });
+      } else {
+        throw authErr;
+      }
+    }
   }
 
   // 2. Balance Check
-  const unified = await getUnifiedBalance(userId);
+  const unified = await getUnifiedBalance(canonicalUserId, true);
   const ngnBal = (unified.balances as any[]).find((b) => String(b.asset).toLowerCase() === 'ngn');
-  const availableNgn = Number(ngnBal?.availableBalance ?? ngnBal?.spendable ?? '0');
+  let availableNgn = Number(ngnBal?.availableBalance ?? ngnBal?.spendable ?? '0');
+  if (!Number.isFinite(availableNgn) || availableNgn <= 0) {
+    availableNgn = await getUserNgnBalance(canonicalUserId).catch(() => 0);
+  }
   if (!Number.isFinite(availableNgn) || availableNgn < input.amount) {
     throw badRequest(
       `Insufficient NGN balance. Available: ${availableNgn.toFixed(2)} NGN, requested: ${input.amount.toFixed(2)} NGN`
@@ -236,7 +256,7 @@ export async function executePaystackNgnBankTransfer(
 
   // 3. Guard: In-Flight Duplicate Transfer Check (30-second dedup window)
   pruneExpiredBankTransferKeys();
-  const dedup = bankTransferDedupKey(userId, input.amount, input.accountNumber);
+  const dedup = bankTransferDedupKey(canonicalUserId, input.amount, input.accountNumber);
   const inFlightAt = recentBankTransferKeys.get(dedup);
   if (inFlightAt && Date.now() - inFlightAt < BANK_TRANSFER_DEDUP_MS) {
     throw badRequest('A transfer with the same amount and recipient is already in flight. Please wait 30 seconds.');
@@ -251,7 +271,7 @@ export async function executePaystackNgnBankTransfer(
   // 5. Atomic Ledger Hold
   await createBalanceLedgerEntry(
     {
-      userId,
+      userId: canonicalUserId,
       asset: 'ngn',
       amount: input.amount.toFixed(2),
       kind: 'hold',
@@ -261,14 +281,14 @@ export async function executePaystackNgnBankTransfer(
       description: `Hold NGN for outbound Paystack transfer to ${input.accountNumber} (${input.bankName ?? input.bankCode})`,
       transferId,
     },
-    { actorType: 'user', actorId: userId }
+    { actorType: 'user', actorId: canonicalUserId }
   );
 
   // 5. Initial Quote & Transfer Records in Database
   const quoteId = `ngnq_${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`;
   const quoteRecord: NgnQuoteRecord = {
     id: quoteId,
-    userId,
+    userId: canonicalUserId,
     direction: 'offramp',
     provider: 'paystack',
     sourceCurrency: 'ngn',
@@ -287,7 +307,7 @@ export async function executePaystackNgnBankTransfer(
   const transferRecord: NgnTransferRecord = {
     id: transferId,
     quoteId,
-    userId,
+    userId: canonicalUserId,
     direction: 'offramp',
     provider: 'paystack',
     sourceCurrency: 'ngn',
@@ -317,19 +337,19 @@ export async function executePaystackNgnBankTransfer(
   let result: TransferRecord;
   try {
     result = await adapter.createTransfer({
-      userId,
+      userId: canonicalUserId,
       accountNumber: input.accountNumber,
       bankCode: input.bankCode,
       amountKobo: Math.round(input.amount * 100),
       providerRef,
-      narration: input.narration || `Sivan transfer for ${userId}`,
+      narration: input.narration || `Sivan transfer for ${canonicalUserId}`,
     });
   } catch (err: any) {
     // Immediate Rejection by Paystack -> Release Hold Atomically
     recentBankTransferKeys.delete(dedup);
     await createBalanceLedgerEntry(
       {
-        userId,
+        userId: canonicalUserId,
         asset: 'ngn',
         amount: input.amount.toFixed(2),
         kind: 'hold_release',
@@ -374,7 +394,7 @@ export async function executePaystackNgnBankTransfer(
     updatedRecord.completedAt = new Date().toISOString();
     await createBalanceLedgerEntry(
       {
-        userId,
+        userId: canonicalUserId,
         asset: 'ngn',
         amount: input.amount.toFixed(2),
         kind: 'debit_transfer',
@@ -389,6 +409,10 @@ export async function executePaystackNgnBankTransfer(
   }
 
   await db.upsertNgnTransferRecord(updatedRecord);
+  invalidateUnifiedBalanceCache(canonicalUserId);
+  if (canonicalUserId !== userId) {
+    invalidateUnifiedBalanceCache(userId);
+  }
 
   return {
     success: true,
