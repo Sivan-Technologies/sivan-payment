@@ -651,7 +651,7 @@ function formatTimestamp(isoString: string): string {
   return d.toLocaleString('en-NG', { timeZone: 'Africa/Lagos' });
 }
 
-async function resolvePaymentUserId(target: string): Promise<string> {
+export async function resolvePaymentUserId(target: string): Promise<string> {
   if (!target) return target;
   const rawClean = target.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
   const withPlus = `+${rawClean}`;

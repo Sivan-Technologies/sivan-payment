@@ -144,22 +144,29 @@ async function pinForUser(userId: string): Promise<WithdrawalPinRecord | undefin
   if (direct) return direct;
 
   try {
+    const user = (await db.findUserById(userId)) || (await db.findUserByTarget(userId));
+    if (user) {
+      const userPin = pins.find((item) => item.userId === user.id);
+      if (userPin) return userPin;
+    }
+
     const links = await db.listCustomerIdentityLinks();
     const relatedUserIds = new Set<string>();
     for (const l of links) {
       if (l.status === 'linked') {
         if (l.paymentUserId === userId && l.escrowUserId) relatedUserIds.add(l.escrowUserId);
         if (l.escrowUserId === userId && l.paymentUserId) relatedUserIds.add(l.paymentUserId);
+        if (user && l.paymentUserId === user.id && l.escrowUserId) relatedUserIds.add(l.escrowUserId);
+        if (user && l.escrowUserId === user.id && l.paymentUserId) relatedUserIds.add(l.paymentUserId);
       }
     }
-    const user = await db.findUserById(userId);
     if (user?.whatsappNumber) {
       const waUser = await db.findUserByWhatsappNumber(user.whatsappNumber);
-      if (waUser && waUser.id !== userId) relatedUserIds.add(waUser.id);
+      if (waUser && waUser.id !== userId && waUser.id !== user.id) relatedUserIds.add(waUser.id);
     }
     if (user?.telegramUserId) {
       const tgUser = await db.findUserByTelegramUserId(user.telegramUserId);
-      if (tgUser && tgUser.id !== userId) relatedUserIds.add(tgUser.id);
+      if (tgUser && tgUser.id !== userId && tgUser.id !== user.id) relatedUserIds.add(tgUser.id);
     }
 
     for (const relId of relatedUserIds) {

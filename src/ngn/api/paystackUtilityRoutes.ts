@@ -22,6 +22,7 @@ import {
   getUserNgnBalance,
   fetchDataPlans,
   reconcileUnsettledUtilityPurchases,
+  resolvePaymentUserId,
 } from '../service/sivanUtilityService.js';
 import {
   getAirtimeConversionRate,
@@ -153,8 +154,10 @@ async function requireSpendAuthorization(
 ): Promise<void> {
   requireServiceCaller(request);
 
+  const resolvedUserId = await resolvePaymentUserId(userId).catch(() => userId);
+
   if (pin) {
-    await verifyPinForUserId(userId, pin, { ipAddress: request.ip });
+    await verifyPinForUserId(resolvedUserId, pin, { ipAddress: request.ip });
     return;
   }
 
@@ -164,7 +167,7 @@ async function requireSpendAuthorization(
    * told apart on purpose: someone who has never set a PIN needs Settings,
    * someone who has one just needs to be asked for it.
    */
-  const configured = await hasWithdrawalPin(userId);
+  const configured = await hasWithdrawalPin(resolvedUserId);
   throw badRequest(
     configured
       ? 'Enter your Sivan PIN to approve this purchase.'
