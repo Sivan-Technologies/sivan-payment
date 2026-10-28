@@ -638,3 +638,113 @@ export async function notifyNgnDvaDeposit(
     console.error('NGN DVA deposit notification error:', err?.message || err);
   }
 }
+
+/**
+ * Dispatches an instant WhatsApp notification when a user's BVN is confirmed
+ * by NIBSS and their dedicated Wema Bank virtual account is provisioned.
+ */
+export async function notifyDvaActivated(
+  userId: string,
+  account: {
+    accountNumber: string;
+    bankName: string;
+    accountName: string;
+  }
+): Promise<void> {
+  try {
+    if (!shouldNotifyDepositOnce('dva_activated', account.accountNumber)) return;
+
+    if (
+      userId.startsWith('usr_dev_') ||
+      userId.startsWith('usr_test_') ||
+      userId.includes('mock') ||
+      userId.includes('test_agent') ||
+      userId.includes('buyer_test') ||
+      userId.includes('seller_test')
+    ) {
+      return;
+    }
+
+    const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
+    const gatewayUrl = (
+      process.env.CORE_API_BASE_URL ||
+      process.env.API_GATEWAY_URL ||
+      process.env.PUBLIC_API_GATEWAY_URL ||
+      (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
+    ).replace(/\/$/, '');
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
+    if (!secret) return;
+
+    const user = await db.findUserById(userId);
+    if (!user) return;
+
+    const bankName = account.bankName || 'Wema Bank';
+    const bodyText =
+      `🎉 Sivan Virtual Account Activated\n\n` +
+      `Your BVN has been verified with NIBSS and your dedicated Nigerian bank account is ready.\n\n` +
+      `• Bank . ${bankName}\n` +
+      `• Account Number . ${account.accountNumber}\n` +
+      `• Account Name . ${account.accountName}\n` +
+      `• Status . Active (Instant Credit)\n\n` +
+      `Transfer funds from any Nigerian bank app or USSD to instantly fund your Sivan spendable balance.`;
+
+    const promptText = `${bodyText}\n\nType BALANCE to view balance or MENU for all options.`;
+
+    // WhatsApp
+    void (async () => {
+      try {
+        let targetPhone = user.whatsappNumber;
+        if (!targetPhone) {
+          const links = await db.listCustomerIdentityLinks();
+          const activeWa = links
+            .filter((l) => l.paymentUserId === userId && l.status === 'linked' && Boolean(l.whatsappNumber))
+            .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
+          targetPhone = activeWa[0]?.whatsappNumber;
+        }
+        if (!targetPhone) return;
+
+        const rawWaUrl =
+          process.env.WHATSAPP_NOTIFICATION_URL ||
+          process.env.WHATSAPP_BOT_URL ||
+          `${gatewayUrl}/api/whatsapp`;
+        const waNotifyUrl = rawWaUrl.endsWith('/api/notify')
+          ? rawWaUrl
+          : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+
+        const formattedPhone = targetPhone.startsWith('whatsapp:')
+          ? targetPhone
+          : `whatsapp:${targetPhone.startsWith('+') ? targetPhone : `+${targetPhone.replace(/\D/g, '')}`}`;
+
+        const resp = await fetch(waNotifyUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-notify-secret': secret,
+            'x-target-service': 'whatsapp-bot',
+          },
+          body: JSON.stringify({
+            to: formattedPhone,
+            message: promptText,
+            menuCard: {
+              body: bodyText,
+              actions: [
+                { id: 'balance', title: '📊 View Balance', action: 'balance' },
+                { id: 'menu', title: '⚡ Main Menu', action: 'menu' },
+              ],
+            },
+          }),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          console.error(`DVA activation WhatsApp notify failed [${resp.status}]: ${errText}`);
+        } else {
+          console.log(`DVA activation WhatsApp notify delivered to ${formattedPhone}`);
+        }
+      } catch (err: any) {
+        console.error('DVA activation WhatsApp notification error:', err?.message || err);
+      }
+    })();
+  } catch (err: any) {
+    console.error('DVA activation notification error:', err?.message || err);
+  }
+}

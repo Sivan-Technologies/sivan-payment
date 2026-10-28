@@ -106,7 +106,33 @@ export async function processPaystackWebhook(
         };
       }
 
-      await completeAfterIdentification(userId, customerCode);
+      const dvaResult = await completeAfterIdentification(userId, customerCode);
+      if (dvaResult.state === 'ready' && dvaResult.account?.accountNumber) {
+        void import('../deposits/deposit-notification.service.js')
+          .then(({ notifyDvaActivated }) => {
+            void notifyDvaActivated(userId, {
+              accountNumber: dvaResult.account!.accountNumber,
+              bankName: dvaResult.account!.bankName || 'Wema Bank',
+              accountName: dvaResult.account!.accountName || 'Sivan Verified Account',
+            });
+          })
+          .catch(() => undefined);
+      }
+
+      // Update user full name from verified customer record if available
+      try {
+        const user = await db.findUserById(userId);
+        if (user) {
+          const verifiedFirst = (eventData as any).first_name || (eventData as any).customer?.first_name;
+          const verifiedLast = (eventData as any).last_name || (eventData as any).customer?.last_name;
+          if (verifiedFirst && verifiedLast) {
+            user.fullName = `${verifiedLast} ${verifiedFirst}`.trim();
+            await db.updateUserRecord(user);
+          }
+        }
+      } catch (_nameErr) {
+        // Non-blocking
+      }
 
       // Atomically mark the user's NGN Level 2 identity verification as matched / verified
       try {
