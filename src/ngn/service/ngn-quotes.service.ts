@@ -14,6 +14,7 @@ import { userLimitOverrideFor } from '../../kyc/service/user-limits.service.js';
 import { effectiveUsedNgn } from '../../kyc/service/user-limit-usage.js';
 import { VOLUME_WINDOW_DAYS } from '../../kyc/types/verification.types.js';
 import { applySivanMargin } from './ngn-margin.js';
+import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import { gasEstimateUsd, networkDisplayLabel } from '../network-costs.js';
 import type { NgnControlsRecord, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
 
@@ -402,9 +403,21 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
       ? providerFeeAsset * rate
       : providerFeeAsset;
 
+  const feeSettingsForMarkup =
+    input.direction === 'offramp' && revenueMode === 'breet_markup'
+      ? await getAdminFeeSettings()
+      : null;
+  const adminConfiguredOfframpPercent = feeSettingsForMarkup
+    ? (Number(feeSettingsForMarkup.ngnOfframpFeePercent ?? 0) > 0
+        ? Number(feeSettingsForMarkup.ngnOfframpFeePercent)
+        : Number(feeSettingsForMarkup.offrampFeePercent ?? 0))
+    : 0;
+  const effectiveBreetMarkupPercent =
+    breetMarkupPercentForQuote > 0 ? breetMarkupPercentForQuote : adminConfiguredOfframpPercent;
+
   const breetMarkupNgn =
-    input.direction === 'offramp' && revenueMode === 'breet_markup' && breetMarkupPercentForQuote > 0
-      ? grossForMargin * (breetMarkupPercentForQuote / 100)
+    input.direction === 'offramp' && revenueMode === 'breet_markup' && effectiveBreetMarkupPercent > 0
+      ? grossForMargin * (effectiveBreetMarkupPercent / 100)
       : 0;
 
   const margin = revenueMode === 'disabled'
@@ -430,12 +443,12 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
        * deliberate or a provider failure.
        */
       explanation: !breetMarkupKnown
-        ? `Breet markup could not be read; priced from the last known value (${breetMarkupPercentForQuote}%).`
-        : breetMarkupPercentForQuote > 0
-        ? `Sivan revenue is handled by Breet markup (${breetMarkupPercentForQuote}%); no on-chain Sivan fee is added.`
+        ? `Breet markup could not be read; priced from the last known value (${effectiveBreetMarkupPercent}%).`
+        : effectiveBreetMarkupPercent > 0
+        ? `Sivan revenue is handled by Breet markup (${effectiveBreetMarkupPercent}%); no on-chain Sivan fee is added.`
         : 'Sivan revenue mode is Breet markup, but no Breet markup is currently configured.',
       markupKnown: breetMarkupKnown,
-      markupSource: breetMarkupSource,
+      markupSource: breetMarkupPercentForQuote > 0 ? breetMarkupSource : 'admin_fee_settings',
     }
     : await applySivanMargin({
     direction: input.direction,

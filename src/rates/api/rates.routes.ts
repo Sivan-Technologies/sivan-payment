@@ -13,6 +13,10 @@ interface CachedRateEntry {
 const SERVER_CACHE_TTL_MS = 60_000;
 let cachedRates: CachedRateEntry | null = null;
 
+export function clearLiveRatesCache(): void {
+  cachedRates = null;
+}
+
 async function fetchLiveMarketRates(): Promise<any> {
   const now = Date.now();
   if (cachedRates && now - cachedRates.cachedAt < SERVER_CACHE_TTL_MS) {
@@ -60,9 +64,13 @@ async function fetchLiveMarketRates(): Promise<any> {
         const settings = await getAdminFeeSettings();
         const ngnOfframpPercent = Number(settings.ngnOfframpFeePercent ?? 0);
         const baseOfframpPercent = Number(settings.offrampFeePercent ?? 0);
-        const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : (baseOfframpPercent > 0 ? baseOfframpPercent : 1);
-        const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
+        const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : baseOfframpPercent;
+        const providerPercent = Number(settings.ngnProviderFeePercent ?? env.BREET_FEE_PERCENT ?? 0.5);
         const totalPercent = sivanPercent + providerPercent;
+
+        const ngnOnrampPercent = Number(settings.ngnOnrampFeePercent ?? 0);
+        const baseOnrampPercent = Number(settings.onrampFeePercent ?? 0);
+        const onrampMarginPercent = ngnOnrampPercent > 0 ? ngnOnrampPercent : (baseOnrampPercent > 0 ? baseOnrampPercent : sivanPercent);
 
         const netRate = Math.round(grossRate * (1 - totalPercent / 100));
         const usdtSell = Math.round(usdtGross * (1 - totalPercent / 100));
@@ -70,12 +78,12 @@ async function fetchLiveMarketRates(): Promise<any> {
         result.ngn = {
           usdc: {
             sell: netRate,
-            buy: Math.round(grossRate * 0.99),
+            buy: Math.round(grossRate * (1 - onrampMarginPercent / 100)),
             mid: Math.round((grossRate + netRate) / 2),
           },
           usdt: {
             sell: usdtSell,
-            buy: Math.round(usdtGross * 0.99),
+            buy: Math.round(usdtGross * (1 - onrampMarginPercent / 100)),
             mid: Math.round((usdtGross + usdtSell) / 2),
           },
           grossRate: Math.round(grossRate),
@@ -115,12 +123,12 @@ async function fetchLiveMarketRates(): Promise<any> {
         result.ghs = {
           usdc: {
             sell: roundedGhs,
-            buy: parseFloat((roundedGhs * 0.99).toFixed(2)),
+            buy: roundedGhs,
             mid: roundedGhs,
           },
           usdt: {
             sell: roundedGhs,
-            buy: parseFloat((roundedGhs * 0.99).toFixed(2)),
+            buy: roundedGhs,
             mid: roundedGhs,
           },
           grossRate: parseFloat(Number(ghsQuote.rate).toFixed(2)),

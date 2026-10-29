@@ -126,7 +126,7 @@ export async function ngnRoutes(app: FastifyInstance) {
       const ngnOfframpPercent = Number(settings.ngnOfframpFeePercent ?? 0);
       const baseOfframpPercent = Number(settings.offrampFeePercent ?? 0);
       const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : baseOfframpPercent;
-      const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
+      const providerPercent = Number(settings.ngnProviderFeePercent ?? env.BREET_FEE_PERCENT ?? 0.5);
       const totalPercent = sivanPercent + providerPercent;
 
       // Net rate embeds both provider cost and Sivan margin.
@@ -141,7 +141,7 @@ export async function ngnRoutes(app: FastifyInstance) {
           grossRate: Math.round(grossRate),
           netRate: roundedNet,
           usdc: roundedNet,
-          usdt: Math.round(roundedNet * 0.998),
+          usdt: roundedNet,
           providerFeePercent: providerPercent,
           sivanMarginPercent: sivanPercent,
           totalFeePercent: totalPercent,
@@ -810,6 +810,27 @@ export async function ngnRoutes(app: FastifyInstance) {
       severity: 'warning',
       metadata: { markupPercent: result.markupPercent, reason: body.reason },
     });
+    try {
+      const { getAdminFeeSettings, updateAdminFeeSettings } = await import('../../admin/admin-fees.service.js');
+      const currentFees = await getAdminFeeSettings();
+      if (Number(currentFees.ngnOfframpFeePercent) !== Number(result.markupPercent)) {
+        const { updatedAt: _u, ...restFees } = currentFees;
+        await updateAdminFeeSettings(
+          {
+            ...restFees,
+            ngnOfframpFeePercent: result.markupPercent,
+            updatedBy: body.updatedBy || 'admin_api_key',
+            reason: body.reason || `Aligned NGN off-ramp fee percent with Breet markup (${result.markupPercent}%)`,
+          },
+          { skipBreetSync: true }
+        );
+      } else {
+        const { clearLiveRatesCache } = await import('../../rates/api/rates.routes.js');
+        clearLiveRatesCache();
+      }
+    } catch (err: any) {
+      console.warn('[breet/markup] Admin fee settings sync warning:', err?.message || err);
+    }
     return { data: result };
   });
 

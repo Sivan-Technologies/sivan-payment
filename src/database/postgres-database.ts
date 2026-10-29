@@ -217,6 +217,11 @@ export class PostgresDatabase {
            on payments_auth_challenges (created_at asc)
            where consumed_at is null`
       );
+      await optionalQuery(
+        this.pool,
+        `create index if not exists idx_audit_logs_action_created
+           on payments_audit_logs (action, created_at desc)`
+      );
     } catch (error) {
       console.warn('[postgres.ensureHotPathIndexes] warning:', (error as Error)?.message || error);
     }
@@ -969,13 +974,20 @@ export class PostgresDatabase {
   }
 
   async latestAuditLogByAction(action: string) {
+    const queued = [...this.auditQueue]
+      .filter((item) => item.action === action)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     const client = await this.pool.connect();
     try {
       const result = await client.query(
         'select * from payments_audit_logs where action = $1 order by created_at desc limit 1',
         [action]
       );
-      return result.rows.length ? mapAuditLog(result.rows[0]) : null;
+      const dbLatest = result.rows.length ? mapAuditLog(result.rows[0]) : null;
+      if (queued && (!dbLatest || queued.createdAt >= dbLatest.createdAt)) {
+        return queued;
+      }
+      return dbLatest;
     } finally { client.release(); }
   }
 
@@ -1614,6 +1626,20 @@ export class PostgresDatabase {
   }
 
   async insertAuditLogRecord(record: AuditLogRecord) {
+    if (
+      record.action === 'admin.fees.updated' ||
+      record.action === 'admin.platform.updated' ||
+      record.action === 'balance.ledger_entry' ||
+      record.action === 'ngn.breet_markup_updated'
+    ) {
+      const client = await this.pool.connect();
+      try {
+        await upsertAuditLog(client, record);
+        return record;
+      } finally {
+        client.release();
+      }
+    }
     this.auditQueue.push(record);
     if (this.auditQueue.length >= 20) {
       void this.flushAuditLogs();

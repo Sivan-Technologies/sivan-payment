@@ -420,13 +420,15 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
 }
 
 export async function getAdminFeeSettings(): Promise<AdminFeeSettings> {
-  const data = await db.read();
-  const latest = (data.auditLogs ?? []).filter((log) => log.action === 'admin.fees.updated').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const latest = await db.latestAuditLogByAction('admin.fees.updated');
   if (!latest) return defaultAdminFeeSettings();
   return { ...defaultAdminFeeSettings(), ...((latest.metadata as any)?.settings ?? {}), updatedBy: latest.actorId ?? 'admin_api_key', updatedAt: latest.createdAt };
 }
 
-export async function updateAdminFeeSettings(input: z.infer<typeof feeSettingsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+export async function updateAdminFeeSettings(
+  input: z.infer<typeof feeSettingsSchema>,
+  context: { ipAddress?: string; userAgent?: string; skipBreetSync?: boolean } = {}
+) {
   const previous = await getAdminFeeSettings();
   const { updatedBy, reason, ...settings } = input;
 
@@ -450,5 +452,35 @@ export async function updateAdminFeeSettings(input: z.infer<typeof feeSettingsSc
     userAgent: context.userAgent,
     metadata: { previous, settings: next, reason }
   });
+
+  try {
+    const { clearLiveRatesCache } = await import('../rates/api/rates.routes.js');
+    clearLiveRatesCache();
+  } catch {
+    // Non-fatal
+  }
+
+  if (
+    !context.skipBreetSync &&
+    Number.isFinite(next.ngnOfframpFeePercent) &&
+    next.ngnOfframpFeePercent !== previous.ngnOfframpFeePercent &&
+    next.ngnOfframpFeePercent >= 0 &&
+    next.ngnOfframpFeePercent <= 10
+  ) {
+    try {
+      const { getNgnControls } = await import('../ngn/service/ngn-controls.service.js');
+      const { getNgnProvider } = await import('../ngn/provider/ngn-provider-registry.js');
+      const controls = await getNgnControls();
+      if (controls.offrampRevenueMode === 'breet_markup') {
+        const provider = getNgnProvider('breet');
+        if (provider.updateBreetMarkupPercent) {
+          await provider.updateBreetMarkupPercent(next.ngnOfframpFeePercent);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[admin-fees] Breet markup sync warning:', err?.message || err);
+    }
+  }
+
   return next;
 }
