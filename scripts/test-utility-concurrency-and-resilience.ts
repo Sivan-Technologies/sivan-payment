@@ -889,8 +889,123 @@ async function run(): Promise<void> {
   assert.ok(foundPending, 'pending_reconciliation record from Suite 16 must be tracked in reconciliation');
   ok('Connected reconciliation verified: reconcileUnsettledUtilityPurchases tracks pending reconciliation and unsettled deliveries');
 
+  // ─── 19. Provider Float/404 Decline Immediate Release & Stuck Hold Reconciliation ───
+  console.log('\n══ 19. Provider Decline Hold Release & Stuck Hold Auto-Reconciliation ══');
+  const { PaystackUtilityApiError } = await import('../src/ngn/provider/paystack-utility.provider.js');
+  const { createBalanceLedgerEntry } = await import('../src/balances/balance.service.js');
+
+  const userDecline19 = 'usr_provider_decline_19';
+  await db.upsertVirtualAccountTransactionRecord({
+    id: `vatx_seed_${userDecline19}`,
+    provider: 'paystack',
+    depositId: `dep_${userDecline19}`,
+    userId: userDecline19,
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '2500.00',
+    destinationAmount: '2500.00',
+    paymentRail: 'nibss_paystack_dva',
+    status: 'completed',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const floatExhaustedPrimary: IUtilityProvider = {
+    name: 'float_exhausted_primary',
+    supports: ['airtime'],
+    priority: 20,
+    async purchaseAirtime() {
+      throw new UtilityProviderError({
+        provider: 'float_exhausted_primary',
+        reason: 'provider_float_exhausted',
+        context: 'airtime purchase',
+        upstreamMessage: 'Insufficient balance fund your wallet and try again',
+      });
+    },
+  };
+
+  const paystack404Secondary: IUtilityProvider = {
+    name: 'paystack_404_secondary',
+    supports: ['airtime'],
+    priority: 10,
+    async purchaseAirtime() {
+      throw new PaystackUtilityApiError(
+        'Paystack utility API call failed with HTTP 404',
+        '/bill/charge',
+        404,
+        'Requested url (/bill/charge) not found'
+      );
+    },
+  };
+
+  registerUtilityProvider(floatExhaustedPrimary);
+  registerUtilityProvider(paystack404Secondary);
+  setUtilityRouting({
+    routes: { airtime: ['float_exhausted_primary', 'paystack_404_secondary'], data: ['mock_primary'], electricity: ['mock_primary'] },
+    failover: { airtime: true, data: false, electricity: false },
+  });
+
+  await assert.rejects(
+    () =>
+      executeAirtimePurchase({
+        userId: userDecline19,
+        phone: '09136717403',
+        amountNgn: 500,
+        operator: 'mtn',
+        idempotencyKey: `idem_decline19_${Date.now()}`,
+        channel: 'whatsapp',
+      }),
+    /Paystack utility API call failed with HTTP 404/
+  );
+  assert.equal(await getUserNgnBalance(userDecline19), 2500, 'Spendable balance must remain 2,500 NGN after provider decline');
+  ok('Immediate hold release verified: provider float exhaustion + 404 decline immediately releases hold');
+
+  // Simulate a legacy pending_reconciliation hold caused by HTTP 404 and verify auto-reconciliation releases it
+  const legacyResId = `res_legacy_404_${Date.now()}`;
+  await db.upsertVirtualAccountTransactionRecord({
+    id: `vatx_res_${legacyResId}`,
+    provider: 'paystack',
+    depositId: legacyResId,
+    userId: userDecline19,
+    sourceCurrency: 'ngn',
+    destinationCurrency: 'ngn',
+    sourceAmount: '500.00',
+    destinationAmount: '-500.00',
+    paymentRail: 'utility_reservation',
+    status: 'pending_reconciliation' as any,
+    depositReference: legacyResId,
+    rawPayload: {
+      service: 'airtime',
+      amountNgn: 500,
+      error: 'Paystack utility API call failed with HTTP 404',
+      heldAt: now,
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
+  await createBalanceLedgerEntry(
+    {
+      userId: userDecline19,
+      asset: 'ngn',
+      amount: '500.00',
+      kind: 'hold',
+      status: 'completed',
+      sourceType: 'utility_reservation',
+      sourceId: legacyResId,
+      description: 'Legacy stuck hold: 500 NGN',
+      transferId: legacyResId,
+    },
+    { actorType: 'system', actorId: userDecline19 }
+  );
+  assert.equal(await getUserNgnBalance(userDecline19), 2000, 'Pre-reconcile balance reflects 500 NGN stuck hold');
+
+  const reconResult19 = await reconcileUnsettledUtilityPurchases();
+  assert.ok(!reconResult19.pendingReconciliation.includes(legacyResId), 'Authoritative 404 hold must be resolved out of pendingReconciliation');
+  assert.equal(await getUserNgnBalance(userDecline19), 2500, 'Post-reconcile balance restored to 2,500 NGN');
+  ok('Auto-reconciliation verified: stuck pending_reconciliation from 404 decline released back to spendable balance');
+
   console.log('\n======================================================');
-  console.log('🎉 ALL 18 UTILITY CONCURRENCY & RESILIENCE TESTS PASSED');
+  console.log('🎉 ALL 19 UTILITY CONCURRENCY & RESILIENCE TESTS PASSED');
   console.log('======================================================\n');
 }
 

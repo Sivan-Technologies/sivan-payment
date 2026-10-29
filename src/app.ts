@@ -612,6 +612,31 @@ export async function buildApp() {
       });
     }
 
+    if ((error as any)?.name === 'PaystackUtilityApiError') {
+      const reason = 'upstream_declined' as const;
+      const statusCode = statusForReason(reason);
+      request.log.error(
+        {
+          provider: 'paystack',
+          reason,
+          endpoint: (error as any)?.endpoint,
+          httpStatus: (error as any)?.httpStatus,
+          upstream: (error as any)?.message,
+          url: request.url,
+          requestId: request.id,
+        },
+        'utility provider failure'
+      );
+      return reply.code(statusCode).send({
+        error: {
+          code: codeForReason(reason),
+          message: customerMessageForReason(reason),
+          details: { code: codeForReason(reason), reason },
+          requestId: String(request.id),
+        },
+      });
+    }
+
     if (error instanceof AppError) {
       if (error.statusCode >= 500) {
         captureError(error, { requestId: request.id, url: request.url, method: request.method, code: error.code, details: error.details });

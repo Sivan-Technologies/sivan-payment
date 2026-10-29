@@ -140,7 +140,7 @@ export function isTimeoutOrNetworkError(err: any): boolean {
   ) {
     return true;
   }
-  const status = Number(err.status || err.statusCode || err.details?.status || 0);
+  const status = Number(err.status || err.statusCode || err.httpStatus || err.details?.status || 0);
   if (status === 502 || status === 504 || status === 503) {
     return true;
   }
@@ -155,10 +155,28 @@ export function isTimeoutOrNetworkError(err: any): boolean {
  */
 export function isAuthoritativeRejection(err: any): boolean {
   if (!err) return false;
+
+  const reason = String(err.reason || err.details?.reason || '').toLowerCase();
+  if (reason === 'provider_timeout') return false;
+  const authoritativeUtilityReasons = [
+    'provider_float_exhausted',
+    'provider_auth_failed',
+    'provider_unavailable',
+    'invalid_recipient',
+    'invalid_plan',
+    'upstream_declined',
+  ];
+  if (authoritativeUtilityReasons.includes(reason)) {
+    return true;
+  }
+
   if (isTimeoutOrNetworkError(err)) return false;
 
-  const status = Number(err.statusCode || err.status || err.details?.status || 0);
+  const status = Number(err.statusCode || err.status || err.httpStatus || err.details?.status || 0);
   if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+    return true;
+  }
+  if (err.name === 'PaystackUtilityApiError' && status > 0 && status < 500 && status !== 408 && status !== 429) {
     return true;
   }
 
@@ -171,6 +189,11 @@ export function isAuthoritativeRejection(err: any): boolean {
     'operator_rejected',
     'insufficient_balance',
     'insufficient_provider_float',
+    'provider_float_exhausted',
+    'provider_auth_failed',
+    'provider_unavailable',
+    'invalid_plan',
+    'upstream_declined',
     'bad_request',
     'pin_not_set',
     'pin_required',
@@ -179,6 +202,9 @@ export function isAuthoritativeRejection(err: any): boolean {
   if (knownRejectionCodes.includes(code)) return true;
 
   const msg = String(err.message || '').toLowerCase();
+  if (/failed with http 4\d\d\b/i.test(msg) && !/failed with http (408|429)\b/i.test(msg)) {
+    return true;
+  }
   const knownRejectionPhrases = [
     'invalid mobile number',
     'invalid recipient',
@@ -189,6 +215,14 @@ export function isAuthoritativeRejection(err: any): boolean {
     'no data plan',
     'insufficient balance',
     'insufficient float',
+    'provider_float_exhausted',
+    'provider_auth_failed',
+    'provider_unavailable',
+    'invalid_plan',
+    'upstream_declined',
+    'no provider',
+    'carries no',
+    'not supported on paystack rails',
     'pin',
   ];
   if (knownRejectionPhrases.some((phrase) => msg.includes(phrase))) {
@@ -521,6 +555,9 @@ async function withBalanceReservation<T>(
             idempotencyKey,
             fingerprint,
             error: err?.message || String(err),
+            errorReason: err?.reason,
+            errorCode: err?.code,
+            httpStatus: err?.httpStatus || err?.statusCode || err?.status,
           },
           createdAt: now,
           updatedAt: new Date().toISOString(),
@@ -569,6 +606,9 @@ async function withBalanceReservation<T>(
             idempotencyKey,
             fingerprint,
             error: err?.message || String(err),
+            errorReason: err?.reason,
+            errorCode: err?.code,
+            httpStatus: err?.httpStatus || err?.statusCode || err?.status,
             heldAt: new Date().toISOString(),
           },
           createdAt: now,
@@ -1562,7 +1602,56 @@ export async function reconcileUnsettledUtilityPurchases(): Promise<{
   }
 
   // 2. Track and review pending_reconciliation (timeouts / ambiguous states)
+  // If a pending_reconciliation reservation recorded a definitive provider decline
+  // or 4xx/config rejection where no utility was delivered, release the hold atomically.
   for (const tx of pending) {
+    const raw = (tx.rawPayload || {}) as any;
+    const recordedErr = {
+      message: String(raw.error || ''),
+      reason: raw.errorReason || raw.reason,
+      code: raw.errorCode || raw.code,
+      httpStatus: raw.httpStatus,
+      status: raw.status,
+    };
+
+    if (recordedErr.message && isAuthoritativeRejection(recordedErr)) {
+      try {
+        const amountNgn = Math.abs(Number(tx.sourceAmount || tx.destinationAmount || 0));
+        const reservationId = tx.depositId;
+        if (tx.userId && amountNgn > 0) {
+          await createBalanceLedgerEntry(
+            {
+              userId: tx.userId,
+              asset: 'ngn',
+              amount: amountNgn.toFixed(2),
+              kind: 'hold_release',
+              status: 'completed',
+              sourceType: 'utility_reservation',
+              sourceId: reservationId,
+              description: `Release rejected utility reservation: ${amountNgn} NGN`,
+              transferId: `rel_${reservationId}`,
+            },
+            { actorType: 'system', actorId: tx.userId }
+          );
+        }
+
+        await db.upsertVirtualAccountTransactionRecord({
+          ...tx,
+          status: 'failed',
+          destinationAmount: '0.00',
+          rawPayload: {
+            ...raw,
+            reconciledAt: new Date().toISOString(),
+            reconciliationAction: 'hold_released_on_authoritative_rejection',
+          },
+          updatedAt: new Date().toISOString(),
+        });
+        continue;
+      } catch (relErr) {
+        console.error(`[reconcileUnsettled] Failed to release rejected pending reservation ${tx.depositId}:`, relErr);
+      }
+    }
+
     pendingReconciliation.push(tx.depositId);
   }
 
