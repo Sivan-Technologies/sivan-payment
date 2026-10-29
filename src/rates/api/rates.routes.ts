@@ -13,6 +13,10 @@ interface CachedRateEntry {
 const SERVER_CACHE_TTL_MS = 60_000;
 let cachedRates: CachedRateEntry | null = null;
 
+export function clearLiveRatesCache(): void {
+  cachedRates = null;
+}
+
 async function fetchLiveMarketRates(): Promise<any> {
   const now = Date.now();
   if (cachedRates && now - cachedRates.cachedAt < SERVER_CACHE_TTL_MS) {
@@ -26,10 +30,11 @@ async function fetchLiveMarketRates(): Promise<any> {
   try {
     const controls = await getNgnControls();
     if (controls.offrampEnabled) {
-      const providerName = controls.activeProvider ?? 'breet';
+      const breetConfigured = Boolean(env.BREET_APP_ID && env.BREET_APP_SECRET);
+      const providerName = breetConfigured ? 'breet' : (controls.activeProvider ?? 'breet');
       const provider = getNgnProvider(providerName);
 
-      const rawQuote = await provider.createQuote({
+      const rawQuoteUsdc = await provider.createQuote({
         userId: 'rate_query',
         direction: 'offramp',
         sourceCurrency: 'usdc',
@@ -38,28 +43,48 @@ async function fetchLiveMarketRates(): Promise<any> {
         network: 'solana',
       });
 
-      const grossRate = Number(rawQuote.rate);
+      let rawQuoteUsdt = rawQuoteUsdc;
+      try {
+        rawQuoteUsdt = await provider.createQuote({
+          userId: 'rate_query',
+          direction: 'offramp',
+          sourceCurrency: 'usdt',
+          destinationCurrency: 'ngn',
+          sourceAmount: '10',
+          network: 'solana',
+        });
+      } catch {
+        rawQuoteUsdt = rawQuoteUsdc;
+      }
+
+      const grossRate = Number(rawQuoteUsdc.rate);
+      const usdtGross = Number(rawQuoteUsdt.rate) || grossRate;
+
       if (Number.isFinite(grossRate) && grossRate > 0) {
         const settings = await getAdminFeeSettings();
         const ngnOfframpPercent = Number(settings.ngnOfframpFeePercent ?? 0);
         const baseOfframpPercent = Number(settings.offrampFeePercent ?? 0);
         const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : baseOfframpPercent;
-        const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
+        const providerPercent = Number(settings.ngnProviderFeePercent ?? env.BREET_FEE_PERCENT ?? 0.5);
         const totalPercent = sivanPercent + providerPercent;
 
+        const ngnOnrampPercent = Number(settings.ngnOnrampFeePercent ?? 0);
+        const baseOnrampPercent = Number(settings.onrampFeePercent ?? 0);
+        const onrampMarginPercent = ngnOnrampPercent > 0 ? ngnOnrampPercent : (baseOnrampPercent > 0 ? baseOnrampPercent : sivanPercent);
+
         const netRate = Math.round(grossRate * (1 - totalPercent / 100));
-        const usdtSell = Math.round(netRate * 0.998);
+        const usdtSell = Math.round(usdtGross * (1 - totalPercent / 100));
 
         result.ngn = {
           usdc: {
             sell: netRate,
-            buy: Math.round(grossRate * 0.99),
+            buy: Math.round(grossRate * (1 - onrampMarginPercent / 100)),
             mid: Math.round((grossRate + netRate) / 2),
           },
           usdt: {
             sell: usdtSell,
-            buy: Math.round(grossRate * 0.988),
-            mid: Math.round((grossRate + usdtSell) / 2),
+            buy: Math.round(usdtGross * (1 - onrampMarginPercent / 100)),
+            mid: Math.round((usdtGross + usdtSell) / 2),
           },
           grossRate: Math.round(grossRate),
           netRate,
@@ -95,17 +120,16 @@ async function fetchLiveMarketRates(): Promise<any> {
 
       if (Number.isFinite(netGhsRate) && netGhsRate > 0) {
         const roundedGhs = parseFloat(netGhsRate.toFixed(2));
-        const usdtGhs = parseFloat((netGhsRate * 0.998).toFixed(2));
         result.ghs = {
           usdc: {
             sell: roundedGhs,
-            buy: parseFloat((roundedGhs * 0.99).toFixed(2)),
+            buy: roundedGhs,
             mid: roundedGhs,
           },
           usdt: {
-            sell: usdtGhs,
-            buy: parseFloat((usdtGhs * 0.99).toFixed(2)),
-            mid: usdtGhs,
+            sell: roundedGhs,
+            buy: roundedGhs,
+            mid: roundedGhs,
           },
           grossRate: parseFloat(Number(ghsQuote.rate).toFixed(2)),
           netRate: roundedGhs,

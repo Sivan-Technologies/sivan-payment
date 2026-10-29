@@ -27,7 +27,7 @@ As artificial intelligence transitions from generative conversation to autonomou
 Simultaneously, in emerging markets like Nigeria and across Africa, over 80% of informal digital commerce occurs inside messaging apps (Telegram, WhatsApp) without structured contracts or escrow-less protection, creating high counterparty risk and settlement friction.
 
 Proposed Solution:
-Sivan payment Ai bridges conversational AI, agentic execution, and Solana programmable money. It models service agreements as verifiable, deterministic state machines (Draft -> Pending -> Funded -> Delivered -> Released / Disputed) accessible via natural language across Telegram (@Sivan_Ai), WhatsApp, Web, and REST APIs.
+Sivan payment Ai bridges conversational AI, agentic execution, and Solana programmable money. It models service agreements as verifiable, deterministic state machines (Draft -> Pending -> Funded -> Delivered -> Released / Disputed) accessible via natural language across Telegram (@SivanAi_bot), WhatsApp, Web, and REST APIs.
 
 Sivan payment Ai locks funds in USDC on Solana using the x402 payment facility protocol. Upon work delivery proof, real-time push alerts dispatch to parties, and funds are automatically released to the seller's Solana wallet address with zero manual web form friction.
 
@@ -51,7 +51,7 @@ Sivan payment Ai was built by leveraging advanced AI coding tools (Claude 3.7, C
 Upscaling Agentic Engineering Toolset & Mainnet Launch Plan:
 While Sivan payment is already launched publicly, the Sivan Service Agreement coordination layer is currently in live testing. The $200 USDG grant will directly cover our monthly AI coding subscriptions (Claude Pro, Cursor/Codex AI, and Solana MCP tools via solana.new). We will leverage these upgraded AI tools to:
 - Transition our x402 Solana USDC settlement engine from Devnet to Solana Mainnet-Beta.
-- Publicly launch the 1-click Service Agreement creation & release flow on Telegram (@Sivan_Ai) and Web.
+- Publicly launch the 1-click Service Agreement creation & release flow on Telegram (@SivanAi_bot) and Web.
 - Perform automated edge-case validation and dispute resolution rules before public launch.
 
 ---
@@ -68,7 +68,7 @@ Milestone 3: Vercel Operations Console & Risk Controls (Completed)
 Deployed live Vercel dashboard (sivan-admin-hub-test.vercel.app), bounded database audit queue (0.18ms write latency), and USDT toggle switch.
 
 Milestone 4: Public Launch of Sivan Service Agreement Engine on Solana Mainnet & Telegram (Target for Tranche 2 Shipping)
-Transition x402 payment routing from Solana Devnet to Mainnet-Beta and launch the 1-click Service Agreement creation & settlement flow publicly on Telegram (@Sivan_Ai) and Web.
+Transition x402 payment routing from Solana Devnet to Mainnet-Beta and launch the 1-click Service Agreement creation & settlement flow publicly on Telegram (@SivanAi_bot) and Web.
 
 ---
 

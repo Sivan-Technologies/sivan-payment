@@ -1,10 +1,10 @@
 import { db } from '../database/json-database.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import { solanaRpc } from '../wallets/solana/solana-rpc.js';
-import { evmRpc } from '../wallets/evm/evm-rpc.js';
+import { evmRpc, usesNativeStablecoin } from '../wallets/evm/evm-rpc.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { solanaMintFor } from '../wallets/solana/spl-transfer.js';
-import { erc20TokenAddress } from '../wallets/provider/privy-wallet.provider.js';
+import { erc20TokenAddress, decimalsForChainAsset } from '../wallets/provider/privy-wallet.provider.js';
 import { nowIso } from '../shared/id.js';
 import type { WalletDepositRecord } from '../database/types.js';
 import type { WalletChain } from '../wallets/types/wallet.types.js';
@@ -232,6 +232,25 @@ async function balanceStillPresent(
       return held + EPSILON >= expected ? 'confirmed' : 'unknown';
     }
 
+    if (deposit.chain === 'starknet') {
+      const { starknetErc20Balance } = await import('../wallets/starknet/starknet-rpc.js');
+      const { STARKNET_USDC, STARKNET_STRK, STARKNET_USDC_DECIMALS } = await import('../wallets/starknet/StarknetAdapter.js');
+      const { normaliseStarknetAddress } = await import('../wallets/address-validation.js');
+      const isStrk = deposit.asset.toLowerCase() === 'strk';
+      const tokenAddress = isStrk
+        ? (production ? STARKNET_STRK.mainnet : STARKNET_STRK.testnet)
+        : (production ? STARKNET_USDC.mainnet : STARKNET_USDC.testnet);
+      const decimals = isStrk ? 18 : STARKNET_USDC_DECIMALS;
+      const amountStr = await starknetErc20Balance(
+        tokenAddress,
+        normaliseStarknetAddress(deposit.address),
+        decimals,
+        { production }
+      );
+      const held = Number(amountStr);
+      return held + EPSILON >= expected ? 'confirmed' : 'unknown';
+    }
+
     /**
      * EVM: read at a block behind the head, not at 'latest'.
      *
@@ -246,11 +265,24 @@ async function balanceStillPresent(
     // depth. Clamp at 0 rather than underflowing a bigint into a huge number.
     const target = headNumber > BigInt(EVM_CONFIRMATIONS) ? headNumber - BigInt(EVM_CONFIRMATIONS) : 0n;
 
-    const token = erc20TokenAddress(deposit.chain as WalletChain, deposit.asset, production);
-    if (!token) return 'unknown';
-
     const holder = deposit.address.trim().toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(holder)) return 'unknown';
+
+    if (usesNativeStablecoin(deposit.chain as WalletChain)) {
+      const raw = await evmRpc<string>(
+        deposit.chain as WalletChain,
+        'eth_getBalance',
+        [holder, `0x${target.toString(16)}`],
+        { production }
+      );
+      if (!raw || raw === '0x') return 'unknown';
+      const decimals = decimalsForChainAsset(deposit.chain as WalletChain, deposit.asset);
+      const held = Number(BigInt(raw)) / 10 ** decimals;
+      return held + EPSILON >= expected ? 'confirmed' : 'unknown';
+    }
+
+    const token = erc20TokenAddress(deposit.chain as WalletChain, deposit.asset, production);
+    if (!token) return 'unknown';
 
     const data = '0x70a08231' + holder.slice(2).padStart(64, '0');
     const raw = await evmRpc<string>(
@@ -265,7 +297,8 @@ async function balanceStillPresent(
     // same condition for the same reason.
     if (!raw || raw === '0x') return 'unknown';
 
-    const held = Number(BigInt(raw)) / 1e6;
+    const decimals = decimalsForChainAsset(deposit.chain as WalletChain, deposit.asset);
+    const held = Number(BigInt(raw)) / 10 ** decimals;
     return held + EPSILON >= expected ? 'confirmed' : 'unknown';
   } catch {
     return 'unknown';
@@ -318,6 +351,28 @@ async function txOutcome(
         }
       }
       return 'unknown';
+    }
+
+    if (deposit.chain === 'starknet') {
+      const { starknetRpc } = await import('../wallets/starknet/starknet-rpc.js');
+      try {
+        const status = await starknetRpc<{ execution_status?: string; finality_status?: string }>(
+          'starknet_getTransactionStatus',
+          [hash],
+          { production }
+        );
+        if (!status) return 'unknown';
+        if (status.execution_status === 'REVERTED') return 'failed';
+        if (
+          status.execution_status === 'SUCCEEDED' &&
+          (status.finality_status === 'ACCEPTED_ON_L2' || status.finality_status === 'ACCEPTED_ON_L1')
+        ) {
+          return 'confirmed';
+        }
+        return 'unknown';
+      } catch {
+        return 'unknown';
+      }
     }
 
     const receipt = await evmRpc<any>(
@@ -391,6 +446,12 @@ export async function confirmDeposits(limit = 100): Promise<DepositConfirmationO
       const updated = await db.updateWalletDepositStatus(deposit.id, 'confirmed', nowIso());
       if (updated) {
         outcome.confirmed.push(deposit.id);
+        void import('./deposit-notification.service.js')
+          .then(({ notifyTelegramDeposit, notifyWhatsAppDeposit }) => {
+            void notifyTelegramDeposit(updated.userId, updated);
+            void notifyWhatsAppDeposit(updated.userId, updated);
+          })
+          .catch(() => undefined);
         await createAuditLog({
           action: 'deposit.confirmed',
           resourceType: 'wallet_deposit',

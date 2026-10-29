@@ -16,6 +16,7 @@ import {
   getIdentityStatus,
   redeemIdentityLinkSchema,
   lookupTelegramIdentity,
+  lookupWhatsappIdentity,
   lookupPhoneIdentity,
   redeemTelegramLink,
   redeemTelegramLinkSchema,
@@ -25,16 +26,25 @@ import {
   unlinkTelegramIdentity,
   unlinkWhatsappIdentity,
 } from './identity.service.js';
-import { verifyUserJwt } from '../auth/jwt.js';
+import { signUserJwt, verifyUserJwt } from '../auth/jwt.js';
 import {
   hasWithdrawalPin,
   setWithdrawalPin,
   setWithdrawalPinSchema,
+  setChatWithdrawalPinSchema,
+  setInitialPinFromChat,
   verifyWithdrawalPin,
   verifyWithdrawalPinSchema,
   verifyTmaPinStepUp,
   evaluatePinRequirement,
+  assertPinIsAcceptable,
 } from './withdrawal-pin.service.js';
+import {
+  startChatEmailOtp,
+  startChatEmailOtpSchema,
+  verifyChatEmailOtp,
+  verifyChatEmailOtpSchema,
+} from './email-otp.service.js';
 
 function getAuthUserId(request: any): string | undefined {
   if (request.authUser?.sub) return request.authUser.sub;
@@ -68,8 +78,8 @@ async function resolveChatIdentity(channel: string, identity: string): Promise<s
     return result.linked ? result.paymentUserId : undefined;
   }
   if (channel === 'whatsapp') {
-    const user = await db.findUserByWhatsappNumber(identity.trim());
-    return user?.id;
+    const result = await lookupWhatsappIdentity(identity);
+    return result.linked ? result.paymentUserId : undefined;
   }
   // An unrecognised channel resolves to nobody. Falling through to a default
   // lookup here would let a new channel authorise payouts before anyone had
@@ -172,7 +182,10 @@ export async function identityRoutes(app: FastifyInstance) {
     const cleanTgUsername = telegramUsername ? telegramUsername.replace(/^@/, '') : '';
     const linkedEscrowUserId = telegramLink?.escrowUserId || status?.link?.escrowUserId;
 
-    const aliases = [
+    // Build the fullest possible alias set so agreements created from any channel
+    // (Telegram, WhatsApp, Web) are visible to the same person on all channels
+    // without requiring explicit account linking.
+    const rawAliases = [
       userId,
       user?.id,
       user?.email,
@@ -188,12 +201,40 @@ export async function identityRoutes(app: FastifyInstance) {
       handle
     ].filter(Boolean) as string[];
 
+    // Expand phone numbers to all normalized variants so that +2348012345678,
+    // 2348012345678, 08012345678, and whatsapp:+2348012345678 all match the
+    // same agreement row regardless of how the channel stored the identity.
+    const aliasExpansionSet = new Set<string>(rawAliases.map((a) => String(a).toLowerCase().trim()).filter(Boolean));
+    for (const raw of rawAliases) {
+      const v = String(raw || '').trim();
+      // Phone variants
+      const stripped = v.replace(/^whatsapp:/i, '');
+      const digits = stripped.replace(/\D/g, '');
+      if (digits.length >= 7) {
+        aliasExpansionSet.add(`+${digits}`);
+        aliasExpansionSet.add(digits);
+        aliasExpansionSet.add(`whatsapp:+${digits}`);
+        aliasExpansionSet.add(`whatsapp:${digits}`);
+        // Nigerian local 0… form
+        if (digits.startsWith('234') && digits.length >= 12) {
+          aliasExpansionSet.add(`0${digits.slice(3)}`);
+        }
+      }
+      // @username variants
+      if (v.startsWith('@')) {
+        aliasExpansionSet.add(v.slice(1).toLowerCase());
+      } else if (/^[a-z0-9_]{3,32}$/i.test(v) && !digits || v.length < digits.length) {
+        aliasExpansionSet.add(`@${v.toLowerCase()}`);
+      }
+    }
+    const aliases = Array.from(aliasExpansionSet).filter(Boolean);
+
     // Also include all linked wallet addresses so agreements stored against a
     // wallet address (e.g. Celo 0x..., Stellar G...) are visible to the owner.
     try {
       const userWallets = await db.listUserWallets(userId);
       for (const w of userWallets) {
-        if (w.address) aliases.push(w.address);
+        if (w.address) aliases.push(w.address.toLowerCase());
       }
     } catch (walletErr) {
       console.warn('[Service Agreements] Could not load user wallets for alias expansion:', walletErr);
@@ -235,11 +276,15 @@ export async function identityRoutes(app: FastifyInstance) {
       console.warn('[Service Agreements] Native lookup note:', e);
     }
 
-    // 2. Fetch external Telegram / WhatsApp linked deals if linked or available
-    const isLinked = Boolean(whatsappNumber || telegramUserId || status?.channels?.telegram?.linked || linkedEscrowUserId || userEmail);
+    // 2. Fetch external Telegram / WhatsApp linked deals from the escrow agent.
+    // We deliberately do NOT gate this behind "must be linked" — any authenticated
+    // web user should see agreements addressed to them by phone, Telegram ID,
+    // email, or username without requiring explicit channel linking first.
+    // The shareable link remains optional and is never forced.
+    const isLinked = Boolean(whatsappNumber || telegramUserId || status?.channels?.telegram?.linked || linkedEscrowUserId || userEmail || nativeDeals.length > 0);
 
     let externalDeals: any[] = [];
-    if (isLinked) {
+    if (true) { // Always attempt; the escrow agent will return empty if no identity resolves
       const escrowAgentUrl = env.CORE_API_BASE_URL || env.ESCROW_AGENT_URL;
       const coreSecret = process.env.CORE_API_SECRET;
 
@@ -250,18 +295,30 @@ export async function identityRoutes(app: FastifyInstance) {
       if (whatsappNumber) {
         params.push(`actorWhatsapp=${encodeURIComponent(whatsappNumber)}`);
       }
+      if (user?.whatsappNumber && user.whatsappNumber !== whatsappNumber) {
+        params.push(`actorWhatsapp=${encodeURIComponent(user.whatsappNumber)}`);
+      }
       if (telegramUserId) {
         params.push(`actorTelegramId=${encodeURIComponent(telegramUserId)}`);
+      }
+      if (user?.telegramUserId && String(user.telegramUserId) !== String(telegramUserId || '')) {
+        params.push(`actorTelegramId=${encodeURIComponent(user.telegramUserId)}`);
       }
       if (cleanTgUsername) {
         params.push(`actorTelegramUsername=${encodeURIComponent(cleanTgUsername)}`);
       }
+      if (user?.telegramUsername && user.telegramUsername !== telegramUsername) {
+        const cleanDbTg = user.telegramUsername.replace(/^@/, '');
+        params.push(`actorTelegramUsername=${encodeURIComponent(cleanDbTg)}`);
+      }
+      if (user?.username) {
+        params.push(`actorTelegramUsername=${encodeURIComponent(user.username)}`);
+      }
       if (userEmail) {
         params.push(`actorEmail=${encodeURIComponent(userEmail)}`);
       }
-      if (!linkedEscrowUserId && !whatsappNumber && !telegramUserId && !userEmail) {
-        params.push(`actorUserId=${encodeURIComponent(userId)}`);
-      }
+      // Always include userId as a fallback so internal agreements sync
+      params.push(`actorUserId=${encodeURIComponent(userId)}`);
 
       const url = `${escrowAgentUrl}/api/users/escrows?${params.join('&')}`;
 
@@ -331,7 +388,7 @@ export async function identityRoutes(app: FastifyInstance) {
 
     return {
       data: {
-        linked: isLinked || nativeDeals.length > 0,
+        linked: isLinked || nativeDeals.length > 0 || allDeals.length > 0,
         deals: allDeals
       }
     };
@@ -480,6 +537,34 @@ export async function identityRoutes(app: FastifyInstance) {
   });
 
   /**
+   * Start 6-digit Email OTP verification and Account Linking from Chat (Telegram/WhatsApp).
+   */
+  app.post('/api/identity/email-otp/start', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(startChatEmailOtpSchema, request.body);
+    return {
+      data: await startChatEmailOtp(body, {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      }),
+    };
+  });
+
+  /**
+   * Verify 6-digit Email OTP and perform Account Linking / Canonical UserId Synchronization.
+   */
+  app.post('/api/identity/email-otp/verify', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(verifyChatEmailOtpSchema, request.body);
+    return {
+      data: await verifyChatEmailOtp(body, {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      }),
+    };
+  });
+
+  /**
    * Directly link or update the phone number for a Telegram user from chat.
    */
   app.post('/api/identity/telegram/:telegramUserId/phone', async (request, reply) => {
@@ -508,17 +593,27 @@ export async function identityRoutes(app: FastifyInstance) {
     }
 
     const fullName = body.fullName || (body.firstName ? `${body.firstName} ${body.lastName || ''}`.trim() : user?.fullName) || 'Sivan User';
-    const email = body.email ? String(body.email).trim().toLowerCase() : (user?.email || `${cleanPhone}@sivantech.online`);
     const now = nowIso();
 
+    let targetEmail = user?.email || (body.email ? String(body.email).trim().toLowerCase() : `${cleanPhone}@sivantech.online`);
+    if (body.email && user && body.email.toLowerCase().trim() !== String(user.email).toLowerCase().trim()) {
+      const conflict = await db.findUserByEmail(body.email.toLowerCase().trim());
+      if (conflict && conflict.id !== user.id) {
+        // Prevent duplicate unique key conflict during unverified phone updates
+        targetEmail = user.email;
+      } else {
+        targetEmail = body.email.toLowerCase().trim();
+      }
+    }
+
     if (!user) {
-      user = await db.findUserByEmail(email);
+      user = await db.findUserByEmail(targetEmail);
     }
 
     if (!user) {
       user = await db.insertUserRecord({
         id: id('usr'),
-        email,
+        email: targetEmail,
         fullName,
         whatsappNumber: normalized,
         telegramUserId: cleanId,
@@ -528,7 +623,7 @@ export async function identityRoutes(app: FastifyInstance) {
     } else {
       user = await db.updateUserRecord({
         ...user,
-        email,
+        email: targetEmail,
         fullName: user.fullName || fullName,
         whatsappNumber: normalized,
         telegramUserId: cleanId,
@@ -566,6 +661,21 @@ export async function identityRoutes(app: FastifyInstance) {
   });
 
   /**
+   * Dedicated username tag availability check for chat layers (WhatsApp / Telegram) and onboarding.
+   */
+  app.get('/api/identity/username/availability', async (request) => {
+    const query = request.query as { username?: string };
+    const raw = String(query.username || '').trim();
+    try {
+      const { checkUsernameAvailability } = await import('../users/username.service.js');
+      const data = await checkUsernameAvailability(raw);
+      return { data };
+    } catch (err: any) {
+      return { data: { username: raw, available: false, error: err?.message || 'Invalid username' } };
+    }
+  });
+
+  /**
    * Compatibility endpoint for user profile registration.
    */
   app.post('/api/users/profile', async (request, reply) => {
@@ -582,13 +692,11 @@ export async function identityRoutes(app: FastifyInstance) {
     if (!user) {
       user = await db.findUserByWhatsappNumber(`whatsapp:${normalized}`);
     }
+    if (!user) {
+      user = await db.findUserByWhatsappNumber(cleanPhone);
+    }
     if (!user && cleanTelegramId) {
       user = await db.findUserByTelegramUserId(cleanTelegramId);
-    }
-
-    const email = body.email ? String(body.email).trim().toLowerCase() : (user?.email || `${cleanPhone}@sivantech.online`);
-    if (!user) {
-      user = await db.findUserByEmail(email);
     }
 
     const firstName = body.firstName || 'Sivan User';
@@ -596,20 +704,55 @@ export async function identityRoutes(app: FastifyInstance) {
     const fullName = `${firstName} ${lastName}`.trim();
     const now = nowIso();
 
+    let targetEmail = user?.email || (body.email ? String(body.email).trim().toLowerCase() : `${cleanPhone}@sivantech.online`);
+    if (body.email && user && body.email.toLowerCase().trim() !== String(user.email).toLowerCase().trim()) {
+      const conflict = await db.findUserByEmail(body.email.toLowerCase().trim());
+      if (conflict && conflict.id !== user.id) {
+        targetEmail = user.email;
+      } else {
+        targetEmail = body.email.toLowerCase().trim();
+      }
+    }
+
     if (!user) {
-      user = await db.insertUserRecord({
-        id: id('usr'),
-        email,
-        fullName,
-        whatsappNumber: normalized,
-        telegramUserId: cleanTelegramId,
-        createdAt: now,
-        updatedAt: now,
-      });
+      user = await db.findUserByEmail(targetEmail);
+    }
+
+    if (!user) {
+      try {
+        user = await db.insertUserRecord({
+          id: id('usr'),
+          email: targetEmail,
+          fullName,
+          whatsappNumber: normalized,
+          telegramUserId: cleanTelegramId,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch (insertErr: any) {
+        if (insertErr?.code === '23505' || String(insertErr?.message).includes('unique constraint') || String(insertErr?.message).includes('duplicate key')) {
+          user = (await db.findUserByEmail(targetEmail))
+            || (await db.findUserByWhatsappNumber(normalized))
+            || (await db.findUserByWhatsappNumber(cleanPhone));
+          if (user) {
+            user = await db.updateUserRecord({
+              ...user,
+              fullName: user.fullName || fullName,
+              whatsappNumber: normalized,
+              telegramUserId: cleanTelegramId || user.telegramUserId,
+              updatedAt: now,
+            });
+          } else {
+            throw insertErr;
+          }
+        } else {
+          throw insertErr;
+        }
+      }
     } else {
       user = await db.updateUserRecord({
         ...user,
-        email,
+        email: targetEmail,
         fullName: user.fullName || fullName,
         whatsappNumber: normalized,
         telegramUserId: cleanTelegramId || user.telegramUserId,
@@ -683,6 +826,7 @@ export async function identityRoutes(app: FastifyInstance) {
           email: `reset_${user.id}_${Date.now()}@sivantech.online`,
           whatsappNumber: undefined,
           telegramUserId: undefined,
+          username: undefined,
           updatedAt: nowIso(),
         });
         unlinkedPhone = true;
@@ -788,6 +932,24 @@ export async function identityRoutes(app: FastifyInstance) {
   });
 
   /**
+   * Set initial withdrawal PIN from an authenticated chat channel (e.g. Meta WhatsApp Flows).
+   * Guarded by identity service secret.
+   * Only allows initial setup when user has no PIN yet; prevents takeovers by blocking chat-based resets.
+   */
+  app.post('/api/identity/set-pin-chat', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(setChatWithdrawalPinSchema, request.body);
+    return {
+      data: await setInitialPinFromChat(
+        body,
+        resolveChatIdentity,
+        { ipAddress: request.ip, userAgent: request.headers['user-agent'] }
+      ),
+    };
+  });
+
+
+  /**
    * Telegram Mini-App (TMA) & Web Keypad Step-Up PIN Verification.
    * Authenticates PIN for high-value transactions ($50+) and returns a single-use step-up token.
    */
@@ -811,7 +973,8 @@ export async function identityRoutes(app: FastifyInstance) {
         },
         { ipAddress: request.ip }
       );
-      return { data: result };
+      const authToken = signUserJwt({ userId: String(userId) });
+      return { data: { ...result, authToken } };
     } catch (err: any) {
       return reply.code(err.statusCode || 400).send({
         error: {
@@ -819,6 +982,35 @@ export async function identityRoutes(app: FastifyInstance) {
           code: err.details?.code || 'PIN_VERIFICATION_FAILED',
           details: err.details,
         },
+      });
+    }
+  });
+
+  /**
+   * Set initial transaction PIN from Telegram Mini-App (TMA).
+   * Only allowed if user has NO PIN configured yet (anti-takeover rule).
+   */
+  app.post('/api/identity/pin/tma-setup', async (request, reply) => {
+    const { userId, pin } = (request.body || {}) as { userId?: string; pin?: string };
+    if (!userId || !pin) {
+      return reply.code(400).send({ error: { message: 'Missing userId or pin' } });
+    }
+    const existing = await hasWithdrawalPin(String(userId));
+    if (existing) {
+      return reply.code(400).send({
+        error: { message: 'A PIN is already set for your account. Please use Web Settings to change or reset your PIN.' }
+      });
+    }
+    try {
+      assertPinIsAcceptable(String(pin));
+      const result = await setWithdrawalPin(String(userId), { pin: String(pin) }, {
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+      });
+      return { data: result };
+    } catch (err: any) {
+      return reply.code(err.statusCode || 400).send({
+        error: { message: err.message || 'Unable to configure PIN' }
       });
     }
   });
@@ -867,21 +1059,27 @@ export async function identityRoutes(app: FastifyInstance) {
     const userId = await resolveChatIdentity(channel, String(identity));
     if (!userId) return reply.code(404).send({ error: { message: 'Chat identity is not linked to a Sivan Payment account.' } });
 
-    let unified = await getUnifiedBalance(userId);
-    const existingChains = (unified.wallets || []).map((w) => w.chain);
-    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc'];
-    const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
-
-    if (missingChains.length > 0) {
+    const cleanEnsureChain = rawBody.ensureChain ? String(rawBody.ensureChain).trim().toLowerCase() : undefined;
+    if (cleanEnsureChain) {
       const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-      await Promise.all(
-        missingChains.map((chain) => ensureUserWallet(userId, chain as any).catch(() => null))
-      );
-      unified = await getUnifiedBalance(userId);
+      if (cleanEnsureChain === 'stellar') {
+        await ensureUserWallet(userId, 'stellar');
+      } else if (cleanEnsureChain === 'starknet') {
+        await ensureUserWallet(userId, 'starknet');
+      } else {
+        const isEvm = ['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(cleanEnsureChain);
+        const primaryEvm = isEvm ? (cleanEnsureChain as any) : 'celo';
+        await Promise.all([
+          ensureUserWallet(userId, 'solana').catch(() => null),
+          ensureUserWallet(userId, primaryEvm).catch(() => null),
+        ]);
+      }
     }
 
+    const unified = await getUnifiedBalance(userId);
+
     const hasAnyFunds = unified.balances.some((b) => Number(b.spendable) > 0 || Number(b.chain) > 0);
-    const unreadable = !hasAnyFunds && (unified.balances.length
+    const unreadable = !hasAnyFunds && !cleanEnsureChain && (unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
       : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable));
     if (unreadable) {
@@ -896,11 +1094,17 @@ export async function identityRoutes(app: FastifyInstance) {
         userId,
         asset: usdcEntry?.asset ?? 'usdc',
         available: Number(usdcEntry?.spendable ?? 0),
+        spendable: Number(usdcEntry?.spendable ?? 0),
+        held: Number(usdcEntry?.held ?? 0),
+        chainTotal: Number(usdcEntry?.chain ?? 0),
         pending: Number(usdcEntry?.pending ?? 0),
         balances: unified.balances.map((b) => ({
           asset: b.asset,
           amount: Number(b.spendable),
           available: Number(b.spendable),
+          spendable: Number(b.spendable),
+          held: Number(b.held ?? 0),
+          chain: Number(b.chain ?? 0),
           pending: Number(b.pending),
         })),
         wallets: unified.wallets.map((w) => ({
@@ -920,32 +1124,45 @@ export async function identityRoutes(app: FastifyInstance) {
    * Universal recipient target resolver (@username, +phone, or userId) for instant P2P transfers and multi-chain resolution.
    */
   app.get('/api/identity/resolve-target', async (request, reply) => {
-    const { target, chain } = request.query as { target?: string; chain?: string };
+    const { target, chain, provision, ensureWallet } = request.query as { target?: string; chain?: string; provision?: string; ensureWallet?: string };
     if (!target || typeof target !== 'string') {
       return reply.code(400).send({ error: { message: 'Missing target query parameter' } });
     }
 
-    const user = await db.findUserByTarget(target);
+    let user = await db.findUserByTarget(target);
+    if (!user) {
+      const rawClean = target.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+      if (rawClean.length >= 7 && /^\d+$/.test(rawClean)) {
+        user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) ||
+               (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) ||
+               (await db.findUserByWhatsappNumber(rawClean));
+      }
+    }
     if (!user) {
       return { data: { found: false, target } };
     }
 
+    const userWallets: any[] = await db.listUserWallets(user.id).catch(() => []);
     let targetAddress: string | undefined;
     const requestedChain = chain ? String(chain).trim().toLowerCase() : undefined;
 
     if (requestedChain) {
-      try {
-        const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-        const wallet = await ensureUserWallet(user.id, requestedChain as any);
-        if (wallet?.address) {
-          targetAddress = wallet.address;
+      const match = userWallets.find((w) => w.chain?.toLowerCase() === requestedChain);
+      if (match?.address) {
+        targetAddress = match.address;
+      } else if (provision === 'true' || ensureWallet === 'true') {
+        try {
+          const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+          const created = await ensureUserWallet(user.id, requestedChain as any);
+          if (created?.address) {
+            targetAddress = created.address;
+            userWallets.push(created);
+          }
+        } catch (err: any) {
+          request.log.warn({ err: err?.message, userId: user.id, chain: requestedChain }, '[resolve-target] Auto-provision wallet on chain failed');
         }
-      } catch (err) {
-        console.warn('[resolve-target.wallet_error]', err);
       }
     }
-
-    const userWallets = await db.listUserWallets(user.id).catch(() => []);
 
     return {
       data: {
@@ -955,6 +1172,8 @@ export async function identityRoutes(app: FastifyInstance) {
           username: user.username,
           displayName: (user as any).name || (user as any).fullName || user.username || (user as any).telegramUsername || user.whatsappNumber || 'Sivan User',
           phone: user.whatsappNumber,
+          telegramUserId: user.telegramUserId,
+          telegramUsername: user.telegramUsername,
           targetAddress,
           chain: requestedChain,
           wallets: userWallets.map((w) => ({ chain: w.chain, address: w.address })),

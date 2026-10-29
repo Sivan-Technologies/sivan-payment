@@ -12,6 +12,45 @@ import { confirmAvatarUpload, confirmAvatarUploadSchema, createAvatarUploadUrl, 
 import { checkUsernameAvailability, updateUsername, usernameSchema } from './username.service.js';
 import { legalAcceptancePayloadSchema, listUserLegalAcceptances, recordSignupLegalAcceptance } from '../legal/legal-acceptance.service.js';
 import { confirmUserEmailChange, userEmailChangeConfirmSchema } from '../admin/account-recovery.service.js';
+import { getAuthUserId } from '../auth/jwt.js';
+
+import { id, nowIso } from '../shared/id.js';
+
+async function resolveTargetUserId(userIdParam: string, request: any): Promise<string> {
+  if (!userIdParam) return userIdParam;
+  const decodedParam = decodeURIComponent(userIdParam).trim();
+  if (decodedParam === 'me') {
+    return getAuthUserId(request) || decodedParam;
+  }
+
+  // Check if an existing user matches directly by ID or target (@username, full_name, etc.)
+  const directMatch = (await db.findUserById(decodedParam)) || (await db.findUserByTarget(decodedParam));
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  if (decodedParam.startsWith('+') || /^\d{10,14}$/.test(decodedParam) || decodedParam.startsWith('whatsapp:')) {
+    const rawClean = decodedParam.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    let user = (await db.findUserByWhatsappNumber(`+${rawClean}`)) || 
+               (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`)) || 
+               (await db.findUserByWhatsappNumber(rawClean)) ||
+               (await db.findUserByTarget(`+${rawClean}`)) ||
+               (await db.findUserByTarget(rawClean));
+    if (!user) {
+      const now = nowIso();
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email: `${rawClean}@sivantech.online`,
+        fullName: 'Sivan User',
+        whatsappNumber: `+${rawClean}`,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    return user.id;
+  }
+  return decodedParam;
+}
 
 const createUserWithLegalSchema = createUserSchema.extend({
   legalAcceptance: legalAcceptancePayloadSchema
@@ -43,63 +82,47 @@ export async function usersRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/users/:userId/preferences', async (request) => {
-    const { userId } = request.params as { userId: string };
+    const rawUserId = (request.params as { userId: string }).userId;
+    const userId = await resolveTargetUserId(rawUserId, request);
     const preferences = await getUserPreferences(userId);
     return {
       data: {
         ...preferences,
-        // READ-ONLY server fact, not a stored preference: which chain THIS
-        // deployment signs against. Not part of UserPreferencesRecord and never
-        // written back - the PUT schema has no `network` key at all.
-        //
-        // The UI needs it to mark the testnet build. Sourced from the server
-        // rather than the frontend's own VITE_APP_ENV so the badge cannot
-        // disagree with what the backend will actually do: a testnet API behind
-        // a frontend built as 'live' would otherwise show nothing at all.
-        //
-        // It rides inside `data` rather than a sibling `meta` because the
-        // frontend's shared api() helper returns `json.data ?? json` and drops
-        // everything else, so a `meta` key would be silently discarded.
         networkMode: resolveNetworkMode(),
       },
     };
-
   });
 
-
   app.put('/api/users/:userId/preferences', async (request) => {
-    const { userId } = request.params as { userId: string };
+    const rawUserId = (request.params as { userId: string }).userId;
+    const userId = await resolveTargetUserId(rawUserId, request);
     const body = parseBody(updateUserPreferencesSchema, request.body);
     const updated = await updateUserPreferences(userId, body);
     return {
       data: {
         ...updated,
-        // Repeated on the write path, and NOT decoration. The frontend does
-        // setUserPreferences(response) wholesale, so a PUT that omitted this
-        // would drop networkMode out of client state and the testnet banner
-        // would vanish the moment a user saved any unrelated preference.
         networkMode: resolveNetworkMode(),
       },
     };
   });
 
-
-
-
   app.get('/api/users/:userId/username/availability', async (request) => {
-    const { userId } = request.params as { userId: string };
+    const rawUserId = (request.params as { userId: string }).userId;
+    const userId = (rawUserId === 'check' || rawUserId === 'none') ? undefined : await resolveTargetUserId(rawUserId, request);
     const query = request.query as { username?: string };
     return { data: await checkUsernameAvailability(query.username || '', userId) };
   });
 
   app.put('/api/users/:userId/username', async (request) => {
-    const { userId } = request.params as { userId: string };
+    const rawUserId = (request.params as { userId: string }).userId;
+    const userId = await resolveTargetUserId(rawUserId, request);
     const body = parseBody(usernameSchema, request.body);
     return { data: await updateUsername(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   app.post('/api/users/:userId/avatar/upload-url', async (request) => {
-    const { userId } = request.params as { userId: string };
+    const rawUserId = (request.params as { userId: string }).userId;
+    const userId = await resolveTargetUserId(rawUserId, request);
     const body = parseBody(createAvatarUploadUrlSchema, request.body);
     return { data: await createAvatarUploadUrl(userId, body) };
   });

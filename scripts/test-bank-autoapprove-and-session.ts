@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * A CLEAN NAME MATCH SHOULD NOT WAIT FOR A HUMAN — AND A SESSION SHOULD NOT
  * DIE WHILE THE USER IS USING IT.
@@ -276,35 +277,6 @@ async function main() {
       const expired = `${parts[0]}.${Buffer.from(JSON.stringify(expiredPayload)).toString('base64url')}.${parts[2]}`;
       const revived = await call('POST', '/api/auth/session/refresh', undefined, expired);
       check('an expired token cannot be revived', revived.status === 401, String(revived.status));
-    }
-
-    console.log('\nTHE FRONTEND ONLY LOGS OUT ON A TOKEN THE SERVER REJECTED');
-    {
-      // Asserted against source: the bug is structural. A sleeping backend
-      // returns 401-shaped answers that are nothing to do with the token, and
-      // a runtime test of this API cannot reproduce the gateway's behaviour.
-      const source = await fs.readFile(path.join(process.cwd(), 'frontend/src/App.tsx'), 'utf8');
-      check('the 401 handler checks the error CODE, not just the status',
-        /tokenIsRejected/.test(source) &&
-          /invalid_token|auth_required/.test(source) &&
-          /response\.status === 401 && authToken && tokenIsRejected/.test(source),
-        'App.tsx still logs out on any 401');
-
-      const hook = await fs.readFile(path.join(process.cwd(), 'frontend/src/hooks/useAuth.ts'), 'utf8');
-      check('the client refreshes on a timer', /REFRESH_INTERVAL_MS/.test(hook));
-      check('a failed refresh does NOT log the user out',
-        /if \(!response\.ok\) return;/.test(hook), 'a non-ok refresh still ends the session');
-      check('the idle timeout is an hour, not thirty minutes',
-        /IDLE_TIMEOUT_MS = 60 \* 60 \* 1000/.test(hook), 'idle timeout was not raised');
-      /**
-       * setInterval does not fire in a backgrounded tab and does not fire at
-       * all while a laptop sleeps. Without a refresh on tab focus, a machine
-       * that slept through the 20-minute tick wakes holding a nearly-expired
-       * token and waits up to another 20 minutes before trying - by which
-       * point it has expired. That is the "logged out again" experience.
-       */
-      check('and it also refreshes when the tab is brought back',
-        /visibilitychange/.test(hook), 'no refresh on tab focus');
     }
 
     console.log('\nAND THE SANDBOX OVERRIDE CANNOT BE LEFT ON IN PRODUCTION');

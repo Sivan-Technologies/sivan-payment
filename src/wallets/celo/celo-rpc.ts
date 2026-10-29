@@ -36,11 +36,23 @@ const PUBLIC_TESTNET_ENDPOINTS = [
 
 export function celoRpcEndpoints(options?: { production?: boolean }): string[] {
   const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
-  const custom = (process.env.CELO_RPC_URL || '').trim();
-  const fallback = (process.env.CELO_RPC_FALLBACK_URL || '').trim();
+  let custom = (process.env.CELO_RPC_URL || '').trim();
+  let fallback = (process.env.CELO_RPC_FALLBACK_URL || '').trim();
+
+  // Legacy Celo Alfajores testnet was sunset in late 2024.
+  // Automatically sanitize or ignore dead alfajores endpoints to prevent fetch failures.
+  if (custom.includes('alfajores')) {
+    custom = isProd ? 'https://forno.celo.org' : 'https://forno.celo-sepolia.celo-testnet.org';
+  }
+  if (fallback.includes('alfajores')) {
+    fallback = isProd ? 'https://celo.drpc.org' : 'https://celo-sepolia.drpc.org';
+  }
+
   const defaults = isProd ? PUBLIC_MAINNET_ENDPOINTS : PUBLIC_TESTNET_ENDPOINTS;
 
-  const ordered = [custom, fallback, ...defaults].filter(Boolean);
+  const ordered = [custom, fallback, ...defaults]
+    .filter(Boolean)
+    .filter((url) => !url.includes('alfajores'));
   return [...new Set(ordered)];
 }
 

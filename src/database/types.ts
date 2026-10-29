@@ -3,7 +3,7 @@ import type { VirtualAccountEventRecord, VirtualAccountRecord, VirtualAccountReq
 export type Currency = 'usd' | 'gbp' | 'eur';
 export type SupplierPayoutCurrency = Currency | 'mxn' | 'brl';
 export type SourceCurrency = 'usdc' | 'usdt';
-export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'optimism' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb';
+export type Chain = 'ethereum' | 'polygon' | 'base' | 'solana' | 'arbitrum' | 'arc' | 'optimism' | 'avalanche_c_chain' | 'stellar' | 'celo' | 'bsc' | 'bnb' | 'starknet';
 export type CustomerStatus = 'created' | 'kyc_not_started' | 'kyc_incomplete' | 'kyc_under_review' | 'kyc_approved' | 'kyc_rejected' | 'paused' | 'offboarded';
 export type ExternalAccountStatus = 'created' | 'active' | 'verification_pending' | 'verified' | 'verification_failed' | 'deactivated';
 export type OnrampStatus = 'created' | 'awaiting_payment' | 'payment_received' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'requires_action';
@@ -459,7 +459,7 @@ export interface UserWalletRecord {
  * Solana is the default because it is the only supported chain that carries
  * BOTH USDC and USDT, and it has the lowest fees. Base cannot hold USDT.
  */
-export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb';
+export type WalletChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'bsc' | 'bnb' | 'arbitrum' | 'arc' | 'starknet';
 
 export const DEFAULT_WALLET_CHAIN: WalletChain = 'solana';
 
@@ -528,6 +528,83 @@ export interface NgnPayoutAccountRecord {
   reviewedAt?: string;
   reviewNote?: string;
   raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * A Ghanaian payout account (MoMo or bank) and the name-match verdict attached to it.
+ * Completely isolated from Nigerian accounts to prevent schema pollution.
+ */
+export interface GhsPayoutAccountRecord {
+  id: string;
+  userId: string;
+  provider: string;
+  bankId: string;
+  bankName?: string;
+  accountNumber: string;
+  accountType: 'momo' | 'bank';
+  accountName: string;
+  declaredName: string;
+  matchVerdict: 'match' | 'review' | 'mismatch';
+  matchScore: number;
+  matchExplanation?: string;
+  matchedTokens?: string[];
+  unmatchedBankTokens?: string[];
+  resolutionTrustworthy: boolean;
+  status: 'pending_review' | 'verified' | 'rejected';
+  reviewReason?: 'auto_verified' | 'name_needs_review' | 'name_mismatch' | 'resolution_untrustworthy';
+  needsHumanReview?: boolean;
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
+  raw?: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GhsQuoteRecord {
+  id: string;
+  userId: string;
+  provider: string;
+  providerQuoteId?: string;
+  direction: 'onramp' | 'offramp';
+  sourceCurrency: string;
+  destinationCurrency: string;
+  sourceAmount: string;
+  destinationAmount: string;
+  rate: string;
+  feeAmount: string;
+  network?: string;
+  payoutAccountId?: string;
+  expiresAt: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface GhsTransferRecord {
+  id: string;
+  quoteId: string;
+  userId: string;
+  provider: string;
+  providerTransferId?: string;
+  direction: 'onramp' | 'offramp';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  sourceCurrency: string;
+  destinationCurrency: string;
+  sourceAmount: string;
+  destinationAmount: string;
+  rate: string;
+  feeAmount: string;
+  depositAddress?: string;
+  payoutAccountId?: string;
+  bankId?: string;
+  bankName?: string;
+  accountNumber?: string;
+  accountName?: string;
+  settlementReference?: string;
+  failureReason?: string;
+  metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -978,6 +1055,34 @@ export interface NgnIdentityVerificationRecord {
   updatedAt: string;
 }
 
+export type StepUpModule = 'nin' | 'proof_of_address' | 'source_of_funds' | 'global_passport';
+export type StepUpRequestStatus = 'pending' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'expired';
+
+export interface StepUpVerificationRequestRecord {
+  id: string; // vreq_...
+  userId: string;
+  adminId: string;
+  requestedModules: StepUpModule[];
+  reason: string;
+  status: StepUpRequestStatus;
+  tokenHash: string; // SHA-256 of raw secret token
+  expiresAt: string;
+  submittedAt?: string;
+  submissionData?: {
+    nin?: string;
+    proofOfAddressDocId?: string;
+    sourceOfFundsDocId?: string;
+    passportDocId?: string;
+    notes?: string;
+  };
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewNotes?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface UnifiedWebhookLogRecord {
   id: string;
   serviceName: string;
@@ -1092,11 +1197,13 @@ export interface P2pClaimRecord {
  * Any active status → cancelled | disputed
  */
 export type ServiceAgreementStatus =
+  | 'pending_seller_acceptance'
   | 'pending_payment'
   | 'funded'
   | 'in_delivery'
   | 'delivered'
   | 'released'
+  | 'declined'
   | 'cancelled'
   | 'disputed';
 
@@ -1122,6 +1229,14 @@ export interface ServiceAgreementRecord {
   fundedAt: string | null;
   deliveredAt: string | null;
   releasedAt: string | null;
+  /** Set when seller accepts the agreement. */
+  sellerAcceptedAt?: string | null;
+  /** Set when seller declines the agreement. */
+  sellerDeclinedAt?: string | null;
+  /** Optional reason provided by seller when declining. */
+  sellerDeclineReason?: string | null;
+  /** ISO timestamp after which the agreement auto-cancels if seller has not responded. */
+  acceptanceExpiresAt?: string | null;
   fundingTxHash?: string | null;
   releaseTxHash?: string | null;
   vaultAddress?: string | null;
@@ -1132,6 +1247,11 @@ export interface ServiceAgreementRecord {
   buyerTotalPayableUsdc?: number;
   sellerNetAmountUsdc?: number;
   feeTxHash?: string | null;
+  refundTxHash?: string | null;
+  refundSignature?: string | null;
+  lastError?: string | null;
+  adminReleaseNote?: string | null;
+  adminReleasedBy?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1195,6 +1315,43 @@ export interface DatabaseShape {
   serviceAgreements: ServiceAgreementRecord[];
   passkeyCredentials?: PasskeyCredentialRecord[];
   passkeyChallenges?: PasskeyChallengeRecord[];
+  agreementControls?: AgreementControlsRecord[];
+  ghsPayoutAccounts?: GhsPayoutAccountRecord[];
+  ghsQuotes?: GhsQuoteRecord[];
+  ghsTransfers?: GhsTransferRecord[];
+  verificationRequests?: StepUpVerificationRequestRecord[];
+}
+
+/**
+ * Central Protocol Safeguard Architecture (PSA) controls for Service Agreements.
+ *
+ * Three independent control axes replace a single binary enabled flag:
+ *
+ *  creation_enabled — gates NEW agreement drafts. When false, all POST /api/agreements
+ *  and POST /api/v1/developer/agreements calls are rejected with 503. Existing funded
+ *  agreements are completely unaffected.
+ *
+ *  servicing_enabled — governs lifecycle mutations on EXISTING agreements (fund, deliver,
+ *  release, cancel, extend). Must stay true while any agreement holds user funds.
+ *
+ *  emergency_halt — circuit breaker reserved for confirmed smart-contract or bridge
+ *  vulnerabilities. Blocks on-chain settlement calls (release, fund) while leaving
+ *  read-only agreement views fully accessible. Should be toggled by the founder
+ *  only via the admin key.
+ *
+ * Separating creation from servicing protects user capital: toggling creation off
+ * does not trap funds already held inside active agreements.
+ */
+export interface AgreementControlsRecord {
+  id: 'default_controls';
+  creationEnabled: boolean;
+  servicingEnabled: boolean;
+  emergencyHalt: boolean;
+  pilotWhitelistOnly: boolean;
+  allowedNetworks: string[];
+  maintenanceMessage: string;
+  updatedByAdminId?: string;
+  updatedAt: string;
 }
 
 export interface PasskeyCredentialRecord {

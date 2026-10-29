@@ -13,6 +13,12 @@ import { checkRateLimit } from './shared/rate-limit.js';
 import { getSystemStatus, isUserMutationBlocked, systemStatusMessage } from './system/system-status.service.js';
 import { getAdminPlatformSettings, isPlatformMutationBlocked } from './admin/admin-settings.service.js';
 import { getActiveRestrictionForUser } from './admin/admin-hardening.service.js';
+import {
+  UtilityProviderError,
+  statusForReason,
+  customerMessageForReason,
+  codeForReason,
+} from './ngn/provider/utility-provider.error.js';
 
 /** Constant-time admin key comparison, length-guarded so it cannot throw. */
 function safeKeyEquals(provided: string, expected: string): boolean {
@@ -22,11 +28,20 @@ function safeKeyEquals(provided: string, expected: string): boolean {
 }
 
 function normalizeAdminAliasUrl(rawUrl = '') {
+  if (rawUrl.startsWith('/api/admin/api/admin/')) {
+    return rawUrl.replace(/^\/api\/admin\/api\/admin\//, '/api/admin/');
+  }
+  if (rawUrl.startsWith('/api/admin/payment/api/admin/')) {
+    return rawUrl.replace(/^\/api\/admin\/payment\/api\/admin\//, '/api/admin/');
+  }
   if (rawUrl.startsWith('/api/admin/payment/')) {
     return rawUrl.replace(/^\/api\/admin\/payment/, '/api/admin');
   }
+  if (rawUrl.startsWith('/api/payment/admin/') || rawUrl === '/api/payment/admin') {
+    return rawUrl.replace(/^\/api\/payment\/admin/, '/api/admin');
+  }
   if (rawUrl.startsWith('/api/payment/')) {
-    return rawUrl.replace(/^\/api\/payment/, '/api/admin');
+    return rawUrl.replace(/^\/api\/payment/, '');
   }
   if (!rawUrl.startsWith('/api/admin')) {
     const path = rawUrl.split('?')[0];
@@ -34,7 +49,8 @@ function normalizeAdminAliasUrl(rawUrl = '') {
       '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
       '/finance', '/approvals', '/reconciliation', '/webhooks',
       '/compliance', '/search', '/risk', '/suppliers', '/fees',
-      '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers'
+      '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers',
+      '/utilities', '/moneygram', '/wallets'
     ];
     if (strippedAdminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
       return `/api/admin${rawUrl}`;
@@ -403,6 +419,16 @@ export async function buildApp() {
     const header = request.headers.authorization;
     const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
     if (!token) {
+      const stepUpToken = ((request.headers['x-step-up-token'] as string) || (request.body as any)?.stepUpToken) as string | undefined;
+      const targetUserId = getTargetUserId(request);
+      if (stepUpToken && targetUserId) {
+        const { isStepUpTokenValidForUser } = await import('./identity/withdrawal-pin.service.js');
+        const isValid = await isStepUpTokenValidForUser(targetUserId, stepUpToken);
+        if (isValid) {
+          (request as any).authUser = { sub: targetUserId, roles: ['user'] };
+          return;
+        }
+      }
       return reply.code(401).send({ error: { code: 'auth_required', message: 'Authentication required' } });
     }
     try {
@@ -494,7 +520,8 @@ export async function buildApp() {
       '/overview', '/users', '/limits', '/withdrawals', '/on-ramp',
       '/finance', '/approvals', '/reconciliation', '/webhooks',
       '/compliance', '/search', '/risk', '/suppliers', '/fees',
-      '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers'
+      '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers',
+      '/utilities', '/moneygram', '/wallets'
     ];
     const isAdminPath = rawUrl.startsWith('/api/admin') || adminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
     if (!isAdminPath) return;
@@ -546,6 +573,70 @@ export async function buildApp() {
    * on the code, and rewriting it would break the frontend's own handling.
    */
   app.setErrorHandler((error, request, reply) => {
+    /**
+     * A PROVIDER DECLINING IS NOT A CRASH.
+     *
+     * Utility adapters used to throw a bare Error carrying the vendor's own
+     * sentence. Nothing caught it, so it fell through to the generic branch
+     * below and became a 500 with the body "Internal server error" - plus a
+     * Sentry capture and an ops Telegram page, for events like a customer
+     * mistyping a phone number.
+     *
+     * These are classified at the adapter, where the vendor's dialect is
+     * understood, and answered with a status that matches whose problem it is
+     * and a message the customer can act on. The vendor's raw text stays in
+     * the log and never reaches the response: for a provider-side shortfall it
+     * would read as though the CUSTOMER were out of funds, which is both false
+     * and the fastest way to lose their trust in the ledger.
+     */
+    if (error instanceof UtilityProviderError) {
+      const statusCode = statusForReason(error.reason);
+      request.log.error(
+        {
+          provider: error.provider,
+          reason: error.reason,
+          context: error.context,
+          upstream: error.upstreamMessage,
+          url: request.url,
+          requestId: request.id,
+        },
+        'utility provider failure'
+      );
+      return reply.code(statusCode).send({
+        error: {
+          code: codeForReason(error.reason),
+          message: customerMessageForReason(error.reason),
+          details: { code: codeForReason(error.reason), reason: error.reason },
+          requestId: String(request.id),
+        },
+      });
+    }
+
+    if ((error as any)?.name === 'PaystackUtilityApiError') {
+      const reason = 'upstream_declined' as const;
+      const statusCode = statusForReason(reason);
+      request.log.error(
+        {
+          provider: 'paystack',
+          reason,
+          endpoint: (error as any)?.endpoint,
+          httpStatus: (error as any)?.httpStatus,
+          upstream: (error as any)?.message,
+          url: request.url,
+          requestId: request.id,
+        },
+        'utility provider failure'
+      );
+      return reply.code(statusCode).send({
+        error: {
+          code: codeForReason(reason),
+          message: customerMessageForReason(reason),
+          details: { code: codeForReason(reason), reason },
+          requestId: String(request.id),
+        },
+      });
+    }
+
     if (error instanceof AppError) {
       if (error.statusCode >= 500) {
         captureError(error, { requestId: request.id, url: request.url, method: request.method, code: error.code, details: error.details });
@@ -764,8 +855,12 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (method === 'GET' && url.startsWith('/api/users/whatsapp-balance')) return false;
   if (url.startsWith('/api/users/whatsapp-payout-account')) return false;
   if (method === 'GET' && url.includes('/verification-summary')) return false;
-  if (method === 'GET' && url.startsWith('/api/ngn/quote')) return false;
-  if (url.startsWith('/api/ngn/offramp/orders')) return false;
+  if (method === 'GET' && (url.startsWith('/api/ngn/quote') || url.startsWith('/api/ghs/quote'))) return false;
+  if (url.startsWith('/api/ngn/offramp/orders') || url.startsWith('/api/ghs/offramp/orders')) return false;
+  if (url.startsWith('/api/ngn/utility')) return false;
+  if (method === 'GET' && (url.startsWith('/api/ghs/banks') || url.startsWith('/api/ghs/bank-account/resolve'))) return false;
+  if (method === 'GET' && (url.startsWith('/api/ngn/banks') || url.startsWith('/api/ngn/bank-account/resolve') || url.startsWith('/api/ngn/paystack/banks') || url.startsWith('/api/ngn/paystack/bank-account/resolve'))) return false;
+  if (url.startsWith('/api/ghs/payout-accounts')) return false;
   if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile' || url === '/api/identity/reset-test-user')) return false;
 
   /**
@@ -890,9 +985,12 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
   if (url.startsWith('/api/admin/settings/platform') || url.startsWith('/api/admin/offramp/controls') || url.startsWith('/api/admin/system/status') || url.startsWith('/api/admin/system/incidents')) return ['ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/settings/team') || url.startsWith('/api/admin/settings/api-keys')) return ['ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/virtual-account')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);
+  if (url.startsWith('/api/admin/agreements')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/ngn')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
+  if (url.startsWith('/api/admin/ghs')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/approvals')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.includes('/sync') || url.includes('/reconciliation') || url.includes('/webhooks')) return ['ops', 'operator', 'engineering'].includes(role);
+  if (url.startsWith('/api/admin/utilities') || url.startsWith('/api/admin/moneygram')) return ['ops', 'operator', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/customers') && url.includes('/kyc-status')) return ['ops', 'operator', 'compliance'].includes(role);
 
   return false;

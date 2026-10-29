@@ -27,7 +27,7 @@
 > Simultaneously, in emerging markets like Nigeria and across Africa, over 80% of informal digital commerce occurs inside messaging apps (Telegram, WhatsApp) without structured contracts or escrow-less protection, creating high counterparty risk and settlement friction.
 
 #### Proposed Solution
-> Sivan payment Ai bridges conversational AI, agentic execution, and Solana programmable money. It models service agreements as verifiable, deterministic state machines (`Draft` → `Pending` → `Funded` → `Delivered` → `Released` / `Disputed`) accessible via natural language across Telegram (`@Sivan_Ai`), WhatsApp, Web, and REST APIs.
+> Sivan payment Ai bridges conversational AI, agentic execution, and Solana programmable money. It models service agreements as verifiable, deterministic state machines (`Draft` → `Pending` → `Funded` → `Delivered` → `Released` / `Disputed`) accessible via natural language across Telegram (`@SivanAi_bot`), WhatsApp, Web, and REST APIs.
 >
 > Sivan payment Ai locks funds in USDC on Solana Devnet/Mainnet using the x402 payment facility protocol. Upon work delivery proof, real-time push alerts dispatch to parties, and funds are automatically released to the seller's Solana wallet address with zero manual web form friction.
 

@@ -5,8 +5,10 @@ import { addSupportTicketMessage, createSupportMessageSchema, createSupportTicke
 
 function listOptions(request: any) {
   const query = (request.query ?? {}) as Record<string, string>;
-  const limit = Math.min(Math.max(Number(query.limit ?? 100), 1), 500);
-  const offset = Math.max(Number(query.offset ?? 0), 0);
+  const rawLimit  = Number(query.limit  ?? 100);
+  const rawOffset = Number(query.offset ?? 0);
+  const limit  = Math.min(Math.max(Number.isFinite(rawLimit)  ? rawLimit  : 100, 1), 500);
+  const offset = Math.max(Number.isFinite(rawOffset) ? rawOffset : 0, 0);
   return { limit, offset, status: query.status || undefined, priority: query.priority || undefined, type: query.type || undefined, assignedTo: query.assignedTo || undefined, search: query.search || undefined, dateFrom: query.dateFrom || undefined, dateTo: query.dateTo || undefined };
 }
 

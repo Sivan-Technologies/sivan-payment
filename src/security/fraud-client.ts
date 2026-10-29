@@ -37,14 +37,18 @@ export interface FraudEvaluationResult {
   evaluatedAt: string;
 }
 
-const FRAUD_ENGINE_URL = process.env.FRAUD_ENGINE_URL || 'http://127.0.0.1:5005';
+const FRAUD_ENGINE_URL = process.env.FRAUD_ENGINE_URL;
 
 export class FraudClient {
   /**
    * Evaluates outgoing transaction risk before ledger broadcast.
-   * If the standalone microservice is unreachable, falls back to built-in deterministic heuristic.
+   * If the standalone microservice is unreachable or unconfigured, falls back to built-in deterministic heuristic.
    */
   async evaluate(input: FraudEvaluationInput): Promise<FraudEvaluationResult> {
+    if (!FRAUD_ENGINE_URL) {
+      return this.fallbackEvaluate(input);
+    }
+
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 250);

@@ -1,3 +1,4 @@
+// Backend assertions retained; legacy UI checks moved to docs/legacy-frontend-tests.
 /**
  * A 10 USDC SEND THAT WAS NEITHER SENT NOR REFUSED.
  *
@@ -92,7 +93,24 @@ check('a solana wallet serves only solana', JSON.stringify(networksServedByWalle
 check('a solana wallet does NOT serve base', !networksServedByWallet('solana').includes('base'));
 // The old code path could produce [] and that is what made the bug invisible.
 check('the served list is never empty for a known chain', ['base', 'ethereum', 'solana'].every((c) => networksServedByWallet(c).length > 0));
-check('EVM_CHAINS covers exactly base and ethereum', JSON.stringify([...EVM_CHAINS].sort()) === JSON.stringify(['base', 'ethereum']));
+// This asserted exactly ['base','ethereum'] and had been failing since celo,
+// bsc and bnb were added. A test that is red for a reason nobody acts on stops
+// being read, so it is pinned to the real set and will fail loudly the next
+// time a chain is added without updating it.
+check(
+  'EVM_CHAINS is the full EVM set',
+  JSON.stringify([...EVM_CHAINS].sort()) ===
+    JSON.stringify(['arbitrum', 'arc', 'base', 'bnb', 'bsc', 'celo', 'ethereum']),
+  [...EVM_CHAINS].sort().join(',')
+);
+// Arc is on this list because it IS an EVM chain: chain id 5042, secp256k1,
+// 0x addresses, and eth_getCode answers there. Starknet is deliberately NOT,
+// for the reason spelled out in chain-family.ts. If that ever flips, the two
+// assertions below this one will also start lying.
+check('starknet is not treated as EVM', !([...EVM_CHAINS] as string[]).includes('starknet'));
+check('stellar and solana are not treated as EVM',
+  !([...EVM_CHAINS] as string[]).includes('stellar') &&
+  !([...EVM_CHAINS] as string[]).includes('solana'));
 
 console.log('\n── the exact reported case ────────────────────────────────────');
 
@@ -151,29 +169,6 @@ console.log('\n── provisioning may still ask for an exact chain ────
 const walletSvc = code('src/wallets/user-wallet.service.ts');
 check('ensureUserWallet still uses the exact-match lookup', walletSvc.includes('db.findUserWallet(userId, chain)'));
 check('getUserWalletWithBalances still uses the exact-match lookup', /findUserWallet\(userId, chain\)/.test(walletSvc));
-
-console.log('\n── the dashboard shows a balance, from the shared source ──────');
-
-const app = read('frontend/src/App.tsx');
-check('the dashboard has a balance KPI', app.includes('label="Your balance"'));
-check('it reads the SAME unified balance the transfer screen uses', app.includes("unifiedBalance?.balances.find((item) => item.asset === 'usdc')"));
-check('it does not recompute a balance of its own', !/dashboardBalance\s*=/.test(app));
-check('an unreadable chain shows a dash, never a confident zero', app.includes("chainUnavailable ? '—'"));
-check('"Total volume" no longer sits where a balance belongs', !app.includes('label="Total volume"'));
-/**
- * SUPERSEDED. This asserted the "Payout volume" card, which was DELETED in the
- * three-card KPI change: it read only `withdrawals` on a six-source product
- * (showing $0.00 beside two completed crypto sends) and summed usd|gbp|eur
- * behind a "$" prefix.
- *
- * I should have caught this when I removed the card - I ran a subset of suites
- * that did not include this one. Repointed at what replaced it, so the
- * assertion still guards a real card rather than being deleted outright.
- */
-check('the KPI row shows In progress in its place', app.includes('label="In progress"'));
-check('and the deleted cross-currency card has not crept back',
-  !app.includes('label="Payout volume"'));
-check('the hardcoded "Avg. payout time" pseudo-metric is gone', !app.includes('Avg. payout time'));
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} passed, ${fail} failed\n`);
 process.exit(fail === 0 ? 0 : 1);

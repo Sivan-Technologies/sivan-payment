@@ -3,6 +3,7 @@ import { badRequest, serviceUnavailable } from '../../shared/errors.js';
 import { bankResolutionMessage } from '../../shared/user-message.js';
 import { BreetNgnProvider } from '../provider/breet.provider.js';
 import { PajNgnProvider } from '../provider/paj.provider.js';
+import { listPaystackBanks, resolvePaystackBankAccount as resolvePaystackAccount } from './paystack-outbound-transfer.service.js';
 import type { NgnProviderName } from '../types/ngn.types.js';
 
 /**
@@ -129,6 +130,16 @@ export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<Ngn
     return (banks as any[] ?? []).map((bank: any) => ({
       id: String(bank.id ?? bank.code ?? bank.bankId),
       name: bank.name ?? bank.bankName,
+      slug: bank.slug,
+      type: bank.type,
+    }));
+  }
+
+  if (provider === 'paystack') {
+    const banks = await listPaystackBanks(currency.toUpperCase());
+    return banks.map((bank) => ({
+      id: bank.code,
+      name: bank.name,
       slug: bank.slug,
       type: bank.type,
     }));
@@ -281,6 +292,16 @@ export async function resolveNgnBankAccount(
       bankId,
       bankName: result?.bankName ?? result?.bank_name,
       trustworthy: (env.PAJ_RAMP_ENV ?? 'staging') === 'production' || trustSandbox,
+    };
+  }
+
+  if (provider === 'paystack') {
+    const resolved = await resolvePaystackAccount(bankId, accountNumber);
+    return {
+      accountName: resolved.accountName,
+      accountNumber: resolved.accountNumber,
+      bankId,
+      trustworthy: true,
     };
   }
 

@@ -185,24 +185,36 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     return saved;
   }
 
-  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC)
-  if (['base', 'celo', 'bsc', 'bnb', 'ethereum'].includes(chain)) {
+  // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC/Arbitrum/Arc)
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(chain)) {
     const evmWallet = await db.findUserWallet(userId, 'base')
       || await db.findUserWallet(userId, 'ethereum')
       || await db.findUserWallet(userId, 'celo')
-      || await db.findUserWallet(userId, 'bsc');
+      || await db.findUserWallet(userId, 'bsc')
+      || await db.findUserWallet(userId, 'arbitrum')
+      || await db.findUserWallet(userId, 'arc');
     if (evmWallet) {
-      return {
-        ...evmWallet,
-        chain,
-      };
+      const thisRow = await db.findUserWallet(userId, chain);
+      if (!thisRow) {
+        const baseProviderId = evmWallet.providerWalletId.split(':')[0];
+        const record: UserWalletRecord = {
+          ...evmWallet,
+          id: id('uw'),
+          chain,
+          providerWalletId: `${baseProviderId}:${chain}`,
+          updatedAt: nowIso(),
+        };
+        const inserted = await db.insertUserWallet(record).catch(() => null);
+        return inserted || { ...evmWallet, chain, providerWalletId: `${baseProviderId}:${chain}` };
+      }
+      return thisRow;
     }
   }
 
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const { customer } = await requireWalletEligibility(userId, provider.name);
 
-  const targetChain = chain === 'solana' ? 'solana' : 'ethereum';
+  const targetChain = chain === 'solana' ? 'solana' : chain === 'starknet' ? 'starknet' : 'ethereum';
   const providerWallet = await provider.createWallet({
     userId,
     providerCustomerId: customer?.providerCustomerId,
@@ -230,6 +242,29 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
 
   const saved = await db.insertUserWallet(record);
 
+  // When EVM wallet is provisioned, automatically populate sibling EVM chain rows
+  if (['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(chain)) {
+    const siblingEvmChains: WalletChain[] = ['base', 'celo', 'bsc', 'arbitrum', 'arc'];
+    const baseProviderId = record.providerWalletId.split(':')[0];
+    for (const sib of siblingEvmChains) {
+      if (sib !== chain) {
+        const exists = await db.findUserWallet(userId, sib);
+        if (!exists) {
+          const sibRecord: UserWalletRecord = {
+            ...record,
+            id: id('uw'),
+            chain: sib,
+            providerWalletId: `${baseProviderId}:${sib}`,
+          };
+          await db.insertUserWallet(sibRecord).catch((err) => {
+            console.warn('[insertSiblingWallet.error]', sib, err?.message);
+            return null;
+          });
+        }
+      }
+    }
+  }
+
   await createAuditLog({
     actorType: 'system',
     actorId: userId,
@@ -255,7 +290,10 @@ export async function listUserWallets(userId: string): Promise<UserWalletRecord[
   const stored = await db.listUserWallets(userId);
   if (!stored.length) return stored;
 
-  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
+  // Starknet is safe to list here even though it shares no key with the EVM
+  // rails: the expansion below matches on walletServesNetwork, which is
+  // family based, so an EVM wallet will never be surfaced as a Starknet one.
+  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo', 'arbitrum', 'arc', 'starknet'];
   const expanded: UserWalletRecord[] = [];
 
   for (const chain of activeRails) {

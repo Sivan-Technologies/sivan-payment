@@ -44,7 +44,7 @@ export const pathByView: Record<ViewKey, string> = {
 export function viewFromPath(pathname: string): ViewKey {
   const clean = pathname.replace(/\/$/, '') || '/';
   if (clean === '/dashboard' || clean === '/app') return 'overview';
-  if (clean === '/withdraw' || clean === '/app/sell') return 'withdraw';
+  if (clean === '/withdraw' || clean === '/cashout' || clean === '/app/sell') return 'withdraw';
   if (clean === '/transfer' || clean === '/send' || clean === '/app/transfer') return 'transfer';
   if (clean === '/buy' || clean === '/on-ramp' || clean === '/app/buy') return 'buy';
   if (clean === '/receive' || clean === '/deposit' || clean === '/app/receive') return 'receive';
@@ -128,7 +128,7 @@ export function CustomSelect({ name, options, value, defaultValue, onChange, dis
     onChange?.(next);
     setOpen(false);
   };
-  return <div className="custom-select-wrap app-select-wrap"><input type="hidden" name={name} value={selected?.value || ''} /><button type="button" disabled={disabled} className={`custom-select-trigger ${open ? 'open' : ''}`} onClick={() => !disabled && setOpen((state) => !state)}><span><strong>{selected?.label || 'Select'}</strong>{selected?.helper && <small>{selected.helper}</small>}</span><em>⌄</em></button>{open && <div className="custom-select-menu app-select-menu">{options.map((option) => <button type="button" disabled={option.disabled} className={option.value === selected?.value ? 'selected' : ''} key={option.value} onClick={() => !option.disabled && choose(option.value)}><span>{option.label}</span>{option.helper && <small>{option.helper}</small>}</button>)}</div>}</div>;
+  return <div className="custom-select-wrap app-select-wrap"><input type="hidden" name={name} value={selected?.value || ''} /><button type="button" disabled={disabled} className={`custom-select-trigger ${open ? 'open' : ''}`} onClick={() => !disabled && setOpen((state) => !state)}><span><strong>{selected?.label || 'Select'}</strong>{selected?.helper && <small>{selected.helper}</small>}</span><em>⌄</em></button>{open && <div className="custom-select-menu app-select-menu">{options.map((option) => <button type="button" disabled={option.disabled} className={option.value === selected?.value ? 'selected' : ''} key={option.value} onClick={() => !option.disabled && choose(option.value)}><div className="select-option-body"><span className="select-option-label">{option.label}</span>{option.helper && <small className="select-option-helper">{option.helper}</small>}</div></button>)}</div>}</div>;
 }
 
 export function Badge({ children, status }: { children: string; status?: string }) {
@@ -147,6 +147,29 @@ export function shortRef(value?: string) {
   if (!value) return '—';
   if (value.length <= 14) return value;
   return `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
+
+/**
+ * Format crypto and fiat amounts for clean, professional display.
+ *
+ * Rules:
+ * - If integer or whole amount (e.g. 5, 20, 20.000000): displays cleanly as "5" or "20" (no trailing .00).
+ * - If fractional (e.g. 4.700000, 44.700000000000000016, 9.900000):
+ *   rounds floating point jitter to at most 2 decimal places (e.g. "44.70", "4.70", "9.90").
+ */
+export function formatAmount(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '' || value === '—') return '—';
+  const num = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isFinite(num)) return String(value);
+
+  if (Math.abs(num - Math.round(num)) < 1e-6) {
+    return Math.round(num).toLocaleString('en-US');
+  }
+
+  return num.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 export function timeAgo(value?: string, nowMs = Date.now()) {
@@ -200,11 +223,13 @@ export const fallbackSourceNetworks: NetworkControl[] = [
   { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedAt: new Date().toISOString() },
   { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedAt: new Date().toISOString() },
   { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedAt: new Date().toISOString() },
+  { network: 'arc', enabled: true, isDefault: false, label: 'Arc', sortOrder: 26, updatedAt: new Date().toISOString() },
+  { network: 'arbitrum', enabled: true, isDefault: false, label: 'Arbitrum', sortOrder: 27, updatedAt: new Date().toISOString() },
   { network: 'stellar', enabled: true, isDefault: false, label: 'Stellar', sortOrder: 28, updatedAt: new Date().toISOString() },
   { network: 'celo', enabled: true, isDefault: false, label: 'Celo', sortOrder: 29, updatedAt: new Date().toISOString() },
+  { network: 'starknet', enabled: true, isDefault: false, label: 'Starknet', sortOrder: 30, updatedAt: new Date().toISOString() },
   { network: 'ethereum', enabled: false, isDefault: false, label: 'Ethereum', sortOrder: 30, updatedAt: new Date().toISOString() },
   { network: 'polygon', enabled: false, isDefault: false, label: 'Polygon', sortOrder: 40, updatedAt: new Date().toISOString() },
-  { network: 'arbitrum', enabled: false, isDefault: false, label: 'Arbitrum', sortOrder: 50, updatedAt: new Date().toISOString() },
   { network: 'avalanche_c_chain', enabled: false, isDefault: false, label: 'Avalanche C-Chain', sortOrder: 60, updatedAt: new Date().toISOString() }
 ];
 
@@ -214,7 +239,7 @@ export const fallbackVirtualAccounts: VirtualAccountControl[] = [
   { currency: 'eur', enabled: false, label: 'EUR virtual account', provider: 'bridge', accountType: 'iban', paymentRails: ['sepa'], updatedAt: new Date().toISOString() }
 ];
 
-export function normalizeFrontendApiBase(value: string) {
+export function normalizeFrontendApiBase(value?: string) {
   const clean = (value || '').trim().replace(/\/$/, '');
   try {
     const parsed = new URL(clean);
@@ -257,7 +282,7 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
       sourceAssets: fallbackSourceAssets,
       sourceNetworks: fallbackSourceNetworks,
       defaultNetwork: 'solana',
-      supplierPayoutsEnabled: true
+      supplierPayoutsEnabled: false
       // No displayFx on the legacy array shape - there is nowhere for it to
       // have come from. Consumers fall back to naira, which is what the
       // figures already are.
@@ -271,15 +296,11 @@ export function normalizeOfframpControls(value: unknown): OfframpControls {
     sourceNetworks: data?.sourceNetworks ?? fallbackSourceNetworks,
     defaultNetwork: data?.defaultNetwork ?? data?.sourceNetworks?.find((n) => n.enabled && n.isDefault)?.network ?? 'solana',
     /**
-     * DEFAULTS TO TRUE, and the direction matters.
+     * DEFAULTS TO FALSE (fail-closed).
      *
-     * `?? true` means a failed or stale controls fetch shows the route and
-     * lets the server refuse - annoying but honest. Defaulting to false would
-     * hide a live, working feature every time this endpoint hiccupped, which
-     * is a far worse failure: the user cannot tell "switched off" from
-     * "broken", and neither can support.
+     * Supplier payout is hidden by default and only enabled when explicitly confirmed by the API.
      */
-    supplierPayoutsEnabled: data?.supplierPayoutsEnabled ?? true,
+    supplierPayoutsEnabled: Boolean(data?.supplierPayoutsEnabled),
     /**
      * `?? true` DELIBERATELY, and the opposite direction to the server.
      *

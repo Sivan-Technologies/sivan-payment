@@ -172,13 +172,13 @@ export const feeSettingsSchema = z.object({
    */
   transferFeeMaximumUsd: z.coerce.number().min(0).max(10_000).default(DEFAULT_TRANSFER_FEE.maximumUsd),
   /**
-   * Micro-rail (Celo & Stellar) minimum fee floor, USD.
-   * Default $0.10. Celo (CIP-64) and Stellar (CAP-0015) have sub-cent gas,
+   * Micro-rail (Celo, Stellar & Starknet) minimum fee floor, USD.
+   * Default $0.10. Celo (CIP-64), Stellar (CAP-0015), and Starknet have sub-cent gas,
    * allowing a lower floor for everyday micro-transactions ($5 to $50) with >99% margin.
    */
   microRailFeeMinimumUsd: z.coerce.number().min(0).max(100).default(0.10),
   /**
-   * Micro-rail (Celo & Stellar) maximum fee cap, USD.
+   * Micro-rail (Celo, Stellar & Starknet) maximum fee cap, USD.
    * Default $0.75.
    */
   microRailFeeMaximumUsd: z.coerce.number().min(0).max(10_000).default(0.75),
@@ -390,10 +390,9 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     gasSolPriceUsd: DEFAULT_GAS_CONTROLS.solPriceUsd,
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     rateSources: [
-      { name: 'Bridge', weightPercent: 40, live: true },
-      { name: 'CoinGecko', weightPercent: 25, live: true },
-      { name: 'Kraken', weightPercent: 20, live: true },
-      { name: 'Chainlink', weightPercent: 15, live: true }
+      { name: 'Textile Credit RFQ', weightPercent: 50, live: true },
+      { name: 'Busha / NIBSS', weightPercent: 30, live: true },
+      { name: 'Celo Market Maker', weightPercent: 20, live: true }
     ],
     feeTiers: [
       { tier: 'starter', label: 'Starter (T1)', tradingFeePercent: Number(percent(onramp)), spreadPercent: 0.8, minimumFeeUsd: 1, description: 'New users, KYC L1' },
@@ -421,13 +420,15 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
 }
 
 export async function getAdminFeeSettings(): Promise<AdminFeeSettings> {
-  const data = await db.read();
-  const latest = (data.auditLogs ?? []).filter((log) => log.action === 'admin.fees.updated').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const latest = await db.latestAuditLogByAction('admin.fees.updated');
   if (!latest) return defaultAdminFeeSettings();
   return { ...defaultAdminFeeSettings(), ...((latest.metadata as any)?.settings ?? {}), updatedBy: latest.actorId ?? 'admin_api_key', updatedAt: latest.createdAt };
 }
 
-export async function updateAdminFeeSettings(input: z.infer<typeof feeSettingsSchema>, context: { ipAddress?: string; userAgent?: string } = {}) {
+export async function updateAdminFeeSettings(
+  input: z.infer<typeof feeSettingsSchema>,
+  context: { ipAddress?: string; userAgent?: string; skipBreetSync?: boolean } = {}
+) {
   const previous = await getAdminFeeSettings();
   const { updatedBy, reason, ...settings } = input;
 
@@ -451,5 +452,35 @@ export async function updateAdminFeeSettings(input: z.infer<typeof feeSettingsSc
     userAgent: context.userAgent,
     metadata: { previous, settings: next, reason }
   });
+
+  try {
+    const { clearLiveRatesCache } = await import('../rates/api/rates.routes.js');
+    clearLiveRatesCache();
+  } catch {
+    // Non-fatal
+  }
+
+  if (
+    !context.skipBreetSync &&
+    Number.isFinite(next.ngnOfframpFeePercent) &&
+    next.ngnOfframpFeePercent !== previous.ngnOfframpFeePercent &&
+    next.ngnOfframpFeePercent >= 0 &&
+    next.ngnOfframpFeePercent <= 10
+  ) {
+    try {
+      const { getNgnControls } = await import('../ngn/service/ngn-controls.service.js');
+      const { getNgnProvider } = await import('../ngn/provider/ngn-provider-registry.js');
+      const controls = await getNgnControls();
+      if (controls.offrampRevenueMode === 'breet_markup') {
+        const provider = getNgnProvider('breet');
+        if (provider.updateBreetMarkupPercent) {
+          await provider.updateBreetMarkupPercent(next.ngnOfframpFeePercent);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[admin-fees] Breet markup sync warning:', err?.message || err);
+    }
+  }
+
   return next;
 }

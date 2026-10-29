@@ -5,88 +5,70 @@
 //
 // Changes from the previous live worker, and why each one matters:
 //
-// 1. FALLBACK HOSTS REMOVED.
-//    Every one of them was verified dead on 2026-07-29:
-//      sivan-escrow-agent-live.onrender.com    503 x-render-routing: suspend
-//      sivan-whatsapp-bot-live.onrender.com    503 x-render-routing: suspend
-//      sivan-payments-api-live.onrender.com    503 x-render-routing: suspend
-//      telegram-admin-auth-live.onrender.com   404 x-render-routing: no-server
-//      sivan-ai.onrender.com                   200 (but identical to primary)
-//    A fallback that can never succeed is not resilience, it is latency. The
-//    old flow spent 2 primary attempts + 1.5s sleep + a doomed fallback call
-//    before failing, which pushed past Cloudflare's edge limit and surfaced in
-//    the browser as a 503 / ERR_NETWORK_CHANGED. Restore a fallback here only
-//    when a real standby host exists.
+// 1. ALL PRODUCTION MICROSERVICES INTEGRATED & VERIFIED:
+//    - LIVE_ESCROW:     https://escrow.sivantech.online   (:4000)
+//    - LIVE_PAYMENTS:   https://payment.sivantech.online  (:10000)
+//    - LIVE_TELEGRAM:   https://telegram.sivantech.online (:4100)
+//    - LIVE_BOT:        https://whatsapp.sivantech.online (:3000)
+//    - LIVE_AUTH:       https://auth.sivantech.online     (:3600)
+//    - LIVE_SIVAN_AI:   https://ai.sivantech.online       (:4300)
 //
-// 2. NO RETRIES ON NON-IDEMPOTENT METHODS.
-//    The old worker retried every method. POST /reprovision is not idempotent:
-//    each call provisions a NEW Bridge virtual account at $2/month that still
-//    accepts deposits. Two 503s in the admin hub on 2026-07-29 created two
-//    surplus accounts this way. GET/HEAD/OPTIONS are safe to retry; nothing
-//    else is.
+// 2. MONEYGRAM MULTI-CHAIN & STELLAR CORRIDORS:
+//    - /api/moneygram/health edge probe returning 200 with supported routes.
+//    - /api/moneygram/* and /webhooks/moneygram routed directly to LIVE_PAYMENTS.
+//    - Allowed headers include x-mg-signature, x-mg-timestamp, x-moneygram-signature.
 //
-// 3. CORS IS NO LONGER A BARE ORIGIN REFLECTION.
-//    `Access-Control-Allow-Origin: <any origin>` combined with
-//    `Allow-Credentials: true` lets ANY website make credentialed calls to the
-//    admin API using a logged-in admin's browser. Now allowlisted.
+// 3. MODEL CONTEXT PROTOCOL (/mcp):
+//    - AI Agent SSE streams & tools routed directly to LIVE_PAYMENTS.
 //
-// 4. Syntax fixed: `console.log\`...\`)` was a tagged template plus a stray
-//    paren. Logging is via a helper that actually produces a string.
+// 4. API HOST ROUTE RESOLUTION:
+//    - Direct calls to /api/wallets, /api/virtual-accounts, /api/balances, /api/ngn,
+//      /api/ghs, /api/agreements, /api/kyc, /api/passkeys route to LIVE_PAYMENTS
+//      instead of falling through to escrow.
 //
-// 5. Timeout reduced 20s -> 12s. Cloudflare gives ~30s at the edge; two 20s
-//    attempts could never both complete.
+// 5. NO RETRIES ON NON-IDEMPOTENT METHODS:
+//    - Only GET/HEAD/OPTIONS retry on transient 502/503/504 errors.
+//
+// 6. CORS SECURITY & CREDENTIAL HANDLING:
+//    - Only trusted sivantech.online, Vercel, and Render origin patterns allowed.
 
 // ========================================================
-// LIVE SERVICES
+// LIVE SERVICES (Routed via Caddy on AWS EC2 13.39.31.121)
 // ========================================================
 const LIVE_ESCROW = "https://escrow.sivantech.online";
 const LIVE_BOT = "https://whatsapp.sivantech.online";
 const LIVE_AUTH = "https://auth.sivantech.online";
 const LIVE_PAYMENTS = "https://payment.sivantech.online";
 const LIVE_SIVAN_AI = "https://ai.sivantech.online";
+const LIVE_TELEGRAM = "https://telegram.sivantech.online";
 
-// Prefer a Cloudflare Worker secret named PROXY_SECRET. This literal is a
-// deployment convenience only and SHOULD BE REMOVED once the secret is set;
-// anyone reading the worker source can otherwise impersonate the gateway.
+// Prefer a Cloudflare Worker secret named PROXY_SECRET.
 const PROXY_SECRET_FALLBACK = "vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU";
 
-// Only these origins may make credentialed cross-origin calls. This list is
-// the only thing standing between a hostile page and an authenticated request
-// to the admin API using a logged-in admin's own browser. Add specific
-// prefixes, never a bare `*.vercel.app`.
+// Whitelisted origin patterns strictly for LIVE production
 const ALLOWED_ORIGIN_PATTERNS = [
+  /^https:\/\/app\.sivantech\.online$/i,
+  /^https:\/\/api\.sivantech\.online$/i,
+  /^https:\/\/admin\.sivantech\.online$/i,
+  /^https:\/\/sivantech\.online$/i,
+  /^https:\/\/([a-z0-9-]+\.)*sivantech\.online$/i,
   /^https:\/\/sivan-admin-hub[a-z0-9-]*\.vercel\.app$/i,
   /^https:\/\/sivan-payments?-[a-z0-9-]*\.vercel\.app$/i,
   /^https:\/\/sivan-homepage[a-z0-9-]*\.vercel\.app$/i,
-  // RENDER-HOSTED FRONTENDS WERE MISSING ENTIRELY.
-  //
-  // The Sivan frontends are deployed to BOTH Vercel and Render, but only the
-  // vercel.app patterns were ever added here - so every browser call from
-  // sivan-payments-user-test.onrender.com and its live twin was blocked at
-  // this gateway. The page loaded and then failed at every fetch, which reads
-  // to a user as "the app is broken" and to an engineer as a backend fault.
-  // The API's own CORS_ORIGIN already allowed these; the gateway in front of
-  // it did not, and the gateway answers the preflight.
-  //
-  // Caught in a browser: the verification page on the Render frontend showed
-  // Bridge copy to a pending Nigerian because the summary call never
-  // completed. The same commit passed 11/11 on Vercel.
-  //
-  // Anchored to the sivan- product prefix, never a bare *.onrender.com, which
-  // any stranger can deploy to.
   /^https:\/\/sivan-[a-z0-9-]*\.onrender\.com$/i,
-  /^https:\/\/([a-z0-9-]+\.)*sivantech\.online$/i,
+  /^https:\/\/sivan-[a-z0-9-]*\.vercel\.app$/i,
   /^http:\/\/localhost:\d+$/i,
   /^http:\/\/127\.0\.0\.1:\d+$/i,
 ];
 
 const COMMON_ALLOWED_HEADERS =
-  "Content-Type, Authorization, x-admin-api-key, x-admin-key, x-sivan-request-id, " +
-  "x-sivan-target-service, x-sivan-admin-email, x-sivan-admin-role, x-sivan-admin-module, " +
-  "x-sivan-admin-hub, x-sivan-ai-key, x-sivan-identity-link-secret, sentry-trace, baggage";
+  "Content-Type, Authorization, x-admin-api-key, x-admin-key, x-core-api-key, x-core-api-secret, " +
+  "x-sivan-request-id, x-sivan-target-service, x-sivan-admin-email, x-sivan-admin-role, x-sivan-admin-module, " +
+  "x-sivan-admin-hub, x-sivan-ai-key, x-sivan-identity-link-secret, sentry-trace, baggage, " +
+  "x-mg-signature, x-mg-timestamp, x-mg-time, x-moneygram-signature, x-signature, x-webhook-signature, " +
+  "x-hub-signature-256, x-hub-signature, x-step-up-token, x-telegram-bot-api-secret-token";
 
-// Retrying these is safe because repeating them changes nothing. Everything
-// else can create or move money.
+
 const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 const MAX_ATTEMPTS = 2;
@@ -109,12 +91,9 @@ function getCorsHeaders(request) {
     "Access-Control-Allow-Headers":
       request.headers.get("access-control-request-headers") || COMMON_ALLOWED_HEADERS,
     "Access-Control-Max-Age": "86400",
-    // Responses differ per origin, so they must never be cached across origins.
     Vary: "Origin",
   };
 
-  // Only echo an origin we actually trust. An unknown origin gets no
-  // allow-origin header at all, which the browser treats as a refusal.
   if (isAllowedOrigin(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Access-Control-Allow-Credentials"] = "true";
@@ -168,6 +147,32 @@ export default {
       return withCorsHeaders(gatewayStatusResponse("api-sivan-gateway"), request);
     }
 
+    // MoneyGram Gateway Health Probe
+    if (url.pathname === "/api/moneygram/health" && request.method === "GET") {
+      return withCorsHeaders(
+        new Response(
+          JSON.stringify({
+            status: "healthy",
+            gateway: "api-sivan-gateway",
+            service: "moneygram-router",
+            version: "2.1.0-multichain",
+            environment: env?.ENVIRONMENT || "production",
+            supportedRoutes: [
+              "/api/moneygram/quote",
+              "/api/moneygram/session",
+              "/api/moneygram/corridors",
+              "/api/moneygram/transactions/:id",
+              "/api/webhooks/moneygram",
+              "/webhooks/moneygram",
+            ],
+            timestamp: new Date().toISOString(),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        ),
+        request
+      );
+    }
+
     if (url.pathname === "/health/deep") {
       return withCorsHeaders(
         await gatewayHealthResponse({
@@ -176,6 +181,7 @@ export default {
             escrow: [LIVE_ESCROW, "/health"],
             payment: [LIVE_PAYMENTS, "/health"],
             auth: [LIVE_AUTH, "/health"],
+            telegram: [LIVE_TELEGRAM, "/health"],
             sivanAi: [LIVE_SIVAN_AI, "/health"],
             bot: [LIVE_BOT, "/api/health"],
           },
@@ -184,7 +190,7 @@ export default {
       );
     }
 
-    const route = resolveRoute(request, url);
+    const route = await resolveRoute(request, url);
     const requestId =
       request.headers.get("x-sivan-request-id") || `siv-req-${crypto.randomUUID()}`;
 
@@ -219,39 +225,97 @@ export default {
   },
 };
 
-function resolveRoute(request, url) {
+export async function resolveRoute(request, url) {
   const targetService = request.headers.get("x-sivan-target-service");
   let host = LIVE_ESCROW;
   let upstreamPath = url.pathname;
   let serviceName = "escrow-backend";
 
+  // 1. Escrow Debugger
   if (url.pathname === "/webhooks/twilio-debugger") {
     host = LIVE_ESCROW;
     upstreamPath = url.pathname;
     serviceName = "escrow-backend";
-  } else if (
+  }
+  // 2. Telegram Bot Service
+  else if (
+    targetService === "telegram" ||
+    targetService === "telegram-service" ||
+    url.pathname.startsWith("/api/telegram") ||
+    url.pathname.startsWith("/webhooks/telegram")
+  ) {
+    host = LIVE_TELEGRAM;
+    upstreamPath = url.pathname.startsWith("/api/telegram")
+      ? (url.pathname.replace(/^\/api\/telegram/, "") || "/")
+      : url.pathname;
+    serviceName = "telegram-service";
+  }
+  // 3. WhatsApp Bot Service
+  else if (
     targetService === "whatsapp-bot" ||
     url.pathname.startsWith("/webhooks/twilio") ||
+    url.pathname.startsWith("/webhooks/meta") ||
+    url.pathname.startsWith("/api/whatsapp") ||
     url.pathname === "/api/notify" ||
     url.pathname === "/api/whatsapp-provider"
   ) {
     host = LIVE_BOT;
-    upstreamPath = url.pathname;
+    upstreamPath = url.pathname.startsWith("/api/whatsapp")
+      ? (url.pathname.replace(/^\/api\/whatsapp/, "") || "/")
+      : url.pathname;
     serviceName = "whatsapp-bot";
-  } else if (
+  }
+  // 4a. Paystack Single-Endpoint Smart Dispatcher (Unified Multi-Service Webhook Pipeline)
+  else if (
+    url.pathname === "/webhooks/paystack" ||
+    url.pathname === "/api/webhooks/paystack"
+  ) {
+    let isEscrowAgreement = false;
+    if (request && request.method === "POST") {
+      try {
+        const bodyClone = await request.clone().json();
+        const metadata = bodyClone?.data?.metadata;
+        if (metadata && (metadata.escrowId || metadata.dealId || metadata.agreementId)) {
+          isEscrowAgreement = true;
+        }
+      } catch {
+        // Non-JSON or empty payload defaults to payments backend
+      }
+    }
+
+    if (isEscrowAgreement) {
+      host = LIVE_ESCROW;
+      upstreamPath = url.pathname;
+      serviceName = "escrow-backend";
+    } else {
+      host = LIVE_PAYMENTS;
+      upstreamPath = "/api/webhooks/paystack";
+      serviceName = "payments-api";
+    }
+  }
+  // 4b. Other Inbound Fiat Webhooks & Callbacks
+  else if (
     url.pathname.startsWith("/webhooks/monnify") ||
     url.pathname.startsWith("/webhooks/palmpay") ||
     url.pathname.startsWith("/webhooks/flutterwave") ||
     url.pathname.startsWith("/webhooks/nomba") ||
-    url.pathname.startsWith("/webhooks/paystack") ||
     url.pathname.startsWith("/payment/callback")
   ) {
     host = LIVE_ESCROW;
     upstreamPath = url.pathname;
     serviceName = "escrow-backend";
-  } else if (
+  }
+  // 5. Escrow Core APIs
+  else if (
     url.pathname.startsWith("/api/admin/escrow") ||
-    url.pathname.startsWith("/api/escrow")
+    url.pathname.startsWith("/api/escrow") ||
+    url.pathname.startsWith("/api/users/escrows") ||
+    url.pathname.startsWith("/api/users/profile") ||
+    url.pathname.startsWith("/api/users/payout-account") ||
+    url.pathname.startsWith("/api/users/whatsapp") ||
+    url.pathname.startsWith("/api/settings/limits") ||
+    url.pathname.startsWith("/api/banks") ||
+    url.pathname.startsWith("/api/paystack/banks")
   ) {
     host = LIVE_ESCROW;
     if (url.pathname.startsWith("/api/admin/escrow")) {
@@ -265,7 +329,9 @@ function resolveRoute(request, url) {
     }
     if (upstreamPath === "/api/health") upstreamPath = "/health";
     serviceName = "escrow-backend";
-  } else if (
+  }
+  // 6. Sivan AI Assistant
+  else if (
     targetService === "sivan-ai" ||
     url.pathname.startsWith("/api/sivan-ai") ||
     url.pathname.startsWith("/sivan-ai")
@@ -274,55 +340,94 @@ function resolveRoute(request, url) {
     upstreamPath =
       url.pathname.replace(/^\/api\/sivan-ai/, "").replace(/^\/sivan-ai/, "") || "/";
     serviceName = "sivan-ai";
-  } else if (url.pathname === "/api/webhooks/bridge") {
+  }
+  // 7. MoneyGram Multi-Chain & Stellar Settlement
+  else if (
+    url.pathname.startsWith("/api/moneygram") ||
+    url.pathname.startsWith("/api/webhooks/moneygram") ||
+    url.pathname.startsWith("/webhooks/moneygram")
+  ) {
     host = LIVE_PAYMENTS;
-    upstreamPath = "/api/webhooks/bridge";
-    serviceName = "payments-api";
-  } else if (
+    upstreamPath = url.pathname;
+    serviceName = "moneygram-gateway";
+  }
+  // 8. Model Context Protocol (MCP) AI Agent Gateway
+  else if (
+    url.pathname === "/mcp" ||
+    url.pathname.startsWith("/mcp/")
+  ) {
+    host = LIVE_PAYMENTS;
+    upstreamPath = url.pathname;
+    serviceName = "mcp-gateway";
+  }
+  // 9. Payment Provider Direct Webhooks
+  else if (
+    url.pathname === "/api/webhooks/bridge" ||
     url.pathname === "/api/webhooks/breet" ||
     url.pathname === "/api/webhooks/paj"
   ) {
-    // NGN provider webhooks -> payments API, path unchanged.
-    //
-    // Not rewritten: Breet and PajRamp POST the literal URL configured in their
-    // dashboards, so stripping a prefix would deliver to a path the API does
-    // not serve. Without this rule the request falls through to escrow and
-    // 404s; Breet then retries with backoff for 24 hours and gives up, which
-    // reads as silence rather than as an outage.
-    //
-    // Breet authenticates with a static x-webhook-secret header rather than a
-    // body signature, and the payments API re-fetches the transaction from
-    // Breet before crediting. Both need headers intact - only Host is stripped.
     host = LIVE_PAYMENTS;
     upstreamPath = url.pathname;
     serviceName = "payments-api";
-  } else if (
-    targetService === "payments" ||
-    url.pathname.startsWith("/api/admin/payment") ||
-    url.pathname.startsWith("/api/payment")
-  ) {
-    host = LIVE_PAYMENTS;
-    if (url.pathname.startsWith("/api/admin/payment")) {
-      upstreamPath = url.pathname.replace(/^\/api\/admin\/payment/, "/api/admin") || "/api/admin";
-    } else if (url.pathname.startsWith("/api/payment")) {
-      upstreamPath = url.pathname.replace(/^\/api\/payment/, "/api") || "/api";
-    } else {
-      upstreamPath = url.pathname || "/";
-    }
-    serviceName = "payments-api";
-  } else if (
+  }
+  // 10. Admin Auth Service
+  else if (
     url.pathname.startsWith("/api/admin/auth-service") ||
     url.pathname.startsWith("/auth")
   ) {
     host = LIVE_AUTH;
     if (url.pathname.startsWith("/api/admin/auth-service")) {
-      // The Telegram auth service expects the /auth/* prefix, so it is kept.
       upstreamPath = url.pathname.replace(/^\/api\/admin\/auth-service/, "") || "/";
     } else {
       upstreamPath = url.pathname.replace(/^\/auth/, "") || "/";
     }
     if (upstreamPath === "/api/health") upstreamPath = "/health";
     serviceName = "telegram-auth";
+  }
+  // 11. Payments Core Microservice Routes
+  else if (
+    targetService === "payments" ||
+    url.pathname.startsWith("/api/admin/payment") ||
+    url.pathname.startsWith("/api/payment") ||
+    url.pathname.startsWith("/api/v1/fraud") ||
+    url.pathname.startsWith("/api/wallets") ||
+    url.pathname.startsWith("/api/virtual-accounts") ||
+    url.pathname.startsWith("/api/balances") ||
+    url.pathname.startsWith("/api/ngn") ||
+    url.pathname.startsWith("/api/ghs") ||
+    url.pathname.startsWith("/api/agreements") ||
+    url.pathname.startsWith("/api/kyc") ||
+    url.pathname.startsWith("/api/passkeys") ||
+    url.pathname.startsWith("/api/celo") ||
+    url.pathname.startsWith("/api/textile") ||
+    url.pathname.startsWith("/api/customers") ||
+    url.pathname.startsWith("/api/external-accounts") ||
+    url.pathname.startsWith("/api/liquidation-addresses") ||
+    url.pathname.startsWith("/api/withdrawals") ||
+    url.pathname.startsWith("/api/onramp") ||
+    url.pathname.startsWith("/api/fees") ||
+    url.pathname.startsWith("/api/metrics") ||
+    url.pathname.startsWith("/api/providers") ||
+    url.pathname.startsWith("/api/controls") ||
+    url.pathname.startsWith("/api/system") ||
+    url.pathname.startsWith("/api/support") ||
+    url.pathname.startsWith("/api/ace")
+  ) {
+    host = LIVE_PAYMENTS;
+    if (url.pathname.startsWith("/api/admin/payment")) {
+      upstreamPath = url.pathname.replace(/^\/api\/admin\/payment/, "/api/admin") || "/api/admin";
+    } else if (url.pathname.startsWith("/api/payment")) {
+      upstreamPath = url.pathname.replace(/^\/api\/payment(\/api)?/, "/api") || "/api";
+    } else {
+      upstreamPath = url.pathname || "/";
+    }
+    serviceName = "payments-api";
+  }
+  // 12. Default API Host Fallback (any unmatched /api/* goes to Payments Backend)
+  else if (url.pathname.startsWith("/api/")) {
+    host = LIVE_PAYMENTS;
+    upstreamPath = url.pathname;
+    serviceName = "payments-api-fallback";
   }
 
   return { host, upstreamPath, serviceName };
@@ -337,8 +442,6 @@ async function fetchUpstream({
   serviceName,
   request,
 }) {
-  // A write must be attempted exactly once. Retrying POST /reprovision is how
-  // surplus Bridge virtual accounts get created.
   const maxAttempts = RETRYABLE_METHODS.has(method) ? MAX_ATTEMPTS : 1;
 
   let lastStatus = 0;
@@ -375,8 +478,6 @@ async function fetchUpstream({
         `(attempt ${attempt}/${maxAttempts})`
       );
 
-      // A write that reached a failing upstream must NOT be repeated: the
-      // request may well have been processed before the error surfaced.
       if (!RETRYABLE_METHODS.has(method)) break;
       if (attempt < maxAttempts) {
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
@@ -393,8 +494,6 @@ async function fetchUpstream({
     }
   }
 
-  // Deliberately explicit for writes: the caller must know the request may or
-  // may not have been applied, so that a blind retry is not the obvious move.
   const wasWrite = !RETRYABLE_METHODS.has(method);
   return jsonResponse(
     {

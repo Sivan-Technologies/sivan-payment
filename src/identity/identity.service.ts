@@ -11,6 +11,7 @@ import {
   clearPairingAttempts,
   recordFailedPairingAttempt
 } from './pairing-attempts.js';
+import { hasWithdrawalPin } from './withdrawal-pin.service.js';
 
 const TOKEN_PREFIX = 'SVP';
 
@@ -129,7 +130,7 @@ async function activeLinksForPaymentUser(userId: string) {
   return links.filter((item) => item.paymentUserId === userId && item.status === 'linked');
 }
 
-async function activeLinkForWhatsapp(whatsappNumber: string) {
+export async function activeLinkForWhatsapp(whatsappNumber: string) {
   const links = await db.listCustomerIdentityLinks();
   return links.find((item) => item.whatsappNumber === whatsappNumber && item.status === 'linked' && linkChannel(item) === 'whatsapp');
 }
@@ -302,13 +303,69 @@ export async function redeemWhatsappLink(input: z.infer<typeof redeemIdentityLin
   if (!user) throw notFound('Payment user');
 
   const linkForWhatsapp = await activeLinkForWhatsapp(whatsappNumber);
-  if (linkForWhatsapp && linkForWhatsapp.paymentUserId !== user.id) rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
-  const linkForUser = await activeLinkForPaymentUser(user.id, 'whatsapp');
-  if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) rejectPairing('whatsapp', whatsappNumber, 'This Sivan payment account is already linked to another WhatsApp number.');
-
   const existingUserWithWhatsapp = await db.findUserByWhatsappNumber(whatsappNumber);
-  if (existingUserWithWhatsapp && existingUserWithWhatsapp.id !== user.id) {
+
+  // An auto-created chat placeholder user lacks verified email or has default placeholder identity
+  const isPlaceholderChatUser = Boolean(
+    existingUserWithWhatsapp &&
+    existingUserWithWhatsapp.id !== user.id &&
+    (!existingUserWithWhatsapp.emailVerifiedAt ||
+      existingUserWithWhatsapp.email.endsWith('@sivantech.online') ||
+      existingUserWithWhatsapp.fullName === 'Sivan User') &&
+    (!linkForWhatsapp || linkForWhatsapp.paymentUserId === existingUserWithWhatsapp.id)
+  );
+
+  if (linkForWhatsapp && linkForWhatsapp.paymentUserId !== user.id && !isPlaceholderChatUser) {
     rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
+  }
+
+  const linkForUser = await activeLinkForPaymentUser(user.id, 'whatsapp');
+  if (linkForUser && linkForUser.whatsappNumber !== whatsappNumber) {
+    rejectPairing('whatsapp', whatsappNumber, 'This Sivan payment account is already linked to another WhatsApp number.');
+  }
+
+  if (existingUserWithWhatsapp && existingUserWithWhatsapp.id !== user.id) {
+    if (isPlaceholderChatUser) {
+      // Merge placeholder chat user into authenticated dashboard user
+      const chatHasPin = await hasWithdrawalPin(existingUserWithWhatsapp.id);
+      const canonicalHasPin = await hasWithdrawalPin(user.id);
+      if (chatHasPin && !canonicalHasPin) {
+        const pins = await db.listWithdrawalPins();
+        const chatPin = pins.find((p) => p.userId === existingUserWithWhatsapp.id);
+        if (chatPin) {
+          await db.upsertWithdrawalPinRecord({
+            ...chatPin,
+            userId: user.id,
+            updatedAt: now,
+          });
+        }
+      }
+
+      // Re-point any identity links from placeholder to canonical user
+      const links = await db.listCustomerIdentityLinks();
+      for (const l of links) {
+        if (l.paymentUserId === existingUserWithWhatsapp.id || (l.whatsappNumber === whatsappNumber && l.channel === 'whatsapp')) {
+          await db.upsertCustomerIdentityLinkRecord({
+            ...l,
+            paymentUserId: user.id,
+            email: normalizeEmail(user.email),
+            status: 'linked',
+            linkedAt: l.linkedAt || now,
+            updatedAt: now,
+          });
+        }
+      }
+
+      // Free whatsappNumber from the placeholder user record to prevent PostgreSQL unique constraint collision
+      await db.updateUserRecord({
+        ...existingUserWithWhatsapp,
+        email: `merged_${existingUserWithWhatsapp.id}_${Date.now()}@sivantech.online`,
+        whatsappNumber: undefined,
+        updatedAt: now,
+      });
+    } else {
+      rejectPairing('whatsapp', whatsappNumber, 'This WhatsApp number is already linked to another Sivan payment account.');
+    }
   }
 
 
@@ -513,6 +570,59 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
 }
 
 /**
+ * Resolve a WhatsApp phone number to its Sivan identity.
+ * Normalizes phone formats and resolves through active identity links
+ * to ensure chat channels always reach the canonical payment user account.
+ */
+export async function lookupWhatsappIdentity(whatsappNumber: string) {
+  const rawClean = String(whatsappNumber || '').trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  const withPlus = `+${rawClean}`;
+  const withWhatsapp = `whatsapp:+${rawClean}`;
+
+  const candidates = [withPlus, withWhatsapp, rawClean];
+
+  // 1. Check identity links for linked payment user
+  const identityLinks = await db.listCustomerIdentityLinks();
+  const whatsappLink = identityLinks.find(
+    (l) => l.status === 'linked' && candidates.includes(String(l.whatsappNumber || ''))
+  );
+  if (whatsappLink) {
+    const user = await db.findUserById(whatsappLink.paymentUserId);
+    if (user) {
+      return {
+        linked: true as const,
+        paymentUserId: user.id,
+        escrowUserId: whatsappLink.escrowUserId || user.id,
+        email: user.email,
+        fullName: user.fullName,
+        whatsappNumber: user.whatsappNumber || withPlus,
+        canTransact: true,
+      };
+    }
+  }
+
+  // 2. Check direct user records by phone variants
+  let user = await db.findUserByWhatsappNumber(withPlus);
+  if (!user) user = await db.findUserByWhatsappNumber(withWhatsapp);
+  if (!user) user = await db.findUserByWhatsappNumber(rawClean);
+  if (!user) user = await db.findUserByTarget(rawClean);
+
+  if (user) {
+    return {
+      linked: true as const,
+      paymentUserId: user.id,
+      escrowUserId: user.id,
+      email: user.email,
+      fullName: user.fullName,
+      whatsappNumber: user.whatsappNumber || withPlus,
+      canTransact: true,
+    };
+  }
+
+  return { linked: false as const };
+}
+
+/**
  * Resolve a phone number to its Sivan identity, including Telegram user ID.
  */
 export async function lookupPhoneIdentity(phone: string) {
@@ -530,5 +640,6 @@ export async function lookupPhoneIdentity(phone: string) {
   }
   return { linked: false as const };
 }
+
 
 

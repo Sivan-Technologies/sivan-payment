@@ -18,7 +18,7 @@
 
 import { chromium } from 'playwright';
 
-const FRONTEND = process.argv[2] ?? process.env.E2E_FRONTEND ?? 'https://sivan-payments-user-test.vercel.app';
+const FRONTEND = process.argv[2] ?? process.env.E2E_FRONTEND ?? 'https://staging.sivantech.online';
 
 let pass = 0, fail = 0;
 const failures = [];

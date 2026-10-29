@@ -1,21 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { processBridgeWebhook } from './webhooks.service.js';
+import { processPaystackWebhook, PaystackWebhookError } from './paystackWebhookHandler.js';
+import { processMoneyGramWebhook, MoneyGramWebhookError } from './moneygramWebhookHandler.js';
 
 export async function webhooksRoutes(app: FastifyInstance) {
   app.post('/api/webhooks/bridge', async (request, reply) => {
     const rawBody = (request as any).rawBody as Buffer | undefined;
     const signature = request.headers['x-webhook-signature'];
     const signatureHeader = Array.isArray(signature) ? signature[0] : signature;
-    /**
-     * `?? {}` because a POST with NO BODY AT ALL never reaches a content-type
-     * parser - Fastify skips parsing entirely and leaves request.body
-     * undefined. The service then read `payload.event_id` off undefined and
-     * threw a TypeError, which surfaced as a 500 rather than the honest 400.
-     *
-     * Found while fixing the raw-body crash: a bare `curl -X POST` with no
-     * body and no Content-Type, which is exactly the shape of a naive
-     * uptime check or a provider's connectivity probe.
-     */
     const result = await processBridgeWebhook(
       (request.body ?? {}) as any,
       rawBody ?? Buffer.from(JSON.stringify(request.body ?? {})),
@@ -23,4 +15,74 @@ export async function webhooksRoutes(app: FastifyInstance) {
     );
     return reply.code(200).send({ data: result });
   });
+
+  const handlePaystackWebhook = async (request: any, reply: any) => {
+    const rawBody = request.rawBody as Buffer | undefined;
+    const signature = request.headers['x-paystack-signature'];
+    const signatureHeader = Array.isArray(signature) ? signature[0] : signature;
+
+    try {
+      const result = await processPaystackWebhook(
+        request.body ?? {},
+        rawBody ?? Buffer.from(JSON.stringify(request.body ?? {})),
+        signatureHeader
+      );
+      return reply.code(200).send({ data: result });
+    } catch (error) {
+      if (error instanceof PaystackWebhookError) {
+        return reply.code(error.statusCode).send({
+          error: {
+            name: error.name,
+            message: error.message,
+          },
+        });
+      }
+      throw error;
+    }
+  };
+
+  const handleMoneyGramWebhook = async (request: any, reply: any) => {
+    const rawBody = request.rawBody as Buffer | undefined;
+    const raw = rawBody ?? Buffer.from(JSON.stringify(request.body ?? {}));
+
+    try {
+      await processMoneyGramWebhook(
+        request.body ?? {},
+        raw,
+        request.headers
+      );
+      // MoneyGram specification requires HTTP 200 with an EMPTY body.
+      return reply.code(200).type('text/plain').send('');
+    } catch (error) {
+      if (error instanceof MoneyGramWebhookError) {
+        return reply.code(error.statusCode).send({
+          error: {
+            name: error.name,
+            message: error.message,
+          },
+        });
+      }
+      throw error;
+    }
+  };
+
+  app.post('/api/webhooks/paystack', handlePaystackWebhook);
+  app.post('/webhooks/paystack', handlePaystackWebhook);
+
+  app.post('/api/webhooks/moneygram', handleMoneyGramWebhook);
+  app.post('/webhooks/moneygram', handleMoneyGramWebhook);
+  app.post('/api/webhooks/ramps-sandbox', handleMoneyGramWebhook);
+  app.post('/webhooks/ramps-sandbox', handleMoneyGramWebhook);
+  app.post('/api/webhooks/ramps', handleMoneyGramWebhook);
+  app.post('/webhooks/ramps', handleMoneyGramWebhook);
+  app.get('/api/webhooks/moneygram', async (_req, reply) => {
+    return reply.code(200).send({ status: 'ok', service: 'moneygram-webhook-receiver' });
+  });
+  app.get('/api/webhooks/ramps-sandbox', async (_req, reply) => {
+    return reply.code(200).send({ status: 'ok', service: 'moneygram-webhook-receiver' });
+  });
+  app.get('/api/webhooks/ramps', async (_req, reply) => {
+    return reply.code(200).send({ status: 'ok', service: 'moneygram-webhook-receiver' });
+  });
 }
+

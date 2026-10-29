@@ -8,7 +8,7 @@ graph TD
     C --> D[Step 4: Package & Submit Grant Applications]
 📌 Step 1: Capture Evidence & Recorded Artifacts
 Video / Screenshot Recording: Record a clean 2-minute demonstration showing:
-User creating an agreement via natural language in Telegram (@Sivan_Ai).
+User creating an agreement via natural language in Telegram (@SivanAi_bot).
 Real-time pop-up card received by counterparty with action buttons ([📦 Submit delivery] / [Release Funds]).
 Funds release on Solana Devnet (x402 protocol facility).
 Admin Hub controls showing real-time setting toggles and sub-50ms audit logs.

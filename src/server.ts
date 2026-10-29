@@ -8,6 +8,7 @@ import { notifyPendingDeposits } from './deposits/deposit-notification.service.j
 import { confirmDeposits } from './deposits/deposit-confirmation.service.js';
 import { isTransientPostgresError } from './database/postgres-database.js';
 import { sweepDeadlineAlerts } from './agreements/deadline-sweeper.service.js';
+import { reconcileUnsettledUtilityPurchases } from './ngn/service/sivanUtilityService.js';
 
 initMonitoring();
 
@@ -159,6 +160,35 @@ if (env.TRANSFER_CONFIRM_POLL_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'transfer confirmer failed');
       captureError(error as Error, { source: 'transfer_confirmer' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * RECONCILE UNSETTLED AND PENDING UTILITY PURCHASES
+ *
+ * Settle purchases that vended successfully upstream during a transient DB glitch,
+ * and track purchases whose provider fulfillment status was unknown.
+ */
+if (env.UTILITY_RECONCILE_POLL_SECONDS > 0) {
+  const intervalMs = env.UTILITY_RECONCILE_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await reconcileUnsettledUtilityPurchases();
+      if (outcome.settled.length > 0) {
+        app.log.info({ settled: outcome.settled }, 'unsettled utility purchases reconciled and settled');
+      }
+      if (outcome.failed.length > 0) {
+        app.log.error({ failed: outcome.failed }, 'unsettled utility purchases failed during reconciliation');
+      }
+      if (outcome.pendingReconciliation.length > 0) {
+        app.log.warn({ pending: outcome.pendingReconciliation }, 'utility purchases pending reconciliation');
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'utility reconciler failed');
+      captureError(error as Error, { source: 'utility_reconciler' });
     }
   };
   setInterval(tick, intervalMs).unref();

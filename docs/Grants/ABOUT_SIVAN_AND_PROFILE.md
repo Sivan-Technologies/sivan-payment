@@ -49,7 +49,7 @@ Sivan Payment AI models service arrangements as verifiable, deterministic state 
 - Blockchain: Solana Devnet and Mainnet (SPL Token Program, USDC / USDT)
 - Backend: Node.js, Fastify, TypeScript, PostgreSQL (Neon DB with composite indexing)
 - Frontend and Console: Next.js, Vercel, Tailwind CSS, REST APIs
-- Messaging Integrations: Telegram Bot API (@Sivan_Ai), WhatsApp Business API
+- Messaging Integrations: Telegram Bot API (@SivanAi_bot), WhatsApp Business API
 
 ### Traction and Proven Delivery:
 - Live multi-channel state machine with 100% completed agreement settlement rate.

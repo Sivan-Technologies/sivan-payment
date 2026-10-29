@@ -98,3 +98,92 @@ export async function assertWithdrawalAuthorised(input: WithdrawalAuthorisation)
     { code: configured ? 'PIN_REQUIRED' : 'PIN_NOT_SET' }
   );
 }
+
+export type TransferAuthorisation = {
+  userId: string;
+  amount: number;
+  destinationAddress: string;
+  network?: string;
+  asset?: string;
+  isP2p?: boolean;
+  pin?: string;
+  stepUpToken?: string;
+};
+
+/**
+ * Adaptive Transfer Guard for Direct & P2P Transfers.
+ *
+ * Risk-based step-up authentication matrix:
+ * 1. New Sender (0 previous completed transfers): PIN required on 100% of transfers.
+ * 2. High-Value Transfer (>= 15 USDC or >= 15,000 NGN): PIN required.
+ * 3. New Recipient / Destination Address: PIN required.
+ * 4. 24h Velocity Exceeded (>= 3 transfers or >= 30 USDC / 30,000 NGN cumulative): PIN required.
+ * 5. Frictionless Micro-Send (< 15 USDC / 15,000 NGN to a known counterparty): Allowed without PIN.
+ */
+export async function assertTransferAuthorised(input: TransferAuthorisation): Promise<void> {
+  const { userId, amount, destinationAddress, asset, pin, stepUpToken } = input;
+  const isNgn = (asset || '').toLowerCase() === 'ngn';
+
+  if (stepUpToken) {
+    await consumeStepUpToken({
+      token: stepUpToken,
+      userId,
+      amount: String(amount),
+      currency: isNgn ? 'NGN' : 'USDC',
+      destinationRef: destinationAddress,
+    });
+    return;
+  }
+
+  if (pin) {
+    await verifyPinForUserId(userId, pin);
+    return;
+  }
+
+  if (!env.WITHDRAWAL_PIN_ENFORCED) return;
+
+  const { listUserBalanceTransfers } = await import('../balances/balance.service.js');
+  const history = await listUserBalanceTransfers(userId).catch(() => []);
+  const completedSends = history.filter(
+    (t: any) => t.direction === 'out' || t.status === 'completed' || t.status === 'broadcast' || t.status === 'confirmed'
+  );
+
+  const isNewSender = completedSends.length === 0;
+
+  const cleanDest = destinationAddress.toLowerCase().trim();
+  const isKnownRecipient = completedSends.some((t: any) => {
+    const dest = String(t.destinationAddress || '').toLowerCase().trim();
+    return dest === cleanDest;
+  });
+
+  const isHighValue = isNgn ? amount >= 15000 : amount >= 15;
+
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const recent24hSends = completedSends.filter((t: any) => t.createdAt && t.createdAt >= oneDayAgo);
+  const recent24hVolume = recent24hSends.reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
+  const velocityExceeded = isNgn
+    ? (recent24hSends.length >= 3 || recent24hVolume >= 30000)
+    : (recent24hSends.length >= 3 || recent24hVolume >= 30);
+
+  const requiresPin = isNewSender || !isKnownRecipient || isHighValue || velocityExceeded;
+
+  if (requiresPin) {
+    const configured = await hasWithdrawalPin(userId);
+    throw badRequest(
+      configured
+        ? 'Enter your 6-digit Sivan PIN to authorize this transfer.'
+        : 'Set up your 6-digit Sivan PIN before sending transfers.',
+      {
+        code: configured ? 'PIN_REQUIRED' : 'PIN_NOT_SET',
+        reason: isNewSender
+          ? 'First-time transfer requires 6-digit PIN verification.'
+          : !isKnownRecipient
+          ? 'New recipient destination requires 6-digit PIN verification.'
+          : isHighValue
+          ? (isNgn ? 'Transfers of ₦15,000 or more require 6-digit PIN verification.' : 'Transfers of $15 or more require 6-digit PIN verification.')
+          : '24-hour transfer volume cap reached. PIN verification required.',
+      }
+    );
+  }
+}
+

@@ -440,6 +440,17 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       if (typeof cached === 'number') {
         return { markupPercent: cached, known: false, source: 'last_known', reason };
       }
+      try {
+        const { getAdminFeeSettings } = await import('../../admin/admin-fees.service.js');
+        const settings = await getAdminFeeSettings();
+        const adminMarkup = Number(settings.ngnOfframpFeePercent ?? 0);
+        if (Number.isFinite(adminMarkup) && adminMarkup > 0) {
+          BreetNgnProvider.lastKnownMarkupPercent = adminMarkup;
+          return { markupPercent: adminMarkup, known: false, source: 'last_known', reason };
+        }
+      } catch {
+        // Fall through to unavailable
+      }
       return { markupPercent: 0, known: false, source: 'unavailable', reason };
     }
   }
@@ -473,7 +484,9 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       }),
     });
     const markup = Number(result?.data?.markupPercent ?? result?.markupPercent ?? result?.markup ?? percent);
-    return { markupPercent: Number.isFinite(markup) ? markup : percent, raw: result };
+    const finalMarkup = Number.isFinite(markup) ? markup : percent;
+    BreetNgnProvider.lastKnownMarkupPercent = finalMarkup;
+    return { markupPercent: finalMarkup, raw: result };
   }
 
   /**

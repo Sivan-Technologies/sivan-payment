@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { passkeyService } from './passkey.service.js';
+import { signUserJwt } from '../auth/jwt.js';
 
 export async function passkeyRoutes(app: FastifyInstance) {
   /**
@@ -100,7 +101,8 @@ export async function passkeyRoutes(app: FastifyInstance) {
         currency,
         destinationRef,
       });
-      return { data: result };
+      const authToken = signUserJwt({ userId: String(userId) });
+      return { data: { ...result, authToken } };
     } catch (err: any) {
       return reply.code(err.statusCode || 400).send({ error: { message: err.message } });
     }

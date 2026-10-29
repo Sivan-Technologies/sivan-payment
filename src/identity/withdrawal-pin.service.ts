@@ -44,21 +44,18 @@ export const setWithdrawalPinSchema = z.object({
 export const verifyWithdrawalPinSchema = z.object({
   channel: z.enum(['whatsapp', 'telegram']),
   identity: z.string().min(1).max(64),
-  /**
-   * 6-12, matching setWithdrawalPinSchema above.
-   *
-   * This used to accept a minimum of 4. Nothing could ever satisfy it: a PIN
-   * can only be created through setWithdrawalPinSchema, which demands 6, so a
-   * 4 or 5 digit submission was accepted by the schema and then failed the
-   * hash comparison - burning one of the user's limited attempts and moving
-   * them toward a lockout for input the API had told them was well-formed.
-   */
   pin: z.string().min(6).max(12),
-
   amount: z.string().min(1).max(40),
   currency: z.string().min(2).max(10),
   destinationRef: z.string().min(1).max(200),
 });
+
+export const setChatWithdrawalPinSchema = z.object({
+  channel: z.enum(['whatsapp', 'telegram']),
+  identity: z.string().min(1).max(64),
+  pin: z.string().min(6).max(12),
+});
+
 
 /**
  * scrypt, matching `scrypt-sha256-v1` already used for 2FA recovery answers.
@@ -143,7 +140,44 @@ function tokenHash(token: string) {
 
 async function pinForUser(userId: string): Promise<WithdrawalPinRecord | undefined> {
   const pins = await db.listWithdrawalPins();
-  return pins.find((item) => item.userId === userId);
+  const direct = pins.find((item) => item.userId === userId);
+  if (direct) return direct;
+
+  try {
+    const user = (await db.findUserById(userId)) || (await db.findUserByTarget(userId));
+    if (user) {
+      const userPin = pins.find((item) => item.userId === user.id);
+      if (userPin) return userPin;
+    }
+
+    const links = await db.listCustomerIdentityLinks();
+    const relatedUserIds = new Set<string>();
+    for (const l of links) {
+      if (l.status === 'linked') {
+        if (l.paymentUserId === userId && l.escrowUserId) relatedUserIds.add(l.escrowUserId);
+        if (l.escrowUserId === userId && l.paymentUserId) relatedUserIds.add(l.paymentUserId);
+        if (user && l.paymentUserId === user.id && l.escrowUserId) relatedUserIds.add(l.escrowUserId);
+        if (user && l.escrowUserId === user.id && l.paymentUserId) relatedUserIds.add(l.paymentUserId);
+      }
+    }
+    if (user?.whatsappNumber) {
+      const waUser = await db.findUserByWhatsappNumber(user.whatsappNumber);
+      if (waUser && waUser.id !== userId && waUser.id !== user.id) relatedUserIds.add(waUser.id);
+    }
+    if (user?.telegramUserId) {
+      const tgUser = await db.findUserByTelegramUserId(user.telegramUserId);
+      if (tgUser && tgUser.id !== userId && tgUser.id !== user.id) relatedUserIds.add(tgUser.id);
+    }
+
+    for (const relId of relatedUserIds) {
+      const relPin = pins.find((item) => item.userId === relId);
+      if (relPin) return relPin;
+    }
+  } catch (_err) {
+    // Fall back to direct result
+  }
+
+  return undefined;
 }
 
 export async function hasWithdrawalPin(userId: string) {
@@ -218,6 +252,27 @@ export async function setWithdrawalPin(
 }
 
 /**
+ * Set the initial PIN for a user from an authenticated chat channel (e.g. Meta WhatsApp Flows).
+ * Guarded by service secret at the route layer.
+ * Only allows setting if no PIN exists yet; prevents chat-based PIN changes to guard against takeovers.
+ */
+export async function setInitialPinFromChat(
+  input: z.infer<typeof setChatWithdrawalPinSchema>,
+  resolveIdentity: (channel: 'whatsapp' | 'telegram', identity: string) => Promise<string | undefined>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  const userId = await resolveIdentity(input.channel, input.identity);
+  if (!userId) {
+    throw badRequest('Your chat account is not linked to a Sivan Payment profile.');
+  }
+  const existing = await pinForUser(userId);
+  if (existing) {
+    throw badRequest('A withdrawal PIN is already set for your account. To change or reset your PIN, please use Security Settings in the Sivan dashboard.');
+  }
+  return setWithdrawalPin(userId, { pin: input.pin }, context);
+}
+
+/**
  * The four refusals a caller must be able to tell apart.
  *
  * They travel in `details.code`, because badRequest/forbidden take no code
@@ -266,7 +321,7 @@ export async function verifyPinForUserId(
     });
   }
 
-  const candidate = hashPin(userId, pin, record.pinSalt);
+  const candidate = hashPin(record.userId, pin, record.pinSalt);
   if (!secureEqual(candidate.pinHash, record.pinHash)) {
     const failedAttempts = (record.failedAttempts ?? 0) + 1;
     const lockedUntil =
@@ -575,5 +630,20 @@ export async function verifyTmaPinStepUp(
     expiresAt: stepUp.expiresAt,
     userId,
   };
+}
+
+/**
+ * Checks whether an unconsumed, non-expired step-up token exists for the given user.
+ * Used by preHandler auth gate to authenticate step-up transfer requests.
+ */
+export async function isStepUpTokenValidForUser(userId: string, token: string): Promise<boolean> {
+  if (!userId || !token) return false;
+  const tokens = await db.listWithdrawalStepUpTokens();
+  const hashed = tokenHash(token);
+  const record = tokens.find((item) => secureEqual(item.tokenHash, hashed));
+  if (!record) return false;
+  if (record.usedAt) return false;
+  if (Date.parse(record.expiresAt) <= Date.now()) return false;
+  return record.userId === userId;
 }
 

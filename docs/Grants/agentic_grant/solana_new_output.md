@@ -38,7 +38,7 @@ Conversational Intent Parser -> Validated Schema -> Verifiable Agreement State M
 Verifiable Agreement State Machine -> Lock Funds -> Solana x402 Payment Facility
 Solana x402 Payment Facility -> SPL Token Deposit -> Solana Devnet / Mainnet Cluster
 Verifiable Agreement State Machine -> Work Delivery -> Real-Time Push Notification Engine
-Real-Time Push Notification Engine -> Pop-up Alert -> Telegram (@Sivan_Ai) / WhatsApp
+Real-Time Push Notification Engine -> Pop-up Alert -> Telegram (@SivanAi_bot) / WhatsApp
 [Buyer / Approver] -> Approve Work -> Verifiable Agreement State Machine
 Verifiable Agreement State Machine -> Automated Release -> On-Chain USDC Release
 On-Chain USDC Release -> Tx Signature -> Solana Explorer
@@ -63,7 +63,7 @@ Milestone 3: Deployed Operations Console & USDT Control Switch (Completed)
 Live Vercel dashboard (sivan-admin-hub-test.vercel.app), bounded database audit queue (0.18ms write latency), and USDT toggle switch.
 
 Milestone 4: Public Launch of Sivan Service Agreement Engine on Solana Mainnet & Telegram (Target for Tranche 2 Shipping)
-Transition x402 payment routing from Solana Devnet to Mainnet-Beta and launch the 1-click Service Agreement creation & settlement flow publicly on Telegram (@Sivan_Ai) and Web.
+Transition x402 payment routing from Solana Devnet to Mainnet-Beta and launch the 1-click Service Agreement creation & settlement flow publicly on Telegram (@SivanAi_bot) and Web.
 
 ---
 

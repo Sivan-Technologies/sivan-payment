@@ -8,7 +8,7 @@ const urls = {
   liveBackend: 'https://sivan-payments-api-live.onrender.com',
   testBackend: 'https://sivan-payments-api-test.onrender.com',
   liveUser: 'https://app.sivantech.online',
-  testUser: 'https://sivan-payments-user-test.vercel.app',
+  testUser: 'https://staging.sivantech.online',
   admin: process.env.ADMIN_APP_URL || 'https://sivan-admin-hub-test.vercel.app'
 };
 

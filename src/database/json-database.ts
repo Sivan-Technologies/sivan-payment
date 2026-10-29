@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
+import { resolveUsername } from './username-resolution.js';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord, StepUpVerificationRequestRecord } from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -68,12 +69,35 @@ const emptyDb = (): DatabaseShape => ({
   ngnIdentityVerifications: [],
   p2pClaims: [],
   serviceAgreements: [],
+  agreementControls: [],
+  ghsPayoutAccounts: [],
+  ghsQuotes: [],
+  ghsTransfers: [],
+  verificationRequests: [],
 });
 
 export class JsonDatabase {
   private filePath: string;
   private db: DatabaseShape | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
+
+  async getAgreementControls(): Promise<AgreementControlsRecord | null> {
+    const data = await this.read();
+    return (data.agreementControls ?? []).find((c) => c.id === 'default_controls') ?? null;
+  }
+
+  async saveAgreementControls(record: AgreementControlsRecord): Promise<AgreementControlsRecord> {
+    return this.mutate((data) => {
+      data.agreementControls = data.agreementControls ?? [];
+      const idx = data.agreementControls.findIndex((c) => c.id === 'default_controls');
+      if (idx >= 0) {
+        data.agreementControls[idx] = record;
+      } else {
+        data.agreementControls.push(record);
+      }
+      return record;
+    });
+  }
 
   async saveP2pClaim(claim: P2pClaimRecord): Promise<P2pClaimRecord> {
     return this.mutate((data) => {
@@ -251,12 +275,16 @@ export class JsonDatabase {
 
   async findUserByUsername(username: string) {
     const data = await this.read();
-    return data.users.find((user) => user.username?.toLowerCase() === username.toLowerCase());
+    return resolveUsername(data.users, username);
   }
 
   async findUserByWhatsappNumber(whatsappNumber: string) {
     const data = await this.read();
-    return data.users.find((user) => user.whatsappNumber === whatsappNumber);
+    const clean = String(whatsappNumber || '').trim();
+    if (!clean) return undefined;
+    const digitsOnly = clean.replace(/\D/g, '');
+    const candidates = new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`]);
+    return data.users.find((user) => user.whatsappNumber && candidates.has(user.whatsappNumber));
   }
 
   async findUserByTelegramUserId(telegramUserId: string) {
@@ -269,32 +297,101 @@ export class JsonDatabase {
     const clean = String(target || '').trim();
     if (!clean) return undefined;
 
+    // Helper to backfill telegram info from customerIdentityLinks if missing on user
+    const backfillUser = (u: UserRecord): UserRecord => {
+      if (u.telegramUserId && (u as any).telegramUsername) return u;
+      const links = data.customerIdentityLinks || [];
+      const link = links.find((l) => l.paymentUserId === u.id && (l.telegramUserId || l.telegramUsername));
+      if (link) {
+        return {
+          ...u,
+          telegramUserId: u.telegramUserId || link.telegramUserId,
+          telegramUsername: (u as any).telegramUsername || link.telegramUsername,
+          whatsappNumber: u.whatsappNumber || link.whatsappNumber,
+        };
+      }
+      return u;
+    };
+
     // 1. Direct ID match
     let user = data.users.find((u) => u.id === clean);
-    if (user) return user;
+    if (user) return backfillUser(user);
 
     // 2. Username match (@username or username)
     const username = clean.replace(/^@/, '').toLowerCase();
-    user = data.users.find((u) => u.username?.toLowerCase() === username || (u as any).telegramUsername?.toLowerCase() === username);
-    if (user) return user;
+    user = resolveUsername(data.users, username);
+    if (user) return backfillUser(user);
 
     // 3. Phone / WhatsApp match (normalize to E.164 and local)
     const digitsOnly = clean.replace(/\D/g, '');
+    const isTenDigitNgMobile = digitsOnly.length === 10 && /^[789][01]\d{8}$/.test(digitsOnly);
+    const phoneCandidates = new Set(
+      [
+        clean,
+        `+${digitsOnly}`,
+        digitsOnly,
+        `whatsapp:+${digitsOnly}`,
+        `whatsapp:${clean}`,
+        isTenDigitNgMobile ? `+234${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `234${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `0${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `whatsapp:+234${digitsOnly}` : undefined,
+      ].filter(Boolean) as string[]
+    );
     user = data.users.find((u) => {
-      if (u.whatsappNumber === clean || u.whatsappNumber === `+${digitsOnly}`) return true;
+      if (u.whatsappNumber && phoneCandidates.has(u.whatsappNumber)) return true;
       if (digitsOnly.length === 13 && digitsOnly.startsWith('234')) {
         return u.whatsappNumber === `+${digitsOnly}` || u.whatsappNumber === `0${digitsOnly.slice(3)}`;
       }
       if (digitsOnly.length === 11 && digitsOnly.startsWith('0')) {
         return u.whatsappNumber === `+234${digitsOnly.slice(1)}` || u.whatsappNumber === digitsOnly;
       }
+      if (isTenDigitNgMobile) {
+        return u.whatsappNumber === `+234${digitsOnly}` || u.whatsappNumber === `0${digitsOnly}`;
+      }
       return false;
     });
-    if (user) return user;
+    if (user) return backfillUser(user);
+
+    // 3b. Sivan Dedicated Virtual Account (10-digit NUBAN) match
+    if (digitsOnly.length === 10) {
+      const va = (data.virtualAccounts || []).find(
+        (a) =>
+          (a as any).accountNumber === digitsOnly ||
+          a.accountNumberMasked === digitsOnly ||
+          (a.rawProviderPayload as any)?.accountNumber === digitsOnly ||
+          (a.rawProviderPayload as any)?.account_number === digitsOnly
+      );
+      if (va?.userId) {
+        user = data.users.find((u) => u.id === va.userId);
+        if (user) return backfillUser(user);
+      }
+    }
 
     // 4. Telegram user ID match
     user = data.users.find((u) => u.telegramUserId === clean);
-    return user;
+    if (user) return backfillUser(user);
+
+    // 5. Customer identity links match (linked Telegram accounts, phones, usernames)
+    const links = data.customerIdentityLinks || [];
+    const matchedLink = links.find((l) =>
+      (l.telegramUsername && l.telegramUsername.toLowerCase() === username) ||
+      (l.telegramUserId && l.telegramUserId === clean) ||
+      (l.whatsappNumber && (phoneCandidates.has(l.whatsappNumber) || l.whatsappNumber === `+${digitsOnly}`))
+    );
+    if (matchedLink?.paymentUserId) {
+      user = data.users.find((u) => u.id === matchedLink.paymentUserId);
+      if (user) {
+        return {
+          ...user,
+          telegramUserId: user.telegramUserId || matchedLink.telegramUserId,
+          telegramUsername: (user as any).telegramUsername || matchedLink.telegramUsername,
+          whatsappNumber: user.whatsappNumber || matchedLink.whatsappNumber,
+        };
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -728,6 +825,80 @@ export class JsonDatabase {
     });
   }
 
+  async listGhsPayoutAccounts(userId?: string): Promise<GhsPayoutAccountRecord[]> {
+    const data = await this.read();
+    const all = data.ghsPayoutAccounts ?? [];
+    return userId ? all.filter((item) => item.userId === userId) : all;
+  }
+
+  async findGhsPayoutAccountById(id: string): Promise<GhsPayoutAccountRecord | null> {
+    const data = await this.read();
+    return (data.ghsPayoutAccounts ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsPayoutAccountRecord(record: GhsPayoutAccountRecord) {
+    return this.mutate((data) => {
+      data.ghsPayoutAccounts = data.ghsPayoutAccounts ?? [];
+      const index = data.ghsPayoutAccounts.findIndex(
+        (item) =>
+          item.userId === record.userId &&
+          item.provider === record.provider &&
+          item.bankId === record.bankId &&
+          item.accountNumber === record.accountNumber
+      );
+      if (index >= 0) {
+        const existing = data.ghsPayoutAccounts[index];
+        const merged = { ...record, id: existing.id, createdAt: existing.createdAt };
+        data.ghsPayoutAccounts[index] = merged;
+        return merged;
+      }
+      data.ghsPayoutAccounts.push(record);
+      return record;
+    });
+  }
+
+  async listGhsQuotes(userId?: string): Promise<GhsQuoteRecord[]> {
+    const data = await this.read();
+    const all = data.ghsQuotes ?? [];
+    return userId ? all.filter((item) => item.userId === userId) : all;
+  }
+
+  async findGhsQuoteById(id: string): Promise<GhsQuoteRecord | null> {
+    const data = await this.read();
+    return (data.ghsQuotes ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsQuoteRecord(record: GhsQuoteRecord) {
+    return this.mutate((data) => {
+      data.ghsQuotes = data.ghsQuotes ?? [];
+      const index = data.ghsQuotes.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ghsQuotes[index] = record;
+      else data.ghsQuotes.push(record);
+      return record;
+    });
+  }
+
+  async listGhsTransfers(filter?: { userId?: string }): Promise<GhsTransferRecord[]> {
+    const data = await this.read();
+    const all = data.ghsTransfers ?? [];
+    return filter?.userId ? all.filter((item) => item.userId === filter.userId) : all;
+  }
+
+  async findGhsTransferById(id: string): Promise<GhsTransferRecord | null> {
+    const data = await this.read();
+    return (data.ghsTransfers ?? []).find((item) => item.id === id) ?? null;
+  }
+
+  async upsertGhsTransferRecord(record: GhsTransferRecord) {
+    return this.mutate((data) => {
+      data.ghsTransfers = data.ghsTransfers ?? [];
+      const index = data.ghsTransfers.findIndex((item) => item.id === record.id);
+      if (index >= 0) data.ghsTransfers[index] = record;
+      else data.ghsTransfers.push(record);
+      return record;
+    });
+  }
+
   async insertUserWallet(record: UserWalletRecord) {
     return this.mutate((data) => {
       data.userWallets = data.userWallets ?? [];
@@ -800,7 +971,14 @@ export class JsonDatabase {
    */
   async findWalletByProviderWalletId(providerWalletId: string): Promise<UserWalletRecord | undefined> {
     const data = await this.read();
-    return (data.userWallets ?? []).find((w) => w.providerWalletId === providerWalletId && w.status !== 'closed');
+    const cleanId = providerWalletId.split(':')[0];
+    return (data.userWallets ?? []).find(
+      (w) =>
+        (w.providerWalletId === providerWalletId ||
+          w.providerWalletId === cleanId ||
+          w.providerWalletId.startsWith(`${cleanId}:`)) &&
+        w.status !== 'closed'
+    );
   }
 
   /**
@@ -1105,6 +1283,27 @@ export class JsonDatabase {
       else data.transactionReferences.push(record);
       return record;
     });
+  }
+
+  private userMutexMap = new Map<string, Promise<void>>();
+
+  async withUserLock<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const key = (userId || 'global').toLowerCase().trim();
+    const current = this.userMutexMap.get(key) || Promise.resolve();
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.userMutexMap.set(key, current.then(() => next));
+    await current;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.userMutexMap.get(key) === current.then(() => next)) {
+        this.userMutexMap.delete(key);
+      }
+    }
   }
 
   async insertUnifiedWebhookLogRecord(record: any) {
@@ -1438,16 +1637,45 @@ export class JsonDatabase {
     return (data.serviceAgreements ?? []).find((a) => a.id === id) ?? null;
   }
 
+  async listServiceAgreements(limit = 200): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    return [...(data.serviceAgreements ?? [])]
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      .slice(0, limit);
+  }
+
   async listServiceAgreementsByUserId(userIdOrAliases: string | string[]): Promise<ServiceAgreementRecord[]> {
     const data = await this.read();
-    const aliases = (Array.isArray(userIdOrAliases) ? userIdOrAliases : [userIdOrAliases])
-      .filter(Boolean)
-      .map((s) => String(s).toLowerCase());
+    const rawList = (Array.isArray(userIdOrAliases) ? userIdOrAliases : [userIdOrAliases]).filter(Boolean);
+
+    // Expand aliases with phone/username variants (mirrors postgres-database.ts)
+    const expandedSet = new Set<string>();
+    for (const a of rawList) {
+      const lower = String(a).toLowerCase().trim();
+      if (!lower) continue;
+      expandedSet.add(lower);
+      const stripped = lower.replace(/^whatsapp:/i, '');
+      const digits = stripped.replace(/\D/g, '');
+      if (digits.length >= 7) {
+        expandedSet.add(`+${digits}`);
+        expandedSet.add(digits);
+        expandedSet.add(`whatsapp:+${digits}`);
+        expandedSet.add(`whatsapp:${digits}`);
+        if (digits.startsWith('234') && digits.length >= 12) {
+          expandedSet.add(`0${digits.slice(3)}`);
+        }
+      }
+      if (lower.startsWith('@')) {
+        expandedSet.add(lower.slice(1));
+      } else if (/^[a-z0-9_]{3,32}$/.test(lower) && digits.length < lower.length) {
+        expandedSet.add(`@${lower}`);
+      }
+    }
 
     const records = (data.serviceAgreements ?? []).filter((a) => {
       const buyer = String(a.buyerUserId || '').toLowerCase();
       const seller = String(a.sellerUserId || '').toLowerCase();
-      return aliases.includes(buyer) || aliases.includes(seller);
+      return expandedSet.has(buyer) || expandedSet.has(seller);
     });
     return records.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }
@@ -1462,6 +1690,22 @@ export class JsonDatabase {
       .filter((a) =>
         (a.status === 'funded' || a.status === 'in_delivery') &&
         a.deliveryDueAt != null
+      )
+      .slice(0, limit);
+  }
+
+  /**
+   * Returns agreements with status 'pending_seller_acceptance' where acceptanceExpiresAt
+   * has passed. Used by the sweeper to auto-cancel unaccepted agreements.
+   */
+  async listExpiredPendingAcceptanceAgreements(now = new Date(), limit = 100): Promise<ServiceAgreementRecord[]> {
+    const data = await this.read();
+    const nowMs = now.getTime();
+    return (data.serviceAgreements ?? [])
+      .filter((a) =>
+        a.status === 'pending_seller_acceptance' &&
+        a.acceptanceExpiresAt != null &&
+        new Date(a.acceptanceExpiresAt).getTime() <= nowMs
       )
       .slice(0, limit);
   }
@@ -1555,6 +1799,45 @@ export class JsonDatabase {
     });
   }
 
+  async createVerificationRequest(record: StepUpVerificationRequestRecord): Promise<StepUpVerificationRequestRecord> {
+    return this.mutate((data) => {
+      data.verificationRequests = data.verificationRequests ?? [];
+      data.verificationRequests.push(record);
+      return record;
+    });
+  }
+
+  async getVerificationRequestById(id: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const data = await this.read();
+    return (data.verificationRequests ?? []).find((r) => r.id === id);
+  }
+
+  async getVerificationRequestByTokenHash(tokenHash: string): Promise<StepUpVerificationRequestRecord | undefined> {
+    const data = await this.read();
+    return (data.verificationRequests ?? []).find((r) => r.tokenHash === tokenHash);
+  }
+
+  async listVerificationRequests(userId?: string): Promise<StepUpVerificationRequestRecord[]> {
+    const data = await this.read();
+    return (data.verificationRequests ?? [])
+      .filter((r) => !userId || r.userId === userId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async updateVerificationRequest(
+    id: string,
+    patch: Partial<StepUpVerificationRequestRecord>
+  ): Promise<StepUpVerificationRequestRecord | undefined> {
+    return this.mutate((data) => {
+      data.verificationRequests = data.verificationRequests ?? [];
+      const idx = data.verificationRequests.findIndex((r) => r.id === id);
+      if (idx === -1) return undefined;
+      const merged = { ...data.verificationRequests[idx], ...patch, updatedAt: new Date().toISOString() };
+      data.verificationRequests[idx] = merged;
+      return merged;
+    });
+  }
+
   private async persist(): Promise<void> {
     if (!this.db) return;
     const data = JSON.stringify(this.db, null, 2);
@@ -1569,4 +1852,3 @@ export class JsonDatabase {
 export const db = (env.DATABASE_PROVIDER === 'postgres' && Boolean(env.DATABASE_URL))
   ? new PostgresDatabase()
   : new JsonDatabase();
-

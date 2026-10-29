@@ -64,6 +64,12 @@ import { getNgnReconciliationSummary } from '../service/ngn-reconciliation.servi
 import { listNgnSettlementQueue } from '../service/ngn-settlement.service.js';
 import { listNgnWebhooks, recordNgnWebhook } from '../service/ngn-webhooks.service.js';
 import { reconcileNgnSettlements } from '../service/ngn-settlement-reconciler.js';
+import {
+  listPaystackBanks,
+  resolvePaystackBankAccount,
+  executePaystackNgnBankTransfer,
+  executePaystackTransferSchema,
+} from '../service/paystack-outbound-transfer.service.js';
 
 function ensureOwnUser(request: any, userId: string) {
   if (userId === 'rate_query' || userId.startsWith('rate_query') || userId === 'public') {
@@ -120,7 +126,7 @@ export async function ngnRoutes(app: FastifyInstance) {
       const ngnOfframpPercent = Number(settings.ngnOfframpFeePercent ?? 0);
       const baseOfframpPercent = Number(settings.offrampFeePercent ?? 0);
       const sivanPercent = ngnOfframpPercent > 0 ? ngnOfframpPercent : baseOfframpPercent;
-      const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
+      const providerPercent = Number(settings.ngnProviderFeePercent ?? env.BREET_FEE_PERCENT ?? 0.5);
       const totalPercent = sivanPercent + providerPercent;
 
       // Net rate embeds both provider cost and Sivan margin.
@@ -135,7 +141,7 @@ export async function ngnRoutes(app: FastifyInstance) {
           grossRate: Math.round(grossRate),
           netRate: roundedNet,
           usdc: roundedNet,
-          usdt: Math.round(roundedNet * 0.998),
+          usdt: roundedNet,
           providerFeePercent: providerPercent,
           sivanMarginPercent: sivanPercent,
           totalFeePercent: totalPercent,
@@ -154,8 +160,13 @@ export async function ngnRoutes(app: FastifyInstance) {
   app.get('/api/ngn/live-rate', liveRateHandler);
   app.get('/ngn/live-rate', liveRateHandler);
 
-  app.get('/api/ngn/quote', async (request) => {
-    const query = createNgnQuoteSchema.parse(request.query ?? {});
+  app.get('/api/ngn/quote', async (request, reply) => {
+    const parsed = createNgnQuoteSchema.safeParse(request.query ?? {});
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      return reply.status(400).send({ error: 'INVALID_QUERY', message: issues });
+    }
+    const query = parsed.data;
     ensureOwnUser(request, query.userId);
     return { data: await createNgnQuote(query) };
   });
@@ -241,6 +252,45 @@ export async function ngnRoutes(app: FastifyInstance) {
     if (query.userId) ensureOwnUser(request, query.userId);
     if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
     return { data: await resolveNgnBankAccount(query.bankId, query.accountNumber, query.currency ?? 'ngn') };
+  });
+
+  /**
+   * List Nigerian banks via Paystack.
+   */
+  app.get('/api/ngn/paystack/banks', async (request) => {
+    const query = request.query as { currency?: string };
+    return { data: await listPaystackBanks(query.currency || 'NGN') };
+  });
+
+  /**
+   * Resolve a Nigerian bank account via Paystack.
+   */
+  app.get('/api/ngn/paystack/bank-account/resolve', async (request) => {
+    const query = request.query as {
+      bankCode?: string;
+      bank_code?: string;
+      accountNumber?: string;
+      account_number?: string;
+      userId?: string;
+    };
+    if (query.userId) ensureOwnUser(request, query.userId);
+    const bankCode = query.bankCode || query.bank_code;
+    const accountNumber = query.accountNumber || query.account_number;
+    if (!bankCode || !accountNumber) {
+      throw badRequest('bankCode and accountNumber are required');
+    }
+    return { data: await resolvePaystackBankAccount(bankCode, accountNumber) };
+  });
+
+  /**
+   * Outbound NGN transfer to any Nigerian bank account via Paystack Transfers API.
+   * Debits/holds internal Sivan NGN ledger balance atomically.
+   */
+  app.post('/api/users/:userId/ngn/bank-transfer', async (request) => {
+    const { userId } = request.params as { userId: string };
+    ensureOwnUser(request, userId);
+    const body = parseBody(executePaystackTransferSchema, request.body);
+    return { data: await executePaystackNgnBankTransfer(userId, body) };
   });
 
   /**
@@ -760,6 +810,27 @@ export async function ngnRoutes(app: FastifyInstance) {
       severity: 'warning',
       metadata: { markupPercent: result.markupPercent, reason: body.reason },
     });
+    try {
+      const { getAdminFeeSettings, updateAdminFeeSettings } = await import('../../admin/admin-fees.service.js');
+      const currentFees = await getAdminFeeSettings();
+      if (Number(currentFees.ngnOfframpFeePercent) !== Number(result.markupPercent)) {
+        const { updatedAt: _u, ...restFees } = currentFees;
+        await updateAdminFeeSettings(
+          {
+            ...restFees,
+            ngnOfframpFeePercent: result.markupPercent,
+            updatedBy: body.updatedBy || 'admin_api_key',
+            reason: body.reason || `Aligned NGN off-ramp fee percent with Breet markup (${result.markupPercent}%)`,
+          },
+          { skipBreetSync: true }
+        );
+      } else {
+        const { clearLiveRatesCache } = await import('../../rates/api/rates.routes.js');
+        clearLiveRatesCache();
+      }
+    } catch (err: any) {
+      console.warn('[breet/markup] Admin fee settings sync warning:', err?.message || err);
+    }
     return { data: result };
   });
 

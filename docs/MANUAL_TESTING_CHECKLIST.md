@@ -3,7 +3,7 @@
 Document Identifier: MANUAL_TESTING_CHECKLIST
 Author: Samson Micheal (Founder & CEO, Sivan Technologies)
 HQ Location: Abuja, Nigeria
-Platform Target: Telegram (@Sivan_Ai), WhatsApp, and Web (https://app.sivantech.online)
+Platform Target: Telegram (@SivanAi_bot), WhatsApp, and Web (https://app.sivantech.online)
 Updated: September 2026
 
 ---
@@ -24,7 +24,7 @@ Testing Ground Rules:
 Objective: Verify seamless 30-second onboarding for new visitors on Telegram and WhatsApp.
 
 ### Test 1.1: Telegram 1-Tap Phone Share
-- Step 1: Open @Sivan_Ai from a fresh Telegram account.
+- Step 1: Open @SivanAi_bot from a fresh Telegram account.
 - Step 2: Send "hello" or "/start".
 - Step 3: Verify Sivan AI greets the user warmly and displays the native reply keyboard button: [ 📱 Share Phone Number to Start ].
 - Step 4: Tap [ 📱 Share Phone Number to Start ].
@@ -32,7 +32,7 @@ Objective: Verify seamless 30-second onboarding for new visitors on Telegram and
 - Expected Result: User profile is registered in under 5 seconds with zero PIN gate upfront.
 
 ### Test 1.2: Direct Typed Phone Entry
-- Step 1: Open @Sivan_Ai from an unlinked account.
+- Step 1: Open @SivanAi_bot from an unlinked account.
 - Step 2: Type a Nigerian phone number directly (e.g. "08012345678" or "+2348012345678").
 - Step 3: Verify Sivan AI normalizes the number, links the Telegram account, and delivers the VIP Smart Menu.
 - Expected Result: Immediate onboarding with confirmed phone identity.
@@ -398,7 +398,7 @@ Objective: Verify 4 ML risk vectors (IP/ASN threat, device integrity, behavioral
 Objective: Verify 1-tap multi-chain network switching in chat, authentic on-chain Ed25519 and secp256k1 key generation via Privy Server Wallets, Circle Devnet Faucet compatibility, native Stellar Horizon verification, and protocol-level gas fee sponsorship.
 
 ### Test 15.1: 1-Tap Multi-Chain Network Switching in Chat
-- Step 1: In Telegram (@Sivan_Ai / @SivanStaging_Bot) or WhatsApp, send "receive", "/receive", or "deposit crypto".
+- Step 1: In Telegram (@SivanAi_bot / @SivanStaging_Bot) or WhatsApp, send "receive", "/receive", or "deposit crypto".
 - Step 2: Verify Sivan AI renders the interactive multi-chain receive card displaying official Web3 symbols and 1-tap network selector buttons:
   - [ ◎ SOL (Active) ]
   - [ ⬡ BASE · Base ]

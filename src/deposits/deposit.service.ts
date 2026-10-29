@@ -177,7 +177,15 @@ export async function recordDeposit(observation: DepositObservation): Promise<Re
    * alert produced 66 events for 3 transfers. The audit log should record
    * that money arrived, once.
    */
-  if (outcome.created) {
+  if (outcome.created && outcome.record.status === 'confirmed') {
+    // Deliver real-time push notifications across Telegram and WhatsApp immediately
+    void import('./deposit-notification.service.js')
+      .then(({ notifyTelegramDeposit, notifyWhatsAppDeposit }) => {
+        void notifyTelegramDeposit(outcome.record.userId, outcome.record);
+        void notifyWhatsAppDeposit(outcome.record.userId, outcome.record);
+      })
+      .catch(() => undefined);
+
     await createAuditLog({
       action: 'deposit.observed',
       resourceType: 'wallet_deposit',

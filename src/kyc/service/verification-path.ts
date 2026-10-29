@@ -28,16 +28,14 @@ export type VerificationPath = 'ngn_bank' | 'bridge_kyc';
 export type CountryCode = string;
 
 export const NIGERIA: CountryCode = 'NG';
+export const GHANA: CountryCode = 'GH';
 
 /**
  * Countries whose local rail Sivan can verify directly.
  *
- * Only Nigeria today. Breet also settles Ghana (GHS), so GH is the obvious
- * next entry - but it is deliberately absent until the Ghanaian resolver has
- * been tested, because adding it here would route Ghanaian users into a check
- * that does not exist yet and strand them with no path at all.
+ * Nigeria (CBN BVN/NIN linkage) and Ghana (GhIPSS Ghana Card linkage via Breet).
  */
-const LOCAL_RAIL_COUNTRIES = new Set<CountryCode>([NIGERIA]);
+const LOCAL_RAIL_COUNTRIES = new Set<CountryCode>([NIGERIA, GHANA]);
 
 export function normalizeCountry(value: string | undefined | null): CountryCode | undefined {
   const trimmed = String(value ?? '').trim().toUpperCase();
@@ -61,6 +59,10 @@ export function verificationPathFor(country: string | undefined | null): Verific
 
 export function isNigerianUser(country: string | undefined | null): boolean {
   return normalizeCountry(country) === NIGERIA;
+}
+
+export function isGhanaianUser(country: string | undefined | null): boolean {
+  return normalizeCountry(country) === GHANA;
 }
 
 /**
@@ -88,6 +90,20 @@ export function verificationPlanFor(country: string | undefined | null): Verific
   const path = verificationPathFor(normalized);
 
   if (path === 'ngn_bank') {
+    if (normalized === GHANA) {
+      return {
+        path,
+        country: normalized,
+        isFallback: false,
+        title: 'Verify with your Mobile Money or bank account',
+        description:
+          'Enter your Ghana MTN MoMo, Telecel Cash, or bank account. We confirm the account name matches your name - ' +
+          'no documents, no selfie, usually under a minute.',
+        unlocks: ['Sell crypto to Ghanaian Cedi', 'Withdraw to your MoMo or Ghanaian bank'],
+        costsProviderFee: false,
+      };
+    }
+
     return {
       path,
       country: normalized,

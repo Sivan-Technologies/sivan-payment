@@ -75,5 +75,5 @@ If a user chooses to type their PIN directly in text instead of tapping the butt
 
 ### Component B: Mini-App Frontend
 - Web App Route: /pin-pad hosted on https://app.sivantech.online.
-- BotFather Registration: Configured under @Sivan_Ai.
+- BotFather Registration: Configured under @SivanAi_bot.
 - Security: Cross-Origin payload isolation with HMAC session verification.

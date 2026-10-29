@@ -49,6 +49,7 @@ const EVM_EXPLORERS: Record<string, { mainnet: string; testnet: string; label: s
   ethereum: { mainnet: 'https://etherscan.io', testnet: 'https://sepolia.etherscan.io', label: 'Etherscan' },
   polygon: { mainnet: 'https://polygonscan.com', testnet: 'https://amoy.polygonscan.com', label: 'Polygonscan' },
   arbitrum: { mainnet: 'https://arbiscan.io', testnet: 'https://sepolia.arbiscan.io', label: 'Arbiscan' },
+  arc: { mainnet: 'https://explorer.arc.io', testnet: 'https://testnet.arcscan.app', label: 'Arc Explorer' },
   avalanche: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
   avalanche_c_chain: { mainnet: 'https://snowtrace.io', testnet: 'https://subnets-test.avax.network/c-chain', label: 'Snowtrace' },
 };
@@ -61,6 +62,7 @@ const USEROP_CHAIN: Record<string, { mainnet: string; testnet: string }> = {
   ethereum: { mainnet: 'mainnet', testnet: 'sepolia' },
   polygon: { mainnet: 'matic', testnet: 'amoy' },
   arbitrum: { mainnet: 'arbitrum-one', testnet: 'arbitrum-sepolia' },
+  arc: { mainnet: 'arc', testnet: 'arc-testnet' },
 };
 
 export interface ExplorerInput {
@@ -110,6 +112,28 @@ export function explorerLink(input: ExplorerInput): ExplorerLink | undefined {
     return {
       url: `${host}/tx/${encodeURIComponent(hash)}`,
       label: 'StellarExpert',
+      testnet,
+    };
+  }
+
+  /**
+   * Starknet is NOT EVM and must not fall through to EVM_EXPLORERS below.
+   *
+   * Functionally the key lookup would have worked, but the fall-through path
+   * ends at jiffyscan for a pending user operation, and that is ERC-4337.
+   * Starknet has native account abstraction and no userOp hash, so a pending
+   * Starknet transfer would have produced a jiffyscan link for an identifier
+   * that does not exist there.
+   *
+   * Starkscan rather than Voyager: Voyager returns 403 to automated requests,
+   * so Starkscan is the one whose availability we can actually verify.
+   */
+  if (network === 'starknet') {
+    if (!hash) return undefined;
+    const host = testnet ? 'https://sepolia.starkscan.co' : 'https://starkscan.co';
+    return {
+      url: `${host}/tx/${encodeURIComponent(hash)}`,
+      label: 'Starkscan',
       testnet,
     };
   }
@@ -189,6 +213,8 @@ export function networkLabel(chain?: string): string {
     ethereum: 'Ethereum',
     polygon: 'Polygon',
     arbitrum: 'Arbitrum',
+    arc: 'Arc',
+    starknet: 'Starknet',
     avalanche_c_chain: 'Avalanche',
     tron: 'Tron',
     sivan_p2p: 'Sivan Instant P2P',
@@ -219,6 +245,24 @@ export function getNetworkExplorer(
   const rawAddr = destinationAddress?.trim();
 
   const isMainnet = modeInput ? (modeInput.toLowerCase() === 'mainnet' || modeInput.toLowerCase() === 'live') : false;
+
+  if (net.includes('arc')) {
+    const arcDomain = isMainnet ? 'https://explorer.arc.io' : 'https://testnet.arcscan.app';
+    const url = rawTxHash ? `${arcDomain}/tx/${rawTxHash}` : rawAddr ? `${arcDomain}/address/${rawAddr}` : arcDomain;
+    return { name: 'Arc Explorer', url };
+  }
+
+  if (net.includes('starknet') || net.includes('strk')) {
+    const starkDomain = isMainnet ? 'https://starkscan.co' : 'https://sepolia.starkscan.co';
+    const url = rawTxHash ? `${starkDomain}/tx/${rawTxHash}` : rawAddr ? `${starkDomain}/contract/${rawAddr}` : starkDomain;
+    return { name: 'Starkscan Explorer', url };
+  }
+
+  if (net.includes('arbitrum') || net.includes('arbi')) {
+    const arbiDomain = isMainnet ? 'https://arbiscan.io' : 'https://sepolia.arbiscan.io';
+    const url = rawTxHash ? `${arbiDomain}/tx/${rawTxHash}` : rawAddr ? `${arbiDomain}/address/${rawAddr}` : arbiDomain;
+    return { name: 'Arbiscan Explorer', url };
+  }
 
   if (net.includes('base')) {
     const baseDomain = isMainnet ? 'https://basescan.org' : 'https://sepolia.basescan.org';

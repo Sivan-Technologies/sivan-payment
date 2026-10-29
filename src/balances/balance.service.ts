@@ -37,9 +37,10 @@ function pruneExpiredDedupKeys(): void {
 }
 import { createAuditLog } from '../audit/audit.service.js';
 import { db } from '../database/json-database.js';
+import { createUser } from '../users/users.service.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
-import { getSpendable, getUnifiedBalance } from './unified-balance.service.js';
+import { getSpendable, getUnifiedBalance, invalidateUnifiedBalanceCache } from './unified-balance.service.js';
 import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
@@ -50,7 +51,7 @@ import { evaluateGasLimits } from './gas-usage.service.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { buildP2pReceivedEmail, sendEmail } from '../notifications/email.service.js';
 
-export type BalanceAsset = 'usdc' | 'usdt';
+export type BalanceAsset = 'usdc' | 'usdt' | 'ngn';
 /**
  * Networks Sivan knows about.
  *
@@ -59,7 +60,7 @@ export type BalanceAsset = 'usdc' | 'usdt';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc' | 'starknet';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -79,26 +80,48 @@ export type BalanceTransferStatus = 'requested' | 'pending_review' | 'processing
 export const balanceTransferControlsSchema = z.object({
   transfersEnabled: z.boolean().default(true),
   p2pTransfersEnabled: z.boolean().default(true),
+  ngnInternalTransfersEnabled: z.boolean().default(true),
   minimumSendAmount: z.coerce.number().positive().default(0.1),
+  minimumNgnSendAmount: z.coerce.number().positive().default(10),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
 });
 
 export const createBalanceTransferSchema = z.object({
-  asset: z.enum(['usdc', 'usdt']).default('usdc'),
-  network: z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron']),
+  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt'])).default('usdc'),
+  network: z.preprocess((val) => {
+    if (typeof val === 'string') {
+      const s = val.trim().toLowerCase();
+      if (s.includes('stellar')) return 'stellar';
+      if (s.includes('solana') || s.includes('sol')) return 'solana';
+      if (s.includes('celo')) return 'celo';
+      if (s.includes('base')) return 'base';
+      if (s.includes('bsc') || s.includes('binance') || s.includes('bnb')) return 'bsc';
+      if (s.includes('arbitrum')) return 'arbitrum';
+      if (s.includes('polygon') || s.includes('matic')) return 'polygon';
+      if (s.includes('avalanche') || s.includes('avax')) return 'avalanche_c_chain';
+      if (s.includes('ethereum') || s.includes('eth')) return 'ethereum';
+      if (s.includes('starknet')) return 'starknet';
+      if (s.includes('tron')) return 'tron';
+      if (s.includes('arc')) return 'arc';
+      return s;
+    }
+    return val;
+  }, z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
 });
 
 export const adminBalanceAdjustmentSchema = z.object({
   userId: z.string().min(1),
-  asset: z.enum(['usdc', 'usdt']).default('usdc'),
+  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt', 'ngn'])).default('usdc'),
   amount: z.coerce.number(),
   status: z.enum(['pending', 'available']).default('available'),
   reason: z.string().min(5).max(1000),
@@ -119,6 +142,7 @@ type LedgerMetadata = {
   network?: BalanceNetwork;
   destinationAddress?: string;
   transferId?: string;
+  txHash?: string;
 };
 
 type TransferMetadata = {
@@ -300,15 +324,23 @@ export async function getBalanceTransferControls() {
    * one place to set it.
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
+  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet'];
+  const mergedNetworks: BalanceNetwork[] = saved?.supportedNetworks
+    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork, 'starknet' as BalanceNetwork]))
+    : defaultNetworks;
+
   return {
     transfersEnabled: process.env.BALANCE_TRANSFERS_ENABLED !== 'false',
+    p2pTransfersEnabled: saved?.p2pTransfersEnabled ?? (process.env.P2P_TRANSFERS_ENABLED !== 'false'),
+    ngnInternalTransfersEnabled: saved?.ngnInternalTransfersEnabled ?? (process.env.NGN_INTERNAL_TRANSFERS_ENABLED !== 'false'),
+    minimumNgnSendAmount: saved?.minimumNgnSendAmount ?? Number(process.env.MINIMUM_NGN_SEND_AMOUNT || 10),
     manualReviewThreshold: Number(process.env.BALANCE_TRANSFER_MANUAL_REVIEW_THRESHOLD || 1000),
     riskHoldsEnabled: true,
-    supportedNetworks: ['solana', 'base', 'celo', 'stellar', 'bsc', 'ethereum'] as BalanceNetwork[],
     p2pClaimExpiryDays: Number(process.env.P2P_CLAIM_EXPIRY_DAYS || 7),
     updatedBy: 'env',
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
+    supportedNetworks: mergedNetworks,
     /**
      * AFTER the spread on purpose.
      *
@@ -376,6 +408,9 @@ export function resolveTransferFeeWallet(network: string): string {
   if (n === 'celo') {
     return process.env.SIVAN_FEE_WALLET_CELO?.trim() || env.SIVAN_FEE_WALLET_CELO?.trim() || '';
   }
+  if (n === 'arc') {
+    return process.env.SIVAN_FEE_WALLET_ARC?.trim() || process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
+  }
   return process.env.SIVAN_FEE_WALLET_EVM?.trim() || process.env.SIVAN_FEE_WALLET_BASE?.trim() || '';
 }
 
@@ -394,7 +429,7 @@ export async function quoteTransfer(
   const adminFees = await getAdminFeeSettings().catch(() => undefined);
 
   const n = (network || '').toLowerCase().trim();
-  const isMicroRail = n === 'celo' || n === 'stellar';
+  const isMicroRail = n === 'celo' || n === 'stellar' || n === 'starknet' || n === 'arc';
 
   // Merge: admin overrides replace network defaults dynamically.
   const config: TransferFeeConfig = {
@@ -434,9 +469,21 @@ export async function updateBalanceTransferControls(input: z.infer<typeof balanc
 }
 
 export async function createBalanceLedgerEntry(input: Omit<LedgerMetadata, 'entryId'> & { entryId?: string }, context: { actorType?: 'system' | 'user' | 'admin' | 'provider'; actorId?: string } = {}) {
-  const existing = await ledgerLogs();
-  if (existing.some((item) => item.entry.sourceType === input.sourceType && item.entry.sourceId === input.sourceId && item.entry.kind === input.kind)) {
-    return existing.find((item) => item.entry.sourceType === input.sourceType && item.entry.sourceId === input.sourceId && item.entry.kind === input.kind)!.entry;
+  // Deduplication decides whether money moves, so the key has to be the thing
+  // that identifies one attempt. Keying on sourceType+sourceId+kind alone meant
+  // a second funding of the same agreement always matched the first and
+  // returned it, reporting success while holding nothing. That is how
+  // SIV-928041-E012 reached IN_PROGRESS with the buyer holding nothing.
+  // transferId identifies the attempt, and kind keeps the separate legs of one
+  // transfer (debit and fee) from collapsing into each other.
+  const existing = await ledgerLogs(input.userId || undefined);
+  const isDuplicate = (entry: LedgerMetadata) =>
+    input.transferId
+      ? entry.transferId === input.transferId && entry.kind === input.kind
+      : entry.sourceType === input.sourceType && entry.sourceId === input.sourceId && entry.kind === input.kind;
+  const duplicate = existing.find((item) => isDuplicate(item.entry));
+  if (duplicate) {
+    return duplicate.entry;
   }
   const entry: LedgerMetadata = { ...input, entryId: input.entryId || id('bal') };
   await createAuditLog({
@@ -448,14 +495,28 @@ export async function createBalanceLedgerEntry(input: Omit<LedgerMetadata, 'entr
     severity: entry.kind === 'adjustment' ? 'warning' : 'info',
     metadata: entry
   });
+  if (input.userId) {
+    invalidateUnifiedBalanceCache(input.userId);
+  }
   return entry;
 }
 
 export async function listUserBalanceLedger(userId: string) {
+  const allTransfers = await transferLogs().catch(() => []);
+  const txHashMap = new Map<string, string>();
+  for (const item of allTransfers) {
+    if (item.transfer?.transferId && item.transfer?.txHash) {
+      txHashMap.set(item.transfer.transferId, item.transfer.txHash);
+    }
+  }
+
   // userId pushed into the query. The .filter below is kept as a belt-and-
   // braces check on the JSONB match, not as the primary filter.
   return (await ledgerLogs(userId))
-    .map((item) => ({ ...item.entry, createdAt: item.log.createdAt }))
+    .map((item) => {
+      const txHash = item.entry.txHash || (item.entry.transferId ? txHashMap.get(item.entry.transferId) : undefined);
+      return { ...item.entry, txHash, createdAt: item.log.createdAt };
+    })
     .filter((entry) => entry.userId === userId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -464,26 +525,60 @@ export async function getUserBalance(userId: string) {
   const entries = await listUserBalanceLedger(userId);
   const byAsset: Record<string, { asset: string; pending: number; available: number; held: number; spent: number; totalCredited: number }> = {};
   const ensure = (asset: string) => byAsset[asset] ||= { asset, pending: 0, available: 0, held: 0, spent: 0, totalCredited: 0 };
+  /**
+   * HELD MONEY IS NOT SPENDABLE.
+   *
+   * A hold moves money out of available and into held, so available is
+   * already the spendable figure: 50,000 credited with 15,000 held reads as
+   * 35,000 available. Settling that hold must therefore draw from held, not
+   * from available, because the money left available when the hold was
+   * placed. Drawing from available again would debit the user twice.
+   *
+   * That reasoning only holds for the debit that settles the hold. The
+   * previous rule drew EVERY debit from held first, so an unrelated spend -
+   * a utility purchase, a p2p transfer - quietly consumed money committed to
+   * somebody else's agreement and left available untouched. Since every
+   * insufficient-funds guard reads available, nothing ever refused the
+   * spend: a user with no free money could keep buying airtime out of their
+   * counterparty's escrow until the hold was gone.
+   *
+   * A debit now consumes held only up to the hold recorded against its own
+   * sourceId. A hold and the debits that settle it share that id - an
+   * agreement uses SIV-..., a balance transfer uses btx_... - so settlement
+   * still works exactly as before. Anything with no hold of its own, which
+   * is every p2p transfer and every utility purchase, comes out of available
+   * and is refused once available runs out.
+   */
+  const heldBySource = new Map<string, number>();
+  const sourceKey = (entry: { asset: string; sourceId: string }) => `${entry.asset}::${entry.sourceId}`;
   const chronologicalEntries = [...entries].reverse();
   for (const entry of chronologicalEntries) {
     const row = ensure(entry.asset);
     const value = amount(entry.amount);
     if (entry.kind === 'credit_available' || entry.kind === 'adjustment') {
-      if (entry.sourceType !== 'service_agreement') {
-        row.available += value;
-      }
+      row.available += value;
       row.totalCredited += Math.max(value, 0);
     }
-    if (entry.kind === 'hold') { row.available -= value; row.held += value; }
+    if (entry.kind === 'hold') {
+      row.available -= value;
+      row.held += value;
+      heldBySource.set(sourceKey(entry), (heldBySource.get(sourceKey(entry)) || 0) + value);
+    }
     if (entry.kind === 'hold_release') {
       row.available += value;
       const releaseFromHeld = Math.min(Math.max(0, row.held), value);
       const releaseFromSpent = value - releaseFromHeld;
       row.held -= releaseFromHeld;
       row.spent = Math.max(0, row.spent - releaseFromSpent);
+      // Some flows release under a different id than they held under, so the
+      // global held figure stays authoritative and this only tidies the map.
+      const tracked = heldBySource.get(sourceKey(entry)) || 0;
+      if (tracked > 0) heldBySource.set(sourceKey(entry), Math.max(0, tracked - value));
     }
     if (entry.kind === 'debit_transfer' || entry.kind === 'fee') {
-      const debitFromHeld = Math.min(Math.max(0, row.held), value);
+      const tracked = Math.max(0, heldBySource.get(sourceKey(entry)) || 0);
+      const debitFromHeld = Math.min(tracked, Math.max(0, row.held), value);
+      if (debitFromHeld > 0) heldBySource.set(sourceKey(entry), tracked - debitFromHeld);
       row.held -= debitFromHeld;
       const unheldDebit = value - debitFromHeld;
       row.available -= unheldDebit;
@@ -684,6 +779,7 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   // request hitting this check before the first resolves is also blocked.
   recentTransferKeys.set(dKey, Date.now());
 
+  try {
   /**
    * The gateway's 12s clock starts HERE, so ours does too. Everything between
    * this line and the broadcast - chain balance reads, a Solana RPC for the
@@ -694,7 +790,8 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   const controls = await getBalanceTransferControls();
   if (!controls.transfersEnabled) throw forbidden('Transfers from settled USDC balance are currently disabled.');
   if (!controls.supportedNetworks.includes(input.network)) throw forbidden(`${input.network} transfers are currently disabled.`);
-  if (input.amount < controls.minimumSendAmount) throw badRequest(`Minimum transfer amount is ${controls.minimumSendAmount} ${input.asset.toUpperCase()}.`);
+  const minAllowed = controls.minimumSendAmount ?? 1;
+  if (input.amount < minAllowed) throw badRequest(`Minimum transfer amount is ${minAllowed} ${input.asset.toUpperCase()}.`);
 
   // THE DESTINATION WAS ONLY LENGTH-CHECKED: z.string().min(8).max(160).
   //
@@ -707,6 +804,17 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   // the user's balance locked behind a transfer that can never settle.
   const addressCheck = validateAddressForChain(input.destinationAddress, input.network as AddressChain);
   if (!addressCheck.valid) throw badRequest(addressCheck.reason ?? 'That destination address is not valid.');
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId,
+    amount: input.amount,
+    destinationAddress: input.destinationAddress,
+    network: input.network,
+    isP2p: false,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
   /**
    * SPENDABLE, NOT "settled ledger available".
    *
@@ -733,6 +841,25 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   if (spendable < input.amount) {
     throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance. You can send up to ${money(spendable)}.`);
   }
+
+  if (input.network) {
+    const networkSpendable = await getSpendable(userId, input.asset, input.network);
+    if (networkSpendable !== null && networkSpendable < input.amount) {
+      const unified = await getUnifiedBalance(userId);
+      const availableChains = (unified.wallets || [])
+        .filter((w) => w.chain.toLowerCase() !== input.network.toLowerCase() && (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0))
+        .map((w) => {
+          const bal = w.balances?.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
+          return `${w.chain} (${bal?.amount} ${input.asset.toUpperCase()})`;
+        })
+        .join(', ');
+      if (availableChains) {
+        throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You have ${money(networkSpendable)} on ${input.network}, but your balance is on: ${availableChains}. Please send on that network instead.`);
+      }
+      throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You can send up to ${money(networkSpendable)}.`);
+    }
+  }
+
   const now = nowIso();
   /**
    * WHEN A HUMAN MUST LOOK.
@@ -897,6 +1024,10 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
   }
 
   return transfer;
+} catch (err) {
+  recentTransferKeys.delete(dKey);
+  throw err;
+}
 }
 
 /**
@@ -1108,6 +1239,7 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     sourceType: 'balance_transfer', sourceId: transfer.transferId,
     description: `On-chain transfer submitted to ${transfer.network}`,
     network: transfer.network, destinationAddress: transfer.destinationAddress, transferId: transfer.transferId,
+    txHash: result.txHash,
   }, { actorType: 'system', actorId: 'balance_transfer' });
 
   /**
@@ -1279,10 +1411,12 @@ export async function createAdminBalanceAdjustment(input: z.infer<typeof adminBa
 }
 
 export const createP2pTransferSchema = z.object({
-  asset: z.enum(['usdc', 'usdt']).default('usdc'),
+  asset: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['usdc', 'usdt', 'ngn'])).default('usdc'),
   amount: z.coerce.number().positive(),
   recipientTarget: z.string().min(1).max(160),
   note: z.string().max(500).optional(),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
 });
 
 export async function executeP2pTransfer(
@@ -1290,25 +1424,43 @@ export async function executeP2pTransfer(
   input: z.infer<typeof createP2pTransferSchema>,
   context: { ipAddress?: string; userAgent?: string } = {}
 ) {
-  const sender = await db.findUserById(senderUserId);
+  const sender = (await db.findUserById(senderUserId)) || (await db.findUserByTarget(senderUserId));
   if (!sender) throw notFound('Sender User');
+  senderUserId = sender.id;
+
+  const isNgn = input.asset.toLowerCase() === 'ngn';
+  if (!isNgn) {
+    throw badRequest('Internal off-chain transfers are only supported for NGN. For USDC and crypto assets, please send an on-chain transfer to the recipient\'s Sivan Tag or wallet address.');
+  }
 
   const controls = await getBalanceTransferControls().catch(() => null);
-  if (controls && controls.p2pTransfersEnabled === false) {
-    throw badRequest('P2P transfers are temporarily paused by administration for maintenance. Please try again shortly.');
+  const isEnabled = (controls as any)?.ngnInternalTransfersEnabled ?? controls?.p2pTransfersEnabled ?? true;
+  if (!isEnabled) {
+    throw badRequest('Internal NGN transfers are temporarily paused by administration. Please try again shortly.');
   }
 
-  const minAmount = controls?.minimumSendAmount ?? 1;
+  const minAmount = (controls as any)?.minimumNgnSendAmount ?? 10;
   if (input.amount < minAmount) {
-    throw badRequest(`P2P transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
+    throw badRequest(`Internal NGN transfer amount must be at least ${minAmount} NGN`);
   }
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId: senderUserId,
+    amount: input.amount,
+    destinationAddress: input.recipientTarget,
+    asset: input.asset,
+    isP2p: true,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
 
   const cleanTarget = input.recipientTarget.trim();
   const recipient = await db.findUserByTarget(cleanTarget);
 
   // Check sender spendable balance
   const unified = await getUnifiedBalance(senderUserId);
-  const assetEntry = unified.balances.find((b) => b.asset === input.asset) ?? unified.balances[0];
+  const assetEntry = unified.balances.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
   const spendable = Number(assetEntry?.spendable ?? 0);
 
   if (spendable < input.amount) {
@@ -1407,7 +1559,10 @@ export async function executeP2pTransfer(
     throw badRequest('You cannot send a P2P transfer to yourself');
   }
 
-  const transferId = `p2p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const now = new Date();
+  const dayStr = String(now.getDate()).padStart(3, '0');
+  const rand = Math.random().toString(36).substring(2, 7).toUpperCase();
+  const transferId = `TXN-${dayStr}-${rand}`;
   const amountStr = input.amount.toFixed(2);
 
   // 1. Debit sender ledger
@@ -1487,6 +1642,36 @@ export async function executeP2pTransfer(
     }
   }
 
+  // Fetch recipient's updated available balance for the credit alert
+  let recipientAvailableStr = '';
+  try {
+    const recBal = await getUserBalance(recipient.id);
+    const assetRow = recBal?.balances?.find((b: any) => b.asset.toLowerCase() === input.asset.toLowerCase());
+    if (assetRow && assetRow.available !== undefined) {
+      const availNum = Number(assetRow.available);
+      recipientAvailableStr = input.asset.toLowerCase() === 'ngn'
+        ? `₦${availNum.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : `${availNum.toFixed(2)} ${input.asset.toUpperCase()}`;
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  const formattedAmount = input.asset.toLowerCase() === 'ngn'
+    ? `₦${input.amount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `${input.amount.toFixed(2)} ${input.asset.toUpperCase()}`;
+
+  const availableLine = recipientAvailableStr ? `\n\nBalance: ${recipientAvailableStr}` : '';
+
+  const creditAlertBody = [
+    '📥 Payment Received from Sivan',
+    '',
+    `${formattedAmount} has arrived.`,
+    '',
+    `Sender: ${senderDisplayName}`,
+    `Ref: ${transferId}${availableLine}`,
+  ].join('\n');
+
   try {
     const notifyUrl = process.env.TELEGRAM_NOTIFICATION_URL;
     const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET;
@@ -1499,7 +1684,6 @@ export async function executeP2pTransfer(
             .sort((a, b) => (b.linkedAt || b.createdAt || '').localeCompare(a.linkedAt || a.createdAt || ''));
           const tgLink = activeLinks[0];
           if (tgLink?.telegramUserId) {
-            const tgText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
             await fetch(`${notifyUrl.replace(/\/$/, '')}/api/notify`, {
               method: 'POST',
               headers: {
@@ -1508,7 +1692,7 @@ export async function executeP2pTransfer(
               },
               body: JSON.stringify({
                 telegramId: tgLink.telegramUserId,
-                message: tgText,
+                message: creditAlertBody,
               }),
             });
           }
@@ -1536,7 +1720,6 @@ export async function executeP2pTransfer(
             targetPhone = activeWa[0]?.whatsappNumber;
           }
           if (targetPhone) {
-            const waText = `🎉 Instant P2P Transfer Received!\n\nYou just received ${input.amount.toFixed(2)} ${input.asset.toUpperCase()} from ${senderDisplayName}.\n\nTransfer ID: ${transferId}\nStatus: Delivered Instantly ⚡\n\nThe funds are immediately available in your Sivan balance.`;
             const waNotifyUrl = `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
             await fetch(waNotifyUrl, {
               method: 'POST',
@@ -1546,7 +1729,15 @@ export async function executeP2pTransfer(
               },
               body: JSON.stringify({
                 to: targetPhone,
-                message: waText,
+                message: `${creditAlertBody}\n\nWithdraw . View Receipt . New Deal`,
+                menuCard: {
+                  body: creditAlertBody,
+                  actions: [
+                    { id: 'act_cashout', title: '🏧 Withdraw', action: 'CASHOUT' },
+                    { id: `receipt_${transferId}`, title: '🧾 View Receipt', action: `receipt_${transferId}` },
+                    { id: 'create service agreement', title: '🤝 New Deal', action: 'create service agreement' },
+                  ],
+                },
               }),
             });
           }
@@ -1559,6 +1750,19 @@ export async function executeP2pTransfer(
     console.warn('[p2p.whatsapp_notify] Notification error:', err);
   }
 
+  // Query the sender's post-debit spendable balance.
+  // createBalanceLedgerEntry already called invalidateUnifiedBalanceCache(senderUserId)
+  // synchronously before returning, so this read hits the live ledger with zero cache risk.
+  let senderRemainingBalance: number | undefined;
+  try {
+    const postDebitSpendable = await getSpendable(senderUserId, input.asset);
+    if (postDebitSpendable !== null && Number.isFinite(postDebitSpendable)) {
+      senderRemainingBalance = Math.max(0, postDebitSpendable);
+    }
+  } catch {
+    // Non-fatal: whatsapp-bot will fall back to its own balance query
+  }
+
   return {
     transferId,
     amount: input.amount,
@@ -1566,6 +1770,7 @@ export async function executeP2pTransfer(
     fee: 0,
     netAmount: input.amount,
     status: 'completed',
+    senderRemainingBalance,
     sender: {
       userId: sender.id,
       username: sender.username,
@@ -1718,5 +1923,333 @@ export async function redeemP2pClaim(
     senderName: sender?.username ? `@${sender.username}` : ((sender as any)?.name || (sender as any)?.fullName || 'Sivan User'),
     creditedToUserId: recipient.id,
     claimedAt: claim.claimedAt,
+  };
+}
+
+export const fundAgreementSchema = z.object({
+  agreementId: z.string().min(1).max(128),
+  amount: z.coerce.number().positive(),
+  currency: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['ngn', 'usdc', 'usdt'])).default('ngn'),
+  pin: z.string().optional(),
+  stepUpToken: z.string().optional(),
+});
+
+export async function fundServiceAgreementFromBalance(
+  userId: string,
+  input: z.infer<typeof fundAgreementSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  let resolvedUserId = userId;
+  const rawClean = userId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (userId.startsWith('+') || userId.startsWith('whatsapp:') || /^\d{7,15}$/.test(userId)) {
+    const user = (await db.findUserByWhatsappNumber(`+${rawClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawClean).catch(() => null))
+      || (await db.findUserById(userId).catch(() => null));
+    if (user) resolvedUserId = user.id;
+  }
+
+  const cleanAsset = input.currency.toLowerCase() as BalanceAsset;
+
+  const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+  await assertTransferAuthorised({
+    userId: resolvedUserId,
+    amount: input.amount,
+    destinationAddress: input.agreementId,
+    network: 'base',
+    asset: cleanAsset,
+    isP2p: false,
+    pin: input.pin,
+    stepUpToken: input.stepUpToken,
+  });
+
+  const unified = await getUnifiedBalance(resolvedUserId);
+  const assetEntry = unified.balances.find((b) => b.asset.toLowerCase() === cleanAsset);
+  const spendable = Number(assetEntry?.spendable ?? 0);
+
+  if (spendable < input.amount) {
+    throw badRequest(`Insufficient ${input.currency.toUpperCase()} balance. Available: ${spendable} ${input.currency.toUpperCase()}, Required: ${input.amount} ${input.currency.toUpperCase()}`);
+  }
+
+  // A buyer can legitimately fund an agreement again after a previous hold was
+  // refunded. Each funding cycle therefore needs its own reference, otherwise
+  // the retry is swallowed as a duplicate of the cycle that was already
+  // returned. Still derived, not random, so a genuine retry of the same
+  // attempt stays idempotent.
+  const agreementLedger = await listUserBalanceLedger(resolvedUserId).catch(() => []);
+  const forThisAgreement = agreementLedger.filter((e) => e.sourceId === input.agreementId);
+
+  if (forThisAgreement.some((e) => e.sourceType === 'service_agreement_settlement')) {
+    throw badRequest(`Service Agreement ${input.agreementId} has already been settled and cannot be funded again.`);
+  }
+
+  const holdCount = forThisAgreement.filter(
+    (e) => e.sourceType === 'service_agreement_fund' && e.kind === 'hold'
+  ).length;
+  const refundCount = forThisAgreement.filter((e) => e.sourceType === 'service_agreement_refund').length;
+
+  if (holdCount > refundCount) {
+    // A hold for this agreement is already outstanding. This is a real retry,
+    // so report the existing hold rather than taking the money twice.
+    const current = forThisAgreement.find(
+      (e) => e.sourceType === 'service_agreement_fund' && e.kind === 'hold'
+    );
+    return {
+      success: true,
+      alreadyHeld: true,
+      paymentReference: current?.transferId || `agr_fund_${input.agreementId}`,
+      agreementId: input.agreementId,
+      amount: input.amount,
+      currency: input.currency.toUpperCase(),
+      ledgerEntryId: current?.entryId,
+    };
+  }
+
+  const paymentReference =
+    refundCount > 0 ? `agr_fund_${input.agreementId}_r${refundCount}` : `agr_fund_${input.agreementId}`;
+  const amountStr = input.amount.toFixed(2);
+
+  const entry = await createBalanceLedgerEntry(
+    {
+      userId: resolvedUserId,
+      asset: cleanAsset,
+      amount: amountStr,
+      kind: 'hold',
+      status: 'held',
+      sourceType: 'service_agreement_fund',
+      sourceId: input.agreementId,
+      description: `Fund Service Agreement ${input.agreementId}`,
+      destinationAddress: input.agreementId,
+      transferId: paymentReference,
+    },
+    { actorType: 'user', actorId: resolvedUserId }
+  );
+
+  return {
+    success: true,
+    paymentReference,
+    agreementId: input.agreementId,
+    amount: input.amount,
+    currency: input.currency.toUpperCase(),
+    ledgerEntryId: entry.entryId,
+  };
+}
+
+export const releaseAgreementSchema = z.object({
+  agreementId: z.string().min(1),
+  buyerUserId: z.string().optional(),
+  sellerUserId: z.string().min(1),
+  amount: z.number().positive(),
+  sellerNetAmount: z.number().positive().optional(),
+  feeAmount: z.number().min(0).optional(),
+  currency: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['ngn', 'usdc', 'usdt'])).default('ngn'),
+  payoutDestination: z.enum(['balance', 'bank']).optional().default('balance'),
+});
+
+export async function releaseServiceAgreementFromBalance(
+  userId: string,
+  input: z.infer<typeof releaseAgreementSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  let resolvedBuyerId = input.buyerUserId || userId;
+  const rawBuyerClean = resolvedBuyerId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (resolvedBuyerId.startsWith('+') || resolvedBuyerId.startsWith('whatsapp:') || /^\d{7,15}$/.test(resolvedBuyerId)) {
+    const user = (await db.findUserByWhatsappNumber(`+${rawBuyerClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawBuyerClean).catch(() => null))
+      || (await db.findUserById(resolvedBuyerId).catch(() => null));
+    if (user) resolvedBuyerId = user.id;
+  }
+
+  let resolvedSellerId = input.sellerUserId;
+  const rawSellerClean = resolvedSellerId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (resolvedSellerId.startsWith('+') || resolvedSellerId.startsWith('whatsapp:') || /^\d{7,15}$/.test(resolvedSellerId)) {
+    let user = (await db.findUserByWhatsappNumber(`+${rawSellerClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawSellerClean).catch(() => null))
+      || (await db.findUserById(resolvedSellerId).catch(() => null));
+    if (!user) {
+      user = await createUser({
+        fullName: `Freelancer ${rawSellerClean.slice(-4) || 'User'}`,
+        whatsappNumber: `+${rawSellerClean}`,
+        primaryChannel: 'whatsapp'
+      }).catch(() => null) as any;
+    }
+    if (user) resolvedSellerId = user.id;
+  }
+
+  const cleanAsset = input.currency.toLowerCase() as BalanceAsset;
+
+  const sellerLedger = await listUserBalanceLedger(resolvedSellerId).catch(() => []);
+  const alreadySettled = sellerLedger.some(
+    (e) => (e.sourceType === 'service_agreement_payout' || e.transferId === `agr_payout_${input.agreementId}`) && e.sourceId === input.agreementId
+  );
+  if (alreadySettled) {
+    return {
+      success: true,
+      alreadySettled: true,
+      agreementId: input.agreementId,
+      amount: input.amount,
+      currency: input.currency.toUpperCase(),
+    };
+  }
+
+  const totalAmount = input.amount;
+  let fee = input.feeAmount !== undefined ? input.feeAmount : 0;
+  let sellerNet = input.sellerNetAmount !== undefined ? input.sellerNetAmount : (totalAmount - fee);
+  if (sellerNet <= 0 || fee < 0) {
+    fee = Math.max(0, totalAmount - (input.sellerNetAmount ?? totalAmount));
+    sellerNet = totalAmount - fee;
+  }
+
+  const paymentReference = `agr_settle_${input.agreementId}`;
+
+  // Check if buyer funded via internal balance hold; only debit if a hold exists
+  const buyerLedger = await listUserBalanceLedger(resolvedBuyerId).catch(() => []);
+  const buyerHoldEntry = buyerLedger.find(
+    (e) => e.kind === 'hold' && (e.sourceId === input.agreementId || e.transferId === `agr_hold_${input.agreementId}`)
+  );
+
+  if (buyerHoldEntry) {
+    await createBalanceLedgerEntry(
+      {
+        userId: resolvedBuyerId,
+        asset: cleanAsset,
+        amount: sellerNet.toFixed(2),
+        kind: 'debit_transfer',
+        status: 'completed',
+        sourceType: 'service_agreement_settlement',
+        sourceId: input.agreementId,
+        description: `Service Agreement ${input.agreementId} release payout`,
+        destinationAddress: resolvedSellerId,
+        transferId: paymentReference,
+      },
+      { actorType: 'system', actorId: 'agreement_settlement' }
+    );
+
+    if (fee > 0) {
+      await createBalanceLedgerEntry(
+        {
+          userId: resolvedBuyerId,
+          asset: cleanAsset,
+          amount: fee.toFixed(2),
+          kind: 'fee',
+          status: 'completed',
+          sourceType: 'service_agreement_fee',
+          sourceId: input.agreementId,
+          description: `Service Agreement ${input.agreementId} platform fee`,
+          transferId: `agr_fee_${input.agreementId}`,
+        },
+        { actorType: 'system', actorId: 'agreement_settlement' }
+      );
+    }
+  }
+
+  // Atomically credit seller spendable available balance if payout destination is balance.
+  // If destination is 'bank', the payout was already transferred to seller's external bank account
+  // (e.g. via Paystack/NIP rails). We do not credit seller's Sivan app balance to avoid double disbursement.
+  if (input.payoutDestination !== 'bank') {
+    await createBalanceLedgerEntry(
+      {
+        userId: resolvedSellerId,
+        asset: cleanAsset,
+        amount: sellerNet.toFixed(2),
+        kind: 'credit_available',
+        status: 'available',
+        sourceType: 'service_agreement_payout',
+        sourceId: input.agreementId,
+        description: `Payment received for Service Agreement ${input.agreementId}`,
+        transferId: `agr_payout_${input.agreementId}`,
+      },
+      { actorType: 'system', actorId: 'agreement_settlement' }
+    );
+  }
+
+  return {
+    success: true,
+    agreementId: input.agreementId,
+    totalAmount,
+    sellerNetAmount: sellerNet,
+    feeAmount: fee,
+    currency: input.currency.toUpperCase(),
+    buyerUserId: resolvedBuyerId,
+    sellerUserId: resolvedSellerId,
+  };
+}
+
+export const refundAgreementSchema = z.object({
+  agreementId: z.string().min(1),
+  buyerUserId: z.string().optional(),
+  amount: z.number().positive(),
+  currency: z.preprocess((val) => typeof val === 'string' ? val.trim().toLowerCase() : val, z.enum(['ngn', 'usdc', 'usdt'])).default('ngn'),
+  reason: z.string().optional(),
+});
+
+export async function refundServiceAgreementFromBalance(
+  userId: string,
+  input: z.infer<typeof refundAgreementSchema>,
+  context: { ipAddress?: string; userAgent?: string } = {}
+) {
+  let resolvedBuyerId = input.buyerUserId || userId;
+  const rawBuyerClean = resolvedBuyerId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  if (resolvedBuyerId.startsWith('+') || resolvedBuyerId.startsWith('whatsapp:') || /^\d{7,15}$/.test(resolvedBuyerId)) {
+    const user = (await db.findUserByWhatsappNumber(`+${rawBuyerClean}`).catch(() => null))
+      || (await db.findUserByWhatsappNumber(rawBuyerClean).catch(() => null))
+      || (await db.findUserById(resolvedBuyerId).catch(() => null));
+    if (user) resolvedBuyerId = user.id;
+  }
+  const cleanAsset = input.currency.toLowerCase() as BalanceAsset;
+
+  const existingLedger = await listUserBalanceLedger(resolvedBuyerId).catch(() => []);
+  const alreadyRefunded = existingLedger.some(
+    (e) => (e.sourceType === 'service_agreement_refund' || e.transferId === `agr_refund_${input.agreementId}`) && e.sourceId === input.agreementId
+  );
+  if (alreadyRefunded) {
+    return { success: true, alreadyRefunded: true, agreementId: input.agreementId };
+  }
+
+  // This endpoint used to credit whatever amount it was handed, without
+  // checking that there was anything to give back. That makes it a way to
+  // mint balance, and it makes the obvious caller (cancel an agreement)
+  // unsafe to wire up. Refund only what is actually still held.
+  const settled = existingLedger.some(
+    (e) => e.sourceId === input.agreementId && e.sourceType === 'service_agreement_settlement'
+  );
+  if (settled) {
+    return { success: true, alreadySettled: true, nothingToRefund: true, agreementId: input.agreementId };
+  }
+
+  const holdEntries = existingLedger.filter(
+    (e) => e.sourceId === input.agreementId && e.sourceType === 'service_agreement_fund' && e.kind === 'hold'
+  );
+  if (holdEntries.length === 0) {
+    return { success: true, nothingToRefund: true, agreementId: input.agreementId };
+  }
+
+  const heldTotal = holdEntries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const refundAmount = Math.min(Number(input.amount), heldTotal);
+  if (!(refundAmount > 0)) {
+    return { success: true, nothingToRefund: true, agreementId: input.agreementId };
+  }
+
+  await createBalanceLedgerEntry(
+    {
+      userId: resolvedBuyerId,
+      asset: cleanAsset,
+      amount: refundAmount.toFixed(2),
+      kind: 'hold_release',
+      status: 'available',
+      sourceType: 'service_agreement_refund',
+      sourceId: input.agreementId,
+      description: `Refund hold for Service Agreement ${input.agreementId}: ${input.reason || 'Cancelled'}`,
+      transferId: `agr_refund_${input.agreementId}`,
+    },
+    { actorType: 'system', actorId: 'agreement_refund' }
+  );
+
+  return {
+    success: true,
+    agreementId: input.agreementId,
+    amount: refundAmount,
+    requestedAmount: input.amount,
+    currency: input.currency.toUpperCase(),
+    buyerUserId: resolvedBuyerId,
   };
 }

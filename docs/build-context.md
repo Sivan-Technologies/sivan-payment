@@ -7,7 +7,7 @@ Last updated: 2026-08-20
 
 - sivan-payment: Core payment engine, USDC buy/sell, balance ledger, direct on-chain P2P transfers, bank off-ramping, 10 master test suites.
 - sivan-escrow-agent: Service agreement state machine, milestone releases, dispute reconciliation, PostgreSQL store, core API integration.
-- Telegram-layer: Telegram Payment AI Layer (@Sivan_Ai), natural language intent parser, 1-tap balance payment UI, direct transfer routing, callbacks.
+- Telegram-layer: Telegram Payment AI Layer (@SivanAi_bot), natural language intent parser, 1-tap balance payment UI, direct transfer routing, callbacks.
 - whatsapp-bot: WhatsApp Payment AI Layer, multi-channel identity resolution, webhook ingress, push alerts.
 - sivan-admin-hub and telegram-admin-auth: Telegram OTP admin session token authentication, JWT sessions, Next.js production admin dashboard.
 
@@ -21,7 +21,8 @@ Last updated: 2026-08-20
   - Platform Web App: https://app.sivantech.online
   - AWS Production API Gateway: https://api.sivantech.online
   - Staging API Gateway: https://test-sivan.sivantech.online
-  - Telegram Payment AI Agent: https://t.me/Sivan_Ai (@Sivan_Ai)
+  - Telegram Live Payment Bot: https://t.me/SivanAi_bot (@SivanAi_bot)
+- Telegram Personal Chat / Community: https://t.me/Sivan_Ai (@Sivan_Ai)
 
 
 ## System Quality and Readiness Review Scores

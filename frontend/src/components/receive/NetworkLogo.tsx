@@ -15,14 +15,14 @@
  * confusion this screen exists to prevent.
  */
 
-export type LogoChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc';
+export type LogoChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'starknet' | 'bsc';
 
 /**
  * Is there a real mark for this chain string?
  */
 export function logoChainFor(chain?: string): LogoChain | undefined {
   const key = String(chain ?? '').trim().toLowerCase();
-  const valid: LogoChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'polygon', 'arbitrum', 'bsc'];
+  const valid: LogoChain[] = ['solana', 'base', 'ethereum', 'stellar', 'celo', 'polygon', 'arbitrum', 'arc', 'starknet', 'bsc'];
   return valid.includes(key as LogoChain) ? (key as LogoChain) : undefined;
 }
 
@@ -118,11 +118,30 @@ export function NetworkLogo({ chain, size = 20 }: { chain: LogoChain; size?: num
     );
   }
 
+  if (chain === 'starknet') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <circle cx="12" cy="12" r="12" fill="#0C0C4F" />
+        <path d="M6 13.4c2.1-2.6 4-3.9 5.9-3.9 1.9 0 3.8 1.3 5.9 3.9-1.4-1-2.8-1.5-4.2-1.5-1.6 0-3.1.6-4.6 1.7l-.5.4-.5-.4C7.3 13.1 6.7 13.2 6 13.4z" fill="#FAFAFA" />
+        <circle cx="17.1" cy="8.6" r="1.3" fill="#EC796B" />
+      </svg>
+    );
+  }
+
   if (chain === 'arbitrum') {
     return (
       <svg {...common} viewBox="0 0 32 32">
         <circle cx="16" cy="16" r="15" fill="#28A0F0" />
         <path fill="#fff" d="M16 7l8 14h-4.2l-3.8-6.6-3.8 6.6H8l8-14zm0 5.2L13 18h6l-3-5.8z" />
+      </svg>
+    );
+  }
+
+  if (chain === 'arc') {
+    return (
+      <svg {...common} viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#0048E5" />
+        <path fill="#fff" d="M16 8a8 8 0 0 1 8 8h-3a5 5 0 0 0-5-5V8zm-8 8a8 8 0 0 1 8-8v3a5 5 0 0 0-5 5H8zm8 8a8 8 0 0 1-8-8h3a5 5 0 0 0 5 5v3zm8-8a8 8 0 0 1-8 8v-3a5 5 0 0 0 5-5h3z" />
       </svg>
     );
   }

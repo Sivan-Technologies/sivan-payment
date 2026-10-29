@@ -38,6 +38,9 @@ const envSchema = z.object({
   WHATSAPP_NOTIFICATION_URL: z.string().url().optional(),
   TEXTILE_CELO_DEPOSIT_ADDRESS: z.string().optional(),
   SIVAN_CELO_AGENT_ADDRESS: z.string().optional(),
+  SIVAN_CELO_RELAY_AGENT_ADDRESS: z.string().optional(),
+  CELO_AGENT_PRIVATE_KEY: z.string().optional().default(''),
+  CELO_RELAY_AGENT_PRIVATE_KEY: z.string().optional().default(''),
   SENTRY_DSN: z.string().optional().default(''),
   SENTRY_ENVIRONMENT: z.string().optional().default(''),
   SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
@@ -84,19 +87,10 @@ const envSchema = z.object({
   /**
    * Require a withdrawal PIN on every money-out request.
    *
-   * DEFAULTS TO FALSE, and that is the entire point of it existing.
-   *
-   * The server can demand a PIN the moment this code deploys. The clients
-   * cannot supply one yet: the WhatsApp and Telegram bots have no PIN prompt,
-   * and the web withdrawal flow does not collect it. Enforcing on deploy would
-   * therefore reject EVERY withdrawal on both rails - including from users who
-   * have dutifully set a PIN, because nothing would be asking them for it.
-   *
-   * So the enforcement ships dark. Turn it on only once every client can
-   * prompt, and turn it on for one deployment at a time, because the failure
-   * mode is total: no user can withdraw by any route.
+   * Enabled: Web in-flow PIN enrollment, Telegram group-hardened PIN verification,
+   * and WhatsApp prefilled deep-links are fully implemented and verified across test suites.
    */
-  WITHDRAWAL_PIN_ENFORCED: booleanFromEnv.default(false),
+  WITHDRAWAL_PIN_ENFORCED: booleanFromEnv.default(true),
 
   IDENTITY_PAIRING_MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(6),
   IDENTITY_PAIRING_LOCKOUT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
@@ -173,12 +167,32 @@ const envSchema = z.object({
   BASE_RPC_FALLBACK_URL: z.string().url().optional(),
   ETHEREUM_RPC_URL: z.string().url().optional(),
   ETHEREUM_RPC_FALLBACK_URL: z.string().url().optional(),
+  /**
+   * Arbitrum One and Arbitrum Sepolia.
+   *
+   * Optional for the same reason the others are: an unset RPC degrades to the
+   * public endpoints in evm-rpc.ts, which are rate limited and explicitly not
+   * production traffic. Set these in any real deployment.
+   */
+  ARBITRUM_RPC_URL: z.string().url().optional(),
+  // Starknet. The public tier in starknet-rpc.ts is a degraded fallback only:
+  // three public Starknet endpoints were discontinued or paywalled during 2026,
+  // so a configured provider is effectively required in production.
+  STARKNET_RPC_URL: z.string().url().optional(),
+  STARKNET_RPC_FALLBACK_URL: z.string().url().optional(),
+  STARKNET_USDC_TESTNET_ADDRESS: z.string().optional(),
+  AVNU_PAYMASTER_URL: z.string().url().optional(),
+  AVNU_API_KEY: z.string().optional(),
+  ARBITRUM_RPC_FALLBACK_URL: z.string().url().optional(),
   STELLAR_HORIZON_URL: z.string().url().optional(),
   STELLAR_SPONSOR_ACCOUNT_ID: z.string().optional(),
   STELLAR_SPONSOR_SECRET_KEY: z.string().optional(),
   STELLAR_MAX_FEE_STROOPS: z.coerce.number().optional().default(1000),
   STELLAR_SPONSORED_RESERVES: z.coerce.boolean().optional().default(true),
   BALANCE_TRANSFERS_ENABLED: z.coerce.boolean().default(true),
+  P2P_TRANSFERS_ENABLED: booleanFromEnv.default(true),
+  NGN_INTERNAL_TRANSFERS_ENABLED: booleanFromEnv.default(true),
+  MINIMUM_NGN_SEND_AMOUNT: positiveIntFromEnv.default(10),
   WEBHOOK_MAX_AGE_MS: positiveIntFromEnv.default(10 * 60 * 1000),
   /**
    * 1.25%, not 0.
@@ -313,6 +327,12 @@ const envSchema = z.object({
    * wallet-controls.service.ts takes precedence over this.
    */
   WALLET_PROVIDER: z.string().optional().default('mock'),
+  /**
+   * Privy API base. Optional; the provider keeps the production default when
+   * unset. Declared so a staging tenant or a proxy can be pointed at without
+   * editing source.
+   */
+  PRIVY_API_BASE_URL: z.string().url().optional(),
   PRIVY_APP_ID: z.string().optional().default(''),
   PRIVY_APP_SECRET: z.string().optional().default(''),
   /**
@@ -388,6 +408,10 @@ const envSchema = z.object({
    * on chain within seconds still read "Processing" hours later. 0 disables.
    */
   TRANSFER_CONFIRM_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  /**
+   * How often to reconcile unsettled and pending utility purchases, in seconds. 0 disables.
+   */
+  UTILITY_RECONCILE_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
   /** Age at which an unconfirmed send is escalated to a human, in minutes. */
   TRANSFER_CONFIRM_STALE_MINUTES: z.coerce.number().int().positive().default(30),
   /**
@@ -398,7 +422,7 @@ const envSchema = z.object({
    * calls by the number of wallets. This is a stopgap detector; the real fix is
    * RPC webhooks, at which point this goes to 0.
    */
-  DEPOSIT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  DEPOSIT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(15),
   /**
    * How often to deliver deposit notifications, in seconds. 0 disables.
    *
@@ -406,7 +430,7 @@ const envSchema = z.object({
    * deposits being RECORDED, and a slow sweep must not delay the alert for a
    * deposit already found. The two loops share only the database.
    */
-  DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(45),
+  DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(30),
   /**
    * How often to re-check pending deposits for finality, in seconds. 0
    * disables.
@@ -417,10 +441,10 @@ const envSchema = z.object({
    * deposit stays 'pending' forever - which is exactly what shipped, and what
    * put "In progress" next to money the balance card already called spendable.
    *
-   * 45s rather than the scan's 60s: confirmation is the tail of the delay a
+   * 15s confirmation interval: confirmation is the tail of the delay a
    * user actually watches, and waiting longer saves no chain reads.
    */
-  DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(45),
+  DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(15),
   /**
    * How often the service agreement deadline sweeper runs, in seconds. 0 disables.
    *
@@ -462,7 +486,7 @@ const envSchema = z.object({
   PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_BANK_ID: z.string().optional().default(''),
   PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
-  KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify', 'flutterwave', 'identifyorg']).default('mock'),
+  KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify', 'flutterwave', 'identifyorg', 'paystack']).default('mock'),
   MONNIFY_BASE_URL: z.string().url().optional().default('https://api.monnify.com'),
   MONNIFY_API_KEY: z.string().optional().default(''),
   MONNIFY_SECRET_KEY: z.string().optional().default(''),

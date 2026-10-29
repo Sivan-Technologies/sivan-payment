@@ -1,14 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
-import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, getBalanceTransferControls, getP2pClaimDetails, redeemP2pClaim, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
+import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, fundAgreementSchema, fundServiceAgreementFromBalance, releaseAgreementSchema, releaseServiceAgreementFromBalance, refundAgreementSchema, refundServiceAgreementFromBalance, getBalanceTransferControls, getP2pClaimDetails, redeemP2pClaim, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
 import { getUnifiedBalance } from './unified-balance.service.js';
 import { quoteTransfer } from './balance.service.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
 import { listUserDeposits } from '../deposits/deposit.service.js';
+import { confirmDeposits } from '../deposits/deposit-confirmation.service.js';
 import { db } from '../database/json-database.js';
 import { normalizeWhatsappNumber, activeLinkForTelegram } from '../identity/identity.service.js';
 import { requireIdentityServiceSecret } from '../shared/service-auth.js';
+import { id, nowIso } from '../shared/id.js';
 
 /**
  * Resolve a chat-channel caller to a payment user.
@@ -90,23 +92,44 @@ export async function balanceRoutes(app: FastifyInstance) {
    */
   app.get('/api/users/whatsapp-balance', async (request, reply) => {
     requireIdentityServiceSecret(request as any);
-    const { whatsapp } = request.query as { whatsapp?: string };
+    const { whatsapp, ensureChain } = request.query as { whatsapp?: string; ensureChain?: string };
     if (!whatsapp) return reply.code(400).send({ error: 'whatsapp query param required' });
-    const user = await findUserByChannelPhone(whatsapp);
+    let user: any = await findUserByChannelPhone(whatsapp);
+    if (!user) {
+      const rawClean = whatsapp.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+      const withPlus = `+${rawClean}`;
+      const now = nowIso();
+      user = await db.insertUserRecord({
+        id: id('usr'),
+        email: `${rawClean}@sivantech.online`,
+        fullName: 'Sivan User',
+        whatsappNumber: withPlus,
+        createdAt: now,
+        updatedAt: now,
+      }).catch(async () => {
+        return (await findUserByChannelPhone(whatsapp)) || undefined;
+      });
+    }
     if (!user) return reply.code(404).send({ error: 'WhatsApp number not linked to a Sivan Payment account' });
 
-    let unified = await getUnifiedBalance(user.id);
-    const existingChains = (unified.wallets || []).map((w) => w.chain);
-    const requiredChains = ['solana', 'base', 'celo', 'stellar', 'bsc'];
-    const missingChains = requiredChains.filter((c) => !existingChains.includes(c));
-
-    if (missingChains.length > 0) {
+    const cleanEnsureChain = ensureChain ? String(ensureChain).trim().toLowerCase() : undefined;
+    if (cleanEnsureChain) {
       const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-      await Promise.all(
-        missingChains.map((chain) => ensureUserWallet(user.id, chain as any).catch(() => null))
-      );
-      unified = await getUnifiedBalance(user.id);
+      if (cleanEnsureChain === 'stellar') {
+        await ensureUserWallet(user.id, 'stellar');
+      } else if (cleanEnsureChain === 'starknet') {
+        await ensureUserWallet(user.id, 'starknet');
+      } else {
+        const isEvm = ['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(cleanEnsureChain);
+        const primaryEvm = isEvm ? (cleanEnsureChain as any) : 'celo';
+        await Promise.all([
+          ensureUserWallet(user.id, 'solana').catch(() => null),
+          ensureUserWallet(user.id, primaryEvm).catch(() => null),
+        ]);
+      }
     }
+
+    const unified = await getUnifiedBalance(user.id);
 
     /**
      * A FAILED CHAIN READ MUST NOT LEAVE AS A CONFIDENT ZERO.
@@ -119,7 +142,7 @@ export async function balanceRoutes(app: FastifyInstance) {
      * instead of telling a funded user their balance is empty.
      */
     const hasAnyFunds = unified.balances.some((b) => Number(b.spendable) > 0 || Number(b.chain) > 0);
-    const unreadable = !hasAnyFunds && (unified.balances.length
+    const unreadable = !hasAnyFunds && !cleanEnsureChain && (unified.balances.length
       ? unified.balances.every((b) => b.chainUnavailable && Number(b.credited) === 0)
       : unified.wallets.length > 0 && unified.wallets.every((w) => w.balancesUnavailable));
     if (unreadable) {
@@ -132,15 +155,24 @@ export async function balanceRoutes(app: FastifyInstance) {
     return {
       data: {
         userId: user.id,
+        username: user.username,
+        fullName: user.fullName,
+        email: user.email,
         asset: usdcEntry?.asset ?? 'usdc',
         // `spendable` is chain + credited - held: what the user may actually
         // move right now, which is the question both bots are really asking.
         available: Number(usdcEntry?.spendable ?? 0),
+        spendable: Number(usdcEntry?.spendable ?? 0),
+        held: Number(usdcEntry?.held ?? 0),
+        chainTotal: Number(usdcEntry?.chain ?? 0),
         pending: Number(usdcEntry?.pending ?? 0),
         balances: unified.balances.map((b) => ({
           asset: b.asset,
           amount: Number(b.spendable),
           available: Number(b.spendable),
+          spendable: Number(b.spendable),
+          held: Number(b.held ?? 0),
+          chain: Number(b.chain ?? 0),
           pending: Number(b.pending),
         })),
         wallets: unified.wallets.map((w) => ({
@@ -274,6 +306,15 @@ export async function balanceRoutes(app: FastifyInstance) {
     return { data: await listUserBalanceTransfers(userId) };
   });
 
+  /**
+   * Compatibility history endpoint for chat clients (Telegram / WhatsApp)
+   */
+  app.get('/api/balance/history', async (request, reply) => {
+    const { userId } = request.query as { userId?: string };
+    if (!userId) return reply.code(400).send({ error: 'userId query parameter required' });
+    return { data: await listUserBalanceTransfers(userId) };
+  });
+
   app.post('/api/users/:userId/balance/transfers', async (request) => {
     const { userId } = request.params as { userId: string };
     const body = parseBody(createBalanceTransferSchema, request.body);
@@ -287,6 +328,36 @@ export async function balanceRoutes(app: FastifyInstance) {
     const { userId } = request.params as { userId: string };
     const body = parseBody(createP2pTransferSchema, request.body);
     return { data: await executeP2pTransfer(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Dedicated endpoint to commit funding for a Service Agreement atomically from balance.
+   */
+  app.post('/api/users/:userId/balance/fund-agreement', async (request) => {
+    requireIdentityServiceSecret(request as any);
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(fundAgreementSchema, request.body);
+    return { data: await fundServiceAgreementFromBalance(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Dedicated endpoint to release funds for a Service Agreement atomically from balance.
+   */
+  app.post('/api/users/:userId/balance/release-agreement', async (request) => {
+    requireIdentityServiceSecret(request as any);
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(releaseAgreementSchema, request.body);
+    return { data: await releaseServiceAgreementFromBalance(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+
+  /**
+   * Dedicated endpoint to refund held funds for a cancelled Service Agreement back to balance.
+   */
+  app.post('/api/users/:userId/balance/refund-agreement', async (request) => {
+    requireIdentityServiceSecret(request as any);
+    const { userId } = request.params as { userId: string };
+    const body = parseBody(refundAgreementSchema, request.body);
+    return { data: await refundServiceAgreementFromBalance(userId, body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
   /**
@@ -343,7 +414,13 @@ export async function balanceRoutes(app: FastifyInstance) {
 
   app.get('/api/users/:userId/balance/deposits', async (request) => {
     const { userId } = request.params as { userId: string };
-    return { data: await listUserDeposits(userId) };
+    let deposits = await listUserDeposits(userId);
+    const hasPending = deposits.some((d) => d.status === 'pending');
+    if (hasPending) {
+      await confirmDeposits().catch(() => undefined);
+      deposits = await listUserDeposits(userId);
+    }
+    return { data: deposits };
   });
 
   app.get('/api/balance/controls', async () => ({ data: await getBalanceTransferControls() }));

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { qrDataUri } from '../qrCode';
 import { NetworkFamilyLogo, NetworkLogo } from './receive/NetworkLogo';
+import { formatAmount } from '../appUtils';
 import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } from '../types';
+import { MoneyGramModal } from './moneygram/MoneyGramModal';
 
 /**
  * Receive (deposit) screen.
@@ -20,7 +22,7 @@ import type { AssetControl, NetworkControl, UnifiedBalance, UserWalletRecord } f
  *   which is the cheapest known defence against wrong-network loss.
  */
 
-export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'bsc';
+export type ReceiveChain = 'solana' | 'base' | 'ethereum' | 'stellar' | 'celo' | 'polygon' | 'arbitrum' | 'arc' | 'starknet' | 'bsc';
 export type ReceiveAsset = 'usdc' | 'usdt';
 
 /** Re-exported so callers do not need to know the record shape. */
@@ -40,6 +42,8 @@ const CHAIN_ASSETS: Record<ReceiveChain, ReceiveAsset[]> = {
   celo: ['usdc', 'usdt'],
   polygon: ['usdc', 'usdt'],
   arbitrum: ['usdc', 'usdt'],
+  arc: ['usdc'],
+  starknet: ['usdc'],
   bsc: ['usdc', 'usdt'],
 };
 
@@ -107,6 +111,25 @@ const CHAIN_META: Record<ReceiveChain, {
     accent: '#28A0F0',
     note: 'Arbitrum One L2 EVM network.',
   },
+  starknet: {
+    label: 'Starknet',
+    short: 'STRK',
+    // felt252, NOT a 20 byte EVM address. Variable length up to 64 hex
+    // characters, and leading zeros are optional, so 0x123 and 0x0123 are the
+    // same account. Never compare these as raw strings.
+    addressFormat: 'Starts with 0x (Starknet felt)',
+    confirmations: 'Usually 15–30 seconds',
+    accent: '#0C0C4F',
+    note: 'Send only USDC on Starknet. Gas is paid in USDC, so you never need STRK.',
+  },
+  arc: {
+    label: 'Arc',
+    short: 'ARC',
+    addressFormat: 'Starts with 0x (EVM)',
+    confirmations: 'Sub-second (~0.5s)',
+    accent: '#0048E5',
+    note: 'Circle Arc Layer 1 EVM with native 18-decimal USDC and sub-second finality.',
+  },
   bsc: {
     label: 'BNB Chain',
     short: 'BNB',
@@ -147,6 +170,9 @@ export function ReceiveView({
   walletsEnabled,
   onCreateWallet,
   onRefresh,
+  userFullName,
+  userPhone,
+  userId,
 }: {
   wallets: WalletRecord[];
   unifiedBalance?: UnifiedBalance | null;
@@ -160,9 +186,14 @@ export function ReceiveView({
   walletsEnabled: boolean;
   onCreateWallet: (chain: ReceiveChain) => void;
   onRefresh: () => void;
+  userFullName?: string;
+  userPhone?: string;
+  userId?: string;
 }) {
+  const [depositMethod, setDepositMethod] = useState<'crypto' | 'moneygram'>('crypto');
+  const [moneygramModalOpen, setMoneygramModalOpen] = useState(false);
   const availableChains = useMemo(() => {
-    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo'];
+    const supported: ReceiveChain[] = ['solana', 'base', 'bsc', 'arbitrum', 'arc', 'starknet', 'stellar', 'celo'];
     if (!enabledNetworks || enabledNetworks.length === 0) {
       return supported;
     }
@@ -183,7 +214,7 @@ export function ReceiveView({
   /**
    * NETWORKS PRESENTED AS DISTINCT CHOICES.
    *
-   * All 5 ultra-low-fee networks (Solana, Base, BNB Chain, Stellar, Celo)
+   * All ultra-low-fee networks (Solana, Base, BNB Chain, Arbitrum, Stellar, Celo)
    * are presented as individual options so users can deposit instantly without high gas fees.
    */
   const chainFamilies = useMemo(() => {
@@ -221,6 +252,22 @@ export function ReceiveView({
         chains: ['bsc'],
       },
       {
+        key: 'arbitrum',
+        label: 'Arbitrum',
+        note: 'Arbitrum One L2 EVM network. Ultra-low gas fees for USDC & USDT.',
+        accent: CHAIN_META.arbitrum.accent,
+        recommended: activeDefault === 'arbitrum',
+        chains: ['arbitrum'],
+      },
+      {
+        key: 'arc',
+        label: 'Arc',
+        note: 'Circle Arc Layer 1 EVM. Native 18-decimal USDC with sub-second finality.',
+        accent: CHAIN_META.arc.accent,
+        recommended: activeDefault === 'arc',
+        chains: ['arc'],
+      },
+      {
         key: 'stellar',
         label: 'Stellar',
         note: 'Dedicated G... address. Ultra-fast sub-cent cross-border settlement.',
@@ -235,6 +282,14 @@ export function ReceiveView({
         accent: CHAIN_META.celo.accent,
         recommended: activeDefault === 'celo',
         chains: ['celo'],
+      },
+      {
+        key: 'starknet',
+        label: 'Starknet',
+        note: 'Validity rollup with native account abstraction. Gas paid directly in USDC.',
+        accent: CHAIN_META.starknet.accent,
+        recommended: activeDefault === 'starknet',
+        chains: ['starknet'],
       },
     ];
     return families
@@ -403,23 +458,26 @@ export function ReceiveView({
       ? ['solana']
       : activeChain === 'stellar'
       ? ['stellar']
-      : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum'];
+      : activeChain === 'starknet'
+      ? ['starknet']
+      : ['base', 'ethereum', 'celo', 'bsc', 'bnb', 'polygon', 'arbitrum', 'arc'];
 
   const wallet =
     openWallets.find((w) => w.chain === activeChain) ??
     openWallets.find((w) => walletFamily.includes(w.chain));
 
   // The server returns acceptedAssets per wallet and is authoritative. Fall
-  // back to the local matrix before a wallet exists so the warning copy is
-  // still correct on the pre-generation screen.
-  const chainAssets = wallet?.acceptedAssets ?? CHAIN_ASSETS[activeChain];
+  // back to the local matrix before a wallet exists, or when the matched
+  // wallet is a family fallback from another EVM chain (e.g. Base), so the
+  // accepted assets and warnings reflect the active chain accurately.
+  const chainAssets = (wallet && wallet.chain === activeChain ? wallet.acceptedAssets : null) ?? CHAIN_ASSETS[activeChain];
   const assetsOnChain = chainAssets.filter((asset) =>
     enabledAssets.some((a) => a.asset === asset && a.enabled)
   );
   const assetLabel = assetsOnChain.map((a) => a.toUpperCase()).join(' or ');
 
-  const directChainWallet = openWallets.find((w) => w.chain === activeChain);
-  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain === activeChain);
+  const directChainWallet = openWallets.find((w) => w.chain?.toLowerCase() === activeChain.toLowerCase());
+  const directUnified = (unifiedBalance?.wallets || []).find((w) => w.chain?.toLowerCase() === activeChain.toLowerCase());
   const unifiedWallet = directUnified ?? (unifiedBalance?.wallets || []).find(
     (w) => w.address && wallet?.address && w.address.toLowerCase() === wallet.address.toLowerCase()
   );
@@ -427,23 +485,36 @@ export function ReceiveView({
   const activeBalances = useMemo(() => {
     // 1. Direct wallet for the selected chain
     if (directChainWallet?.balances && directChainWallet.balances.length > 0) {
-      return directChainWallet.balances.filter((b) => !b.chain || b.chain === activeChain);
+      const filtered = directChainWallet.balances.filter((b) => !b.chain || b.chain.toLowerCase() === activeChain.toLowerCase());
+      if (filtered.length > 0) return filtered;
     }
     // 2. Direct unified entry for the selected chain
     if (directUnified?.balances && directUnified.balances.length > 0) {
-      return directUnified.balances.filter((b) => !b.chain || b.chain === activeChain);
+      const filtered = directUnified.balances.filter((b) => !b.chain || b.chain.toLowerCase() === activeChain.toLowerCase());
+      if (filtered.length > 0) return filtered;
     }
     // 3. Fallback to matched wallet if it contains balances for this chain
     if (wallet?.balances && wallet.balances.length > 0) {
-      const matching = wallet.balances.filter((b) => b.chain === activeChain);
+      const matching = wallet.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
       if (matching.length > 0) return matching;
     }
     if (unifiedWallet?.balances && unifiedWallet.balances.length > 0) {
-      const matching = unifiedWallet.balances.filter((b) => b.chain === activeChain);
+      const matching = unifiedWallet.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
       if (matching.length > 0) return matching;
     }
-    return directChainWallet?.balances ?? directUnified?.balances ?? wallet?.balances;
-  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, activeChain]);
+    // 4. Any entry in unifiedBalance.wallets matching activeChain
+    for (const uw of unifiedBalance?.wallets || []) {
+      if (uw.chain?.toLowerCase() === activeChain.toLowerCase() && uw.balances && uw.balances.length > 0) {
+        return uw.balances;
+      }
+      if (uw.balances && uw.balances.length > 0) {
+        const matching = uw.balances.filter((b) => b.chain?.toLowerCase() === activeChain.toLowerCase());
+        if (matching.length > 0) return matching;
+      }
+    }
+    // If no balance entries belong to this active chain, return empty so it renders the awaiting deposit state
+    return [];
+  }, [directChainWallet, directUnified, wallet?.balances, unifiedWallet?.balances, unifiedBalance?.wallets, activeChain]);
 
   const lastDispatchedBalanceRef = useRef<string>('');
   useEffect(() => {
@@ -474,13 +545,111 @@ export function ReceiveView({
     <section className="app-page receive-page">
       <PageHead onRefresh={handleRefresh} />
 
-      <article className="receive-panel">
-        <div className="receive-chain-head">
-          <div>
-            <p className="eyebrow">Step 1</p>
-            <h3>Choose a network</h3>
+      <div className="seg" style={{ marginBottom: '20px' }}>
+        <button
+          type="button"
+          className={depositMethod === 'crypto' ? 'active' : ''}
+          onClick={() => setDepositMethod('crypto')}
+        >
+          🌐 On-Chain Crypto Deposit
+        </button>
+        <button
+          type="button"
+          className={depositMethod === 'moneygram' ? 'active' : ''}
+          onClick={() => setDepositMethod('moneygram')}
+        >
+          💵 Cash In via MoneyGram
+        </button>
+      </div>
+
+      {depositMethod === 'moneygram' ? (
+        <article className="panel receive-panel" style={{ padding: '28px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <span
+              style={{
+                background: '#e02424',
+                color: '#fff',
+                fontSize: '11px',
+                fontWeight: 800,
+                padding: '3px 8px',
+                borderRadius: '4px',
+                letterSpacing: '0.04em',
+              }}
+            >
+              MONEYGRAM CASH IN
+            </span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--green-ink)' }}>
+              STELLAR NATIVE USDC DEPOSIT
+            </span>
           </div>
-        </div>
+          <h3 style={{ margin: '0 0 8px', fontSize: '22px', fontWeight: 700 }}>
+            Deposit Physical Cash at Any MoneyGram Location
+          </h3>
+          <p style={{ margin: '0 0 20px', color: 'var(--muted)', fontSize: '14px', lineHeight: '1.5' }}>
+            Deposit physical cash at over 400,000 MoneyGram locations across 180+ countries. Your physical fiat deposit is converted directly into native Stellar USDC and credited to your Sivan account.
+          </p>
+
+          <div
+            style={{
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              borderRadius: '14px',
+              padding: '20px',
+              marginBottom: '24px',
+            }}
+          >
+            <h4 style={{ margin: '0 0 12px', fontSize: '15px' }}>Simple 4-Step Cash In Process:</h4>
+            <ol style={{ margin: 0, paddingLeft: '20px', fontSize: '13.5px', color: 'var(--muted)', lineHeight: '1.7' }}>
+              <li>Click <strong>Start Cash-In Session</strong> below and choose your deposit country and currency.</li>
+              <li>Receive your official MoneyGram deposit barcode or reference instruction.</li>
+              <li>Present the barcode and cash to the cashier at any MoneyGram agent location.</li>
+              <li>Cashier accepts cash, and native USDC arrives on Stellar in your Sivan wallet with zero bank account needed.</li>
+            </ol>
+          </div>
+
+          <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={() => setMoneygramModalOpen(true)}
+              style={{ padding: '12px 24px', fontSize: '15px' }}
+            >
+              💵 Start Cash In Session →
+            </button>
+            <a
+              href="https://www.moneygram.com/mgo/us/en/locations"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '13px', color: 'var(--green-ink)', fontWeight: 600, textDecoration: 'none' }}
+            >
+              📍 Find Nearest MoneyGram Agent ↗
+            </a>
+          </div>
+
+          <MoneyGramModal
+            open={moneygramModalOpen}
+            mode="deposit"
+            onClose={() => {
+              setMoneygramModalOpen(false);
+              onRefresh();
+            }}
+            onSuccess={() => {
+              onRefresh();
+            }}
+            userFullName={userFullName}
+            userPhone={userPhone}
+            userId={userId}
+          />
+        </article>
+      ) : (
+        <>
+          <article className="receive-panel">
+            <div className="receive-chain-head">
+            <div>
+              <p className="eyebrow">Step 1</p>
+              <h3>Choose a network</h3>
+            </div>
+          </div>
 
         {/* GROUPED BY ADDRESS, NOT BY CHAIN.
 
@@ -738,7 +907,7 @@ export function ReceiveView({
                   <div className="receive-balance-row">
                     {activeBalances.map((balance) => (
                       <div className="receive-balance" key={`${balance.asset}-${balance.chain}`}>
-                        <strong>{balance.amount}</strong>
+                        <strong>{formatAmount(balance.amount)}</strong>
                         <small>{balance.asset.toUpperCase()}</small>
                       </div>
                     ))}
@@ -748,6 +917,8 @@ export function ReceiveView({
             </>
           )}
         </article>
+      )}
+      </>
       )}
     </section>
   );

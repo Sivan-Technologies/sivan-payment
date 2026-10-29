@@ -49,7 +49,7 @@ Please find the requested details and attachments outlined below:
 ### 3. Official Business and Social Media Channels
 - Official Website: https://sivantech.online
 - Official X (Twitter): https://x.com/samswitchy (and https://x.com/sivantech)
-- Telegram Production Layer: https://t.me/Sivan_Ai
+- Telegram Live Payment Bot: https://t.me/SivanAi_bot
 
 ### 4. Dedicated Team Contacts
 - Customer Support Department:

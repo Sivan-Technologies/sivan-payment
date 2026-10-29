@@ -60,6 +60,7 @@ export interface UserRepository {
   upsertVirtualAccountTransactionRecord(record: VirtualAccountTransactionRecord): Promise<VirtualAccountTransactionRecord>;
   listTransactionReferences(): Promise<TransactionReferenceRecord[]>;
   upsertTransactionReferenceRecord(record: TransactionReferenceRecord): Promise<TransactionReferenceRecord>;
+  withUserLock?<T>(userId: string, fn: () => Promise<T>): Promise<T>;
 }
 
 export interface AuthRepository {

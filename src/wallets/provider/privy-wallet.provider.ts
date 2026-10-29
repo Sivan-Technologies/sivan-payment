@@ -4,7 +4,28 @@ import { forbidden, serviceUnavailable, badRequest, type AppError } from '../../
 import { authorizationSignature, loadAuthorizationPrivateKey } from './privy-authorization.js';
 import { buildSplTransfer, solanaMintFor } from '../solana/spl-transfer.js';
 import { solanaRpc } from '../solana/solana-rpc.js';
-import { erc20BalanceOf, fromBaseUnits } from '../evm/evm-rpc.js';
+import {
+  erc20BalanceOf,
+  nativeBalanceOf,
+  usesNativeStablecoin,
+  fromBaseUnits,
+  waitForEvmReceipt,
+} from '../evm/evm-rpc.js';
+import {
+  buildSivanTransferCalls,
+  computeTypedDataHash,
+} from '../starknet/starknet-transfer.js';
+import {
+  buildPaymasterTransaction,
+  executePaymasterTransaction,
+  defaultFeeMode,
+  sponsoredFeeMode,
+  STARKNET_GAS_TOKEN,
+} from '../starknet/paymaster.js';
+import { isAccountDeployed, starknetErc20Balance } from '../starknet/starknet-rpc.js';
+import { buildAccountDeployment } from '../starknet/starknet-deploy.js';
+import { STARKNET_USDC_DECIMALS, STARKNET_USDC, STARKNET_STRK } from '../starknet/StarknetAdapter.js';
+import { normaliseStarknetAddress } from '../address-validation.js';
 import { resolveNetworkMode } from '../network-mode.js';
 import { db } from '../../database/json-database.js';
 import type { NetworkMode } from '../../database/types.js';
@@ -80,7 +101,22 @@ import type {
  * destination and cap. That is a deliberate later step, not a default.
  */
 
-const PRIVY_BASE = 'https://api.privy.io/v1';
+/**
+ * Privy API base, from the environment.
+ *
+ * Was a hardcoded literal. A baked-in base URL cannot be pointed at a staging
+ * tenant or a proxy without editing source, and it silently keeps working when
+ * an operator believes they have redirected it, which is the failure that
+ * matters: the change looks applied and is not.
+ *
+ * The default preserves existing behaviour so nothing breaks on deploy.
+ */
+const PRIVY_BASE = (process.env.PRIVY_API_BASE_URL || env.PRIVY_API_BASE_URL || 'https://api.privy.io/v1').replace(/\/+$/, '');
+
+export function normalizePrivyWalletId(id: string | undefined): string {
+  if (!id) return '';
+  return id.split(':')[0];
+}
 
 /** Privy's chain vocabulary, keyed by Sivan's. */
 const CHAIN_TYPE: Record<WalletChain, string> = {
@@ -91,7 +127,39 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
   celo: 'ethereum',
   bsc: 'ethereum',
   bnb: 'ethereum',
+  // Arbitrum One is an EVM rollup: standard JSON-RPC, standard secp256k1
+  // addresses. Privy needs no new key material for it.
+  arbitrum: 'ethereum',
+  // Arc is Circle's own L1: EVM-compatible, Reth execution, standard
+  // secp256k1 addresses. Privy needs no new key material for it.
+  arc: 'ethereum',
+  /**
+   * Starknet is its own Privy chain_type, not 'ethereum'. It uses the STARK
+   * curve, so Privy must generate distinct key material: an existing EVM
+   * wallet cannot sign for it.
+   *
+   * Privy supports Starknet at TIER 2, which means it will create the wallet
+   * and sign a hash via rawSign, but it will NOT broadcast. We build,
+   * hash, and submit the transaction ourselves. Same shape as sendCeloTransfer,
+   * which already signs through Privy and broadcasts the raw tx itself.
+   */
+  starknet: 'starknet',
 };
+
+/**
+ * Convert a Privy chain_type string to the Sivan WalletChain label.
+ *
+ * Privy uses: 'solana', 'ethereum', 'starknet' (and 'stellar' for read-only
+ * linked accounts). The mapping is intentionally explicit so that any future
+ * Privy chain_type is caught at code-review time rather than silently becoming
+ * 'ethereum' at runtime.
+ */
+function privyChainTypeToWalletChain(chainType: string | undefined): WalletChain {
+  if (chainType === 'solana') return 'solana';
+  if (chainType === 'starknet') return 'starknet';
+  // 'ethereum' covers base, celo, bsc, arbitrum, arc — all share one secp256k1 key.
+  return 'ethereum';
+}
 
 /**
  * CAIP-2 identifiers, needed when sending a transaction.
@@ -121,6 +189,52 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   bnb: {
     mainnet: 'eip155:56',
     testnet: 'eip155:97',
+  },
+  /**
+   * Arbitrum One and Arbitrum Sepolia.
+   *
+   * Both chain ids were read back from the live RPCs before being written
+   * here, rather than copied from documentation:
+   *   eth_chainId on arb1      -> 0xa4b1  = 42161
+   *   eth_chainId on sepolia   -> 0x66eee = 421614
+   *
+   * The distinction matters more than usual on a rollup. An EVM address is
+   * identical across both, so a transaction sent with the wrong CAIP-2 does
+   * not bounce. It succeeds, on a chain nobody is watching.
+   */
+  arbitrum: {
+    mainnet: 'eip155:42161',
+    testnet: 'eip155:421614',
+  },
+  /**
+   * Arc, Circle's stablecoin L1. Read back from each RPC before being
+   * written here:
+   *
+   *   eth_chainId on rpc.mainnet.arc.io -> 0x13b2   = 5042
+   *   eth_chainId on rpc.testnet.arc.io -> 0x4cef52 = 5042002
+   *
+   * Same hazard as Arbitrum: one secp256k1 address is valid on both, so a
+   * transaction sent with the wrong CAIP-2 does not bounce. It succeeds on a
+   * chain nobody is watching.
+   */
+  arc: {
+    mainnet: 'eip155:5042',
+    testnet: 'eip155:5042002',
+  },
+  /**
+   * Starknet breaks the eip155:<integer> shape used by every other entry here.
+   * Its chain id is an ASCII SHORT STRING encoded as a felt, not a number:
+   *
+   *   starknet_chainId on mainnet -> 0x534e5f4d41494e -> "SN_MAIN"
+   *   starknet_chainId on sepolia -> "SN_SEPOLIA"
+   *
+   * Read back from api.cartridge.gg/x/starknet/mainnet before being written
+   * here. CAIP-2 namespaces Starknet as `starknet:<chain id>`, so the
+   * reference is the decoded short string rather than a decimal.
+   */
+  starknet: {
+    mainnet: 'starknet:SN_MAIN',
+    testnet: 'starknet:SN_SEPOLIA',
   },
 };
 
@@ -175,11 +289,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 async function privyRequest<T>(path: string, init: RequestInit & { idempotencyKey?: string } = {}): Promise<T> {
   const { idempotencyKey, ...rest } = init;
+  const sanitizedPath = path.replace(/\/wallets\/([^/]+)/, (_match, walletId) => {
+    return `/wallets/${encodeURIComponent(normalizePrivyWalletId(decodeURIComponent(walletId)))}`;
+  });
 
   let lastError: AppError | undefined;
 
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    const response = await fetch(`${PRIVY_BASE}${path}`, {
+    const response = await fetch(`${PRIVY_BASE}${sanitizedPath}`, {
       ...rest,
       headers: { ...headers(idempotencyKey), ...(rest.headers ?? {}) },
     });
@@ -458,16 +575,55 @@ const ERC20_TOKENS: Record<string, { mainnet?: string; testnet?: string }> = {
     testnet: '0x01C5C0122039549AD1493B8220cABEdD739BC44E',
   },
   'celo:usdt': {
+    // Tether native USDT on Celo — verified from official Celo docs and Tether.io
+    // Mainnet: https://celoscan.io/token/0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e
+    // Testnet: Celo Sepolia USDT — https://celoscan.io/token/0xd077A400968890Eacc75cdc901F0356c943e4fDb
     mainnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
-    testnet: '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e',
+    testnet: '0xd077A400968890Eacc75cdc901F0356c943e4fDb',
   },
   'celo:cusd': {
+    // Mento cUSD — verified from official Celo docs
     mainnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
-    testnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
+    testnet: '0x874069Fa1Eb16D44d622F2e0Ca25eeA172369bC1',
+  },
+  'celo:usdm': {
+    // Mento USDm (US Dollar) — verified from official Celo docs
+    // Mainnet: https://celoscan.io/token/0x765DE816845861e75A25fCA122bb6898B8B1282a
+    // Testnet: Celo Sepolia USDm — https://celoscan.io/token/0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b
+    mainnet: '0x765DE816845861e75A25fCA122bb6898B8B1282a',
+    testnet: '0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b',
   },
   'bsc:usdc': {
     mainnet: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
     testnet: '0x64544969ed7EBf5f083679233325356EbE738930',
+  },
+  /**
+   * Arbitrum USDC. Both are Circle NATIVE USDC, not the bridged USDC.e.
+   *
+   * Each was read back from its own RPC with symbol() and decimals() before
+   * being written here, the same standard the Celo entries were held to:
+   *   42161  0xaf88d065e77c8cC2239327C5EDb3A432268e5831  USDC  6dp
+   *   421614 0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d  USDC  6dp
+   *
+   * Worth the check on Arbitrum specifically. The bridged legacy token
+   * USDC.e at 0xFF97...5CC8 is still widely circulated and reports symbol()
+   * as exactly "USDC", so a symbol check does NOT tell them apart. Only
+   * name() does:
+   *
+   *   native   0xaf88...5831  "USD Coin"
+   *   bridged  0xFF97...5CC8  "USD Coin (Arb1)"
+   *
+   * The two are not interchangeable: USDC.e cannot be redeemed with Circle or
+   * moved by CCTP, so a transfer into it lands in an asset the recipient
+   * cannot off-ramp, with nothing in the symbol to warn anyone.
+   */
+  'arbitrum:usdc': {
+    mainnet: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+    testnet: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
+  },
+  'arbitrum:usdt': {
+    mainnet: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+    testnet: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
   },
   'bsc:usdt': {
     mainnet: '0x55d398326f99059fF775485246999027B3197955',
@@ -493,9 +649,32 @@ export function erc20TokenAddress(
   return production ? entry.mainnet : entry.testnet;
 }
 
-/** USDC and USDT are 6-decimal tokens on every chain Sivan supports. */
+/**
+ * USDC and USDT are 6-decimal ERC-20 tokens on every chain where they ARE an
+ * ERC-20. Kept for callers that are provably ERC-20-only.
+ *
+ * Prefer decimalsForChainAsset(). This overload cannot see the chain, and Arc
+ * is the case where the chain decides the answer.
+ */
 export function decimalsFor(asset: string): number {
   return ['usdc', 'usdt'].includes(String(asset).toLowerCase()) ? 6 : 18;
+}
+
+/**
+ * Decimals for an asset ON A GIVEN CHAIN.
+ *
+ * Arc broke the assumption that USDC is always 6dp. Arc's USDC is the NATIVE
+ * gas token and is 18dp at the protocol level, so the decimal count is a
+ * property of the (chain, asset) pair, not of the asset alone.
+ *
+ * This matters more than most off-by-one bugs because it does not throw. Using
+ * 6 where 18 is correct reports a balance 10^12 times too large, and formats
+ * cleanly the whole way to the user's screen.
+ */
+export function decimalsForChainAsset(chain: WalletChain, asset: string): number {
+  const a = String(asset).toLowerCase();
+  if (usesNativeStablecoin(chain) && a === 'usdc') return 18;
+  return decimalsFor(a);
 }
 
 /**
@@ -568,7 +747,7 @@ export class PrivyWalletProvider implements WalletProvider {
    * Base is served by the Ethereum wallet - same key, same address - so all
    * three are supported with only TWO keys per user.
    */
-  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb'];
+  readonly supportedChains: readonly string[] = ['solana', 'ethereum', 'base', 'celo', 'bsc', 'bnb', 'arbitrum', 'arc'];
 
   /**
    * Create (or return) the user's wallet for a chain.
@@ -650,9 +829,32 @@ export class PrivyWalletProvider implements WalletProvider {
 
   /**
    * The user's existing wallet of a chain type, if any.
+   *
+   * WHY chain IS NOT ALWAYS 'ethereum' FOR NON-SOLANA TYPES.
+   *
+   * The original code did `chainType === 'solana' ? 'solana' : 'ethereum'`,
+   * which collapsed 'starknet' (and any future non-EVM chain type) to
+   * 'ethereum'. This had two failure modes:
+   *
+   *   1. DB lookup: `db.findUserWallet(userId, 'ethereum')` returns an EVM
+   *      wallet for a starknet request, so the EVM wallet is returned early
+   *      with chain='starknet' — wrong address, wrong family.
+   *
+   *   2. Privy linked_accounts path: the account is found by chain_type filter
+   *      (correct) but then returned via toProviderWallet(wallet, 'ethereum')
+   *      — right wallet, wrong chain label, so the record never matches on the
+   *      ReceiveView lookup (w.chain === 'starknet').
+   *
+   * The fix: resolve chain from chainType directly. Starknet is its own family
+   * and must stay 'starknet' all the way through.
    */
   private async findWallet(userId: string, chainType: string): Promise<ProviderWallet | undefined> {
-    const chain = chainType === 'solana' ? 'solana' : 'ethereum';
+    const chain: WalletChain =
+      chainType === 'solana'
+        ? 'solana'
+        : chainType === 'starknet'
+        ? 'starknet'
+        : 'ethereum';
     const dbWallet = await db.findUserWallet(userId, chain as any).catch(() => undefined);
     if (dbWallet?.providerWalletId) {
       const full = await privyRequest<any>(`/wallets/${encodeURIComponent(dbWallet.providerWalletId)}`).catch(() => undefined);
@@ -704,7 +906,7 @@ export class PrivyWalletProvider implements WalletProvider {
 
   async getWallet(providerWalletId: string): Promise<ProviderWallet> {
     const raw = await privyRequest<any>(`/wallets/${encodeURIComponent(providerWalletId)}`);
-    return this.toProviderWallet(raw, raw?.chain_type === 'solana' ? 'solana' : 'ethereum');
+    return this.toProviderWallet(raw, privyChainTypeToWalletChain(raw?.chain_type));
   }
 
   async listWallets(providerCustomerId: string): Promise<ProviderWallet[]> {
@@ -713,7 +915,7 @@ export class PrivyWalletProvider implements WalletProvider {
     return (user?.linked_accounts ?? [])
       .filter((account: any) => account?.type === 'wallet')
       .map((account: any) =>
-        this.toProviderWallet(account, account?.chain_type === 'solana' ? 'solana' : 'ethereum')
+        this.toProviderWallet(account, privyChainTypeToWalletChain(account?.chain_type))
       );
   }
 
@@ -777,7 +979,19 @@ export class PrivyWalletProvider implements WalletProvider {
 
     if (chain === 'stellar') {
       const { readStellarTokenBalances } = await import('../stellar/stellar-rpc.js');
-      const stellarBalances = await readStellarTokenBalances(address).catch(() => ({ usdc: 0, usdt: 0, xlm: 0 }));
+      /**
+       * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+       *
+       * The old code caught any Stellar RPC error and silently returned all
+       * three assets as 0. This poisoned `lastSeen` in the deposit detector:
+       * the next successful read looked like a deposit of the user's entire
+       * Stellar holding.
+       *
+       * Re-throwing causes the detector's per-wallet try/catch to skip this
+       * chain entirely and leave `lastSeen` untouched, so the next tick diffs
+       * against the last figure we actually believed.
+       */
+      const stellarBalances = await readStellarTokenBalances(address);
       return [
         {
           asset: 'usdc',
@@ -797,11 +1011,64 @@ export class PrivyWalletProvider implements WalletProvider {
       ];
     }
 
+    if (chain === 'starknet') {
+      return this.starknetBalances(address, production);
+    }
+
     // USDC and USDT where a contract is known for this chain and network. A
     // missing entry is skipped rather than reported as zero: Base has no
     // native USDT, and "0 USDT on Base" would be an invented figure.
     const balances: WalletBalance[] = [];
-    const assetsToCheck: WalletAsset[] = chain === 'celo' ? ['usdc', 'usdt', 'cusd'] : ['usdc', 'usdt'];
+
+    /**
+     * Arc settles USDC as the NATIVE coin, so there is no ERC-20 contract to
+     * read and erc20TokenAddress() correctly returns undefined for it. Without
+     * this branch the loop below would `continue` past every asset and report
+     * an empty balance list for a funded Arc wallet.
+     *
+     * No contractAddress is set on the result: there is no contract, and
+     * inventing one would be a lie the UI would happily render as a link.
+     */
+    if (usesNativeStablecoin(chain)) {
+      try {
+        const amount = await nativeBalanceOf(
+          chain,
+          address,
+          decimalsForChainAsset(chain, 'usdc'),
+          { production }
+        );
+        balances.push({ asset: 'usdc', chain, amount });
+      } catch {
+        /**
+         * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+         *
+         * Do not push amount:'0' here. The deposit-detection poller would
+         * store 0 in lastSeen and record the entire real balance as a new
+         * deposit on the next successful read (the Arc phantom-deposit bug).
+         *
+         * Returning an empty list causes the poller's outer try/catch (for the
+         * whole chain) to NOT apply, but the inner per-asset loop simply sees
+         * no USDC entry and leaves lastSeen untouched for this tick.
+         */
+      }
+      return balances;
+    }
+
+    if (chain === 'celo') {
+      try {
+        const celoAmount = await nativeBalanceOf(
+          'celo',
+          address,
+          18,
+          { production }
+        );
+        balances.push({ asset: 'celo', chain: 'celo', amount: celoAmount });
+      } catch (err) {
+        console.warn('[getBalances] Native CELO read failed on celo:', err instanceof Error ? err.message : err);
+      }
+    }
+
+    const assetsToCheck: WalletAsset[] = chain === 'celo' ? ['usdc', 'usdt', 'usdm'] : ['usdc', 'usdt'];
     for (const asset of assetsToCheck) {
       const token = erc20TokenAddress(chain, asset, production);
       if (!token) continue;
@@ -811,14 +1078,26 @@ export class PrivyWalletProvider implements WalletProvider {
           chain,
           token,
           address,
-          decimalsFor(asset),
+          decimalsForChainAsset(chain, asset),
           { production }
         );
 
         balances.push({ asset, chain, amount, contractAddress: token });
       } catch (err) {
-        // Individual token contract read error defaults to 0 rather than failing the entire wallet
-        balances.push({ asset, chain, amount: '0', contractAddress: token });
+        /**
+         * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+         *
+         * The old code pushed amount:'0' on any ERC-20 read failure (Arbitrum
+         * timeout, rate-limit, etc.). The deposit-detection poller stored that
+         * 0 in lastSeen; the next successful read reported the full balance as
+         * a new deposit — exactly the Arbitrum phantom-deposit bug observed in
+         * production (dep_349ef453, dep_cdc45068, etc.).
+         *
+         * Omitting the asset here means lastSeen is unchanged for this tick.
+         * The next successful read picks up from the last known-good value and
+         * only fires for the real delta.
+         */
+        console.warn(`[getBalances] ERC-20 read failed for ${asset} on ${chain}, omitting from result to protect deposit baseline`, err instanceof Error ? err.message : err);
       }
     }
 
@@ -844,27 +1123,107 @@ export class PrivyWalletProvider implements WalletProvider {
       const mint = solanaMintFor(asset, production);
       if (!mint) continue;
 
-      const { result } = await solanaRpc<any>(
-        'getTokenAccountsByOwner',
-        [address, { mint }, { encoding: 'jsonParsed' }],
+      try {
+        const { result } = await solanaRpc<any>(
+          'getTokenAccountsByOwner',
+          [address, { mint }, { encoding: 'jsonParsed' }],
+          { production }
+        );
+
+        const accounts: any[] = result?.value ?? [];
+
+        // Summed, not first-only. One owner can hold several accounts for the
+        // same mint, and showing only one under-reports the holding.
+        const total = accounts.reduce((sum, account) => {
+          const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
+          return sum + (raw ? BigInt(raw) : 0n);
+        }, 0n);
+
+        balances.push({
+          asset,
+          chain: 'solana',
+          amount: fromBaseUnits(total, 6),
+          contractAddress: mint,
+        });
+      } catch (err: any) {
+        /**
+         * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+         *
+         * A genuine "no token account for this mint" returns { value: [] }
+         * from the RPC without throwing - that path above correctly sums to 0
+         * and pushes '0.000000'. A throw here is a real RPC error (cluster-mint
+         * mismatch, node timeout, rate-limit, etc.), NOT a confirmed zero.
+         *
+         * The old code pushed '0.000000' on error, poisoning lastSeen in the
+         * deposit detector. The next successful read reported the entire Solana
+         * balance as a new deposit.
+         *
+         * Omitting the asset leaves lastSeen unchanged for this tick. The next
+         * successful read diffs against the last figure we actually believed.
+         */
+        console.warn(`[solanaBalances] getTokenAccountsByOwner failed for ${asset}, omitting from result to protect deposit baseline:`, err?.message || err);
+      }
+    }
+
+    return balances;
+  }
+
+  /**
+   * Token balances (USDC, STRK) for a Starknet address.
+   */
+  private async starknetBalances(address: string, production: boolean): Promise<WalletBalance[]> {
+    const normalised = normaliseStarknetAddress(address);
+    const balances: WalletBalance[] = [];
+
+    const usdcAddress = production
+      ? STARKNET_USDC.mainnet
+      : (process.env.STARKNET_USDC_TESTNET_ADDRESS || '0x0512feAc6339Ff7889822cb5aA2a86C848e9D392bB0E3E237C008674feeD8343');
+
+    // 1. USDC
+    try {
+      const amount = await starknetErc20Balance(
+        usdcAddress,
+        normalised,
+        STARKNET_USDC_DECIMALS,
         { production }
       );
-
-      const accounts: any[] = result?.value ?? [];
-
-      // Summed, not first-only. One owner can hold several accounts for the
-      // same mint, and showing only one under-reports the holding.
-      const total = accounts.reduce((sum, account) => {
-        const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
-        return sum + (raw ? BigInt(raw) : 0n);
-      }, 0n);
-
       balances.push({
-        asset,
-        chain: 'solana',
-        amount: fromBaseUnits(total, 6),
-        contractAddress: mint,
+        asset: 'usdc',
+        chain: 'starknet',
+        amount: Number(amount).toFixed(6),
+        contractAddress: usdcAddress,
       });
+    } catch {
+      /**
+       * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+       *
+       * Omit the asset rather than pushing '0.000000'. The deposit detector
+       * leaves lastSeen untouched when an asset is absent from the result,
+       * preventing phantom deposits on Starknet after a node hiccup.
+       */
+    }
+
+    // 2. STRK
+    const strkAddress = production ? STARKNET_STRK.mainnet : STARKNET_STRK.testnet;
+    try {
+      const amount = await starknetErc20Balance(
+        strkAddress,
+        normalised,
+        18,
+        { production }
+      );
+      balances.push({
+        asset: 'strk',
+        chain: 'starknet',
+        amount: Number(amount).toFixed(6),
+        contractAddress: strkAddress,
+      });
+    } catch {
+      /**
+       * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+       *
+       * Same reasoning as the USDC catch above. Omit rather than zero.
+       */
     }
 
     return balances;
@@ -973,6 +1332,41 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendCeloTransfer(input, signingKey, caip2);
     }
 
+    /**
+     * Arc sends USDC as a NATIVE value transfer, not an ERC-20 call.
+     *
+     * The generic EVM path below builds `to: <token contract>` with an
+     * encoded transfer(address,uint256) and `value: 0x0`. On Arc there is no
+     * USDC contract (eth_getCode at every well-known USDC address returns 0x),
+     * so that transaction would be sent to an address with no code. It would
+     * not revert. It would succeed as a plain value transfer of ZERO to a dead
+     * address, burn the gas, and report a hash the user could paste into an
+     * explorer and see "success" on, with nothing moved.
+     *
+     * Hence: recipient in `to`, amount in `value`, no calldata.
+     *
+     * 18 decimals, sourced from decimalsForChainAsset. Arc's native USDC is
+     * 18dp; using the ERC-20 default of 6 would send 10^12 times too little.
+     */
+    /**
+     * Starknet is not EVM and cannot use any branch below it. It is dispatched
+     * here, before the native and ERC-20 EVM paths, because those both assume
+     * an eth_sendTransaction shaped request that Privy will broadcast. On
+     * Starknet Privy signs only, and the paymaster broadcasts.
+     */
+    if (input.chain === 'starknet') {
+      return this.sendStarknetTransfer(input, signingKey);
+    }
+
+    if (usesNativeStablecoin(input.chain)) {
+      if (String(input.asset).toLowerCase() !== 'usdc') {
+        throw forbidden(
+          `Arc settles in USDC only. ${String(input.asset).toUpperCase()} is not available on Arc.`
+        );
+      }
+      return this.sendNativeEvmTransfer(input, signingKey, caip2);
+    }
+
     // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
     // disagreeing is the specific failure this parameter exists to prevent: a
     // mainnet USDC contract addressed on Base Sepolia is not a token contract
@@ -983,7 +1377,8 @@ export class PrivyWalletProvider implements WalletProvider {
       throw forbidden(`No ${input.asset.toUpperCase()} contract known for ${input.chain}.`);
     }
 
-    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
 
     const body = {
       method: 'eth_sendTransaction',
@@ -1042,6 +1437,57 @@ export class PrivyWalletProvider implements WalletProvider {
       throw new Error(`Privy: ${message}`);
     }
 
+    const evmTxHash: string | undefined = result?.data?.hash || result?.hash || undefined;
+    const userOpHash: string | undefined = result?.data?.user_operation_hash || undefined;
+    const isSponsored = Boolean(result?.data?.sponsorship_provider);
+
+    /**
+     * RECEIPT VERIFICATION — guard against false success receipts on EVM chains.
+     *
+     * For NON-SPONSORED transactions we have a real txHash immediately and can
+     * poll eth_getTransactionReceipt inline to verify status 0x1 before reporting
+     * success. This matches the fix applied to the Celo settlement relayer.
+     *
+     * For SPONSORED (ERC-4337 user operations) no txHash exists until a bundler
+     * includes the user operation in a block, so we cannot poll synchronously.
+     * Those fall through to 'submitted' and the background transfer-confirmation
+     * poller confirms them asynchronously.
+     *
+     * A reverted non-sponsored tx throws immediately so the balance hold is
+     * released and the user is told the truth: the send failed on-chain.
+     */
+    const production = isProduction(input.networkMode);
+    if (evmTxHash && !isSponsored && /^0x[0-9a-fA-F]{64}$/.test(evmTxHash)) {
+      const receiptResult = await waitForEvmReceipt(input.chain, evmTxHash, {
+        production,
+        pollAttempts: 15,  // 30s max — keeps the HTTP response under gateway timeout
+        pollIntervalMs: 2_000,
+      });
+
+      if (receiptResult.reverted) {
+        console.error(
+          `[privy.createTransfer] ${input.chain} tx ${evmTxHash} reverted (status 0x0). No funds transferred.`
+        );
+        throw new Error(
+          `Transaction reverted on-chain (status 0x0). No funds were transferred. txHash: ${evmTxHash}`
+        );
+      }
+
+      const confirmedStatus = receiptResult.confirmed ? 'confirmed' : 'submitted';
+      return {
+        provider: this.name,
+        providerTransferId:
+          result?.data?.transaction_id ||
+          result?.transaction_id ||
+          evmTxHash,
+        status: confirmedStatus,
+        txHash: evmTxHash,
+        userOperationHash: userOpHash,
+        sponsored: false,
+        rawProviderPayload: { ...result, confirmed: receiptResult.confirmed },
+      };
+    }
+
     return {
       provider: this.name,
       // `??` was wrong here. A SPONSORED transaction is an ERC-4337 user
@@ -1060,13 +1506,396 @@ export class PrivyWalletProvider implements WalletProvider {
         result?.data?.user_operation_hash ||
         result?.data?.hash ||
         `privy_tx_${crypto.randomUUID()}`,
+      // 'submitted' for sponsored txs — background poller will confirm.
       status: 'submitted',
       // Deliberately left undefined rather than '' when sponsored: there is no
       // transaction hash yet, and an empty string reads as "we have one".
-      txHash: result?.data?.hash || result?.hash || undefined,
-      userOperationHash: result?.data?.user_operation_hash || undefined,
-      sponsored: Boolean(result?.data?.sponsorship_provider),
+      txHash: evmTxHash,
+      userOperationHash: userOpHash,
+      sponsored: isSponsored,
       rawProviderPayload: result,
+    };
+  }
+
+  /**
+   * Move the NATIVE coin out of an EVM wallet.
+   *
+   * Arc is the only chain that takes this path today. Its settlement asset,
+   * USDC, IS the native gas token, so a transfer is `to` plus `value` with no
+   * calldata, exactly like sending ETH on Ethereum.
+   *
+   * Kept separate from the generic EVM path rather than adding a branch inside
+   * it, because the two build fundamentally different transactions and the
+   * failure mode of confusing them is silent. The ERC-20 path sets
+   * `to: <contract>` and `value: 0x0`; run against Arc, where no USDC contract
+   * exists, that sends zero to an address with no code. It does not revert. It
+   * produces a hash that shows "success" in an explorer while moving nothing.
+   *
+   * Amount is converted with decimalsForChainAsset, which returns 18 for Arc
+   * USDC. The ERC-20 default of 6 would transfer 10^12 times too little and
+   * would also not revert.
+   */
+  private async sendNativeEvmTransfer(
+    input: WalletTransferInput,
+    signingKey: string,
+    caip2: string
+  ): Promise<WalletTransfer> {
+    const decimals = decimalsForChainAsset(input.chain, input.asset);
+    const value = '0x' + toBaseUnits(input.amount, decimals).toString(16);
+
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
+
+    const numericChainId = Number(caip2.replace(/^eip155:/, ''));
+    const body: Record<string, unknown> = {
+      method: 'eth_sendTransaction',
+      caip2,
+      // On Arc, USDC is the native gas token. The wallet holds native USDC and
+      // pays its own gas without needing external paymasters/sponsorship.
+      // Explicitly omit sponsor: true to avoid 400 invalid_data on custom networks.
+      params: {
+        transaction: {
+          to: input.toAddress,
+          value,
+          ...(Number.isFinite(numericChainId) && numericChainId > 0 ? { chain_id: numericChainId } : {}),
+          // No calldata. A native transfer carries none, and sending an
+          // encoded ERC-20 call here would be interpreted by a plain EOA
+          // recipient as nothing at all while still moving `value`.
+        },
+      },
+    };
+
+    const { appId } = credentials();
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result: any = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = String(result?.error ?? result?.message ?? `HTTP ${response.status}`);
+
+      /**
+       * Arc is a new chain and gas sponsorship may not be configured.
+       * Keep message free of provider names so safeUserMessage preserves it.
+       */
+      if (/gas sponsorship is not (enabled|configured)/i.test(message)) {
+        throw forbidden(
+          `Gas sponsorship is not available for ${caip2}. The wallet must hold native currency to pay its own gas.`
+        );
+      }
+      if (/unsupported|unknown|not supported/i.test(message) && /chain|network|caip/i.test(message)) {
+        throw forbidden(
+          `Network ${caip2} is not recognised by the signing infrastructure. Network support must be enabled before transfers on this network can be signed.`
+        );
+      }
+      throw new Error(`Signing failed: ${message}`);
+    }
+
+    const evmTxHash: string | undefined = result?.data?.hash || result?.hash || undefined;
+    const userOpHash: string | undefined = result?.data?.user_operation_hash || undefined;
+    const isSponsored = Boolean(result?.data?.sponsorship_provider);
+
+    // Same receipt discipline as the ERC-20 path: a non-sponsored tx has a
+    // real hash now and is polled inline, so a revert is reported as a
+    // failure rather than as a receipt the user could screenshot.
+    const production = isProduction(input.networkMode);
+    if (evmTxHash && !isSponsored && /^0x[0-9a-fA-F]{64}$/.test(evmTxHash)) {
+      const receiptResult = await waitForEvmReceipt(input.chain, evmTxHash, {
+        production,
+        // Arc finalises in well under a second, so 10 attempts is already
+        // generous. Kept polling rather than assuming, because "fast chain"
+        // is not "instant node indexing".
+        pollAttempts: 10,
+        pollIntervalMs: 2_000,
+      });
+
+      if (receiptResult.reverted) {
+        console.error(
+          `[privy.sendNativeEvmTransfer] ${input.chain} tx ${evmTxHash} reverted (status 0x0). No funds transferred.`
+        );
+        throw new Error(
+          `Transaction reverted on-chain (status 0x0). No funds were transferred. txHash: ${evmTxHash}`
+        );
+      }
+
+      return {
+        provider: this.name,
+        providerTransferId:
+          result?.data?.transaction_id || result?.transaction_id || evmTxHash,
+        status: receiptResult.confirmed ? 'confirmed' : 'submitted',
+        txHash: evmTxHash,
+        userOperationHash: userOpHash,
+        sponsored: false,
+        rawProviderPayload: { ...result, confirmed: receiptResult.confirmed },
+      };
+    }
+
+    return {
+      provider: this.name,
+      providerTransferId:
+        result?.data?.transaction_id ||
+        result?.transaction_id ||
+        result?.data?.user_operation_hash ||
+        result?.data?.hash ||
+        `privy_tx_${crypto.randomUUID()}`,
+      status: 'submitted',
+      txHash: evmTxHash,
+      userOperationHash: userOpHash,
+      sponsored: isSponsored,
+      rawProviderPayload: result,
+    };
+  }
+
+  /**
+   * Move USDC out of a user's Starknet wallet, with gas abstracted.
+   *
+   * THREE STEPS, AND THE REASON THE SHAPE IS UNUSUAL.
+   *
+   * Privy supports Starknet at TIER 2: it creates the STARK curve wallet and
+   * signs a hash via raw_sign, but it will NOT broadcast, and it does not
+   * sponsor gas on Starknet at all. Every other chain here either has Privy
+   * broadcast (EVM, Solana) or has us broadcast a locally assembled raw
+   * transaction (Celo CIP-64). Starknet can do neither cheaply, because v3
+   * invoke hashing covers calldata, nonce, resource bounds, tip, paymaster
+   * data and both DA modes.
+   *
+   * The AVNU paymaster removes the problem rather than solving it:
+   *
+   *   1. paymaster_buildTransaction   AVNU returns SNIP-12 typed data
+   *   2. raw_sign                     Privy signs the typed data hash
+   *   3. paymaster_executeTransaction AVNU SUBMITS the transaction
+   *
+   * So sign-only is sufficient and we never touch
+   * starknet_addInvokeTransaction.
+   *
+   * FEE MODE. Default is the USER paying gas in USDC, so Sivan carries no
+   * float and there is no sponsorship balance that can run dry and halt the
+   * chain. Sponsorship is used for exactly one case: an account that is not
+   * yet deployed. On Starknet an account IS a contract, and a brand new one
+   * holds nothing to pay with, so that first transaction has to be on us.
+   */
+  private async sendStarknetTransfer(
+    input: WalletTransferInput,
+    signingKey: string
+  ): Promise<WalletTransfer> {
+    if (String(input.asset).toLowerCase() !== 'usdc') {
+      throw forbidden(
+        `Starknet settles in USDC only. ${String(input.asset).toUpperCase()} is not available.`
+      );
+    }
+
+    const production = isProduction(input.networkMode);
+    const token = production ? STARKNET_GAS_TOKEN.mainnet : STARKNET_GAS_TOKEN.testnet;
+    if (!token) {
+      throw forbidden('No Starknet USDC address is configured for this network mode.');
+    }
+
+    const senderWallet = await this.getWallet(input.providerWalletId).catch(() => undefined);
+    const senderAddress = senderWallet?.address;
+    if (!senderAddress) {
+      throw forbidden('Starknet wallet address could not be resolved for this transfer.');
+    }
+
+    /**
+     * Addresses are normalised before they touch calldata or the paymaster.
+     * Starknet drops leading zeros freely, so 0x123 and 0x0123 are the same
+     * account. Comparing or keying on the raw string is how one user ends up
+     * with two wallet rows and a split balance.
+     */
+    const from = normaliseStarknetAddress(senderAddress);
+    const to = normaliseStarknetAddress(input.toAddress);
+
+    const feeWallet = (process.env.SIVAN_FEE_WALLET_STARKNET || '').trim();
+    const calls = buildSivanTransferCalls({
+      tokenAddress: token,
+      recipient: to,
+      amount: input.amount,
+      decimals: STARKNET_USDC_DECIMALS,
+      feeAmount: input.feeAmount,
+      feeRecipient: feeWallet ? normaliseStarknetAddress(feeWallet) : undefined,
+    });
+
+    /**
+     * ACCOUNT DEPLOYMENT.
+     *
+     * On Starknet an account IS a contract. A wallet Privy has just created
+     * has a counterfactual address with nothing at it: funds can be sent TO
+     * it, but it cannot send, because there is no contract to verify its
+     * signature. Sponsoring its gas does not help, since the transaction has
+     * nothing to execute against.
+     *
+     * SNIP-29 deploy_and_invoke creates the account and runs the transfer in
+     * one atomic sponsored transaction, which is the only way a brand new user
+     * can make their first payment.
+     *
+     * The deployment payload is checked to derive EXACTLY this address before
+     * it is submitted. A mismatch would deploy a working account somewhere
+     * else and strand the funds already sent here, silently. buildAccountDeployment
+     * refuses rather than returning an unverified payload.
+     */
+    const deployed = await isAccountDeployed(from, { production }).catch(() => true);
+
+    let deployment: unknown;
+    if (!deployed) {
+      const publicKey =
+        (senderWallet as any)?.publicKey ??
+        (senderWallet as any)?.rawProviderPayload?.public_key ??
+        (senderWallet as any)?.rawProviderPayload?.publicKey;
+
+      if (!publicKey) {
+        throw forbidden(
+          'This Starknet account is not deployed yet and its public key is not on the ' +
+            'wallet record, so the deployment payload cannot be built. The key is ' +
+            'returned by Privy at wallet creation and is required, because it determines ' +
+            'the account address.'
+        );
+      }
+
+      try {
+        deployment = buildAccountDeployment({ address: from, publicKey: String(publicKey) });
+      } catch (error: any) {
+        // Surfaced verbatim: these messages name the exact missing input
+        // (class hash, public key) or the address mismatch, and each has a
+        // different remedy.
+        throw forbidden(`Starknet account deployment could not be prepared. ${String(error?.message ?? error)}`);
+      }
+    }
+
+    /**
+     * Sponsored only while deploying. Once the account exists the user pays
+     * gas in USDC, so Sivan carries no float and no sponsorship balance can
+     * run dry and halt the chain.
+     */
+    const feeMode = deployed ? defaultFeeMode(production) : sponsoredFeeMode();
+
+    // ── 1. Ask the paymaster to build it ───────────────────────────
+    let built: any;
+    try {
+      built = await buildPaymasterTransaction(from, calls, feeMode, { production }, deployment);
+    } catch (error: any) {
+      const msg = String(error?.message ?? error);
+      if (/gas token|not supported|unsupported token/i.test(msg)) {
+        throw forbidden(
+          `The paymaster does not currently accept our settlement token as gas on Starknet. ${msg}`
+        );
+      }
+      throw new Error(`Starknet paymaster build failed: ${msg}`);
+    }
+
+    const typedData = built?.typed_data ?? built?.typedData;
+    if (!typedData) {
+      throw new Error(
+        'Starknet paymaster did not return typed data to sign. ' +
+          `Response keys: ${Object.keys(built ?? {}).join(', ') || 'none'}`
+      );
+    }
+
+    // ── 2. Privy signs the SNIP-12 hash ────────────────────────────
+    const messageHash = computeTypedDataHash(typedData, from);
+
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
+    const body = { method: 'raw_sign', params: { hash: messageHash } };
+    const { appId } = credentials();
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...headers(input.idempotencyKey),
+        'privy-authorization-signature': authorizationSignature({
+          method: 'POST',
+          url,
+          body,
+          appId,
+          privateKeyPem: signingKey,
+          idempotencyKey: input.idempotencyKey,
+        }),
+      },
+      body: JSON.stringify(body),
+    });
+
+    const signResult: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const msg = String(signResult?.error ?? signResult?.message ?? `HTTP ${response.status}`);
+      /**
+       * Named explicitly because the remedy is a Privy dashboard or plan
+       * change, not a code change, and the raw message does not say so.
+       * Starknet is a Tier 2 chain on Privy and raw_sign is the only signing
+       * primitive available for it.
+       */
+      if (/not supported|unsupported|unknown chain|not enabled/i.test(msg)) {
+        throw forbidden(
+          'Privy has not enabled Starknet for this app, or raw_sign is not available on this plan. ' +
+            'Starknet is a Tier 2 chain: it needs raw_sign, since Privy will not broadcast for it.'
+        );
+      }
+      throw new Error(`Privy Starknet raw_sign: ${msg}`);
+    }
+
+    /**
+     * A STARK signature is a pair (r, s), two felts. Privy may return it as an
+     * array or as an object; both shapes are accepted, and anything else fails
+     * loudly rather than being coerced into a signature the paymaster would
+     * reject with a less useful error.
+     */
+    const raw = signResult?.data?.signature ?? signResult?.signature;
+    const signature: string[] = Array.isArray(raw)
+      ? raw.map(String)
+      : raw && typeof raw === 'object' && 'r' in raw && 's' in raw
+        ? [String((raw as any).r), String((raw as any).s)]
+        : [];
+    if (signature.length < 2) {
+      throw new Error(
+        `Privy Starknet raw_sign returned an unusable signature: ${JSON.stringify(raw)}. ` +
+          'Expected a STARK (r, s) pair.'
+      );
+    }
+
+    // ── 3. The paymaster broadcasts ────────────────────────────────
+    let executed: { transaction_hash?: string; tracking_id?: string };
+    try {
+      executed = await executePaymasterTransaction(
+        from, typedData, signature, feeMode, { production }, deployment
+      );
+    } catch (error: any) {
+      throw new Error(`Starknet paymaster execute failed: ${String(error?.message ?? error)}`);
+    }
+
+    const txHash = executed?.transaction_hash;
+    if (!txHash) {
+      throw new Error(
+        'Starknet paymaster accepted the transaction but returned no hash. ' +
+          `tracking_id: ${executed?.tracking_id ?? 'none'}`
+      );
+    }
+
+    /**
+     * 'submitted', not 'confirmed'. The paymaster has broadcast, which is not
+     * the same as inclusion. The background transfer-confirmation poller
+     * resolves it, exactly as it does for sponsored EVM user operations.
+     * Claiming 'confirmed' here would emit a receipt the user could screenshot
+     * before the transaction had landed.
+     */
+    return {
+      provider: this.name,
+      providerTransferId: executed?.tracking_id || txHash,
+      status: 'submitted',
+      txHash,
+      sponsored: feeMode.mode === 'sponsored',
+      rawProviderPayload: { ...executed, feeMode: feeMode.mode, accountDeployed: deployed, deployedInThisTx: !deployed },
     };
   }
 
@@ -1157,7 +1986,8 @@ export class PrivyWalletProvider implements WalletProvider {
         : {}),
     });
 
-    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
     const body = {
       method: 'signAndSendTransaction',
       caip2,
@@ -1234,6 +2064,75 @@ export class PrivyWalletProvider implements WalletProvider {
       (typeof result?.result === 'string' ? result.result : undefined) ||
       undefined;
 
+    /**
+     * SOLANA SIGNATURE STATUS VERIFICATION — guard against false receipts.
+     *
+     * signAndSendTransaction resolves when Privy broadcasts the transaction.
+     * The signature exists but the transaction has NOT yet been confirmed by
+     * the network. Showing a receipt immediately would be a false success
+     * notification if the transaction fails to land.
+     *
+     * Poll getSignatureStatuses for up to 30s (15 × 2s). Solana slots are
+     * ~400ms so the signature is normally confirmed within the first 2–3 polls.
+     *
+     * confirmed/finalized + err === null → status:'confirmed'
+     * err is set (InsufficientFunds, simulation failure etc.) → throw so the
+     *   balance hold is released and the user is told the truth.
+     * timeout → status:'submitted'; background poller handles the rest.
+     */
+    let solanaStatus: 'confirmed' | 'submitted' = 'submitted';
+    if (signature) {
+      const solanaPollAttempts = 15;
+      const solanaPollIntervalMs = 2_000;
+      const solRpcOpts = { production: isProduction(input.networkMode) };
+
+      for (let attempt = 0; attempt < solanaPollAttempts; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, solanaPollIntervalMs));
+
+        let statusResult: any = null;
+        try {
+          statusResult = await solanaRpc<any>(
+            'getSignatureStatuses',
+            [[signature], { searchTransactionHistory: true }],
+            solRpcOpts
+          );
+        } catch {
+          // RPC hiccup — not evidence the tx failed.
+          continue;
+        }
+
+        const statuses: any[] = statusResult?.result?.value ?? [];
+        const sigStatus = statuses[0];
+
+        if (!sigStatus) continue; // Not yet visible to this node.
+
+        if (sigStatus.err !== null && sigStatus.err !== undefined) {
+          // Transaction was processed and FAILED on-chain.
+          console.error(
+            `[privy.sendSolanaTransfer] Signature ${signature} confirmed with error:`,
+            sigStatus.err
+          );
+          throw new Error(
+            `Solana transaction failed on-chain: ${JSON.stringify(sigStatus.err)}. No funds were transferred. signature: ${signature}`
+          );
+        }
+
+        const cs = sigStatus.confirmationStatus;
+        if (cs === 'confirmed' || cs === 'finalized') {
+          solanaStatus = 'confirmed';
+          break;
+        }
+        // 'processed' is too early — tx is in a block but not yet confirmed
+        // by a supermajority of validators. Keep polling.
+      }
+
+      if (solanaStatus !== 'confirmed') {
+        console.warn(
+          `[privy.sendSolanaTransfer] Signature ${signature} did not reach confirmed status within ${solanaPollAttempts * solanaPollIntervalMs / 1000}s. Returning submitted.`
+        );
+      }
+    }
+
     return {
       provider: this.name,
       // Same empty-string trap as the EVM path above: `??` would let Privy's
@@ -1243,7 +2142,7 @@ export class PrivyWalletProvider implements WalletProvider {
         result?.transaction_id ||
         signature ||
         `privy_sol_${crypto.randomUUID()}`,
-      status: 'submitted',
+      status: solanaStatus,
       txHash: signature,
       sponsored: Boolean(result?.data?.sponsorship_provider),
       rawProviderPayload: {
@@ -1384,7 +2283,8 @@ export class PrivyWalletProvider implements WalletProvider {
     // -------------------------------------------------------------------
     // Step 2: Privy secp256k1_sign — Privy signs the hash inside HSM
     // -------------------------------------------------------------------
-    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(input.providerWalletId)}/rpc`;
+    const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
+    const rawSignUrl = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
     const rawSignBody = {
       method: 'secp256k1_sign',
       params: { hash: signingHash },
@@ -1426,77 +2326,122 @@ export class PrivyWalletProvider implements WalletProvider {
     const txHash = await celoRpc<string>('eth_sendRawTransaction', [rawTx], rpcOpts);
 
     // -------------------------------------------------------------------
-    // Step 4: Collect Sivan Protocol Fee on-chain if feeAmount > 0 and feeWallet configured
+    // Step 3b: RECEIPT VERIFICATION — guard against false success receipts.
+    //
+    // eth_sendRawTransaction resolves as soon as the node accepts the broadcast.
+    // It does NOT mean the transaction was included and it certainly does NOT
+    // mean it succeeded. A tx can be included and REVERT (status 0x0) — in that
+    // case no value moved and returning 'submitted' (let alone 'confirmed')
+    // would emit a false receipt the user could screenshot as proof of payment.
+    //
+    // Poll the receipt for up to ~30s (15 × 2s). Celo blocks every ~5s so the
+    // receipt normally arrives on attempt 1–3.
+    //
+    // Reverted → throw immediately so the balance hold is released and the user
+    //            is told the truth: the send failed on-chain.
+    // TimedOut → return 'submitted'; the background transfer-confirmation poller
+    //            will finish it and fire a confirmed notification.
     // -------------------------------------------------------------------
-    let feeTxHash: string | undefined;
-    const feeWallet = env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_FEE_WALLET_CELO?.trim();
-    const feeAmountNum = Number(input.feeAmount ?? 0);
+    if (txHash) {
+      const receiptResult = await waitForEvmReceipt('celo', txHash, {
+        production,
+        pollAttempts: 15,
+        pollIntervalMs: 2_000,
+      });
 
-    if (feeWallet && feeAmountNum > 0 && feeWallet.toLowerCase() !== senderAddress.toLowerCase()) {
-      try {
-        const collectionOn = await import('../wallet-controls.service.js')
-          .then((mod) => mod.getWalletControls())
-          .then((controls) => controls?.collectTransferFeeOnChain !== false)
-          .catch(() => false);
+      if (receiptResult.reverted) {
+        console.error(
+          `[privy.sendCeloTransfer] Transaction ${txHash} reverted (status 0x0). No funds were transferred.`
+        );
+        throw new Error(
+          `Celo transaction reverted on-chain (status 0x0). No funds were transferred. txHash: ${txHash}`
+        );
+      }
 
-        if (collectionOn) {
-          const feePayload = buildCeloTransferPayload({
-            tokenAddress: token,
-            recipientAddress: feeWallet,
-            amount: String(input.feeAmount),
-            decimals: decimalsFor(input.asset),
-          });
+      if (receiptResult.confirmed) {
+        // -------------------------------------------------------------------
+        // Step 4: Collect Sivan Protocol Fee on-chain if feeAmount > 0
+        // -------------------------------------------------------------------
+        let feeTxHash: string | undefined;
+        const feeWallet = env.SIVAN_FEE_WALLET_CELO?.trim() || process.env.SIVAN_FEE_WALLET_CELO?.trim();
+        const feeAmountNum = Number(input.feeAmount ?? 0);
 
-          const feeCip64Params = {
-            chainId,
-            nonce: nonce + 1n,
-            maxPriorityFeePerGas: maxPriority,
-            maxFeePerGas: maxFee,
-            gasLimit,
-            to: feePayload.to,
-            value: 0n,
-            data: feePayload.data,
-            feeCurrency,
-          };
+        if (feeWallet && feeAmountNum > 0 && feeWallet.toLowerCase() !== senderAddress.toLowerCase()) {
+          try {
+            const collectionOn = await import('../wallet-controls.service.js')
+              .then((mod) => mod.getWalletControls())
+              .then((controls) => controls?.collectTransferFeeOnChain !== false)
+              .catch(() => false);
 
-          const feeSigningHash = buildCip64SigningHash(feeCip64Params);
-          const feeIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}_fee` : undefined;
+            if (collectionOn) {
+              const feePayload = buildCeloTransferPayload({
+                tokenAddress: token,
+                recipientAddress: feeWallet,
+                amount: String(input.feeAmount),
+                decimals: decimalsFor(input.asset),
+              });
 
-          const feeSignBody = {
-            method: 'secp256k1_sign',
-            params: { hash: feeSigningHash },
-          };
+              const feeCip64Params = {
+                chainId,
+                nonce: nonce + 1n,
+                maxPriorityFeePerGas: maxPriority,
+                maxFeePerGas: maxFee,
+                gasLimit,
+                to: feePayload.to,
+                value: 0n,
+                data: feePayload.data,
+                feeCurrency,
+              };
 
-          const feeSignResponse = await fetch(rawSignUrl, {
-            method: 'POST',
-            headers: {
-              ...headers(feeIdempotencyKey),
-              'privy-authorization-signature': authorizationSignature({
+              const feeSigningHash = buildCip64SigningHash(feeCip64Params);
+              const feeIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}_fee` : undefined;
+              const feeSignBody = { method: 'secp256k1_sign', params: { hash: feeSigningHash } };
+
+              const feeSignResponse = await fetch(rawSignUrl, {
                 method: 'POST',
-                url: rawSignUrl,
-                body: feeSignBody,
-                appId,
-                privateKeyPem: signingKey,
-                idempotencyKey: feeIdempotencyKey,
-              }),
-            },
-            body: JSON.stringify(feeSignBody),
-          });
+                headers: {
+                  ...headers(feeIdempotencyKey),
+                  'privy-authorization-signature': authorizationSignature({
+                    method: 'POST',
+                    url: rawSignUrl,
+                    body: feeSignBody,
+                    appId,
+                    privateKeyPem: signingKey,
+                    idempotencyKey: feeIdempotencyKey,
+                  }),
+                },
+                body: JSON.stringify(feeSignBody),
+              });
 
-          const feeSignResult: any = await feeSignResponse.json().catch(() => ({}));
-          if (feeSignResponse.ok) {
-            const feePrivySignature: string = feeSignResult?.data?.signature ?? feeSignResult?.signature;
-            if (feePrivySignature) {
-              const feeRawTx = buildCip64SignedRawTx(feeCip64Params, feePrivySignature);
-              feeTxHash = await celoRpc<string>('eth_sendRawTransaction', [feeRawTx], rpcOpts);
+              const feeSignResult: any = await feeSignResponse.json().catch(() => ({}));
+              if (feeSignResponse.ok) {
+                const feePrivySignature: string = feeSignResult?.data?.signature ?? feeSignResult?.signature;
+                if (feePrivySignature) {
+                  const feeRawTx = buildCip64SignedRawTx(feeCip64Params, feePrivySignature);
+                  feeTxHash = await celoRpc<string>('eth_sendRawTransaction', [feeRawTx], rpcOpts);
+                }
+              } else {
+                console.warn('[privy.sendCeloTransfer] Fee sign note:', feeSignResult?.error ?? feeSignResult?.message);
+              }
             }
-          } else {
-            console.warn('[privy.sendCeloTransfer] Fee sign note:', feeSignResult?.error ?? feeSignResult?.message);
+          } catch (feeErr) {
+            console.warn('[privy.sendCeloTransfer] On-chain Celo protocol fee transfer note:', feeErr);
           }
         }
-      } catch (feeErr) {
-        console.warn('[privy.sendCeloTransfer] On-chain Celo protocol fee transfer note:', feeErr);
+
+        return {
+          provider: this.name,
+          providerTransferId: txHash,
+          status: 'confirmed',
+          txHash,
+          userOperationHash: undefined,
+          sponsored: false,
+          rawProviderPayload: { chainId: chainId.toString(), txHash, feeTxHash, feeCurrency, senderAddress, confirmed: true },
+        };
       }
+
+      // timedOut — broadcast is in flight, background poller will confirm.
+      console.warn(`[privy.sendCeloTransfer] Receipt for ${txHash} timed out after polling; returning submitted.`);
     }
 
     return {
@@ -1506,7 +2451,7 @@ export class PrivyWalletProvider implements WalletProvider {
       txHash: txHash || undefined,
       userOperationHash: undefined,
       sponsored: false,
-      rawProviderPayload: { chainId: chainId.toString(), txHash, feeTxHash, feeCurrency, senderAddress },
+      rawProviderPayload: { chainId: chainId.toString(), txHash, feeCurrency, senderAddress, confirmed: false },
     };
   }
 

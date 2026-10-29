@@ -61,6 +61,9 @@ const TESTNET_LABELS: Record<WalletChain, string> = {
   celo: 'Celo Sepolia',
   bsc: 'BSC Testnet',
   bnb: 'BSC Testnet',
+  arbitrum: 'Arbitrum Sepolia',
+  arc: 'Arc Testnet',
+  starknet: 'Starknet Sepolia',
 };
 
 export function networkLabel(mode: NetworkMode, chain: WalletChain): string {
