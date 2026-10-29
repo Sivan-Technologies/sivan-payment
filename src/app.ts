@@ -859,6 +859,7 @@ function requiresUserAuth(method: string, url: string): boolean {
   if (url.startsWith('/api/ngn/offramp/orders') || url.startsWith('/api/ghs/offramp/orders')) return false;
   if (url.startsWith('/api/ngn/utility')) return false;
   if (method === 'GET' && (url.startsWith('/api/ghs/banks') || url.startsWith('/api/ghs/bank-account/resolve'))) return false;
+  if (method === 'GET' && (url.startsWith('/api/ngn/banks') || url.startsWith('/api/ngn/bank-account/resolve') || url.startsWith('/api/ngn/paystack/banks') || url.startsWith('/api/ngn/paystack/bank-account/resolve'))) return false;
   if (url.startsWith('/api/ghs/payout-accounts')) return false;
   if (method === 'POST' && (url === '/api/users' || url === '/api/users/profile' || url === '/api/identity/reset-test-user')) return false;
 

@@ -102,7 +102,7 @@ export function isTransientPostgresError(error: unknown): boolean {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
-async function optionalQuery(client: pg.PoolClient, sql: string, params: unknown[] = []): Promise<{ rows: any[] }> {
+async function optionalQuery(client: pg.Pool | pg.PoolClient, sql: string, params: unknown[] = []): Promise<{ rows: any[] }> {
   try {
     return await client.query(sql, params);
   } catch (error: any) {
@@ -188,6 +188,38 @@ export class PostgresDatabase {
       console.error('[postgres.pool.error]', error?.message || error);
     });
     this.instrumentPoolQueries();
+    void this.ensureHotPathIndexes();
+  }
+
+  private async ensureHotPathIndexes() {
+    try {
+      await optionalQuery(
+        this.pool,
+        `create index if not exists idx_payments_wallet_deposits_unnotified_status_created
+           on payments_wallet_deposits (created_at asc)
+           where notified_at is null and status <> 'failed'`
+      );
+      await optionalQuery(
+        this.pool,
+        `create index if not exists payments_wallet_deposits_pending_idx
+           on payments_wallet_deposits (created_at asc)
+           where status = 'pending'`
+      );
+      await optionalQuery(
+        this.pool,
+        `create index if not exists idx_payments_user_wallets_open_created
+           on payments_user_wallets (created_at asc)
+           where status <> 'closed'`
+      );
+      await optionalQuery(
+        this.pool,
+        `create index if not exists idx_payments_auth_challenges_active_created
+           on payments_auth_challenges (created_at asc)
+           where consumed_at is null`
+      );
+    } catch (error) {
+      console.warn('[postgres.ensureHotPathIndexes] warning:', (error as Error)?.message || error);
+    }
   }
 
   private instrumentPoolQueries() {
@@ -293,7 +325,9 @@ export class PostgresDatabase {
       const supplierControls = await optionalQuery(client, 'select * from payments_supplier_controls order by id asc');
       const supplierVolumeGrants = await optionalQuery(client, 'select * from payments_supplier_volume_grants order by created_at asc');
       const webhookEvents = await client.query('select * from payments_webhook_events order by created_at asc');
-      const authChallenges = await client.query('select * from payments_auth_challenges order by created_at asc');
+      const authChallenges = await client.query(
+        'select * from payments_auth_challenges where consumed_at is null and expires_at > now() order by created_at asc'
+      );
       // Bound auditLogs to recent 100 entries so db.read() doesn't pull millions of historical rows.
       // Targeted queries use listAuditLogs() and listBalanceLedgerLogs().
       const auditLogs = await optionalQuery(client, 'select * from payments_audit_logs order by created_at desc limit 100');
@@ -487,45 +521,42 @@ export class PostgresDatabase {
   }
 
   async getAdminOverviewView() {
-    const client = await this.pool.connect();
-    try {
-      const [users, customers, externalAccounts, liquidationAddresses, withdrawals, onrampOrders, webhookEvents, withdrawalsByStatusRows, webhookEventsByTypeRows, recentUsers, recentCustomers, recentWithdrawals, recentOnrampOrders, recentWebhookEvents] = await Promise.all([
-        client.query('select count(*)::int as count from users'),
-        client.query('select count(*)::int as count from payments_customers'),
-        client.query('select count(*)::int as count from payments_external_accounts'),
-        client.query('select count(*)::int as count from payments_liquidation_addresses'),
-        client.query('select count(*)::int as count from payments_withdrawals'),
-        optionalQuery(client, 'select count(*)::int as count from payments_onramp_orders'),
-        client.query('select count(*)::int as count from payments_webhook_events'),
-        client.query('select status, count(*)::int as count from payments_withdrawals group by status'),
-        client.query("select coalesce(event_category, event_type, 'unknown') as key, count(*)::int as count from payments_webhook_events group by key"),
-        client.query('select * from users order by created_at desc limit 10'),
-        client.query('select * from payments_customers order by created_at desc limit 10'),
-        client.query('select * from payments_withdrawals order by created_at desc limit 10'),
-        optionalQuery(client, 'select * from payments_onramp_orders order by created_at desc limit 10'),
-        client.query('select * from payments_webhook_events order by created_at desc limit 10')
-      ]);
-      return {
-        counts: {
-          users: users.rows[0]?.count ?? 0,
-          customers: customers.rows[0]?.count ?? 0,
-          externalAccounts: externalAccounts.rows[0]?.count ?? 0,
-          liquidationAddresses: liquidationAddresses.rows[0]?.count ?? 0,
-          withdrawals: withdrawals.rows[0]?.count ?? 0,
-          onrampOrders: onrampOrders.rows[0]?.count ?? 0,
-          webhookEvents: webhookEvents.rows[0]?.count ?? 0
-        },
-        withdrawalsByStatus: Object.fromEntries(withdrawalsByStatusRows.rows.map((row) => [row.status, Number(row.count)])),
-        webhookEventsByType: Object.fromEntries(webhookEventsByTypeRows.rows.map((row) => [row.key, Number(row.count)])),
-        recent: {
-          users: recentUsers.rows.map(mapUser),
-          customers: recentCustomers.rows.map(mapCustomer),
-          withdrawals: recentWithdrawals.rows.map(mapWithdrawal),
-          onrampOrders: recentOnrampOrders.rows.map(mapOnrampOrder),
-          webhookEvents: recentWebhookEvents.rows.map(mapWebhookEvent)
-        }
-      };
-    } finally { client.release(); }
+    const [users, customers, externalAccounts, liquidationAddresses, withdrawals, onrampOrders, webhookEvents, withdrawalsByStatusRows, webhookEventsByTypeRows, recentUsers, recentCustomers, recentWithdrawals, recentOnrampOrders, recentWebhookEvents] = await Promise.all([
+      this.pool.query('select count(*)::int as count from users'),
+      this.pool.query('select count(*)::int as count from payments_customers'),
+      this.pool.query('select count(*)::int as count from payments_external_accounts'),
+      this.pool.query('select count(*)::int as count from payments_liquidation_addresses'),
+      this.pool.query('select count(*)::int as count from payments_withdrawals'),
+      optionalQuery(this.pool, 'select count(*)::int as count from payments_onramp_orders'),
+      this.pool.query('select count(*)::int as count from payments_webhook_events'),
+      this.pool.query('select status, count(*)::int as count from payments_withdrawals group by status'),
+      this.pool.query("select coalesce(event_category, event_type, 'unknown') as key, count(*)::int as count from payments_webhook_events group by key"),
+      this.pool.query('select * from users order by created_at desc limit 10'),
+      this.pool.query('select * from payments_customers order by created_at desc limit 10'),
+      this.pool.query('select * from payments_withdrawals order by created_at desc limit 10'),
+      optionalQuery(this.pool, 'select * from payments_onramp_orders order by created_at desc limit 10'),
+      this.pool.query('select * from payments_webhook_events order by created_at desc limit 10')
+    ]);
+    return {
+      counts: {
+        users: users.rows[0]?.count ?? 0,
+        customers: customers.rows[0]?.count ?? 0,
+        externalAccounts: externalAccounts.rows[0]?.count ?? 0,
+        liquidationAddresses: liquidationAddresses.rows[0]?.count ?? 0,
+        withdrawals: withdrawals.rows[0]?.count ?? 0,
+        onrampOrders: onrampOrders.rows[0]?.count ?? 0,
+        webhookEvents: webhookEvents.rows[0]?.count ?? 0
+      },
+      withdrawalsByStatus: Object.fromEntries(withdrawalsByStatusRows.rows.map((row) => [row.status, Number(row.count)])),
+      webhookEventsByType: Object.fromEntries(webhookEventsByTypeRows.rows.map((row) => [row.key, Number(row.count)])),
+      recent: {
+        users: recentUsers.rows.map(mapUser),
+        customers: recentCustomers.rows.map(mapCustomer),
+        withdrawals: recentWithdrawals.rows.map(mapWithdrawal),
+        onrampOrders: recentOnrampOrders.rows.map(mapOnrampOrder),
+        webhookEvents: recentWebhookEvents.rows.map(mapWebhookEvent)
+      }
+    };
   }
 
   async findUserById(userId: string) {
@@ -1076,23 +1107,20 @@ export class PostgresDatabase {
    * parallel on one connection.
    */
   async readControlTables() {
-    const client = await this.pool.connect();
-    try {
-      const [customerTypes, payouts, virtualAccounts, assets, networks] = await Promise.all([
-        client.query('select * from payments_customer_type_controls order by customer_type asc'),
-        client.query('select * from payments_control_settings order by currency asc'),
-        optionalQuery(client, 'select * from payments_virtual_account_controls order by currency asc'),
-        client.query('select * from payments_asset_controls order by asset asc'),
-        client.query('select * from payments_network_controls order by sort_order asc'),
-      ]);
-      return {
-        customerTypeControls: customerTypes.rows.map(mapCustomerTypeControl),
-        paymentControls: payouts.rows.map(mapPaymentControl),
-        virtualAccountControls: virtualAccounts.rows.map(mapVirtualAccountControl),
-        assetControls: assets.rows.map(mapAssetControl),
-        networkControls: networks.rows.map(mapNetworkControl),
-      };
-    } finally { client.release(); }
+    const [customerTypes, payouts, virtualAccounts, assets, networks] = await Promise.all([
+      this.pool.query('select * from payments_customer_type_controls order by customer_type asc'),
+      this.pool.query('select * from payments_control_settings order by currency asc'),
+      optionalQuery(this.pool, 'select * from payments_virtual_account_controls order by currency asc'),
+      this.pool.query('select * from payments_asset_controls order by asset asc'),
+      this.pool.query('select * from payments_network_controls order by sort_order asc'),
+    ]);
+    return {
+      customerTypeControls: customerTypes.rows.map(mapCustomerTypeControl),
+      paymentControls: payouts.rows.map(mapPaymentControl),
+      virtualAccountControls: virtualAccounts.rows.map(mapVirtualAccountControl),
+      assetControls: assets.rows.map(mapAssetControl),
+      networkControls: networks.rows.map(mapNetworkControl),
+    };
   }
 
   async listNgnControls(): Promise<NgnControlsRecord[]> {
