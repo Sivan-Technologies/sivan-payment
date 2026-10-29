@@ -324,7 +324,20 @@ export class JsonDatabase {
 
     // 3. Phone / WhatsApp match (normalize to E.164 and local)
     const digitsOnly = clean.replace(/\D/g, '');
-    const phoneCandidates = new Set([clean, `+${digitsOnly}`, digitsOnly, `whatsapp:+${digitsOnly}`, `whatsapp:${clean}`]);
+    const isTenDigitNgMobile = digitsOnly.length === 10 && /^[789][01]\d{8}$/.test(digitsOnly);
+    const phoneCandidates = new Set(
+      [
+        clean,
+        `+${digitsOnly}`,
+        digitsOnly,
+        `whatsapp:+${digitsOnly}`,
+        `whatsapp:${clean}`,
+        isTenDigitNgMobile ? `+234${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `234${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `0${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `whatsapp:+234${digitsOnly}` : undefined,
+      ].filter(Boolean) as string[]
+    );
     user = data.users.find((u) => {
       if (u.whatsappNumber && phoneCandidates.has(u.whatsappNumber)) return true;
       if (digitsOnly.length === 13 && digitsOnly.startsWith('234')) {
@@ -333,9 +346,27 @@ export class JsonDatabase {
       if (digitsOnly.length === 11 && digitsOnly.startsWith('0')) {
         return u.whatsappNumber === `+234${digitsOnly.slice(1)}` || u.whatsappNumber === digitsOnly;
       }
+      if (isTenDigitNgMobile) {
+        return u.whatsappNumber === `+234${digitsOnly}` || u.whatsappNumber === `0${digitsOnly}`;
+      }
       return false;
     });
     if (user) return backfillUser(user);
+
+    // 3b. Sivan Dedicated Virtual Account (10-digit NUBAN) match
+    if (digitsOnly.length === 10) {
+      const va = (data.virtualAccounts || []).find(
+        (a) =>
+          (a as any).accountNumber === digitsOnly ||
+          a.accountNumberMasked === digitsOnly ||
+          (a.rawProviderPayload as any)?.accountNumber === digitsOnly ||
+          (a.rawProviderPayload as any)?.account_number === digitsOnly
+      );
+      if (va?.userId) {
+        user = data.users.find((u) => u.id === va.userId);
+        if (user) return backfillUser(user);
+      }
+    }
 
     // 4. Telegram user ID match
     user = data.users.find((u) => u.telegramUserId === clean);

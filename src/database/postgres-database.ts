@@ -611,6 +611,7 @@ export class PostgresDatabase {
       }
 
       const digitsOnly = clean.replace(/\D/g, '');
+      const isTenDigitNgMobile = digitsOnly.length === 10 && /^[789][01]\d{8}$/.test(digitsOnly);
       const phoneCandidates = Array.from(new Set([
         clean,
         digitsOnly ? `+${digitsOnly}` : undefined,
@@ -619,7 +620,31 @@ export class PostgresDatabase {
         `whatsapp:${clean}`,
         digitsOnly.startsWith('234') && digitsOnly.length >= 12 ? `0${digitsOnly.slice(3)}` : undefined,
         digitsOnly.startsWith('0') && digitsOnly.length === 11 ? `+234${digitsOnly.slice(1)}` : undefined,
+        isTenDigitNgMobile ? `+234${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `234${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `0${digitsOnly}` : undefined,
+        isTenDigitNgMobile ? `whatsapp:+234${digitsOnly}` : undefined,
       ])).filter(Boolean);
+
+      if (digitsOnly.length === 10) {
+        const vaRes = await optionalQuery(
+          client,
+          `select user_id from payments_virtual_accounts where (account_number_masked = $1 or raw_provider_payload->>'accountNumber' = $1 or raw_provider_payload->>'account_number' = $1) and user_id is not null limit 1`,
+          [digitsOnly]
+        );
+        const dvaRes = !vaRes.rows[0]?.user_id
+          ? await optionalQuery(
+              client,
+              `select user_id from paystack_dedicated_accounts where account_number = $1 and user_id is not null limit 1`,
+              [digitsOnly]
+            )
+          : { rows: [] };
+        const matchedVaUserId = vaRes.rows[0]?.user_id || dvaRes.rows[0]?.user_id;
+        if (matchedVaUserId) {
+          const u = await client.query('select * from users where user_id = $1 limit 1', [matchedVaUserId]);
+          if (u.rows[0]) return mapUser(u.rows[0]);
+        }
+      }
 
       if (digitsOnly.length >= 7) {
         res = await client.query('select * from users where whatsapp_number = ANY($1) limit 1', [phoneCandidates]);
