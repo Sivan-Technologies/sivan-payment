@@ -151,9 +151,35 @@ export async function findDvaRecord(userId: string): Promise<VirtualAccountRecor
 
   // Cross-reference canonical user if userId was a phone number, channel id, or alias
   try {
-    const user = (await db.findUserById(userId)) || (await db.findUserByTarget(userId));
+    const cleanPhone = userId.replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+    const withPlus = `+${cleanPhone}`;
+    const withWhatsapp = `whatsapp:+${cleanPhone}`;
+
+    // Direct phone matching against stored virtual account userId representations
+    const byDirectPhone = all.find(
+      (r) => (r.userId === cleanPhone || r.userId === withPlus || r.userId === withWhatsapp) && r.provider === PROVIDER
+    );
+    if (byDirectPhone) return byDirectPhone;
+
+    let user = (await db.findUserById(userId)) || (await db.findUserByTarget(userId));
+    if (!user && cleanPhone) {
+      user = (await db.findUserByWhatsappNumber(withPlus))
+        || (await db.findUserByWhatsappNumber(cleanPhone))
+        || (await db.findUserByWhatsappNumber(withWhatsapp));
+
+      if (!user) {
+        const identityLinks = await db.listCustomerIdentityLinks();
+        const link = identityLinks.find(
+          (l) => l.status === 'linked' && (l.whatsappNumber === withPlus || l.whatsappNumber === withWhatsapp || l.whatsappNumber === cleanPhone)
+        );
+        if (link) user = await db.findUserById(link.paymentUserId);
+      }
+    }
+
     if (user && user.id !== userId) {
-      const byCanonical = all.find((r) => r.userId === user.id && r.provider === PROVIDER);
+      const byCanonical = all.find(
+        (r) => (r.userId === user.id || r.userId === user.whatsappNumber || (user as any).phone === r.userId) && r.provider === PROVIDER
+      );
       if (byCanonical) return byCanonical;
     }
   } catch {
