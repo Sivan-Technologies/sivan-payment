@@ -213,6 +213,7 @@ export async function balanceRoutes(app: FastifyInstance) {
           account: {
             id: activeNgn.id,
             bankName: activeNgn.bankName || 'Bank',
+            bankCode: (activeNgn as any).bankCode || (activeNgn as any).bank_code || '',
             currency: 'NGN',
             accountName: activeNgn.accountName,
             accountOwnerName: activeNgn.accountName,
@@ -232,10 +233,11 @@ export async function balanceRoutes(app: FastifyInstance) {
         account: primaryAccount ? {
           id: primaryAccount.id,
           bankName: primaryAccount.bankName,
+          bankCode: (primaryAccount as any).bankCode || (primaryAccount as any).bank_code || '',
           currency: primaryAccount.currency,
           accountName: primaryAccount.accountName || primaryAccount.accountOwnerName,
           accountOwnerName: primaryAccount.accountOwnerName,
-          accountNumber: primaryAccount.accountLast4,
+          accountNumber: (primaryAccount as any).accountNumber || primaryAccount.accountLast4,
         } : null,
       }
     };

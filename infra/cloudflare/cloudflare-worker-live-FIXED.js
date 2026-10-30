@@ -42,8 +42,7 @@ const LIVE_PAYMENTS = "https://payment.sivantech.online";
 const LIVE_SIVAN_AI = "https://ai.sivantech.online";
 const LIVE_TELEGRAM = "https://telegram.sivantech.online";
 
-// Prefer a Cloudflare Worker secret named PROXY_SECRET.
-const PROXY_SECRET_FALLBACK = "vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU";
+// Required Cloudflare Worker secret. Never embed credentials in source.
 
 // Whitelisted origin patterns strictly for LIVE production
 const ALLOWED_ORIGIN_PATTERNS = [
@@ -143,6 +142,16 @@ export default {
       );
     }
 
+    const proxySecret = typeof env?.PROXY_SECRET === "string" ? env.PROXY_SECRET.trim() : "";
+    if (!proxySecret) {
+      return withCorsHeaders(new Response(JSON.stringify({
+        error: "gateway_not_configured",
+        message: "Gateway temporarily unavailable.",
+      }), { status: 503, headers: {
+        "Content-Type": "application/json", "Cache-Control": "no-store",
+      } }), request);
+    }
+
     if (url.pathname === "/status" || url.pathname === "/health") {
       return withCorsHeaders(gatewayStatusResponse("api-sivan-gateway"), request);
     }
@@ -198,11 +207,8 @@ export default {
     headers.set("x-sivan-request-id", requestId);
     headers.delete("host");
 
-    const proxySecret = env?.PROXY_SECRET || PROXY_SECRET_FALLBACK;
-    if (proxySecret) {
-      headers.set("x-twilio-proxy-secret", proxySecret);
-      headers.set("x-notify-secret", proxySecret);
-    }
+    headers.set("x-twilio-proxy-secret", proxySecret);
+    headers.set("x-notify-secret", proxySecret);
 
     const body = ["GET", "HEAD"].includes(request.method)
       ? undefined

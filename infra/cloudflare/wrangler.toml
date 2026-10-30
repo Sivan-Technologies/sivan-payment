@@ -1,0 +1,39 @@
+# ==============================================================================
+# SIVAN LIVE PRODUCTION GATEWAY — Cloudflare Worker
+# Worker name : sivan-gateway-live
+# Routes      : api.sivantech.online/*
+#               admin.sivantech.online/*
+#
+# Deploy      : wrangler deploy --config wrangler.toml
+#
+# This worker uses hardcoded production service URLs (no UPSTREAM_* bindings
+# required). PROXY_SECRET is required as a Cloudflare secret binding.
+# Requests fail closed with HTTP 503 if this binding is absent.
+# Rotate the previously committed credential in Cloudflare and upstream services
+# before manually deploying. Never place its value in this file.
+#
+# Secrets (set once via CLI, never stored here):
+#   wrangler secret put PROXY_SECRET
+#   (value: the shared proxy secret used by Caddy / internal services)
+# ==============================================================================
+
+name                = "sivan-gateway-live"
+main                = "cloudflare-worker-live-FIXED.js"
+compatibility_date  = "2024-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+# ── Plain environment variables ───────────────────────────────────────────────
+[vars]
+ENVIRONMENT = "production"
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+[[routes]]
+pattern   = "api.sivantech.online/*"
+zone_name = "sivantech.online"
+
+[[routes]]
+pattern   = "admin.sivantech.online/*"
+zone_name = "sivantech.online"
