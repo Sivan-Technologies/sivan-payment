@@ -81,6 +81,18 @@ export class JsonDatabase {
   private db: DatabaseShape | null = null;
   private writeQueue: Promise<void> = Promise.resolve();
 
+  async getSystemSetting<T>(key: string): Promise<T | null> {
+    const data = await this.read();
+    return ((data as any).systemSettings ?? {})[key] ?? null;
+  }
+
+  async setSystemSetting<T>(key: string, value: T): Promise<void> {
+    await this.mutate((data) => {
+      (data as any).systemSettings = (data as any).systemSettings ?? {};
+      (data as any).systemSettings[key] = value;
+    });
+  }
+
   async getAgreementControls(): Promise<AgreementControlsRecord | null> {
     const data = await this.read();
     return (data.agreementControls ?? []).find((c) => c.id === 'default_controls') ?? null;

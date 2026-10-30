@@ -50,21 +50,30 @@ export const updateNgnControlsSchema = z.object({
   maxTransactionNgn: z.string().optional(),
   dailyLimitNgn: z.string().optional(),
   highValueReviewThresholdNgn: z.string().optional(),
+  maxVirtualAccountOfframpUsd: z.union([z.number(), z.string()]).optional(),
   updatedBy: z.string().optional().default('admin_api_key')
 });
 
 export function defaultNgnControls(): NgnControlsRecord {
-  return { id: 'global', onrampEnabled: true, offrampEnabled: true, mockProviderEnabled: true, bankSettlementEnabled: true, virtualAccountEnabled: true, activeProvider: 'breet', backupProvider: undefined, identityVerificationEnabled: true, externalFundingEnabled: true, offrampRevenueMode: env.NGN_OFFRAMP_REVENUE_MODE, thirdPartyPayoutsEnabled: false, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', updatedBy: 'system', updatedAt: nowIso() };
+  return { id: 'global', onrampEnabled: true, offrampEnabled: true, mockProviderEnabled: true, bankSettlementEnabled: true, virtualAccountEnabled: true, activeProvider: 'breet', backupProvider: undefined, identityVerificationEnabled: true, externalFundingEnabled: true, offrampRevenueMode: env.NGN_OFFRAMP_REVENUE_MODE, thirdPartyPayoutsEnabled: false, limitEnforcementOfframp: true, limitEnforcementOnramp: true, limitEnforcementEscrow: true, maxTransactionNgn: '500000', dailyLimitNgn: '2000000', highValueReviewThresholdNgn: '1000000', maxVirtualAccountOfframpUsd: 140, updatedBy: 'system', updatedAt: nowIso() };
 }
 
 export async function getNgnControls() {
-  const existing = (await db.listNgnControls?.()) ?? [];
-  const found = existing.find((item) => item.id === 'global');
+  const [existing, vaSetting] = await Promise.all([
+    db.listNgnControls?.().catch(() => []) ?? [],
+    (db as any).getSystemSetting?.('max_va_offramp_usd').catch(() => null)
+  ]);
+  const found = (existing || []).find((item) => item.id === 'global');
   const defaults = defaultNgnControls();
-  if (!found) return defaults;
+  const maxVirtualAccountOfframpUsd = typeof vaSetting?.threshold === 'number'
+    ? vaSetting.threshold
+    : parseFloat(String(vaSetting?.threshold || '140')) || 140;
+
+  if (!found) return { ...defaults, maxVirtualAccountOfframpUsd };
   return {
     ...defaults,
     ...found,
+    maxVirtualAccountOfframpUsd,
     onrampEnabled: found.onrampEnabled ?? true,
     offrampEnabled: env.NGN_OFFRAMP_REVENUE_MODE === 'disabled' ? false : (found.offrampEnabled === false && (env.BREET_ENV ?? 'development') !== 'production' ? true : (found.offrampEnabled ?? true)),
     offrampRevenueMode: found.offrampRevenueMode ?? defaults.offrampRevenueMode,
@@ -83,7 +92,22 @@ export async function getNgnControls() {
 
 export async function updateNgnControls(input: z.infer<typeof updateNgnControlsSchema>) {
   const current = await getNgnControls();
-  const next: NgnControlsRecord = { ...current, ...input, backupProvider: input.backupProvider === null ? undefined : input.backupProvider ?? current.backupProvider, updatedBy: input.updatedBy ?? 'admin_api_key', updatedAt: nowIso() };
+  if (input.maxVirtualAccountOfframpUsd !== undefined) {
+    const numericVal = Number(input.maxVirtualAccountOfframpUsd);
+    if (!isNaN(numericVal) && numericVal >= 0) {
+      await (db as any).setSystemSetting?.('max_va_offramp_usd', { threshold: numericVal });
+    }
+  }
+
+  const { maxVirtualAccountOfframpUsd: incomingThreshold, ...dbPatch } = input;
+  const next: NgnControlsRecord = {
+    ...current,
+    ...dbPatch,
+    maxVirtualAccountOfframpUsd: incomingThreshold !== undefined ? Number(incomingThreshold) : current.maxVirtualAccountOfframpUsd,
+    backupProvider: input.backupProvider === null ? undefined : input.backupProvider ?? current.backupProvider,
+    updatedBy: input.updatedBy ?? 'admin_api_key',
+    updatedAt: nowIso()
+  };
   await db.upsertNgnControlsRecord(next);
   await createAuditLog({ actorType: 'admin', actorId: next.updatedBy, action: 'ngn.controls_updated', resourceType: 'payments_ngn_controls', resourceId: 'global', severity: 'warning', metadata: { previous: current, next } });
   return next;
