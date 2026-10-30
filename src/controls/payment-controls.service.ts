@@ -112,6 +112,7 @@ export const updatePaymentControlsSchema = z.object({
     isDefault: z.boolean().optional()
   })).optional(),
   defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb', 'starknet']).optional(),
+  maxVirtualAccountOfframpUsd: z.number().nonnegative().optional(),
   // Legacy support for older admin frontend payloads.
   controls: z.array(z.object({
     currency: z.enum(['usd', 'gbp', 'eur', 'ngn']),
@@ -126,6 +127,12 @@ export interface OfframpControlsResponse {
   sourceAssets: AssetControlRecord[];
   sourceNetworks: NetworkControlRecord[];
   defaultNetwork: string;
+  /**
+   * Maximum USD amount for off-ramp / withdrawal into a Sivan Virtual Account.
+   * Conversions above this threshold settle directly to an external commercial bank.
+   * Default: 140 USD. Set to 0 to remove restriction.
+   */
+  maxVirtualAccountOfframpUsd: number;
   /**
    * Whether cross-border supplier payouts are open for business.
    *
@@ -211,6 +218,7 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
   const balanceControls: any = await import('../balances/balance.service.js')
     .then((mod) => mod.getBalanceTransferControls())
     .catch(() => null);
+  const vaThresholdSetting: any = await (db as any).getSystemSetting?.('max_va_offramp_usd').catch(() => null);
   const existingCustomerTypes = data.customerTypeControls ?? [];
   const existingPayouts = data.paymentControls ?? [];
   const existingAssets = data.assetControls ?? [];
@@ -253,6 +261,9 @@ export async function listPaymentControls(): Promise<OfframpControlsResponse> {
     ),
     sourceNetworks,
     defaultNetwork,
+    maxVirtualAccountOfframpUsd: typeof vaThresholdSetting?.threshold === 'number'
+      ? vaThresholdSetting.threshold
+      : parseFloat(String(vaThresholdSetting?.threshold || '140')) || 140,
     displayFx: displayFxRates()
   };
 }
@@ -449,6 +460,10 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
     throw badRequest('At least one deposit network must remain enabled');
   }
 
+  if (input.maxVirtualAccountOfframpUsd !== undefined) {
+    await (db as any).setSystemSetting?.('max_va_offramp_usd', { threshold: input.maxVirtualAccountOfframpUsd });
+  }
+
   await db.updatePaymentControlsSnapshot({ customerTypes, payoutCurrencies, virtualAccounts, sourceAssets, sourceNetworks });
 
   const defaultNetwork = sourceNetworks.find((n) => n.isDefault)?.network ?? 'solana';
@@ -465,9 +480,18 @@ export async function updatePaymentControls(input: z.infer<typeof updatePaymentC
       virtualAccounts: virtualAccounts.map(({ currency, enabled }) => ({ currency, enabled })),
       sourceAssets: sourceAssets.map(({ asset, enabled }) => ({ asset, enabled })),
       sourceNetworks: sourceNetworks.map(({ network, enabled, isDefault }) => ({ network, enabled, isDefault })),
-      defaultNetwork
+      defaultNetwork,
+      maxVirtualAccountOfframpUsd: input.maxVirtualAccountOfframpUsd
     }
   });
 
-  return { customerTypes, payoutCurrencies, virtualAccounts, sourceAssets, sourceNetworks, defaultNetwork };
+  return {
+    customerTypes,
+    payoutCurrencies,
+    virtualAccounts,
+    sourceAssets,
+    sourceNetworks,
+    defaultNetwork,
+    maxVirtualAccountOfframpUsd: input.maxVirtualAccountOfframpUsd ?? current.maxVirtualAccountOfframpUsd
+  };
 }

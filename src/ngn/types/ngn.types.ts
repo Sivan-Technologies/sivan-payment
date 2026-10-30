@@ -235,6 +235,7 @@ export interface NgnControlsRecord {
   maxTransactionNgn: string;
   dailyLimitNgn: string;
   highValueReviewThresholdNgn: string;
+  maxVirtualAccountOfframpUsd?: number;
   updatedBy?: string;
   updatedAt: string;
 }

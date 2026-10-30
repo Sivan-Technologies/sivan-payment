@@ -1408,6 +1408,32 @@ export class PostgresDatabase {
     }
   }
 
+  async getSystemSetting<T>(key: string): Promise<T | null> {
+    const client = await this.pool.connect();
+    try {
+      await this.ensurePaymentsJsonStore(client);
+      const result = await optionalQuery(client, `SELECT value FROM payments_json_store WHERE key = $1`, [`setting:${key}`]);
+      return result.rows.length ? (result.rows[0].value as T) : null;
+    } finally {
+      client.release();
+    }
+  }
+
+  async setSystemSetting<T>(key: string, value: T): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await this.ensurePaymentsJsonStore(client);
+      await client.query(
+        `INSERT INTO payments_json_store (key, value, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [`setting:${key}`, JSON.stringify(value)]
+      );
+    } finally {
+      client.release();
+    }
+  }
+
   async listGhsTransfers(filter?: { userId?: string }): Promise<GhsTransferRecord[]> {
     const client = await this.pool.connect();
     try {
