@@ -98,3 +98,4 @@ export class PaystackFloatAdapter implements IProviderFloatAdapter {
     }
   }
 }
+

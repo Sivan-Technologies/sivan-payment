@@ -468,6 +468,10 @@ const envSchema = z.object({
    * How often the provider float threshold monitor runs, in seconds. Default 300 (5m). 0 disables.
    */
   FLOAT_MONITOR_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
+  /**
+   * How often the universal multi-provider reconciliation worker sweeps, in seconds. Default 1800 (30m). 0 disables.
+   */
+  RECONCILIATION_SWEEP_POLL_SECONDS: z.coerce.number().int().nonnegative().default(1800),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),

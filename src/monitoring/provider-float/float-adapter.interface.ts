@@ -49,3 +49,4 @@ export const adminFloatSettingsSchema = z.object({
 });
 
 export type AdminFloatSettings = z.infer<typeof adminFloatSettingsSchema>;
+

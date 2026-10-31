@@ -11,6 +11,7 @@ import { sweepDeadlineAlerts } from './agreements/deadline-sweeper.service.js';
 import { reconcileUnsettledUtilityPurchases } from './ngn/service/sivanUtilityService.js';
 import { archiveExpiredAuditLogs } from './audit/audit.service.js';
 import { evaluateProviderFloats } from './monitoring/provider-float/provider-float-monitor.service.js';
+import { runUniversalDailyReconciliation } from './reconciliation/universal-reconciliation.service.js';
 
 initMonitoring();
 
@@ -408,6 +409,32 @@ if (env.FLOAT_MONITOR_POLL_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'provider float monitor failed');
       captureError(error as Error, { source: 'provider_float_monitor' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * UNIVERSAL MULTI-PROVIDER RECONCILIATION WORKER
+ *
+ * Sweeps pending transfers, missing virtual account events, and provider settlement logs.
+ * Automatically reconciles deterministic settlements and syncs provider terminal states.
+ */
+if (env.RECONCILIATION_SWEEP_POLL_SECONDS > 0) {
+  const intervalMs = env.RECONCILIATION_SWEEP_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await runUniversalDailyReconciliation();
+      if (outcome.autoResolvedCount > 0) {
+        app.log.info(
+          { autoResolvedCount: outcome.autoResolvedCount, scannedCount: outcome.scannedCount },
+          'universal reconciliation worker auto-resolved pending settlements'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'universal reconciliation worker failed');
+      captureError(error as Error, { source: 'universal_reconciliation_worker' });
     }
   };
   setInterval(tick, intervalMs).unref();
