@@ -1,5 +1,6 @@
 import type {
   AuditLogRecord,
+  AuditLogArchiveRecord,
   AuthChallengeRecord,
   CustomerRecord,
   ExternalAccountRecord,
@@ -88,6 +89,7 @@ export interface EventRepository {
   insertWebhookEventRecord(record: WebhookEventRecord): Promise<WebhookEventRecord>;
   updateWebhookEventRecord(record: WebhookEventRecord): Promise<WebhookEventRecord>;
   insertAuditLogRecord(record: AuditLogRecord): Promise<AuditLogRecord>;
+  archiveAuditLogs?(retentionDays?: number): Promise<{ archivedCount: number; oldestRemainingDate: string | null }>;
 }
 
 export interface ControlsRepository {
@@ -112,6 +114,21 @@ export interface AdminReadRepository {
   listAdminOnrampOrdersView(options?: { limit?: number; offset?: number; status?: string }): Promise<unknown[]>;
   listWebhookEventsView(options?: { limit?: number; offset?: number }): Promise<WebhookEventRecord[]>;
   listAuditLogsView(options?: { limit?: number; offset?: number }): Promise<AuditLogRecord[]>;
+  listArchivedAuditLogsView?(options?: {
+    limit?: number;
+    offset?: number;
+    action?: string;
+    resourceId?: string;
+    actorId?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<AuditLogArchiveRecord[]>;
+  getAuditLogStats?(): Promise<{
+    activeCount: number;
+    archiveCount: number;
+    oldestActiveDate: string | null;
+    oldestArchiveDate: string | null;
+  }>;
   listReconciliationRunsView(options?: { limit?: number; offset?: number }): Promise<unknown[]>;
 }
 

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../shared/validation.js';
 import { adminChangeUsername, adminChangeUsernameSchema, adminEmailChangeRequestSchema, adminRemoveAvatar, adminRemoveAvatarSchema, adminNameCorrectionRequestSchema, adminRequestNameCorrection, adminResetTwoFactor, adminResetTwoFactorSchema, adminStartEmailChange, adminUnlinkWhatsapp, adminUnlinkWhatsappSchema, getAccountRecoveryControls } from './account-recovery.service.js';
-import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWithdrawals, listAdminAuditLogs, listAdminReconciliationRuns, listAdminOnrampOrders } from './admin.service.js';
+import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWithdrawals, listAdminAuditLogs, listAdminArchivedAuditLogs, getAdminAuditStats, triggerAuditArchival, listAdminReconciliationRuns, listAdminOnrampOrders } from './admin.service.js';
 import { getAdminAnalytics } from './analytics.service.js';
 import { runOfframpReconciliation } from '../reconciliation/reconciliation.service.js';
 import { buildReferenceReconciliationDashboard, persistReferenceReconciliationRun } from '../reconciliation/reference-reconciliation.service.js';
@@ -15,6 +15,14 @@ import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation
 import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, getUserLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, markWithdrawalCompleted, reconcileAllPendingWithdrawals, rejectRequest, removeUserLimitOverride, reviewRiskCase, riskReviewSchema, updateLimitControls, updateUserLimitOverride, userLimitOverrideSchema } from './admin-ops.service.js';
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
+import { getLiveFloatTelemetry, updateAdminFloatSettings } from './admin-float-settings.service.js';
+import { evaluateProviderFloats } from '../monitoring/provider-float/provider-float-monitor.service.js';
+import {
+  reconcileInboundDeposit,
+  reconcileOutboundTransfer,
+  resolveReconciliationFinding,
+  runUniversalDailyReconciliation,
+} from '../reconciliation/universal-reconciliation.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
 import { previewOnrampFees, validateTiers } from './fee-policy.js';
 import { getCustomerKycDiagnostics, getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, getBusinessKpis, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
@@ -312,6 +320,13 @@ export async function adminRoutes(app: FastifyInstance) {
     return { data: await requestApiKeyRotation({ key, ...body }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
 
+  regGet('/settings/floats', async () => ({ data: await getLiveFloatTelemetry() }));
+  regPut('/settings/floats', async (request) => {
+    const body = (request.body ?? {}) as any;
+    return { data: await updateAdminFloatSettings(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+  regPost('/floats/check-now', async () => ({ data: await evaluateProviderFloats() }));
+
   regGet('/exports/all.json', async (request, reply) => {
     return reply.header('Content-Type', 'application/json; charset=utf-8').header('Content-Disposition', 'attachment; filename="sivan-admin-export.json"').send(await buildAllAdminExport());
   });
@@ -386,11 +401,77 @@ export async function adminRoutes(app: FastifyInstance) {
     return { data: await reprocessBridgeWebhookEvent(id) };
   });
   regGet('/audit-logs', async (request) => ({ data: await listAdminAuditLogs(listOptions(request)) }));
+  regGet('/audit-logs/archive', async (request) => {
+    const query = (request.query ?? {}) as Record<string, string>;
+    const options = {
+      ...listOptions(request),
+      action: query.action || undefined,
+      resourceId: query.resourceId || undefined,
+      actorId: query.actorId || undefined,
+      startDate: query.startDate || undefined,
+      endDate: query.endDate || undefined,
+    };
+    return { data: await listAdminArchivedAuditLogs(options) };
+  });
+  regGet('/audit-logs/stats', async () => ({ data: await getAdminAuditStats() }));
+  regPost('/audit-logs/archive', async (request) => {
+    const body = (request.body ?? {}) as { retentionDays?: number };
+    const retentionDays = Number(body.retentionDays) > 0 ? Number(body.retentionDays) : 90;
+    const result = await triggerAuditArchival(retentionDays);
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: 'admin_api_key',
+      action: 'audit_logs.archival_triggered',
+      metadata: { retentionDays, result },
+    });
+    return { data: result };
+  });
   regGet('/reconciliation/runs', async (request) => ({ data: await listAdminReconciliationRuns(listOptions(request)) }));
   regGet('/reconciliation/findings/dashboard', async (request) => {
     const query = (request.query ?? {}) as Record<string, string>;
     return { data: await buildReferenceReconciliationDashboard({ limit: query.limit ? Number(query.limit) : undefined }) };
   });
+
+  regPost('/reconciliation/backfill-deposit', async (request) => {
+    const body = parseBody(
+      z.object({
+        provider: z.string().min(2),
+        reference: z.string().min(2),
+        userId: z.string().optional(),
+        reason: z.string().optional(),
+      }),
+      request.body
+    );
+    return { data: await reconcileInboundDeposit({ ...body, operatorId: 'admin_api_key' }) };
+  });
+
+  regPost('/reconciliation/sync-transfer', async (request) => {
+    const body = parseBody(
+      z.object({
+        provider: z.string().min(2),
+        reference: z.string().min(2),
+        reason: z.string().optional(),
+      }),
+      request.body
+    );
+    return { data: await reconcileOutboundTransfer({ ...body, operatorId: 'admin_api_key' }) };
+  });
+
+  regPost('/reconciliation/findings/:id/resolve', async (request) => {
+    const { id } = request.params as { id: string };
+    const body = parseBody(
+      z.object({
+        action: z.enum(['auto_remediate', 'mark_resolved', 'ignore']).default('auto_remediate'),
+        notes: z.string().optional(),
+      }),
+      request.body ?? {}
+    );
+    return { data: await resolveReconciliationFinding({ findingId: id, ...body, operatorId: 'admin_api_key' }) };
+  });
+
+  regPost('/reconciliation/universal/sweep', async () => ({
+    data: await runUniversalDailyReconciliation(),
+  }));
   regPost('/reconciliation/findings/run', async (request) => {
     const body = parseBody(referenceReconciliationRunSchema, request.body);
     const result = await persistReferenceReconciliationRun(body);

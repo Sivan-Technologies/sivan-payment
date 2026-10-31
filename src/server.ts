@@ -9,6 +9,9 @@ import { confirmDeposits } from './deposits/deposit-confirmation.service.js';
 import { isTransientPostgresError } from './database/postgres-database.js';
 import { sweepDeadlineAlerts } from './agreements/deadline-sweeper.service.js';
 import { reconcileUnsettledUtilityPurchases } from './ngn/service/sivanUtilityService.js';
+import { archiveExpiredAuditLogs } from './audit/audit.service.js';
+import { evaluateProviderFloats } from './monitoring/provider-float/provider-float-monitor.service.js';
+import { runUniversalDailyReconciliation } from './reconciliation/universal-reconciliation.service.js';
 
 initMonitoring();
 
@@ -352,6 +355,86 @@ if (env.DEADLINE_SWEEP_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'deadline sweeper failed');
       captureError(error as Error, { source: 'deadline_sweeper' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * 90-DAY AUDIT LOG ARCHIVAL WORKER
+ *
+ * Automatically migrates audit logs older than AUDIT_LOG_RETENTION_DAYS (standard 90 days)
+ * from payments_audit_logs into payments_audit_logs_archive.
+ * Keeps active queries lean while retaining compliance dispute evidence indefinitely.
+ */
+if (env.AUDIT_LOG_ARCHIVE_POLL_SECONDS > 0) {
+  const intervalMs = env.AUDIT_LOG_ARCHIVE_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await archiveExpiredAuditLogs(env.AUDIT_LOG_RETENTION_DAYS);
+      if (outcome.archivedCount > 0) {
+        app.log.info(
+          { archivedCount: outcome.archivedCount, oldestRemainingDate: outcome.oldestRemainingDate },
+          'expired audit logs successfully archived to compliance storage'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'audit log archival worker failed');
+      captureError(error as Error, { source: 'audit_log_archival' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * PROVIDER FLOAT THRESHOLD MONITOR WORKER
+ *
+ * Automatically monitors pre-funded float balances across Paystack payout pools,
+ * utility aggregators, and sponsoring gas wallets against warning and critical buffers.
+ * Dispatches Telegram Ops Alerts when float drops below safe operating thresholds.
+ */
+if (env.FLOAT_MONITOR_POLL_SECONDS > 0) {
+  const intervalMs = env.FLOAT_MONITOR_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await evaluateProviderFloats();
+      if (outcome.alertsTriggered > 0) {
+        app.log.warn(
+          { alertsTriggered: outcome.alertsTriggered, summary: outcome.summary },
+          'provider float buffer warnings or critical alerts dispatched to ops'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'provider float monitor failed');
+      captureError(error as Error, { source: 'provider_float_monitor' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * UNIVERSAL MULTI-PROVIDER RECONCILIATION WORKER
+ *
+ * Sweeps pending transfers, missing virtual account events, and provider settlement logs.
+ * Automatically reconciles deterministic settlements and syncs provider terminal states.
+ */
+if (env.RECONCILIATION_SWEEP_POLL_SECONDS > 0) {
+  const intervalMs = env.RECONCILIATION_SWEEP_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await runUniversalDailyReconciliation();
+      if (outcome.autoResolvedCount > 0) {
+        app.log.info(
+          { autoResolvedCount: outcome.autoResolvedCount, scannedCount: outcome.scannedCount },
+          'universal reconciliation worker auto-resolved pending settlements'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'universal reconciliation worker failed');
+      captureError(error as Error, { source: 'universal_reconciliation_worker' });
     }
   };
   setInterval(tick, intervalMs).unref();

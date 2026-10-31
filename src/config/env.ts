@@ -454,6 +454,24 @@ const envSchema = z.object({
    * the 6-hour window well in advance while not generating noise under load.
    */
   DEADLINE_SWEEP_SECONDS: z.coerce.number().int().nonnegative().default(300),
+  /**
+   * Standard 90-day retention window for active audit and transaction logs.
+   * Banking compliance and regulatory dispute evidence older than this threshold
+   * are automatically moved into cold compliance archive storage.
+   */
+  AUDIT_LOG_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  /**
+   * How often the audit log archival worker runs, in seconds. Default 86400 (24h). 0 disables.
+   */
+  AUDIT_LOG_ARCHIVE_POLL_SECONDS: z.coerce.number().int().nonnegative().default(86400),
+  /**
+   * How often the provider float threshold monitor runs, in seconds. Default 300 (5m). 0 disables.
+   */
+  FLOAT_MONITOR_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
+  /**
+   * How often the universal multi-provider reconciliation worker sweeps, in seconds. Default 1800 (30m). 0 disables.
+   */
+  RECONCILIATION_SWEEP_POLL_SECONDS: z.coerce.number().int().nonnegative().default(1800),
   // Breet's merchant reference for this integration. Identifies Sivan to Breet
   // in support and reconciliation; not a credential.
   BREET_MERCHANT_REFERENCE: z.string().optional().default(''),
