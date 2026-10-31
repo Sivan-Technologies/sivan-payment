@@ -70,6 +70,12 @@ import {
   executePaystackNgnBankTransfer,
   executePaystackTransferSchema,
 } from '../service/paystack-outbound-transfer.service.js';
+import {
+  getNgnTransferFeePolicy,
+  setNgnTransferFeePolicy,
+  calculateNgnOutboundTransferFee,
+  ngnTransferFeePolicySchema,
+} from '../service/ngn-transfer-fee.service.js';
 
 function ensureOwnUser(request: any, userId: string) {
   if (userId === 'rate_query' || userId.startsWith('rate_query') || userId === 'public') {
@@ -291,6 +297,28 @@ export async function ngnRoutes(app: FastifyInstance) {
     ensureOwnUser(request, userId);
     const body = parseBody(executePaystackTransferSchema, request.body);
     return { data: await executePaystackNgnBankTransfer(userId, body) };
+  });
+
+  /**
+   * Public & Client policy quote for outbound NGN bank transfer fees and CBN Stamp Duty.
+   */
+  app.get('/api/ngn/transfer-fee-policy', async () => {
+    return { data: await getNgnTransferFeePolicy() };
+  });
+
+  app.get('/api/ngn/transfer-fee-quote', async (request) => {
+    const query = (request.query || {}) as { amount?: string | number };
+    const amount = Number(query.amount || 0);
+    return { data: await calculateNgnOutboundTransferFee(amount) };
+  });
+
+  /**
+   * Admin configuration to update floor fee, stamp duty threshold, and network fee tiers.
+   */
+  app.post('/api/admin/ngn/transfer-fee-policy', async (request) => {
+    const body = parseBody(ngnTransferFeePolicySchema.partial(), request.body);
+    const updated = await setNgnTransferFeePolicy(body);
+    return { data: updated };
   });
 
   /**

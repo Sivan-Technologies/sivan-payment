@@ -60,7 +60,7 @@ async function main() {
 
   // 5. Verify active audit logs no longer contain the expired logs
   const activeLogs = await listAuditLogs(500);
-  const activeIds = new Set(activeLogs.map((l) => l.id));
+  const activeIds = new Set(activeLogs.map((l: any) => l.id));
   assert(activeIds.has(recentLog.id), 'Recent log must still be in active audit logs');
   assert(!activeIds.has(expiredLog.id), 'Expired admin log must be removed from active audit logs');
   assert(!activeIds.has(oldLedgerLog.id), 'Expired ledger log must be removed from active audit logs');
