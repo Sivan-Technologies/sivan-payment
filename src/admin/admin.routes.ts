@@ -15,6 +15,8 @@ import { runOnrampReconciliation } from '../onramp/service/onramp-reconciliation
 import { addAdminNote, adminNoteSchema, approvalRequestSchema, approvalReviewSchema, approveRequest, buildExport, createApprovalRequest, getAdminOnrampOrderDetails, getAdminUserDetails, getAdminWithdrawalDetails, getFinanceDashboard, getLegalEvidenceSummary, getLimitControls, getUserLimitControls, limitControlsSchema, listApprovalRequests, listRiskCases, markWithdrawalCompleted, reconcileAllPendingWithdrawals, rejectRequest, removeUserLimitOverride, reviewRiskCase, riskReviewSchema, updateLimitControls, updateUserLimitOverride, userLimitOverrideSchema } from './admin-ops.service.js';
 import { reprocessBridgeWebhookEvent } from '../webhooks/webhooks.service.js';
 import { adminPlatformSettingsSchema, buildAllAdminExport, getAdminApiKeyInventory, getAdminPlatformSettings, getAdminTeamMembers, inviteAdminTeamMember, requestApiKeyRotation, updateAdminPlatformSettings } from './admin-settings.service.js';
+import { getLiveFloatTelemetry, updateAdminFloatSettings } from './admin-float-settings.service.js';
+import { evaluateProviderFloats } from '../monitoring/provider-float/provider-float-monitor.service.js';
 import { feeSettingsSchema, getAdminFeeSettings, updateAdminFeeSettings } from './admin-fees.service.js';
 import { previewOnrampFees, validateTiers } from './fee-policy.js';
 import { getCustomerKycDiagnostics, getDocumentVerificationQueue, getGlobalSearch, getProviderHealth, getQueueDashboard, getSettlementReconciliation, getUserTimeline, getBusinessKpis, listUserRestrictions, payoutRetrySchema, refundRequestSchema, requestPayoutRetry, requestRefund, restrictUser, unrestrictUser, userRestrictionSchema } from './admin-hardening.service.js';
@@ -311,6 +313,13 @@ export async function adminRoutes(app: FastifyInstance) {
     const body = parseBody(z.object({ requestedBy: z.string().optional(), reason: z.string().optional() }), request.body ?? {});
     return { data: await requestApiKeyRotation({ key, ...body }, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });
+
+  regGet('/settings/floats', async () => ({ data: await getLiveFloatTelemetry() }));
+  regPut('/settings/floats', async (request) => {
+    const body = (request.body ?? {}) as any;
+    return { data: await updateAdminFloatSettings(body, { ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
+  });
+  regPost('/floats/check-now', async () => ({ data: await evaluateProviderFloats() }));
 
   regGet('/exports/all.json', async (request, reply) => {
     return reply.header('Content-Type', 'application/json; charset=utf-8').header('Content-Disposition', 'attachment; filename="sivan-admin-export.json"').send(await buildAllAdminExport());

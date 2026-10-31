@@ -10,6 +10,7 @@ import { isTransientPostgresError } from './database/postgres-database.js';
 import { sweepDeadlineAlerts } from './agreements/deadline-sweeper.service.js';
 import { reconcileUnsettledUtilityPurchases } from './ngn/service/sivanUtilityService.js';
 import { archiveExpiredAuditLogs } from './audit/audit.service.js';
+import { evaluateProviderFloats } from './monitoring/provider-float/provider-float-monitor.service.js';
 
 initMonitoring();
 
@@ -380,6 +381,33 @@ if (env.AUDIT_LOG_ARCHIVE_POLL_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'audit log archival worker failed');
       captureError(error as Error, { source: 'audit_log_archival' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * PROVIDER FLOAT THRESHOLD MONITOR WORKER
+ *
+ * Automatically monitors pre-funded float balances across Paystack payout pools,
+ * utility aggregators, and sponsoring gas wallets against warning and critical buffers.
+ * Dispatches Telegram Ops Alerts when float drops below safe operating thresholds.
+ */
+if (env.FLOAT_MONITOR_POLL_SECONDS > 0) {
+  const intervalMs = env.FLOAT_MONITOR_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await evaluateProviderFloats();
+      if (outcome.alertsTriggered > 0) {
+        app.log.warn(
+          { alertsTriggered: outcome.alertsTriggered, summary: outcome.summary },
+          'provider float buffer warnings or critical alerts dispatched to ops'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'provider float monitor failed');
+      captureError(error as Error, { source: 'provider_float_monitor' });
     }
   };
   setInterval(tick, intervalMs).unref();
