@@ -37,3 +37,4 @@ export interface IProviderReconciliationAdapter {
   fetchRecentSettlements?(sinceIso: string): Promise<Array<VerifiedDepositOutcome | VerifiedTransferOutcome>>;
   isConfigured(): boolean;
 }
+
