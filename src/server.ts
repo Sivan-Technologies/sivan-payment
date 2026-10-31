@@ -9,6 +9,7 @@ import { confirmDeposits } from './deposits/deposit-confirmation.service.js';
 import { isTransientPostgresError } from './database/postgres-database.js';
 import { sweepDeadlineAlerts } from './agreements/deadline-sweeper.service.js';
 import { reconcileUnsettledUtilityPurchases } from './ngn/service/sivanUtilityService.js';
+import { archiveExpiredAuditLogs } from './audit/audit.service.js';
 
 initMonitoring();
 
@@ -352,6 +353,33 @@ if (env.DEADLINE_SWEEP_SECONDS > 0) {
     } catch (error) {
       app.log.error({ err: error }, 'deadline sweeper failed');
       captureError(error as Error, { source: 'deadline_sweeper' });
+    }
+  };
+  setInterval(tick, intervalMs).unref();
+  void tick();
+}
+
+/**
+ * 90-DAY AUDIT LOG ARCHIVAL WORKER
+ *
+ * Automatically migrates audit logs older than AUDIT_LOG_RETENTION_DAYS (standard 90 days)
+ * from payments_audit_logs into payments_audit_logs_archive.
+ * Keeps active queries lean while retaining compliance dispute evidence indefinitely.
+ */
+if (env.AUDIT_LOG_ARCHIVE_POLL_SECONDS > 0) {
+  const intervalMs = env.AUDIT_LOG_ARCHIVE_POLL_SECONDS * 1000;
+  const tick = async () => {
+    try {
+      const outcome = await archiveExpiredAuditLogs(env.AUDIT_LOG_RETENTION_DAYS);
+      if (outcome.archivedCount > 0) {
+        app.log.info(
+          { archivedCount: outcome.archivedCount, oldestRemainingDate: outcome.oldestRemainingDate },
+          'expired audit logs successfully archived to compliance storage'
+        );
+      }
+    } catch (error) {
+      app.log.error({ err: error }, 'audit log archival worker failed');
+      captureError(error as Error, { source: 'audit_log_archival' });
     }
   };
   setInterval(tick, intervalMs).unref();

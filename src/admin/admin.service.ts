@@ -47,6 +47,35 @@ export async function listAdminAuditLogs(options: { limit?: number; offset?: num
   return db.listAuditLogsView(options);
 }
 
+export async function listAdminArchivedAuditLogs(options: {
+  limit?: number;
+  offset?: number;
+  action?: string;
+  resourceId?: string;
+  actorId?: string;
+  startDate?: string;
+  endDate?: string;
+} = {}) {
+  if (typeof (db as any).listArchivedAuditLogsView === 'function') {
+    return (db as any).listArchivedAuditLogsView(options);
+  }
+  return [];
+}
+
+export async function getAdminAuditStats() {
+  if (typeof (db as any).getAuditLogStats === 'function') {
+    return (db as any).getAuditLogStats();
+  }
+  return { activeCount: 0, archiveCount: 0, oldestActiveDate: null, oldestArchiveDate: null };
+}
+
+export async function triggerAuditArchival(retentionDays = 90) {
+  if (typeof (db as any).archiveAuditLogs === 'function') {
+    return (db as any).archiveAuditLogs(retentionDays);
+  }
+  return { archivedCount: 0, oldestRemainingDate: null };
+}
+
 export async function listAdminReconciliationRuns(options: { limit?: number; offset?: number } = {}) {
   return db.listReconciliationRunsView(options);
 }

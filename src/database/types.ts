@@ -876,6 +876,10 @@ export interface AuditLogRecord {
   createdAt: string;
 }
 
+export interface AuditLogArchiveRecord extends AuditLogRecord {
+  archivedAt: string;
+}
+
 export interface ReconciliationRunRecord {
   id: string;
   provider?: string;
@@ -1280,6 +1284,7 @@ export interface DatabaseShape {
   webhookEvents: WebhookEventRecord[];
   authChallenges: AuthChallengeRecord[];
   auditLogs: AuditLogRecord[];
+  auditLogsArchive?: AuditLogArchiveRecord[];
   reconciliationRuns: ReconciliationRunRecord[];
   reconciliationFindings: ReconciliationFindingRecord[];
   paymentControls: PaymentControlRecord[];

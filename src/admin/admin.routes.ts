@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { parseBody } from '../shared/validation.js';
 import { adminChangeUsername, adminChangeUsernameSchema, adminEmailChangeRequestSchema, adminRemoveAvatar, adminRemoveAvatarSchema, adminNameCorrectionRequestSchema, adminRequestNameCorrection, adminResetTwoFactor, adminResetTwoFactorSchema, adminStartEmailChange, adminUnlinkWhatsapp, adminUnlinkWhatsappSchema, getAccountRecoveryControls } from './account-recovery.service.js';
-import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWithdrawals, listAdminAuditLogs, listAdminReconciliationRuns, listAdminOnrampOrders } from './admin.service.js';
+import { getAdminOverview, listAdminUsers, listAdminWebhookEvents, listAdminWithdrawals, listAdminAuditLogs, listAdminArchivedAuditLogs, getAdminAuditStats, triggerAuditArchival, listAdminReconciliationRuns, listAdminOnrampOrders } from './admin.service.js';
 import { getAdminAnalytics } from './analytics.service.js';
 import { runOfframpReconciliation } from '../reconciliation/reconciliation.service.js';
 import { buildReferenceReconciliationDashboard, persistReferenceReconciliationRun } from '../reconciliation/reference-reconciliation.service.js';
@@ -386,6 +386,31 @@ export async function adminRoutes(app: FastifyInstance) {
     return { data: await reprocessBridgeWebhookEvent(id) };
   });
   regGet('/audit-logs', async (request) => ({ data: await listAdminAuditLogs(listOptions(request)) }));
+  regGet('/audit-logs/archive', async (request) => {
+    const query = (request.query ?? {}) as Record<string, string>;
+    const options = {
+      ...listOptions(request),
+      action: query.action || undefined,
+      resourceId: query.resourceId || undefined,
+      actorId: query.actorId || undefined,
+      startDate: query.startDate || undefined,
+      endDate: query.endDate || undefined,
+    };
+    return { data: await listAdminArchivedAuditLogs(options) };
+  });
+  regGet('/audit-logs/stats', async () => ({ data: await getAdminAuditStats() }));
+  regPost('/audit-logs/archive', async (request) => {
+    const body = (request.body ?? {}) as { retentionDays?: number };
+    const retentionDays = Number(body.retentionDays) > 0 ? Number(body.retentionDays) : 90;
+    const result = await triggerAuditArchival(retentionDays);
+    await createAuditLog({
+      actorType: 'admin',
+      actorId: 'admin_api_key',
+      action: 'audit_logs.archival_triggered',
+      metadata: { retentionDays, result },
+    });
+    return { data: result };
+  });
   regGet('/reconciliation/runs', async (request) => ({ data: await listAdminReconciliationRuns(listOptions(request)) }));
   regGet('/reconciliation/findings/dashboard', async (request) => {
     const query = (request.query ?? {}) as Record<string, string>;

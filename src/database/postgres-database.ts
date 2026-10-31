@@ -36,6 +36,7 @@ import type {
   WithdrawalRecord,
   AuthChallengeRecord,
   AuditLogRecord,
+  AuditLogArchiveRecord,
   ReconciliationRunRecord,
   ReconciliationFindingRecord,
   PaymentControlRecord,
@@ -221,6 +222,38 @@ export class PostgresDatabase {
         this.pool,
         `create index if not exists idx_audit_logs_action_created
            on payments_audit_logs (action, created_at desc)`
+      );
+      await optionalQuery(
+        this.pool,
+        `create table if not exists payments_audit_logs_archive (
+           id text primary key,
+           actor_type text not null,
+           actor_id text,
+           action text not null,
+           resource_type text,
+           resource_id text,
+           severity text not null default 'info',
+           ip_address text,
+           user_agent text,
+           metadata jsonb,
+           created_at timestamptz not null,
+           archived_at timestamptz not null default now()
+         )`
+      );
+      await optionalQuery(
+        this.pool,
+        `create index if not exists idx_payments_audit_logs_archive_created_at
+           on payments_audit_logs_archive (created_at desc)`
+      );
+      await optionalQuery(
+        this.pool,
+        `create index if not exists idx_payments_audit_logs_archive_action
+           on payments_audit_logs_archive (action, created_at desc)`
+      );
+      await optionalQuery(
+        this.pool,
+        `create index if not exists idx_payments_audit_logs_archive_resource
+           on payments_audit_logs_archive (resource_type, resource_id)`
       );
     } catch (error) {
       console.warn('[postgres.ensureHotPathIndexes] warning:', (error as Error)?.message || error);
@@ -955,22 +988,179 @@ export class PostgresDatabase {
   async listBalanceLedgerLogs(userId?: string) {
     const client = await this.pool.connect();
     try {
-      const result = userId
+      let result = userId
         ? await optionalQuery(
             client,
-            `select * from payments_audit_logs
-             where action = 'balance.ledger_entry' and metadata->>'userId' = $1
+            `select * from (
+               select id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at
+               from payments_audit_logs
+               where action = 'balance.ledger_entry' and metadata->>'userId' = $1
+               union all
+               select id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at
+               from payments_audit_logs_archive
+               where action = 'balance.ledger_entry' and metadata->>'userId' = $1
+             ) unified_ledger
              order by created_at asc`,
             [userId]
           )
         : await optionalQuery(
             client,
-            `select * from payments_audit_logs
-             where action = 'balance.ledger_entry'
+            `select * from (
+               select id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at
+               from payments_audit_logs
+               where action = 'balance.ledger_entry'
+               union all
+               select id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at
+               from payments_audit_logs_archive
+               where action = 'balance.ledger_entry'
+             ) unified_ledger
              order by created_at asc`
           );
-      return result.rows.map(mapAuditLog);
+
+      if (!result || !result.rows) {
+        result = userId
+          ? await optionalQuery(
+              client,
+              `select * from payments_audit_logs
+               where action = 'balance.ledger_entry' and metadata->>'userId' = $1
+               order by created_at asc`,
+              [userId]
+            )
+          : await optionalQuery(
+              client,
+              `select * from payments_audit_logs
+               where action = 'balance.ledger_entry'
+               order by created_at asc`
+            );
+      }
+
+      return (result?.rows || []).map(mapAuditLog);
     } finally { client.release(); }
+  }
+
+  /**
+   * 90-Day Banking Compliance & Dispute Evidence Audit Log Archival.
+   *
+   * Automatically deletes records older than retentionDays (default 90) from
+   * the hot payments_audit_logs table and safely inserts them into
+   * payments_audit_logs_archive.
+   */
+  async archiveAuditLogs(retentionDays = 90): Promise<{ archivedCount: number; oldestRemainingDate: string | null }> {
+    const client = await this.pool.connect();
+    try {
+      let totalArchived = 0;
+      // Process in batches of 2000 to prevent long locks on active transactions
+      for (let batch = 0; batch < 20; batch++) {
+        const result = await client.query(
+          `with to_move as (
+             select id from payments_audit_logs
+             where created_at < now() - ($1 || ' days')::interval
+             limit 2000
+           ),
+           moved as (
+             delete from payments_audit_logs
+             where id in (select id from to_move)
+             returning id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at
+           )
+           insert into payments_audit_logs_archive (
+             id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at, archived_at
+           )
+           select id, actor_type, actor_id, action, resource_type, resource_id, severity, ip_address, user_agent, metadata, created_at, now() as archived_at
+           from moved
+           on conflict (id) do update set archived_at = excluded.archived_at
+           returning id`,
+          [retentionDays]
+        );
+        const count = result.rowCount ?? result.rows.length;
+        totalArchived += count;
+        if (count < 2000) break;
+      }
+
+      const oldestQuery = await optionalQuery(
+        client,
+        'select created_at from payments_audit_logs order by created_at asc limit 1'
+      );
+      const oldestRemainingDate = oldestQuery?.rows?.[0]?.created_at
+        ? iso(oldestQuery.rows[0].created_at)
+        : null;
+
+      return { archivedCount: totalArchived, oldestRemainingDate };
+    } finally {
+      client.release();
+    }
+  }
+
+  async listArchivedAuditLogsView(options: {
+    limit?: number;
+    offset?: number;
+    action?: string;
+    resourceId?: string;
+    actorId?: string;
+    startDate?: string;
+    endDate?: string;
+  } = {}): Promise<AuditLogArchiveRecord[]> {
+    const { limit = 200, offset = 0, action, resourceId, actorId, startDate, endDate } = options;
+    const client = await this.pool.connect();
+    try {
+      const conditions: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+
+      if (action) {
+        conditions.push(`action = $${idx++}`);
+        values.push(action);
+      }
+      if (resourceId) {
+        conditions.push(`resource_id = $${idx++}`);
+        values.push(resourceId);
+      }
+      if (actorId) {
+        conditions.push(`actor_id = $${idx++}`);
+        values.push(actorId);
+      }
+      if (startDate) {
+        conditions.push(`created_at >= $${idx++}`);
+        values.push(startDate);
+      }
+      if (endDate) {
+        conditions.push(`created_at <= $${idx++}`);
+        values.push(endDate);
+      }
+
+      const whereClause = conditions.length > 0 ? `where ${conditions.join(' and ')}` : '';
+      values.push(limit, offset);
+      const query = `select * from payments_audit_logs_archive ${whereClause} order by created_at desc limit $${idx++} offset $${idx}`;
+      const result = await client.query(query, values);
+      return result.rows.map(mapArchivedAuditLog);
+    } finally {
+      client.release();
+    }
+  }
+
+  async getAuditLogStats(): Promise<{
+    activeCount: number;
+    archiveCount: number;
+    oldestActiveDate: string | null;
+    oldestArchiveDate: string | null;
+  }> {
+    const client = await this.pool.connect();
+    try {
+      const activeRes = await client.query(
+        'select count(*)::int as count, min(created_at) as oldest from payments_audit_logs'
+      );
+      const archiveRes = await optionalQuery(
+        client,
+        'select count(*)::int as count, min(created_at) as oldest from payments_audit_logs_archive'
+      );
+      return {
+        activeCount: activeRes.rows[0]?.count ?? 0,
+        archiveCount: archiveRes?.rows?.[0]?.count ?? 0,
+        oldestActiveDate: activeRes.rows[0]?.oldest ? iso(activeRes.rows[0].oldest) : null,
+        oldestArchiveDate: archiveRes?.rows?.[0]?.oldest ? iso(archiveRes.rows[0].oldest) : null,
+      };
+    } finally {
+      client.release();
+    }
   }
 
   async latestAuditLogByAction(action: string) {
@@ -4725,6 +4915,13 @@ function mapAuditLog(row: any): AuditLogRecord {
     userAgent: str(row.user_agent),
     metadata: row.metadata,
     createdAt: iso(row.created_at)
+  };
+}
+
+function mapArchivedAuditLog(row: any): AuditLogArchiveRecord {
+  return {
+    ...mapAuditLog(row),
+    archivedAt: iso(row.archived_at)
   };
 }
 

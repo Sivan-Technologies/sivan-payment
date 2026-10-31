@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { resolveUsername } from './username-resolution.js';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord, StepUpVerificationRequestRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuditLogArchiveRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord, StepUpVerificationRequestRecord } from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -36,6 +36,7 @@ const emptyDb = (): DatabaseShape => ({
   webhookEvents: [],
   authChallenges: [],
   auditLogs: [],
+  auditLogsArchive: [],
   reconciliationRuns: [],
   reconciliationFindings: [],
   paymentControls: [],
@@ -488,10 +489,81 @@ export class JsonDatabase {
    */
   async listBalanceLedgerLogs(userId?: string) {
     const data = await this.read();
-    return (data.auditLogs ?? [])
+    const all = [...(data.auditLogs ?? []), ...(data.auditLogsArchive ?? [])];
+    return all
       .filter((log) => log.action === 'balance.ledger_entry')
       .filter((log) => !userId || (log.metadata as { userId?: string } | undefined)?.userId === userId)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async archiveAuditLogs(retentionDays = 90): Promise<{ archivedCount: number; oldestRemainingDate: string | null }> {
+    const cutoffTime = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+    return this.mutate((data) => {
+      data.auditLogs = data.auditLogs ?? [];
+      data.auditLogsArchive = data.auditLogsArchive ?? [];
+      const remaining: AuditLogRecord[] = [];
+      let count = 0;
+      const nowStr = new Date().toISOString();
+      for (const log of data.auditLogs) {
+        const logTime = new Date(log.createdAt).getTime();
+        if (logTime < cutoffTime) {
+          data.auditLogsArchive.push({ ...log, archivedAt: nowStr });
+          count++;
+        } else {
+          remaining.push(log);
+        }
+      }
+      data.auditLogs = remaining;
+      const oldestRemainingDate = remaining.length > 0
+        ? remaining.reduce((min, cur) => cur.createdAt < min ? cur.createdAt : min, remaining[0].createdAt)
+        : null;
+      return { archivedCount: count, oldestRemainingDate };
+    });
+  }
+
+  async listArchivedAuditLogsView(options: {
+    limit?: number;
+    offset?: number;
+    action?: string;
+    resourceId?: string;
+    actorId?: string;
+    startDate?: string;
+    endDate?: string;
+  } = {}): Promise<AuditLogArchiveRecord[]> {
+    const { limit = 200, offset = 0, action, resourceId, actorId, startDate, endDate } = options;
+    const data = await this.read();
+    let logs = (data.auditLogsArchive ?? []).slice();
+    if (action) logs = logs.filter((l) => l.action === action);
+    if (resourceId) logs = logs.filter((l) => l.resourceId === resourceId);
+    if (actorId) logs = logs.filter((l) => l.actorId === actorId);
+    if (startDate) logs = logs.filter((l) => l.createdAt >= startDate);
+    if (endDate) logs = logs.filter((l) => l.createdAt <= endDate);
+    return logs
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(offset, offset + limit);
+  }
+
+  async getAuditLogStats(): Promise<{
+    activeCount: number;
+    archiveCount: number;
+    oldestActiveDate: string | null;
+    oldestArchiveDate: string | null;
+  }> {
+    const data = await this.read();
+    const active = data.auditLogs ?? [];
+    const archive = data.auditLogsArchive ?? [];
+    const oldestActive = active.length > 0
+      ? active.reduce((min, cur) => cur.createdAt < min ? cur.createdAt : min, active[0].createdAt)
+      : null;
+    const oldestArchive = archive.length > 0
+      ? archive.reduce((min, cur) => cur.createdAt < min ? cur.createdAt : min, archive[0].createdAt)
+      : null;
+    return {
+      activeCount: active.length,
+      archiveCount: archive.length,
+      oldestActiveDate: oldestActive,
+      oldestArchiveDate: oldestArchive,
+    };
   }
 
   async listAuditLogsByActions(actions: string[], resourceId?: string) {
