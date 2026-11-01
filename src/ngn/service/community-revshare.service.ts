@@ -49,6 +49,18 @@ export interface RevshareAllocationResult {
   reason?: string;
 }
 
+export interface DeveloperApiControls {
+  fixedAppFeeNgn: number;
+  developerRevsharePercent: number;
+  isDeveloperApiActive: boolean;
+  supportedCorridors: {
+    nigeria: boolean;
+    ghana: boolean;
+    kenya: boolean;
+  };
+  updatedAt?: string;
+}
+
 export class CommunityRevshareService {
   private readonly GROUPS_SETTING_KEY = 'community_partner_groups';
   private readonly LEDGERS_SETTING_KEY = 'community_partner_ledgers';
@@ -346,6 +358,68 @@ export class CommunityRevshareService {
       totalRevenueNgn,
       groups: adminGroups,
     };
+  }
+
+  /**
+   * Retrieves summary of all community partner groups for the Sivan Admin Hub.
+   */
+  async getAllGroupsSummary(): Promise<{
+    totalGroups: number;
+    activeGroups: number;
+    totalDeals: number;
+    totalVolumeNgn: number;
+    totalRevsharePaidNgn: number;
+    groups: CommunityGroupRecord[];
+  }> {
+    const groups = await this.loadGroups();
+
+    const activeGroups = groups.filter((g) => g.status === 'ACTIVE' && g.isEarningEnabled).length;
+    const totalDeals = groups.reduce((acc, g) => acc + (g.totalDealsCount || 0), 0);
+    const totalVolumeNgn = groups.reduce((acc, g) => acc + (g.totalVolumeNgn || 0), 0);
+    const totalRevsharePaidNgn = groups.reduce((acc, g) => acc + (g.totalRevenueEarnedNgn || 0), 0);
+
+    return {
+      totalGroups: groups.length,
+      activeGroups,
+      totalDeals,
+      totalVolumeNgn,
+      totalRevsharePaidNgn,
+      groups,
+    };
+  }
+
+  private readonly DEVELOPER_CONTROLS_KEY = 'developer_api_controls';
+
+  async getDeveloperControls(): Promise<DeveloperApiControls> {
+    const controls = await db.getSystemSetting<DeveloperApiControls>(this.DEVELOPER_CONTROLS_KEY);
+    if (controls && typeof controls.fixedAppFeeNgn === 'number') {
+      return controls;
+    }
+    return {
+      fixedAppFeeNgn: 50,
+      developerRevsharePercent: 15.0,
+      isDeveloperApiActive: true,
+      supportedCorridors: {
+        nigeria: true,
+        ghana: true,
+        kenya: true,
+      },
+    };
+  }
+
+  async updateDeveloperControls(input: Partial<DeveloperApiControls>): Promise<DeveloperApiControls> {
+    const current = await this.getDeveloperControls();
+    const updated: DeveloperApiControls = {
+      ...current,
+      ...input,
+      supportedCorridors: {
+        ...current.supportedCorridors,
+        ...(input.supportedCorridors || {}),
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    await db.setSystemSetting(this.DEVELOPER_CONTROLS_KEY, updated);
+    return updated;
   }
 }
 
