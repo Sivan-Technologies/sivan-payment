@@ -41,6 +41,7 @@ import { celoCashoutRoutes } from '../offramp/api/celo-cashout.routes.js';
 import { textileBuyRoutes } from '../offramp/api/textile-buy.routes.js';
 import { moneygramRoutes } from '../moneygram/routes/moneygram.routes.js';
 import { telemetryRoutes } from '../telemetry/telemetry.routes.js';
+import { communityRoutes } from '../ngn/api/community.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -128,4 +129,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await celoCashoutRoutes(app);
   await textileBuyRoutes(app);
   await telemetryRoutes(app);
+  await communityRoutes(app);
 }
