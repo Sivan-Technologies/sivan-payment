@@ -388,6 +388,13 @@ export class CommunityRevshareService {
     };
   }
 
+  /**
+   * Returns all community partner groups.
+   */
+  async listGroups(): Promise<CommunityGroupRecord[]> {
+    return this.loadGroups();
+  }
+
   private readonly DEVELOPER_CONTROLS_KEY = 'developer_api_controls';
 
   async getDeveloperControls(): Promise<DeveloperApiControls> {

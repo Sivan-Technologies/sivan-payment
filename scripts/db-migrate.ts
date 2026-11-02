@@ -49,7 +49,9 @@ if (!env.DATABASE_URL) {
 }
 
 const migrationsDir = path.join(process.cwd(), 'database', 'migrations');
-const files = (await fs.readdir(migrationsDir)).filter((file) => file.endsWith('.sql')).sort();
+const files = (await fs.readdir(migrationsDir))
+  .filter((file) => file.endsWith('.sql') && !file.toLowerCase().includes('rollback'))
+  .sort();
 
 const client = new Client({
   connectionString: env.DATABASE_URL,
