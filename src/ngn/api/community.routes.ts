@@ -30,10 +30,14 @@ const allocateRevshareSchema = z.object({
 });
 
 const updateControlsSchema = z.object({
-  groupId: z.string().min(1, 'groupId is required'),
+  groupId: z.string().optional(),
+  groupJid: z.string().optional(),
   isEarningEnabled: z.boolean().optional(),
+  isBroadcastEnabled: z.boolean().optional(),
   revsharePercent: z.number().min(0).max(100).optional(),
   status: z.enum(['ACTIVE', 'PAUSED', 'SUSPENDED']).optional(),
+}).refine(data => data.groupId || data.groupJid, {
+  message: 'Either groupId or groupJid must be provided',
 });
 
 export async function communityRoutes(app: FastifyInstance) {
@@ -131,9 +135,14 @@ export async function communityRoutes(app: FastifyInstance) {
   /**
    * GET /api/community/admin/groups & /api/admin/community/groups
    * Lists all community partner groups for the Sivan Admin Hub dashboard.
+   * Supports ?broadcastOnly=true filter.
    */
-  const handleGetGroups = async (_request: FastifyRequest, reply: FastifyReply) => {
+  const handleGetGroups = async (request: FastifyRequest<{ Querystring: { broadcastOnly?: string } }>, reply: FastifyReply) => {
     try {
+      if (request.query?.broadcastOnly === 'true') {
+        const groups = await communityRevshareService.getBroadcastEnabledGroups();
+        return reply.send({ success: true, groups, count: groups.length });
+      }
       const stats = await communityRevshareService.getAllGroupsSummary();
       return reply.send({ success: true, ...stats });
     } catch (err: any) {
@@ -142,6 +151,30 @@ export async function communityRoutes(app: FastifyInstance) {
   };
   app.get('/api/community/admin/groups', handleGetGroups);
   app.get('/api/admin/community/groups', handleGetGroups);
+
+  /**
+   * POST /api/community/group/toggle-broadcast
+   * Called by WhatsApp community bot when admin sends "sivan broadcast on" or "sivan broadcast off".
+   */
+  app.post('/api/community/group/toggle-broadcast', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const toggleSchema = z.object({
+        groupJid: z.string().min(1, 'groupJid is required'),
+        isBroadcastEnabled: z.boolean(),
+      });
+      const input = toggleSchema.parse(request.body);
+      const updated = await communityRevshareService.updateAdminControls({
+        groupJid: input.groupJid,
+        isBroadcastEnabled: input.isBroadcastEnabled,
+      });
+      if (!updated) {
+        return reply.status(404).send({ success: false, error: 'Community group not found or not linked' });
+      }
+      return reply.send({ success: true, group: updated });
+    } catch (err: any) {
+      return reply.status(400).send({ success: false, error: err?.message || 'Failed to toggle broadcast' });
+    }
+  });
 
   /**
    * GET /api/community/admin/developer-controls & /api/admin/community/developer-controls

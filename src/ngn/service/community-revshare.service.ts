@@ -15,6 +15,7 @@ export interface CommunityGroupRecord {
   referralCode: string;
   revsharePercent: number;
   isEarningEnabled: boolean;
+  isBroadcastEnabled: boolean;
   status: 'ACTIVE' | 'PAUSED' | 'SUSPENDED';
   totalDealsCount: number;
   totalVolumeNgn: number;
@@ -111,6 +112,7 @@ export class CommunityRevshareService {
       referralCode: code,
       revsharePercent: params.revsharePercent !== undefined ? params.revsharePercent : 20.0,
       isEarningEnabled: params.isEarningEnabled !== undefined ? params.isEarningEnabled : true,
+      isBroadcastEnabled: existingIdx >= 0 ? (groups[existingIdx].isBroadcastEnabled ?? false) : false,
       status: 'ACTIVE',
       totalDealsCount: existingIdx >= 0 ? groups[existingIdx].totalDealsCount : 0,
       totalVolumeNgn: existingIdx >= 0 ? groups[existingIdx].totalVolumeNgn : 0,
@@ -305,20 +307,26 @@ export class CommunityRevshareService {
   }
 
   /**
-   * Updates admin controls: toggling earnings on/off, updating revshare percent, or pausing group.
+   * Updates admin controls: toggling earnings on/off, morning broadcast opt-in, updating revshare percent, or pausing group.
    */
   async updateAdminControls(params: {
-    groupId: string;
+    groupId?: string;
+    groupJid?: string;
     isEarningEnabled?: boolean;
+    isBroadcastEnabled?: boolean;
     revsharePercent?: number;
     status?: 'ACTIVE' | 'PAUSED' | 'SUSPENDED';
   }): Promise<CommunityGroupRecord | null> {
     const groups = await this.loadGroups();
-    const group = groups.find((g) => g.id === params.groupId);
+    const group = groups.find((g) => (params.groupId && g.id === params.groupId) || (params.groupJid && g.groupJid === params.groupJid));
     if (!group) return null;
 
     if (params.isEarningEnabled !== undefined) {
       group.isEarningEnabled = params.isEarningEnabled;
+    }
+
+    if (params.isBroadcastEnabled !== undefined) {
+      group.isBroadcastEnabled = params.isBroadcastEnabled;
     }
 
     if (params.revsharePercent !== undefined) {
@@ -332,6 +340,14 @@ export class CommunityRevshareService {
     group.updatedAt = new Date().toISOString();
     await this.saveGroups(groups);
     return group;
+  }
+
+  /**
+   * Returns all active community groups with morning rates broadcast enabled.
+   */
+  async getBroadcastEnabledGroups(): Promise<CommunityGroupRecord[]> {
+    const groups = await this.loadGroups();
+    return groups.filter((g) => g.status === 'ACTIVE' && g.isBroadcastEnabled === true);
   }
 
   /**
