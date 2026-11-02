@@ -395,6 +395,59 @@ export class CommunityRevshareService {
     return this.loadGroups();
   }
 
+  /**
+   * Generates or retrieves a stable partner referral code for a given adminActorId.
+   * Format: SIV-<3-letter suffix derived from phone>-<2-digit counter>
+   * e.g. SIV-CVG-88
+   *
+   * If the actor already has a registered group/code, returns the existing code.
+   * Otherwise, registers a new partner group and returns the generated code.
+   */
+  async generatePartnerCode(params: {
+    adminActorId: string;
+    adminPhone: string;
+    displayName?: string;
+  }): Promise<{ referralCode: string; isNew: boolean }> {
+    const { adminActorId, adminPhone, displayName } = params;
+    const groups = await this.loadGroups();
+
+    // Return existing code if this admin already has one
+    const existing = groups.find(
+      (g) => g.adminActorId === adminActorId || g.adminPhone === adminPhone
+    );
+    if (existing) {
+      return { referralCode: existing.referralCode, isNew: false };
+    }
+
+    // Generate a deterministic 3-letter suffix from phone digits
+    const digits = adminPhone.replace(/\D/g, '');
+    const suffix = digits
+      .split('')
+      .slice(-6)
+      .reduce((acc: number[], d: string) => { acc.push(Number(d)); return acc; }, [])
+      .map((n: number) => String.fromCharCode(65 + (n % 26)))
+      .join('')
+      .slice(0, 3)
+      .toUpperCase()
+      .padEnd(3, 'X');
+
+    // Numeric part: count existing codes with this suffix to avoid collision
+    const conflictCount = groups.filter((g) => g.referralCode.startsWith(`SIV-${suffix}-`)).length;
+    const numeric = String((conflictCount + 1) * 11 + (conflictCount * 3)).slice(0, 2).padStart(2, '0');
+    const referralCode = `SIV-${suffix}-${numeric}`;
+
+    // Register the new partner group (no group JID yet; will be linked by the group bridge)
+    await this.registerGroup({
+      groupJid: undefined,
+      groupName: displayName || `${adminPhone} Community`,
+      adminActorId,
+      adminPhone,
+      referralCode,
+    });
+
+    return { referralCode, isNew: true };
+  }
+
   private readonly DEVELOPER_CONTROLS_KEY = 'developer_api_controls';
 
   async getDeveloperControls(): Promise<DeveloperApiControls> {

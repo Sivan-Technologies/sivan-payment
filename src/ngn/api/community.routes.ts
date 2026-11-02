@@ -15,6 +15,12 @@ const linkGroupSchema = z.object({
   partnerCode: z.string().min(1, 'partnerCode is required'),
 });
 
+const generateCodeSchema = z.object({
+  adminActorId: z.string().min(1, 'adminActorId is required'),
+  adminPhone: z.string().min(7, 'adminPhone is required'),
+  displayName: z.string().optional(),
+});
+
 const allocateRevshareSchema = z.object({
   agreementId: z.string().min(1, 'agreementId is required'),
   originatingGroupId: z.string().optional(),
@@ -31,6 +37,21 @@ const updateControlsSchema = z.object({
 });
 
 export async function communityRoutes(app: FastifyInstance) {
+  /**
+   * POST /api/community/partner/generate-code
+   * Called from whatsapp-bot private DM when a user types "partner code" or "my referral code".
+   * Returns or creates a stable SIV-XXX-XX partner referral code for the actor.
+   */
+  app.post('/api/community/partner/generate-code', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const input = generateCodeSchema.parse(request.body);
+      const result = await communityRevshareService.generatePartnerCode(input);
+      return reply.send({ success: true, ...result });
+    } catch (err: any) {
+      return reply.status(400).send({ success: false, error: err?.message || 'Failed to generate partner code' });
+    }
+  });
+
   /**
    * POST /api/community/verify-link
    * Used by WhatsApp Community Bridge when an admin sends "sivan link <CODE>".
