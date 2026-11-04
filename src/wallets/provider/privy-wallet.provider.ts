@@ -1380,11 +1380,19 @@ export class PrivyWalletProvider implements WalletProvider {
     const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
     const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
 
-    const body = {
+    // Chain-aware gas sponsorship policy:
+    // - BSC / BNB: App pays gas sponsorship from Sivan Privy credits.
+    // - Base, Arbitrum, Ethereum, Polygon: User pays token gas via Privy Alchemy paymaster (fees deducted from user's USDC/USDT).
+    const isTokenGasChain = ['base', 'arbitrum', 'ethereum', 'polygon'].includes(input.chain);
+    const sponsorOptions = isTokenGasChain
+      ? { asset: input.asset.toLowerCase() }
+      : undefined;
+
+    const body: Record<string, unknown> = {
       method: 'eth_sendTransaction',
       caip2,
-      // Base and BSC use Privy gas sponsorship.
       sponsor: true,
+      ...(sponsorOptions ? { sponsor_options: sponsorOptions } : {}),
       params: {
         transaction: {
           to: token,
