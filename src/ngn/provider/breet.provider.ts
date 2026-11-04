@@ -17,6 +17,7 @@ import {
   canDeposit,
   canWithdraw,
   type StableAsset,
+  type DepositAsset,
 } from './breet-networks.js';
 
 /**
@@ -242,26 +243,12 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     // The crypto leg is the non-naira side, whichever direction this is.
     const quoteAsset = (
       input.sourceCurrency === 'ngn' ? input.destinationCurrency : input.sourceCurrency
-    ).toLowerCase() as StableAsset;
+    ).toLowerCase() as DepositAsset;
 
     const identifier =
       breetDepositAssetId(quoteNetwork, quoteAsset, breetEnvironment())
       ?? env.BREET_DEFAULT_ASSET_ID;
     if (!identifier) {
-      /**
-       * NO PROVIDER NAME. This is a user-facing refusal.
-       *
-       * It used to read "Breet cannot price USDC on avalanche_c_chain", which
-       * safeUserMessage() rewrites to "We could not complete that request.
-       * Please check your details and try again." - so the one piece of
-       * information the user needed, WHICH NETWORK TO USE INSTEAD, never
-       * reached them. Measured live: a naira off-ramp quote on
-       * avalanche_c_chain returned exactly that blank refusal.
-       *
-       * avalanche_c_chain is enabled as a DEPOSIT network but carries no USDC
-       * or USDT that the naira rail can settle, so this path is reachable by
-       * anyone who picks it in the sell screen.
-       */
       const label = String(quoteNetwork).replace(/_/g, ' ');
       throw forbidden(
         `${quoteAsset.toUpperCase()} on ${label} cannot be converted to naira. ` +
@@ -280,8 +267,18 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       { method: 'POST', body: JSON.stringify({ amountInUSD: 1, currency: 'ngn' }) }
     );
 
-    const rate = Number(probe?.rate);
-    if (!Number.isFinite(rate) || rate <= 0) throw new Error('Breet: rate is unavailable.');
+    const rawRate = Number(probe?.rate);
+    if (!Number.isFinite(rawRate) || rawRate <= 0) throw new Error('Breet: rate is unavailable.');
+
+    // For ETH and other volatile native assets, Breet's rate-calculator returns
+    // cryptoAmount per 1 USD (e.g. 0.0003 ETH per USD) and NGNAmount per 1 USD.
+    // To convert 1 ETH -> NGN: effectiveRate = NGNAmount / cryptoAmount.
+    // For stablecoins (USDC/USDT), cryptoAmount is 1 (or 1 USD = 1 USDC), so effectiveRate = rawRate.
+    const effectiveRate = (quoteAsset === 'eth' && probe?.cryptoAmount && probe.cryptoAmount > 0)
+      ? (Number(probe.NGNAmount || rawRate) / Number(probe.cryptoAmount))
+      : rawRate;
+
+    const rate = effectiveRate;
 
     /**
      * ADMIN-CONFIGURABLE, not an env var.
@@ -295,34 +292,18 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     let feeAmount: number;
 
     if (input.direction === 'onramp') {
-      // NGN in, stablecoin out.
+      // NGN in, crypto out.
       feeAmount = source * (feePercent / 100);
       destinationAmount = Math.max(source - feeAmount, 0) / rate;
     } else {
-      /**
-       * Stablecoin in, NGN out.
-       *
-       * feeAmount IS REPORTED IN THE SOURCE ASSET, not in naira.
-       *
-       * It used to be computed on the naira gross (`gross * percent`), which
-       * made this provider the odd one out: mock-ngn reports its fee in USDC,
-       * and ngn-margin.ts adds providerFeeAmount to a margin denominated in
-       * the source amount. Mixing the two meant a 0.255 USDC fee arriving as
-       * 382.50 and being added to 0.51 as though they were the same unit - a
-       * 1,500x error that reads as a 751% fee.
-       *
-       * Fixed HERE rather than by converting downstream. A caller cannot know
-       * which unit a given provider chose, and the first attempt at a
-       * downstream conversion divided the mock provider's already-correct USDC
-       * figure by the rate, turning 0.255 into 0.00017. The unit is the
-       * provider's to state consistently.
-       *
-       * The naira the user loses is unchanged: fee * rate.
-       */
       feeAmount = source * (feePercent / 100);
       const gross = source * rate;
       destinationAmount = Math.max(gross - feeAmount * rate, 0);
     }
+
+    const amountUsd = quoteAsset === 'eth'
+      ? (source * (rate / (Number(probe?.NGNAmount || rawRate) || 1)))
+      : source;
 
     return {
       provider: this.name,
@@ -330,7 +311,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       sourceAmount: money(source, input.sourceCurrency === 'ngn' ? 2 : 6),
       destinationAmount: money(destinationAmount, input.destinationCurrency === 'ngn' ? 2 : 6),
       rate: money(rate),
-      // 6dp on off-ramp because the fee is now in the source asset (USDC),
+      // 6dp on off-ramp because the fee is now in the source asset (USDC/ETH),
       // not naira - 2dp would round 0.255 to 0.26.
       feeAmount: money(feeAmount, input.direction === 'onramp' ? 2 : 6),
       metadata: {
@@ -339,6 +320,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
         assetId,
         feePercent,
         rateSource: 'rate-calculator',
+        amountUsd,
       },
     } satisfies Partial<NgnQuoteRecord> as any;
   }
@@ -645,13 +627,14 @@ export class BreetNgnProvider implements NgnProviderAdapter {
     const sivanNetwork = String(
       (quote.metadata as any)?.network ?? env.BREET_DEFAULT_NETWORK ?? 'solana'
     ).toLowerCase() as BalanceNetwork;
-    const asset = String(quote.sourceCurrency ?? 'usdc').toLowerCase() as StableAsset;
+    const asset = String(quote.sourceCurrency ?? 'usdc').toLowerCase() as DepositAsset;
 
     if (!canDeposit(sivanNetwork, asset)) {
       throw forbidden(
         `Breet cannot receive ${asset.toUpperCase()} on ${sivanNetwork}. ` +
           'Supported: USDC on Solana, Ethereum, Base, BSC, Arbitrum, Polygon; ' +
-          'USDT on Solana, Ethereum, Tron, BSC, Polygon, TON.'
+          'USDT on Solana, Ethereum, Tron, BSC, Polygon, TON; ' +
+          'ETH on Ethereum.'
       );
     }
 
@@ -684,7 +667,7 @@ export class BreetNgnProvider implements NgnProviderAdapter {
 
     const economics = assetEconomics(identifier);
     const estimatedGasUsd = Number((quote.metadata as any)?.estimatedGasUsd ?? 0);
-    const amountUsd = Number(quote.sourceAmount);
+    const amountUsd = Number((quote.metadata as any)?.amountUsd ?? quote.sourceAmount);
 
     if (minimumUsd === undefined) {
       // Refuse rather than guess. A wrong floor costs the user the flag fee.

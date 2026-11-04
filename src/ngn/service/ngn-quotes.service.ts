@@ -22,8 +22,8 @@ import type { NgnControlsRecord, NgnProviderName, NgnQuoteInput, NgnQuoteRecord 
 export const createNgnQuoteSchema = z.object({
   userId: z.string().min(1),
   direction: z.enum(['onramp', 'offramp']),
-  sourceCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd']),
-  destinationCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd']),
+  sourceCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd', 'eth']),
+  destinationCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd', 'eth']),
   sourceAmount: z.string().min(1),
   /**
    * Which chain the crypto leg moves on.
@@ -185,9 +185,9 @@ async function requireSivanVerified(userId: string, input: NgnQuoteInput, provid
 }
 
 function validateCurrencyPair(input: NgnQuoteInput) {
-  const allowedCrypto = ['usdc', 'usdt', 'cngn', 'cusd'];
+  const allowedCrypto = ['usdc', 'usdt', 'cngn', 'cusd', 'eth'];
   if (input.direction === 'onramp' && (input.sourceCurrency !== 'ngn' || !allowedCrypto.includes(input.destinationCurrency))) throw badRequest('NGN on-ramp must quote NGN to USDC/USDT/cNGN.');
-  if (input.direction === 'offramp' && (!allowedCrypto.includes(input.sourceCurrency) || input.destinationCurrency !== 'ngn')) throw badRequest('NGN off-ramp must quote USDC/USDT/cNGN to NGN.');
+  if (input.direction === 'offramp' && (!allowedCrypto.includes(input.sourceCurrency) || input.destinationCurrency !== 'ngn')) throw badRequest('NGN off-ramp must quote USDC/USDT/cNGN/ETH to NGN.');
   const amount = Number(input.sourceAmount);
   if (!Number.isFinite(amount) || amount <= 0) throw badRequest('Invalid source amount.');
 }

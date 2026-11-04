@@ -246,8 +246,8 @@ export interface NgnQuoteRecord {
   customerId?: string;
   direction: NgnDirection;
   provider: NgnProviderName;
-  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
-  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
+  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd' | 'eth';
+  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd' | 'eth';
   sourceAmount: string;
   destinationAmount: string;
   rate: string;
@@ -267,8 +267,8 @@ export interface NgnTransferRecord {
   customerId?: string;
   direction: NgnDirection;
   provider: NgnProviderName;
-  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
-  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
+  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd' | 'eth';
+  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd' | 'eth';
   sourceAmount: string;
   destinationAmount: string;
   rate: string;
@@ -311,8 +311,8 @@ export interface NgnQuoteInput {
   userId: string;
   customerId?: string;
   direction: NgnDirection;
-  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
-  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd';
+  sourceCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd' | 'eth';
+  destinationCurrency: 'ngn' | 'usdc' | 'usdt' | 'cngn' | 'cusd' | 'eth';
   sourceAmount: string;
   /**
    * The chain the crypto leg moves on.

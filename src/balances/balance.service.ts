@@ -844,7 +844,23 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
 
   if (input.network) {
     const networkSpendable = await getSpendable(userId, input.asset, input.network);
-    if (networkSpendable !== null && networkSpendable < input.amount) {
+
+    // On User-Pays token gas EVM networks (Base, Arbitrum, Polygon, Ethereum),
+    // Privy's Alchemy paymaster atomically collects gas in the token being sent.
+    // Ensure the wallet retains sufficient buffer so paymaster preflight does not bounce.
+    const isTokenGasNetwork = ['base', 'arbitrum', 'polygon', 'ethereum'].includes(String(input.network).toLowerCase());
+    const tokenGasBuffer = isTokenGasNetwork
+      ? (String(input.network).toLowerCase() === 'ethereum' ? 2.0 : 0.01)
+      : 0;
+
+    if (networkSpendable !== null && networkSpendable < input.amount + tokenGasBuffer) {
+      if (tokenGasBuffer > 0 && networkSpendable >= input.amount) {
+        throw badRequest(
+          `Insufficient ${input.asset.toUpperCase()} on ${input.network} to cover transfer plus network gas. ` +
+          `Network gas on ${input.network} requires an estimated reserve of ${tokenGasBuffer} ${input.asset.toUpperCase()}. ` +
+          `You can send up to ${money(Math.max(0, networkSpendable - tokenGasBuffer))}.`
+        );
+      }
       const unified = await getUnifiedBalance(userId);
       const availableChains = (unified.wallets || [])
         .filter((w) => w.chain.toLowerCase() !== input.network.toLowerCase() && (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0))
@@ -1082,7 +1098,11 @@ async function pickFundedWallet(
 
   // Prefer a wallet that alone covers the send; otherwise the fullest one.
   // TransferMetadata carries amount as a string, so coerce once here.
-  const needed = Number(transfer.amount) || 0;
+  const isTokenGasNetwork = ['base', 'arbitrum', 'polygon', 'ethereum'].includes(String(transfer.network).toLowerCase());
+  const tokenGasBuffer = isTokenGasNetwork
+    ? (String(transfer.network).toLowerCase() === 'ethereum' ? 2.0 : 0.01)
+    : 0;
+  const needed = (Number(transfer.amount) || 0) + tokenGasBuffer;
   const covers = usable.filter((entry) => entry.amount >= needed);
   const pool = covers.length ? covers : usable;
   return pool.sort((a, b) => b.amount - a.amount)[0].row;
