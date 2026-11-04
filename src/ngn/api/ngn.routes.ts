@@ -33,9 +33,12 @@ import {
   usableForOnramp,
   usableForOfframp,
   breetMinimumDepositUsd,
+  breetDepositAssetId,
+  assetIsDisabled,
   type StableAsset,
+  type DepositAsset,
 } from '../provider/breet-networks.js';
-import { breetEnvironment } from '../provider/breet.provider.js';
+import { breetEnvironment, BreetNgnProvider } from '../provider/breet.provider.js';
 import { gasEstimateUsd, networkDisplayLabel } from '../network-costs.js';
 
 import {
@@ -70,6 +73,12 @@ import {
   executePaystackNgnBankTransfer,
   executePaystackTransferSchema,
 } from '../service/paystack-outbound-transfer.service.js';
+import {
+  getNgnTransferFeePolicy,
+  setNgnTransferFeePolicy,
+  calculateNgnOutboundTransferFee,
+  ngnTransferFeePolicySchema,
+} from '../service/ngn-transfer-fee.service.js';
 
 function ensureOwnUser(request: any, userId: string) {
   if (userId === 'rate_query' || userId.startsWith('rate_query') || userId === 'public') {
@@ -170,6 +179,129 @@ export async function ngnRoutes(app: FastifyInstance) {
     ensureOwnUser(request, query.userId);
     return { data: await createNgnQuote(query) };
   });
+
+  const ethQuoteSchema = z.object({
+    userId: z.string().min(1),
+    amount: z.string().min(1).optional(),
+    sourceAmount: z.string().min(1).optional(),
+    payoutAccountId: z.string().optional(),
+  });
+
+  const ethQuoteHandler = async (request: any, reply: any) => {
+    const raw = request.method === 'GET' ? request.query : request.body;
+    const parsed = ethQuoteSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      return reply.status(400).send({ error: 'INVALID_QUERY', message: issues });
+    }
+    const { userId, payoutAccountId } = parsed.data;
+    const amount = parsed.data.sourceAmount ?? parsed.data.amount;
+    if (!amount) {
+      return reply.status(400).send({ error: 'INVALID_QUERY', message: 'amount or sourceAmount is required' });
+    }
+    ensureOwnUser(request, userId);
+
+    const breetProvider = new BreetNgnProvider();
+    await breetProvider.loadAssets().catch(() => {});
+
+    const envMode = breetEnvironment();
+    const identifier = breetDepositAssetId('ethereum', 'eth', envMode) ?? (envMode === 'production' ? 'ETH' : 'ETH_TEST5');
+    if (assetIsDisabled(identifier)) {
+      return reply.status(503).send({
+        error: 'ASSET_UNAVAILABLE',
+        message: 'ETH off-ramp is temporarily unavailable from provider.',
+      });
+    }
+
+    const quote = await createNgnQuote({
+      userId,
+      direction: 'offramp',
+      sourceCurrency: 'eth',
+      destinationCurrency: 'ngn',
+      sourceAmount: String(amount),
+      network: 'ethereum',
+      payoutAccountId,
+    });
+
+    return { data: quote };
+  };
+
+  app.get('/api/ngn/off-ramp/eth/quote', ethQuoteHandler);
+  app.post('/api/ngn/off-ramp/eth/quote', ethQuoteHandler);
+  app.get('/off-ramp/eth/quote', ethQuoteHandler);
+  app.post('/off-ramp/eth/quote', ethQuoteHandler);
+
+  const ethAddressSchema = z.object({
+    userId: z.string().min(1),
+    quoteId: z.string().optional(),
+    sourceAmount: z.string().optional(),
+    amount: z.string().optional(),
+    payoutAccountId: z.string().optional(),
+    pin: z.string().optional(),
+    stepUpToken: z.string().optional(),
+  });
+
+  const ethAddressHandler = async (request: any, reply: any) => {
+    const raw = request.method === 'GET' ? request.query : request.body;
+    const parsed = ethAddressSchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      return reply.status(400).send({ error: 'INVALID_QUERY', message: issues });
+    }
+    const { userId, payoutAccountId, pin, stepUpToken } = parsed.data;
+    ensureOwnUser(request, userId);
+
+    const breetProvider = new BreetNgnProvider();
+    await breetProvider.loadAssets().catch(() => {});
+
+    const envMode = breetEnvironment();
+    const identifier = breetDepositAssetId('ethereum', 'eth', envMode) ?? (envMode === 'production' ? 'ETH' : 'ETH_TEST5');
+    if (assetIsDisabled(identifier)) {
+      return reply.status(503).send({
+        error: 'ASSET_UNAVAILABLE',
+        message: 'ETH off-ramp is temporarily unavailable from provider.',
+      });
+    }
+
+    let targetQuoteId = parsed.data.quoteId;
+    if (!targetQuoteId) {
+      const amount = parsed.data.sourceAmount ?? parsed.data.amount;
+      if (!amount) {
+        return reply.status(400).send({ error: 'INVALID_QUERY', message: 'quoteId or amount is required' });
+      }
+      const quote = await createNgnQuote({
+        userId,
+        direction: 'offramp',
+        sourceCurrency: 'eth',
+        destinationCurrency: 'ngn',
+        sourceAmount: String(amount),
+        network: 'ethereum',
+        payoutAccountId,
+      });
+      targetQuoteId = quote.id;
+    }
+
+    const order = await acceptNgnQuote({
+      userId,
+      quoteId: targetQuoteId,
+      pin,
+      stepUpToken,
+    });
+
+    return {
+      data: {
+        address: order.depositAddress,
+        orderId: order.id,
+        quoteId: targetQuoteId,
+        transfer: order,
+      },
+    };
+  };
+
+  app.get('/api/ngn/off-ramp/eth/address', ethAddressHandler);
+  app.post('/api/ngn/off-ramp/eth/address', ethAddressHandler);
+  app.get('/off-ramp/eth/address', ethAddressHandler);
+  app.post('/off-ramp/eth/address', ethAddressHandler);
 
   app.post('/api/ngn/onramp/orders', async (request) => {
     const body = parseBody(acceptNgnQuoteSchema, request.body);
@@ -291,6 +423,28 @@ export async function ngnRoutes(app: FastifyInstance) {
     ensureOwnUser(request, userId);
     const body = parseBody(executePaystackTransferSchema, request.body);
     return { data: await executePaystackNgnBankTransfer(userId, body) };
+  });
+
+  /**
+   * Public & Client policy quote for outbound NGN bank transfer fees and CBN Stamp Duty.
+   */
+  app.get('/api/ngn/transfer-fee-policy', async () => {
+    return { data: await getNgnTransferFeePolicy() };
+  });
+
+  app.get('/api/ngn/transfer-fee-quote', async (request) => {
+    const query = (request.query || {}) as { amount?: string | number };
+    const amount = Number(query.amount || 0);
+    return { data: await calculateNgnOutboundTransferFee(amount) };
+  });
+
+  /**
+   * Admin configuration to update floor fee, stamp duty threshold, and network fee tiers.
+   */
+  app.post('/api/admin/ngn/transfer-fee-policy', async (request) => {
+    const body = parseBody(ngnTransferFeePolicySchema.partial(), request.body);
+    const updated = await setNgnTransferFeePolicy(body);
+    return { data: updated };
   });
 
   /**

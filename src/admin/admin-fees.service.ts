@@ -318,6 +318,33 @@ export const feeSettingsSchema = z.object({
 
   bridgeOfframpCostPercent: z.coerce.number().min(0).max(100),
   rateSources: z.array(z.object({ name: z.string().min(1), weightPercent: z.coerce.number().min(0).max(100), live: z.boolean().default(true) })).default([]),
+
+  /**
+   * ───── ETH OFF-RAMP SERVICE FEE CONTROLS (STREAM 2) ─────
+   *
+   * Native ETH withdrawals collect both rate markup (Stream 1) and an explicit
+   * ETH service fee (Stream 2) routed directly to Sivan's fee wallet before Breet
+   * sweep.
+   *
+   * ethServiceFeeMode:
+   *   'tiered': Standard tiered volume bands (default)
+   *   'flat': Uniform flat dollar fee across all trade sizes
+   *   'percent': Uniform percentage fee across all trade sizes
+   *
+   * ethWhaleCapUsd:
+   *   Hard cap in USD for whale tier trades. Setting to 0 disables the cap.
+   */
+  ethServiceFeeMode: z.enum(['tiered', 'flat', 'percent']).default('tiered'),
+  ethServiceFeePercent: z.coerce.number().min(0).max(100).default(1.0),
+  ethServiceFeeFlatUsd: z.coerce.number().min(0).max(1000).default(10.0),
+  ethTier1Percent: z.coerce.number().min(0).max(100).default(1.5),
+  ethTier2Percent: z.coerce.number().min(0).max(100).default(1.0),
+  ethMinFeeUsd: z.coerce.number().min(0).max(50).default(1.50),
+  ethMidFlatUsd: z.coerce.number().min(0).max(500).default(10.0),
+  ethWhaleThresholdUsd: z.coerce.number().min(1000).max(1000000).default(10000),
+  ethWhalePercent: z.coerce.number().min(0).max(100).default(0.50),
+  ethWhaleCapUsd: z.coerce.number().min(0).max(10000).default(100),
+
   feeTiers: z.array(feeTierSchema).min(1),
   networkFees: z.array(networkFeeSchema).default([]),
   promotions: z.array(promotionSchema).default([]),
@@ -389,6 +416,16 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     gasDailyBudgetUsd: DEFAULT_GAS_CONTROLS.dailyBudgetUsd,
     gasSolPriceUsd: DEFAULT_GAS_CONTROLS.solPriceUsd,
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
+    ethServiceFeeMode: 'tiered',
+    ethServiceFeePercent: 1.0,
+    ethServiceFeeFlatUsd: 10.0,
+    ethTier1Percent: 1.5,
+    ethTier2Percent: 1.0,
+    ethMinFeeUsd: 1.50,
+    ethMidFlatUsd: 10.0,
+    ethWhaleThresholdUsd: 10000,
+    ethWhalePercent: 0.50,
+    ethWhaleCapUsd: 100,
     rateSources: [
       { name: 'Textile Credit RFQ', weightPercent: 50, live: true },
       { name: 'Busha / NIBSS', weightPercent: 30, live: true },
@@ -483,4 +520,57 @@ export async function updateAdminFeeSettings(
   }
 
   return next;
+}
+
+/**
+ * Compute the Sivan ETH service fee in USD for a given withdrawal amount in USD.
+ *
+ * Supports three modes:
+ * - 'flat': fixed dollar fee
+ * - 'percent': fixed percentage across all amounts
+ * - 'tiered': graduated schedule ($5-$99: 1.5%, $100-$499: 1.0%, $500-$9,999: $10 flat, $10,000+: 0.50% with $100 cap)
+ *
+ * Setting ethWhaleCapUsd to 0 disables the cap.
+ */
+export function calculateEthServiceFeeUsd(
+  amountUsd: number,
+  settings?: Partial<z.infer<typeof feeSettingsSchema>>
+): number {
+  const safeAmount = Number.isFinite(amountUsd) ? Math.max(0, amountUsd) : 0;
+  const mode = settings?.ethServiceFeeMode ?? 'tiered';
+
+  if (mode === 'flat') {
+    return Math.max(0, Number(settings?.ethServiceFeeFlatUsd ?? 10.0));
+  }
+
+  if (mode === 'percent') {
+    const pct = Number(settings?.ethServiceFeePercent ?? 1.0);
+    return Math.max(0, safeAmount * (pct / 100));
+  }
+
+  // Tiered mode (default)
+  const t1Pct = Number(settings?.ethTier1Percent ?? 1.5);
+  const t2Pct = Number(settings?.ethTier2Percent ?? 1.0);
+  const minUsd = Number(settings?.ethMinFeeUsd ?? 1.50);
+  const midFlat = Number(settings?.ethMidFlatUsd ?? 10.0);
+  const whaleThresh = Number(settings?.ethWhaleThresholdUsd ?? 10000);
+  const whalePct = Number(settings?.ethWhalePercent ?? 0.50);
+  const whaleCap = Number(settings?.ethWhaleCapUsd ?? 100);
+
+  if (safeAmount < 100) {
+    return Math.max(safeAmount * (t1Pct / 100), minUsd);
+  }
+  if (safeAmount < 500) {
+    return Math.max(0, safeAmount * (t2Pct / 100));
+  }
+  if (safeAmount < whaleThresh) {
+    return midFlat;
+  }
+
+  // Whale tier ($10,000+)
+  const fee = safeAmount * (whalePct / 100);
+  if (whaleCap > 0) {
+    return Math.min(fee, whaleCap);
+  }
+  return fee;
 }

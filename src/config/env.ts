@@ -152,6 +152,8 @@ const envSchema = z.object({
   SIVAN_FEE_WALLET_STELLAR: z.string().optional().default(''),
   SIVAN_FEE_WALLET_CELO: z.string().optional().default(''),
   SIVAN_CELO_FEE_WALLET: z.string().optional().default(''),
+  SIVAN_FEE_WALLET_EVM: z.string().optional().default(''),
+  SIVAN_ETH_FEE_WALLET_ADDRESS: z.string().optional().default(''),
   SOLANA_RPC_URL: z.string().url().optional(),
   SOLANA_RPC_FALLBACK_URL: z.string().url().optional(),
   /**

@@ -33,6 +33,8 @@
 import type { BalanceNetwork } from '../../balances/balance.service.js';
 
 export type StableAsset = 'usdc' | 'usdt';
+export type NativeAsset = 'eth';
+export type DepositAsset = StableAsset | NativeAsset;
 
 /**
  * Breet's asset ID is a Mongo ObjectId, NOT the identifier in their docs.
@@ -51,8 +53,8 @@ export interface BreetNetworkCapability {
   network: BalanceNetwork;
   /** Breet's `network` value on the withdrawal endpoint, when withdrawals work. */
   breetWithdrawalNetwork?: 'ERC20' | 'TRC20' | 'BSC' | 'SOL' | 'TON' | 'BASE';
-  /** Can Sivan receive a user's stablecoin here? Drives OFF-RAMP. */
-  deposit: Partial<Record<StableAsset, { mainnet: string; testnet: string; minUsd: number }>>;
+  /** Can Sivan receive a user's stablecoin or native asset here? Drives OFF-RAMP. */
+  deposit: Partial<Record<DepositAsset, { mainnet: string; testnet: string; minUsd: number }>>;
   /** Can Breet send stablecoin here? Drives ON-RAMP. */
   withdrawal: Partial<Record<StableAsset, boolean>>;
 }
@@ -62,8 +64,8 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     network: 'solana',
     breetWithdrawalNetwork: 'SOL',
     deposit: {
-      usdc: { mainnet: 'SOL_USDC_PTHX', testnet: 'SOL_USDC_JKVK', minUsd: 15.7 },
-      usdt: { mainnet: 'SOL_USDT_EWAY', testnet: 'USDT_B7ZDHS8D_TOR7', minUsd: 15.7 },
+      usdc: { mainnet: 'SOL_USDC_PTHX', testnet: 'SOL_USDC_JKVK', minUsd: 5 },
+      usdt: { mainnet: 'SOL_USDT_EWAY', testnet: 'USDT_B7ZDHS8D_TOR7', minUsd: 5 },
     },
     withdrawal: { usdc: true, usdt: true },
   },
@@ -71,8 +73,9 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     network: 'ethereum',
     breetWithdrawalNetwork: 'ERC20',
     deposit: {
-      usdc: { mainnet: 'USDC', testnet: 'USDC_ETH_TEST5_0GER', minUsd: 15 },
-      usdt: { mainnet: 'USDT_ERC20', testnet: 'USDT_ETH_TEST5_WFZR', minUsd: 15 },
+      usdc: { mainnet: 'USDC', testnet: 'USDC_ETH_TEST5_0GER', minUsd: 10 },
+      usdt: { mainnet: 'USDT_ERC20', testnet: 'USDT_ETH_TEST5_WFZR', minUsd: 10 },
+      eth: { mainnet: 'ETH', testnet: 'ETH_TEST5', minUsd: 5 },
     },
     withdrawal: { usdc: true, usdt: true },
   },
@@ -80,7 +83,7 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     network: 'tron',
     breetWithdrawalNetwork: 'TRC20',
     deposit: {
-      usdt: { mainnet: 'TRX_USDT_S2UZ', testnet: 'USDT_TRX_TEST2', minUsd: 20 },
+      usdt: { mainnet: 'TRX_USDT_S2UZ', testnet: 'USDT_TRX_TEST2', minUsd: 10 },
       // Breet withdraws USDC over TRC20 but publishes no USDC-on-Tron DEPOSIT
       // asset, so this is deliberately asymmetric rather than an oversight.
     },
@@ -93,7 +96,7 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
       usdc: {
         mainnet: 'USDC_BASECHAIN_ETH_5I5C',
         testnet: 'USDC_BASECHAIN_ETH_TEST5_8SH8',
-        minUsd: 15.7,
+        minUsd: 5,
       },
     },
     withdrawal: { usdc: true },
@@ -105,12 +108,12 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
       usdc: {
         mainnet: 'USDC_BSC',
         testnet: 'USDC_BSC_TEST',
-        minUsd: 15.7,
+        minUsd: 5,
       },
       usdt: {
         mainnet: 'USDT_BSC',
         testnet: 'USDT_BSC_TEST',
-        minUsd: 15.7,
+        minUsd: 5,
       },
     },
     withdrawal: { usdc: true, usdt: true },
@@ -118,15 +121,15 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
   {
     network: 'arbitrum',
     deposit: {
-      usdc: { mainnet: 'USDC_ARB_3SBJ', testnet: 'USDC_ARB_SEPOLIA_V84S', minUsd: 15 },
+      usdc: { mainnet: 'USDC_ARB_3SBJ', testnet: 'USDC_ARB_SEPOLIA_V84S', minUsd: 5 },
     },
     withdrawal: {},
   },
   {
     network: 'polygon',
     deposit: {
-      usdc: { mainnet: 'USDC_POLYGON_NXTB', testnet: 'USDC_AMOY_POLYGON_TEST_7WWV', minUsd: 15 },
-      usdt: { mainnet: 'USDT_POLYGON', testnet: 'USD_POLYGON_TEST_MUMBAI_QFXA', minUsd: 15 },
+      usdc: { mainnet: 'USDC_POLYGON_NXTB', testnet: 'USDC_AMOY_POLYGON_TEST_7WWV', minUsd: 5 },
+      usdt: { mainnet: 'USDT_POLYGON', testnet: 'USD_POLYGON_TEST_MUMBAI_QFXA', minUsd: 5 },
     },
     withdrawal: {},
   },
@@ -144,7 +147,7 @@ function capability(network: BalanceNetwork) {
 }
 
 /** Off-ramp: can a user send us this asset on this network? */
-export function canDeposit(network: BalanceNetwork, asset: StableAsset): boolean {
+export function canDeposit(network: BalanceNetwork, asset: DepositAsset): boolean {
   if (network === 'celo') return true;
   return Boolean(capability(network)?.deposit?.[asset]);
 }
@@ -168,7 +171,7 @@ export function breetWithdrawalNetwork(network: BalanceNetwork): string | undefi
  */
 export function breetDepositAssetId(
   network: BalanceNetwork,
-  asset: StableAsset,
+  asset: DepositAsset,
   environment: 'development' | 'production'
 ): string | undefined {
   const entry = capability(network)?.deposit?.[asset];
@@ -185,7 +188,7 @@ export function breetDepositAssetId(
  */
 export function breetMinimumDepositUsd(
   network: BalanceNetwork,
-  asset: StableAsset,
+  asset: DepositAsset,
   environment: 'development' | 'production'
 ): number | undefined {
   if (network === 'celo') return 1;
@@ -195,17 +198,9 @@ export function breetMinimumDepositUsd(
   const envMin = Number(process.env.BREET_MINIMUM_WITHDRAW_USD || process.env.BREET_MIN_USD);
   if (Number.isFinite(envMin) && envMin > 0) return envMin;
 
-  // LIVE VALUE FIRST. This function used to return `entry.minUsd` (hardcoded
-  // 15 everywhere) in production and a flat 1 in development. Both were wrong:
-  // The static table happens to match Breet's DOCUMENTED mainnet figures ($15
-  // for USDC/USDT on these chains, $20 for Tron USDT), but it is still a
-  // snapshot: Breet say plainly that assets and their minimums change, and
-  // their own docs disagree with their own API in the sandbox - documented as
-  // $1 for every test asset, actually 50 for most, 10 for USDC_BSC_TEST and
-  // 5000 for BCH/DOGE. Reading the live value is the only way to be right in
-  // both environments.
+  // LIVE VALUE FIRST. This function reads live economics from GET /trades/assets.
+  // The static table is a last resort fallback when the cache is cold.
   const identifier = environment === 'production' ? entry.mainnet : entry.testnet;
-  if (environment === 'development') return 1;
   const live = assetEconomics(identifier);
   if (live) return live.minimumUsd;
 
@@ -241,10 +236,10 @@ export function minimumOfframpUsd(input: {
   minimumUsd: number;
   breakdown: { breetMinimumUsd: number; estimatedGasUsd: number; bufferUsd: number };
 } {
-  const bufferPercent = input.bufferPercent ?? 1.0;
+  const bufferPercent = input.bufferPercent ?? 0.2;
   const minimumBufferUsd = input.minimumBufferUsd ?? 0.5;
 
-  const rawBufferUsd = (input.breetMinimumUsd * bufferPercent) / 100;
+  const rawBufferUsd = input.estimatedGasUsd * bufferPercent;
   const bufferUsd = Math.max(rawBufferUsd, minimumBufferUsd);
   const total = input.breetMinimumUsd + input.estimatedGasUsd + bufferUsd;
 
@@ -407,7 +402,7 @@ export function usableForOnramp(
 /** Networks from a controls list that Breet can actually off-ramp from. */
 export function usableForOfframp(
   enabled: readonly BalanceNetwork[],
-  asset: StableAsset
+  asset: DepositAsset
 ): BalanceNetwork[] {
   return enabled.filter((network) => canDeposit(network, asset));
 }
@@ -424,6 +419,7 @@ export function reconcileWithControls(enabled: readonly BalanceNetwork[]) {
     network,
     offrampUsdc: canDeposit(network, 'usdc'),
     offrampUsdt: canDeposit(network, 'usdt'),
+    offrampEth: canDeposit(network, 'eth'),
     onrampUsdc: canWithdraw(network, 'usdc'),
     onrampUsdt: canWithdraw(network, 'usdt'),
   }));
@@ -431,10 +427,10 @@ export function reconcileWithControls(enabled: readonly BalanceNetwork[]) {
   return {
     networks: report,
     onrampCapable: report.filter((r) => r.onrampUsdc || r.onrampUsdt).map((r) => r.network),
-    offrampCapable: report.filter((r) => r.offrampUsdc || r.offrampUsdt).map((r) => r.network),
+    offrampCapable: report.filter((r) => r.offrampUsdc || r.offrampUsdt || r.offrampEth).map((r) => r.network),
     /** Enabled in Sivan, unusable with Breet in either direction. */
     unsupported: report
-      .filter((r) => !r.offrampUsdc && !r.offrampUsdt && !r.onrampUsdc && !r.onrampUsdt)
+      .filter((r) => !r.offrampUsdc && !r.offrampUsdt && !r.offrampEth && !r.onrampUsdc && !r.onrampUsdt)
       .map((r) => r.network),
   };
 }

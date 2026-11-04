@@ -10,6 +10,7 @@ import { assertWithdrawalAuthorised } from '../../identity/withdrawal-pin.guard.
 import { hasWithdrawalPin } from '../../identity/withdrawal-pin.service.js';
 import { getBankingRailAdapter } from '../../banking-rail/banking-rail-registry.js';
 import { resolvePaymentUserId, getUserNgnBalance } from './sivanUtilityService.js';
+import { calculateNgnOutboundTransferFee } from './ngn-transfer-fee.service.js';
 import type { NgnTransferRecord, NgnQuoteRecord } from '../types/ngn.types.js';
 import type { TransferRecord } from '../../banking-rail/banking-rail.adapter.js';
 
@@ -241,16 +242,22 @@ export async function executePaystackNgnBankTransfer(
     }
   }
 
-  // 2. Balance Check
+  // 2. Balance & Transfer Fee Calculation
+  const feeCalc = await calculateNgnOutboundTransferFee(input.amount);
+  const totalRequired = input.amount + feeCalc.totalFee;
+
   const unified = await getUnifiedBalance(canonicalUserId, true);
   const ngnBal = (unified.balances as any[]).find((b) => String(b.asset).toLowerCase() === 'ngn');
   let availableNgn = Number(ngnBal?.availableBalance ?? ngnBal?.spendable ?? '0');
   if (!Number.isFinite(availableNgn) || availableNgn <= 0) {
     availableNgn = await getUserNgnBalance(canonicalUserId).catch(() => 0);
   }
-  if (!Number.isFinite(availableNgn) || availableNgn < input.amount) {
+  if (!Number.isFinite(availableNgn) || availableNgn < totalRequired) {
+    const availFormatted = availableNgn.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const reqFormatted = totalRequired.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const principalFormatted = input.amount.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     throw badRequest(
-      `Insufficient NGN balance. Available: ${availableNgn.toFixed(2)} NGN, requested: ${input.amount.toFixed(2)} NGN`
+      `Insufficient NGN balance. Available: ₦${availFormatted}, required: ₦${reqFormatted} (Transfer: ₦${principalFormatted} + Network Fee: ₦${feeCalc.networkFee}${feeCalc.stampDuty > 0 ? ` + Stamp Duty: ₦${feeCalc.stampDuty}` : ''})`
     );
   }
 
@@ -268,17 +275,17 @@ export async function executePaystackNgnBankTransfer(
   const providerRef = `ps_out_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
   const now = new Date().toISOString();
 
-  // 5. Atomic Ledger Hold
+  // 5. Atomic Ledger Hold (Holds Principal + Transfer Fee + Stamp Duty)
   await createBalanceLedgerEntry(
     {
       userId: canonicalUserId,
       asset: 'ngn',
-      amount: input.amount.toFixed(2),
+      amount: totalRequired.toFixed(2),
       kind: 'hold',
       status: 'held',
       sourceType: 'ngn_cashout',
       sourceId: transferId,
-      description: `Hold NGN for outbound Paystack transfer to ${input.accountNumber} (${input.bankName ?? input.bankCode})`,
+      description: `Hold NGN for outbound Paystack transfer to ${input.accountNumber} (${input.bankName ?? input.bankCode}) - Principal: ₦${input.amount}, Fee: ₦${feeCalc.networkFee}, Stamp Duty: ₦${feeCalc.stampDuty}`,
       transferId,
     },
     { actorType: 'user', actorId: canonicalUserId }
@@ -293,10 +300,10 @@ export async function executePaystackNgnBankTransfer(
     provider: 'paystack',
     sourceCurrency: 'ngn',
     destinationCurrency: 'ngn',
-    sourceAmount: input.amount.toFixed(2),
+    sourceAmount: totalRequired.toFixed(2),
     destinationAmount: input.amount.toFixed(2),
     rate: '1.00',
-    feeAmount: '0.00',
+    feeAmount: feeCalc.totalFee.toFixed(2),
     status: 'quote_accepted',
     expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     createdAt: now,
@@ -312,10 +319,10 @@ export async function executePaystackNgnBankTransfer(
     provider: 'paystack',
     sourceCurrency: 'ngn',
     destinationCurrency: 'ngn',
-    sourceAmount: input.amount.toFixed(2),
+    sourceAmount: totalRequired.toFixed(2),
     destinationAmount: input.amount.toFixed(2),
     rate: '1.00',
-    feeAmount: '0.00',
+    feeAmount: feeCalc.totalFee.toFixed(2),
     status: 'bank_processing',
     bankReference: providerRef,
     settlementReference: providerRef,
@@ -328,6 +335,11 @@ export async function executePaystackNgnBankTransfer(
       accountName: input.accountName,
       narration: input.narration,
       providerRef,
+      principalAmount: input.amount,
+      networkFee: feeCalc.networkFee,
+      stampDuty: feeCalc.stampDuty,
+      totalFee: feeCalc.totalFee,
+      totalDebit: totalRequired,
     },
   };
   await db.upsertNgnTransferRecord(transferRecord);
@@ -345,13 +357,13 @@ export async function executePaystackNgnBankTransfer(
       narration: input.narration || `Sivan transfer for ${canonicalUserId}`,
     });
   } catch (err: any) {
-    // Immediate Rejection by Paystack -> Release Hold Atomically
+    // Immediate Rejection by Paystack -> Release Entire Hold Atomically
     recentBankTransferKeys.delete(dedup);
     await createBalanceLedgerEntry(
       {
         userId: canonicalUserId,
         asset: 'ngn',
-        amount: input.amount.toFixed(2),
+        amount: totalRequired.toFixed(2),
         kind: 'hold_release',
         status: 'available',
         sourceType: 'ngn_cashout',
@@ -396,7 +408,7 @@ export async function executePaystackNgnBankTransfer(
       {
         userId: canonicalUserId,
         asset: 'ngn',
-        amount: input.amount.toFixed(2),
+        amount: totalRequired.toFixed(2),
         kind: 'debit_transfer',
         status: 'completed',
         sourceType: 'ngn_cashout',
@@ -422,6 +434,12 @@ export async function executePaystackNgnBankTransfer(
     status: updatedRecord.status,
     amount: input.amount,
     currency: 'NGN',
+    fee: {
+      networkFee: feeCalc.networkFee,
+      stampDuty: feeCalc.stampDuty,
+      totalFee: feeCalc.totalFee,
+      totalDebit: totalRequired,
+    },
     recipient: {
       accountNumber: input.accountNumber,
       bankCode: input.bankCode,

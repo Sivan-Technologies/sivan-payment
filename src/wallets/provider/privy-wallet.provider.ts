@@ -1367,6 +1367,12 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendNativeEvmTransfer(input, signingKey, caip2);
     }
 
+    // Native ETH is the protocol asset on Ethereum/Base/Arbitrum and uses direct
+    // value transfer with no ERC-20 contract address.
+    if (String(input.asset).toLowerCase() === 'eth') {
+      return this.sendNativeEvmTransfer(input, signingKey, caip2);
+    }
+
     // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
     // disagreeing is the specific failure this parameter exists to prevent: a
     // mainnet USDC contract addressed on Base Sepolia is not a token contract
@@ -1380,11 +1386,19 @@ export class PrivyWalletProvider implements WalletProvider {
     const targetWalletId = normalizePrivyWalletId(input.providerWalletId);
     const url = `${PRIVY_BASE}/wallets/${encodeURIComponent(targetWalletId)}/rpc`;
 
-    const body = {
+    // Chain-aware gas sponsorship policy:
+    // - BSC / BNB: App pays gas sponsorship from Sivan Privy credits.
+    // - Base, Arbitrum, Ethereum, Polygon: User pays token gas via Privy Alchemy paymaster (fees deducted from user's USDC/USDT).
+    const isTokenGasChain = ['base', 'arbitrum', 'ethereum', 'polygon'].includes(input.chain);
+    const sponsorOptions = isTokenGasChain
+      ? { asset: input.asset.toLowerCase() }
+      : undefined;
+
+    const body: Record<string, unknown> = {
       method: 'eth_sendTransaction',
       caip2,
-      // Base and BSC use Privy gas sponsorship.
       sponsor: true,
+      ...(sponsorOptions ? { sponsor_options: sponsorOptions } : {}),
       params: {
         transaction: {
           to: token,

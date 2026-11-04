@@ -22,8 +22,8 @@ import type { NgnControlsRecord, NgnProviderName, NgnQuoteInput, NgnQuoteRecord 
 export const createNgnQuoteSchema = z.object({
   userId: z.string().min(1),
   direction: z.enum(['onramp', 'offramp']),
-  sourceCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd']),
-  destinationCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd']),
+  sourceCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd', 'eth']),
+  destinationCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd', 'eth']),
   sourceAmount: z.string().min(1),
   /**
    * Which chain the crypto leg moves on.
@@ -185,9 +185,9 @@ async function requireSivanVerified(userId: string, input: NgnQuoteInput, provid
 }
 
 function validateCurrencyPair(input: NgnQuoteInput) {
-  const allowedCrypto = ['usdc', 'usdt', 'cngn', 'cusd'];
+  const allowedCrypto = ['usdc', 'usdt', 'cngn', 'cusd', 'eth'];
   if (input.direction === 'onramp' && (input.sourceCurrency !== 'ngn' || !allowedCrypto.includes(input.destinationCurrency))) throw badRequest('NGN on-ramp must quote NGN to USDC/USDT/cNGN.');
-  if (input.direction === 'offramp' && (!allowedCrypto.includes(input.sourceCurrency) || input.destinationCurrency !== 'ngn')) throw badRequest('NGN off-ramp must quote USDC/USDT/cNGN to NGN.');
+  if (input.direction === 'offramp' && (!allowedCrypto.includes(input.sourceCurrency) || input.destinationCurrency !== 'ngn')) throw badRequest('NGN off-ramp must quote USDC/USDT/cNGN/ETH to NGN.');
   const amount = Number(input.sourceAmount);
   if (!Number.isFinite(amount) || amount <= 0) throw badRequest('Invalid source amount.');
 }
@@ -392,10 +392,15 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
    * contract it documents - gross and providerFee in the SAME currency - true
    * for both directions.
    */
+  const isEthOfframp = input.direction === 'offramp' && input.sourceCurrency === 'eth';
+  const sivanServiceFeeEth = isEthOfframp ? Number((quote.metadata as any)?.sivanServiceFeeEth ?? 0) : 0;
+  const sivanServiceFeeUsd = isEthOfframp ? Number((quote.metadata as any)?.sivanServiceFeeUsd ?? 0) : 0;
+  const sourceConverted = isEthOfframp ? Math.max(0, Number(quote.sourceAmount) - sivanServiceFeeEth) : Number(quote.sourceAmount);
+
   const grossForMargin =
     input.direction === 'onramp'
       ? Number(quote.sourceAmount)
-      : Number(quote.sourceAmount) * rate;
+      : sourceConverted * rate;
 
   let providerFeeAsset = Number(quote.feeAmount ?? 0) || 0;
   let providerFeeNgn =
@@ -783,6 +788,11 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     effectivePercent: String(effectivePercent),
     appliedRule: margin.appliedRule,
     explanation: margin.explanation,
+    ...(isEthOfframp ? {
+      sivanServiceFeeEth: fixedMoney(sivanServiceFeeEth, 6),
+      sivanServiceFeeUsd: fixedMoney(sivanServiceFeeUsd, 2),
+      amountToConvert: fixedMoney(sourceConverted, 6),
+    } : {}),
   };
 
   const now = nowIso();
