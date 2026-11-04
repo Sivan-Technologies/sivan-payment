@@ -8,7 +8,7 @@ import { buildOtpEmail, sendEmail } from '../notifications/email.service.js';
 import { createAuditLog } from '../audit/audit.service.js';
 import type { UserRecord } from '../database/types.js';
 import { activeLinkForTelegram, activeLinkForWhatsapp } from './identity.service.js';
-import { hasWithdrawalPin } from './withdrawal-pin.service.js';
+import { hasWithdrawalPin, verifyPinForUserId } from './withdrawal-pin.service.js';
 
 export const startChatEmailOtpSchema = z.object({
   email: z.string().email().transform((val) => val.toLowerCase().trim()),
@@ -334,5 +334,185 @@ export async function verifyChatEmailOtp(
     message: isExistingAccount
       ? 'Account linked to existing profile successfully.'
       : 'Email verified and connected successfully.',
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Email Change OTP — PIN-authenticated email address update
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const startEmailChangeOtpSchema = z.object({
+  currentUserId: z.string().min(1),
+  newEmail: z.string().email().transform((val) => val.toLowerCase().trim()),
+  pin: z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 numeric digits'),
+  channel: z.enum(['whatsapp', 'telegram']),
+  identifier: z.string().min(1).max(128).trim(),
+});
+
+export const verifyEmailChangeOtpSchema = z.object({
+  currentUserId: z.string().min(1),
+  newEmail: z.string().email().transform((val) => val.toLowerCase().trim()),
+  code: z.string().min(4).max(12).trim(),
+  channel: z.enum(['whatsapp', 'telegram']),
+  identifier: z.string().min(1).max(128).trim(),
+});
+
+/**
+ * Start an email change OTP flow for an authenticated chat user.
+ *
+ * Requires the user's current withdrawal PIN as a second factor so that an
+ * attacker who takes over a chat channel cannot silently reroute verification
+ * emails to a new address.
+ */
+export async function startEmailChangeOtp(
+  input: z.infer<typeof startEmailChangeOtpSchema>
+) {
+  const { currentUserId, newEmail, pin, channel, identifier } = input;
+
+  // Validate PIN format (schema already enforces this, but kept explicit)
+  if (!/^\d{4,6}$/.test(pin)) {
+    throw badRequest('PIN must be 4 to 6 numeric digits.', { code: 'INVALID_PIN_FORMAT' });
+  }
+
+  // Look up user by userId
+  const user = await db.findUserById(currentUserId);
+  if (!user) {
+    throw badRequest('User not found.', { code: 'USER_NOT_FOUND' });
+  }
+
+  // Verify the user's withdrawal PIN
+  await verifyPinForUserId(currentUserId, pin);
+
+  // Check the new email is not already registered to a DIFFERENT user
+  const existingUserWithEmail = await db.findUserByEmail(newEmail);
+  if (existingUserWithEmail && existingUserWithEmail.id !== currentUserId) {
+    throw badRequest('That email address is already registered to another account.', {
+      code: 'EMAIL_TAKEN',
+    });
+  }
+
+  // Enforce 60-second cooldown
+  const lastChallenge = await db.latestAuthChallengeForEmail(newEmail);
+  if (lastChallenge) {
+    const elapsedMs = Date.now() - Date.parse(lastChallenge.createdAt);
+    const cooldownMs = (env.AUTH_OTP_RESEND_COOLDOWN_SECONDS || 60) * 1000;
+    if (Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs < cooldownMs) {
+      const waitSeconds = Math.ceil((cooldownMs - elapsedMs) / 1000);
+      throw badRequest(
+        `A verification code was just sent to that address. Check your inbox, or request another in ${waitSeconds} second${waitSeconds === 1 ? '' : 's'}.`
+      );
+    }
+  }
+
+  // Generate 6-digit code and store auth challenge
+  const code = generateCode();
+  const now = new Date();
+  const expiresInMinutes = env.AUTH_OTP_EXPIRES_MINUTES || 10;
+  const expiresAt = new Date(now.getTime() + expiresInMinutes * 60 * 1000).toISOString();
+  const challenge = {
+    id: id('auth'),
+    email: newEmail,
+    codeHash: hashCode(newEmail, code),
+    intent: 'email_change' as const,
+    expiresAt,
+    createdAt: now.toISOString(),
+  };
+
+  await db.insertAuthChallengeRecord(challenge);
+
+  // Send verification email to the new address
+  await sendEmail({
+    to: newEmail,
+    subject: 'Confirm your new Sivan email address',
+    text: `Your Sivan email change verification code is: ${code}\n\nThis code expires in ${expiresInMinutes} minutes.\n\nIf you did not request this, please contact support immediately.`,
+    html: `<p>Your Sivan email change verification code is: <strong>${code}</strong></p><p>This code expires in ${expiresInMinutes} minutes.</p><p>If you did not request this, please contact support immediately.</p>`,
+  });
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: currentUserId,
+    action: 'identity.email_change_otp_sent',
+    resourceType: 'auth_challenge',
+    resourceId: challenge.id,
+    metadata: {
+      newEmail,
+      channel,
+      identifier,
+    },
+  });
+
+  return {
+    sent: true,
+    maskedEmail: maskEmail(newEmail),
+    expiresInMinutes,
+  };
+}
+
+/**
+ * Verify the email change OTP code and update the user's email address.
+ */
+export async function verifyEmailChangeOtp(
+  input: z.infer<typeof verifyEmailChangeOtpSchema>
+) {
+  const { currentUserId, newEmail, code, channel, identifier } = input;
+  const now = nowIso();
+
+  // Look up the pending auth challenge for newEmail with intent 'email_change'
+  const challenge = await db.latestAuthChallengeForEmail(newEmail);
+  if (!challenge || challenge.intent !== 'email_change') {
+    throw badRequest('No pending email change request found for that address.', {
+      code: 'NO_PENDING_CHALLENGE',
+    });
+  }
+
+  // Verify not expired
+  if (Date.parse(challenge.expiresAt) < Date.now()) {
+    throw badRequest('Verification code has expired. Please request a new one.', {
+      code: 'CODE_EXPIRED',
+    });
+  }
+
+  // Verify code hash matches
+  const expectedHash = hashCode(newEmail, code);
+  if (challenge.codeHash !== expectedHash) {
+    throw badRequest('Invalid verification code.', { code: 'INVALID_CODE' });
+  }
+
+  // Look up the current user record
+  const user = await db.findUserById(currentUserId);
+  if (!user) {
+    throw badRequest('User not found.', { code: 'USER_NOT_FOUND' });
+  }
+
+  const oldEmail = user.email;
+
+  // Update user record: set email = newEmail, emailVerifiedAt = now
+  await db.updateUserRecord({
+    ...user,
+    email: newEmail,
+    emailVerifiedAt: now,
+    updatedAt: now,
+  });
+
+  // Consume the challenge
+  await db.consumeAuthChallengeAndMarkUserEmail(challenge.id, currentUserId, now);
+
+  await createAuditLog({
+    actorType: 'user',
+    actorId: currentUserId,
+    action: 'identity.email_changed',
+    resourceType: 'user',
+    resourceId: currentUserId,
+    metadata: {
+      oldEmail,
+      newEmail,
+      channel,
+      identifier,
+    },
+  });
+
+  return {
+    changed: true,
+    email: newEmail,
   };
 }

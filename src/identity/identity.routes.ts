@@ -44,6 +44,10 @@ import {
   startChatEmailOtpSchema,
   verifyChatEmailOtp,
   verifyChatEmailOtpSchema,
+  startEmailChangeOtp,
+  startEmailChangeOtpSchema,
+  verifyEmailChangeOtp,
+  verifyEmailChangeOtpSchema,
 } from './email-otp.service.js';
 
 function getAuthUserId(request: any): string | undefined {
@@ -561,6 +565,29 @@ export async function identityRoutes(app: FastifyInstance) {
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],
       }),
+    };
+  });
+
+  /**
+   * Start email address change OTP flow from an authenticated chat channel.
+   * Requires the user's current withdrawal PIN as a second factor.
+   */
+  app.post('/api/identity/email-otp/change/start', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(startEmailChangeOtpSchema, request.body);
+    return {
+      data: await startEmailChangeOtp(body),
+    };
+  });
+
+  /**
+   * Verify email change OTP code and update the user's email address.
+   */
+  app.post('/api/identity/email-otp/change/verify', async (request) => {
+    requireIdentityServiceSecret(request);
+    const body = parseBody(verifyEmailChangeOtpSchema, request.body);
+    return {
+      data: await verifyEmailChangeOtp(body),
     };
   });
 

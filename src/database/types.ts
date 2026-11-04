@@ -916,7 +916,7 @@ export interface AuthChallengeRecord {
   id: string;
   email: string;
   codeHash: string;
-  intent: 'signup' | 'signin';
+  intent: 'signup' | 'signin' | 'email_change';
   fullName?: string;
   expiresAt: string;
   consumedAt?: string;
