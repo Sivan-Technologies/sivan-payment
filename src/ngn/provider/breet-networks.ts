@@ -62,8 +62,8 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     network: 'solana',
     breetWithdrawalNetwork: 'SOL',
     deposit: {
-      usdc: { mainnet: 'SOL_USDC_PTHX', testnet: 'SOL_USDC_JKVK', minUsd: 15.7 },
-      usdt: { mainnet: 'SOL_USDT_EWAY', testnet: 'USDT_B7ZDHS8D_TOR7', minUsd: 15.7 },
+      usdc: { mainnet: 'SOL_USDC_PTHX', testnet: 'SOL_USDC_JKVK', minUsd: 5 },
+      usdt: { mainnet: 'SOL_USDT_EWAY', testnet: 'USDT_B7ZDHS8D_TOR7', minUsd: 5 },
     },
     withdrawal: { usdc: true, usdt: true },
   },
@@ -71,8 +71,8 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     network: 'ethereum',
     breetWithdrawalNetwork: 'ERC20',
     deposit: {
-      usdc: { mainnet: 'USDC', testnet: 'USDC_ETH_TEST5_0GER', minUsd: 15 },
-      usdt: { mainnet: 'USDT_ERC20', testnet: 'USDT_ETH_TEST5_WFZR', minUsd: 15 },
+      usdc: { mainnet: 'USDC', testnet: 'USDC_ETH_TEST5_0GER', minUsd: 10 },
+      usdt: { mainnet: 'USDT_ERC20', testnet: 'USDT_ETH_TEST5_WFZR', minUsd: 10 },
     },
     withdrawal: { usdc: true, usdt: true },
   },
@@ -80,7 +80,7 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     network: 'tron',
     breetWithdrawalNetwork: 'TRC20',
     deposit: {
-      usdt: { mainnet: 'TRX_USDT_S2UZ', testnet: 'USDT_TRX_TEST2', minUsd: 20 },
+      usdt: { mainnet: 'TRX_USDT_S2UZ', testnet: 'USDT_TRX_TEST2', minUsd: 10 },
       // Breet withdraws USDC over TRC20 but publishes no USDC-on-Tron DEPOSIT
       // asset, so this is deliberately asymmetric rather than an oversight.
     },
@@ -93,7 +93,7 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
       usdc: {
         mainnet: 'USDC_BASECHAIN_ETH_5I5C',
         testnet: 'USDC_BASECHAIN_ETH_TEST5_8SH8',
-        minUsd: 15.7,
+        minUsd: 5,
       },
     },
     withdrawal: { usdc: true },
@@ -105,12 +105,12 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
       usdc: {
         mainnet: 'USDC_BSC',
         testnet: 'USDC_BSC_TEST',
-        minUsd: 15.7,
+        minUsd: 5,
       },
       usdt: {
         mainnet: 'USDT_BSC',
         testnet: 'USDT_BSC_TEST',
-        minUsd: 15.7,
+        minUsd: 5,
       },
     },
     withdrawal: { usdc: true, usdt: true },
@@ -118,15 +118,15 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
   {
     network: 'arbitrum',
     deposit: {
-      usdc: { mainnet: 'USDC_ARB_3SBJ', testnet: 'USDC_ARB_SEPOLIA_V84S', minUsd: 15 },
+      usdc: { mainnet: 'USDC_ARB_3SBJ', testnet: 'USDC_ARB_SEPOLIA_V84S', minUsd: 5 },
     },
     withdrawal: {},
   },
   {
     network: 'polygon',
     deposit: {
-      usdc: { mainnet: 'USDC_POLYGON_NXTB', testnet: 'USDC_AMOY_POLYGON_TEST_7WWV', minUsd: 15 },
-      usdt: { mainnet: 'USDT_POLYGON', testnet: 'USD_POLYGON_TEST_MUMBAI_QFXA', minUsd: 15 },
+      usdc: { mainnet: 'USDC_POLYGON_NXTB', testnet: 'USDC_AMOY_POLYGON_TEST_7WWV', minUsd: 5 },
+      usdt: { mainnet: 'USDT_POLYGON', testnet: 'USD_POLYGON_TEST_MUMBAI_QFXA', minUsd: 5 },
     },
     withdrawal: {},
   },

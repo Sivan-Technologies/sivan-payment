@@ -123,6 +123,12 @@ function money(value: number, dp = 2) {
 export class BreetNgnProvider implements NgnProviderAdapter {
   name: NgnProviderName = 'breet';
 
+  constructor() {
+    // Eagerly warm up live asset minimums and IDs in the background so
+    // live economics from Breet's API are always available immediately.
+    this.loadAssets().catch(() => {});
+  }
+
   /**
    * Live asset list, cached.
    *

@@ -148,15 +148,13 @@ console.log('\nDISABLING A NETWORK REMOVES IT WITHOUT A DEPLOY');
 
 console.log('\nMINIMUMS ARE PER ASSET, NOT GLOBAL');
 {
-  // Documented mainnet values. Tron USDT is 20 while everything else is 15,
-  // which is why a single constant cannot work.
-  check('ethereum usdc mainnet minimum is 15',
-    breetMinimumDepositUsd('ethereum' as any, 'usdc', 'production') === 15,
+  check('ethereum usdc mainnet minimum is 10',
+    breetMinimumDepositUsd('ethereum' as any, 'usdc', 'production') === 10,
     String(breetMinimumDepositUsd('ethereum' as any, 'usdc', 'production')));
-  check('solana usdt mainnet minimum is 15.7',
-    breetMinimumDepositUsd('solana' as any, 'usdt', 'production') === 15.7);
-  check('tron usdt is higher at 20',
-    breetMinimumDepositUsd('tron' as any, 'usdt', 'production') === 20,
+  check('solana usdt mainnet minimum is 5',
+    breetMinimumDepositUsd('solana' as any, 'usdt', 'production') === 5);
+  check('tron usdt is 10',
+    breetMinimumDepositUsd('tron' as any, 'usdt', 'production') === 10,
     String(breetMinimumDepositUsd('tron' as any, 'usdt', 'production')));
 }
 
