@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { db } from '../../database/json-database.js';
+import { env } from '../../config/env.js';
 import { badRequest, notFound } from '../../shared/errors.js';
 import { id, nowIso } from '../../shared/id.js';
 import { createAuditLog } from '../../audit/audit.service.js';
@@ -478,7 +479,12 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
       )
     : 0;
 
-  const ethFeeWallet = (process.env.SIVAN_ETH_FEE_WALLET_ADDRESS || '').trim();
+  const ethFeeWallet = (
+    process.env.SIVAN_ETH_FEE_WALLET_ADDRESS ||
+    process.env.SIVAN_FEE_WALLET_EVM ||
+    env.SIVAN_FEE_WALLET_EVM ||
+    ''
+  ).trim();
 
   // If ETH withdrawal and fee wallet is configured, route Sivan's ETH service fee directly
   if (isEthOfframp && sivanFeeEth > 0 && ethFeeWallet) {
