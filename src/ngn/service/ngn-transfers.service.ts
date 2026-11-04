@@ -466,9 +466,54 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
   const provider = getWalletProvider(await resolveActiveWalletProvider());
   const fees = (transfer.metadata as any)?.quoteMetadata?.fees ?? {};
   const revenueMode = String(fees?.revenueMode ?? 'sivan_fee_wallet');
+  const isEthOfframp = asset === 'eth' && transfer.direction === 'offramp';
+  const sivanFeeEth = isEthOfframp
+    ? Math.max(
+        0,
+        Number(
+          (transfer.metadata as any)?.quoteMetadata?.sivanServiceFeeEth ??
+          (transfer.metadata as any)?.quoteMetadata?.fees?.sivanServiceFeeEth ??
+          0
+        )
+      )
+    : 0;
+
+  const ethFeeWallet = (process.env.SIVAN_ETH_FEE_WALLET_ADDRESS || '').trim();
+
+  // If ETH withdrawal and fee wallet is configured, route Sivan's ETH service fee directly
+  if (isEthOfframp && sivanFeeEth > 0 && ethFeeWallet) {
+    try {
+      await provider.createTransfer({
+        providerWalletId: wallet.providerWalletId,
+        providerCustomerId: wallet.customerId,
+        asset: 'eth' as any,
+        chain: network as any,
+        amount: String(sivanFeeEth),
+        toAddress: ethFeeWallet,
+        idempotencyKey: `ethfee_${transfer.id}`,
+        reference: `fee_${transfer.id}`,
+      });
+      await createAuditLog({
+        actorType: 'system',
+        actorId: 'ngn_sweep',
+        action: 'ngn.eth_service_fee_collected',
+        resourceType: 'payments_ngn_transfer',
+        resourceId: transfer.id,
+        severity: 'info',
+        metadata: {
+          ethFeeWallet,
+          sivanFeeEth,
+          transferId: transfer.id,
+        },
+      });
+    } catch (err: any) {
+      console.warn(`[sweepToRail] Failed to sweep ETH service fee to ${ethFeeWallet}:`, err?.message || err);
+    }
+  }
+
   const sivanFeeAmount = revenueMode === 'sivan_fee_wallet' && network === 'solana'
     ? Math.max(0, Number(fees?.sivanMarginAsset ?? fees?.sivanMargin ?? 0))
-    : 0;
+    : (isEthOfframp ? sivanFeeEth : 0);
   const amountToRail = Math.max(0, amount - sivanFeeAmount);
   const result = await provider.createTransfer({
     providerWalletId: wallet.providerWalletId,
@@ -477,7 +522,7 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
     chain: network as any,
     amount: String(amountToRail),
     toAddress: transfer.depositAddress!,
-    ...(sivanFeeAmount > 0 ? { feeAmount: String(sivanFeeAmount) } : {}),
+    ...(sivanFeeAmount > 0 && !isEthOfframp ? { feeAmount: String(sivanFeeAmount) } : {}),
     // Keyed on the transfer, so a retry cannot sweep twice.
     idempotencyKey: `ngnsweep_${transfer.id}`,
     reference: transfer.id,

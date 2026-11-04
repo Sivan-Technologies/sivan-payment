@@ -392,10 +392,15 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
    * contract it documents - gross and providerFee in the SAME currency - true
    * for both directions.
    */
+  const isEthOfframp = input.direction === 'offramp' && input.sourceCurrency === 'eth';
+  const sivanServiceFeeEth = isEthOfframp ? Number((quote.metadata as any)?.sivanServiceFeeEth ?? 0) : 0;
+  const sivanServiceFeeUsd = isEthOfframp ? Number((quote.metadata as any)?.sivanServiceFeeUsd ?? 0) : 0;
+  const sourceConverted = isEthOfframp ? Math.max(0, Number(quote.sourceAmount) - sivanServiceFeeEth) : Number(quote.sourceAmount);
+
   const grossForMargin =
     input.direction === 'onramp'
       ? Number(quote.sourceAmount)
-      : Number(quote.sourceAmount) * rate;
+      : sourceConverted * rate;
 
   let providerFeeAsset = Number(quote.feeAmount ?? 0) || 0;
   let providerFeeNgn =
@@ -783,6 +788,11 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     effectivePercent: String(effectivePercent),
     appliedRule: margin.appliedRule,
     explanation: margin.explanation,
+    ...(isEthOfframp ? {
+      sivanServiceFeeEth: fixedMoney(sivanServiceFeeEth, 6),
+      sivanServiceFeeUsd: fixedMoney(sivanServiceFeeUsd, 2),
+      amountToConvert: fixedMoney(sourceConverted, 6),
+    } : {}),
   };
 
   const now = nowIso();

@@ -1367,6 +1367,12 @@ export class PrivyWalletProvider implements WalletProvider {
       return this.sendNativeEvmTransfer(input, signingKey, caip2);
     }
 
+    // Native ETH is the protocol asset on Ethereum/Base/Arbitrum and uses direct
+    // value transfer with no ERC-20 contract address.
+    if (String(input.asset).toLowerCase() === 'eth') {
+      return this.sendNativeEvmTransfer(input, signingKey, caip2);
+    }
+
     // Same mode as caip2 above, NOT a fresh isProduction() read. Those two
     // disagreeing is the specific failure this parameter exists to prevent: a
     // mainnet USDC contract addressed on Base Sepolia is not a token contract

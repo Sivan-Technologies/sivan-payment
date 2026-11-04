@@ -19,6 +19,7 @@ import {
   type StableAsset,
   type DepositAsset,
 } from './breet-networks.js';
+import { getAdminFeeSettings, calculateEthServiceFeeUsd } from '../../admin/admin-fees.service.js';
 
 /**
  * Breet NGN provider.
@@ -305,6 +306,28 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       ? (source * (rate / (Number(probe?.NGNAmount || rawRate) || 1)))
       : source;
 
+    let sivanServiceFeeUsd = 0;
+    let sivanServiceFeeEth = 0;
+    let amountToBreet = source;
+
+    if (quoteAsset === 'eth' && input.direction === 'offramp') {
+      const adminFees = await getAdminFeeSettings().catch(() => null);
+      sivanServiceFeeUsd = calculateEthServiceFeeUsd(amountUsd, adminFees ?? undefined);
+      // ethPriceUsd: 1 USD = probe.cryptoAmount ETH -> 1 ETH = 1 / probe.cryptoAmount USD
+      // sivanServiceFeeEth = sivanServiceFeeUsd / ethPriceUsd = sivanServiceFeeUsd * probe.cryptoAmount
+      if (probe?.cryptoAmount && probe.cryptoAmount > 0) {
+        sivanServiceFeeEth = Number((sivanServiceFeeUsd * probe.cryptoAmount).toFixed(8));
+      } else if (rate > 0 && probe?.NGNAmount) {
+        sivanServiceFeeEth = Number((sivanServiceFeeUsd / (rate / probe.NGNAmount)).toFixed(8));
+      }
+      amountToBreet = Math.max(0, source - sivanServiceFeeEth);
+
+      // Recalculate provider fee and destination based on what actually reaches Breet
+      feeAmount = amountToBreet * (feePercent / 100);
+      const gross = amountToBreet * rate;
+      destinationAmount = Math.max(gross - feeAmount * rate, 0);
+    }
+
     return {
       provider: this.name,
       providerQuoteId: `breet_${input.direction}_${crypto.randomUUID()}`,
@@ -321,6 +344,9 @@ export class BreetNgnProvider implements NgnProviderAdapter {
         feePercent,
         rateSource: 'rate-calculator',
         amountUsd,
+        sivanServiceFeeUsd,
+        sivanServiceFeeEth,
+        amountToBreet,
       },
     } satisfies Partial<NgnQuoteRecord> as any;
   }
