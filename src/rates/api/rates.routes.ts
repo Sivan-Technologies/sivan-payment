@@ -152,6 +152,9 @@ async function fetchLiveMarketRates(): Promise<any> {
 export async function ratesRoutes(app: FastifyInstance) {
   const handler = async (request: any) => {
     const query = request.query ?? {};
+    if (query.fresh === 'true' || query.bypassCache === 'true') {
+      clearLiveRatesCache();
+    }
     const corridorsParam = String(query.corridors ?? query.corridor ?? 'both').toLowerCase();
     const needNgn = corridorsParam.includes('ngn') || corridorsParam === 'both';
     const needGhs = corridorsParam.includes('ghs') || corridorsParam === 'both';
