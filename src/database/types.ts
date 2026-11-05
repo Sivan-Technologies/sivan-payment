@@ -285,6 +285,11 @@ export interface UserRecord {
   avatarUpdatedAt?: string;
   emailVerifiedAt?: string;
   whatsappVerifiedAt?: string;
+  intentVirtualAccounts?: boolean;
+  intentOfframp?: boolean;
+  intentServiceAgreements?: boolean;
+  intentConfiguredAt?: string;
+  kycRoutingAssigned?: 'bridge' | 'metamap' | 'local_nibss' | string;
   createdAt: string;
   updatedAt: string;
 }

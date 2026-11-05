@@ -232,6 +232,62 @@ export async function requireUser(userId?: string) {
   return getUser(userId);
 }
 
+export const setKycIntentSchema = z.object({
+  intentVirtualAccounts: z.boolean().default(false),
+  intentOfframp: z.boolean().default(false),
+  intentServiceAgreements: z.boolean().default(false),
+  kycRoutingAssigned: z.enum(['bridge', 'metamap', 'local_nibss']).optional(),
+});
+
+export async function setKycIntent(userId: string, input: z.infer<typeof setKycIntentSchema>) {
+  const user = await getUser(userId);
+  const now = nowIso();
+
+  // If routing is not explicitly passed, assign optimal path dynamically based on intent & geography
+  let routing = input.kycRoutingAssigned;
+  if (!routing) {
+    if (input.intentVirtualAccounts) {
+      routing = 'bridge';
+    } else if (user.country === 'NG' || user.country === 'GH') {
+      routing = 'local_nibss';
+    } else {
+      routing = 'metamap';
+    }
+  }
+
+  const updated: any = {
+    ...user,
+    intentVirtualAccounts: input.intentVirtualAccounts,
+    intentOfframp: input.intentOfframp,
+    intentServiceAgreements: input.intentServiceAgreements,
+    intentConfiguredAt: now,
+    kycRoutingAssigned: routing,
+    updatedAt: now,
+  };
+
+  await db.updateUserRecord(updated);
+  return {
+    userId: updated.id,
+    intentVirtualAccounts: updated.intentVirtualAccounts,
+    intentOfframp: updated.intentOfframp,
+    intentServiceAgreements: updated.intentServiceAgreements,
+    intentConfiguredAt: updated.intentConfiguredAt,
+    kycRoutingAssigned: updated.kycRoutingAssigned,
+  };
+}
+
+export async function getKycIntent(userId: string) {
+  const user = await getUser(userId);
+  return {
+    userId: user.id,
+    intentVirtualAccounts: user.intentVirtualAccounts ?? false,
+    intentOfframp: user.intentOfframp ?? false,
+    intentServiceAgreements: user.intentServiceAgreements ?? false,
+    intentConfiguredAt: user.intentConfiguredAt,
+    kycRoutingAssigned: user.kycRoutingAssigned,
+  };
+}
+
 function inferPrimaryChannel(email?: string, whatsappNumber?: string): 'email' | 'whatsapp' | 'both' {
   if (email && whatsappNumber) return 'both';
   if (email) return 'email';

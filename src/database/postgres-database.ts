@@ -3591,6 +3591,11 @@ function mapUser(row: any): UserRecord {
     avatarUpdatedAt: optionalIso(row.avatar_updated_at),
     emailVerifiedAt: optionalIso(row.email_verified_at),
     whatsappVerifiedAt: optionalIso(row.whatsapp_verified_at),
+    intentVirtualAccounts: row.intent_virtual_accounts === true,
+    intentOfframp: row.intent_offramp === true,
+    intentServiceAgreements: row.intent_service_agreements === true,
+    intentConfiguredAt: optionalIso(row.intent_configured_at),
+    kycRoutingAssigned: str(row.kyc_routing_assigned),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at)
   };
@@ -4600,8 +4605,8 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
   const primaryChannel = user.primaryChannel ?? inferPrimaryChannel(user.email, user.whatsappNumber);
   try {
     await client.query(
-      `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, date_of_birth, role_history, primary_channel, username, username_updated_at, telegram_user_id, telegram_username, telegram_verified_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, created_at, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      `insert into users (user_id, whatsapp_number, email, first_name, last_name, country, date_of_birth, role_history, primary_channel, username, username_updated_at, telegram_user_id, telegram_username, telegram_verified_at, avatar_url, avatar_object_key, avatar_updated_at, email_verified_at, whatsapp_verified_at, intent_virtual_accounts, intent_offramp, intent_service_agreements, intent_configured_at, kyc_routing_assigned, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
        on conflict (user_id) do update set
          whatsapp_number = excluded.whatsapp_number,
          email = excluded.email,
@@ -4620,8 +4625,13 @@ async function upsertUser(client: pg.PoolClient, user: UserRecord) {
          avatar_updated_at = excluded.avatar_updated_at,
          email_verified_at = excluded.email_verified_at,
          whatsapp_verified_at = excluded.whatsapp_verified_at,
+         intent_virtual_accounts = coalesce(excluded.intent_virtual_accounts, users.intent_virtual_accounts),
+         intent_offramp = coalesce(excluded.intent_offramp, users.intent_offramp),
+         intent_service_agreements = coalesce(excluded.intent_service_agreements, users.intent_service_agreements),
+         intent_configured_at = coalesce(excluded.intent_configured_at, users.intent_configured_at),
+         kyc_routing_assigned = coalesce(excluded.kyc_routing_assigned, users.kyc_routing_assigned),
          updated_at = excluded.updated_at`,
-      [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, user.dateOfBirth ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.telegramUserId ?? null, user.telegramUsername ?? null, user.telegramVerifiedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.createdAt, user.updatedAt]
+      [user.id, user.whatsappNumber ?? null, user.email || null, firstName, lastName, user.country ?? null, user.dateOfBirth ?? null, JSON.stringify(['payments_user']), primaryChannel, user.username ?? null, user.usernameUpdatedAt ?? null, user.telegramUserId ?? null, user.telegramUsername ?? null, user.telegramVerifiedAt ?? null, user.avatarUrl ?? null, user.avatarObjectKey ?? null, user.avatarUpdatedAt ?? null, user.emailVerifiedAt ?? null, user.whatsappVerifiedAt ?? null, user.intentVirtualAccounts ?? false, user.intentOfframp ?? false, user.intentServiceAgreements ?? false, user.intentConfiguredAt ?? null, user.kycRoutingAssigned ?? null, user.createdAt, user.updatedAt]
     );
   } catch (err: any) {
     if (err?.code === '23505' && (err?.constraint === 'users_email_key' || String(err?.message).includes('users_email_key')) && user.email) {
