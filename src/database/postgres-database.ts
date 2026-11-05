@@ -265,42 +265,47 @@ export class PostgresDatabase {
     const connectRetries = Math.max(0, Number(process.env.POSTGRES_CONNECT_RETRIES ?? 2));
     const retryDelayMs = Math.max(50, Number(process.env.POSTGRES_CONNECT_RETRY_DELAY_MS ?? 250));
     const originalConnect = this.pool.connect.bind(this.pool);
-    this.pool.connect = (async (...args: any[]) => {
-      let client: pg.PoolClient | undefined;
-      for (let attempt = 0; attempt <= connectRetries; attempt += 1) {
-        try {
-          client = await (originalConnect as any)(...args);
-          break;
-        } catch (error) {
-          if (!isTransientPostgresError(error) || attempt >= connectRetries) throw error;
-          const waitMs = retryDelayMs * (attempt + 1);
-          console.warn('[postgres.connect.retry]', {
-            attempt: attempt + 1,
-            nextAttempt: attempt + 2,
-            waitMs,
-            error: (error as Error)?.message || String(error),
-            pool: this.getPoolStats(),
-          });
-          await sleep(waitMs);
-        }
+    this.pool.connect = ((...args: any[]) => {
+      if (typeof args[0] === 'function') {
+        return (originalConnect as any)(...args);
       }
-      if (!client) throw new Error('Postgres connection could not be acquired');
-      if ((client as any).__sivanInstrumented) return client;
-      const originalQuery = client.query.bind(client);
-      client.query = (async (...queryArgs: any[]) => {
-        const started = Date.now();
-        try {
-          return await (originalQuery as any)(...queryArgs);
-        } finally {
-          const durationMs = Date.now() - started;
-          if (durationMs >= slowQueryMs) {
-            const sql = typeof queryArgs[0] === 'string' ? queryArgs[0] : queryArgs[0]?.text;
-            console.warn('[postgres.slow_query]', { durationMs, sql: String(sql ?? '').replace(/\s+/g, ' ').slice(0, 500), pool: this.getPoolStats() });
+      return (async () => {
+        let client: pg.PoolClient | undefined;
+        for (let attempt = 0; attempt <= connectRetries; attempt += 1) {
+          try {
+            client = await (originalConnect as any)(...args);
+            break;
+          } catch (error) {
+            if (!isTransientPostgresError(error) || attempt >= connectRetries) throw error;
+            const waitMs = retryDelayMs * (attempt + 1);
+            console.warn('[postgres.connect.retry]', {
+              attempt: attempt + 1,
+              nextAttempt: attempt + 2,
+              waitMs,
+              error: (error as Error)?.message || String(error),
+              pool: this.getPoolStats(),
+            });
+            await sleep(waitMs);
           }
         }
-      }) as any;
-      (client as any).__sivanInstrumented = true;
-      return client;
+        if (!client) throw new Error('Postgres connection could not be acquired');
+        if ((client as any).__sivanInstrumented) return client;
+        const originalQuery = client.query.bind(client);
+        client.query = (async (...queryArgs: any[]) => {
+          const started = Date.now();
+          try {
+            return await (originalQuery as any)(...queryArgs);
+          } finally {
+            const durationMs = Date.now() - started;
+            if (durationMs >= slowQueryMs) {
+              const sql = typeof queryArgs[0] === 'string' ? queryArgs[0] : queryArgs[0]?.text;
+              console.warn('[postgres.slow_query]', { durationMs, sql: String(sql ?? '').replace(/\s+/g, ' ').slice(0, 500), pool: this.getPoolStats() });
+            }
+          }
+        }) as any;
+        (client as any).__sivanInstrumented = true;
+        return client;
+      })();
     }) as any;
   }
 
