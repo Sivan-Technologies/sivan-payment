@@ -57,3 +57,4 @@ CREATE INDEX IF NOT EXISTS idx_b2b_merchants_slug ON b2b_merchants(slug);
 CREATE INDEX IF NOT EXISTS idx_b2b_api_keys_hash ON b2b_merchant_api_keys(secret_hash);
 CREATE INDEX IF NOT EXISTS idx_b2b_dispatched_flows_ref ON b2b_dispatched_flows(reference);
 CREATE INDEX IF NOT EXISTS idx_b2b_dispatched_flows_merchant ON b2b_dispatched_flows(merchant_id);
+

@@ -3,3 +3,4 @@
 DROP TABLE IF EXISTS b2b_dispatched_flows CASCADE;
 DROP TABLE IF EXISTS b2b_merchant_api_keys CASCADE;
 DROP TABLE IF EXISTS b2b_merchants CASCADE;
+
