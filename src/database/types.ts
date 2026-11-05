@@ -1386,4 +1386,56 @@ export interface PasskeyChallengeRecord {
   createdAt: string;
 }
 
+export interface B2bMerchantRecord {
+  id: string;
+  name: string;
+  slug: string;
+  email: string;
+  phone: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'PENDING';
+  webhookUrl?: string;
+  webhookSecret?: string;
+  customGreeting?: string;
+  customButtonLabel?: string;
+  customSuccessMessage?: string;
+  totalVolumeNgn: number;
+  totalDealsCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface B2bMerchantApiKeyRecord {
+  id: string;
+  merchantId: string;
+  keyPrefix: string;
+  publicKey: string;
+  secretHash: string;
+  maskedKey: string;
+  mode: 'live' | 'test';
+  status: 'ACTIVE' | 'REVOKED';
+  lastUsedAt?: string;
+  createdAt: string;
+}
+
+export interface B2bDispatchedFlowRecord {
+  id: string;
+  merchantId: string;
+  reference: string;
+  customerPhone: string;
+  customerName?: string;
+  amountNgn: number;
+  currency: string;
+  flowType: string;
+  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
+  dedicatedAccountNumber?: string;
+  dedicatedBankName?: string;
+  metaMessageId?: string;
+  greetingMessage?: string;
+  buttonLabel?: string;
+  successMessage?: string;
+  metadata?: Record<string, any>;
+  createdAt: string;
+  completedAt?: string;
+}
+
 

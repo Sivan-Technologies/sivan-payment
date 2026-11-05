@@ -345,6 +345,10 @@ export class PostgresDatabase {
     };
   }
 
+  getPool(): pg.Pool {
+    return this.pool;
+  }
+
   async read(): Promise<DatabaseShape> {
     const client = await this.pool.connect();
     try {
