@@ -22,3 +22,4 @@ CREATE TABLE IF NOT EXISTS b2b_webhook_outbox (
 CREATE INDEX IF NOT EXISTS idx_b2b_outbox_pending ON b2b_webhook_outbox(status, next_retry_at) WHERE status = 'PENDING';
 CREATE INDEX IF NOT EXISTS idx_b2b_outbox_merchant ON b2b_webhook_outbox(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_b2b_outbox_flow ON b2b_webhook_outbox(flow_id);
+
