@@ -128,8 +128,8 @@ export class B2bMerchantService {
 
       await client.query(
         `INSERT INTO b2b_merchant_api_keys (
-          merchant_id, key_prefix, public_key, secret_hash, masked_key, mode, is_active
-        ) VALUES ($1, $2, $3, $4, $5, 'live', true)`,
+          merchant_id, key_prefix, public_key, secret_hash, masked_key, mode, status
+        ) VALUES ($1, $2, $3, $4, $5, 'live', 'ACTIVE')`,
         [merchantId, prefix, publicKey, secretHash, maskedKey]
       );
 
@@ -176,7 +176,7 @@ export class B2bMerchantService {
       LEFT JOIN LATERAL (
         SELECT masked_key, public_key, created_at
         FROM b2b_merchant_api_keys
-        WHERE merchant_id = m.id AND is_active = true
+        WHERE merchant_id = m.id AND status = 'ACTIVE'
         ORDER BY created_at DESC LIMIT 1
       ) k ON true
       ORDER BY m.created_at DESC
@@ -242,13 +242,13 @@ export class B2bMerchantService {
     try {
       await client.query('BEGIN');
       await client.query(
-        `UPDATE b2b_merchant_api_keys SET is_active = false WHERE merchant_id = $1 AND is_active = true`,
+        `UPDATE b2b_merchant_api_keys SET status = 'REVOKED' WHERE merchant_id = $1 AND status = 'ACTIVE'`,
         [merchantId]
       );
       const { secretKey, publicKey, secretHash, maskedKey, prefix } = this.generateKeyPair(mode);
       await client.query(
-        `INSERT INTO b2b_merchant_api_keys (merchant_id, key_prefix, public_key, secret_hash, masked_key, mode, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6, true)`,
+        `INSERT INTO b2b_merchant_api_keys (merchant_id, key_prefix, public_key, secret_hash, masked_key, mode, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE')`,
         [merchantId, prefix, publicKey, secretHash, maskedKey, mode]
       );
       await client.query('COMMIT');
@@ -285,7 +285,7 @@ export class B2bMerchantService {
               m.created_at as m_created_at, m.updated_at as m_updated_at
        FROM b2b_merchant_api_keys k
        JOIN b2b_merchants m ON k.merchant_id = m.id
-       WHERE k.secret_hash = $1 AND k.is_active = true`,
+       WHERE k.secret_hash = $1 AND k.status = 'ACTIVE'`,
       [secretHash]
     );
 
@@ -330,7 +330,7 @@ export class B2bMerchantService {
       secretHash: row.secret_hash,
       maskedKey: row.masked_key,
       mode: row.mode,
-      status: row.is_active ? 'ACTIVE' : 'REVOKED',
+      status: row.status as 'ACTIVE' | 'REVOKED',
       lastUsedAt: row.last_used_at?.toISOString(),
       createdAt: row.created_at.toISOString(),
     };
