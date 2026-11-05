@@ -1438,4 +1438,22 @@ export interface B2bDispatchedFlowRecord {
   completedAt?: string;
 }
 
+export interface B2bWebhookOutboxRecord {
+  id: string;
+  merchantId: string;
+  flowId?: string;
+  eventType: string;
+  destinationUrl: string;
+  payload: Record<string, any>;
+  signatureHeader: string;
+  attempts: number;
+  maxAttempts: number;
+  status: 'PENDING' | 'DELIVERED' | 'FAILED';
+  lastError?: string;
+  nextRetryAt: string;
+  deliveredAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 

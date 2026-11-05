@@ -13,6 +13,10 @@ const createMerchantSchema = z.object({
   customSuccessMessage: z.string().optional(),
 });
 
+const toggleStatusSchema = z.object({
+  status: z.enum(['ACTIVE', 'SUSPENDED']),
+});
+
 const dispatchFlowSchema = z.object({
   customerPhone: z.string().min(7, 'customerPhone is required'),
   customerName: z.string().optional(),
@@ -27,6 +31,25 @@ const dispatchFlowSchema = z.object({
 });
 
 export async function businessRoutes(app: FastifyInstance) {
+  /**
+   * GET /api/v1/business/merchants
+   * Lists all onboarded B2B merchants for the Sivan Admin Hub.
+   */
+  app.get('/api/v1/business/merchants', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const merchants = await b2bMerchantService.listMerchants();
+      return reply.send({
+        success: true,
+        merchants,
+      });
+    } catch (err: any) {
+      return reply.status(500).send({
+        success: false,
+        error: err?.message || 'Failed to list merchants',
+      });
+    }
+  });
+
   /**
    * POST /api/v1/business/merchants
    * Onboards a new merchant and provisions their live API key pair.
@@ -53,6 +76,76 @@ export async function businessRoutes(app: FastifyInstance) {
   });
 
   /**
+   * PUT /api/v1/business/merchants/:id/status
+   * Toggles merchant status between ACTIVE and SUSPENDED.
+   */
+  app.put('/api/v1/business/merchants/:id/status', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const { id } = request.params;
+      const { status } = toggleStatusSchema.parse(request.body);
+      const merchant = await b2bMerchantService.toggleMerchantStatus(id, status);
+
+      if (!merchant) {
+        return reply.status(404).send({ success: false, error: 'Merchant not found' });
+      }
+
+      return reply.send({
+        success: true,
+        merchant,
+      });
+    } catch (err: any) {
+      return reply.status(400).send({
+        success: false,
+        error: err?.message || 'Failed to update merchant status',
+      });
+    }
+  });
+
+  /**
+   * POST /api/v1/business/merchants/:id/rotate-key
+   * Rotates a merchant's API key.
+   */
+  app.post('/api/v1/business/merchants/:id/rotate-key', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const { id } = request.params;
+      const keys = await b2bMerchantService.rotateApiKey(id, 'live');
+      return reply.send({
+        success: true,
+        keys,
+        message: 'New API key generated successfully. Previous keys revoked.',
+      });
+    } catch (err: any) {
+      return reply.status(400).send({
+        success: false,
+        error: err?.message || 'Failed to rotate API key',
+      });
+    }
+  });
+
+  /**
+   * GET /api/v1/business/merchants/:id/flows
+   * Lists dispatched flows for a specific merchant.
+   */
+  app.get('/api/v1/business/merchants/:id/flows', async (request: FastifyRequest<{ Params: { id: string }; Querystring: { limit?: string; offset?: string } }>, reply: FastifyReply) => {
+    try {
+      const { id } = request.params;
+      const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
+      const offset = parseInt(request.query.offset || '0', 10);
+      const flows = await b2bMerchantService.listMerchantFlows(id, limit, offset);
+
+      return reply.send({
+        success: true,
+        flows,
+      });
+    } catch (err: any) {
+      return reply.status(400).send({
+        success: false,
+        error: err?.message || 'Failed to list merchant flows',
+      });
+    }
+  });
+
+  /**
    * POST /api/v1/business/flows/dispatch
    * Dispatches an interactive WhatsApp Meta Flow or mobile checkout to a customer.
    * Authenticated via: Authorization: Bearer sk_live_...
@@ -60,8 +153,11 @@ export async function businessRoutes(app: FastifyInstance) {
   app.post('/api/v1/business/flows/dispatch', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const authHeader = request.headers.authorization;
-      const { merchant } = await b2bMerchantService.authenticateApiKey(authHeader);
+      if (!authHeader) {
+        return reply.status(401).send({ success: false, error: 'Missing Authorization header' });
+      }
 
+      const { merchant } = await b2bMerchantService.authenticateApiKey(authHeader);
       const input = dispatchFlowSchema.parse(request.body);
       const flow = await b2bMerchantService.dispatchFlow(merchant, input);
 
@@ -74,7 +170,7 @@ export async function businessRoutes(app: FastifyInstance) {
         flow,
       });
     } catch (err: any) {
-      const statusCode = err?.message?.includes('Unauthorized') ? 401 : 400;
+      const statusCode = err?.message?.includes('Authentication failed') ? 401 : 400;
       return reply.status(statusCode).send({
         success: false,
         error: err?.message || 'Flow dispatch failed',
@@ -90,8 +186,11 @@ export async function businessRoutes(app: FastifyInstance) {
   app.get('/api/v1/business/flows/:reference', async (request: FastifyRequest<{ Params: { reference: string } }>, reply: FastifyReply) => {
     try {
       const authHeader = request.headers.authorization;
-      await b2bMerchantService.authenticateApiKey(authHeader);
+      if (!authHeader) {
+        return reply.status(401).send({ success: false, error: 'Missing Authorization header' });
+      }
 
+      await b2bMerchantService.authenticateApiKey(authHeader);
       const { reference } = request.params;
       const flow = await b2bMerchantService.getFlowByReference(reference);
 
@@ -107,7 +206,7 @@ export async function businessRoutes(app: FastifyInstance) {
         flow,
       });
     } catch (err: any) {
-      const statusCode = err?.message?.includes('Unauthorized') ? 401 : 400;
+      const statusCode = err?.message?.includes('Authentication failed') ? 401 : 400;
       return reply.status(statusCode).send({
         success: false,
         error: err?.message || 'Failed to fetch flow',
@@ -117,13 +216,16 @@ export async function businessRoutes(app: FastifyInstance) {
 
   /**
    * POST /api/v1/business/flows/:reference/simulate-complete
-   * Simulates settlement of a flow for integration testing and triggers webhook dispatch.
+   * Simulates settlement of a flow for integration testing and queues webhook into outbox.
    */
   app.post('/api/v1/business/flows/:reference/simulate-complete', async (request: FastifyRequest<{ Params: { reference: string } }>, reply: FastifyReply) => {
     try {
       const authHeader = request.headers.authorization;
-      await b2bMerchantService.authenticateApiKey(authHeader);
+      if (!authHeader) {
+        return reply.status(401).send({ success: false, error: 'Missing Authorization header' });
+      }
 
+      await b2bMerchantService.authenticateApiKey(authHeader);
       const { reference } = request.params;
       const flow = await b2bMerchantService.getFlowByReference(reference);
       if (!flow) {
@@ -135,10 +237,27 @@ export async function businessRoutes(app: FastifyInstance) {
         success: ok,
         reference,
         status: 'COMPLETED',
-        message: 'Flow marked as completed and webhook event dispatched to merchant',
+        message: 'Flow marked as completed and webhook event queued into durable outbox',
       });
     } catch (err: any) {
       return reply.status(400).send({ success: false, error: err?.message || 'Failed to complete flow' });
+    }
+  });
+
+  /**
+   * POST /api/v1/business/webhooks/:id/retry
+   * Manually retries a webhook outbox delivery.
+   */
+  app.post('/api/v1/business/webhooks/:id/retry', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const { id } = request.params;
+      const ok = await b2bMerchantService.retryWebhook(id);
+      return reply.send({
+        success: ok,
+        message: 'Webhook delivery triggered',
+      });
+    } catch (err: any) {
+      return reply.status(400).send({ success: false, error: err?.message || 'Failed to retry webhook' });
     }
   });
 }
