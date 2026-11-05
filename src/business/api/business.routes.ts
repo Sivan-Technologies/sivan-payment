@@ -24,6 +24,7 @@ const dispatchFlowSchema = z.object({
   currency: z.string().optional().default('NGN'),
   orderReference: z.string().optional(),
   flowType: z.string().optional().default('checkout'),
+  includeVirtualAccount: z.boolean().optional().default(false),
   greetingMessage: z.string().optional(),
   buttonLabel: z.string().optional(),
   successMessage: z.string().optional(),

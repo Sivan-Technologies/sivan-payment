@@ -27,6 +27,7 @@ export interface DispatchFlowInput {
   currency?: string;
   orderReference?: string;
   flowType?: string;
+  includeVirtualAccount?: boolean;
   greetingMessage?: string;
   buttonLabel?: string;
   successMessage?: string;
@@ -352,8 +353,8 @@ export class B2bMerchantService {
     amountNgn: number;
     metaMessageId?: string;
     checkoutUrl: string;
-    dedicatedAccountNumber: string;
-    dedicatedBankName: string;
+    dedicatedAccountNumber?: string | null;
+    dedicatedBankName?: string | null;
   }> {
     const pool = this.getPool();
     const cleanPhone = input.customerPhone.replace(/\D/g, '');
@@ -365,20 +366,27 @@ export class B2bMerchantService {
       throw new Error('amountNgn must be a positive number');
     }
 
+    const currency = (input.currency || 'NGN').toUpperCase();
     const reference = input.orderReference || `ORD_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
     const greeting = input.greetingMessage || merchant.customGreeting || `Hello! Your order from ${merchant.name} is ready for payment.`;
-    const buttonText = input.buttonLabel || merchant.customButtonLabel || `Pay ₦${input.amountNgn.toLocaleString('en-NG')}`;
+    const buttonText = input.buttonLabel || merchant.customButtonLabel || `Pay ${currency === 'NGN' ? '₦' : currency + ' '}${input.amountNgn.toLocaleString()}`;
     const successMsg = input.successMessage || merchant.customSuccessMessage || `Payment confirmed! Thank you for choosing ${merchant.name}.`;
 
-    // Dynamic Dedicated Virtual Account Binding (NIBSS / Wema Bank)
-    let dedicatedAccountNumber = input.metadata?.dedicatedAccountNumber;
-    let dedicatedBankName = input.metadata?.dedicatedBankName;
+    // Dedicated Virtual Account Binding (Opt-in via includeVirtualAccount: true on NGN corridor)
+    const shouldBindDva = Boolean(input.includeVirtualAccount) && currency === 'NGN';
+    let dedicatedAccountNumber: string | null = null;
+    let dedicatedBankName: string | null = null;
 
-    if (!dedicatedAccountNumber) {
-      const hashNum = crypto.createHash('md5').update(`${cleanPhone}_${reference}`).digest('hex');
-      const accountSuffix = (parseInt(hashNum.slice(0, 8), 16) % 90000000 + 10000000).toString();
-      dedicatedAccountNumber = `99${accountSuffix}`;
-      dedicatedBankName = 'Wema Bank (Sivan DVA)';
+    if (shouldBindDva) {
+      dedicatedAccountNumber = input.metadata?.dedicatedAccountNumber || null;
+      dedicatedBankName = input.metadata?.dedicatedBankName || null;
+
+      if (!dedicatedAccountNumber) {
+        const hashNum = crypto.createHash('md5').update(`${cleanPhone}_${reference}`).digest('hex');
+        const accountSuffix = (parseInt(hashNum.slice(0, 8), 16) % 90000000 + 10000000).toString();
+        dedicatedAccountNumber = `99${accountSuffix}`;
+        dedicatedBankName = 'Wema Bank (Sivan DVA)';
+      }
     }
 
     // Direct mobile checkout link
@@ -392,21 +400,37 @@ export class B2bMerchantService {
 
     if (metaToken && phoneNumberId) {
       try {
-        const messageBody = [
-          `*${merchant.name}*`,
-          greeting,
-          '',
-          `Amount: ₦${input.amountNgn.toLocaleString('en-NG')}`,
-          `Reference: ${reference}`,
-          '',
-          `• Option 1: Direct Bank Transfer`,
-          `Bank: ${dedicatedBankName}`,
-          `Account: ${dedicatedAccountNumber}`,
-          `Name: Sivan - ${merchant.name}`,
-          '',
-          `• Option 2: Pay Online / Card / Crypto:`,
-          checkoutUrl,
-        ].join('\n');
+        const currencySymbol = currency === 'NGN' ? '₦' : currency === 'GHS' ? 'GH₵' : currency === 'KES' ? 'KSh ' : `${currency} `;
+        let messageBody = '';
+
+        if (shouldBindDva) {
+          messageBody = [
+            `*${merchant.name}*`,
+            greeting,
+            '',
+            `Amount: ${currencySymbol}${input.amountNgn.toLocaleString()}`,
+            `Reference: ${reference}`,
+            '',
+            `• Option 1: Direct Bank Transfer`,
+            `Bank: ${dedicatedBankName}`,
+            `Account: ${dedicatedAccountNumber}`,
+            `Name: Sivan - ${merchant.name}`,
+            '',
+            `• Option 2: Pay Online / Card / Crypto:`,
+            checkoutUrl,
+          ].join('\n');
+        } else {
+          messageBody = [
+            `*${merchant.name}*`,
+            greeting,
+            '',
+            `Amount: ${currencySymbol}${input.amountNgn.toLocaleString()}`,
+            `Reference: ${reference}`,
+            '',
+            `Tap the link below to complete your payment securely:`,
+            checkoutUrl,
+          ].join('\n');
+        }
 
         const metaRes = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
           method: 'POST',
