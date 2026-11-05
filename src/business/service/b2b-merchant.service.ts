@@ -432,19 +432,74 @@ export class B2bMerchantService {
           ].join('\n');
         }
 
+        const metaFlowId = process.env.META_FLOW_ID;
+        let payload: any;
+
+        if (metaFlowId) {
+          // Meta Interactive Flow Screen with dynamic merchant parameter binding
+          payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: cleanPhone,
+            type: 'interactive',
+            interactive: {
+              type: 'flow',
+              header: {
+                type: 'text',
+                text: merchant.name,
+              },
+              body: {
+                text: greeting,
+              },
+              footer: {
+                text: 'Secured by Sivan Payment Protocol',
+              },
+              action: {
+                name: 'flow',
+                parameters: {
+                  flow_message_version: '3',
+                  flow_token: `sivan_${reference}`,
+                  flow_id: metaFlowId,
+                  flow_cta: buttonText,
+                  flow_action: 'navigate',
+                  flow_action_payload: {
+                    screen: 'CHECKOUT_SCREEN',
+                    data: {
+                      merchant_name: merchant.name,
+                      merchant_slug: merchant.slug,
+                      order_reference: reference,
+                      amount: input.amountNgn,
+                      currency,
+                      currency_symbol: currencySymbol,
+                      customer_phone: cleanPhone,
+                      customer_name: input.customerName || 'Customer',
+                      checkout_url: checkoutUrl,
+                      dedicated_account: dedicatedAccountNumber || '',
+                      dedicated_bank: dedicatedBankName || '',
+                    },
+                  },
+                },
+              },
+            },
+          };
+        } else {
+          // Rich interactive text message with direct links
+          payload = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: cleanPhone,
+            type: 'text',
+            text: { body: messageBody },
+          };
+        }
+
         const metaRes = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${metaToken}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: cleanPhone,
-            type: 'text',
-            text: { body: messageBody },
-          }),
+          body: JSON.stringify(payload),
         });
 
         if (metaRes.ok) {
