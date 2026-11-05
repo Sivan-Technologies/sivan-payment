@@ -34,6 +34,8 @@ const updateControlsSchema = z.object({
   groupJid: z.string().optional(),
   isEarningEnabled: z.boolean().optional(),
   isBroadcastEnabled: z.boolean().optional(),
+  isAntiPhishingEnabled: z.boolean().optional(),
+  allowedLinkPatterns: z.string().optional(),
   revsharePercent: z.number().min(0).max(100).optional(),
   status: z.enum(['ACTIVE', 'PAUSED', 'SUSPENDED']).optional(),
 }).refine(data => data.groupId || data.groupJid, {
@@ -173,6 +175,60 @@ export async function communityRoutes(app: FastifyInstance) {
       return reply.send({ success: true, group: updated });
     } catch (err: any) {
       return reply.status(400).send({ success: false, error: err?.message || 'Failed to toggle broadcast' });
+    }
+  });
+
+  /**
+   * POST /api/community/group/toggle-guard
+   * Called by WhatsApp community bot when admin sends "sivan guard on" or "sivan guard off".
+   */
+  app.post('/api/community/group/toggle-guard', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const toggleSchema = z.object({
+        groupJid: z.string().min(1, 'groupJid is required'),
+        isAntiPhishingEnabled: z.boolean(),
+      });
+      const input = toggleSchema.parse(request.body);
+      const updated = await communityRevshareService.updateAdminControls({
+        groupJid: input.groupJid,
+        isAntiPhishingEnabled: input.isAntiPhishingEnabled,
+      });
+      if (!updated) {
+        return reply.status(404).send({ success: false, error: 'Community group not found or not linked' });
+      }
+      return reply.send({ success: true, group: updated });
+    } catch (err: any) {
+      return reply.status(400).send({ success: false, error: err?.message || 'Failed to toggle anti-phishing guard' });
+    }
+  });
+
+  /**
+   * GET /api/community/group/settings
+   * Fetches live security and broadcast settings for a group (e.g. anti-phishing status and allowed links).
+   */
+  app.get('/api/community/group/settings', async (request: FastifyRequest<{ Querystring: { groupJid: string } }>, reply: FastifyReply) => {
+    try {
+      const groupJid = request.query?.groupJid;
+      if (!groupJid) {
+        return reply.status(400).send({ success: false, error: 'groupJid query parameter is required' });
+      }
+      const group = await communityRevshareService.getGroupByJid(groupJid);
+      if (!group) {
+        return reply.status(404).send({ success: false, error: 'Community group not found' });
+      }
+      return reply.send({
+        success: true,
+        settings: {
+          groupJid: group.groupJid,
+          groupName: group.groupName,
+          isBroadcastEnabled: group.isBroadcastEnabled ?? false,
+          isAntiPhishingEnabled: group.isAntiPhishingEnabled ?? false,
+          allowedLinkPatterns: group.allowedLinkPatterns ?? '',
+          status: group.status,
+        },
+      });
+    } catch (err: any) {
+      return reply.status(500).send({ success: false, error: err?.message || 'Failed to get group settings' });
     }
   });
 
