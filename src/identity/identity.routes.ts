@@ -463,7 +463,14 @@ export async function identityRoutes(app: FastifyInstance) {
    * attempt limit is brute-forceable.
    */
   app.post('/api/identity/link-telegram/redeem', async (request) => {
-    requireIdentityServiceSecret(request);
+    const authHeader = request.headers.authorization;
+    const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    if (bearerToken.startsWith('sk_live_') || bearerToken.startsWith('sk_test_')) {
+      const { b2bMerchantService } = await import('../business/service/b2b-merchant.service.js');
+      await b2bMerchantService.authenticateApiKey(bearerToken);
+    } else {
+      requireIdentityServiceSecret(request);
+    }
     const body = parseBody(redeemTelegramLinkSchema, request.body);
     return { data: await redeemTelegramLink(body, { source: 'telegram', ipAddress: request.ip, userAgent: request.headers['user-agent'] }) };
   });

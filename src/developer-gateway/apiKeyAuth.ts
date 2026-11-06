@@ -43,7 +43,24 @@ export async function requireDeveloperApiKey(
     (env.APP_ENV !== 'production' && apiKey.startsWith('sk_test_')) ||
     validKeys.has(apiKey) ||
     (Boolean(process.env.SIVAN_DEV_API_KEY) && apiKey === process.env.SIVAN_DEV_API_KEY);
+
   if (!isRecognized) {
+    if (apiKey.startsWith('sk_live_') || apiKey.startsWith('sk_test_')) {
+      try {
+        const { b2bMerchantService } = await import('../business/service/b2b-merchant.service.js');
+        const { merchant } = await b2bMerchantService.authenticateApiKey(apiKey);
+        const isLive = apiKey.startsWith('sk_live_');
+        (request as any).b2bMerchant = merchant;
+        (request as any).developerAuth = {
+          keyId: apiKey.slice(0, 16),
+          isLive,
+          developerName: merchant.name,
+        } satisfies DeveloperAuthContext;
+        return;
+      } catch {
+        throw unauthorized('Invalid or revoked Sivan B2B API key provided.');
+      }
+    }
     throw unauthorized('Invalid Sivan developer API key provided.');
   }
 

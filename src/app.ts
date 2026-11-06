@@ -224,12 +224,12 @@ export async function buildApp() {
    *
    * OPTIONS is included because the preflight itself is an OPTIONS request.
    */
-  await app.register(cors, {
+  await app.register(cors as any, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim()),
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
-  await app.register(rawBody, {
+  await app.register(rawBody as any, {
     field: 'rawBody',
     global: false,
     encoding: false,
@@ -417,7 +417,7 @@ export async function buildApp() {
     }
 
     const header = request.headers.authorization;
-    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined;
     if (!token) {
       const stepUpToken = ((request.headers['x-step-up-token'] as string) || (request.body as any)?.stepUpToken) as string | undefined;
       const targetUserId = getTargetUserId(request);
@@ -431,6 +431,26 @@ export async function buildApp() {
       }
       return reply.code(401).send({ error: { code: 'auth_required', message: 'Authentication required' } });
     }
+
+    // B2B Partner API Key authentication (sk_live_... or sk_test_... via @sivanai/sdk)
+    if (token.startsWith('sk_live_') || token.startsWith('sk_test_')) {
+      try {
+        const { b2bMerchantService } = await import('./business/service/b2b-merchant.service.js');
+        const { merchant } = await b2bMerchantService.authenticateApiKey(token);
+        const targetUserId = getTargetUserId(request);
+        (request as any).b2bMerchant = merchant;
+        (request as any).authUser = { sub: targetUserId || merchant.id, roles: ['user', 'b2b_merchant'] };
+        return;
+      } catch (err: any) {
+        return reply.code(401).send({
+          error: {
+            code: 'invalid_api_key',
+            message: err?.message || 'Invalid or revoked B2B API key',
+          },
+        });
+      }
+    }
+
     try {
       const payload = verifyUserJwt(token);
       const targetUserId = getTargetUserId(request);
