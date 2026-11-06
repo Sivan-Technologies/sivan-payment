@@ -86,4 +86,47 @@ export async function kycLevelRoutes(app: FastifyInstance) {
     });
     return { data: result };
   });
+
+  /**
+   * Resolve Tier 2 KYC context (Locked Country + BVN/DVA check) for WhatsApp Meta Flow INIT.
+   */
+  app.get('/api/users/:userId/kyc/tier2/context', async (request) => {
+    const { requireIdentityServiceSecret } = await import('../../shared/service-auth.js');
+    requireIdentityServiceSecret(request);
+    const { userId } = request.params as { userId: string };
+    const { getUserTier2KycContext } = await import('../../admin/verification-request.service.js');
+    return { data: await getUserTier2KycContext(userId) };
+  });
+
+  /**
+   * Submit WhatsApp Meta Flow Tier 2 KYC step (Step 1: Address + Bank Statement, Step 2: NIN + DOB).
+   */
+  app.post('/api/users/:userId/kyc/tier2/step-up', async (request) => {
+    const { requireIdentityServiceSecret } = await import('../../shared/service-auth.js');
+    requireIdentityServiceSecret(request);
+    const { userId } = request.params as { userId: string };
+    const { z } = await import('zod');
+    const body = z
+      .object({
+        step: z.enum(['address', 'nin']),
+        country: z.string().min(2).max(16),
+        streetAddress: z.string().optional(),
+        city: z.string().optional(),
+        stateRegion: z.string().optional(),
+        documentType: z.string().optional(),
+        documentFileName: z.string().optional(),
+        documentMimeType: z.string().optional(),
+        proofOfAddressUrl: z.string().optional(),
+        nin: z.string().optional(),
+        dateOfBirth: z.string().optional(),
+      })
+      .parse(request.body);
+
+    const { submitWhatsAppTier2KycStep } = await import('../../admin/verification-request.service.js');
+    const result = await submitWhatsAppTier2KycStep({
+      userIdOrPhone: userId,
+      ...body,
+    });
+    return { data: result };
+  });
 }

@@ -50,7 +50,7 @@ function normalizeAdminAliasUrl(rawUrl = '') {
       '/finance', '/approvals', '/reconciliation', '/webhooks',
       '/compliance', '/search', '/risk', '/suppliers', '/fees',
       '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers',
-      '/utilities', '/moneygram', '/wallets'
+      '/utilities', '/moneygram', '/wallets', '/kyc'
     ];
     if (strippedAdminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
       return `/api/admin${rawUrl}`;
@@ -541,7 +541,7 @@ export async function buildApp() {
       '/finance', '/approvals', '/reconciliation', '/webhooks',
       '/compliance', '/search', '/risk', '/suppliers', '/fees',
       '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers',
-      '/utilities', '/moneygram', '/wallets'
+      '/utilities', '/moneygram', '/wallets', '/kyc'
     ];
     const isAdminPath = rawUrl.startsWith('/api/admin') || adminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
     if (!isAdminPath) return;

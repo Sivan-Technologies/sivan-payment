@@ -601,18 +601,49 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = request.params as { id: string };
     const body = z
       .object({
-        decision: z.enum(['approved', 'rejected']),
+        decision: z.enum(['approved', 'rejected']).optional(),
+        status: z.enum(['approved', 'rejected']).optional(),
         reviewNotes: z.string().optional(),
+        notes: z.string().optional(),
       })
       .parse(request.body);
+
+    const decision = body.decision || body.status;
+    if (!decision) {
+      throw new Error('decision or status (approved | rejected) is required');
+    }
 
     const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
     const reviewed = await reviewStepUpVerificationRequest(
       adminId,
       params.id,
-      body.decision,
-      body.reviewNotes
+      decision,
+      body.reviewNotes || body.notes
     );
     return { data: reviewed };
+  });
+
+  // Autonomous AI KYC Controls (Configurable Approval Threshold)
+  regGet('/kyc/controls', async () => {
+    const { getKycControls } = await import('./verification-request.service.js');
+    return { data: await getKycControls() };
+  });
+
+  regPost('/kyc/controls', async (request) => {
+    const body = z
+      .object({
+        aiApprovalThreshold: z.coerce.number().min(50).max(99),
+        aiAutoApprovalEnabled: z.boolean(),
+      })
+      .parse(request.body);
+
+    const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
+    const { updateKycControls } = await import('./verification-request.service.js');
+    const updated = await updateKycControls({
+      aiApprovalThreshold: body.aiApprovalThreshold,
+      aiAutoApprovalEnabled: body.aiAutoApprovalEnabled,
+      adminId,
+    });
+    return { data: updated };
   });
 }

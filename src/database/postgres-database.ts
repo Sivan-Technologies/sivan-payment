@@ -11,6 +11,7 @@ import type {
   NgnIdentityVerificationRecord,
   NgnPayoutAccountRecord,
   StepUpVerificationRequestRecord,
+  KycControlsRecord,
   AceSupportMessageRecord,
   AceSupportResolutionRecord,
   AceSupportSessionRecord,
@@ -3137,8 +3138,8 @@ export class PostgresDatabase {
       `);
       await client.query(
         `INSERT INTO payments_verification_requests
-         (id, user_id, admin_id, requested_modules, reason, status, token_hash, expires_at, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (id, user_id, admin_id, requested_modules, reason, status, token_hash, expires_at, submitted_at, submission_data, metadata, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          ON CONFLICT (id) DO NOTHING`,
         [
           record.id,
@@ -3149,6 +3150,9 @@ export class PostgresDatabase {
           record.status,
           record.tokenHash,
           record.expiresAt,
+          record.submittedAt || null,
+          record.submissionData ? JSON.stringify(record.submissionData) : null,
+          JSON.stringify(record.metadata || {}),
           record.createdAt,
           record.updatedAt,
         ]
@@ -3244,6 +3248,7 @@ export class PostgresDatabase {
   }
 
   private mapVerificationRequest(r: any): StepUpVerificationRequestRecord {
+    const parsedSub = typeof r.submission_data === 'string' ? JSON.parse(r.submission_data) : r.submission_data;
     return {
       id: r.id,
       userId: r.user_id,
@@ -3254,7 +3259,8 @@ export class PostgresDatabase {
       tokenHash: r.token_hash,
       expiresAt: r.expires_at?.toISOString?.() || r.expires_at,
       submittedAt: r.submitted_at?.toISOString?.() || r.submitted_at,
-      submissionData: typeof r.submission_data === 'string' ? JSON.parse(r.submission_data) : r.submission_data,
+      submissionData: parsedSub,
+      submittedData: parsedSub,
       reviewedAt: r.reviewed_at?.toISOString?.() || r.reviewed_at,
       reviewedBy: r.reviewed_by,
       reviewNotes: r.review_notes,
@@ -3311,6 +3317,88 @@ export class PostgresDatabase {
           record.updatedAt,
         ]
       );
+      return record;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getKycControls(): Promise<KycControlsRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS payments_kyc_controls (
+          id VARCHAR(32) PRIMARY KEY,
+          ai_approval_threshold INTEGER NOT NULL DEFAULT 85,
+          ai_auto_approval_enabled BOOLEAN NOT NULL DEFAULT true,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by VARCHAR(64)
+        )
+      `);
+      const result = await client.query(
+        'SELECT * FROM payments_kyc_controls WHERE id = $1 LIMIT 1',
+        ['default_kyc_controls']
+      );
+      if (!result.rows.length) {
+        return {
+          id: 'default_kyc_controls',
+          aiApprovalThreshold: 85,
+          aiAutoApprovalEnabled: true,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      const r = result.rows[0];
+      return {
+        id: 'default_kyc_controls',
+        aiApprovalThreshold: Number(r.ai_approval_threshold ?? 85),
+        aiAutoApprovalEnabled: Boolean(r.ai_auto_approval_enabled ?? true),
+        updatedAt: r.updated_at?.toISOString?.() || r.updated_at,
+        updatedBy: r.updated_by || undefined,
+      };
+    } catch (err) {
+      console.warn('[postgres.getKycControls]', err);
+      return {
+        id: 'default_kyc_controls',
+        aiApprovalThreshold: 85,
+        aiAutoApprovalEnabled: true,
+        updatedAt: new Date().toISOString(),
+      };
+    } finally {
+      client.release();
+    }
+  }
+
+  async saveKycControls(record: KycControlsRecord): Promise<KycControlsRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS payments_kyc_controls (
+          id VARCHAR(32) PRIMARY KEY,
+          ai_approval_threshold INTEGER NOT NULL DEFAULT 85,
+          ai_auto_approval_enabled BOOLEAN NOT NULL DEFAULT true,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_by VARCHAR(64)
+        )
+      `);
+      await client.query(
+        `INSERT INTO payments_kyc_controls (id, ai_approval_threshold, ai_auto_approval_enabled, updated_at, updated_by)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE SET
+           ai_approval_threshold = EXCLUDED.ai_approval_threshold,
+           ai_auto_approval_enabled = EXCLUDED.ai_auto_approval_enabled,
+           updated_at = EXCLUDED.updated_at,
+           updated_by = EXCLUDED.updated_by`,
+        [
+          record.id,
+          record.aiApprovalThreshold,
+          record.aiAutoApprovalEnabled,
+          record.updatedAt,
+          record.updatedBy || null,
+        ]
+      );
+      return record;
+    } catch (err) {
+      console.error('[postgres.saveKycControls] error:', err);
       return record;
     } finally {
       client.release();

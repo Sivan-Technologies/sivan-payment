@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { resolveUsername } from './username-resolution.js';
 import path from 'node:path';
 import { env } from '../config/env.js';
-import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuditLogArchiveRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord, StepUpVerificationRequestRecord } from './types.js';
+import type { AceSupportMessageRecord, AceSupportResolutionRecord, AceSupportSessionRecord, AceToolCallRecord, AuditLogRecord, AuditLogArchiveRecord, AuthChallengeRecord, CustomerRecord, DatabaseShape, ExternalAccountRecord, NgnPayoutAccountRecord, GhsPayoutAccountRecord, GhsQuoteRecord, GhsTransferRecord, LiquidationAddressRecord, UserWalletRecord, OnrampOrderRecord, ReconciliationFindingRecord, ReconciliationRunRecord, UserRecord, CustomerIdentityLinkRecord, IdentityPairingTokenRecord, UserPreferencesRecord, UserTwoFactorRecord, UserTwoFactorRecoveryQuestionRecord, LegalAcceptanceRecord, WithdrawalRecord, PaymentControlRecord, VirtualAccountControlRecord, AssetControlRecord, NetworkControlRecord, SystemStatusRecord, SystemIncidentRecord, SupportTicketRecord, SupportTicketMessageRecord, TransactionReferenceRecord, SupplierRecord, SupplierPaymentRecord, SupplierControlsRecord, VerificationLimitOverrideRecord, UserLimitOverrideRecord, UserLimitResetRecord, WalletControlsRecord, WalletDepositRecord, NgnIdentityVerificationRecord, WithdrawalPinRecord, WithdrawalStepUpTokenRecord, P2pClaimRecord, ServiceAgreementRecord, PasskeyCredentialRecord, PasskeyChallengeRecord, AgreementControlsRecord, StepUpVerificationRequestRecord, KycControlsRecord } from './types.js';
 // A runtime Set, so it is a VALUE import - it cannot ride on the `import type`
 // line above, which is erased at compile time.
 import { WITHDRAWAL_LIMIT_CONSUMING_STATUSES } from './types.js';
@@ -1919,6 +1919,28 @@ export class JsonDatabase {
       const merged = { ...data.verificationRequests[idx], ...patch, updatedAt: new Date().toISOString() };
       data.verificationRequests[idx] = merged;
       return merged;
+    });
+  }
+
+  async getKycControls(): Promise<KycControlsRecord> {
+    const data = await this.read();
+    const found = (data.kycControls || []).find((c) => c.id === 'default_kyc_controls');
+    if (found) return found;
+    return {
+      id: 'default_kyc_controls',
+      aiApprovalThreshold: 85,
+      aiAutoApprovalEnabled: true,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async saveKycControls(record: KycControlsRecord): Promise<KycControlsRecord> {
+    return this.mutate((data) => {
+      data.kycControls = data.kycControls || [];
+      const idx = data.kycControls.findIndex((c) => c.id === record.id);
+      if (idx >= 0) data.kycControls[idx] = record;
+      else data.kycControls.push(record);
+      return record;
     });
   }
 
