@@ -195,6 +195,30 @@ export async function businessRoutes(app: FastifyInstance) {
   });
 
   /**
+   * GET /api/v1/business/merchants/:id/customers
+   * Admin endpoint to inspect individual customer breakdown for a merchant.
+   */
+  app.get('/api/v1/business/merchants/:id/customers', async (request: FastifyRequest<{ Params: { id: string }; Querystring: { limit?: string; offset?: string } }>, reply: FastifyReply) => {
+    try {
+      const { id } = request.params;
+      const limit = Math.min(parseInt(request.query.limit || '50', 10), 100);
+      const offset = parseInt(request.query.offset || '0', 10);
+      const data = await b2bMerchantService.getPartnerCustomerMetrics(id, limit, offset);
+
+      return reply.send({
+        success: true,
+        summary: data.summary,
+        customers: data.customers,
+      });
+    } catch (err: any) {
+      return reply.status(400).send({
+        success: false,
+        error: err?.message || 'Failed to fetch customer metrics for merchant',
+      });
+    }
+  });
+
+  /**
    * POST /api/v1/business/flows/dispatch
    * Dispatches an interactive WhatsApp Meta Flow or mobile checkout to a customer.
    * Authenticated via: Authorization: Bearer sk_live_...
