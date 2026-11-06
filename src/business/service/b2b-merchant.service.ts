@@ -14,7 +14,9 @@ export interface CreateMerchantInput {
   slug?: string;
   email: string;
   phone: string;
+  password?: string;
   webhookUrl?: string;
+  sandboxWebhookUrl?: string;
   customGreeting?: string;
   customButtonLabel?: string;
   customSuccessMessage?: string;
@@ -82,12 +84,14 @@ export class B2bMerchantService {
   }
 
   /**
-   * Registers a new B2B merchant and provisions their first live API key.
+   * Registers a new B2B merchant and provisions their initial API key pairs.
    */
   async createMerchant(input: CreateMerchantInput): Promise<{
     merchant: B2bMerchantRecord;
     secretKey: string;
     publicKey: string;
+    sandboxSecretKey: string;
+    sandboxPublicKey: string;
   }> {
     const pool = this.getPool();
     const slug = (input.slug || input.name)
@@ -99,14 +103,19 @@ export class B2bMerchantService {
     const webhookSecret = `whsec_${crypto.randomBytes(16).toString('hex')}`;
     const client = await pool.connect();
 
+    const passwordHash = input.password
+      ? crypto.createHash('sha256').update(input.password.trim()).digest('hex')
+      : null;
+
     try {
       await client.query('BEGIN');
 
       const merchantRes = await client.query(
         `INSERT INTO b2b_merchants (
-          name, slug, email, phone, webhook_url, webhook_secret,
+          name, slug, email, phone, webhook_url, sandbox_webhook_url, webhook_secret,
+          password_hash, is_sandbox_enabled, is_live_enabled,
           custom_greeting, custom_button_label, custom_success_message
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, false, $9, $10, $11)
         RETURNING *`,
         [
           input.name.trim(),
@@ -114,7 +123,9 @@ export class B2bMerchantService {
           input.email.trim().toLowerCase(),
           input.phone.trim(),
           input.webhookUrl?.trim() || null,
+          input.sandboxWebhookUrl?.trim() || null,
           webhookSecret,
+          passwordHash,
           input.customGreeting?.trim() || null,
           input.customButtonLabel?.trim() || null,
           input.customSuccessMessage?.trim() || null,
@@ -124,14 +135,22 @@ export class B2bMerchantService {
       const merchantRow = merchantRes.rows[0];
       const merchantId = merchantRow.id;
 
-      // Provision initial live API key
-      const { secretKey, publicKey, secretHash, maskedKey, prefix } = this.generateKeyPair('live');
+      // Provision initial sandbox API key (active by default)
+      const testKey = this.generateKeyPair('test');
+      await client.query(
+        `INSERT INTO b2b_merchant_api_keys (
+          merchant_id, key_prefix, public_key, secret_hash, masked_key, mode, status
+        ) VALUES ($1, $2, $3, $4, $5, 'test', 'ACTIVE')`,
+        [merchantId, testKey.prefix, testKey.publicKey, testKey.secretHash, testKey.maskedKey]
+      );
 
+      // Provision initial live API key (locked until Sivan Admin enables live mode)
+      const liveKey = this.generateKeyPair('live');
       await client.query(
         `INSERT INTO b2b_merchant_api_keys (
           merchant_id, key_prefix, public_key, secret_hash, masked_key, mode, status
         ) VALUES ($1, $2, $3, $4, $5, 'live', 'ACTIVE')`,
-        [merchantId, prefix, publicKey, secretHash, maskedKey]
+        [merchantId, liveKey.prefix, liveKey.publicKey, liveKey.secretHash, liveKey.maskedKey]
       );
 
       await client.query('COMMIT');
@@ -143,7 +162,10 @@ export class B2bMerchantService {
         email: merchantRow.email,
         phone: merchantRow.phone,
         status: merchantRow.status,
+        isSandboxEnabled: merchantRow.is_sandbox_enabled ?? true,
+        isLiveEnabled: merchantRow.is_live_enabled ?? false,
         webhookUrl: merchantRow.webhook_url,
+        sandboxWebhookUrl: merchantRow.sandbox_webhook_url,
         webhookSecret: merchantRow.webhook_secret,
         customGreeting: merchantRow.custom_greeting,
         customButtonLabel: merchantRow.custom_button_label,
@@ -154,7 +176,13 @@ export class B2bMerchantService {
         updatedAt: merchantRow.updated_at.toISOString(),
       };
 
-      return { merchant, secretKey, publicKey };
+      return {
+        merchant,
+        secretKey: liveKey.secretKey,
+        publicKey: liveKey.publicKey,
+        sandboxSecretKey: testKey.secretKey,
+        sandboxPublicKey: testKey.publicKey,
+      };
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -214,7 +242,10 @@ export class B2bMerchantService {
       [status, merchantId]
     );
     if (res.rows.length === 0) return null;
-    const row = res.rows[0];
+    return this.mapMerchantRow(res.rows[0]);
+  }
+
+  private mapMerchantRow(row: any): B2bMerchantRecord {
     return {
       id: row.id,
       name: row.name,
@@ -222,15 +253,18 @@ export class B2bMerchantService {
       email: row.email,
       phone: row.phone,
       status: row.status,
+      isSandboxEnabled: row.is_sandbox_enabled ?? true,
+      isLiveEnabled: row.is_live_enabled ?? false,
       webhookUrl: row.webhook_url,
+      sandboxWebhookUrl: row.sandbox_webhook_url,
       webhookSecret: row.webhook_secret,
       customGreeting: row.custom_greeting,
       customButtonLabel: row.custom_button_label,
       customSuccessMessage: row.custom_success_message,
       totalVolumeNgn: Number(row.total_volume_ngn || 0),
       totalDealsCount: Number(row.total_deals_count || 0),
-      createdAt: row.created_at.toISOString(),
-      updatedAt: row.updated_at.toISOString(),
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at || ''),
+      updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at || ''),
     };
   }
 
@@ -243,8 +277,8 @@ export class B2bMerchantService {
     try {
       await client.query('BEGIN');
       await client.query(
-        `UPDATE b2b_merchant_api_keys SET status = 'REVOKED' WHERE merchant_id = $1 AND status = 'ACTIVE'`,
-        [merchantId]
+        `UPDATE b2b_merchant_api_keys SET status = 'REVOKED' WHERE merchant_id = $1 AND mode = $2 AND status = 'ACTIVE'`,
+        [merchantId, mode]
       );
       const { secretKey, publicKey, secretHash, maskedKey, prefix } = this.generateKeyPair(mode);
       await client.query(
@@ -260,6 +294,228 @@ export class B2bMerchantService {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Toggles merchant Live API access (Admin Control).
+   */
+  async toggleMerchantLiveApi(
+    merchantId: string,
+    isLiveEnabled: boolean,
+    approvedBy = 'admin'
+  ): Promise<B2bMerchantRecord | null> {
+    const pool = this.getPool();
+    const res = await pool.query(
+      `UPDATE b2b_merchants
+       SET is_live_enabled = $1,
+           live_approved_at = CASE WHEN $1 = true THEN NOW() ELSE live_approved_at END,
+           live_approved_by = CASE WHEN $1 = true THEN $2 ELSE live_approved_by END,
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [isLiveEnabled, approvedBy, merchantId]
+    );
+    if (res.rows.length === 0) return null;
+    return this.mapMerchantRow(res.rows[0]);
+  }
+
+  /**
+   * Fetches full partner profile including sandbox and live keys for partner.sivantech.online.
+   */
+  async getMerchantProfile(merchantId: string): Promise<{
+    merchant: B2bMerchantRecord;
+    keys: {
+      sandbox?: { publicKey: string; maskedKey: string; createdAt: string; lastUsedAt?: string };
+      live?: { publicKey: string; maskedKey: string; createdAt: string; lastUsedAt?: string };
+    };
+  } | null> {
+    const pool = this.getPool();
+    const mRes = await pool.query('SELECT * FROM b2b_merchants WHERE id = $1', [merchantId]);
+    if (mRes.rows.length === 0) return null;
+    const merchant = this.mapMerchantRow(mRes.rows[0]);
+
+    const kRes = await pool.query(
+      `SELECT * FROM b2b_merchant_api_keys WHERE merchant_id = $1 AND status = 'ACTIVE'`,
+      [merchantId]
+    );
+
+    const keys: {
+      sandbox?: { publicKey: string; maskedKey: string; createdAt: string; lastUsedAt?: string };
+      live?: { publicKey: string; maskedKey: string; createdAt: string; lastUsedAt?: string };
+    } = {};
+
+    for (const k of kRes.rows) {
+      const modeKey = k.mode === 'test' ? 'sandbox' : 'live';
+      keys[modeKey] = {
+        publicKey: k.public_key,
+        maskedKey: k.masked_key,
+        createdAt: k.created_at instanceof Date ? k.created_at.toISOString() : String(k.created_at || ''),
+        lastUsedAt: k.last_used_at instanceof Date ? k.last_used_at.toISOString() : (k.last_used_at ? String(k.last_used_at) : undefined),
+      };
+    }
+
+    return { merchant, keys };
+  }
+
+  /**
+   * Updates partner webhook endpoints.
+   */
+  async updateMerchantWebhooks(
+    merchantId: string,
+    input: { webhookUrl?: string; sandboxWebhookUrl?: string }
+  ): Promise<B2bMerchantRecord | null> {
+    const pool = this.getPool();
+    const res = await pool.query(
+      `UPDATE b2b_merchants
+       SET webhook_url = COALESCE($1, webhook_url),
+           sandbox_webhook_url = COALESCE($2, sandbox_webhook_url),
+           updated_at = NOW()
+       WHERE id = $3
+       RETURNING *`,
+      [input.webhookUrl?.trim() || null, input.sandboxWebhookUrl?.trim() || null, merchantId]
+    );
+    if (res.rows.length === 0) return null;
+    return this.mapMerchantRow(res.rows[0]);
+  }
+
+  /**
+   * Generates a signed session token for partner.sivantech.online.
+   */
+  generatePartnerToken(merchantId: string): string {
+    const expiresAt = Date.now() + 86400 * 1000 * 7; // 7 days
+    const payload = `${merchantId}:${expiresAt}`;
+    const secret = env.USER_JWT_SECRET || env.ADMIN_API_KEY || 'sivan_partner_secret_fallback';
+    const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    return Buffer.from(`${payload}:${sig}`).toString('base64url');
+  }
+
+  /**
+   * Verifies partner session token.
+   */
+  async verifyPartnerToken(token: string): Promise<B2bMerchantRecord> {
+    const decoded = Buffer.from(token, 'base64url').toString('utf8');
+    const parts = decoded.split(':');
+    if (parts.length !== 3) throw new Error('Invalid token format');
+    const [merchantId, expiresStr, sig] = parts;
+    const expiresAt = Number(expiresStr);
+    if (Date.now() > expiresAt) throw new Error('Session expired. Please log in again.');
+    const payload = `${merchantId}:${expiresStr}`;
+    const secret = env.USER_JWT_SECRET || env.ADMIN_API_KEY || 'sivan_partner_secret_fallback';
+    const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+    if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expectedSig, 'hex'))) {
+      throw new Error('Invalid token signature');
+    }
+    const pool = this.getPool();
+    const res = await pool.query('SELECT * FROM b2b_merchants WHERE id = $1', [merchantId]);
+    if (res.rows.length === 0 || res.rows[0].status !== 'ACTIVE') {
+      throw new Error('Merchant account not found or suspended');
+    }
+    return this.mapMerchantRow(res.rows[0]);
+  }
+
+  /**
+   * Authenticates partner login via email + password.
+   */
+  async partnerLogin(email: string, passwordPlain: string): Promise<{
+    token: string;
+    merchant: B2bMerchantRecord;
+  }> {
+    const pool = this.getPool();
+    const cleanEmail = email.trim().toLowerCase();
+    const res = await pool.query('SELECT * FROM b2b_merchants WHERE email = $1', [cleanEmail]);
+    if (res.rows.length === 0) {
+      throw new Error('Invalid email or password.');
+    }
+    const row = res.rows[0];
+    if (row.status !== 'ACTIVE') {
+      throw new Error(`Partner account is ${row.status}. Please contact Sivan support.`);
+    }
+
+    if (!row.password_hash) {
+      throw new Error('Partner portal password not set. Please contact Sivan admin to receive your setup link.');
+    }
+
+    const providedHash = crypto.createHash('sha256').update(passwordPlain.trim()).digest('hex');
+    const isMatch = crypto.timingSafeEqual(
+      Buffer.from(providedHash, 'hex'),
+      Buffer.from(row.password_hash, 'hex')
+    );
+
+    if (!isMatch) {
+      throw new Error('Invalid email or password.');
+    }
+
+    void pool.query('UPDATE b2b_merchants SET last_login_at = NOW() WHERE id = $1', [row.id]).catch(() => {});
+    const token = this.generatePartnerToken(row.id);
+    return { token, merchant: this.mapMerchantRow(row) };
+  }
+
+  /**
+   * Returns individual customer breakdown and aggregate metrics for partner.sivantech.online.
+   */
+  async getPartnerCustomerMetrics(merchantId: string, limit = 50, offset = 0): Promise<{
+    summary: {
+      totalCustomers: number;
+      totalVolumeNgn: number;
+      totalCompletedFlows: number;
+      totalPendingFlows: number;
+    };
+    customers: Array<{
+      customerPhone: string;
+      customerName?: string;
+      totalFlows: number;
+      completedFlows: number;
+      totalVolumeNgn: number;
+      lastActiveAt: string;
+    }>;
+  }> {
+    const pool = this.getPool();
+
+    const sumRes = await pool.query(
+      `SELECT
+         COUNT(DISTINCT customer_phone) as total_customers,
+         COALESCE(SUM(amount_ngn) FILTER (WHERE status = 'COMPLETED'), 0) as total_volume_ngn,
+         COUNT(*) FILTER (WHERE status = 'COMPLETED') as total_completed,
+         COUNT(*) FILTER (WHERE status = 'PENDING') as total_pending
+       FROM b2b_dispatched_flows
+       WHERE merchant_id = $1`,
+      [merchantId]
+    );
+
+    const sumRow = sumRes.rows[0] || {};
+    const summary = {
+      totalCustomers: Number(sumRow.total_customers || 0),
+      totalVolumeNgn: Number(sumRow.total_volume_ngn || 0),
+      totalCompletedFlows: Number(sumRow.total_completed || 0),
+      totalPendingFlows: Number(sumRow.total_pending || 0),
+    };
+
+    const custRes = await pool.query(
+      `SELECT
+         customer_phone,
+         MAX(customer_name) as customer_name,
+         COUNT(*) as total_flows,
+         COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed_flows,
+         COALESCE(SUM(amount_ngn) FILTER (WHERE status = 'COMPLETED'), 0) as total_volume_ngn,
+         MAX(created_at) as last_active_at
+       FROM b2b_dispatched_flows
+       WHERE merchant_id = $1
+       GROUP BY customer_phone
+       ORDER BY last_active_at DESC
+       LIMIT $2 OFFSET $3`,
+      [merchantId, limit, offset]
+    );
+
+    const customers = custRes.rows.map((r) => ({
+      customerPhone: r.customer_phone,
+      customerName: r.customer_name || undefined,
+      totalFlows: Number(r.total_flows || 0),
+      completedFlows: Number(r.completed_flows || 0),
+      totalVolumeNgn: Number(r.total_volume_ngn || 0),
+      lastActiveAt: r.last_active_at instanceof Date ? r.last_active_at.toISOString() : String(r.last_active_at || ''),
+    }));
+
+    return { summary, customers };
   }
 
   /**
@@ -280,6 +536,9 @@ export class B2bMerchantService {
     const res = await pool.query(
       `SELECT k.*, m.name as m_name, m.slug as m_slug, m.email as m_email,
               m.phone as m_phone, m.status as m_status, m.webhook_url as m_webhook_url,
+              m.sandbox_webhook_url as m_sandbox_webhook_url,
+              m.is_sandbox_enabled as m_is_sandbox_enabled,
+              m.is_live_enabled as m_is_live_enabled,
               m.webhook_secret as m_webhook_secret, m.custom_greeting as m_custom_greeting,
               m.custom_button_label as m_custom_button_label, m.custom_success_message as m_custom_success_message,
               m.total_volume_ngn as m_total_volume_ngn, m.total_deals_count as m_total_deals_count,
@@ -300,6 +559,14 @@ export class B2bMerchantService {
       throw new Error(`Merchant account is ${row.m_status}. Please contact Sivan support.`);
     }
 
+    if (row.mode === 'live' && row.m_is_live_enabled === false) {
+      throw new Error('Live API access is pending approval. Please request activation in the Partner Portal or contact Sivan admin.');
+    }
+
+    if (row.mode === 'test' && row.m_is_sandbox_enabled === false) {
+      throw new Error('Sandbox API access is currently disabled for this account.');
+    }
+
     // Touch last_used_at in background
     void pool
       .query('UPDATE b2b_merchant_api_keys SET last_used_at = NOW() WHERE id = $1', [row.id])
@@ -312,7 +579,10 @@ export class B2bMerchantService {
       email: row.m_email,
       phone: row.m_phone,
       status: row.m_status,
+      isSandboxEnabled: row.m_is_sandbox_enabled ?? true,
+      isLiveEnabled: row.m_is_live_enabled ?? false,
       webhookUrl: row.m_webhook_url,
+      sandboxWebhookUrl: row.m_sandbox_webhook_url,
       webhookSecret: row.m_webhook_secret,
       customGreeting: row.m_custom_greeting,
       customButtonLabel: row.m_custom_button_label,

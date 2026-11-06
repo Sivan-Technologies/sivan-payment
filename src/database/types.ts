@@ -1434,8 +1434,13 @@ export interface B2bMerchantRecord {
   email: string;
   phone: string;
   status: 'ACTIVE' | 'SUSPENDED' | 'PENDING';
+  isSandboxEnabled?: boolean;
+  isLiveEnabled?: boolean;
   webhookUrl?: string;
+  sandboxWebhookUrl?: string;
   webhookSecret?: string;
+  passwordHash?: string;
+  lastLoginAt?: string;
   customGreeting?: string;
   customButtonLabel?: string;
   customSuccessMessage?: string;
