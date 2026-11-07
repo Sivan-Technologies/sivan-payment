@@ -223,6 +223,7 @@ export class WebChallengeService {
         id: user.id,
         email: user.email,
         fullName: user.fullName || user.username || (channel === 'telegram' ? 'Telegram User' : 'WhatsApp User'),
+        username: user.username || user.telegramUsername || undefined,
         primaryChannel: user.primaryChannel || channel,
       };
 
