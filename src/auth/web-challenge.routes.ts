@@ -4,6 +4,25 @@ import { parseBody } from '../shared/validation.js';
 import { webChallengeService } from './web-challenge.service.js';
 import { isIdentityServiceAuthorized } from '../shared/service-auth.js';
 import { forbidden, badRequest } from '../shared/errors.js';
+import { detectCountryFromHeaders } from '../kyc/service/geo-country.js';
+
+function countryCodeToFlag(code: string): string {
+  if (!code || code.length !== 2) return '';
+  const upper = code.toUpperCase();
+  const first = upper.codePointAt(0);
+  const second = upper.codePointAt(1);
+  if (!first || !second) return '';
+  return String.fromCodePoint(first + 127397, second + 127397);
+}
+
+function resolveCountryName(code: string): string {
+  try {
+    const regionNames = new Intl.DisplayNames(['en'], { type: 'region' });
+    return regionNames.of(code.toUpperCase()) || code.toUpperCase();
+  } catch {
+    return code.toUpperCase();
+  }
+}
 
 const createChallengeSchema = z.object({
   deviceInfo: z.string().min(1).max(255).optional(),
@@ -23,8 +42,18 @@ export async function webChallengeRoutes(app: FastifyInstance) {
    */
   app.post('/api/auth/web-challenge/create', async (request) => {
     const body = parseBody(createChallengeSchema, request.body || {});
-    const userAgent = request.headers['user-agent'] || 'Unknown Browser';
-    const ipAddress = request.ip || '127.0.0.1';
+    const headers = request.headers as Record<string, any>;
+    const userAgent = headers['user-agent'] || 'Unknown Browser';
+
+    // Prioritize genuine client IP forwarded by Cloudflare / reverse proxy
+    const rawIp = (
+      headers['cf-connecting-ip'] ||
+      headers['x-real-ip'] ||
+      (headers['x-forwarded-for'] ? String(headers['x-forwarded-for']).split(',')[0].trim() : '') ||
+      request.ip ||
+      '127.0.0.1'
+    ).trim();
+    const ipAddress = rawIp.replace(/^::ffff:/, '');
 
     let deviceInfo = body.deviceInfo;
     if (!deviceInfo) {
@@ -41,10 +70,26 @@ export async function webChallengeRoutes(app: FastifyInstance) {
       }
     }
 
+    // Detect city and country globally from edge headers
+    let location = body.location;
+    if (!location) {
+      const countryCode = detectCountryFromHeaders(headers);
+      const rawCity = (headers['cf-ipcity'] || headers['x-vercel-ip-city'] || '').trim();
+      const city = rawCity ? decodeURIComponent(rawCity) : '';
+
+      if (countryCode) {
+        const countryName = resolveCountryName(countryCode);
+        const flag = countryCodeToFlag(countryCode);
+        location = city ? `${city}, ${countryName} ${flag}`.trim() : `${countryName} ${flag}`.trim();
+      } else if (city) {
+        location = city;
+      }
+    }
+
     const data = await webChallengeService.createChallenge({
       deviceInfo,
       ipAddress,
-      location: body.location,
+      location,
     });
 
     return { success: true, data };
