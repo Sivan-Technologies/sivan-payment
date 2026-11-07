@@ -358,7 +358,8 @@ export async function getUnifiedBalance(userId: string, bypassCache = false): Pr
     // must NEVER drag down on-chain balances that have already been debited by the blockchain consensus.
     const ledgerAvailable = num(entry.available);
     const pooledCredits = Math.max(0, ledgerAvailable);
-    const unabsorbedHoldAgainstChain = Math.max(0, -ledgerAvailable);
+    const activeHold = num(entry.held);
+    const unabsorbedHoldAgainstChain = Math.max(0, activeHold - pooledCredits);
     unabsorbedHoldsByAsset.set(assetKey, unabsorbedHoldAgainstChain);
 
     row.credited = money(pooledCredits);
