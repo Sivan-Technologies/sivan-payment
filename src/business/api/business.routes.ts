@@ -44,6 +44,14 @@ const partnerRotateKeySchema = z.object({
   mode: z.enum(['test', 'live']).default('test'),
 });
 
+const requestLiveAccessSchema = z.object({
+  websiteUrl: z.string().url('Must be a valid URL').optional().or(z.literal('')),
+  useCase: z.string().min(5, 'Use case description is required (min 5 characters)'),
+  estimatedMonthlyVolume: z.string().min(1, 'Estimated monthly volume is required'),
+  businessDescription: z.string().optional(),
+  targetLaunchDate: z.string().optional(),
+});
+
 const toggleLiveApiSchema = z.object({
   isLiveEnabled: z.boolean(),
   approvedBy: z.string().optional(),
@@ -459,6 +467,30 @@ export async function businessRoutes(app: FastifyInstance) {
   });
 
   /**
+   * POST /api/v1/business/partner/request-live-access
+   * Submits a request for live production API access.
+   */
+  app.post('/api/v1/business/partner/request-live-access', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const merchant = await authenticatePartner(request);
+      const input = requestLiveAccessSchema.parse(request.body);
+      const application = await b2bMerchantService.submitLiveAccessRequest(merchant.id, input);
+
+      return reply.send({
+        success: true,
+        application,
+        message: 'Live access application submitted successfully. Sivan compliance will review your request shortly.',
+      });
+    } catch (err: any) {
+      const statusCode = err?.message?.includes('token') || err?.message?.includes('Authorization') ? 401 : 400;
+      return reply.status(statusCode).send({
+        success: false,
+        error: err?.message || 'Failed to submit live access request',
+      });
+    }
+  });
+
+  /**
    * PUT /api/v1/business/partner/webhook
    * Updates partner live and sandbox webhook callback URLs.
    */
@@ -581,7 +613,7 @@ export async function businessRoutes(app: FastifyInstance) {
       );
 
       // Trigger immediate background sweep
-      void (b2bMerchantService as any).processWebhookOutbox().catch(() => {});
+      void (b2bMerchantService as any).processWebhookOutbox().catch(() => { });
 
       return reply.send({
         success: true,

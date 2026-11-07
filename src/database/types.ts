@@ -1446,6 +1446,17 @@ export interface B2bMerchantRecord {
   customSuccessMessage?: string;
   totalVolumeNgn: number;
   totalDealsCount: number;
+  liveApplication?: {
+    websiteUrl?: string;
+    useCase: string;
+    estimatedMonthlyVolume: string;
+    businessDescription?: string;
+    targetLaunchDate?: string;
+    status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+    submittedAt: string;
+    reviewedAt?: string;
+    reviewedBy?: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }

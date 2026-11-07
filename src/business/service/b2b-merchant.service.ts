@@ -211,25 +211,17 @@ export class B2bMerchantService {
       ORDER BY m.created_at DESC
     `);
 
-    return res.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      slug: row.slug,
-      email: row.email,
-      phone: row.phone,
-      status: row.status,
-      webhookUrl: row.webhook_url,
-      webhookSecret: row.webhook_secret,
-      customGreeting: row.custom_greeting,
-      customButtonLabel: row.custom_button_label,
-      customSuccessMessage: row.custom_success_message,
-      totalVolumeNgn: Number(row.total_volume_ngn || 0),
-      totalDealsCount: Number(row.total_deals_count || 0),
-      createdAt: row.created_at.toISOString(),
-      updatedAt: row.updated_at.toISOString(),
-      maskedKey: row.masked_key || undefined,
-      publicKey: row.public_key || undefined,
-    }));
+    return Promise.all(
+      res.rows.map(async (row) => {
+        const liveApp = await db.getSystemSetting<any>(`merchant_live_app:${row.id}`).catch(() => null);
+        return {
+          ...this.mapMerchantRow(row),
+          maskedKey: row.masked_key || undefined,
+          publicKey: row.public_key || undefined,
+          liveApplication: liveApp || null,
+        };
+      })
+    );
   }
 
   /**
@@ -297,6 +289,55 @@ export class B2bMerchantService {
   }
 
   /**
+   * Submits a request for live production API access.
+   */
+  async submitLiveAccessRequest(
+    merchantId: string,
+    input: {
+      websiteUrl?: string;
+      useCase: string;
+      estimatedMonthlyVolume: string;
+      businessDescription?: string;
+      targetLaunchDate?: string;
+    }
+  ): Promise<any> {
+    const pool = this.getPool();
+    const mRes = await pool.query('SELECT * FROM b2b_merchants WHERE id = $1', [merchantId]);
+    if (mRes.rows.length === 0) {
+      throw new Error('Merchant not found');
+    }
+
+    const application = {
+      websiteUrl: input.websiteUrl?.trim() || undefined,
+      useCase: input.useCase.trim(),
+      estimatedMonthlyVolume: input.estimatedMonthlyVolume.trim(),
+      businessDescription: input.businessDescription?.trim() || undefined,
+      targetLaunchDate: input.targetLaunchDate?.trim() || undefined,
+      status: 'PENDING_REVIEW' as const,
+      submittedAt: new Date().toISOString(),
+    };
+
+    await db.setSystemSetting(`merchant_live_app:${merchantId}`, application);
+
+    const { createAuditLog } = await import('../../audit/audit.service.js');
+    await createAuditLog({
+      action: 'developer.live_access.requested',
+      resourceType: 'b2b_merchant',
+      resourceId: merchantId,
+      actorType: 'user',
+      actorId: merchantId,
+      metadata: {
+        merchantName: mRes.rows[0].name,
+        useCase: input.useCase,
+        websiteUrl: input.websiteUrl,
+        estimatedMonthlyVolume: input.estimatedMonthlyVolume,
+      },
+    }).catch(() => undefined);
+
+    return application;
+  }
+
+  /**
    * Toggles merchant Live API access (Admin Control).
    */
   async toggleMerchantLiveApi(
@@ -316,7 +357,25 @@ export class B2bMerchantService {
       [isLiveEnabled, approvedBy, merchantId]
     );
     if (res.rows.length === 0) return null;
-    return this.mapMerchantRow(res.rows[0]);
+
+    if (isLiveEnabled) {
+      const existingApp = await db.getSystemSetting<any>(`merchant_live_app:${merchantId}`).catch(() => null);
+      if (existingApp) {
+        await db.setSystemSetting(`merchant_live_app:${merchantId}`, {
+          ...existingApp,
+          status: 'APPROVED',
+          reviewedAt: new Date().toISOString(),
+          reviewedBy: approvedBy,
+        });
+      }
+    }
+
+    const row = res.rows[0];
+    const liveApp = await db.getSystemSetting<any>(`merchant_live_app:${merchantId}`).catch(() => null);
+    return {
+      ...this.mapMerchantRow(row),
+      liveApplication: liveApp || null,
+    };
   }
 
   /**
@@ -333,6 +392,9 @@ export class B2bMerchantService {
     const mRes = await pool.query('SELECT * FROM b2b_merchants WHERE id = $1', [merchantId]);
     if (mRes.rows.length === 0) return null;
     const merchant = this.mapMerchantRow(mRes.rows[0]);
+
+    const liveApp = await db.getSystemSetting<any>(`merchant_live_app:${merchantId}`).catch(() => null);
+    merchant.liveApplication = liveApp || null;
 
     const kRes = await pool.query(
       `SELECT * FROM b2b_merchant_api_keys WHERE merchant_id = $1 AND status = 'ACTIVE'`,
