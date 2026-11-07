@@ -44,6 +44,7 @@ import { telemetryRoutes } from '../telemetry/telemetry.routes.js';
 import { communityRoutes } from '../ngn/api/community.routes.js';
 import { businessRoutes } from '../business/api/business.routes.js';
 import { webChallengeRoutes } from '../auth/web-challenge.routes.js';
+import { complianceRoutes } from '../compliance/compliance.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -118,6 +119,7 @@ export async function registerRoutes(app: FastifyInstance) {
   await supplierRoutes(app);
   await kycLevelRoutes(app);
   await metamapKycRoutes(app);
+  await complianceRoutes(app);
   await supportRoutes(app);
   await aceSupportRoutes(app);
   await adminRoutes(app);
