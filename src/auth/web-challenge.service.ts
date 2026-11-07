@@ -209,7 +209,56 @@ export class WebChallengeService {
       }
 
       if (!user) {
-        throw badRequest(`No Sivan account found for this ${channel} user. Please complete onboarding in chat first.`);
+        // Auto-provision brand new user account for conversational registration
+        const newUserId = `usr_${crypto.randomUUID()}`;
+        const now = new Date().toISOString();
+        if (channel === 'whatsapp') {
+          user = {
+            id: newUserId,
+            email: '',
+            whatsappNumber: identifier,
+            fullName: 'WhatsApp User',
+            primaryChannel: 'whatsapp' as const,
+            whatsappVerifiedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          };
+          await db.insertUserRecord(user);
+          await db.upsertCustomerIdentityLinkRecord({
+            id: `cil_${crypto.randomUUID()}`,
+            paymentUserId: newUserId,
+            email: '',
+            channel: 'whatsapp',
+            whatsappNumber: identifier,
+            status: 'linked',
+            linkedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          }).catch(() => null);
+        } else {
+          user = {
+            id: newUserId,
+            email: '',
+            telegramUserId: identifier,
+            fullName: 'Telegram User',
+            primaryChannel: 'telegram' as const,
+            telegramVerifiedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          };
+          await db.insertUserRecord(user);
+          await db.upsertCustomerIdentityLinkRecord({
+            id: `cil_${crypto.randomUUID()}`,
+            paymentUserId: newUserId,
+            email: '',
+            channel: 'telegram',
+            telegramUserId: identifier,
+            status: 'linked',
+            linkedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          }).catch(() => null);
+        }
       }
 
       // Generate user JWT token
