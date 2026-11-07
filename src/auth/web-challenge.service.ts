@@ -3,6 +3,7 @@ import type pg from 'pg';
 import { db } from '../database/json-database.js';
 import { signUserJwt } from './jwt.js';
 import { badRequest, notFound } from '../shared/errors.js';
+import { lookupTelegramIdentity, lookupWhatsappIdentity } from '../identity/identity.service.js';
 
 export interface WebAuthChallengeRecord {
   id: string;
@@ -185,18 +186,30 @@ export class WebChallengeService {
 
       if (input.telegramUserId) {
         channel = 'telegram';
-        identifier = String(input.telegramUserId);
+        identifier = String(input.telegramUserId).trim();
         user = await db.findUserByTelegramUserId(identifier);
+        if (!user) {
+          const identity = await lookupTelegramIdentity(identifier);
+          if (identity.linked && identity.paymentUserId) {
+            user = await db.findUserById(identity.paymentUserId);
+          }
+        }
       } else if (input.whatsappNumber) {
         channel = 'whatsapp';
-        identifier = String(input.whatsappNumber);
+        identifier = String(input.whatsappNumber).trim();
         user = await db.findUserByWhatsappNumber(identifier);
+        if (!user) {
+          const identity = await lookupWhatsappIdentity(identifier);
+          if (identity.linked && identity.paymentUserId) {
+            user = await db.findUserById(identity.paymentUserId);
+          }
+        }
       } else {
         throw badRequest('Either telegramUserId or whatsappNumber must be provided.');
       }
 
       if (!user) {
-        throw notFound(`No Sivan account found for this ${channel} user. Please complete onboarding in chat first.`);
+        throw badRequest(`No Sivan account found for this ${channel} user. Please complete onboarding in chat first.`);
       }
 
       // Generate user JWT token
