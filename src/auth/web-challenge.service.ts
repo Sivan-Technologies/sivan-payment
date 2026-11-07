@@ -41,7 +41,7 @@ export class WebChallengeService {
     challengeId: string;
     qrPayload: string;
     telegramUrl: string;
-    whatsappUrl: string;
+    whatsappUrl?: string;
     expiresAt: string;
   }> {
     const pool = this.getPool();
@@ -64,11 +64,13 @@ export class WebChallengeService {
       );
 
       const telegramBotName = process.env.TELEGRAM_BOT_USERNAME || 'SivanAi_bot';
-      const whatsappNumber = process.env.WHATSAPP_NUMBER || '14155238886';
+      const rawWhatsapp = (process.env.WHATSAPP_PHONE_NUMBER || process.env.WHATSAPP_NUMBER || process.env.META_PHONE_NUMBER || '').trim().replace(/\D/g, '');
+      const whatsappNumber = rawWhatsapp || undefined;
 
       const telegramUrl = `https://t.me/${telegramBotName}?start=auth_${challengeId}`;
-      const whatsappUrl = `https://wa.me/${whatsappNumber.replace(/\D/g, '')}?text=AUTH%20${challengeId}`;
-      const qrPayload = `https://sivantech.online/auth?c=${challengeId}`;
+      const whatsappUrl = whatsappNumber ? `https://wa.me/${whatsappNumber}?text=AUTH%20${challengeId}` : undefined;
+      const frontendAppUrl = (process.env.FRONTEND_APP_URL || 'https://app.sivantech.online').replace(/\/+$/, '');
+      const qrPayload = `${frontendAppUrl}/auth/confirm?c=${challengeId}`;
 
       return {
         challengeId,
@@ -92,6 +94,8 @@ export class WebChallengeService {
     location?: string;
     status: string;
     expiresAt: string;
+    telegramUrl: string;
+    whatsappUrl?: string;
   } | null> {
     const pool = this.getPool();
     const client = await pool.connect();
@@ -112,6 +116,13 @@ export class WebChallengeService {
         row.status = 'EXPIRED';
       }
 
+      const telegramBotName = process.env.TELEGRAM_BOT_USERNAME || 'SivanAi_bot';
+      const rawWhatsapp = (process.env.WHATSAPP_PHONE_NUMBER || process.env.WHATSAPP_NUMBER || process.env.META_PHONE_NUMBER || '').trim().replace(/\D/g, '');
+      const whatsappNumber = rawWhatsapp || undefined;
+
+      const telegramUrl = `https://t.me/${telegramBotName}?start=auth_${challengeId}`;
+      const whatsappUrl = whatsappNumber ? `https://wa.me/${whatsappNumber}?text=AUTH%20${challengeId}` : undefined;
+
       return {
         challengeId: row.id,
         deviceInfo: row.device_info,
@@ -119,6 +130,8 @@ export class WebChallengeService {
         location: row.location || undefined,
         status: row.status,
         expiresAt: row.expires_at,
+        telegramUrl,
+        whatsappUrl,
       };
     } finally {
       client.release();
