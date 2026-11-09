@@ -25,6 +25,7 @@ async function runHackathonNearE2e() {
   });
 
   // STEP 1: SENDER INITIATES NEAR CLAIM
+  const runKey = `hackathon_test_key_${Date.now()}`;
   console.log('STEP 1: Sender creates 10.00 USDC transfer on NEAR to ' + recipientPhone);
   const created = await ClaimService.createClaim({
     userId: senderId,
@@ -32,7 +33,7 @@ async function runHackathonNearE2e() {
     amount: '10.000000',
     asset: 'usdc',
     network: 'near',
-    idempotencyKey: 'hackathon_test_key_001',
+    idempotencyKey: runKey,
   });
 
   assert.equal(created.claim.network, 'near', 'Network must be near');
