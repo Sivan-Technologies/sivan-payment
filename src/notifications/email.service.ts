@@ -187,7 +187,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
         <p style="margin:0;color:#475569;font-size:11px;">
           <a href="https://app.sivantech.online" style="color:#74ddbe;text-decoration:none;">Open Web App</a> &bull;
           <a href="https://sivantech.online" style="color:#74ddbe;text-decoration:none;">Protocol Home</a> &bull;
-          <a href="mailto:sivantechnology@gmail.com" style="color:#74ddbe;text-decoration:none;">Support</a>
+          <a href="mailto:support@sivantech.online" style="color:#74ddbe;text-decoration:none;">Support</a>
         </p>
       </div>
 

@@ -128,7 +128,7 @@ const PROTOCOL_KNOWLEDGE_ARTICLES: KnowledgeArticleItem[] = [
     title: 'What if I lost access to my 2FA authenticator, PIN, or email?',
     category: 'safety',
     answer:
-      'For your security, Sivan Ai is strictly read-only and never resets 2FA, changes email addresses, or unlocks accounts automatically. If you lost your authenticator device or need an email recovery, use your configured security recovery questions or contact Sivan Support (sivantechnology@gmail.com) so our compliance team can verify your identity and initiate an audited recovery.',
+      'For your security, Sivan Ai is strictly read-only and never resets 2FA, changes email addresses, or unlocks accounts automatically. If you lost your authenticator device or need an email recovery, use your configured security recovery questions or contact Sivan Support (support@sivantech.online) so our compliance team can verify your identity and initiate an audited recovery.',
     tags: [
       '2fa', 'two factor', 'authenticator', 'lost access', 'forgot', 'recovery',
       'email change', 'locked out', 'reset', 'pin', 'cant sign in', 'cannot sign in', 'help'
