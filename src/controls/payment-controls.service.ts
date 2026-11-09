@@ -77,6 +77,7 @@ export const DEFAULT_ASSET_CONTROLS: AssetControlRecord[] = [
  */
 export const DEFAULT_NETWORK_CONTROLS: NetworkControlRecord[] = [
   { network: 'solana', enabled: true, isDefault: true, label: 'Solana', sortOrder: 10, updatedBy: 'system', updatedAt: nowIso() },
+  { network: 'near', enabled: true, isDefault: false, label: 'NEAR Protocol (Intents & Chain Abstraction)', sortOrder: 15, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'base', enabled: true, isDefault: false, label: 'Base', sortOrder: 20, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'bsc', enabled: true, isDefault: false, label: 'BNB Chain', sortOrder: 25, updatedBy: 'system', updatedAt: nowIso() },
   { network: 'arc', enabled: true, isDefault: false, label: 'Arc', sortOrder: 26, updatedBy: 'system', updatedAt: nowIso() },
@@ -107,11 +108,11 @@ export const updatePaymentControlsSchema = z.object({
     enabled: z.boolean()
   })).optional(),
   sourceNetworks: z.array(z.object({
-    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb', 'starknet']),
+    network: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb', 'starknet', 'near']),
     enabled: z.boolean(),
     isDefault: z.boolean().optional()
   })).optional(),
-  defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb', 'starknet']).optional(),
+  defaultNetwork: z.enum(['ethereum', 'polygon', 'base', 'solana', 'arbitrum', 'arc', 'avalanche_c_chain', 'stellar', 'celo', 'bsc', 'bnb', 'starknet', 'near']).optional(),
   maxVirtualAccountOfframpUsd: z.number().nonnegative().optional(),
   // Legacy support for older admin frontend payloads.
   controls: z.array(z.object({
