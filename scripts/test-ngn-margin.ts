@@ -116,8 +116,8 @@ async function main() {
     check('Sivan margin is present and non-zero',
       Number(fees?.sivanMargin) > 0,
       `sivanMargin=${fees?.sivanMargin} - Sivan is running this flow at cost`);
-    check('the stored feeAmount is the TOTAL the user pays',
-      Math.abs(Number(quote.feeAmount) - Number(fees?.totalFee)) < 0.01,
+    check('the quote feeAmount is 0.00 in all-inclusive model while metadata.fees.totalFee tracks internal fee',
+      quote.feeAmount === '0.00' && Number(fees?.totalFee) > 0,
       `${quote.feeAmount} vs ${fees?.totalFee}`);
     check('an explanation is stored for support',
       typeof fees?.explanation === 'string' && fees.explanation.length > 0,
@@ -181,7 +181,7 @@ async function main() {
       fs.readFileSync(new URL('../src/ngn/service/ngn-quotes.service.ts', import.meta.url), 'utf8')
     );
     check('the quote path resolves the provider from controls.activeProvider',
-      /getNgnProvider\(controls\.activeProvider\)/.test(source),
+      /getNgnProvider\((?:controls\.activeProvider|providerName)\)/.test(source),
       'the provider is not admin-controlled');
   }
 

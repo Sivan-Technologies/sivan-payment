@@ -71,26 +71,31 @@ async function fetchLiveMarketRates(): Promise<any> {
         const ngnOnrampPercent = Number(settings.ngnOnrampFeePercent ?? 0);
         const baseOnrampPercent = Number(settings.onrampFeePercent ?? 0);
         const onrampMarginPercent = ngnOnrampPercent > 0 ? ngnOnrampPercent : (baseOnrampPercent > 0 ? baseOnrampPercent : sivanPercent);
+        const totalOnrampPercent = onrampMarginPercent + providerPercent;
 
         const netRate = Math.round(grossRate * (1 - totalPercent / 100));
         const usdtSell = Math.round(usdtGross * (1 - totalPercent / 100));
+        const usdcBuy = Math.round(grossRate * (1 + totalOnrampPercent / 100));
+        const usdtBuy = Math.round(usdtGross * (1 + totalOnrampPercent / 100));
 
         result.ngn = {
           usdc: {
             sell: netRate,
-            buy: Math.round(grossRate * (1 - onrampMarginPercent / 100)),
-            mid: Math.round((grossRate + netRate) / 2),
+            buy: usdcBuy,
+            mid: Math.round((usdcBuy + netRate) / 2),
           },
           usdt: {
             sell: usdtSell,
-            buy: Math.round(usdtGross * (1 - onrampMarginPercent / 100)),
-            mid: Math.round((usdtGross + usdtSell) / 2),
+            buy: usdtBuy,
+            mid: Math.round((usdtBuy + usdtSell) / 2),
           },
           grossRate: Math.round(grossRate),
           netRate,
           sivanMarginPercent: sivanPercent,
           providerFeePercent: providerPercent,
           totalPercent,
+          onrampMarginPercent,
+          totalOnrampPercent,
           source: providerName,
           updatedAt: timestamp,
         };
