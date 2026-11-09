@@ -41,22 +41,31 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
     const formattedPhone = `whatsapp:+${cleanPhone}`;
     const appUrl = (process.env.CUSTOMER_APP_URL || 'https://app.sivantech.online').replace(/\/$/, '');
     const claimUrl = `${appUrl}/claim?token=${encodeURIComponent(record.token)}`;
-    const officialWaNumber = (process.env.OFFICIAL_WHATSAPP_NUMBER || '2349136717403').replace(/\D/g, '');
-    const waClaimLink = `https://wa.me/${officialWaNumber}?text=CLAIM%20${encodeURIComponent(record.token)}`;
+    const officialWaNumber = (
+      process.env.WHATSAPP_PREFILL_PHONE_NUMBER ||
+      process.env.LIVE_WHATSAPP_PREFILL_PHONE_NUMBER ||
+      process.env.OFFICIAL_WHATSAPP_PHONE ||
+      process.env.WHATSAPP_BOT_PHONE ||
+      ''
+    ).replace(/\D/g, '');
 
-    const text = [
+    const textLines = [
       `🎁 Transfer in Transit`,
       ``,
       `${senderName} sent you ${Number(record.amount).toFixed(2)} ${record.asset.toUpperCase()} on ${record.network.toUpperCase()} Protocol.`,
       ``,
-      `• Tap to claim directly in WhatsApp:`,
-      waClaimLink,
-      ``,
-      `• Or claim on the Web:`,
-      claimUrl,
-      ``,
-      `Ask ${senderName} for your 6-digit Claim Code to complete redemption.`,
-    ].join('\n');
+    ];
+
+    if (officialWaNumber) {
+      const waClaimLink = `https://wa.me/${officialWaNumber}?text=CLAIM%20${encodeURIComponent(record.token)}`;
+      textLines.push(`• Tap to claim directly in WhatsApp:`, waClaimLink, ``);
+      textLines.push(`• Or claim on the Web:`, claimUrl, ``);
+    } else {
+      textLines.push(`Claim your funds here:`, claimUrl, ``);
+    }
+
+    textLines.push(`Ask ${senderName} for your 6-digit Claim Code to complete redemption.`);
+    const text = textLines.join('\n');
 
     await fetch(waNotifyUrl, {
       method: 'POST',
