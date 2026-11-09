@@ -191,7 +191,7 @@ export class ClaimService {
   /**
    * Public preview for recipients (sanitized).
    */
-  static async getPublicPreview(token: string): Promise<PublicClaimPreview> {
+  static async getPublicPreview(token: string): Promise<any> {
     const claim = await ClaimService.findByToken(token);
     if (!claim) {
       throw new Error('Claim not found');
@@ -199,15 +199,21 @@ export class ClaimService {
 
     const rPhone = claim.recipientPhone.replace(/\D/g, '');
     const sPhone = (claim.senderPhone || '').replace(/\D/g, '');
+    const isExpired = new Date(claim.expiresAt).getTime() <= Date.now();
+    const senderName = sPhone ? `Sivan User (ending ${sPhone.slice(-4)})` : 'Sivan User';
 
     return {
       token: claim.token,
+      claimId: claim.id,
       amount: claim.amount,
       asset: claim.asset,
       network: claim.network,
+      senderName,
       senderPhoneLast4: sPhone ? sPhone.slice(-4) : undefined,
+      recipientPhone: claim.recipientPhone,
       recipientPhoneLast4: rPhone.slice(-4) || '****',
-      status: claim.status,
+      status: claim.status.toLowerCase(),
+      isExpired,
       expiresAt: claim.expiresAt,
     };
   }
