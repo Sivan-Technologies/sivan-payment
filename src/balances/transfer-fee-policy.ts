@@ -106,6 +106,55 @@ export interface TransferFeeConfig {
 }
 
 
+export type GasStrategy = 'app_pays' | 'user_pays_token' | 'native_gas';
+
+export function resolveGasStrategy(network?: string): GasStrategy {
+  const n = (network ?? '').toLowerCase().trim();
+  switch (n) {
+    case 'solana':
+    case 'bsc':
+    case 'binance':
+    case 'bnb':
+      return 'app_pays';
+    case 'base':
+    case 'arbitrum':
+    case 'ethereum':
+    case 'eth':
+    case 'polygon':
+    case 'matic':
+    case 'optimism':
+    case 'op':
+      return 'user_pays_token';
+    case 'celo':
+    case 'arc':
+    case 'starknet':
+    case 'stellar':
+      return 'native_gas';
+    default:
+      return 'app_pays';
+  }
+}
+
+export function getEstimatedTokenGasBuffer(network?: string, asset?: string): number {
+  const strategy = resolveGasStrategy(network);
+  if (strategy !== 'user_pays_token') return 0;
+  const n = (network ?? '').toLowerCase().trim();
+  if (n === 'ethereum' || n === 'eth') return 2.0;
+  return 0.01;
+}
+
+export function getNetworkGasDescription(network?: string, asset: string = 'USDC'): string {
+  const strategy = resolveGasStrategy(network);
+  if (strategy === 'user_pays_token') {
+    const est = getEstimatedTokenGasBuffer(network, asset);
+    return `User Pays (~${est.toFixed(3)} ${asset.toUpperCase()})`;
+  }
+  if (strategy === 'native_gas') {
+    return 'Native Fee Currency';
+  }
+  return 'Sponsored by Sivan ($0.00)';
+}
+
 export interface TransferFeeQuote {
   /** What the user typed. */
   amount: string;
@@ -133,6 +182,12 @@ export interface TransferFeeQuote {
   appliedRule: 'percent' | 'minimum' | 'maximum';
   /** One line, safe to show a user or an admin. */
   explanation: string;
+  /** Gas handling mode: app_pays (Sivan sponsors), user_pays_token (ERC-4337 token gas), or native_gas (CIP-64 / Soroban). */
+  gasStrategy: GasStrategy;
+  /** Estimated gas buffer in token units (e.g. 0.01 USDC on Base/Arbitrum, 2.0 USDC on Ethereum L1). */
+  estimatedTokenGas: number;
+  /** Human-readable network gas summary for display cards. */
+  networkGasDescription: string;
 }
 
 /**
@@ -228,7 +283,7 @@ export function resolveNetworkFeeConfig(network?: string): TransferFeeConfig {
 export function quoteTransferFee(
   amount: number,
   config: TransferFeeConfig = DEFAULT_TRANSFER_FEE,
-  options: { createsRecipientAccount?: boolean } = {}
+  options: { createsRecipientAccount?: boolean; network?: string; asset?: string } = {}
 ): TransferFeeQuote {
   const safeAmount = Number.isFinite(amount) && amount > 0 ? amount : 0;
   const percent = Math.max(0, config.percent);
@@ -303,6 +358,10 @@ export function quoteTransferFee(
     ? `${baseExplanation}, plus a one-time $${surcharge.toFixed(2)} to set up this recipient's ${'' /* asset-agnostic */}account on chain`
     : baseExplanation;
 
+  const gasStrategy = resolveGasStrategy(options.network);
+  const estimatedTokenGas = getEstimatedTokenGasBuffer(options.network, options.asset);
+  const networkGasDescription = getNetworkGasDescription(options.network, options.asset);
+
   return {
     amount: money(safeAmount),
     fee: money(fee),
@@ -313,6 +372,9 @@ export function quoteTransferFee(
     effectivePercent: effective.toFixed(2),
     appliedRule,
     explanation,
+    gasStrategy,
+    estimatedTokenGas,
+    networkGasDescription,
   };
 }
 
