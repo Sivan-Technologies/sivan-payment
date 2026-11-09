@@ -149,6 +149,7 @@ const envSchema = z.object({
    * outcome is uncollected revenue, never a misdirected transfer.
    */
   SIVAN_FEE_WALLET_SOLANA: z.string().optional().default(''),
+  SIVAN_FEE_WALLET_NEAR: z.string().optional().default(''),
   SIVAN_FEE_WALLET_STELLAR: z.string().optional().default(''),
   SIVAN_FEE_WALLET_CELO: z.string().optional().default(''),
   SIVAN_CELO_FEE_WALLET: z.string().optional().default(''),

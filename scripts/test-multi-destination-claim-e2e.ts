@@ -80,9 +80,12 @@ async function runMultiDestinationClaimE2E() {
   assert.strictEqual(redeemedB.settlementDetails?.platformFeeUsd, 0.10);
   assert.strictEqual(redeemedB.settlementDetails?.totalFeeUsd, 0.12);
   assert.strictEqual(redeemedB.settlementDetails?.netAmountDelivered, '14.880000');
+  assert(redeemedB.settlementDetails?.feeDestinationWallet, 'Fee destination wallet must be populated');
+  assert(redeemedB.settlementDetails?.feeTxHash?.startsWith('near_fee_intent_tx_'), 'On-chain fee tx hash must be generated');
   console.log(`  ✓ Solver cost: $0.02, Sivan margin: $0.10, Total fee: $0.12`);
   console.log(`  ✓ Delivered ${redeemedB.settlementDetails?.netAmountDelivered} USDC to Solana wallet`);
-  console.log(`  ✓ Sivan treasury earned +$0.10 USDC with ZERO gas paid`);
+  console.log(`  ✓ On-chain fee swept to treasury wallet: ${redeemedB.settlementDetails?.feeDestinationWallet}`);
+  console.log(`  ✓ On-chain fee intent tx hash: ${redeemedB.settlementDetails?.feeTxHash}`);
 
   // --- SCENARIO C: Recipient chooses BASE ---
   console.log('\n[Step 4] Scenario C: Recipient claims to BASE (0.03 solver + 0.10 Sivan margin)...');

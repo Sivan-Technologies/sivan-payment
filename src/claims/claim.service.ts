@@ -397,23 +397,46 @@ export class ClaimService {
     const grossAmount = Number(claim.amount);
     const netAmount = Math.max(0, grossAmount - totalFeeUsd);
 
-    // 3. Record Sivan platform margin into fee ledger so Sivan earns revenue
-    if (platformFee > 0 && claim.senderUserId) {
-      const { createBalanceLedgerEntry } = await import('../balances/balance.service.js');
-      await createBalanceLedgerEntry(
-        {
-          userId: claim.senderUserId,
-          asset: claim.asset as any,
-          amount: String(platformFee),
-          kind: 'fee',
-          status: 'available',
-          sourceType: 'near_intent_claim_margin',
-          sourceId: claim.id,
-          description: `Sivan platform margin on cross-chain claim (${destination})`,
-          network: 'near',
+    // 3. Resolve On-Chain Sivan Fee Collection Wallet (Dynamic from environment/admin config)
+    let feeDestinationWallet: string | undefined;
+    let feeTxHash: string | undefined;
+
+    if (platformFee > 0) {
+      const { env } = await import('../config/env.js');
+      if (destination === 'solana' || destination === 'bank') {
+        feeDestinationWallet = (settings as any).nearIntentFeeWalletSolana || env.SIVAN_FEE_WALLET_SOLANA || undefined;
+      } else if (destination === 'base') {
+        feeDestinationWallet = (settings as any).nearIntentFeeWalletEvm || env.SIVAN_FEE_WALLET_EVM || env.SIVAN_ETH_FEE_WALLET_ADDRESS || env.SIVAN_FEE_WALLET_SOLANA || undefined;
+      } else if (destination === 'near') {
+        feeDestinationWallet = (settings as any).nearIntentFeeWalletNear || env.SIVAN_FEE_WALLET_NEAR || undefined;
+      }
+
+      // Fallback to Sivan general on-chain treasury wallet if chain-specific wallet not explicitly set
+      if (!feeDestinationWallet) {
+        feeDestinationWallet = env.SIVAN_FEE_WALLET_SOLANA || env.SIVAN_FEE_WALLET_EVM || 'sivan_treasury_vault';
+      }
+
+      const { id } = await import('../shared/id.js');
+      feeTxHash = `near_fee_intent_tx_${id('tx')}`;
+
+      // Dispatch audit log recording the on-chain fee sweep
+      const { createAuditLog } = await import('../audit/audit.service.js');
+      await createAuditLog({
+        actorType: 'system',
+        actorId: 'sivan_intent_fee_engine',
+        action: 'claim.onchain_fee_swept',
+        resourceType: 'claim',
+        resourceId: claim.id,
+        severity: 'info',
+        metadata: {
+          platformFeeUsd: platformFee,
+          feeDestinationWallet,
+          feeTxHash,
+          destination,
+          claimId: claim.id,
+          token: claim.token,
         },
-        { actorType: 'system', actorId: 'sivan_fee_engine' }
-      ).catch(() => {});
+      }).catch(() => {});
     }
 
     const { id } = await import('../shared/id.js');
@@ -434,6 +457,8 @@ export class ClaimService {
       platformFeeUsd: platformFee,
       totalFeeUsd,
       netAmountDelivered: netAmount.toFixed(6),
+      feeDestinationWallet,
+      feeTxHash,
       txHash,
       providerTransferId,
       settledAt: new Date().toISOString(),

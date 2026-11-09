@@ -32,6 +32,8 @@ export interface ClaimPayoutSettlement {
   platformFeeUsd: number;
   totalFeeUsd: number;
   netAmountDelivered: string;
+  feeDestinationWallet?: string;
+  feeTxHash?: string;
   txHash?: string;
   providerTransferId?: string;
   settledAt: string;

@@ -368,6 +368,10 @@ export const feeSettingsSchema = z.object({
   nearIntentPlatformFeeUsd: z.coerce.number().min(0).max(100).default(0.10),
   /** Destination payout rails permitted for recipients. */
   nearIntentAllowedDestinations: z.array(z.enum(['near', 'solana', 'base', 'bank'])).default(['near', 'solana', 'base', 'bank']),
+  /** On-chain treasury wallets for fee collection (falls back to env vars) */
+  nearIntentFeeWalletSolana: z.string().optional().default(''),
+  nearIntentFeeWalletNear: z.string().optional().default(''),
+  nearIntentFeeWalletEvm: z.string().optional().default(''),
 
   feeTiers: z.array(feeTierSchema).min(1),
   networkFees: z.array(networkFeeSchema).default([]),
@@ -481,6 +485,9 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
       { id: 'volume_boost', name: 'Volume boost', description: 'Reduced fee on high-volume customers', status: 'scheduled' },
       { id: 'referral_bonus', name: 'Referral bonus', description: '$10 per verified referral', status: 'paused' }
     ],
+    nearIntentFeeWalletSolana: env.SIVAN_FEE_WALLET_SOLANA || '',
+    nearIntentFeeWalletNear: env.SIVAN_FEE_WALLET_NEAR || '',
+    nearIntentFeeWalletEvm: env.SIVAN_FEE_WALLET_EVM || env.SIVAN_ETH_FEE_WALLET_ADDRESS || '',
     updatedBy: 'system',
     reason: 'Default fees from environment',
     updatedAt: nowIso()
