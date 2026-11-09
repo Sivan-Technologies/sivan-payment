@@ -105,6 +105,8 @@ export class ClaimService {
       amount: record.amount,
       asset: record.asset,
       network: record.network,
+      sourceNetwork: record.sourceNetwork,
+      settlementNetwork: record.settlementNetwork || record.network,
       recipientPhoneLast4: last4,
       token: record.token,
       expiresAt: record.expiresAt,
@@ -125,6 +127,7 @@ export class ClaimService {
     amount: string;
     asset?: SupportedClaimAsset;
     network?: SupportedClaimNetwork;
+    sourceNetwork?: SupportedClaimNetwork;
     idempotencyKey?: string;
     pin?: string;
   }): Promise<{ claim: OnchainClaimSummary; claimCode: string; replay: boolean }> {
@@ -159,7 +162,8 @@ export class ClaimService {
     }
 
     const asset: SupportedClaimAsset = (params.asset?.toLowerCase() as SupportedClaimAsset) || 'usdc';
-    const network: SupportedClaimNetwork = (params.network?.toLowerCase() as SupportedClaimNetwork) || 'near';
+    const settlementNetwork: SupportedClaimNetwork = (params.network?.toLowerCase() as SupportedClaimNetwork) || 'near';
+    const sourceNetwork: SupportedClaimNetwork = (params.sourceNetwork?.toLowerCase() as SupportedClaimNetwork) || 'solana';
 
     const claimCode = generateClaimCode();
     const claimCodeHash = hashClaimCode(claimCode);
@@ -175,7 +179,9 @@ export class ClaimService {
       recipientPhone: params.recipientPhone.trim(),
       amount: numAmount.toFixed(6),
       asset,
-      network,
+      network: settlementNetwork,
+      sourceNetwork,
+      settlementNetwork,
       status: 'AWAITING_CLAIM',
       claimCodeHash,
       token,
@@ -298,6 +304,8 @@ export class ClaimService {
       amount: claim.amount,
       asset: claim.asset,
       network: claim.network,
+      sourceNetwork: claim.sourceNetwork,
+      settlementNetwork: claim.settlementNetwork || claim.network,
       senderName,
       senderPhoneLast4: sPhone ? sPhone.slice(-4) : undefined,
       recipientPhone: claim.recipientPhone,

@@ -24,6 +24,8 @@ export interface OnchainClaimRecord {
   amount: string; // decimal string e.g. "10.000000"
   asset: SupportedClaimAsset;
   network: SupportedClaimNetwork;
+  sourceNetwork?: SupportedClaimNetwork;
+  settlementNetwork?: SupportedClaimNetwork;
   status: OnchainClaimStatus;
   claimCodeHash: string; // SHA-256 hash of the 6-digit code
   token: string; // public URL token e.g. sclaim_...
@@ -43,6 +45,8 @@ export interface OnchainClaimSummary {
   amount: string;
   asset: SupportedClaimAsset;
   network: SupportedClaimNetwork;
+  sourceNetwork?: SupportedClaimNetwork;
+  settlementNetwork?: SupportedClaimNetwork;
   recipientPhoneLast4: string;
   token?: string;
   expiresAt: string;
@@ -54,11 +58,16 @@ export interface OnchainClaimSummary {
 
 export interface PublicClaimPreview {
   token: string;
+  claimId?: string;
   amount: string;
   asset: SupportedClaimAsset;
   network: SupportedClaimNetwork;
+  sourceNetwork?: SupportedClaimNetwork;
+  settlementNetwork?: SupportedClaimNetwork;
+  senderName?: string;
   senderPhoneLast4?: string;
   recipientPhoneLast4: string;
-  status: OnchainClaimStatus;
+  status: OnchainClaimStatus | string;
+  isExpired?: boolean;
   expiresAt: string;
 }
