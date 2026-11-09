@@ -1363,6 +1363,8 @@ export interface DatabaseShape {
   ghsTransfers?: GhsTransferRecord[];
   verificationRequests?: StepUpVerificationRequestRecord[];
   kycControls?: KycControlsRecord[];
+  developerApiKeys?: DeveloperApiKeyRecord[];
+  developerUsageLogs?: DeveloperUsageLogRecord[];
 }
 
 /**
@@ -1512,5 +1514,41 @@ export interface B2bWebhookOutboxRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface DeveloperApiKeyRecord {
+  id: string;
+  keyPrefix: string;
+  keyHash: string;
+  maskedKey: string;
+  developerName: string;
+  email: string;
+  organization?: string;
+  environment: 'sandbox' | 'live';
+  permittedEndpoints: string[];
+  monthlyLimit: number;
+  currentMonthRequests: number;
+  status: 'active' | 'revoked' | 'expired';
+  expiryDate?: string;
+  lastUsedAt?: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt?: string;
+  revokedReason?: string;
+  webhookUrl?: string;
+  webhookSecret?: string;
+}
+
+export interface DeveloperUsageLogRecord {
+  id: string;
+  keyId: string;
+  endpoint: string;
+  method: string;
+  statusCode: number;
+  latencyMs: number;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+}
+
 
 
