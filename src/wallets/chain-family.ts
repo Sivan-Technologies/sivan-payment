@@ -24,7 +24,7 @@
  * So: never match a wallet by one literal chain name. Match by FAMILY.
  */
 
-export type ChainFamily = 'evm' | 'solana' | 'stellar' | 'starknet';
+export type ChainFamily = 'evm' | 'solana' | 'stellar' | 'starknet' | 'near';
 
 /** Sivan chain names that share one secp256k1 key and one 0x address. */
 export const EVM_CHAINS = ['ethereum', 'base', 'celo', 'bsc', 'bnb', 'arbitrum', 'arc'] as const;
@@ -33,6 +33,7 @@ export function chainFamily(chain: string): ChainFamily {
   const normalized = String(chain).toLowerCase().trim();
   if (normalized === 'solana') return 'solana';
   if (normalized === 'stellar') return 'stellar';
+  if (normalized === 'near') return 'near';
   /**
    * Starknet is NOT an EVM chain and must never fall through to the 'evm'
    * default below. It uses the STARK curve, not secp256k1, so a Starknet
@@ -52,6 +53,7 @@ export function networksServedByWallet(walletChain: string): string[] {
   const family = chainFamily(walletChain);
   if (family === 'solana') return ['solana'];
   if (family === 'stellar') return ['stellar'];
+  if (family === 'near') return ['near'];
   if (family === 'starknet') return ['starknet'];
   return [...EVM_CHAINS];
 }

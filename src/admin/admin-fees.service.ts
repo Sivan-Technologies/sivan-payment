@@ -373,6 +373,18 @@ export const feeSettingsSchema = z.object({
   nearIntentFeeWalletNear: z.string().optional().default(''),
   nearIntentFeeWalletEvm: z.string().optional().default(''),
 
+  /**
+   * ───── SENDER-SIDE UNIFIED BALANCE AGGREGATOR CONTROLS ─────
+   *
+   * Controls how fragmented balances across chains (e.g. 8 USDC on Solana +
+   * 7 USDC on Base = 15 USDC total) are pooled and settled at send time.
+   */
+  aggregatorEnabled: z.boolean().default(true),
+  aggregatorDefaultTargetNetwork: z.enum(['near', 'solana', 'base', 'stellar', 'celo']).default('near'),
+  aggregatorSourcePriority: z
+    .array(z.enum(['near', 'solana', 'base', 'stellar', 'celo']))
+    .default(['near', 'solana', 'base', 'stellar', 'celo']),
+
   feeTiers: z.array(feeTierSchema).min(1),
   networkFees: z.array(networkFeeSchema).default([]),
   promotions: z.array(promotionSchema).default([]),
@@ -488,6 +500,9 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     nearIntentFeeWalletSolana: env.SIVAN_FEE_WALLET_SOLANA || '',
     nearIntentFeeWalletNear: env.SIVAN_FEE_WALLET_NEAR || '',
     nearIntentFeeWalletEvm: env.SIVAN_FEE_WALLET_EVM || env.SIVAN_ETH_FEE_WALLET_ADDRESS || '',
+    aggregatorEnabled: true,
+    aggregatorDefaultTargetNetwork: 'near',
+    aggregatorSourcePriority: ['near', 'solana', 'base', 'stellar', 'celo'],
     updatedBy: 'system',
     reason: 'Default fees from environment',
     updatedAt: nowIso()

@@ -1,14 +1,30 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ClaimService } from './claim.service.js';
-import type { SupportedClaimAsset, SupportedClaimNetwork, ClaimCancelReason } from './claim.types.js';
+import type {
+  SupportedClaimAsset,
+  SupportedClaimNetwork,
+  ClaimCancelReason,
+  ClaimFundingSource,
+} from './claim.types.js';
 
 interface CreateClaimBody {
   recipientPhone: string;
   amount: string;
   asset?: SupportedClaimAsset;
   network?: SupportedClaimNetwork;
+  sourceNetwork?: SupportedClaimNetwork;
+  fundingSources?: ClaimFundingSource[];
+  walletBalancesOverride?: Array<{ chain: string; amount: number | string; address?: string }>;
   idempotencyKey?: string;
   pin?: string;
+}
+
+interface PlanClaimBody {
+  amount: string | number;
+  asset?: SupportedClaimAsset;
+  network?: SupportedClaimNetwork;
+  sourceNetwork?: SupportedClaimNetwork;
+  walletBalancesOverride?: Array<{ chain: string; amount: number | string; address?: string }>;
 }
 
 interface CancelClaimBody {
@@ -30,6 +46,46 @@ interface RedeemClaimBody {
 
 export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
   /**
+   * POST /api/users/:userId/onchain-claims/plan
+   * Plan / preview multi-chain sender balance aggregation (e.g. 8 USDC Solana + 7 USDC Base -> NEAR).
+   */
+  fastify.post(
+    '/api/users/:userId/onchain-claims/plan',
+    async (
+      request: FastifyRequest<{ Params: { userId: string }; Body: PlanClaimBody }>,
+      reply: FastifyReply
+    ) => {
+      try {
+        const { userId } = request.params;
+        const { amount, asset, network, sourceNetwork, walletBalancesOverride } = request.body || {};
+        if (!amount) {
+          return reply.status(400).send({
+            code: 'INVALID_REQUEST',
+            message: 'amount is required',
+          });
+        }
+        const plan = await ClaimService.planClaim({
+          userId,
+          amount,
+          asset,
+          network,
+          sourceNetwork,
+          walletBalancesOverride,
+        });
+        return reply.status(200).send({
+          status: 'success',
+          data: plan,
+        });
+      } catch (err: any) {
+        return reply.status(400).send({
+          code: 'CLAIM_PLAN_FAILED',
+          message: err.message || 'Failed to compute aggregation plan',
+        });
+      }
+    }
+  );
+
+  /**
    * POST /api/users/:userId/onchain-claims
    * Create claim & lock funds. Returns 6-digit claimCode once.
    */
@@ -41,7 +97,17 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
     ) => {
       try {
         const { userId } = request.params;
-        const { recipientPhone, amount, asset, network, idempotencyKey, pin } = request.body || {};
+        const {
+          recipientPhone,
+          amount,
+          asset,
+          network,
+          sourceNetwork,
+          fundingSources,
+          walletBalancesOverride,
+          idempotencyKey,
+          pin,
+        } = request.body || {};
 
         if (!recipientPhone || !amount) {
           return reply.status(400).send({
@@ -56,6 +122,9 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
           amount,
           asset,
           network,
+          sourceNetwork,
+          fundingSources,
+          walletBalancesOverride,
           idempotencyKey,
           pin,
         });

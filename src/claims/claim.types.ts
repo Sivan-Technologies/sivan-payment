@@ -39,6 +39,13 @@ export interface ClaimPayoutSettlement {
   settledAt: string;
 }
 
+export interface ClaimFundingSource {
+  chain: SupportedClaimNetwork | string;
+  amount: string;
+  walletAddress?: string;
+  txHash?: string;
+}
+
 export interface OnchainClaimRecord {
   id: string; // e.g. clm_...
   senderUserId: string;
@@ -49,6 +56,8 @@ export interface OnchainClaimRecord {
   network: SupportedClaimNetwork;
   sourceNetwork?: SupportedClaimNetwork;
   settlementNetwork?: SupportedClaimNetwork;
+  isAggregated?: boolean;
+  fundingSources?: ClaimFundingSource[];
   payoutDestination?: ClaimPayoutDestination;
   settlementDetails?: ClaimPayoutSettlement;
   status: OnchainClaimStatus;
@@ -72,6 +81,8 @@ export interface OnchainClaimSummary {
   network: SupportedClaimNetwork;
   sourceNetwork?: SupportedClaimNetwork;
   settlementNetwork?: SupportedClaimNetwork;
+  isAggregated?: boolean;
+  fundingSources?: ClaimFundingSource[];
   payoutDestination?: ClaimPayoutDestination;
   settlementDetails?: ClaimPayoutSettlement;
   recipientPhoneLast4: string;
@@ -91,6 +102,8 @@ export interface PublicClaimPreview {
   network: SupportedClaimNetwork;
   sourceNetwork?: SupportedClaimNetwork;
   settlementNetwork?: SupportedClaimNetwork;
+  isAggregated?: boolean;
+  fundingSources?: ClaimFundingSource[];
   senderName?: string;
   senderPhoneLast4?: string;
   recipientPhone: string;

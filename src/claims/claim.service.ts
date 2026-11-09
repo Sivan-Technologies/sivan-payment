@@ -7,7 +7,9 @@ import type {
   SupportedClaimAsset,
   SupportedClaimNetwork,
   ClaimCancelReason,
+  ClaimFundingSource,
 } from './claim.types.js';
+import { planAggregatedSpend, type AggregatedSpendPlan } from '../balances/unified-balance.service.js';
 
 function hashClaimCode(code: string): string {
   return createHash('sha256').update(code.trim()).digest('hex');
@@ -107,6 +109,8 @@ export class ClaimService {
       network: record.network,
       sourceNetwork: record.sourceNetwork,
       settlementNetwork: record.settlementNetwork || record.network,
+      isAggregated: record.isAggregated,
+      fundingSources: record.fundingSources,
       recipientPhoneLast4: last4,
       token: record.token,
       expiresAt: record.expiresAt,
@@ -120,8 +124,38 @@ export class ClaimService {
   }
 
   /**
+   * Preview / plan an aggregated multi-chain claim send without mutating state.
+   */
+  static async planClaim(params: {
+    userId: string;
+    amount: string | number;
+    asset?: SupportedClaimAsset;
+    network?: SupportedClaimNetwork;
+    sourceNetwork?: SupportedClaimNetwork;
+    walletBalancesOverride?: Array<{ chain: string; amount: number | string; address?: string }>;
+  }): Promise<AggregatedSpendPlan> {
+    const numAmount = typeof params.amount === 'number' ? params.amount : parseFloat(String(params.amount));
+    if (isNaN(numAmount) || numAmount <= 0) {
+      throw new Error('Amount must be a positive number');
+    }
+    const asset = (params.asset?.toLowerCase() as SupportedClaimAsset) || 'usdc';
+    const { getAdminFeeSettings } = await import('../admin/admin-fees.service.js');
+    const settings = await getAdminFeeSettings().catch(() => undefined);
+    const defaultSettlement = (settings?.aggregatorDefaultTargetNetwork || 'near') as SupportedClaimNetwork;
+    const settlementNetwork = (params.network?.toLowerCase() as SupportedClaimNetwork) || defaultSettlement;
+
+    return planAggregatedSpend(params.userId, asset, numAmount, {
+      preferredSourceNetwork: params.sourceNetwork,
+      targetSettlementNetwork: settlementNetwork,
+      walletBalancesOverride: params.walletBalancesOverride,
+    });
+  }
+
+  /**
    * Create a new transit claim.
-   * Locks the sender's funds and returns the one-time 6-digit claim code.
+   * Locks the sender's funds (supporting multi-chain balance aggregation e.g.
+   * 8 USDC on Solana + 7 USDC on Base -> settling on NEAR) and returns the
+   * one-time 6-digit claim code.
    */
   static async createClaim(params: {
     userId: string;
@@ -130,6 +164,8 @@ export class ClaimService {
     asset?: SupportedClaimAsset;
     network?: SupportedClaimNetwork;
     sourceNetwork?: SupportedClaimNetwork;
+    fundingSources?: ClaimFundingSource[];
+    walletBalancesOverride?: Array<{ chain: string; amount: number | string; address?: string }>;
     idempotencyKey?: string;
     pin?: string;
   }): Promise<{ claim: OnchainClaimSummary; claimCode: string; replay: boolean }> {
@@ -163,9 +199,73 @@ export class ClaimService {
       throw new Error('Amount must be a positive number');
     }
 
+    const { getAdminFeeSettings } = await import('../admin/admin-fees.service.js');
+    const settings = await getAdminFeeSettings().catch(() => undefined);
+    const adminDefaultTarget = (settings?.aggregatorDefaultTargetNetwork || 'near') as SupportedClaimNetwork;
+
     const asset: SupportedClaimAsset = (params.asset?.toLowerCase() as SupportedClaimAsset) || 'usdc';
-    const settlementNetwork: SupportedClaimNetwork = (params.network?.toLowerCase() as SupportedClaimNetwork) || 'near';
-    const sourceNetwork: SupportedClaimNetwork = (params.sourceNetwork?.toLowerCase() as SupportedClaimNetwork) || 'solana';
+    const settlementNetwork: SupportedClaimNetwork =
+      (params.network?.toLowerCase() as SupportedClaimNetwork) || adminDefaultTarget;
+
+    // Resolve multi-chain sender aggregation plan
+    const spendPlan = await planAggregatedSpend(params.userId, asset, numAmount, {
+      preferredSourceNetwork: params.sourceNetwork,
+      targetSettlementNetwork: settlementNetwork,
+      walletBalancesOverride: params.walletBalancesOverride,
+    });
+
+    // If caller passed walletBalancesOverride or user has funded wallets on-chain, enforce balance check
+    const hasConfiguredBalances =
+      Boolean(params.walletBalancesOverride && params.walletBalancesOverride.length > 0) ||
+      Number(spendPlan.totalSpendable) > 0;
+
+    if (hasConfiguredBalances && !spendPlan.canFulfill) {
+      if (!spendPlan.aggregatorEnabled) {
+        throw new Error(
+          `Multi-chain balance aggregator is disabled by admin. Insufficient ${asset.toUpperCase()} on ${
+            params.sourceNetwork || settlementNetwork
+          } to cover ${numAmount.toFixed(2)} ${asset.toUpperCase()}.`
+        );
+      }
+      throw new Error(
+        `Insufficient unified ${asset.toUpperCase()} balance across networks. Total spendable: ${Number(
+          spendPlan.totalSpendable
+        ).toFixed(2)} ${asset.toUpperCase()}, requested: ${numAmount.toFixed(2)} ${asset.toUpperCase()}.`
+      );
+    }
+
+    let resolvedFundingSources: ClaimFundingSource[];
+    if (params.fundingSources && params.fundingSources.length > 0) {
+      resolvedFundingSources = params.fundingSources.map((src) => ({
+        chain: src.chain.toLowerCase(),
+        amount: Number(src.amount).toFixed(6),
+        walletAddress: src.walletAddress,
+        txHash: src.txHash || `agg_lock_${src.chain.toLowerCase()}_${randomBytes(6).toString('hex')}`,
+      }));
+    } else if (spendPlan.sources.length > 0) {
+      resolvedFundingSources = spendPlan.sources.map((src) => ({
+        chain: src.chain.toLowerCase(),
+        amount: src.amount,
+        walletAddress: src.walletAddress,
+        txHash: `agg_lock_${src.chain.toLowerCase()}_${randomBytes(6).toString('hex')}`,
+      }));
+    } else {
+      const fallbackSource = (params.sourceNetwork?.toLowerCase() as SupportedClaimNetwork) || 'solana';
+      resolvedFundingSources = [
+        {
+          chain: fallbackSource,
+          amount: numAmount.toFixed(6),
+          txHash: `agg_lock_${fallbackSource}_${randomBytes(6).toString('hex')}`,
+        },
+      ];
+    }
+
+    const primarySourceNetwork = (resolvedFundingSources[0]?.chain as SupportedClaimNetwork) ||
+      (params.sourceNetwork?.toLowerCase() as SupportedClaimNetwork) ||
+      'solana';
+    const isAggregated =
+      resolvedFundingSources.length > 1 ||
+      (resolvedFundingSources.length === 1 && resolvedFundingSources[0].chain !== settlementNetwork);
 
     const claimCode = generateClaimCode();
     const claimCodeHash = hashClaimCode(claimCode);
@@ -182,8 +282,10 @@ export class ClaimService {
       amount: numAmount.toFixed(6),
       asset,
       network: settlementNetwork,
-      sourceNetwork,
+      sourceNetwork: primarySourceNetwork,
       settlementNetwork,
+      isAggregated,
+      fundingSources: resolvedFundingSources,
       status: 'AWAITING_CLAIM',
       claimCodeHash,
       token,
@@ -319,6 +421,8 @@ export class ClaimService {
       network: claim.network,
       sourceNetwork: claim.sourceNetwork,
       settlementNetwork: claim.settlementNetwork || claim.network,
+      isAggregated: claim.isAggregated,
+      fundingSources: claim.fundingSources,
       senderName,
       senderPhoneLast4: sPhone ? sPhone.slice(-4) : undefined,
       recipientPhone: claim.recipientPhone,

@@ -436,3 +436,216 @@ export async function getSpendable(userId: string, asset: string, network?: stri
   if (row.chainUnavailable && num(row.credited) === 0) return null;
   return num(row.spendable);
 }
+
+export interface AggregatedFundingSource {
+  chain: string;
+  amount: string;
+  walletAddress?: string;
+}
+
+export interface AggregatedSpendPlan {
+  asset: string;
+  requestedAmount: string;
+  totalSpendable: string;
+  canFulfill: boolean;
+  isAggregated: boolean;
+  aggregatorEnabled: boolean;
+  targetSettlementNetwork: string;
+  sourcePriority: string[];
+  sources: AggregatedFundingSource[];
+  shortfall: string;
+}
+
+/**
+ * Sender-Side Unified Balance Aggregator Planner.
+ *
+ * Evaluates a user's fragmented stablecoin balances across all enabled chains
+ * (e.g. 8 USDC on Solana + 7 USDC on Base = 15 USDC total) and produces an
+ * atomic multi-rail deduction waterfall that settles on the Admin-configured
+ * default target settlement network (NEAR Protocol by default).
+ */
+export async function planAggregatedSpend(
+  userId: string,
+  asset: string,
+  requestedAmount: number,
+  options?: {
+    preferredSourceNetwork?: string;
+    targetSettlementNetwork?: string;
+    walletBalancesOverride?: Array<{ chain: string; amount: number | string; address?: string }>;
+  }
+): Promise<AggregatedSpendPlan> {
+  const { getAdminFeeSettings } = await import('../admin/admin-fees.service.js');
+  const adminFees = await getAdminFeeSettings().catch(() => undefined);
+
+  const aggregatorEnabled = adminFees?.aggregatorEnabled ?? true;
+  const defaultTarget = (adminFees?.aggregatorDefaultTargetNetwork || 'near').toLowerCase();
+  const targetSettlementNetwork = (options?.targetSettlementNetwork || defaultTarget).toLowerCase();
+  const priorityOrder: string[] = (
+    adminFees?.aggregatorSourcePriority && adminFees.aggregatorSourcePriority.length > 0
+      ? adminFees.aggregatorSourcePriority
+      : ['near', 'solana', 'base', 'stellar', 'celo']
+  ).map((c) => c.toLowerCase());
+
+  const cleanAsset = asset.toLowerCase().trim();
+  const safeRequested = Math.max(0, num(requestedAmount));
+
+  // Build per-chain available map
+  const chainMap = new Map<string, { amount: number; address?: string }>();
+  let pooledCredits = 0;
+  let totalUnabsorbedHold = 0;
+
+  if (options?.walletBalancesOverride) {
+    for (const item of options.walletBalancesOverride) {
+      const chainKey = String(item.chain || '').toLowerCase().trim();
+      const val = Math.max(0, num(item.amount));
+      if (chainKey && val > 0) {
+        const prev = chainMap.get(chainKey);
+        chainMap.set(chainKey, {
+          amount: (prev?.amount ?? 0) + val,
+          address: item.address || prev?.address,
+        });
+      }
+    }
+  } else {
+    const unified = await getUnifiedBalance(userId);
+    const assetRow = unified.balances.find((b) => b.asset.toLowerCase() === cleanAsset);
+    pooledCredits = Math.max(0, num(assetRow?.credited ?? 0));
+    const held = Math.max(0, num(assetRow?.held ?? 0));
+    totalUnabsorbedHold = Math.max(0, held - pooledCredits);
+
+    for (const w of unified.wallets || []) {
+      if (w.balancesUnavailable) continue;
+      const chainKey = String(w.chain || '').toLowerCase().trim();
+      for (const b of w.balances || []) {
+        const bAsset = String(b.asset || '').toLowerCase().trim();
+        const matches =
+          bAsset === cleanAsset ||
+          (cleanAsset === 'usdc' && (bAsset === 'usdm' || bAsset === 'cusd'));
+        if (matches) {
+          const val = Math.max(0, num(b.amount));
+          if (val > 0) {
+            const prev = chainMap.get(chainKey);
+            chainMap.set(chainKey, {
+              amount: (prev?.amount ?? 0) + val,
+              address: w.address || prev?.address,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Ordered list of chains according to Admin source priority waterfall
+  const allChains = Array.from(chainMap.keys());
+  const orderedChains = [
+    ...priorityOrder.filter((c) => chainMap.has(c)),
+    ...allChains.filter((c) => !priorityOrder.includes(c)),
+  ];
+
+  // Deduct unabsorbed holds from lowest-priority chains first so primary spendable rails remain accurate
+  if (totalUnabsorbedHold > 0) {
+    let holdLeft = totalUnabsorbedHold;
+    for (const chainKey of [...orderedChains].reverse()) {
+      if (holdLeft <= 0) break;
+      const entry = chainMap.get(chainKey);
+      if (!entry || entry.amount <= 0) continue;
+      const deduct = Math.min(entry.amount, holdLeft);
+      entry.amount = Math.max(0, entry.amount - deduct);
+      holdLeft -= deduct;
+    }
+  }
+
+  let totalChainAvailable = 0;
+  for (const entry of chainMap.values()) {
+    totalChainAvailable += entry.amount;
+  }
+  const totalSpendableNum = totalChainAvailable + pooledCredits;
+
+  const sources: AggregatedFundingSource[] = [];
+  let remaining = safeRequested;
+
+  const preferred = options?.preferredSourceNetwork?.toLowerCase().trim();
+
+  // 1. If preferredSourceNetwork is specified and has enough alone, use it directly
+  if (preferred && chainMap.has(preferred) && (chainMap.get(preferred)!.amount >= safeRequested)) {
+    const entry = chainMap.get(preferred)!;
+    sources.push({
+      chain: preferred,
+      amount: money(safeRequested),
+      walletAddress: entry.address,
+    });
+    remaining = 0;
+  } else if (
+    // 2. If targetSettlementNetwork has enough alone, use 100% from targetSettlementNetwork
+    chainMap.has(targetSettlementNetwork) &&
+    chainMap.get(targetSettlementNetwork)!.amount >= safeRequested
+  ) {
+    const entry = chainMap.get(targetSettlementNetwork)!;
+    sources.push({
+      chain: targetSettlementNetwork,
+      amount: money(safeRequested),
+      walletAddress: entry.address,
+    });
+    remaining = 0;
+  } else if (!aggregatorEnabled) {
+    // When aggregator is disabled by admin, only single-rail spend on target or preferred is allowed
+    const singleChain = preferred || targetSettlementNetwork;
+    const avail = chainMap.get(singleChain)?.amount ?? 0;
+    if (avail > 0) {
+      const take = Math.min(avail, remaining);
+      sources.push({
+        chain: singleChain,
+        amount: money(take),
+        walletAddress: chainMap.get(singleChain)?.address,
+      });
+      remaining = Math.max(0, remaining - take);
+    }
+  } else {
+    // 3. Multi-Chain Sender Aggregation Waterfall (e.g. 8 USDC from Solana + 7 USDC from Base -> NEAR)
+    // If preferredSourceNetwork was given and has partial funds, pull from it first
+    const waterfallOrder = preferred && orderedChains.includes(preferred)
+      ? [preferred, ...orderedChains.filter((c) => c !== preferred)]
+      : orderedChains;
+
+    for (const chainKey of waterfallOrder) {
+      if (remaining <= 1e-9) break;
+      const entry = chainMap.get(chainKey);
+      if (!entry || entry.amount <= 1e-9) continue;
+      const take = Math.min(entry.amount, remaining);
+      sources.push({
+        chain: chainKey,
+        amount: money(take),
+        walletAddress: entry.address,
+      });
+      remaining = Math.max(0, remaining - take);
+    }
+
+    // 4. If pooled credits (virtual account / ledger) exist and are needed to complete the intent
+    if (remaining > 1e-9 && pooledCredits > 1e-9) {
+      const take = Math.min(pooledCredits, remaining);
+      sources.push({
+        chain: targetSettlementNetwork,
+        amount: money(take),
+      });
+      remaining = Math.max(0, remaining - take);
+    }
+  }
+
+  const canFulfill = safeRequested > 0 && remaining <= 1e-6;
+  const isAggregated =
+    sources.length > 1 ||
+    (sources.length === 1 && sources[0].chain.toLowerCase() !== targetSettlementNetwork);
+
+  return {
+    asset: cleanAsset,
+    requestedAmount: money(safeRequested),
+    totalSpendable: money(totalSpendableNum),
+    canFulfill,
+    isAggregated,
+    aggregatorEnabled,
+    targetSettlementNetwork,
+    sourcePriority: priorityOrder,
+    sources,
+    shortfall: money(Math.max(0, remaining)),
+  };
+}

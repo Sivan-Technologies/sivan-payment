@@ -40,7 +40,7 @@ import { db } from '../database/json-database.js';
 import { createUser } from '../users/users.service.js';
 import { badRequest, forbidden, notFound } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
-import { getSpendable, getUnifiedBalance, invalidateUnifiedBalanceCache } from './unified-balance.service.js';
+import { getSpendable, getUnifiedBalance, invalidateUnifiedBalanceCache, planAggregatedSpend } from './unified-balance.service.js';
 import { chainFamily, walletServesNetwork } from '../wallets/chain-family.js';
 import { getWalletProvider } from '../wallets/provider/provider-registry.js';
 import { resolveActiveWalletProvider } from '../wallets/wallet-controls.service.js';
@@ -106,12 +106,13 @@ export const createBalanceTransferSchema = z.object({
       if (s.includes('avalanche') || s.includes('avax')) return 'avalanche_c_chain';
       if (s.includes('ethereum') || s.includes('eth')) return 'ethereum';
       if (s.includes('starknet')) return 'starknet';
+      if (s.includes('near')) return 'near';
       if (s.includes('tron')) return 'tron';
       if (s.includes('arc')) return 'arc';
       return s;
     }
     return val;
-  }, z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])),
+  }, z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet', 'near'])),
   amount: z.coerce.number().positive(),
   destinationAddress: z.string().min(8).max(160),
   note: z.string().max(500).optional(),
@@ -180,6 +181,8 @@ type TransferMetadata = {
   txHash?: string;
   userOperationHash?: string;
   sponsored?: boolean;
+  isAggregated?: boolean;
+  fundingSources?: Array<{ chain: string; amount: string; walletAddress?: string }>;
 };
 
 function amount(value: unknown) {
@@ -324,9 +327,9 @@ export async function getBalanceTransferControls() {
    * one place to set it.
    */
   const fees = await getAdminFeeSettings().catch(() => undefined);
-  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet'];
+  const defaultNetworks: BalanceNetwork[] = ['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet', 'near'];
   const mergedNetworks: BalanceNetwork[] = saved?.supportedNetworks
-    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork, 'starknet' as BalanceNetwork]))
+    ? Array.from(new Set([...saved.supportedNetworks, 'arc' as BalanceNetwork, 'starknet' as BalanceNetwork, 'near' as BalanceNetwork]))
     : defaultNetworks;
 
   return {
@@ -341,6 +344,9 @@ export async function getBalanceTransferControls() {
     reason: 'Environment fallback settings',
     ...(saved ?? {}),
     supportedNetworks: mergedNetworks,
+    aggregatorEnabled: fees?.aggregatorEnabled ?? true,
+    aggregatorDefaultTargetNetwork: fees?.aggregatorDefaultTargetNetwork ?? 'near',
+    aggregatorSourcePriority: fees?.aggregatorSourcePriority ?? ['near', 'solana', 'base', 'stellar', 'celo'],
     /**
      * AFTER the spread on purpose.
      *
@@ -842,6 +848,8 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance. You can send up to ${money(spendable)}.`);
   }
 
+  let aggregatedFundingSources: Array<{ chain: string; amount: string; walletAddress?: string }> | undefined;
+
   if (input.network) {
     const networkSpendable = await getSpendable(userId, input.asset, input.network);
 
@@ -862,17 +870,38 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
         );
       }
       const unified = await getUnifiedBalance(userId);
-      const availableChains = (unified.wallets || [])
-        .filter((w) => w.chain.toLowerCase() !== input.network.toLowerCase() && (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0))
+      const otherFundedWallets = (unified.wallets || []).filter(
+        (w) =>
+          w.chain.toLowerCase() !== input.network.toLowerCase() &&
+          (w.balances || []).some((b) => b.asset.toLowerCase() === input.asset.toLowerCase() && Number(b.amount) > 0)
+      );
+      const availableChains = otherFundedWallets
         .map((w) => {
           const bal = w.balances?.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
           return `${w.chain} (${bal?.amount} ${input.asset.toUpperCase()})`;
         })
         .join(', ');
-      if (availableChains) {
-        throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You have ${money(networkSpendable)} on ${input.network}, but your balance is on: ${availableChains}. Please send on that network instead.`);
+
+      // Check if Sender-Side Unified Balance Aggregator can fulfill this on the aggregator target network (e.g. NEAR)
+      const isAggregatorTarget =
+        input.network.toLowerCase() === 'near' ||
+        input.network.toLowerCase() === String(controls.aggregatorDefaultTargetNetwork || 'near').toLowerCase();
+
+      if (controls.aggregatorEnabled && isAggregatorTarget && otherFundedWallets.length > 0) {
+        const spendPlan = await planAggregatedSpend(userId, input.asset, input.amount, {
+          targetSettlementNetwork: input.network,
+        });
+        if (spendPlan.canFulfill && spendPlan.sources.length > 0) {
+          aggregatedFundingSources = spendPlan.sources;
+        }
       }
-      throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You can send up to ${money(networkSpendable)}.`);
+
+      if (!aggregatedFundingSources) {
+        if (availableChains) {
+          throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You have ${money(networkSpendable)} on ${input.network}, but your balance is on: ${availableChains}. Please send on that network instead.`);
+        }
+        throw badRequest(`Insufficient ${input.asset.toUpperCase()} balance on ${input.network}. You can send up to ${money(networkSpendable)}.`);
+      }
     }
   }
 
@@ -963,6 +992,9 @@ export async function requestBalanceTransfer(userId: string, input: z.infer<type
     destinationAddress: input.destinationAddress,
     status: needsReview ? 'pending_review' : 'requested',
     note: input.note,
+    ...(aggregatedFundingSources
+      ? { isAggregated: true, fundingSources: aggregatedFundingSources }
+      : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -1161,6 +1193,18 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
   if (candidates.length > 1) {
     const funded = await pickFundedWallet(candidates, transfer);
     if (funded) wallet = funded;
+  }
+
+  // If this is an aggregated multi-chain transfer settling on e.g. NEAR and the user
+  // has no native NEAR wallet row yet, sign with the primary source wallet from fundingSources.
+  if (!wallet && transfer.isAggregated && transfer.fundingSources && transfer.fundingSources.length > 0) {
+    for (const src of transfer.fundingSources) {
+      const srcWallet = await db.findUserWalletForNetwork(userId, src.chain);
+      if (srcWallet) {
+        wallet = srcWallet;
+        break;
+      }
+    }
   }
 
   const family = chainFamily(transfer.network);

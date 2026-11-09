@@ -28,7 +28,7 @@
 
 import { createHash } from 'node:crypto';
 
-export type AddressChain = 'base' | 'ethereum' | 'polygon' | 'arbitrum' | 'arc' | 'avalanche_c_chain' | 'solana' | 'stellar' | 'celo' | 'bsc' | 'bnb' | 'starknet';
+export type AddressChain = 'base' | 'ethereum' | 'polygon' | 'arbitrum' | 'arc' | 'avalanche_c_chain' | 'solana' | 'stellar' | 'celo' | 'bsc' | 'bnb' | 'starknet' | 'near';
 
 /** EVM chains share an address format, so they share a validator. */
 const EVM_CHAINS = new Set<AddressChain>(['base', 'ethereum', 'polygon', 'arbitrum', 'arc', 'avalanche_c_chain', 'celo', 'bsc', 'bnb']);
@@ -223,6 +223,25 @@ export function validateAddressForChain(address: string, chain: AddressChain): A
       return { valid: true };
     }
     return { valid: false, reason: 'A Stellar address must start with G (or M for muxed accounts).' };
+  }
+
+  if (chain === 'near') {
+    if (value.startsWith('0x')) {
+      return {
+        valid: false,
+        reason: 'That looks like an EVM address, but you selected NEAR Protocol. Paste a NEAR account (.near / .testnet) or a 64-character implicit account ID.',
+      };
+    }
+    const isNamed = /^[a-z0-9._-]+\.(near|testnet)$/i.test(value);
+    const isImplicit = /^[a-f0-9]{64}$/i.test(value);
+    const isPhoneOrTag = value.startsWith('+') || value.startsWith('@');
+    if (isNamed || isImplicit || isPhoneOrTag) {
+      return { valid: true };
+    }
+    return {
+      valid: false,
+      reason: 'A NEAR address must end with .near / .testnet, or be a 64-character hexadecimal implicit account ID.',
+    };
   }
 
   return { valid: false, reason: `Unsupported network: ${chain}.` };

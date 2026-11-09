@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { adminBalanceAdjustmentSchema, balanceTransferControlsSchema, balanceTransferDecisionSchema, createAdminBalanceAdjustment, decideBalanceTransfer, createBalanceTransferSchema, createP2pTransferSchema, executeP2pTransfer, fundAgreementSchema, fundServiceAgreementFromBalance, releaseAgreementSchema, releaseServiceAgreementFromBalance, refundAgreementSchema, refundServiceAgreementFromBalance, getBalanceTransferControls, getP2pClaimDetails, redeemP2pClaim, getUserBalance, listAllBalanceTransfers, listUserBalanceLedger, listUserBalanceTransfers, requestBalanceTransfer, updateBalanceTransferControls } from './balance.service.js';
-import { getUnifiedBalance } from './unified-balance.service.js';
+import { getUnifiedBalance, planAggregatedSpend } from './unified-balance.service.js';
 import { quoteTransfer } from './balance.service.js';
 import { recipientNeedsTokenAccount } from '../wallets/solana/spl-transfer.js';
 import { resolveNetworkMode } from '../wallets/network-mode.js';
@@ -296,6 +296,25 @@ export async function balanceRoutes(app: FastifyInstance) {
   app.get('/api/users/:userId/balance/unified', async (request) => {
     const { userId } = request.params as { userId: string };
     return { data: await getUnifiedBalance(userId) };
+  });
+
+  app.get('/api/users/:userId/balance/aggregate-plan', async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const { amount, asset, preferredSourceNetwork, targetSettlementNetwork } = request.query as {
+      amount?: string;
+      asset?: string;
+      preferredSourceNetwork?: string;
+      targetSettlementNetwork?: string;
+    };
+    const numAmount = Number(amount);
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
+      return reply.code(400).send({ error: { message: 'Valid positive amount query parameter is required.' } });
+    }
+    const plan = await planAggregatedSpend(userId, asset || 'usdc', numAmount, {
+      preferredSourceNetwork,
+      targetSettlementNetwork,
+    });
+    return { data: plan };
   });
 
   app.get('/api/users/:userId/balance/ledger', async (request) => {
