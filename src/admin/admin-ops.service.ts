@@ -157,9 +157,19 @@ export async function getAdminUserDetails(userId: string) {
   const supportTickets = (data.supportTickets ?? []).filter((item) => item.userId === user.id).sort(descCreated);
   const legalAcceptances = (data.legalAcceptances ?? []).filter((item) => item.userId === user.id).sort((a, b) => b.acceptedAt.localeCompare(a.acceptedAt));
   const auditTimeline = (data.auditLogs ?? []).filter((log) => log.actorId === user.id || log.resourceId === user.id || String((log.metadata as any)?.userId ?? '') === user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100);
+  const { getAdminUserNgnStatement } = await import('./admin-ngn-ledger.service.js');
+  const ngnStatement = await getAdminUserNgnStatement(user.id).catch(() => null);
   return {
     user,
     customer,
+    ngnLedger: ngnStatement
+      ? {
+          activeRail: ngnStatement.activeRail,
+          summary: ngnStatement.summary,
+          virtualAccount: ngnStatement.virtualAccount,
+          recentEntries: ngnStatement.entries.slice(0, 15),
+        }
+      : null,
     legalAcceptances,
     externalAccounts,
     withdrawals,
