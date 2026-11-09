@@ -43,6 +43,7 @@ import { moneygramRoutes } from '../moneygram/routes/moneygram.routes.js';
 import { telemetryRoutes } from '../telemetry/telemetry.routes.js';
 import { communityRoutes } from '../ngn/api/community.routes.js';
 import { businessRoutes } from '../business/api/business.routes.js';
+import { claimRoutes } from '../claims/claim.routes.js';
 import { webChallengeRoutes } from '../auth/web-challenge.routes.js';
 import { complianceRoutes } from '../compliance/compliance.routes.js';
 
@@ -136,4 +137,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await telemetryRoutes(app);
   await communityRoutes(app);
   await businessRoutes(app);
+  await claimRoutes(app);
 }
