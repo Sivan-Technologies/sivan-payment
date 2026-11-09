@@ -1448,9 +1448,10 @@ export async function executeP2pTransfer(
   if (!sender) throw notFound('Sender User');
   senderUserId = sender.id;
 
-  const isNgn = input.asset.toLowerCase() === 'ngn';
-  if (!isNgn) {
-    throw badRequest('Internal off-chain transfers are only supported for NGN. For USDC and crypto assets, please send an on-chain transfer to the recipient\'s Sivan Tag or wallet address.');
+  const assetLower = input.asset.toLowerCase();
+  const isSupportedAsset = assetLower === 'ngn' || assetLower === 'usdc';
+  if (!isSupportedAsset) {
+    throw badRequest('Claimable transfers are supported for NGN and USDC. For other assets, please send an on-chain transfer directly to a wallet address.');
   }
 
   const controls = await getBalanceTransferControls().catch(() => null);
@@ -1459,9 +1460,9 @@ export async function executeP2pTransfer(
     throw badRequest('Internal NGN transfers are temporarily paused by administration. Please try again shortly.');
   }
 
-  const minAmount = (controls as any)?.minimumNgnSendAmount ?? 10;
+  const minAmount = assetLower === 'usdc' ? 1 : ((controls as any)?.minimumNgnSendAmount ?? 10);
   if (input.amount < minAmount) {
-    throw badRequest(`Internal NGN transfer amount must be at least ${minAmount} NGN`);
+    throw badRequest(`Transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
   }
 
   const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
