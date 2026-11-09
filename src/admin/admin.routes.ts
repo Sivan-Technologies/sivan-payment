@@ -40,6 +40,11 @@ import {
   listAllStepUpVerificationRequests,
   reviewStepUpVerificationRequest,
 } from './verification-request.service.js';
+import {
+  getAdminNgnLedgerDashboard,
+  getAdminUserNgnStatement,
+  syncAdminUserNgnVirtualAccount,
+} from './admin-ngn-ledger.service.js';
 
 
 function listOptions(request: any) {
@@ -645,5 +650,33 @@ export async function adminRoutes(app: FastifyInstance) {
       adminId,
     });
     return { data: updated };
+  });
+
+  // Provider-Agnostic NGN User Balances, Inflows, Outflows & Virtual Accounts Ledger
+  regGet('/ngn-ledger/dashboard', async (request) => {
+    const query = (request.query ?? {}) as Record<string, string>;
+    const filter = (['all', 'with_balance', 'with_dva', 'active_holds'].includes(query.filter || '')
+      ? query.filter
+      : 'all') as 'all' | 'with_balance' | 'with_dva' | 'active_holds';
+    const sort = (['available_desc', 'inflow_desc', 'outflow_desc', 'recent_desc'].includes(query.sort || '')
+      ? query.sort
+      : 'available_desc') as 'available_desc' | 'inflow_desc' | 'outflow_desc' | 'recent_desc';
+    return {
+      data: await getAdminNgnLedgerDashboard({
+        search: query.search || query.q || undefined,
+        filter,
+        sort,
+      }),
+    };
+  });
+
+  regGet('/ngn-ledger/users/:userId', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await getAdminUserNgnStatement(userId) };
+  });
+
+  regPost('/ngn-ledger/users/:userId/sync', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await syncAdminUserNgnVirtualAccount(userId) };
   });
 }
