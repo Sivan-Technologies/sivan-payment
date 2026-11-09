@@ -422,6 +422,16 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
   }
 
   /**
+   * NEAR Intent Off-Ramp Route.
+   * NEAR Protocol uses NEAR Intent Solver to resolve NEAR USDC -> Solana USDC,
+   * delivering directly to Breet's Solana deposit address.
+   */
+  if (network === 'near') {
+    const { executeNearIntentSweepToRail } = await import('./near-intent-offramp.service.js');
+    return executeNearIntentSweepToRail(transfer);
+  }
+
+  /**
    * Same wallet-selection rule as everywhere else - but asked by FAMILY.
    *
    * This used `findUserWallet(userId, network === 'solana' ? 'solana' : 'ethereum')`,

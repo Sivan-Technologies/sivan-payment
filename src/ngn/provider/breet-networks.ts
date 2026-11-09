@@ -140,6 +140,14 @@ export const BREET_NETWORKS: readonly BreetNetworkCapability[] = [
     deposit: {},
     withdrawal: {},
   },
+  {
+    // NEAR off-ramp: resolved via NEAR Intent Solver to Breet's Solana deposit address.
+    network: 'near',
+    deposit: {
+      usdc: { mainnet: 'SOL_USDC_PTHX', testnet: 'SOL_USDC_JKVK', minUsd: 5 },
+    },
+    withdrawal: {},
+  },
 ] as const;
 
 function capability(network: BalanceNetwork) {
@@ -148,8 +156,31 @@ function capability(network: BalanceNetwork) {
 
 /** Off-ramp: can a user send us this asset on this network? */
 export function canDeposit(network: BalanceNetwork, asset: DepositAsset): boolean {
-  if (network === 'celo') return true;
+  if (network === 'celo' || network === 'near') return true;
   return Boolean(capability(network)?.deposit?.[asset]);
+}
+
+/**
+ * Resolves the underlying provider rail network.
+ * For NEAR, Breet does not accept direct NEAR deposits, so Sivan routes
+ * via NEAR Intent cross-chain swap into Solana USDC as the primary rail.
+ */
+export function resolveOfframpRailNetwork(network: BalanceNetwork): {
+  railNetwork: BalanceNetwork;
+  isIntentRoute: boolean;
+  intentSourceNetwork?: BalanceNetwork;
+} {
+  if (network === 'near') {
+    return {
+      railNetwork: 'solana',
+      isIntentRoute: true,
+      intentSourceNetwork: 'near',
+    };
+  }
+  return {
+    railNetwork: network,
+    isIntentRoute: false,
+  };
 }
 
 /** On-ramp: can we send this asset to this network? */
@@ -174,7 +205,8 @@ export function breetDepositAssetId(
   asset: DepositAsset,
   environment: 'development' | 'production'
 ): string | undefined {
-  const entry = capability(network)?.deposit?.[asset];
+  const effectiveNetwork = network === 'near' ? 'solana' : network;
+  const entry = capability(effectiveNetwork)?.deposit?.[asset];
   if (!entry) return undefined;
   return environment === 'production' ? entry.mainnet : entry.testnet;
 }
@@ -191,7 +223,7 @@ export function breetMinimumDepositUsd(
   asset: DepositAsset,
   environment: 'development' | 'production'
 ): number | undefined {
-  if (network === 'celo') return 1;
+  if (network === 'celo' || network === 'near') return 5;
   const entry = capability(network)?.deposit?.[asset];
   if (!entry) return undefined;
 

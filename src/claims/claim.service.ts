@@ -175,7 +175,7 @@ export class ClaimService {
     const record: OnchainClaimRecord = {
       id,
       senderUserId: params.userId,
-      senderPhone: sender.phone || sender.whatsappNumber,
+      senderPhone: sender.whatsappNumber || (sender as any).phone,
       recipientPhone: params.recipientPhone.trim(),
       amount: numAmount.toFixed(6),
       asset,
@@ -197,7 +197,7 @@ export class ClaimService {
     });
 
     // Non-blocking WhatsApp invite delivery
-    const senderDisplayName = sender.fullName || (sender.username ? `@${sender.username}` : (sender.phone ? `Sivan User (${sender.phone.slice(-4)})` : 'Sivan User'));
+    const senderDisplayName = sender.fullName || (sender.username ? `@${sender.username}` : (sender.whatsappNumber ? `Sivan User (${sender.whatsappNumber.slice(-4)})` : 'Sivan User'));
     void dispatchClaimInviteWhatsApp(record, senderDisplayName);
 
     return {

@@ -814,6 +814,7 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     metadata: {
       ...(typeof quote.metadata === 'object' && quote.metadata ? quote.metadata : {}),
       network: quoteNetwork,
+      ...(quoteNetwork === 'near' ? { isNearIntentRoute: true, targetRailNetwork: 'solana' } : {}),
       estimatedGasUsd,
       ...(recipientAddress ? { recipientAddress } : {}),
       ...(payoutBank ?? {}),

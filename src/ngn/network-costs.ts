@@ -42,6 +42,7 @@
  */
 export const NETWORK_GAS_USD: Readonly<Record<string, number>> = {
   solana: 0.001,
+  near: 0.001,
   base: 0.02,
   bsc: 0.03,
   celo: 0.001,
@@ -64,6 +65,7 @@ export const NETWORK_GAS_USD: Readonly<Record<string, number>> = {
  */
 const NETWORK_LABELS: Readonly<Record<string, string>> = {
   solana: 'Solana',
+  near: 'NEAR Protocol',
   base: 'Base',
   bsc: 'BNB Smart Chain',
   celo: 'Celo',
