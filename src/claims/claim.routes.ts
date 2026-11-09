@@ -123,7 +123,7 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
 
   /**
    * POST /api/users/:userId/onchain-claims/:claimId/resend
-   * Resend notification to recipient.
+   * Resend notification to recipient on WhatsApp.
    */
   fastify.post(
     '/api/users/:userId/onchain-claims/:claimId/resend',
@@ -131,10 +131,19 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
       request: FastifyRequest<{ Params: { userId: string; claimId: string } }>,
       reply: FastifyReply
     ) => {
-      return reply.status(200).send({
-        status: 'success',
-        data: { inviteChannel: 'whatsapp' },
-      });
+      try {
+        const { userId, claimId } = request.params;
+        const result = await ClaimService.resendInvite(userId, claimId);
+        return reply.status(200).send({
+          status: 'success',
+          data: { inviteChannel: 'whatsapp', delivered: result.delivered },
+        });
+      } catch (err: any) {
+        return reply.status(400).send({
+          code: 'CLAIM_RESEND_FAILED',
+          message: err.message,
+        });
+      }
     }
   );
 

@@ -23,6 +23,58 @@ function generateToken(): string {
   return `sclaim_${randomBytes(16).toString('hex')}`;
 }
 
+async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderName: string): Promise<void> {
+  try {
+    const isLive = process.env.NODE_ENV === 'production' || process.env.DATABASE_MODE === 'live';
+    const gatewayUrl = (
+      process.env.CORE_API_BASE_URL ||
+      process.env.API_GATEWAY_URL ||
+      (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
+    ).replace(/\/$/, '');
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET;
+    if (!secret) return;
+
+    const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || `${gatewayUrl}/api/whatsapp`;
+    const waNotifyUrl = rawWaUrl.endsWith('/api/notify') ? rawWaUrl : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
+
+    const cleanPhone = record.recipientPhone.replace(/\D/g, '');
+    const formattedPhone = `whatsapp:+${cleanPhone}`;
+    const appUrl = (process.env.CUSTOMER_APP_URL || 'https://app.sivantech.online').replace(/\/$/, '');
+    const claimUrl = `${appUrl}/claim?token=${encodeURIComponent(record.token)}`;
+
+    const text = [
+      `🎁 Transfer in Transit`,
+      ``,
+      `${senderName} sent you ${Number(record.amount).toFixed(2)} ${record.asset.toUpperCase()} on ${record.network.toUpperCase()} Protocol.`,
+      ``,
+      `Claim your funds here:`,
+      claimUrl,
+      ``,
+      `Ask ${senderName} for your 6-digit Claim Code to complete redemption.`,
+    ].join('\n');
+
+    await fetch(waNotifyUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-notify-secret': secret,
+        'x-target-service': 'whatsapp-bot',
+      },
+      body: JSON.stringify({
+        to: formattedPhone,
+        message: text,
+        template: {
+          name: 'claim_invite',
+          language: 'en',
+          params: [senderName, `${Number(record.amount).toFixed(2)} ${record.asset.toUpperCase()}`, claimUrl],
+        },
+      }),
+    });
+  } catch (err: any) {
+    console.error('Failed to dispatch claim invite to WhatsApp:', err?.message || err);
+  }
+}
+
 export class ClaimService {
   /**
    * Helper to map an internal record to an OnchainClaimSummary
@@ -124,11 +176,35 @@ export class ClaimService {
       return record;
     });
 
+    // Non-blocking WhatsApp invite delivery
+    const senderDisplayName = sender.fullName || (sender.username ? `@${sender.username}` : (sender.phone ? `Sivan User (${sender.phone.slice(-4)})` : 'Sivan User'));
+    void dispatchClaimInviteWhatsApp(record, senderDisplayName);
+
     return {
       claim: ClaimService.toSummary(record),
       claimCode,
       replay: false,
     };
+  }
+
+  /**
+   * Resend invite notification to recipient on WhatsApp.
+   */
+  static async resendInvite(userId: string, claimId: string): Promise<{ delivered: boolean }> {
+    const rawData = await (db as any).read();
+    const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
+    const claim = all.find((c) => c.id === claimId && c.senderUserId === userId);
+    if (!claim) {
+      throw new Error('Claim not found or unauthorized');
+    }
+    if (claim.status !== 'AWAITING_CLAIM') {
+      throw new Error(`Cannot resend invite for claim in status ${claim.status}`);
+    }
+
+    const sender = await db.findUserById(userId);
+    const senderDisplayName = sender?.fullName || (sender?.username ? `@${sender.username}` : 'Sivan User');
+    void dispatchClaimInviteWhatsApp(claim, senderDisplayName);
+    return { delivered: true };
   }
 
   /**
