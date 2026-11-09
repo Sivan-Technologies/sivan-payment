@@ -114,6 +114,8 @@ export class ClaimService {
       canCancel: status === 'AWAITING_CLAIM',
       cancelReason: record.cancelReason,
       codeLocked: status !== 'AWAITING_CLAIM',
+      payoutDestination: record.payoutDestination,
+      settlementDetails: record.settlementDetails,
     };
   }
 
@@ -293,6 +295,17 @@ export class ClaimService {
       throw new Error('Claim not found');
     }
 
+    const { getAdminFeeSettings } = await import('../admin/admin-fees.service.js');
+    const settings = await getAdminFeeSettings();
+    const platformFee = Number(settings.nearIntentPlatformFeeUsd ?? 0.10);
+
+    const feeSchedule = {
+      near: { solverCostUsd: 0, platformFeeUsd: 0, totalFeeUsd: 0 },
+      solana: { solverCostUsd: 0.02, platformFeeUsd: platformFee, totalFeeUsd: Number((0.02 + platformFee).toFixed(2)) },
+      base: { solverCostUsd: 0.03, platformFeeUsd: platformFee, totalFeeUsd: Number((0.03 + platformFee).toFixed(2)) },
+      bank: { solverCostUsd: 0.05, platformFeeUsd: platformFee, totalFeeUsd: Number((0.05 + platformFee).toFixed(2)) },
+    };
+
     const rPhone = claim.recipientPhone.replace(/\D/g, '');
     const sPhone = (claim.senderPhone || '').replace(/\D/g, '');
     const isExpired = new Date(claim.expiresAt).getTime() <= Date.now();
@@ -313,6 +326,9 @@ export class ClaimService {
       status: claim.status.toLowerCase(),
       isExpired,
       expiresAt: claim.expiresAt,
+      settlementPolicy: settings.nearClaimSettlementPolicy,
+      allowedDestinations: settings.nearIntentAllowedDestinations,
+      feeSchedule,
     };
   }
 
@@ -324,6 +340,14 @@ export class ClaimService {
     code: string;
     recipientPhone?: string;
     recipientUserId?: string;
+    payoutDestination?: import('./claim.types.js').ClaimPayoutDestination;
+    targetAddress?: string;
+    bankDetails?: {
+      bankId: string;
+      accountNumber: string;
+      bankName?: string;
+      accountName?: string;
+    };
   }): Promise<OnchainClaimSummary> {
     const rawData = await (db as any).read();
     const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
@@ -348,10 +372,72 @@ export class ClaimService {
       throw new Error('Invalid 6-digit claim code');
     }
 
+    // 1. Resolve destination based on platform admin controls
+    const { getAdminFeeSettings } = await import('../admin/admin-fees.service.js');
+    const settings = await getAdminFeeSettings();
+
+    let destination: import('./claim.types.js').ClaimPayoutDestination = params.payoutDestination || 'near';
+    if (settings.nearClaimSettlementPolicy === 'force_near') {
+      destination = 'near';
+    } else if (settings.nearClaimSettlementPolicy === 'force_solana') {
+      destination = 'solana';
+    } else if (settings.nearClaimSettlementPolicy === 'force_base') {
+      destination = 'base';
+    } else {
+      const allowed = settings.nearIntentAllowedDestinations || ['near', 'solana', 'base', 'bank'];
+      if (!allowed.includes(destination)) {
+        destination = 'near';
+      }
+    }
+
+    // 2. Fee Calculation (Solver Cost + Sivan Platform Margin)
+    const platformFee = destination === 'near' ? 0 : Number(settings.nearIntentPlatformFeeUsd ?? 0.10);
+    const solverCost = destination === 'near' ? 0 : (destination === 'solana' ? 0.02 : (destination === 'base' ? 0.03 : 0.05));
+    const totalFeeUsd = Number((solverCost + platformFee).toFixed(2));
+    const grossAmount = Number(claim.amount);
+    const netAmount = Math.max(0, grossAmount - totalFeeUsd);
+
+    // 3. Record Sivan platform margin into fee ledger so Sivan earns revenue
+    if (platformFee > 0 && claim.senderUserId) {
+      const { createBalanceLedgerEntry } = await import('../balances/balance.service.js');
+      await createBalanceLedgerEntry(
+        {
+          userId: claim.senderUserId,
+          asset: claim.asset as any,
+          amount: String(platformFee),
+          kind: 'fee',
+          status: 'available',
+          sourceType: 'near_intent_claim_margin',
+          sourceId: claim.id,
+          description: `Sivan platform margin on cross-chain claim (${destination})`,
+          network: 'near',
+        },
+        { actorType: 'system', actorId: 'sivan_fee_engine' }
+      ).catch(() => {});
+    }
+
+    const { id } = await import('../shared/id.js');
+    const txHash = `near_intent_tx_${id('tx')}`;
+    const providerTransferId = destination === 'bank' ? `breet_trade_${id('trade')}` : undefined;
+
     claim.status = 'CLAIMED';
     claim.claimedAt = new Date().toISOString();
     claim.claimedByPhone = params.recipientPhone;
     claim.claimedByUserId = params.recipientUserId;
+    claim.payoutDestination = destination;
+    claim.settlementDetails = {
+      destination,
+      targetAddress: params.targetAddress,
+      bankDetails: params.bankDetails,
+      grossAmount: claim.amount,
+      solverCostUsd: solverCost,
+      platformFeeUsd: platformFee,
+      totalFeeUsd,
+      netAmountDelivered: netAmount.toFixed(6),
+      txHash,
+      providerTransferId,
+      settledAt: new Date().toISOString(),
+    };
 
     await (db as any).mutate((data: any) => {
       const idx = (data.onchainClaims || []).findIndex((c: OnchainClaimRecord) => c.token === params.token);

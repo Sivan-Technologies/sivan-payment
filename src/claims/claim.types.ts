@@ -7,6 +7,8 @@ export type OnchainClaimStatus =
   | 'CANCELLED'
   | 'EXPIRED';
 
+export type ClaimPayoutDestination = 'near' | 'solana' | 'base' | 'bank';
+
 export const CLAIM_CANCEL_REASONS = [
   'wrong_phone_number',
   'recipient_no_response',
@@ -15,6 +17,25 @@ export const CLAIM_CANCEL_REASONS = [
 ] as const;
 
 export type ClaimCancelReason = (typeof CLAIM_CANCEL_REASONS)[number];
+
+export interface ClaimPayoutSettlement {
+  destination: ClaimPayoutDestination;
+  targetAddress?: string;
+  bankDetails?: {
+    bankId: string;
+    accountNumber: string;
+    bankName?: string;
+    accountName?: string;
+  };
+  grossAmount: string;
+  solverCostUsd: number;
+  platformFeeUsd: number;
+  totalFeeUsd: number;
+  netAmountDelivered: string;
+  txHash?: string;
+  providerTransferId?: string;
+  settledAt: string;
+}
 
 export interface OnchainClaimRecord {
   id: string; // e.g. clm_...
@@ -26,6 +47,8 @@ export interface OnchainClaimRecord {
   network: SupportedClaimNetwork;
   sourceNetwork?: SupportedClaimNetwork;
   settlementNetwork?: SupportedClaimNetwork;
+  payoutDestination?: ClaimPayoutDestination;
+  settlementDetails?: ClaimPayoutSettlement;
   status: OnchainClaimStatus;
   claimCodeHash: string; // SHA-256 hash of the 6-digit code
   token: string; // public URL token e.g. sclaim_...
@@ -47,6 +70,8 @@ export interface OnchainClaimSummary {
   network: SupportedClaimNetwork;
   sourceNetwork?: SupportedClaimNetwork;
   settlementNetwork?: SupportedClaimNetwork;
+  payoutDestination?: ClaimPayoutDestination;
+  settlementDetails?: ClaimPayoutSettlement;
   recipientPhoneLast4: string;
   token?: string;
   expiresAt: string;
@@ -66,8 +91,15 @@ export interface PublicClaimPreview {
   settlementNetwork?: SupportedClaimNetwork;
   senderName?: string;
   senderPhoneLast4?: string;
+  recipientPhone: string;
   recipientPhoneLast4: string;
   status: OnchainClaimStatus | string;
   isExpired?: boolean;
   expiresAt: string;
+  settlementPolicy?: 'recipient_choice' | 'force_near' | 'force_solana' | 'force_base';
+  allowedDestinations?: ClaimPayoutDestination[];
+  feeSchedule?: Record<
+    ClaimPayoutDestination,
+    { solverCostUsd: number; platformFeeUsd: number; totalFeeUsd: number }
+  >;
 }

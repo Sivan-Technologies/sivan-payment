@@ -354,6 +354,21 @@ export const feeSettingsSchema = z.object({
   ethWhalePercent: z.coerce.number().min(0).max(100).default(0.50),
   ethWhaleCapUsd: z.coerce.number().min(0).max(10000).default(100),
 
+  /**
+   * ───── NEAR INTENT CLAIM & SETTLEMENT CONTROLS ─────
+   *
+   * nearClaimSettlementPolicy:
+   *   'recipient_choice': Recipient chooses between NEAR, Solana, Base, or Bank.
+   *   'force_near': Forces all claims to settle strictly on NEAR Protocol.
+   *   'force_solana': Forces settlement on Solana.
+   *   'force_base': Forces settlement on Base.
+   */
+  nearClaimSettlementPolicy: z.enum(['recipient_choice', 'force_near', 'force_solana', 'force_base']).default('recipient_choice'),
+  /** Sivan platform margin collected in USDC on cross-chain claim settlements. */
+  nearIntentPlatformFeeUsd: z.coerce.number().min(0).max(100).default(0.10),
+  /** Destination payout rails permitted for recipients. */
+  nearIntentAllowedDestinations: z.array(z.enum(['near', 'solana', 'base', 'bank'])).default(['near', 'solana', 'base', 'bank']),
+
   feeTiers: z.array(feeTierSchema).min(1),
   networkFees: z.array(networkFeeSchema).default([]),
   promotions: z.array(promotionSchema).default([]),
@@ -428,6 +443,9 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     gasLimitsWarnOnly: DEFAULT_GAS_CONTROLS.warnOnly,
     gasDailyBudgetUsd: DEFAULT_GAS_CONTROLS.dailyBudgetUsd,
     gasSolPriceUsd: DEFAULT_GAS_CONTROLS.solPriceUsd,
+    nearClaimSettlementPolicy: 'recipient_choice',
+    nearIntentPlatformFeeUsd: 0.10,
+    nearIntentAllowedDestinations: ['near', 'solana', 'base', 'bank'],
     bridgeOfframpCostPercent: Number(percent(env.BRIDGE_OFFRAMP_COST_PERCENT)),
     ethServiceFeeMode: 'tiered',
     ethServiceFeePercent: 1.0,

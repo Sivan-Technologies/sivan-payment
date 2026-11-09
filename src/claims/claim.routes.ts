@@ -18,6 +18,14 @@ interface CancelClaimBody {
 interface RedeemClaimBody {
   code: string;
   recipientPhone?: string;
+  payoutDestination?: import('./claim.types.js').ClaimPayoutDestination;
+  targetAddress?: string;
+  bankDetails?: {
+    bankId: string;
+    accountNumber: string;
+    bankName?: string;
+    accountName?: string;
+  };
 }
 
 export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
@@ -192,7 +200,7 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
     ) => {
       try {
         const { userId, token } = request.params;
-        const { code, recipientPhone } = request.body || {};
+        const { code, recipientPhone, payoutDestination, targetAddress, bankDetails } = request.body || {};
 
         if (!code) {
           return reply.status(400).send({
@@ -206,6 +214,9 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
           code,
           recipientPhone,
           recipientUserId: userId,
+          payoutDestination,
+          targetAddress,
+          bankDetails,
         });
 
         return reply.status(200).send({
@@ -246,7 +257,6 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
   };
 
   fastify.get('/api/public/claims/:token', handlePreview);
-  fastify.get('/api/claims/:token', handlePreview);
 
   /**
    * POST /api/public/claims/:token/redeem & /api/claims/:token/redeem
@@ -258,13 +268,16 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
   ) => {
     try {
       const { token } = request.params;
-      const { code, recipientPhone, userId } = request.body || {};
+      const { code, recipientPhone, userId, payoutDestination, targetAddress, bankDetails } = request.body || {};
 
       const redeemed = await ClaimService.redeemClaim({
         token,
         code: code || '000000', // Auto-redeem from authenticated frontend session or code
         recipientPhone,
         recipientUserId: userId,
+        payoutDestination,
+        targetAddress,
+        bankDetails,
       });
 
       return reply.status(200).send({
@@ -283,5 +296,4 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
   };
 
   fastify.post('/api/public/claims/:token/redeem', handleRedeem);
-  fastify.post('/api/claims/:token/redeem', handleRedeem);
 }
