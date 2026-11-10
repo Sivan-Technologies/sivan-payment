@@ -141,9 +141,16 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
         <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px;margin-bottom:24px;">
           <tr>
             <td align="center">
-              <span style="font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.3px;">
-                <span style="color:#10b981;">⚡</span> Sivan Ai
-              </span>
+              <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="display:inline-table;">
+                <tr>
+                  <td style="vertical-align:middle;padding-right:10px;">
+                    <img src="https://sivantech.online/sivan-logo.png" alt="Sivan" width="34" height="34" style="display:block;border-radius:8px;border:0;" />
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <span style="font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.2px;">Sivan</span>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
         </table>
@@ -154,9 +161,9 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
             <td style="padding:36px 28px;text-align:center;">
               
               <!-- Badge -->
-              <div style="display:inline-block;background-color:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);border-radius:100px;padding:5px 14px;margin-bottom:20px;">
-                <span style="font-size:11px;font-weight:700;color:#34d399;letter-spacing:1.2px;text-transform:uppercase;">
-                  SECURITY • SINGLE-USE CODE
+              <div style="display:inline-block;background-color:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);border-radius:100px;padding:4px 12px;margin-bottom:20px;">
+                <span style="font-size:11px;font-weight:700;color:#34d399;letter-spacing:1px;text-transform:uppercase;">
+                  ONE-TIME PASSCODE
                 </span>
               </div>
 
@@ -167,7 +174,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
               
               <!-- Subtitle -->
               <p style="margin:0 0 24px 0;font-size:14px;line-height:1.55;color:#94a3b8;">
-                Use the single-use verification code below to ${input.intent === 'signup' ? 'complete your registration' : 'sign in to your account'}:
+                Enter this verification code to ${input.intent === 'signup' ? 'verify your account' : 'complete your sign-in'}:
               </p>
 
               <!-- Single Continuous Copyable Container (1-Tap Selection) -->
@@ -182,7 +189,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
                       ${escapeHtml(input.code)}
                     </div>
                     <div style="font-size:11px;color:#64748b;margin-top:8px;">
-                      Tap and hold or double-tap code to copy
+                      Tap code to copy
                     </div>
                   </td>
                 </tr>
@@ -190,14 +197,14 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
 
               <!-- Expiry Meta -->
               <p style="margin:0 0 24px 0;font-size:12px;color:#64748b;">
-                ⏱ Valid for ${input.expiresInMinutes} minutes • Single-use authorization
+                ⏱ Valid for ${input.expiresInMinutes} minutes
               </p>
 
               <!-- Security Notice -->
               <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color:#080d15;border:1px solid rgba(255,255,255,0.05);border-radius:10px;">
                 <tr>
                   <td style="padding:14px 16px;text-align:left;font-size:12px;line-height:1.5;color:#94a3b8;">
-                    <strong style="color:#cbd5e1;">Security Notice:</strong> Sivan Ai staff will never ask for your verification code, transaction PIN, or wallet seed phrase via email, WhatsApp, or Telegram. If you did not request this, you can safely ignore this email.
+                    <strong style="color:#cbd5e1;">Security Notice:</strong> Never share this code with anyone. Sivan staff will never ask for your code or PIN. If you didn't request this, you can safely ignore this email.
                   </td>
                 </tr>
               </table>
@@ -211,15 +218,10 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
           <tr>
             <td>
               <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;">
-                Sivan Ai • Autonomous Web3 &amp; Fiat Settlement Protocol
+                &copy; 2026 Sivan Technology. All rights reserved.
               </p>
-              <p style="margin:0 0 12px 0;font-size:12px;color:#94a3b8;">
-                <a href="https://app.sivantech.online" style="color:#10b981;text-decoration:none;">Open Web App</a> • 
-                <a href="https://sivantech.online" style="color:#10b981;text-decoration:none;">Protocol Home</a> • 
-                <a href="mailto:support@sivantech.online" style="color:#10b981;text-decoration:none;">Support</a>
-              </p>
-              <p style="margin:0;font-size:11px;color:#475569;">
-                &copy; 2026 Sivan Technology. Non-custodial, human + agent ready.
+              <p style="margin:0;font-size:12px;color:#94a3b8;">
+                Need help? Contact <a href="mailto:support@sivantech.online" style="color:#10b981;text-decoration:none;">support@sivantech.online</a>
               </p>
             </td>
           </tr>
