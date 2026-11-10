@@ -168,19 +168,38 @@ function filterPlans(
  */
 export async function getUtilityDataPlanBySize(
   bundleSize: string,
-  network?: string
+  network?: string,
+  validity?: string
 ): Promise<UtilityDataPlanRecord | null> {
   const plans = await getUtilityDataPlans({ activeOnly: true });
   const cleanSize = bundleSize.toUpperCase().replace(/\s+/g, '');
   const targetNet = (network || 'all').toLowerCase();
+  const cleanVal = validity ? validity.toLowerCase().replace(/[\s_-]+/g, '') : undefined;
 
-  // 1. Exact network match first (e.g. 1GB for MTN)
-  const exact = plans.find(
+  // 1. Exact network AND validity match first
+  if (cleanVal) {
+    const exactWithVal = plans.find(
+      (p) =>
+        p.bundleSize.toUpperCase().replace(/\s+/g, '') === cleanSize &&
+        p.network.toLowerCase() === targetNet &&
+        (p.validity || '').toLowerCase().replace(/[\s_-]+/g, '') === cleanVal
+    );
+    if (exactWithVal) return exactWithVal;
+  }
+
+  // 2. Exact network match (preferring active plans with provider codes or 30-day/monthly popular tiers)
+  const matches = plans.filter(
     (p) => p.bundleSize.toUpperCase().replace(/\s+/g, '') === cleanSize && p.network.toLowerCase() === targetNet
   );
-  if (exact) return exact;
+  if (matches.length > 0) {
+    const best =
+      matches.find((m) => Object.keys(m.providerPlanCodes || {}).length > 0) ||
+      matches.find((m) => /30\s*day|month/i.test(m.validity || '')) ||
+      matches[0];
+    return best;
+  }
 
-  // 2. Fall back to 'all' networks tier
+  // 3. Fall back to 'all' networks tier
   return (
     plans.find(
       (p) => p.bundleSize.toUpperCase().replace(/\s+/g, '') === cleanSize && p.network.toLowerCase() === 'all'
@@ -201,7 +220,10 @@ export async function updateUtilityDataPlans(
 
   if (!options.replaceAll) {
     for (const p of current) {
-      const key = `${p.bundleSize.toUpperCase()}_${p.network.toLowerCase()}`;
+      const pVal = (p.validity || '').toLowerCase().replace(/[\s_-]+/g, '');
+      const key = pVal
+        ? `${p.bundleSize.toUpperCase()}_${p.network.toLowerCase()}_${pVal}`
+        : `${p.bundleSize.toUpperCase()}_${p.network.toLowerCase()}`;
       planMap.set(key, p);
     }
   }
@@ -210,12 +232,30 @@ export async function updateUtilityDataPlans(
   for (const input of inputPlans) {
     const cleanSize = input.bundleSize.toUpperCase().replace(/\s+/g, '');
     const cleanNet = (input.network || 'all').toLowerCase();
-    const key = `${cleanSize}_${cleanNet}`;
-    const id = `plan_${cleanSize.toLowerCase()}_${cleanNet}`;
+    const cleanVal = (input.validity || '').toLowerCase().replace(/[\s_-]+/g, '');
 
-    const existing = current.find(
-      (p) => `${p.bundleSize.toUpperCase()}_${p.network.toLowerCase()}` === key
-    );
+    const existing = current.find((p) => {
+      const sizeMatch = p.bundleSize.toUpperCase().replace(/\s+/g, '') === cleanSize && p.network.toLowerCase() === cleanNet;
+      if (!sizeMatch) return false;
+      if (cleanVal) {
+        const pVal = (p.validity || '').toLowerCase().replace(/[\s_-]+/g, '');
+        return pVal === cleanVal || !pVal;
+      }
+      return true;
+    });
+
+    const effectiveVal = input.validity ?? existing?.validity;
+    const effectiveCleanVal = (effectiveVal || '').toLowerCase().replace(/[\s_-]+/g, '');
+    const key = effectiveCleanVal ? `${cleanSize}_${cleanNet}_${effectiveCleanVal}` : `${cleanSize}_${cleanNet}`;
+    const id = effectiveCleanVal ? `plan_${cleanSize.toLowerCase()}_${cleanNet}_${effectiveCleanVal}` : `plan_${cleanSize.toLowerCase()}_${cleanNet}`;
+
+    if (existing) {
+      const oldVal = (existing.validity || '').toLowerCase().replace(/[\s_-]+/g, '');
+      const oldKey = oldVal ? `${cleanSize}_${cleanNet}_${oldVal}` : `${cleanSize}_${cleanNet}`;
+      if (oldKey !== key) {
+        planMap.delete(oldKey);
+      }
+    }
     // Cost is only ever a real synced figure or null. It is never invented,
     // because a wrong cost produces a confidently wrong margin.
     const costPrice: number | null =
