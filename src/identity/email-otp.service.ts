@@ -117,7 +117,6 @@ export async function startChatEmailOtp(
         : 'Enter this verification code in chat to complete your email verification.'
     }`,
     html: emailPayload.html,
-    attachments: emailPayload.attachments,
   });
 
   await createAuditLog({

@@ -271,7 +271,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
 </body>
 </html>`;
 
-  return { subject: title, text, html };
+  return { subject: title, text, html, attachments: undefined };
 }
 
 export function buildVirtualAccountAssignedEmail(account: VirtualAccountRecord) {
