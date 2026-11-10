@@ -152,19 +152,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
   const title = input.intent === 'signup' ? 'Verify your Sivan account' : 'Sign in to Sivan';
   const text = `${title}\n\nYour Sivan verification code is ${input.code}. It expires in ${input.expiresInMinutes} minutes.\n\nSivan staff will never ask for your code, PIN, or wallet seed phrase.\nIf you did not request this, you can safely ignore this email.`;
 
-  const logoBuf = getSivanLogoBuffer();
-  const attachments: SendEmailInput['attachments'] = logoBuf
-    ? [
-        {
-          filename: 'sivan-logo.png',
-          content: logoBuf,
-          contentId: 'sivan-logo',
-          contentType: 'image/png',
-        },
-      ]
-    : undefined;
-
-  const logoSrc = logoBuf ? 'cid:sivan-logo' : 'https://sivantech.online/sivan-logo.png';
+  const logoSrc = 'https://payment.sivantech.online/sivan-logo.png';
 
   const html = `<!doctype html>
 <html lang="en">
@@ -283,7 +271,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
 </body>
 </html>`;
 
-  return { subject: title, text, html, attachments };
+  return { subject: title, text, html };
 }
 
 export function buildVirtualAccountAssignedEmail(account: VirtualAccountRecord) {
