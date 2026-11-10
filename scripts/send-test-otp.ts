@@ -17,6 +17,7 @@ async function main() {
     subject: emailPayload.subject,
     text: emailPayload.text,
     html: emailPayload.html,
+    attachments: emailPayload.attachments,
   });
 
   console.log('Email sent successfully!', res);

@@ -1,12 +1,46 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Resend } from 'resend';
 import { env } from '../config/env.js';
 import type { VirtualAccountRecord } from '../virtual-accounts/types/virtual-account.types.js';
+
+let cachedLogoBuffer: Buffer | null = null;
+export function getSivanLogoBuffer(): Buffer | null {
+  if (cachedLogoBuffer) return cachedLogoBuffer;
+  const candidates = [
+    path.resolve(process.cwd(), 'asset/sivan-logo.png'),
+    path.resolve(process.cwd(), '../asset/sivan logo.png'),
+    path.resolve(process.cwd(), '../asset/sivan_logo.png'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../asset/sivan-logo.png'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../asset/sivan logo.png'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../asset/sivan_logo.png'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        cachedLogoBuffer = fs.readFileSync(candidate);
+        return cachedLogoBuffer;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
 
 export interface SendEmailInput {
   to: string;
   subject: string;
   text: string;
   html?: string;
+  attachments?: Array<{
+    filename?: string | false;
+    content?: string | Buffer;
+    path?: string;
+    contentType?: string;
+    contentId?: string;
+  }>;
 }
 
 export async function sendEmail(input: SendEmailInput) {
@@ -31,7 +65,8 @@ export async function sendEmail(input: SendEmailInput) {
       to: input.to,
       subject: input.subject,
       text: input.text,
-      html: input.html
+      html: input.html,
+      attachments: input.attachments,
     });
 
     if (error) {
@@ -117,6 +152,20 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
   const title = input.intent === 'signup' ? 'Verify your Sivan account' : 'Sign in to Sivan';
   const text = `${title}\n\nYour Sivan verification code is ${input.code}. It expires in ${input.expiresInMinutes} minutes.\n\nSivan staff will never ask for your code, PIN, or wallet seed phrase.\nIf you did not request this, you can safely ignore this email.`;
 
+  const logoBuf = getSivanLogoBuffer();
+  const attachments: SendEmailInput['attachments'] = logoBuf
+    ? [
+        {
+          filename: 'sivan-logo.png',
+          content: logoBuf,
+          contentId: 'sivan-logo',
+          contentType: 'image/png',
+        },
+      ]
+    : undefined;
+
+  const logoSrc = logoBuf ? 'cid:sivan-logo' : 'https://sivantech.online/sivan-logo.png';
+
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -144,7 +193,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
               <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="display:inline-table;">
                 <tr>
                   <td style="vertical-align:middle;padding-right:10px;">
-                    <img src="https://sivantech.online/sivan-logo.png" alt="Sivan" width="34" height="34" style="display:block;border-radius:8px;border:0;" />
+                    <img src="${logoSrc}" alt="Sivan" width="34" height="34" style="display:block;border-radius:8px;border:0;" />
                   </td>
                   <td style="vertical-align:middle;">
                     <span style="font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.2px;">Sivan</span>
@@ -234,7 +283,7 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
 </body>
 </html>`;
 
-  return { subject: title, text, html };
+  return { subject: title, text, html, attachments };
 }
 
 export function buildVirtualAccountAssignedEmail(account: VirtualAccountRecord) {
