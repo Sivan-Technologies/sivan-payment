@@ -121,7 +121,7 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
           recipientPhone,
           amount,
           asset,
-          network,
+          network: network || (request.body as any)?.targetSettlementNetwork,
           sourceNetwork,
           fundingSources,
           walletBalancesOverride,
@@ -365,4 +365,86 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
   };
 
   fastify.post('/api/public/claims/:token/redeem', handleRedeem);
+
+  /**
+   * POST /api/claims/by-phone/pending
+   * Query waiting claims for a phone number (used by WhatsApp bot).
+   */
+  fastify.post(
+    '/api/claims/by-phone/pending',
+    async (
+      request: FastifyRequest<{ Body: { recipientPhone: string } }>,
+      reply: FastifyReply
+    ) => {
+      try {
+        const { recipientPhone } = request.body || {};
+        if (!recipientPhone) {
+          return reply.status(400).send({
+            code: 'INVALID_REQUEST',
+            message: 'recipientPhone is required',
+          });
+        }
+        const pending = await ClaimService.findPendingByPhone(recipientPhone);
+        return reply.status(200).send({
+          status: 'success',
+          data: pending,
+        });
+      } catch (err: any) {
+        return reply.status(400).send({
+          code: 'PENDING_CLAIMS_FAILED',
+          message: err.message,
+        });
+      }
+    }
+  );
+
+  /**
+   * POST /api/claims/by-phone/redeem
+   * Redeem waiting claim by phone and 6-digit code (used by WhatsApp bot).
+   */
+  fastify.post(
+    '/api/claims/by-phone/redeem',
+    async (
+      request: FastifyRequest<{
+        Body: {
+          recipientPhone: string;
+          userId: string;
+          code: string;
+          claimId?: string;
+          payoutDestination?: any;
+          targetAddress?: string;
+          bankDetails?: any;
+        };
+      }>,
+      reply: FastifyReply
+    ) => {
+      try {
+        const { recipientPhone, userId, code, claimId, payoutDestination, targetAddress, bankDetails } = request.body || {};
+        if (!recipientPhone || !userId || !code) {
+          return reply.status(400).send({
+            code: 'INVALID_REQUEST',
+            message: 'recipientPhone, userId, and code are required',
+          });
+        }
+        const redeemed = await ClaimService.redeemByPhone({
+          recipientPhone,
+          userId,
+          code,
+          claimId,
+          payoutDestination,
+          targetAddress,
+          bankDetails,
+        });
+        return reply.status(200).send({
+          status: 'success',
+          data: redeemed,
+        });
+      } catch (err: any) {
+        return reply.status(400).send({
+          code: 'REDEEM_BY_PHONE_FAILED',
+          message: err.message,
+        });
+      }
+    }
+  );
 }

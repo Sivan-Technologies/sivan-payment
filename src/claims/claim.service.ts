@@ -406,6 +406,84 @@ export class ClaimService {
   }
 
   /**
+   * Find pending claims waiting for a phone number.
+   */
+  static async findPendingByPhone(phone: string): Promise<Array<{
+    id: string;
+    token: string;
+    status: string;
+    amount: string;
+    asset: string;
+    network: string;
+    recipientPhoneLast4: string;
+    expiresAt: string;
+    codeLocked: boolean;
+  }>> {
+    const rawData = await (db as any).read();
+    const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
+    const cleanTarget = phone.replace(/\D/g, '');
+    const now = Date.now();
+
+    const matched = all.filter((c) => {
+      if (c.status !== 'AWAITING_CLAIM') return false;
+      if (new Date(c.expiresAt).getTime() <= now) return false;
+      const cleanPhone = c.recipientPhone.replace(/\D/g, '');
+      return cleanPhone === cleanTarget || (cleanTarget.length >= 10 && cleanPhone.endsWith(cleanTarget.slice(-10)));
+    });
+
+    return matched.map((c) => {
+      const p = c.recipientPhone.replace(/\D/g, '');
+      return {
+        id: c.id,
+        token: c.token,
+        status: c.status,
+        amount: c.amount,
+        asset: c.asset,
+        network: c.network,
+        recipientPhoneLast4: p.slice(-4) || '****',
+        expiresAt: c.expiresAt,
+        codeLocked: false,
+      };
+    });
+  }
+
+  /**
+   * Redeem a claim by phone and code (used directly by WhatsApp).
+   */
+  static async redeemByPhone(params: {
+    recipientPhone: string;
+    userId: string;
+    code: string;
+    claimId?: string;
+    payoutDestination?: import('./claim.types.js').ClaimPayoutDestination;
+    targetAddress?: string;
+    bankDetails?: any;
+  }): Promise<OnchainClaimSummary> {
+    const pending = await ClaimService.findPendingByPhone(params.recipientPhone);
+    if (pending.length === 0) {
+      throw new Error('No waiting transfer found for this phone number.');
+    }
+
+    const target = params.claimId
+      ? pending.find((c) => c.id === params.claimId || c.token === params.claimId)
+      : pending[0];
+
+    if (!target) {
+      throw new Error('Transfer not found or already claimed.');
+    }
+
+    return await ClaimService.redeemClaim({
+      token: target.token,
+      code: params.code,
+      recipientPhone: params.recipientPhone,
+      recipientUserId: params.userId,
+      payoutDestination: params.payoutDestination || 'near',
+      targetAddress: params.targetAddress,
+      bankDetails: params.bankDetails,
+    });
+  }
+
+  /**
    * Public preview for recipients (sanitized).
    */
   static async getPublicPreview(token: string): Promise<any> {
