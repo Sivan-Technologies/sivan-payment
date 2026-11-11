@@ -65,7 +65,7 @@ export class WebChallengeService {
       );
 
       const telegramBotName = process.env.TELEGRAM_BOT_USERNAME || 'SivanAi_bot';
-      const rawWhatsapp = (process.env.WHATSAPP_PHONE_NUMBER || process.env.WHATSAPP_NUMBER || process.env.META_PHONE_NUMBER || '').trim().replace(/\D/g, '');
+      const rawWhatsapp = (process.env.OFFICIAL_SIVAN_PHONE || process.env.WHATSAPP_PHONE_NUMBER || process.env.WHATSAPP_NUMBER || process.env.META_PHONE_NUMBER || '').trim().replace(/\D/g, '');
       const whatsappNumber = rawWhatsapp || undefined;
 
       const telegramUrl = `https://t.me/${telegramBotName}?start=auth_${challengeId}`;
@@ -118,7 +118,7 @@ export class WebChallengeService {
       }
 
       const telegramBotName = process.env.TELEGRAM_BOT_USERNAME || 'SivanAi_bot';
-      const rawWhatsapp = (process.env.WHATSAPP_PHONE_NUMBER || process.env.WHATSAPP_NUMBER || process.env.META_PHONE_NUMBER || '').trim().replace(/\D/g, '');
+      const rawWhatsapp = (process.env.OFFICIAL_SIVAN_PHONE || process.env.WHATSAPP_PHONE_NUMBER || process.env.WHATSAPP_NUMBER || process.env.META_PHONE_NUMBER || '').trim().replace(/\D/g, '');
       const whatsappNumber = rawWhatsapp || undefined;
 
       const telegramUrl = `https://t.me/${telegramBotName}?start=auth_${challengeId}`;

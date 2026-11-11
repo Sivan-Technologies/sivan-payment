@@ -326,6 +326,7 @@ export const CHAIN_ASSET_SUPPORT: Record<string, SourceCurrency[]> = {
   // Starknet: Circle native USDC only, 6 decimals.
   // USDT does not exist natively on Starknet.
   starknet: ['usdc'],
+  near: ['usdc'],
   optimism: ['usdc', 'usdt'],
   avalanche_c_chain: ['usdc', 'usdt'],
 };

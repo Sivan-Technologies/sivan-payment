@@ -144,6 +144,7 @@ const CHAIN_TYPE: Record<WalletChain, string> = {
    * which already signs through Privy and broadcasts the raw tx itself.
    */
   starknet: 'starknet',
+  near: 'near',
 };
 
 /**
@@ -235,6 +236,10 @@ const CAIP2: Record<WalletChain, { mainnet: string; testnet: string }> = {
   starknet: {
     mainnet: 'starknet:SN_MAIN',
     testnet: 'starknet:SN_SEPOLIA',
+  },
+  near: {
+    mainnet: 'near:mainnet',
+    testnet: 'near:testnet',
   },
 };
 
@@ -1013,6 +1018,23 @@ export class PrivyWalletProvider implements WalletProvider {
 
     if (chain === 'starknet') {
       return this.starknetBalances(address, production);
+    }
+
+    if (chain === 'near') {
+      const { readNearBalances } = await import('../near/near-rpc.js');
+      const nearBalances = await readNearBalances(address, production);
+      return [
+        {
+          asset: 'usdc',
+          chain: 'near',
+          amount: Number(nearBalances.usdc).toFixed(6),
+        },
+        {
+          asset: 'near',
+          chain: 'near',
+          amount: Number(nearBalances.near).toFixed(6),
+        },
+      ];
     }
 
     // USDC and USDT where a contract is known for this chain and network. A

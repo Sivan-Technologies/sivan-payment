@@ -185,6 +185,28 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
     return saved;
   }
 
+  if (chain === 'near') {
+    const { generateNearAddress } = await import('./near/near-keypair.js');
+    const address = generateNearAddress('sivan_near_' + userId);
+    const now = nowIso();
+    const record: UserWalletRecord = {
+      id: id('uw'),
+      userId,
+      provider: 'near_native',
+      providerWalletId: `near_${address}`,
+      chain: 'near',
+      address,
+      status: 'active',
+      custodial: false,
+      delegatedSigningEnabled: true,
+      raw: { address, chain: 'near' },
+      createdAt: now,
+      updatedAt: now,
+    };
+    const saved = await db.insertUserWallet(record);
+    return saved;
+  }
+
   // If chain is EVM-based, check if the user already holds an EVM wallet (Base/Ethereum/Celo/BSC/Arbitrum/Arc)
   if (['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(chain)) {
     const evmWallet = await db.findUserWallet(userId, 'base')
@@ -293,7 +315,7 @@ export async function listUserWallets(userId: string): Promise<UserWalletRecord[
   // Starknet is safe to list here even though it shares no key with the EVM
   // rails: the expansion below matches on walletServesNetwork, which is
   // family based, so an EVM wallet will never be surfaced as a Starknet one.
-  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo', 'arbitrum', 'arc', 'starknet'];
+  const activeRails: WalletChain[] = ['solana', 'base', 'bsc', 'stellar', 'celo', 'arbitrum', 'arc', 'starknet', 'near'];
   const expanded: UserWalletRecord[] = [];
 
   for (const chain of activeRails) {
