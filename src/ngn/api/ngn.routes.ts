@@ -138,10 +138,17 @@ export async function ngnRoutes(app: FastifyInstance) {
       const providerPercent = Number(settings.ngnProviderFeePercent ?? env.BREET_FEE_PERCENT ?? 0.5);
       const totalPercent = sivanPercent + providerPercent;
 
+      const ngnOnrampPercent = Number(settings.ngnOnrampFeePercent ?? 0);
+      const baseOnrampPercent = Number(settings.onrampFeePercent ?? 0);
+      const onrampMarginPercent = ngnOnrampPercent > 0 ? ngnOnrampPercent : (baseOnrampPercent > 0 ? baseOnrampPercent : sivanPercent);
+      const totalOnrampPercent = onrampMarginPercent + providerPercent;
+
       // Net rate embeds both provider cost and Sivan margin.
-      // R_net = R_market * (1 - P_total / 100)
+      // Offramp (Sell): R_net = R_market * (1 - P_total / 100)
+      // Onramp (Buy): R_onramp = R_market * (1 + P_total / 100)
       const netRate = grossRate * (1 - totalPercent / 100);
       const roundedNet = Math.round(netRate);
+      const onrampNetRate = Math.round(grossRate * (1 + totalOnrampPercent / 100));
 
       return {
         data: {
@@ -149,11 +156,15 @@ export async function ngnRoutes(app: FastifyInstance) {
           corridor: 'ngn',
           grossRate: Math.round(grossRate),
           netRate: roundedNet,
+          sellRate: roundedNet,
+          buyRate: onrampNetRate,
           usdc: roundedNet,
           usdt: roundedNet,
           providerFeePercent: providerPercent,
           sivanMarginPercent: sivanPercent,
           totalFeePercent: totalPercent,
+          onrampMarginPercent,
+          onrampTotalFeePercent: totalOnrampPercent,
           displayFee: '0',
           allInclusive: true,
           provider: providerName,

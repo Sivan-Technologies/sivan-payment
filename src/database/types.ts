@@ -285,6 +285,11 @@ export interface UserRecord {
   avatarUpdatedAt?: string;
   emailVerifiedAt?: string;
   whatsappVerifiedAt?: string;
+  intentVirtualAccounts?: boolean;
+  intentOfframp?: boolean;
+  intentServiceAgreements?: boolean;
+  intentConfiguredAt?: string;
+  kycRoutingAssigned?: 'bridge' | 'metamap' | 'local_nibss' | string;
   createdAt: string;
   updatedAt: string;
 }
@@ -1062,6 +1067,43 @@ export interface NgnIdentityVerificationRecord {
 export type StepUpModule = 'nin' | 'proof_of_address' | 'source_of_funds' | 'global_passport';
 export type StepUpRequestStatus = 'pending' | 'submitted' | 'under_review' | 'approved' | 'rejected' | 'expired';
 
+export interface AiVerificationResult {
+  overallScore: number;
+  addressMatchScore: number;
+  nameMatchScore: number;
+  isWithin90Days: boolean;
+  statementDate?: string;
+  extractedName?: string;
+  extractedAddress?: string;
+  institution?: string;
+  verdict: 'auto_approved' | 'needs_review' | 'rejected';
+  reasons: string[];
+  thresholdApplied: number;
+  analyzedAt: string;
+}
+
+export interface StepUpVerificationSubmissionData {
+  nin?: string;
+  ninLast4?: string;
+  ninMasked?: string;
+  ninHash?: string;
+  dateOfBirth?: string;
+  country?: string;
+  streetAddress?: string;
+  city?: string;
+  stateRegion?: string;
+  addressText?: string;
+  documentType?: string;
+  documentFileName?: string;
+  documentMimeType?: string;
+  proofOfAddressUrl?: string;
+  proofOfAddressDocId?: string;
+  sourceOfFundsDocId?: string;
+  passportDocId?: string;
+  notes?: string;
+  aiVerification?: AiVerificationResult;
+}
+
 export interface StepUpVerificationRequestRecord {
   id: string; // vreq_...
   userId: string;
@@ -1072,13 +1114,8 @@ export interface StepUpVerificationRequestRecord {
   tokenHash: string; // SHA-256 of raw secret token
   expiresAt: string;
   submittedAt?: string;
-  submissionData?: {
-    nin?: string;
-    proofOfAddressDocId?: string;
-    sourceOfFundsDocId?: string;
-    passportDocId?: string;
-    notes?: string;
-  };
+  submissionData?: StepUpVerificationSubmissionData;
+  submittedData?: StepUpVerificationSubmissionData;
   reviewedAt?: string;
   reviewedBy?: string;
   reviewNotes?: string;
@@ -1325,6 +1362,9 @@ export interface DatabaseShape {
   ghsQuotes?: GhsQuoteRecord[];
   ghsTransfers?: GhsTransferRecord[];
   verificationRequests?: StepUpVerificationRequestRecord[];
+  kycControls?: KycControlsRecord[];
+  developerApiKeys?: DeveloperApiKeyRecord[];
+  developerUsageLogs?: DeveloperUsageLogRecord[];
 }
 
 /**
@@ -1359,6 +1399,14 @@ export interface AgreementControlsRecord {
   updatedAt: string;
 }
 
+export interface KycControlsRecord {
+  id: 'default_kyc_controls';
+  aiApprovalThreshold: number; // 50 to 99, default 85
+  aiAutoApprovalEnabled: boolean;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
 export interface PasskeyCredentialRecord {
   id: string;
   userId: string;
@@ -1380,5 +1428,127 @@ export interface PasskeyChallengeRecord {
   expiresAt: string;
   createdAt: string;
 }
+
+export interface B2bMerchantRecord {
+  id: string;
+  name: string;
+  slug: string;
+  email: string;
+  phone: string;
+  status: 'ACTIVE' | 'SUSPENDED' | 'PENDING';
+  isSandboxEnabled?: boolean;
+  isLiveEnabled?: boolean;
+  webhookUrl?: string;
+  sandboxWebhookUrl?: string;
+  webhookSecret?: string;
+  passwordHash?: string;
+  lastLoginAt?: string;
+  customGreeting?: string;
+  customButtonLabel?: string;
+  customSuccessMessage?: string;
+  totalVolumeNgn: number;
+  totalDealsCount: number;
+  liveApplication?: {
+    websiteUrl?: string;
+    useCase: string;
+    estimatedMonthlyVolume: string;
+    businessDescription?: string;
+    targetLaunchDate?: string;
+    status: 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+    submittedAt: string;
+    reviewedAt?: string;
+    reviewedBy?: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface B2bMerchantApiKeyRecord {
+  id: string;
+  merchantId: string;
+  keyPrefix: string;
+  publicKey: string;
+  secretHash: string;
+  maskedKey: string;
+  mode: 'live' | 'test';
+  status: 'ACTIVE' | 'REVOKED';
+  lastUsedAt?: string;
+  createdAt: string;
+}
+
+export interface B2bDispatchedFlowRecord {
+  id: string;
+  merchantId: string;
+  reference: string;
+  customerPhone: string;
+  customerName?: string;
+  amountNgn: number;
+  currency: string;
+  flowType: string;
+  status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'EXPIRED';
+  dedicatedAccountNumber?: string;
+  dedicatedBankName?: string;
+  metaMessageId?: string;
+  greetingMessage?: string;
+  buttonLabel?: string;
+  successMessage?: string;
+  metadata?: Record<string, any>;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface B2bWebhookOutboxRecord {
+  id: string;
+  merchantId: string;
+  flowId?: string;
+  eventType: string;
+  destinationUrl: string;
+  payload: Record<string, any>;
+  signatureHeader: string;
+  attempts: number;
+  maxAttempts: number;
+  status: 'PENDING' | 'DELIVERED' | 'FAILED';
+  lastError?: string;
+  nextRetryAt: string;
+  deliveredAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DeveloperApiKeyRecord {
+  id: string;
+  keyPrefix: string;
+  keyHash: string;
+  maskedKey: string;
+  developerName: string;
+  email: string;
+  organization?: string;
+  environment: 'sandbox' | 'live';
+  permittedEndpoints: string[];
+  monthlyLimit: number;
+  currentMonthRequests: number;
+  status: 'active' | 'revoked' | 'expired';
+  expiryDate?: string;
+  lastUsedAt?: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt?: string;
+  revokedReason?: string;
+  webhookUrl?: string;
+  webhookSecret?: string;
+}
+
+export interface DeveloperUsageLogRecord {
+  id: string;
+  keyId: string;
+  endpoint: string;
+  method: string;
+  statusCode: number;
+  latencyMs: number;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+}
+
 
 

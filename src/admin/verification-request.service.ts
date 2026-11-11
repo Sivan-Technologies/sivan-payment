@@ -3,7 +3,10 @@ import { db } from '../database/json-database.js';
 import { id, nowIso } from '../shared/id.js';
 import { badRequest, notFound } from '../shared/errors.js';
 import { createAuditLog } from '../audit/audit.service.js';
+import { env } from '../config/env.js';
+import { runAiAddressVerification } from '../kyc/service/ai-address-verifier.service.js';
 import type {
+  KycControlsRecord,
   StepUpModule,
   StepUpRequestStatus,
   StepUpVerificationRequestRecord,
@@ -203,6 +206,7 @@ export async function submitStepUpVerification(
     status: 'under_review',
     submittedAt: now,
     submissionData,
+    submittedData: submissionData,
   });
 
   await createAuditLog({
@@ -289,5 +293,321 @@ export async function reviewStepUpVerificationRequest(
 export async function listAllStepUpVerificationRequests(
   userId?: string
 ): Promise<StepUpVerificationRequestRecord[]> {
-  return db.listVerificationRequests(userId);
+  const rows = await db.listVerificationRequests(userId);
+  return rows.map((r) => ({
+    ...r,
+    submittedData: r.submittedData || r.submissionData,
+  }));
+}
+
+/**
+ * Retrieves the global KYC & Autonomous AI approval controls.
+ */
+export async function getKycControls(): Promise<KycControlsRecord> {
+  return db.getKycControls();
+}
+
+/**
+ * Updates the global KYC & Autonomous AI approval controls.
+ */
+export async function updateKycControls(input: {
+  aiApprovalThreshold: number;
+  aiAutoApprovalEnabled: boolean;
+  adminId?: string;
+}): Promise<KycControlsRecord> {
+  const threshold = Math.max(50, Math.min(Number(input.aiApprovalThreshold) || 85, 99));
+  const record: KycControlsRecord = {
+    id: 'default_kyc_controls',
+    aiApprovalThreshold: threshold,
+    aiAutoApprovalEnabled: Boolean(input.aiAutoApprovalEnabled),
+    updatedAt: nowIso(),
+    updatedBy: input.adminId || 'admin',
+  };
+  await db.saveKycControls(record);
+  await createAuditLog({
+    action: 'admin.kyc_controls.updated',
+    resourceType: 'kyc_controls',
+    resourceId: 'default_kyc_controls',
+    actorType: 'admin',
+    actorId: input.adminId || 'admin',
+    metadata: {
+      aiApprovalThreshold: threshold,
+      aiAutoApprovalEnabled: record.aiAutoApprovalEnabled,
+    },
+  });
+  return record;
+}
+
+/**
+ * Resolves a user's Tier 2 KYC context for the WhatsApp Meta Flow INIT handshake.
+ * Enforces the Locked Country Safeguard Rule:
+ * - If phone starts with +234 OR user has a Nigerian BVN / NGN Virtual Account -> lockedCountry = 'NG'
+ */
+export async function getUserTier2KycContext(userIdOrPhone: string): Promise<{
+  userId: string;
+  hasNigerianBvnOrDva: boolean;
+  firstName?: string;
+  lastName?: string;
+  existingRequestId?: string;
+}> {
+  const clean = String(userIdOrPhone || '').trim();
+  const user =
+    (await db.findUserById(clean)) ||
+    (await db.findUserByWhatsappNumber(clean)) ||
+    (await db.findUserByTarget(clean));
+
+  const resolvedUserId = user?.id || clean;
+
+  let hasNigerianBvnOrDva = false;
+  try {
+    const verifications = await db.listNgnIdentityVerifications(resolvedUserId);
+    if (verifications.some((v) => v.checkType === 'bvn_info' && (v.status === 'matched' || v.status === 'review'))) {
+      hasNigerianBvnOrDva = true;
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  if (!hasNigerianBvnOrDva) {
+    try {
+      const allVas = await db.listVirtualAccounts();
+      if (allVas.some((va) => va.userId === resolvedUserId && va.status === 'active')) {
+        hasNigerianBvnOrDva = true;
+      }
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  let existingRequestId: string | undefined;
+  try {
+    const existing = await db.listVerificationRequests(resolvedUserId);
+    const active = existing.find((r) => r.status === 'pending' || r.status === 'under_review');
+    if (active) existingRequestId = active.id;
+  } catch {
+    // Non-fatal
+  }
+
+  const nameParts = String((user as any)?.fullName || (user as any)?.username || '').trim().split(/\s+/).filter(Boolean);
+
+  return {
+    userId: resolvedUserId,
+    hasNigerianBvnOrDva,
+    firstName: (user as any)?.firstName || nameParts[0] || undefined,
+    lastName: (user as any)?.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(' ') : undefined),
+    existingRequestId,
+  };
+}
+
+export interface SubmitWhatsAppTier2StepInput {
+  userIdOrPhone: string;
+  step: 'address' | 'nin';
+  country: string;
+  streetAddress?: string;
+  city?: string;
+  stateRegion?: string;
+  documentType?: string;
+  documentFileName?: string;
+  documentMimeType?: string;
+  proofOfAddressUrl?: string;
+  nin?: string;
+  dateOfBirth?: string;
+}
+
+/**
+ * Persists a WhatsApp Meta Flow Tier 2 KYC step (Step 1: Address + Bank Statement, Step 2: NIN + DOB).
+ */
+export async function submitWhatsAppTier2KycStep(
+  input: SubmitWhatsAppTier2StepInput
+): Promise<{
+  requestId: string;
+  userId: string;
+  status: StepUpRequestStatus;
+  requiresNinStep: boolean;
+}> {
+  const ctx = await getUserTier2KycContext(input.userIdOrPhone);
+  const userId = ctx.userId;
+  const now = nowIso();
+  const lockedCountry = ctx.hasNigerianBvnOrDva ? 'NG' : String(input.country || 'NG').toUpperCase();
+  const requiresNinStep = lockedCountry === 'NG';
+
+  let record: StepUpVerificationRequestRecord | undefined;
+  if (ctx.existingRequestId) {
+    record = await db.getVerificationRequestById(ctx.existingRequestId);
+  }
+
+  const existingSub = record?.submissionData || {};
+  const addressText =
+    input.streetAddress && input.city
+      ? `${input.streetAddress}, ${input.city}, ${input.stateRegion || ''} (${lockedCountry})`.replace(/,\s*\(/, ' (')
+      : existingSub.addressText;
+
+  let ninLast4 = existingSub.ninLast4;
+  let ninMasked = existingSub.ninMasked;
+  let ninHash = existingSub.ninHash;
+
+  if (input.nin) {
+    const cleanNin = input.nin.replace(/\D/g, '');
+    if (cleanNin.length === 11) {
+      ninLast4 = cleanNin.slice(-4);
+      ninMasked = `*******${ninLast4}`;
+      ninHash = crypto
+        .createHmac('sha256', env.USER_JWT_SECRET)
+        .update(cleanNin)
+        .digest('hex');
+
+      // Check if duplicate NIN used across accounts
+      const duplicates = await db.countUsersWithBvnHash(ninHash, userId).catch(() => 0);
+      if (duplicates > 0) {
+        await createAuditLog({
+          actorType: 'system',
+          action: 'kyc.nin_reused_across_accounts',
+          resourceType: 'verification_request',
+          resourceId: ctx.existingRequestId || 'pending',
+          severity: 'warning',
+          metadata: { userId, ninLast4, otherAccounts: duplicates },
+        }).catch(() => undefined);
+      }
+    }
+  }
+
+  const mergedSubmission: any = {
+    ...existingSub,
+    country: lockedCountry,
+    ...(input.streetAddress ? { streetAddress: input.streetAddress } : {}),
+    ...(input.city ? { city: input.city } : {}),
+    ...(input.stateRegion ? { stateRegion: input.stateRegion } : {}),
+    ...(addressText ? { addressText } : {}),
+    ...(input.documentType ? { documentType: input.documentType } : {}),
+    ...(input.documentFileName ? { documentFileName: input.documentFileName } : {}),
+    ...(input.documentMimeType ? { documentMimeType: input.documentMimeType } : {}),
+    ...(input.proofOfAddressUrl ? { proofOfAddressUrl: input.proofOfAddressUrl } : {}),
+    ...(ninMasked ? { nin: ninMasked, ninLast4, ninMasked, ninHash } : {}),
+    ...(input.dateOfBirth ? { dateOfBirth: input.dateOfBirth } : {}),
+  };
+
+  const isFinalStep = input.step === 'nin' || !requiresNinStep;
+  let targetStatus: StepUpRequestStatus = isFinalStep ? 'under_review' : 'pending';
+  const requestedModules: StepUpModule[] = requiresNinStep
+    ? ['proof_of_address', 'nin']
+    : ['proof_of_address'];
+
+  // Autonomous AI Agent Address & Proof of Address Verification
+  if (isFinalStep) {
+    try {
+      const kycControls = await getKycControls();
+      const userName = [ctx.firstName, ctx.lastName].filter(Boolean).join(' ') || 'Sivan Customer';
+      const aiResult = await runAiAddressVerification({
+        userName,
+        claimedAddress: addressText || '',
+        country: lockedCountry,
+        documentUrl: mergedSubmission.proofOfAddressUrl,
+        documentType: mergedSubmission.documentType,
+        documentFileName: mergedSubmission.documentFileName,
+        threshold: kycControls.aiApprovalThreshold,
+      });
+
+      mergedSubmission.aiVerification = aiResult;
+
+      if (
+        kycControls.aiAutoApprovalEnabled &&
+        aiResult.verdict === 'auto_approved' &&
+        aiResult.overallScore >= kycControls.aiApprovalThreshold
+      ) {
+        targetStatus = 'approved';
+        await db.upsertNgnIdentityVerification({
+          id: `ngnkyc_${userId}_tier2`,
+          userId,
+          checkType: 'nin_info',
+          status: 'matched',
+          provider: 'sivan_ai_compliance_agent',
+          providerReference: ctx.existingRequestId || 'ai_auto_approved',
+          bvnLast4: mergedSubmission.ninLast4 || '0000',
+          bvnHash: mergedSubmission.ninHash,
+          verifiedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        await createAuditLog({
+          action: 'admin.step_up_kyc.auto_approved',
+          resourceType: 'verification_request',
+          resourceId: ctx.existingRequestId || 'auto',
+          actorType: 'system',
+          actorId: 'sivan_ai_agent',
+          metadata: {
+            userId,
+            score: aiResult.overallScore,
+            threshold: kycControls.aiApprovalThreshold,
+            institution: aiResult.institution,
+          },
+        }).catch(() => undefined);
+      }
+    } catch (err: any) {
+      console.warn('[submitWhatsAppTier2KycStep] Autonomous AI verification non-fatal error:', err?.message || err);
+    }
+  }
+
+  if (!record) {
+    const reqId = id('vreq');
+    const tokenSecret = crypto.randomBytes(24).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(tokenSecret).digest('hex');
+    const expiresAt = new Date(Date.now() + 72 * 3600 * 1000).toISOString();
+    record = await db.createVerificationRequest({
+      id: reqId,
+      userId,
+      adminId: 'whatsapp_meta_flow',
+      requestedModules,
+      reason: `WhatsApp Tier 2 KYC (${lockedCountry})`,
+      status: targetStatus,
+      tokenHash,
+      expiresAt,
+      submittedAt: isFinalStep ? now : undefined,
+      submissionData: mergedSubmission,
+      submittedData: mergedSubmission,
+      metadata: {
+        channel: 'whatsapp_flow',
+        lockedCountry,
+        lastStep: input.step,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+  } else {
+    record = (await db.updateVerificationRequest(record.id, {
+      requestedModules,
+      status: targetStatus,
+      submittedAt: isFinalStep ? now : record.submittedAt,
+      submissionData: mergedSubmission,
+      submittedData: mergedSubmission,
+      metadata: {
+        ...(record.metadata || {}),
+        channel: 'whatsapp_flow',
+        lockedCountry,
+        lastStep: input.step,
+      },
+    })) || record;
+  }
+
+  await createAuditLog({
+    action: `kyc.whatsapp_tier2.${input.step}_submitted`,
+    resourceType: 'verification_request',
+    resourceId: record.id,
+    actorType: 'user',
+    actorId: userId,
+    metadata: {
+      lockedCountry,
+      step: input.step,
+      documentType: mergedSubmission.documentType,
+      hasDocument: Boolean(mergedSubmission.proofOfAddressUrl),
+      ninLast4: mergedSubmission.nin ? mergedSubmission.nin.slice(-4) : undefined,
+    },
+  }).catch(() => undefined);
+
+  return {
+    requestId: record.id,
+    userId,
+    status: targetStatus,
+    requiresNinStep,
+  };
 }

@@ -60,7 +60,7 @@ export type BalanceAsset = 'usdc' | 'usdt' | 'ngn';
  * member would make that stored data unreadable. It is excluded from the
  * DEFAULTS instead, which is the switch that actually governs new activity.
  */
-export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc' | 'starknet';
+export type BalanceNetwork = 'base' | 'solana' | 'celo' | 'stellar' | 'bsc' | 'avalanche_c_chain' | 'polygon' | 'ethereum' | 'arbitrum' | 'tron' | 'arc' | 'starknet' | 'near';
 /**
  * `fee` is Sivan's transfer margin, recorded as its own entry.
  *
@@ -85,7 +85,7 @@ export const balanceTransferControlsSchema = z.object({
   minimumNgnSendAmount: z.coerce.number().positive().default(10),
   manualReviewThreshold: z.coerce.number().positive().default(1000),
   riskHoldsEnabled: z.boolean().default(true),
-  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet']),
+  supportedNetworks: z.array(z.enum(['base', 'solana', 'celo', 'stellar', 'bsc', 'avalanche_c_chain', 'polygon', 'ethereum', 'arbitrum', 'tron', 'arc', 'starknet', 'near'])).default(['solana', 'base', 'celo', 'stellar', 'bsc', 'arbitrum', 'arc', 'starknet', 'near']),
   p2pClaimExpiryDays: z.coerce.number().positive().default(7),
   updatedBy: z.string().min(2).default('admin_api_key'),
   reason: z.string().max(1000).optional(),
@@ -416,9 +416,9 @@ export function resolveTransferFeeWallet(network: string): string {
 
 export async function quoteTransfer(
   amount: number,
-  options: { createsRecipientAccount?: boolean; network?: string } = {}
+  options: { createsRecipientAccount?: boolean; network?: string; asset?: string } = {}
 ) {
-  const { network, ...feeOptions } = options;
+  const { network, asset, ...feeOptions } = options;
 
   // Start with the per-network base curve (Celo/Stellar = $0.10/$0.75,
   // all others = $0.25/$1.00).
@@ -443,7 +443,7 @@ export async function quoteTransfer(
     newRecipientUsd: adminFees?.transferFeeNewRecipientUsd ?? networkBase.newRecipientUsd,
   };
 
-  const quote = quoteTransferFee(amount, config, feeOptions);
+  const quote = quoteTransferFee(amount, config, { ...feeOptions, network, asset });
   return {
     ...quote,
     feeWallet: resolveTransferFeeWallet(network || ''),

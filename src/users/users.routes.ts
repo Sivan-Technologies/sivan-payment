@@ -2,7 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { createUser, createUserSchema, getUser, setUserCountry, setUserCountrySchema,
   setUserDateOfBirth,
-  setUserDateOfBirthSchema, setUserName, setUserNameSchema } from './users.service.js';
+  setUserDateOfBirthSchema, setUserName, setUserNameSchema,
+  setKycIntent, setKycIntentSchema, getKycIntent } from './users.service.js';
 import { db } from '../database/json-database.js';
 import { isApprovedKycStatus } from '../kyc/types/verification.types.js';
 import { getUserPreferences, updateUserPreferences, updateUserPreferencesSchema } from './user-preferences.service.js';
@@ -200,6 +201,27 @@ export async function usersRoutes(app: FastifyInstance) {
         kycApproved: isApprovedKycStatus(customer?.kycStatus)
       })
     };
+  });
+
+  /**
+   * POST /api/users/:userId/kyc-intent (and /api/users/:id/kyc-intent)
+   * Saves the user's compliance intent preferences and assigned KYC routing.
+   */
+  app.post('/api/users/:userId/kyc-intent', async (request) => {
+    const params = request.params as any;
+    const targetId = await resolveTargetUserId(params.userId || params.id, request);
+    const body = parseBody(setKycIntentSchema, request.body);
+    return { data: await setKycIntent(targetId, body) };
+  });
+
+  /**
+   * GET /api/users/:userId/kyc-intent (and /api/users/:id/kyc-intent)
+   * Fetches the user's compliance intent preferences and assigned KYC routing.
+   */
+  app.get('/api/users/:userId/kyc-intent', async (request) => {
+    const params = request.params as any;
+    const targetId = await resolveTargetUserId(params.userId || params.id, request);
+    return { data: await getKycIntent(targetId) };
   });
 
   app.get('/api/users/:userId', async (request) => {

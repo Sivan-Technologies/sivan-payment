@@ -7,15 +7,41 @@ import { db } from '../../database/json-database.js';
 import { answerAceSupport } from '../service/ace-support.service.js';
 import { warmRemoteAce } from '../service/ace-remote.service.js';
 import { answerWhatsappAceSupport } from '../service/ace-whatsapp.service.js';
+import { listPublicKnowledgeArticles, querySivanKnowledgeBase } from '../service/ace-knowledge.service.js';
 import { aceSupportRequestSchema } from '../types/ace.types.js';
 import { requireIdentityServiceSecret } from '../../shared/service-auth.js';
 
 const adminAceSupportRequestSchema = aceSupportRequestSchema.extend({ userId: z.string().optional() });
 const whatsappAceSupportRequestSchema = aceSupportRequestSchema.extend({ whatsappNumber: z.string().min(8).max(32) });
+const publicKnowledgeQuerySchema = z.object({
+  message: z.string().min(1).max(1000),
+  context: z.string().optional().default('web_gateway'),
+});
 
 const userMinuteBuckets = new Map<string, { count: number; resetAt: number }>();
+const ipMinuteBuckets = new Map<string, { count: number; resetAt: number }>();
 const maxUserAcePerMinute = 5;
 const maxUserAcePerDay = 10;
+const maxPublicKnowledgePerMinute = 12;
+
+function enforcePublicKnowledgeRateLimit(ip: string) {
+  const key = ip || 'anonymous';
+  const now = Date.now();
+  const bucket = ipMinuteBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    ipMinuteBuckets.set(key, { count: 1, resetAt: now + 60_000 });
+    return;
+  }
+  bucket.count += 1;
+  if (bucket.count > maxPublicKnowledgePerMinute) {
+    throw new AppError(
+      429,
+      'Sivan Ai Knowledge is rate limited. Please wait a moment before asking another question.',
+      'ace_knowledge_rate_limited',
+      { retryAfterSeconds: Math.ceil((bucket.resetAt - now) / 1000) }
+    );
+  }
+}
 
 async function enforceUserAceBudget(userId: string) {
   const now = Date.now();
@@ -47,6 +73,33 @@ export async function aceSupportRoutes(app: FastifyInstance) {
    */
   app.post('/api/ace/warmup', async () => {
     return { data: await warmRemoteAce() };
+  });
+
+  /**
+   * PUBLIC READ-ONLY KNOWLEDGE ENDPOINTS:
+   * Powers the "Need assistance?" Sivan Ai Knowledge drawer on `/signin` and
+   * protocol knowledge queries across the web workspace. Strictly returns
+   * customer-visible protocol & onboarding articles with zero access to private
+   * user records.
+   */
+  app.post('/api/ace/knowledge', async (request) => {
+    enforcePublicKnowledgeRateLimit(request.ip);
+    const body = parseBody(publicKnowledgeQuerySchema, request.body);
+    return {
+      data: await querySivanKnowledgeBase({
+        question: body.message,
+        context: body.context,
+      }),
+    };
+  });
+
+  app.get('/api/ace/knowledge/articles', async (request) => {
+    enforcePublicKnowledgeRateLimit(request.ip);
+    return {
+      data: {
+        articles: listPublicKnowledgeArticles(),
+      },
+    };
   });
 
   app.post('/api/users/:userId/ace/support', async (request) => {

@@ -1645,6 +1645,94 @@ export class PrivyWalletProvider implements WalletProvider {
         );
       }
 
+      // -------------------------------------------------------------------
+      // Step: Collect Sivan Protocol Fee on-chain if feeAmount > 0
+      // -------------------------------------------------------------------
+      let feeTxHash: string | undefined;
+      const feeAmountNum = Number(input.feeAmount ?? 0);
+      const feeWallet = (
+        (input.chain === 'arc' ? (process.env.SIVAN_FEE_WALLET_ARC?.trim() || env.SIVAN_FEE_WALLET_ARC?.trim()) : '') ||
+        process.env.SIVAN_FEE_WALLET_EVM?.trim() ||
+        env.SIVAN_FEE_WALLET_EVM?.trim() ||
+        process.env.SIVAN_ETH_FEE_WALLET_ADDRESS?.trim() ||
+        env.SIVAN_ETH_FEE_WALLET_ADDRESS?.trim() ||
+        process.env.SIVAN_FEE_WALLET_BASE?.trim() ||
+        ''
+      );
+
+      let senderAddress = (input as any).senderAddress || (input as any).fromAddress;
+      if (!senderAddress) {
+        const dbWallet = await db.findWalletByProviderWalletId(input.providerWalletId).catch(() => undefined);
+        senderAddress = dbWallet?.address;
+      }
+      if (!senderAddress) {
+        const privyWallet = await this.getWallet(input.providerWalletId).catch(() => undefined);
+        senderAddress = privyWallet?.address;
+      }
+
+      if (
+        receiptResult.confirmed &&
+        feeWallet &&
+        feeAmountNum > 0 &&
+        (!senderAddress || feeWallet.toLowerCase() !== senderAddress.toLowerCase())
+      ) {
+        try {
+          const collectionOn = await import('../wallet-controls.service.js')
+            .then((mod) => mod.getWalletControls())
+            .then((controls) => controls?.collectTransferFeeOnChain !== false)
+            .catch(() => false);
+
+          if (collectionOn) {
+            const feeDecimals = decimalsForChainAsset(input.chain, input.asset);
+            const feeValue = '0x' + toBaseUnits(String(input.feeAmount), feeDecimals).toString(16);
+            const feeIdempotencyKey = input.idempotencyKey ? `${input.idempotencyKey}_fee` : undefined;
+
+            const feeBody: Record<string, unknown> = {
+              method: 'eth_sendTransaction',
+              caip2,
+              params: {
+                transaction: {
+                  to: feeWallet,
+                  value: feeValue,
+                  ...(Number.isFinite(numericChainId) && numericChainId > 0 ? { chain_id: numericChainId } : {}),
+                },
+              },
+            };
+
+            const feeResponse = await fetch(url, {
+              method: 'POST',
+              headers: {
+                ...headers(feeIdempotencyKey),
+                'privy-authorization-signature': authorizationSignature({
+                  method: 'POST',
+                  url,
+                  body: feeBody,
+                  appId,
+                  privateKeyPem: signingKey,
+                  idempotencyKey: feeIdempotencyKey,
+                }),
+              },
+              body: JSON.stringify(feeBody),
+            });
+
+            const feeResult: any = await feeResponse.json().catch(() => ({}));
+            feeTxHash = feeResult?.data?.hash || feeResult?.hash || undefined;
+            if (feeTxHash) {
+              console.log(
+                `[privy.sendNativeEvmTransfer] Collected on-chain protocol fee of ${input.feeAmount} ${input.asset} on ${input.chain} to ${feeWallet}. Fee txHash: ${feeTxHash}`
+              );
+            } else {
+              console.warn(
+                `[privy.sendNativeEvmTransfer] Protocol fee dispatch response note:`,
+                feeResult?.error ?? feeResult?.message ?? feeResponse.status
+              );
+            }
+          }
+        } catch (feeErr) {
+          console.warn('[privy.sendNativeEvmTransfer] On-chain protocol fee transfer note:', feeErr);
+        }
+      }
+
       return {
         provider: this.name,
         providerTransferId:
@@ -1653,7 +1741,7 @@ export class PrivyWalletProvider implements WalletProvider {
         txHash: evmTxHash,
         userOperationHash: userOpHash,
         sponsored: false,
-        rawProviderPayload: { ...result, confirmed: receiptResult.confirmed },
+        rawProviderPayload: { ...result, feeTxHash, confirmed: receiptResult.confirmed },
       };
     }
 

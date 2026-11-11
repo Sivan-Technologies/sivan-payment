@@ -109,7 +109,7 @@ export async function startEmailAuth(input: z.infer<typeof startEmailAuthSchema>
     to: input.email,
     subject: email.subject,
     text: email.text,
-    html: email.html
+    html: email.html,
   });
 
   await createAuditLog({

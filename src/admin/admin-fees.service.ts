@@ -135,6 +135,15 @@ export const feeSettingsSchema = z.object({
   ngnMinimumFeeNgn: z.coerce.number().min(0).max(10_000_000).default(0),
 
   /**
+   * ───── GHS RAIL CONTROLS (Ghana Cedi via MoMo / Bank) ─────
+   * Sivan platform margin, Breet Ghana provider fee, and minimum fee in GH₵.
+   */
+  ghsOnrampFeePercent: z.coerce.number().min(0).max(100).default(0),
+  ghsOfframpFeePercent: z.coerce.number().min(0).max(100).default(1.0),
+  ghsProviderFeePercent: z.coerce.number().min(0).max(100).default(0.8),
+  ghsMinimumFeeGhs: z.coerce.number().min(0).max(10_000_000).default(0),
+
+  /**
    * ───── TRANSFER FEE: crypto-to-crypto sends from a user's own wallet ─────
    *
    * The only fee in this file NOT constrained by a provider's API. Every
@@ -395,6 +404,10 @@ export function defaultAdminFeeSettings(): AdminFeeSettings {
     maintenanceMode: false,
     maintenanceReason: 'NIBSS inter-bank settlement is undergoing scheduled maintenance. Cashouts will resume shortly.',
     ngnMinimumFeeNgn: Number(env.SIVAN_NGN_MINIMUM_FEE_NGN || 0),
+    ghsOnrampFeePercent: Number(percent(Number(process.env.SIVAN_GHS_ONRAMP_FEE_PERCENT || 0))),
+    ghsOfframpFeePercent: Number(percent(Number(process.env.SIVAN_GHS_OFFRAMP_FEE_PERCENT || 1.0))),
+    ghsProviderFeePercent: Number(process.env.BREET_GHS_FEE_PERCENT ?? 0.8),
+    ghsMinimumFeeGhs: Number(process.env.SIVAN_GHS_MINIMUM_FEE_GHS || 0),
     // Transfer fee. Defaults come from transfer-fee-policy.ts rather than being
     // repeated here, so the curve has exactly one definition.
     transferFeePercent: DEFAULT_TRANSFER_FEE.percent,

@@ -50,7 +50,7 @@ function normalizeAdminAliasUrl(rawUrl = '') {
       '/finance', '/approvals', '/reconciliation', '/webhooks',
       '/compliance', '/search', '/risk', '/suppliers', '/fees',
       '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers',
-      '/utilities', '/moneygram', '/wallets'
+      '/utilities', '/moneygram', '/wallets', '/kyc'
     ];
     if (strippedAdminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
       return `/api/admin${rawUrl}`;
@@ -224,12 +224,12 @@ export async function buildApp() {
    *
    * OPTIONS is included because the preflight itself is an OPTIONS request.
    */
-  await app.register(cors, {
+  await app.register(cors as any, {
     origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((item) => item.trim()),
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
-  await app.register(rawBody, {
+  await app.register(rawBody as any, {
     field: 'rawBody',
     global: false,
     encoding: false,
@@ -417,7 +417,7 @@ export async function buildApp() {
     }
 
     const header = request.headers.authorization;
-    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : undefined;
+    const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined;
     if (!token) {
       const stepUpToken = ((request.headers['x-step-up-token'] as string) || (request.body as any)?.stepUpToken) as string | undefined;
       const targetUserId = getTargetUserId(request);
@@ -431,6 +431,26 @@ export async function buildApp() {
       }
       return reply.code(401).send({ error: { code: 'auth_required', message: 'Authentication required' } });
     }
+
+    // B2B Partner API Key authentication (sk_live_... or sk_test_... via @sivanai/sdk)
+    if (token.startsWith('sk_live_') || token.startsWith('sk_test_')) {
+      try {
+        const { b2bMerchantService } = await import('./business/service/b2b-merchant.service.js');
+        const { merchant } = await b2bMerchantService.authenticateApiKey(token);
+        const targetUserId = getTargetUserId(request);
+        (request as any).b2bMerchant = merchant;
+        (request as any).authUser = { sub: targetUserId || merchant.id, roles: ['user', 'b2b_merchant'] };
+        return;
+      } catch (err: any) {
+        return reply.code(401).send({
+          error: {
+            code: 'invalid_api_key',
+            message: err?.message || 'Invalid or revoked B2B API key',
+          },
+        });
+      }
+    }
+
     try {
       const payload = verifyUserJwt(token);
       const targetUserId = getTargetUserId(request);
@@ -521,7 +541,7 @@ export async function buildApp() {
       '/finance', '/approvals', '/reconciliation', '/webhooks',
       '/compliance', '/search', '/risk', '/suppliers', '/fees',
       '/virtual-account', '/support', '/audit', '/settings', '/system', '/customers',
-      '/utilities', '/moneygram', '/wallets'
+      '/utilities', '/moneygram', '/wallets', '/kyc'
     ];
     const isAdminPath = rawUrl.startsWith('/api/admin') || adminPrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
     if (!isAdminPath) return;
@@ -707,6 +727,17 @@ export async function buildApp() {
     });
   });
 
+  app.get('/sivan-logo.png', async (_req, reply) => {
+    const { getSivanLogoBuffer } = await import('./notifications/email.service.js');
+    const buf = getSivanLogoBuffer();
+    if (!buf) return reply.code(404).send('Logo not found');
+    return reply
+      .header('Content-Type', 'image/png')
+      .header('Cache-Control', 'public, max-age=31536000, immutable')
+      .header('Access-Control-Allow-Origin', '*')
+      .send(buf);
+  });
+
   await registerRoutes(app);
   return app;
 }
@@ -714,7 +745,7 @@ export async function buildApp() {
 
 function isFastHealthRequest(method: string, url: string): boolean {
   const path = url.split('?')[0];
-  return ['GET', 'HEAD'].includes(method) && ['/', '/ping', '/health', '/health/db', '/health/operational'].includes(path);
+  return ['GET', 'HEAD'].includes(method) && ['/', '/ping', '/health', '/health/db', '/health/operational', '/sivan-logo.png'].includes(path);
 }
 
 /**
@@ -984,6 +1015,7 @@ function isAdminRouteAllowed(method: string, rawUrl: string, rawRole: string): b
   if (url.startsWith('/api/admin/limits')) return ['ops', 'operator', 'finance'].includes(role);
   if (url.startsWith('/api/admin/settings/platform') || url.startsWith('/api/admin/offramp/controls') || url.startsWith('/api/admin/system/status') || url.startsWith('/api/admin/system/incidents')) return ['ops', 'operator'].includes(role);
   if (url.startsWith('/api/admin/settings/team') || url.startsWith('/api/admin/settings/api-keys')) return ['ops', 'operator'].includes(role);
+  if (url.startsWith('/api/admin/developer-keys') || url.startsWith('/api/admin/developer-analytics')) return ['ops', 'operator', 'engineering', 'finance'].includes(role);
   if (url.startsWith('/api/admin/virtual-account')) return ['ops', 'operator', 'compliance', 'finance'].includes(role);
   if (url.startsWith('/api/admin/agreements')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);
   if (url.startsWith('/api/admin/ngn')) return ['ops', 'operator', 'compliance', 'finance', 'engineering'].includes(role);

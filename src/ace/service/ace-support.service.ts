@@ -5,6 +5,7 @@ import { buildAceEvidence } from './ace-evidence.service.js';
 import { classifyAceMessage } from './ace-intent.service.js';
 import { composeAceSupportAnswer } from './ace-response.service.js';
 import { requestRemoteAceSupport } from './ace-remote.service.js';
+import { querySivanKnowledgeBase } from './ace-knowledge.service.js';
 import { env } from '../../config/env.js';
 import type { AceResourceType, AceSupportChannel } from '../types/ace.types.js';
 
@@ -24,7 +25,35 @@ export async function answerAceSupport(input: { userId?: string; message: string
   const sessionId = id('ace');
   const now = nowIso();
   const evidence = await buildAceEvidence({ userId: input.userId, message: input.message, resourceType, resourceId, intent: classified.intent, admin: input.admin });
-  const localAnswer = composeAceSupportAnswer(evidence, { admin: input.admin, sessionId });
+  let localAnswer = composeAceSupportAnswer(evidence, { admin: input.admin, sessionId });
+
+  /**
+   * When the user asks a general protocol/product question (e.g. "How do Service Agreements work?",
+   * "Which networks are supported?", "How fast are bank withdrawals?") and there is no specific
+   * transaction or unresolved reference attached, consult the Sivan Ai Knowledge Base so the user
+   * receives an accurate knowledge-backed answer instead of a generic fallback.
+   */
+  if (!evidence.transaction && !evidence.unresolvedReference && classified.intent !== 'verification') {
+    try {
+      const kbResult = await querySivanKnowledgeBase({
+        question: input.message,
+        context: input.channel ?? 'web_dashboard',
+      });
+      if (kbResult && kbResult.articleId && (kbResult.confidence === 'high' || classified.intent === 'unknown')) {
+        localAnswer = {
+          ...localAnswer,
+          answer: kbResult.answer,
+          confidence: kbResult.confidence,
+          needsHuman: kbResult.needsHuman,
+          evidenceChecked: Array.from(new Set([...localAnswer.evidenceChecked, ...kbResult.evidenceChecked])),
+          suggestedActions: kbResult.suggestedActions.length > 0 ? kbResult.suggestedActions : localAnswer.suggestedActions,
+        };
+      }
+    } catch {
+      // Keep localAnswer if knowledge lookup fails
+    }
+  }
+
   const { answer, providerMode, fallbackReason } = await resolveAceAnswer({ input, evidence, localAnswer });
   const toolsUsed = answer.evidenceChecked;
 

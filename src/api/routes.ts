@@ -32,6 +32,7 @@ import { kycLevelRoutes } from '../kyc/api/kyc-level.routes.js';
 import { metamapKycRoutes } from '../kyc/api/metamap.routes.js';
 
 import { developerGatewayRoutes } from '../developer-gateway/developer-gateway.routes.js';
+import { developerKeysRoutes } from '../developer-gateway/developer-keys.routes.js';
 import { agreementRoutes } from '../agreements/agreement.routes.js';
 import { registerNgnBalanceRuntime } from '../ngn/balance-agreements/runtime.js';
 import { agreementControlsRoutes } from '../agreements/agreement-controls.routes.js';
@@ -42,6 +43,9 @@ import { textileBuyRoutes } from '../offramp/api/textile-buy.routes.js';
 import { moneygramRoutes } from '../moneygram/routes/moneygram.routes.js';
 import { telemetryRoutes } from '../telemetry/telemetry.routes.js';
 import { communityRoutes } from '../ngn/api/community.routes.js';
+import { businessRoutes } from '../business/api/business.routes.js';
+import { webChallengeRoutes } from '../auth/web-challenge.routes.js';
+import { complianceRoutes } from '../compliance/compliance.routes.js';
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get('/', async () => ({ status: 'ok', service: 'sivan-payments' }));
@@ -91,6 +95,7 @@ export async function registerRoutes(app: FastifyInstance) {
     return reply.code(health.status === 'critical' ? 503 : 200).send(health);
   });
   await authRoutes(app);
+  await webChallengeRoutes(app);
   await usersRoutes(app);
   await identityRoutes(app);
   await virtualAccountsRoutes(app);
@@ -115,12 +120,14 @@ export async function registerRoutes(app: FastifyInstance) {
   await supplierRoutes(app);
   await kycLevelRoutes(app);
   await metamapKycRoutes(app);
+  await complianceRoutes(app);
   await supportRoutes(app);
   await aceSupportRoutes(app);
   await adminRoutes(app);
   await webhooksRoutes(app);
   await moneygramRoutes(app);
   await app.register(developerGatewayRoutes);
+  await developerKeysRoutes(app);
   await agreementRoutes(app);
   await registerNgnBalanceRuntime(app);
   await agreementControlsRoutes(app);
@@ -130,4 +137,5 @@ export async function registerRoutes(app: FastifyInstance) {
   await textileBuyRoutes(app);
   await telemetryRoutes(app);
   await communityRoutes(app);
+  await businessRoutes(app);
 }

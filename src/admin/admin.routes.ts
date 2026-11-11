@@ -40,6 +40,11 @@ import {
   listAllStepUpVerificationRequests,
   reviewStepUpVerificationRequest,
 } from './verification-request.service.js';
+import {
+  getAdminNgnLedgerDashboard,
+  getAdminUserNgnStatement,
+  syncAdminUserNgnVirtualAccount,
+} from './admin-ngn-ledger.service.js';
 
 
 function listOptions(request: any) {
@@ -601,18 +606,77 @@ export async function adminRoutes(app: FastifyInstance) {
     const params = request.params as { id: string };
     const body = z
       .object({
-        decision: z.enum(['approved', 'rejected']),
+        decision: z.enum(['approved', 'rejected']).optional(),
+        status: z.enum(['approved', 'rejected']).optional(),
         reviewNotes: z.string().optional(),
+        notes: z.string().optional(),
       })
       .parse(request.body);
+
+    const decision = body.decision || body.status;
+    if (!decision) {
+      throw new Error('decision or status (approved | rejected) is required');
+    }
 
     const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
     const reviewed = await reviewStepUpVerificationRequest(
       adminId,
       params.id,
-      body.decision,
-      body.reviewNotes
+      decision,
+      body.reviewNotes || body.notes
     );
     return { data: reviewed };
+  });
+
+  // Autonomous AI KYC Controls (Configurable Approval Threshold)
+  regGet('/kyc/controls', async () => {
+    const { getKycControls } = await import('./verification-request.service.js');
+    return { data: await getKycControls() };
+  });
+
+  regPost('/kyc/controls', async (request) => {
+    const body = z
+      .object({
+        aiApprovalThreshold: z.coerce.number().min(50).max(99),
+        aiAutoApprovalEnabled: z.boolean(),
+      })
+      .parse(request.body);
+
+    const adminId = (request as any).adminUser?.id || (request as any).headers?.['x-admin-id'] || 'admin';
+    const { updateKycControls } = await import('./verification-request.service.js');
+    const updated = await updateKycControls({
+      aiApprovalThreshold: body.aiApprovalThreshold,
+      aiAutoApprovalEnabled: body.aiAutoApprovalEnabled,
+      adminId,
+    });
+    return { data: updated };
+  });
+
+  // Provider-Agnostic NGN User Balances, Inflows, Outflows & Virtual Accounts Ledger
+  regGet('/ngn-ledger/dashboard', async (request) => {
+    const query = (request.query ?? {}) as Record<string, string>;
+    const filter = (['all', 'with_balance', 'with_dva', 'active_holds'].includes(query.filter || '')
+      ? query.filter
+      : 'all') as 'all' | 'with_balance' | 'with_dva' | 'active_holds';
+    const sort = (['available_desc', 'inflow_desc', 'outflow_desc', 'recent_desc'].includes(query.sort || '')
+      ? query.sort
+      : 'available_desc') as 'available_desc' | 'inflow_desc' | 'outflow_desc' | 'recent_desc';
+    return {
+      data: await getAdminNgnLedgerDashboard({
+        search: query.search || query.q || undefined,
+        filter,
+        sort,
+      }),
+    };
+  });
+
+  regGet('/ngn-ledger/users/:userId', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await getAdminUserNgnStatement(userId) };
+  });
+
+  regPost('/ngn-ledger/users/:userId/sync', async (request) => {
+    const { userId } = request.params as { userId: string };
+    return { data: await syncAdminUserNgnVirtualAccount(userId) };
   });
 }

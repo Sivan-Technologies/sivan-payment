@@ -16,6 +16,8 @@ export interface CommunityGroupRecord {
   revsharePercent: number;
   isEarningEnabled: boolean;
   isBroadcastEnabled: boolean;
+  isAntiPhishingEnabled: boolean;
+  allowedLinkPatterns?: string;
   status: 'ACTIVE' | 'PAUSED' | 'SUSPENDED';
   totalDealsCount: number;
   totalVolumeNgn: number;
@@ -113,6 +115,8 @@ export class CommunityRevshareService {
       revsharePercent: params.revsharePercent !== undefined ? params.revsharePercent : 20.0,
       isEarningEnabled: params.isEarningEnabled !== undefined ? params.isEarningEnabled : true,
       isBroadcastEnabled: existingIdx >= 0 ? (groups[existingIdx].isBroadcastEnabled ?? false) : false,
+      isAntiPhishingEnabled: existingIdx >= 0 ? (groups[existingIdx].isAntiPhishingEnabled ?? false) : false,
+      allowedLinkPatterns: existingIdx >= 0 ? (groups[existingIdx].allowedLinkPatterns ?? "") : "",
       status: 'ACTIVE',
       totalDealsCount: existingIdx >= 0 ? groups[existingIdx].totalDealsCount : 0,
       totalVolumeNgn: existingIdx >= 0 ? groups[existingIdx].totalVolumeNgn : 0,
@@ -307,13 +311,15 @@ export class CommunityRevshareService {
   }
 
   /**
-   * Updates admin controls: toggling earnings on/off, morning broadcast opt-in, updating revshare percent, or pausing group.
+   * Updates admin controls: toggling earnings on/off, morning broadcast opt-in, anti-phishing guard, allowed links, updating revshare percent, or pausing group.
    */
   async updateAdminControls(params: {
     groupId?: string;
     groupJid?: string;
     isEarningEnabled?: boolean;
     isBroadcastEnabled?: boolean;
+    isAntiPhishingEnabled?: boolean;
+    allowedLinkPatterns?: string;
     revsharePercent?: number;
     status?: 'ACTIVE' | 'PAUSED' | 'SUSPENDED';
   }): Promise<CommunityGroupRecord | null> {
@@ -329,6 +335,14 @@ export class CommunityRevshareService {
       group.isBroadcastEnabled = params.isBroadcastEnabled;
     }
 
+    if (params.isAntiPhishingEnabled !== undefined) {
+      group.isAntiPhishingEnabled = params.isAntiPhishingEnabled;
+    }
+
+    if (params.allowedLinkPatterns !== undefined) {
+      group.allowedLinkPatterns = params.allowedLinkPatterns;
+    }
+
     if (params.revsharePercent !== undefined) {
       group.revsharePercent = params.revsharePercent;
     }
@@ -340,6 +354,15 @@ export class CommunityRevshareService {
     group.updatedAt = new Date().toISOString();
     await this.saveGroups(groups);
     return group;
+  }
+
+  /**
+   * Returns a community group record by groupJid.
+   */
+  async getGroupByJid(groupJid: string): Promise<CommunityGroupRecord | null> {
+    const groups = await this.loadGroups();
+    const group = groups.find((g) => g.groupJid === groupJid);
+    return group || null;
   }
 
   /**

@@ -75,7 +75,7 @@ export async function createGhsQuote(input: z.infer<typeof createGhsQuoteSchema>
   // Margin from admin settings (e.g. 1% platform fee + provider 0.5%)
   const settings = await getAdminFeeSettings().catch(() => ({} as any));
   const sivanMarginPercent = Number(settings?.ghsOfframpFeePercent ?? settings?.offrampFeePercent ?? 1);
-  const providerPercent = Number(env.BREET_FEE_PERCENT ?? 0.5);
+  const providerPercent = Number(settings?.ghsProviderFeePercent ?? process.env.BREET_GHS_FEE_PERCENT ?? env.BREET_FEE_PERCENT ?? 0.8);
   const feePercent = (sivanMarginPercent + providerPercent) / 100;
   let destinationAmount: number;
   let feeAmount: number;
