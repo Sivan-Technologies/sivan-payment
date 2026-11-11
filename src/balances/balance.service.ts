@@ -422,9 +422,9 @@ export function resolveTransferFeeWallet(network: string): string {
 
 export async function quoteTransfer(
   amount: number,
-  options: { createsRecipientAccount?: boolean; network?: string } = {}
+  options: { createsRecipientAccount?: boolean; network?: string; asset?: string } = {}
 ) {
-  const { network, ...feeOptions } = options;
+  const { network, asset, ...feeOptions } = options;
 
   // Start with the per-network base curve (Celo/Stellar = $0.10/$0.75,
   // all others = $0.25/$1.00).
@@ -449,7 +449,7 @@ export async function quoteTransfer(
     newRecipientUsd: adminFees?.transferFeeNewRecipientUsd ?? networkBase.newRecipientUsd,
   };
 
-  const quote = quoteTransferFee(amount, config, feeOptions);
+  const quote = quoteTransferFee(amount, config, { ...feeOptions, network, asset });
   return {
     ...quote,
     feeWallet: resolveTransferFeeWallet(network || ''),

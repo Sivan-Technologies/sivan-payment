@@ -748,24 +748,28 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
   const netRate =
     input.direction === 'offramp' && rate > 0
       ? rate * (1 - (effectivePercent / 100))
-      : rate;
+      : (input.direction === 'onramp' && rate > 0
+          ? (destinationAfterMargin > 0
+              ? grossForMargin / destinationAfterMargin
+              : rate * (1 + (effectivePercent / 100)))
+          : rate);
   const displayRate =
-    input.direction === 'offramp' && netRate > 0
+    netRate > 0
       ? fixedMoney(netRate, 2)
       : quote.rate;
-  const feeAmountForRecord =
-    input.direction === 'offramp'
-      ? '0.00'
-      : fixedMoney(totalFeeNgn, 2);
+  const feeAmountForRecord = '0.00';
 
   const netPayoutNgn = input.direction === 'offramp' ? Number(destinationAfterMargin.toFixed(2)) : 0;
-  const drift = input.direction === 'offramp' ? Math.abs(netPayoutNgn + providerFeeNgn + sivanMarginNgn - grossForMargin) : 0;
+  const drift =
+    input.direction === 'offramp'
+      ? Math.abs(netPayoutNgn + providerFeeNgn + sivanMarginNgn - grossForMargin)
+      : Math.abs((grossForMargin - providerFeeNgn - sivanMarginNgn) + providerFeeNgn + sivanMarginNgn - grossForMargin);
   const reconciliationDrift = drift < 0.05 ? '0.00' : fixedMoney(drift, 2);
 
   const feeBlock = {
-    allInclusive: input.direction === 'offramp',
-    userFee: feeAmountForRecord,
-    userFeeNgn: input.direction === 'offramp' ? '0.00' : fixedMoney(totalFeeNgn, 2),
+    allInclusive: true,
+    userFee: '0.00',
+    userFeeNgn: '0.00',
     effectiveRate: displayRate,
     grossRate: fixedMoney(rate, 2),
     reconciliationDrift,

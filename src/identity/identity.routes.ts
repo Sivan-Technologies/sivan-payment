@@ -1185,15 +1185,20 @@ export async function identityRoutes(app: FastifyInstance) {
       if (match?.address) {
         targetAddress = match.address;
       } else if (provision === 'true' || ensureWallet === 'true') {
-        try {
-          const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
-          const created = await ensureUserWallet(user.id, requestedChain as any);
-          if (created?.address) {
-            targetAddress = created.address;
-            userWallets.push(created);
+        const canProvision = isIdentityServiceAuthorized(request);
+        if (canProvision) {
+          try {
+            const { ensureUserWallet } = await import('../wallets/user-wallet.service.js');
+            const created = await ensureUserWallet(user.id, requestedChain as any);
+            if (created?.address) {
+              targetAddress = created.address;
+              userWallets.push(created);
+            }
+          } catch (err: any) {
+            request.log.warn({ err: err?.message, userId: user.id, chain: requestedChain }, '[resolve-target] Auto-provision wallet on chain failed');
           }
-        } catch (err: any) {
-          request.log.warn({ err: err?.message, userId: user.id, chain: requestedChain }, '[resolve-target] Auto-provision wallet on chain failed');
+        } else {
+          request.log.info({ userId: user.id, chain: requestedChain }, '[resolve-target] Wallet provisioning ignored: unauthorized client on GET request');
         }
       }
     }

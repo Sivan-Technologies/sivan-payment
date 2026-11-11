@@ -402,8 +402,10 @@ export async function balanceRoutes(app: FastifyInstance) {
       amount?: string; network?: string; asset?: string; destinationAddress?: string;
     };
     const parsed = Number(amount);
+    const networkStr = String(network ?? '').toLowerCase();
+    const assetStr = String(asset ?? 'usdc').toLowerCase();
     if (!Number.isFinite(parsed) || parsed <= 0) {
-      return { data: await quoteTransfer(0, { network: String(network ?? '') }) };
+      return { data: await quoteTransfer(0, { network: networkStr, asset: assetStr }) };
     }
 
     /**
@@ -421,16 +423,15 @@ export async function balanceRoutes(app: FastifyInstance) {
      * transfer path) and the UI shows "may apply" the same way it does for
      * Solana when no destination address is supplied.
      */
-    const networkStr = String(network ?? '').toLowerCase();
     const createsRecipientAccount = destinationAddress && networkStr === 'solana'
       ? await recipientNeedsTokenAccount({
           recipientAddress: String(destinationAddress),
-          asset: String(asset ?? 'usdc'),
+          asset: assetStr,
           production: resolveNetworkMode() === 'mainnet',
         })
       : false;
 
-    return { data: await quoteTransfer(parsed, { createsRecipientAccount, network: networkStr }) };
+    return { data: await quoteTransfer(parsed, { createsRecipientAccount, network: networkStr, asset: assetStr }) };
   });
 
   app.get('/api/users/:userId/balance/deposits', async (request) => {

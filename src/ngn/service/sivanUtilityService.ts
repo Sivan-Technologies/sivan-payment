@@ -755,6 +755,12 @@ export async function getUserNgnBalance(userId: string): Promise<number> {
     available = 0;
   }
 
+  // The unified ledger is the authoritative single source of truth across all rails
+  // (including virtual account deposits, P2P direct transfers, service agreements, and utility debits).
+  if (available > 0) {
+    return available;
+  }
+
   const allTx = await db.listVirtualAccountTransactions().catch(() => []);
   const userTxs = allTx.filter((tx) => (tx.userId === resolvedUserId || tx.userId === userId));
 
@@ -776,12 +782,7 @@ export async function getUserNgnBalance(userId: string): Promise<number> {
       txBalance += Number(tx.destinationAmount || 0);
     }
   }
-  const cleanTxBalance = Math.max(0, Math.round(txBalance * 100) / 100);
-
-  if (available > 0 && cleanTxBalance > 0) {
-    return Math.min(available, cleanTxBalance);
-  }
-  return available > 0 ? available : cleanTxBalance;
+  return Math.max(0, Math.round(txBalance * 100) / 100);
 }
 
 /**

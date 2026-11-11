@@ -1,12 +1,46 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Resend } from 'resend';
 import { env } from '../config/env.js';
 import type { VirtualAccountRecord } from '../virtual-accounts/types/virtual-account.types.js';
+
+let cachedLogoBuffer: Buffer | null = null;
+export function getSivanLogoBuffer(): Buffer | null {
+  if (cachedLogoBuffer) return cachedLogoBuffer;
+  const candidates = [
+    path.resolve(process.cwd(), 'asset/sivan-logo.png'),
+    path.resolve(process.cwd(), '../asset/sivan logo.png'),
+    path.resolve(process.cwd(), '../asset/sivan_logo.png'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../asset/sivan-logo.png'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../asset/sivan logo.png'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../asset/sivan_logo.png'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        cachedLogoBuffer = fs.readFileSync(candidate);
+        return cachedLogoBuffer;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
 
 export interface SendEmailInput {
   to: string;
   subject: string;
   text: string;
   html?: string;
+  attachments?: Array<{
+    filename?: string | false;
+    content?: string | Buffer;
+    path?: string;
+    contentType?: string;
+    contentId?: string;
+  }>;
 }
 
 export async function sendEmail(input: SendEmailInput) {
@@ -31,7 +65,8 @@ export async function sendEmail(input: SendEmailInput) {
       to: input.to,
       subject: input.subject,
       text: input.text,
-      html: input.html
+      html: input.html,
+      attachments: input.attachments,
     });
 
     if (error) {
@@ -117,85 +152,126 @@ export function buildOtpEmail(input: { code: string; expiresInMinutes: number; i
   const title = input.intent === 'signup' ? 'Verify your Sivan account' : 'Sign in to Sivan';
   const text = `${title}\n\nYour Sivan verification code is ${input.code}. It expires in ${input.expiresInMinutes} minutes.\n\nSivan staff will never ask for your code, PIN, or wallet seed phrase.\nIf you did not request this, you can safely ignore this email.`;
 
-  const digits = input.code.split('');
-  const formattedDigits = digits.length === 6
-    ? `<div style="text-align:center;margin:24px 0 20px;">
-        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[0])}</span>
-        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[1])}</span>
-        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[2])}</span>
-        <span style="display:inline-block;margin:0 6px;color:#4A6278;font-size:18px;font-weight:700;vertical-align:middle;">&bull;</span>
-        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[3])}</span>
-        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[4])}</span>
-        <span style="display:inline-block;margin:0 3px;width:42px;height:52px;line-height:52px;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:10px;color:#74ddbe;font-size:26px;font-weight:900;font-family:'SF Mono',Consolas,Menlo,monospace;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.25);">${escapeHtml(digits[5])}</span>
-      </div>`
-    : `<div style="font-size:32px;letter-spacing:.28em;font-weight:900;color:#74ddbe;background:#141F2E;border:1px solid rgba(116,221,190,.32);border-radius:12px;padding:18px 20px;text-align:center;margin:24px 0;font-family:'SF Mono',Consolas,Menlo,monospace;">${escapeHtml(input.code)}</div>`;
+  const logoSrc = 'https://payment.sivantech.online/sivan-logo.png';
 
   const html = `<!doctype html>
-<html>
-  <body style="margin:0;padding:32px 14px;background:#06090e;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#e6edf3;">
-    <div style="max-width:540px;margin:0 auto;">
-      
-      <!-- Brand Header -->
-      <div style="margin-bottom:20px;">
-        <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark only">
+  <meta name="supported-color-schemes" content="dark only">
+  <title>${escapeHtml(title)}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#06090e;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;color:#e2e8f0;">
+  
+  <!-- Hidden Preheader for Inbox Preview -->
+  <div style="display:none;font-size:1px;color:#06090e;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
+    Your Sivan verification code is ${escapeHtml(input.code)} (valid for ${input.expiresInMinutes} minutes).
+  </div>
+
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color:#06090e;padding:40px 16px;">
+    <tr>
+      <td align="center">
+        
+        <!-- Header / Logo -->
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px;margin-bottom:24px;">
           <tr>
-            <td style="vertical-align:middle;padding-right:12px;">
-              <img src="https://sivantech.online/sivan-logo.png" alt="Sivan Ai" width="34" height="34" style="display:block;border-radius:8px;border:0;" />
-            </td>
-            <td style="vertical-align:middle;">
-              <span style="font-size:18px;font-weight:900;letter-spacing:-.02em;color:#ffffff;">Sivan Ai</span>
+            <td align="center">
+              <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="display:inline-table;">
+                <tr>
+                  <td style="vertical-align:middle;padding-right:10px;">
+                    <img src="${logoSrc}" alt="Sivan" width="34" height="34" style="display:block;border-radius:8px;border:0;" />
+                  </td>
+                  <td style="vertical-align:middle;">
+                    <span style="font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-0.2px;">Sivan</span>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
         </table>
-      </div>
 
-      <!-- Main Card -->
-      <div style="background:#0D141F;border:1px solid rgba(116,221,190,.22);border-radius:18px;padding:32px 28px;box-shadow:0 24px 60px rgba(0,0,0,.55);">
-        <div style="display:inline-block;color:#74ddbe;background:rgba(116,221,190,.12);border:1px solid rgba(116,221,190,.30);border-radius:999px;padding:4px 12px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:16px;">
-          Security &bull; Single-Use Code
-        </div>
-        
-        <h1 style="margin:0 0 10px;font-size:26px;font-weight:800;color:#ffffff;line-height:1.2;letter-spacing:-.02em;">${escapeHtml(title)}</h1>
-        <p style="margin:0 0 16px;color:#94A3B8;font-size:14px;line-height:1.6;">
-          Use the single-use verification code below to ${input.intent === 'signup' ? 'complete your registration' : 'sign in to your account'}:
-        </p>
+        <!-- Main Card -->
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px;background-color:#0d141f;border:1px solid rgba(16,185,129,0.22);border-radius:18px;overflow:hidden;box-shadow:0 20px 40px rgba(0,0,0,0.5);">
+          <tr>
+            <td style="padding:36px 28px;text-align:center;">
+              
+              <!-- Badge -->
+              <div style="display:inline-block;background-color:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);border-radius:100px;padding:4px 12px;margin-bottom:20px;">
+                <span style="font-size:11px;font-weight:700;color:#34d399;letter-spacing:1px;text-transform:uppercase;">
+                  ONE-TIME PASSCODE
+                </span>
+              </div>
 
-        ${formattedDigits}
+              <!-- Heading -->
+              <h1 style="margin:0 0 10px 0;font-size:24px;font-weight:700;color:#ffffff;letter-spacing:-0.4px;">
+                ${escapeHtml(title)}
+              </h1>
+              
+              <!-- Subtitle -->
+              <p style="margin:0 0 24px 0;font-size:14px;line-height:1.55;color:#94a3b8;">
+                Enter this verification code to ${input.intent === 'signup' ? 'verify your account' : 'complete your sign-in'}:
+              </p>
 
-        <div style="text-align:center;color:#64748B;font-size:12px;font-weight:600;margin-bottom:24px;">
-          ⏱️ Valid for ${input.expiresInMinutes} minutes &bull; Single-use authorization
-        </div>
+              <!-- Single Continuous Copyable Container (1-Tap Selection) -->
+              <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color:#06090e;border:1px solid rgba(16,185,129,0.35);border-radius:12px;margin-bottom:20px;">
+                <tr>
+                  <td style="padding:20px 16px;text-align:center;">
+                    <div style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">
+                      Verification Code
+                    </div>
+                    <!-- SINGLE STRING: 1-TAP COPY ON MOBILE -->
+                    <div style="font-family:'JetBrains Mono','SF Mono',Consolas,Menlo,monospace;font-size:38px;font-weight:700;color:#10b981;letter-spacing:10px;text-indent:10px;user-select:all;-webkit-user-select:all;">
+                      ${escapeHtml(input.code)}
+                    </div>
+                    <div style="font-size:11px;color:#64748b;margin-top:8px;">
+                      Tap code to copy
+                    </div>
+                  </td>
+                </tr>
+              </table>
 
-        <!-- Security Shield Box -->
-        <div style="background:#090E17;border:1px solid rgba(148,163,184,.14);border-radius:12px;padding:16px;margin-top:20px;">
-          <table role="presentation" cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;">
-            <tr>
-              <td style="vertical-align:top;padding-right:10px;font-size:16px;line-height:1;">🛡️</td>
-              <td style="vertical-align:top;color:#94A3B8;font-size:12px;line-height:1.55;">
-                <strong style="color:#CBD5E1;">Security Notice:</strong> Sivan Ai will never ask for your verification code, transaction PIN, or wallet seed phrase via email, WhatsApp, or Telegram. If you did not request this code, you can safely disregard this message.
-              </td>
-            </tr>
-          </table>
-        </div>
-      </div>
+              <!-- Expiry Meta -->
+              <p style="margin:0 0 24px 0;font-size:12px;color:#64748b;">
+                ⏱ Valid for ${input.expiresInMinutes} minutes
+              </p>
 
-      <!-- Footer -->
-      <div style="text-align:center;margin-top:24px;padding:0 8px;">
-        <p style="margin:0 0 6px;color:#64748B;font-size:12px;line-height:1.6;">
-          Sivan Ai &bull; Autonomous Web3 &amp; Fiat Payment Protocol
-        </p>
-        <p style="margin:0;color:#475569;font-size:11px;">
-          <a href="https://app.sivantech.online" style="color:#74ddbe;text-decoration:none;">Open Web App</a> &bull;
-          <a href="https://sivantech.online" style="color:#74ddbe;text-decoration:none;">Protocol Home</a> &bull;
-          <a href="mailto:sivantechnology@gmail.com" style="color:#74ddbe;text-decoration:none;">Support</a>
-        </p>
-      </div>
+              <!-- Security Notice -->
+              <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color:#080d15;border:1px solid rgba(255,255,255,0.05);border-radius:10px;">
+                <tr>
+                  <td style="padding:14px 16px;text-align:left;font-size:12px;line-height:1.5;color:#94a3b8;">
+                    <strong style="color:#cbd5e1;">Security Notice:</strong> Never share this code with anyone. Sivan staff will never ask for your code or PIN. If you didn't request this, you can safely ignore this email.
+                  </td>
+                </tr>
+              </table>
 
-    </div>
-  </body>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Protocol Footer -->
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width:540px;margin-top:24px;text-align:center;">
+          <tr>
+            <td>
+              <p style="margin:0 0 8px 0;font-size:12px;color:#64748b;">
+                &copy; 2026 Sivan Technology. All rights reserved.
+              </p>
+              <p style="margin:0;font-size:12px;color:#94a3b8;">
+                Need help? Contact <a href="mailto:support@sivantech.online" style="color:#10b981;text-decoration:none;">support@sivantech.online</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
 </html>`;
 
-  return { subject: title, text, html };
+  return { subject: title, text, html, attachments: undefined };
 }
 
 export function buildVirtualAccountAssignedEmail(account: VirtualAccountRecord) {

@@ -496,7 +496,7 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
     ''
   ).trim();
 
-  // If ETH withdrawal and fee wallet is configured, route Sivan's ETH service fee directly
+  // If ETH withdrawal and fee wallet is configured, route Sivan's ETH service fee directly and immediately
   if (isEthOfframp && sivanFeeEth > 0 && ethFeeWallet) {
     try {
       await provider.createTransfer({
@@ -524,6 +524,7 @@ async function sweepToRail(transfer: NgnTransferRecord): Promise<Record<string, 
       });
     } catch (err: any) {
       console.warn(`[sweepToRail] Failed to sweep ETH service fee to ${ethFeeWallet}:`, err?.message || err);
+      throw new Error(`Failed to route EVM fee to treasury (${ethFeeWallet}): ${err?.message || err}`);
     }
   }
 

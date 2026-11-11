@@ -75,6 +75,8 @@ const emptyDb = (): DatabaseShape => ({
   ghsQuotes: [],
   ghsTransfers: [],
   verificationRequests: [],
+  developerApiKeys: [],
+  developerUsageLogs: [],
 });
 
 export class JsonDatabase {
