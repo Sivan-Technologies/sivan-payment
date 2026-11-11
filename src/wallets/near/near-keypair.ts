@@ -73,7 +73,7 @@ export function generateNearKeypair(seedInput: string): NearKeypair {
   // Create Ed25519 private key from seed via PKCS#8 DER
   const pkcs8Der = Buffer.concat([ED25519_PKCS8_PREFIX, seedBytes]);
   const privateKey = crypto.createPrivateKey({ key: pkcs8Der, format: 'der', type: 'pkcs8' });
-  const publicKey = crypto.createPublicKey(privateKey);
+  const publicKey = crypto.createPublicKey(privateKey as any);
 
   // Extract raw 32-byte Ed25519 public key from SPKI DER (last 32 bytes)
   const spkiDer = publicKey.export({ format: 'der', type: 'spki' });

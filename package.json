@@ -222,6 +222,7 @@
     "dotenv": "latest",
     "fastify": "latest",
     "fastify-raw-body": "latest",
+    "near-api-js": "^7.2.0",
     "pg": "^8.22.0",
     "resend": "^6.17.2",
     "starknet": "^7.1.0",

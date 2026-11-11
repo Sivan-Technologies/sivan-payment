@@ -762,7 +762,7 @@ export class PrivyWalletProvider implements WalletProvider {
    */
   async createWallet(input: CreateWalletInput): Promise<ProviderWallet> {
     const chainType = CHAIN_TYPE[input.chain];
-    if (!chainType || input.chain === 'stellar') throw forbidden(`Privy does not issue wallets on ${input.chain}.`);
+    if (!chainType || input.chain === 'stellar' || input.chain === 'near') throw forbidden(`Privy does not issue wallets on ${input.chain}.`);
 
     // Reuse an existing wallet of this chain type before creating another.
     const existing = await this.findWallet(input.userId, chainType);
@@ -1268,6 +1268,24 @@ export class PrivyWalletProvider implements WalletProvider {
   async createTransfer(input: WalletTransferInput): Promise<WalletTransfer> {
     if (input.chain === 'stellar') {
       return this.sendStellarTransfer(input);
+    }
+
+    if (input.chain === 'near') {
+      const { executeNearOnchainTransfer } = await import('../near/near-transfer.js');
+      const nearRes = await executeNearOnchainTransfer({
+        senderUserId: input.userId || '',
+        recipientAddress: input.toAddress,
+        amount: input.amount,
+        asset: (String(input.asset).toLowerCase() === 'near' ? 'near' : 'usdc'),
+        production: isProduction(input.networkMode),
+      });
+
+      return {
+        provider: this.name,
+        providerTransferId: nearRes.txHash,
+        status: nearRes.success ? 'confirmed' : 'failed',
+        txHash: nearRes.txHash,
+      };
     }
 
     const caip = CAIP2[input.chain];
