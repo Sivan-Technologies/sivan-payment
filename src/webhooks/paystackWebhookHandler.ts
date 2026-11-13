@@ -411,7 +411,19 @@ export async function processPaystackWebhook(
 
       const userId = matchingTransfer?.userId || matchingVaTx?.userId;
       const amountKobo = Number(eventData.amount || 0);
-      const grossNgn = amountKobo > 0 ? (amountKobo / 100).toFixed(2) : matchingTransfer?.sourceAmount || matchingVaTx?.sourceAmount || '0.00';
+      const principalNgn = amountKobo > 0
+        ? (amountKobo / 100).toFixed(2)
+        : matchingTransfer?.destinationAmount || matchingVaTx?.destinationAmount || matchingTransfer?.sourceAmount || '0.00';
+
+      const feeNum = Number(matchingTransfer?.feeAmount ?? (matchingTransfer?.metadata as any)?.totalFee ?? 0);
+      const sourceNum = Number(matchingTransfer?.sourceAmount ?? 0);
+      const destNum = Number(principalNgn);
+      const feeDiff = sourceNum > destNum ? sourceNum - destNum : 0;
+      const effectiveFeeNum = feeNum > 0 ? feeNum : feeDiff;
+      const feeNgn = effectiveFeeNum > 0 ? effectiveFeeNum.toFixed(2) : '0.00';
+
+      const sourceId = matchingTransfer?.id || matchingVaTx?.id || reference || transferCode;
+      const transferId = matchingTransfer?.id || matchingVaTx?.id || reference;
 
       if (matchingTransfer) {
         const updatedTransfer: NgnTransferRecord = {
@@ -446,20 +458,39 @@ export async function processPaystackWebhook(
       }
 
       if (userId) {
+        // 1. Debit principal (moves principal from held to spent)
         await createBalanceLedgerEntry(
           {
             userId,
             asset: 'ngn',
-            amount: grossNgn,
+            amount: principalNgn,
             kind: 'debit_transfer',
             status: 'completed',
             sourceType: 'ngn_cashout',
-            sourceId: matchingTransfer?.id || matchingVaTx?.id || reference || transferCode,
+            sourceId,
             description: `Debit held NGN after Paystack transfer completion (${reference || transferCode})`,
-            transferId: matchingTransfer?.id || matchingVaTx?.id || reference,
+            transferId,
           },
           { actorType: 'provider', actorId: 'paystack' }
         );
+
+        // 2. Debit platform fee if applicable (moves fee from held to spent, clearing remaining hold)
+        if (effectiveFeeNum > 0) {
+          await createBalanceLedgerEntry(
+            {
+              userId,
+              asset: 'ngn',
+              amount: feeNgn,
+              kind: 'fee',
+              status: 'completed',
+              sourceType: 'ngn_cashout',
+              sourceId,
+              description: `Platform fee for outbound Paystack transfer (${reference || transferCode})`,
+              transferId,
+            },
+            { actorType: 'provider', actorId: 'paystack' }
+          );
+        }
       }
 
       const eventRecord: VirtualAccountEventRecord = {
@@ -470,8 +501,8 @@ export async function processPaystackWebhook(
         eventType: 'payment_processed',
         sourceCurrency: 'ngn',
         destinationCurrency: 'ngn',
-        sourceAmount: grossNgn,
-        destinationAmount: grossNgn,
+        sourceAmount: principalNgn,
+        destinationAmount: principalNgn,
         paymentRail: 'nibss_paystack_nip',
         status: 'completed',
         depositReference: reference || transferCode,
@@ -488,7 +519,8 @@ export async function processPaystackWebhook(
           reference,
           transferCode,
           userId,
-          amountNgn: grossNgn,
+          amountNgn: principalNgn,
+          feeNgn,
           status: 'completed',
         },
       };
@@ -536,7 +568,9 @@ export async function processPaystackWebhook(
 
       const userId = matchingTransfer?.userId || matchingVaTx?.userId;
       const amountKobo = Number(eventData.amount || 0);
-      const grossNgn = amountKobo > 0 ? (amountKobo / 100).toFixed(2) : matchingTransfer?.sourceAmount || matchingVaTx?.sourceAmount || '0.00';
+      const totalHeldNgn = matchingTransfer?.sourceAmount
+        ? Number(matchingTransfer.sourceAmount).toFixed(2)
+        : (amountKobo > 0 ? (amountKobo / 100).toFixed(2) : '0.00');
 
       if (matchingTransfer) {
         const updatedTransfer: NgnTransferRecord = {
@@ -567,13 +601,13 @@ export async function processPaystackWebhook(
         await db.upsertVirtualAccountTransactionRecord(updatedVaTx);
       }
 
-      // ATOMIC BALANCE RESTORATION: release hold back to user available balance
+      // ATOMIC BALANCE RESTORATION: release full hold (principal + fee) back to user available balance
       if (userId) {
         await createBalanceLedgerEntry(
           {
             userId,
             asset: 'ngn',
-            amount: grossNgn,
+            amount: totalHeldNgn,
             kind: 'hold_release',
             status: 'available',
             sourceType: 'ngn_cashout',
@@ -593,8 +627,8 @@ export async function processPaystackWebhook(
         eventType: 'refunded',
         sourceCurrency: 'ngn',
         destinationCurrency: 'ngn',
-        sourceAmount: grossNgn,
-        destinationAmount: grossNgn,
+        sourceAmount: totalHeldNgn,
+        destinationAmount: totalHeldNgn,
         paymentRail: 'nibss_paystack_nip',
         status: 'failed',
         depositReference: reference || transferCode,
@@ -611,7 +645,7 @@ export async function processPaystackWebhook(
           reference,
           transferCode,
           userId,
-          amountNgn: grossNgn,
+          amountNgn: totalHeldNgn,
           status: 'failed',
           refunded: Boolean(userId),
           failureReason,
@@ -659,7 +693,9 @@ export async function processPaystackWebhook(
 
       const userId = matchingTransfer?.userId || matchingVaTx?.userId;
       const amountKobo = Number(eventData.amount || 0);
-      const grossNgn = amountKobo > 0 ? (amountKobo / 100).toFixed(2) : matchingTransfer?.sourceAmount || matchingVaTx?.sourceAmount || '0.00';
+      const totalReversedNgn = matchingTransfer?.sourceAmount
+        ? Number(matchingTransfer.sourceAmount).toFixed(2)
+        : (amountKobo > 0 ? (amountKobo / 100).toFixed(2) : '0.00');
 
       if (matchingTransfer) {
         const updatedTransfer: NgnTransferRecord = {
@@ -698,7 +734,7 @@ export async function processPaystackWebhook(
           {
             userId,
             asset: 'ngn',
-            amount: grossNgn,
+            amount: totalReversedNgn,
             kind: 'credit_available',
             status: 'available',
             sourceType: 'cashout_reversal',
@@ -718,8 +754,8 @@ export async function processPaystackWebhook(
         eventType: 'refunded',
         sourceCurrency: 'ngn',
         destinationCurrency: 'ngn',
-        sourceAmount: grossNgn,
-        destinationAmount: grossNgn,
+        sourceAmount: totalReversedNgn,
+        destinationAmount: totalReversedNgn,
         paymentRail: 'nibss_paystack_nip',
         status: 'refunded',
         depositReference: reference || transferCode,
@@ -736,7 +772,7 @@ export async function processPaystackWebhook(
           reference,
           transferCode,
           userId,
-          amountNgn: grossNgn,
+          amountNgn: totalReversedNgn,
           status: 'reversed',
           refunded: Boolean(userId),
           reversalReason,
