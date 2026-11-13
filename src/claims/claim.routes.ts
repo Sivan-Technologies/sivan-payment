@@ -326,6 +326,7 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
   };
 
   fastify.get('/api/public/claims/:token', handlePreview);
+  fastify.get('/api/claims/:token/preview', handlePreview);
 
   /**
    * POST /api/public/claims/:token/redeem & /api/claims/:token/redeem

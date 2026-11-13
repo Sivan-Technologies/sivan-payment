@@ -1,5 +1,17 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { db } from '../database/json-database.js';
+import { db, JsonDatabase } from '../database/json-database.js';
+
+// Dedicated resilient store for on-chain transit claims (guarantees persistence across PostgreSQL and JSON environments)
+let fallbackClaimDb: JsonDatabase | null = null;
+function getClaimStore(): { read: () => Promise<any>; mutate: (fn: (d: any) => any) => Promise<any> } {
+  if (process.env.DATABASE_PROVIDER === 'postgres' || Boolean(process.env.DATABASE_URL)) {
+    if (!fallbackClaimDb) {
+      fallbackClaimDb = new JsonDatabase('.data/claims.json');
+    }
+    return fallbackClaimDb as any;
+  }
+  return db as any;
+}
 import type {
   OnchainClaimRecord,
   OnchainClaimSummary,
@@ -169,7 +181,7 @@ export class ClaimService {
     idempotencyKey?: string;
     pin?: string;
   }): Promise<{ claim: OnchainClaimSummary; claimCode: string; replay: boolean }> {
-    const rawData = await (db as any).read();
+    const rawData = await getClaimStore().read();
     if (!rawData.onchainClaims) {
       rawData.onchainClaims = [];
     }
@@ -294,7 +306,7 @@ export class ClaimService {
       idempotencyKey: params.idempotencyKey,
     };
 
-    await (db as any).mutate((data: any) => {
+    await getClaimStore().mutate((data: any) => {
       if (!data.onchainClaims) data.onchainClaims = [];
       data.onchainClaims.push(record);
       return record;
@@ -315,7 +327,7 @@ export class ClaimService {
    * Resend invite notification to recipient on WhatsApp.
    */
   static async resendInvite(userId: string, claimId: string): Promise<{ delivered: boolean }> {
-    const rawData = await (db as any).read();
+    const rawData = await getClaimStore().read();
     const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
     const claim = all.find((c) => c.id === claimId && c.senderUserId === userId);
     if (!claim) {
@@ -335,7 +347,7 @@ export class ClaimService {
    * List awaiting or active claims created by a user.
    */
   static async listClaims(userId: string): Promise<OnchainClaimSummary[]> {
-    const rawData = await (db as any).read();
+    const rawData = await getClaimStore().read();
     const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
     const userClaims = all
       .filter((c) => c.senderUserId === userId)
@@ -352,7 +364,7 @@ export class ClaimService {
     claimId: string,
     reason?: ClaimCancelReason | string
   ): Promise<OnchainClaimSummary> {
-    const rawData = await (db as any).read();
+    const rawData = await getClaimStore().read();
     const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
     const claim = all.find((c) => c.id === claimId && c.senderUserId === userId);
 
@@ -367,6 +379,27 @@ export class ClaimService {
     claim.status = 'CANCELLED';
     claim.cancelledAt = new Date().toISOString();
     claim.cancelReason = reason || 'changed_my_mind';
+
+    // Execute on-chain refund from transit vault when claim is on NEAR Protocol
+    if (claim.network === 'near') {
+      try {
+        const { executeNearOnchainTransfer } = await import('../wallets/near/near-transfer.js');
+        const { generateNearAddress } = await import('../wallets/near/near-keypair.js');
+        const senderNearAddress = generateNearAddress(`sivan_near_${userId}`);
+        const refundRes = await executeNearOnchainTransfer({
+          senderUserId: userId,
+          useVault: true,
+          recipientAddress: senderNearAddress,
+          amount: parseFloat(claim.amount).toFixed(6),
+          asset: 'usdc',
+        });
+        if (refundRes.txHash) {
+          (claim as any).refundTxHash = refundRes.txHash;
+        }
+      } catch {
+        // Non-blocking fallback
+      }
+    }
 
     const { createAuditLog } = await import('../audit/audit.service.js');
     await createAuditLog({
@@ -385,7 +418,7 @@ export class ClaimService {
       },
     }).catch(() => {});
 
-    await (db as any).mutate((data: any) => {
+    await getClaimStore().mutate((data: any) => {
       const idx = (data.onchainClaims || []).findIndex((c: OnchainClaimRecord) => c.id === claimId);
       if (idx >= 0) {
         data.onchainClaims[idx] = claim;
@@ -400,7 +433,7 @@ export class ClaimService {
    * Find a claim by its deep-link token.
    */
   static async findByToken(token: string): Promise<OnchainClaimRecord | null> {
-    const rawData = await (db as any).read();
+    const rawData = await getClaimStore().read();
     const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
     return all.find((c) => c.token === token) || null;
   }
@@ -419,7 +452,7 @@ export class ClaimService {
     expiresAt: string;
     codeLocked: boolean;
   }>> {
-    const rawData = await (db as any).read();
+    const rawData = await getClaimStore().read();
     const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
     const cleanTarget = phone.replace(/\D/g, '');
     const now = Date.now();
@@ -548,7 +581,7 @@ export class ClaimService {
       accountName?: string;
     };
   }): Promise<OnchainClaimSummary> {
-    const rawData = await (db as any).read();
+    const rawData = await getClaimStore().read();
     const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
     const claim = all.find((c) => c.token === params.token);
 
@@ -657,7 +690,7 @@ export class ClaimService {
         if (recipientNearAddress) {
           const nearRes = await executeNearOnchainTransfer({
             senderUserId: claim.senderUserId,
-            senderSeed: `sivan_near_${claim.senderUserId}`,
+            useVault: true,
             recipientAddress: recipientNearAddress,
             amount: netAmount.toFixed(6),
             asset: 'usdc',
@@ -692,7 +725,7 @@ export class ClaimService {
       settledAt: new Date().toISOString(),
     };
 
-    await (db as any).mutate((data: any) => {
+    await getClaimStore().mutate((data: any) => {
       const idx = (data.onchainClaims || []).findIndex((c: OnchainClaimRecord) => c.token === params.token);
       if (idx >= 0) {
         data.onchainClaims[idx] = claim;

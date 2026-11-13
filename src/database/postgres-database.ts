@@ -291,6 +291,9 @@ export class PostgresDatabase {
         }
         if (!client) throw new Error('Postgres connection could not be acquired');
         if ((client as any).__sivanInstrumented) return client;
+        client.on('error', (err: any) => {
+          console.warn('[postgres.client.error]', err?.message || err);
+        });
         const originalQuery = client.query.bind(client);
         client.query = (async (...queryArgs: any[]) => {
           const started = Date.now();

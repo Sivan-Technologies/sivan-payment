@@ -11,10 +11,14 @@ import {
 } from 'near-api-js';
 import { generateNearKeypair } from './near-keypair.js';
 import { getNearRpcUrl, getNearUsdcContract } from './near-rpc.js';
+import { getNearVaultConfig } from './near-vault.js';
 
 export interface NearTransferInput {
   senderUserId: string;
   senderSeed?: string;
+  senderAccountId?: string;
+  senderPrivateKey?: string;
+  useVault?: boolean;
   recipientAddress: string;
   amount: string; // e.g. "15.000000" or "1.5"
   asset?: 'usdc' | 'near';
@@ -187,14 +191,30 @@ export async function executeNearOnchainTransfer(
   const production = Boolean(input.production);
   const rpcUrl = getNearRpcUrl(production);
 
-  // 1. Resolve sender keypair
-  const seed = input.senderSeed || `sivan_near_${input.senderUserId}`;
-  const kp = generateNearKeypair(seed);
-  const nearKp = new KeyPairEd25519(kp.secretKey.replace('ed25519:', ''));
+  // 1. Resolve sender credentials (Transit Vault vs User Wallet)
+  let senderAccountId: string;
+  let nearKp: KeyPairEd25519;
+
+  if (input.useVault) {
+    const vaultConfig = getNearVaultConfig(production);
+    senderAccountId = vaultConfig.accountId;
+    nearKp = new KeyPairEd25519(vaultConfig.privateKey.replace('ed25519:', ''));
+  } else if (input.senderPrivateKey) {
+    nearKp = new KeyPairEd25519(input.senderPrivateKey.replace('ed25519:', ''));
+    senderAccountId =
+      input.senderAccountId ||
+      Buffer.from(nearKp.getPublicKey().data).toString('hex').toLowerCase();
+  } else {
+    const seed = input.senderSeed || `sivan_near_${input.senderUserId}`;
+    const kp = generateNearKeypair(seed);
+    nearKp = new KeyPairEd25519(kp.secretKey.replace('ed25519:', ''));
+    senderAccountId = input.senderAccountId || kp.accountId;
+  }
+
   const senderPublicKeyStr = nearKp.getPublicKey().toString();
 
   // 2. Fetch current nonce and recent block hash
-  let accessKey = await fetchAccessKeyNonce(rpcUrl, kp.accountId, senderPublicKeyStr);
+  let accessKey = await fetchAccessKeyNonce(rpcUrl, senderAccountId, senderPublicKeyStr);
   let recentBlockHashStr: string | null = accessKey?.blockHash ?? null;
 
   if (!recentBlockHashStr) {
@@ -238,7 +258,7 @@ export async function executeNearOnchainTransfer(
 
   // 4. Create and sign the transaction
   const tx = createTransaction(
-    kp.accountId,
+    senderAccountId,
     nearKp.getPublicKey(),
     receiverId,
     nextNonce,
@@ -267,7 +287,7 @@ export async function executeNearOnchainTransfer(
   return {
     success: broadcastRes.success,
     txHash: finalTxHash,
-    senderAddress: kp.accountId,
+    senderAddress: senderAccountId,
     recipientAddress: input.recipientAddress,
     amount: input.amount,
     asset,

@@ -150,6 +150,13 @@ const envSchema = z.object({
    */
   SIVAN_FEE_WALLET_SOLANA: z.string().optional().default(''),
   SIVAN_FEE_WALLET_NEAR: z.string().optional().default(''),
+  NEAR_VAULT_ACCOUNT_ID_TESTNET: z.string().optional().default(''),
+  NEAR_VAULT_PRIVATE_KEY_TESTNET: z.string().optional().default(''),
+  NEAR_VAULT_ACCOUNT_ID_MAINNET: z.string().optional().default(''),
+  NEAR_VAULT_PRIVATE_KEY_MAINNET: z.string().optional().default(''),
+  SIVAN_NEAR_VAULT_SEED: z.string().optional().default(''),
+  NEAR_TESTNET_RPC_URL: z.string().url().optional(),
+  NEAR_MAINNET_RPC_URL: z.string().url().optional(),
   SIVAN_FEE_WALLET_STELLAR: z.string().optional().default(''),
   SIVAN_FEE_WALLET_CELO: z.string().optional().default(''),
   SIVAN_CELO_FEE_WALLET: z.string().optional().default(''),
