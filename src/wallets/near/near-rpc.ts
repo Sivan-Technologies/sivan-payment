@@ -1,10 +1,24 @@
 import { env } from '../../config/env.js';
 
-export function getNearRpcUrl(production?: boolean): string {
+export function getNearRpcUrls(production?: boolean): string[] {
   if (production) {
-    return process.env.NEAR_MAINNET_RPC_URL || process.env.NEAR_RPC_URL || 'https://rpc.mainnet.near.org';
+    const list = [
+      process.env.NEAR_MAINNET_RPC_URL,
+      process.env.NEAR_RPC_URL,
+      'https://free.rpc.fastnear.com',
+      'https://rpc.mainnet.near.org',
+    ].filter(Boolean) as string[];
+    return list;
   }
-  return process.env.NEAR_TESTNET_RPC_URL || 'https://rpc.testnet.near.org';
+  const testList = [
+    process.env.NEAR_TESTNET_RPC_URL,
+    'https://rpc.testnet.near.org',
+  ].filter(Boolean) as string[];
+  return testList;
+}
+
+export function getNearRpcUrl(production?: boolean): string {
+  return getNearRpcUrls(production)[0];
 }
 
 export function getNearUsdcContract(production?: boolean): string {
@@ -15,6 +29,8 @@ export function getNearUsdcContract(production?: boolean): string {
   // Standard testnet NEP-141 USDC contract
   return process.env.NEAR_TESTNET_USDC_CONTRACT || 'usdc.fakes.testnet';
 }
+
+export const NEAR_BRIDGED_USDC_MAINNET = 'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near';
 
 interface NearRpcResponse<T = any> {
   jsonrpc: string;
@@ -31,49 +47,51 @@ interface NearRpcResponse<T = any> {
 }
 
 /**
- * Executes a JSON-RPC query against NEAR Protocol RPC.
+ * Executes a JSON-RPC query against NEAR Protocol RPC with multi-endpoint fallback.
  */
 async function queryNearRpc<T>(method: string, params: Record<string, any>, production?: boolean): Promise<T | null> {
-  const url = getNearRpcUrl(production);
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000);
+  const candidateUrls = getNearRpcUrls(production);
 
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: `sivan_near_${Date.now()}`,
-        method,
-        params,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
+  for (const url of candidateUrls) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1800);
 
-    if (!res.ok) {
-      console.warn(`[near-rpc] HTTP error ${res.status} from ${url}`);
-      return null;
-    }
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: `sivan_near_${Date.now()}`,
+          method,
+          params,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-    const data = (await res.json()) as NearRpcResponse<T>;
-    if (data.error) {
-      const errName = data.error.cause?.name || data.error.name || '';
-      // UNKNOWN_ACCOUNT is expected for fresh un-funded addresses on NEAR
-      if (errName === 'UNKNOWN_ACCOUNT' || errName.includes('does not exist')) {
-        return null;
+      if (!res.ok) {
+        continue;
       }
-      console.warn(`[near-rpc] RPC error: ${JSON.stringify(data.error)}`);
-      return null;
-    }
 
-    return data.result ?? null;
-  } catch (err: any) {
-    clearTimeout(timeoutId);
-    console.warn(`[near-rpc] Query failed for ${method}:`, err?.message || err);
-    return null;
+      const data = (await res.json()) as NearRpcResponse<T>;
+      if (data.error) {
+        const errName = data.error.cause?.name || data.error.name || '';
+        // UNKNOWN_ACCOUNT is expected for fresh un-funded addresses on NEAR
+        if (errName === 'UNKNOWN_ACCOUNT' || errName.includes('does not exist')) {
+          return null;
+        }
+        continue;
+      }
+
+      return data.result ?? null;
+    } catch {
+      clearTimeout(timeoutId);
+      continue;
+    }
   }
+
+  return null;
 }
 
 /**
@@ -152,12 +170,25 @@ export async function fetchNearTokenBalance(
 
 /**
  * Reads both native NEAR and NEP-141 USDC balances for an account.
+ * Supports both native Circle USDC and bridged USDC.e on NEAR mainnet.
  */
 export async function readNearBalances(
   accountId: string,
   production?: boolean
 ): Promise<{ near: string; usdc: string }> {
   const usdcContract = getNearUsdcContract(production);
+
+  if (production) {
+    const [near, nativeUsdc, bridgedUsdc] = await Promise.all([
+      fetchNearNativeBalance(accountId, production),
+      fetchNearTokenBalance(accountId, usdcContract, 6, production),
+      fetchNearTokenBalance(accountId, NEAR_BRIDGED_USDC_MAINNET, 6, production),
+    ]);
+
+    const totalUsdc = (Number(nativeUsdc) + Number(bridgedUsdc)).toFixed(6);
+    return { near, usdc: totalUsdc };
+  }
+
   const [near, usdc] = await Promise.all([
     fetchNearNativeBalance(accountId, production),
     fetchNearTokenBalance(accountId, usdcContract, 6, production),
