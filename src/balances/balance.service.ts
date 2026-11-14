@@ -1497,20 +1497,22 @@ export async function executeP2pTransfer(
   if (!sender) throw notFound('Sender User');
   senderUserId = sender.id;
 
-  const isNgn = input.asset.toLowerCase() === 'ngn';
-  if (!isNgn) {
-    throw badRequest('Internal off-chain transfers are only supported for NGN. For USDC and crypto assets, please send an on-chain transfer to the recipient\'s Sivan Tag or wallet address.');
-  }
+  const cleanTarget = input.recipientTarget.trim();
+  const recipient = await db.findUserByTarget(cleanTarget);
+  const isPhoneTarget = cleanTarget.startsWith('+') || /^\d{7,15}$/.test(cleanTarget);
 
   const controls = await getBalanceTransferControls().catch(() => null);
-  const isEnabled = (controls as any)?.ngnInternalTransfersEnabled ?? controls?.p2pTransfersEnabled ?? true;
+  const isNgn = input.asset.toLowerCase() === 'ngn';
+  const isEnabled = isNgn
+    ? ((controls as any)?.ngnInternalTransfersEnabled ?? controls?.p2pTransfersEnabled ?? true)
+    : (controls?.p2pTransfersEnabled ?? true);
   if (!isEnabled) {
-    throw badRequest('Internal NGN transfers are temporarily paused by administration. Please try again shortly.');
+    throw badRequest('Internal transfers are temporarily paused by administration. Please try again shortly.');
   }
 
-  const minAmount = (controls as any)?.minimumNgnSendAmount ?? 10;
+  const minAmount = isNgn ? ((controls as any)?.minimumNgnSendAmount ?? 10) : 1;
   if (input.amount < minAmount) {
-    throw badRequest(`Internal NGN transfer amount must be at least ${minAmount} NGN`);
+    throw badRequest(`Transfer amount must be at least ${minAmount} ${input.asset.toUpperCase()}`);
   }
 
   const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
@@ -1524,9 +1526,6 @@ export async function executeP2pTransfer(
     stepUpToken: input.stepUpToken,
   });
 
-  const cleanTarget = input.recipientTarget.trim();
-  const recipient = await db.findUserByTarget(cleanTarget);
-
   // Check sender spendable balance
   const unified = await getUnifiedBalance(senderUserId);
   const assetEntry = unified.balances.find((b) => b.asset.toLowerCase() === input.asset.toLowerCase());
@@ -1535,8 +1534,6 @@ export async function executeP2pTransfer(
   if (spendable < input.amount) {
     throw badRequest(`Insufficient spendable balance. Available: ${spendable} ${input.asset.toUpperCase()}, Requested: ${input.amount} ${input.asset.toUpperCase()}`);
   }
-
-  const isPhoneTarget = cleanTarget.startsWith('+') || /^\d{7,15}$/.test(cleanTarget);
 
   // If recipient not yet registered, create a 7-day secure claim vault
   if (!recipient) {
