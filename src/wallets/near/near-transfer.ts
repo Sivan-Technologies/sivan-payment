@@ -282,7 +282,9 @@ export async function executeNearOnchainTransfer(
   // 5. Broadcast to NEAR RPC
   const broadcastRes = await broadcastSignedTransaction(rpcUrl, signedTx);
 
-  const finalTxHash = broadcastRes.txHash || computedTxHash;
+  const finalTxHash = broadcastRes.success
+    ? (broadcastRes.txHash || computedTxHash)
+    : (broadcastRes.txHash || '');
 
   return {
     success: broadcastRes.success,
@@ -292,7 +294,7 @@ export async function executeNearOnchainTransfer(
     amount: input.amount,
     asset,
     network: 'near',
-    blockHash: broadcastRes.blockHash || safeBlockHashStr,
+    blockHash: broadcastRes.blockHash || (broadcastRes.success ? safeBlockHashStr : undefined),
     rawResult: broadcastRes.raw,
   };
 }

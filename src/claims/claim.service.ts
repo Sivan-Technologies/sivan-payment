@@ -4,13 +4,96 @@ import { db, JsonDatabase } from '../database/json-database.js';
 // Dedicated resilient store for on-chain transit claims (guarantees persistence across PostgreSQL and JSON environments)
 let fallbackClaimDb: JsonDatabase | null = null;
 function getClaimStore(): { read: () => Promise<any>; mutate: (fn: (d: any) => any) => Promise<any> } {
-  if (process.env.DATABASE_PROVIDER === 'postgres' || Boolean(process.env.DATABASE_URL)) {
-    if (!fallbackClaimDb) {
-      fallbackClaimDb = new JsonDatabase('.data/claims.json');
-    }
-    return fallbackClaimDb as any;
-  }
-  return db as any;
+  return {
+    async read() {
+      // 1. If database has getSystemSetting (e.g. Postgres payments_json_store or JSON systemSettings), read from it
+      try {
+        if (typeof (db as any).getSystemSetting === 'function') {
+          const stored = await (db as any).getSystemSetting('onchain_claims');
+          if (Array.isArray(stored)) {
+            return { onchainClaims: stored };
+          }
+        }
+      } catch (err) {
+        console.warn('[ClaimService] db.getSystemSetting read note:', err);
+      }
+
+      // 2. Otherwise read from db.read() if not postgres, or fallbackClaimDb
+      const isPostgres = process.env.DATABASE_PROVIDER === 'postgres' || Boolean(process.env.DATABASE_URL);
+      if (!isPostgres) {
+        try {
+          const dbData = await (db as any).read();
+          if (Array.isArray(dbData?.onchainClaims)) {
+            return dbData;
+          }
+        } catch {}
+      }
+
+      if (!fallbackClaimDb) {
+        fallbackClaimDb = new JsonDatabase('.data/claims.json');
+      }
+      return fallbackClaimDb.read().catch(() => ({ onchainClaims: [] }));
+    },
+    async mutate(fn: (d: any) => any) {
+      let current: any = { onchainClaims: [] };
+      try {
+        if (typeof (db as any).getSystemSetting === 'function') {
+          const stored = await (db as any).getSystemSetting('onchain_claims');
+          if (Array.isArray(stored)) {
+            current = { onchainClaims: stored };
+          }
+        }
+      } catch {}
+
+      const isPostgres = process.env.DATABASE_PROVIDER === 'postgres' || Boolean(process.env.DATABASE_URL);
+      if (!current.onchainClaims || current.onchainClaims.length === 0) {
+        if (!isPostgres) {
+          try {
+            const dbData = await (db as any).read();
+            if (Array.isArray(dbData?.onchainClaims) && dbData.onchainClaims.length > 0) {
+              current = dbData;
+            }
+          } catch {}
+        }
+      }
+
+      if (!current.onchainClaims || current.onchainClaims.length === 0) {
+        if (!fallbackClaimDb) {
+          fallbackClaimDb = new JsonDatabase('.data/claims.json');
+        }
+        current = await fallbackClaimDb.read().catch(() => ({ onchainClaims: [] }));
+      }
+
+      const result = await fn(current);
+
+      // Persist to Postgres database payments_json_store
+      try {
+        if (typeof (db as any).setSystemSetting === 'function') {
+          await (db as any).setSystemSetting('onchain_claims', current.onchainClaims || []);
+        }
+      } catch (err) {
+        console.warn('[ClaimService] db.setSystemSetting write note:', err);
+      }
+
+      // Also persist to JSON database or local backup file
+      if (!isPostgres) {
+        try {
+          await (db as any).mutate((d: any) => {
+            d.onchainClaims = current.onchainClaims;
+          });
+        } catch {}
+      }
+      if (!fallbackClaimDb) {
+        fallbackClaimDb = new JsonDatabase('.data/claims.json');
+      }
+      await fallbackClaimDb.mutate((data: any) => {
+        data.onchainClaims = current.onchainClaims;
+        return result;
+      }).catch(() => {});
+
+      return result;
+    },
+  };
 }
 import type {
   OnchainClaimRecord,
@@ -376,29 +459,32 @@ export class ClaimService {
       throw new Error(`Cannot cancel claim in status ${claim.status}`);
     }
 
+    // Execute on-chain refund from transit vault when claim is on NEAR Protocol
+    let refundTxHash: string | undefined;
+    if (claim.network === 'near') {
+      const { executeNearOnchainTransfer } = await import('../wallets/near/near-transfer.js');
+      const { generateNearAddress } = await import('../wallets/near/near-keypair.js');
+      const senderNearAddress = generateNearAddress(`sivan_near_${userId}`);
+      const refundRes = await executeNearOnchainTransfer({
+        senderUserId: userId,
+        useVault: true,
+        recipientAddress: senderNearAddress,
+        amount: parseFloat(claim.amount).toFixed(6),
+        asset: 'usdc',
+      });
+      if (!refundRes.success || !refundRes.txHash) {
+        throw new Error(
+          `Transit vault refund failed: ${refundRes.rawResult?.error || 'Broadcast rejected by RPC'}. Claim status preserved as AWAITING_CLAIM.`
+        );
+      }
+      refundTxHash = refundRes.txHash;
+    }
+
     claim.status = 'CANCELLED';
     claim.cancelledAt = new Date().toISOString();
     claim.cancelReason = reason || 'changed_my_mind';
-
-    // Execute on-chain refund from transit vault when claim is on NEAR Protocol
-    if (claim.network === 'near') {
-      try {
-        const { executeNearOnchainTransfer } = await import('../wallets/near/near-transfer.js');
-        const { generateNearAddress } = await import('../wallets/near/near-keypair.js');
-        const senderNearAddress = generateNearAddress(`sivan_near_${userId}`);
-        const refundRes = await executeNearOnchainTransfer({
-          senderUserId: userId,
-          useVault: true,
-          recipientAddress: senderNearAddress,
-          amount: parseFloat(claim.amount).toFixed(6),
-          asset: 'usdc',
-        });
-        if (refundRes.txHash) {
-          (claim as any).refundTxHash = refundRes.txHash;
-        }
-      } catch {
-        // Non-blocking fallback
-      }
+    if (refundTxHash) {
+      (claim as any).refundTxHash = refundTxHash;
     }
 
     const { createAuditLog } = await import('../audit/audit.service.js');
@@ -672,36 +758,40 @@ export class ClaimService {
     }
 
     const { id } = await import('../shared/id.js');
-    let txHash = `near_intent_tx_${id('tx')}`;
+    let txHash = '';
     const providerTransferId = destination === 'bank' ? `breet_trade_${id('trade')}` : undefined;
 
     // Dispatch real NEAR on-chain transfer when destination is NEAR
     if (destination === 'near') {
-      try {
-        const { executeNearOnchainTransfer } = await import('../wallets/near/near-transfer.js');
-        const { generateNearKeypair } = await import('../wallets/near/near-keypair.js');
+      const { executeNearOnchainTransfer } = await import('../wallets/near/near-transfer.js');
+      const { generateNearKeypair } = await import('../wallets/near/near-keypair.js');
 
-        let recipientNearAddress = params.targetAddress;
-        if (!recipientNearAddress && params.recipientUserId) {
-          const recKp = generateNearKeypair(`sivan_near_${params.recipientUserId}`);
-          recipientNearAddress = recKp.accountId;
-        }
-
-        if (recipientNearAddress) {
-          const nearRes = await executeNearOnchainTransfer({
-            senderUserId: claim.senderUserId,
-            useVault: true,
-            recipientAddress: recipientNearAddress,
-            amount: netAmount.toFixed(6),
-            asset: 'usdc',
-          });
-          if (nearRes.txHash) {
-            txHash = nearRes.txHash;
-          }
-        }
-      } catch {
-        // Fallback to deterministic intent tx hash if transfer generation encounters issue
+      let recipientNearAddress = params.targetAddress;
+      if (!recipientNearAddress && params.recipientUserId) {
+        const recKp = generateNearKeypair(`sivan_near_${params.recipientUserId}`);
+        recipientNearAddress = recKp.accountId;
       }
+
+      if (!recipientNearAddress) {
+        throw new Error('Valid recipient NEAR address or linked user ID is required');
+      }
+
+      const nearRes = await executeNearOnchainTransfer({
+        senderUserId: claim.senderUserId,
+        useVault: true,
+        recipientAddress: recipientNearAddress,
+        amount: netAmount.toFixed(6),
+        asset: 'usdc',
+      });
+
+      if (!nearRes.success || !nearRes.txHash) {
+        throw new Error(
+          `NEAR on-chain settlement failed: ${nearRes.rawResult?.error || 'Broadcast rejected by RPC'}. Claim status preserved as AWAITING_CLAIM.`
+        );
+      }
+      txHash = nearRes.txHash;
+    } else {
+      txHash = `near_intent_tx_${id('tx')}`;
     }
 
     claim.status = 'CLAIMED';
