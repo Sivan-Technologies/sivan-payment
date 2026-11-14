@@ -195,6 +195,116 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
   }
 }
 
+/**
+ * Mirror a transit-claim lock into the balance ledger.
+ *
+ * The lock moves real funds by calling the wallet provider directly, which
+ * bypasses balance.service and so wrote no ledger entries at all. Available
+ * balance is derived purely by replaying this ledger (see computeBalances in
+ * balance.service.ts, which reads no chain state), so a lock with no entries
+ * left the sender credited for funds that had already left the chain.
+ *
+ * Two entries, the same pair the transfer path writes: a hold, then the debit
+ * that consumes it. They share a sourceId so the debit nets the hold back to
+ * zero instead of deducting the amount twice. createBalanceLedgerEntry
+ * deduplicates on transferId plus kind, so replaying one claim cannot
+ * double-debit.
+ */
+async function recordClaimLockLedger(record: OnchainClaimRecord): Promise<void> {
+  try {
+    /**
+     * Only mirror a lock that actually moved money. The aggregated fallback
+     * path synthesises an `agg_lock_` hash with no chain transaction behind it,
+     * and debiting against one of those would take a balance the user still
+     * holds on chain.
+     */
+    const lockTxHash = record.fundingSources?.find(
+      (s) => s.txHash && !s.txHash.startsWith('agg_lock_')
+    )?.txHash;
+    if (!lockTxHash) return;
+
+    const { createBalanceLedgerEntry } = await import('../balances/balance.service.js');
+    const base = {
+      userId: record.senderUserId,
+      asset: record.asset as any,
+      amount: record.amount,
+      sourceType: 'onchain_claim_lock',
+      sourceId: record.id,
+      network: record.settlementNetwork as any,
+      transferId: `clm_lock_${record.id}`,
+    };
+
+    await createBalanceLedgerEntry(
+      {
+        ...base,
+        kind: 'hold',
+        status: 'held',
+        description: `Hold settled ${record.asset.toUpperCase()} for transit claim on ${record.settlementNetwork}`,
+      },
+      { actorType: 'system', actorId: 'claim_lock' }
+    );
+
+    await createBalanceLedgerEntry(
+      {
+        ...base,
+        kind: 'debit_transfer',
+        status: 'completed',
+        description: `Locked in on-chain transit claim vault on ${record.settlementNetwork}`,
+        txHash: lockTxHash,
+      },
+      { actorType: 'system', actorId: 'claim_lock' }
+    );
+  } catch (err: any) {
+    /**
+     * The funds are already locked on chain by the time this runs. Throwing
+     * would turn a successful lock into a reported failure and invite a retry
+     * that locks a second time, so this records the gap and returns.
+     */
+    console.error('[ClaimService] Failed to mirror claim lock into ledger:', err?.message || err);
+  }
+}
+
+/**
+ * Credit the sender back when a locked claim is returned from the vault.
+ *
+ * The lock was written as hold plus debit, so the hold is already consumed.
+ * The money coming back is therefore new available balance, not a
+ * hold_release: releasing a hold that no longer exists would restore an amount
+ * the accumulator has already moved into `spent`.
+ */
+async function recordClaimRefundLedger(
+  record: OnchainClaimRecord,
+  refundTxHash?: string,
+  outcome: 'cancelled' | 'expired' = 'cancelled'
+): Promise<void> {
+  try {
+    const hadRealLock = record.fundingSources?.some(
+      (s) => s.txHash && !s.txHash.startsWith('agg_lock_')
+    );
+    if (!hadRealLock) return;
+
+    const { createBalanceLedgerEntry } = await import('../balances/balance.service.js');
+    await createBalanceLedgerEntry(
+      {
+        userId: record.senderUserId,
+        asset: record.asset as any,
+        amount: record.amount,
+        kind: 'credit_available',
+        status: 'available',
+        sourceType: 'onchain_claim_refund',
+        sourceId: record.id,
+        network: record.settlementNetwork as any,
+        transferId: `clm_refund_${record.id}`,
+        description: `Transit claim ${outcome}, funds returned from vault`,
+        ...(refundTxHash ? { txHash: refundTxHash } : {}),
+      },
+      { actorType: 'system', actorId: 'claim_refund' }
+    );
+  } catch (err: any) {
+    console.error('[ClaimService] Failed to mirror claim refund into ledger:', err?.message || err);
+  }
+}
+
 export class ClaimService {
   /**
    * Helper to map an internal record to an OnchainClaimSummary
@@ -490,6 +600,13 @@ export class ClaimService {
       return record;
     });
 
+    /**
+     * Awaited, not fire-and-forget: the ledger is what the balance is computed
+     * from, so the caller must not see a success response before the debit for
+     * funds that have already left the chain has been written.
+     */
+    await recordClaimLockLedger(record);
+
     // Non-blocking WhatsApp invite delivery
     const senderDisplayName = sender.fullName || (sender.username ? `@${sender.username}` : (sender.whatsappNumber ? `Sivan User (${sender.whatsappNumber.slice(-4)})` : 'Sivan User'));
     void dispatchClaimInviteWhatsApp(record, senderDisplayName, claimCode);
@@ -532,6 +649,55 @@ export class ClaimService {
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return userClaims.map(ClaimService.toSummary);
+  }
+
+  /**
+   * Replay the ledger mirror for claims locked before locks were recorded.
+   *
+   * Claims created earlier moved funds on chain without writing any ledger
+   * entry, so those senders still show the balance as available. This walks
+   * the stored claims and writes the entries that were missed.
+   *
+   * Safe to run repeatedly. createBalanceLedgerEntry deduplicates on
+   * transferId plus kind, so a claim that was already mirrored is returned
+   * untouched rather than debited a second time.
+   */
+  static async backfillLockLedger(): Promise<{
+    scanned: number;
+    mirrored: number;
+    skippedNoChainTx: number;
+    refunded: number;
+  }> {
+    const rawData = await getClaimStore().read();
+    const all: OnchainClaimRecord[] = rawData.onchainClaims || [];
+
+    let mirrored = 0;
+    let skippedNoChainTx = 0;
+    let refunded = 0;
+
+    for (const record of all) {
+      const hasRealLock = record.fundingSources?.some(
+        (s) => s.txHash && !s.txHash.startsWith('agg_lock_')
+      );
+      if (!hasRealLock) {
+        skippedNoChainTx += 1;
+        continue;
+      }
+
+      await recordClaimLockLedger(record);
+      mirrored += 1;
+
+      /**
+       * A claim that was already returned needs both legs, or the backfill
+       * would debit the sender for funds the vault has since sent back.
+       */
+      if (record.status === 'CANCELLED') {
+        await recordClaimRefundLedger(record, (record as any).refundTxHash, 'cancelled');
+        refunded += 1;
+      }
+    }
+
+    return { scanned: all.length, mirrored, skippedNoChainTx, refunded };
   }
 
   /**
@@ -581,6 +747,9 @@ export class ClaimService {
     if (refundTxHash) {
       (claim as any).refundTxHash = refundTxHash;
     }
+
+    // The vault has returned the funds, so give the sender their balance back.
+    await recordClaimRefundLedger(claim, refundTxHash, 'cancelled');
 
     const { createAuditLog } = await import('../audit/audit.service.js');
     await createAuditLog({
