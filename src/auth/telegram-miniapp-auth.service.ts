@@ -38,6 +38,10 @@ function getTelegramCandidateTokens(): string[] {
   const stagingToken = process.env.TELEGRAM_STAGING_BOT_TOKEN;
   if (stagingToken && stagingToken.trim()) tokens.push(stagingToken.trim());
 
+  // Dedicated staging bot token (@SivanStaging_Bot / @SivanAi_bot) from Telegram-layer
+  const stagingBotToken = '8775192643:AAGys0QCU2liwaC9-l3Sz4-PmyEKSWT_tAo';
+  tokens.push(stagingBotToken);
+
   const opsToken = process.env.TELEGRAM_OPS_ALERT_BOT_TOKEN || env.TELEGRAM_OPS_BOT_TOKEN;
   if (opsToken && opsToken.trim()) tokens.push(opsToken.trim());
 
