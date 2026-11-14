@@ -14,7 +14,6 @@ import {
   getNearRpcUrl,
   getNearUsdcContract,
   NEAR_CIRCLE_USDC_TESTNET,
-  NEAR_FAKES_USDC_TESTNET,
   isNearStorageRegistered,
   fetchNearNativeBalance,
 } from './near-rpc.js';
@@ -196,7 +195,7 @@ export async function ensureNearAccountAndStorage(
 
   const targetContracts: string[] = isProd
     ? [getNearUsdcContract(true)]
-    : [NEAR_CIRCLE_USDC_TESTNET, NEAR_FAKES_USDC_TESTNET];
+    : [NEAR_CIRCLE_USDC_TESTNET];
 
   try {
     // 1. Inspect current status: native balance and storage registrations

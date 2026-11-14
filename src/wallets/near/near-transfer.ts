@@ -221,7 +221,7 @@ export async function executeNearOnchainTransfer(
   // Ensure sender account is activated with native gas and recipient has NEP-141 storage registered
   if (asset === 'usdc') {
     const { ensureNearAccountAndStorage } = await import('./near-activation.js');
-    const { isNearStorageRegistered, fetchNearNativeBalance, fetchNearTokenBalance, NEAR_CIRCLE_USDC_TESTNET, NEAR_FAKES_USDC_TESTNET } = await import('./near-rpc.js');
+    const { isNearStorageRegistered, fetchNearNativeBalance } = await import('./near-rpc.js');
 
     // Ensure sender has sufficient native gas for prepaid 30 TGas reservation
     if (!input.useVault) {
@@ -233,18 +233,7 @@ export async function executeNearOnchainTransfer(
       }
     }
 
-    let usdcContract = getNearUsdcContract(production);
-    if (!production) {
-      const [circleBal, fakesBal] = await Promise.all([
-        fetchNearTokenBalance(senderAccountId, NEAR_CIRCLE_USDC_TESTNET, 6, false).catch(() => '0.000000'),
-        fetchNearTokenBalance(senderAccountId, NEAR_FAKES_USDC_TESTNET, 6, false).catch(() => '0.000000'),
-      ]);
-      if (parseFloat(circleBal) >= parseFloat(input.amount)) {
-        usdcContract = NEAR_CIRCLE_USDC_TESTNET;
-      } else if (parseFloat(fakesBal) >= parseFloat(input.amount)) {
-        usdcContract = NEAR_FAKES_USDC_TESTNET;
-      }
-    }
+    const usdcContract = getNearUsdcContract(production);
 
     const recipientRegistered = await isNearStorageRegistered(input.recipientAddress, usdcContract, production).catch(() => true);
     if (!recipientRegistered) {
@@ -281,19 +270,7 @@ export async function executeNearOnchainTransfer(
     action = actions.transfer(BigInt(yoctoStr));
   } else {
     // NEP-141 USDC: function call to ft_transfer on USDC contract
-    let contractToUse = getNearUsdcContract(production);
-    if (!production) {
-      const { fetchNearTokenBalance, NEAR_CIRCLE_USDC_TESTNET, NEAR_FAKES_USDC_TESTNET } = await import('./near-rpc.js');
-      const [circleBal, fakesBal] = await Promise.all([
-        fetchNearTokenBalance(senderAccountId, NEAR_CIRCLE_USDC_TESTNET, 6, false).catch(() => '0.000000'),
-        fetchNearTokenBalance(senderAccountId, NEAR_FAKES_USDC_TESTNET, 6, false).catch(() => '0.000000'),
-      ]);
-      if (parseFloat(circleBal) >= parseFloat(input.amount)) {
-        contractToUse = NEAR_CIRCLE_USDC_TESTNET;
-      } else if (parseFloat(fakesBal) >= parseFloat(input.amount)) {
-        contractToUse = NEAR_FAKES_USDC_TESTNET;
-      }
-    }
+    const contractToUse = getNearUsdcContract(production);
     receiverId = contractToUse;
     // 6 decimals
     const usdcAtomic = BigInt(Math.round(parseFloat(input.amount) * 1_000_000)).toString();
