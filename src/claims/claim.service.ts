@@ -388,10 +388,20 @@ export class ClaimService {
           const { resolveActiveWalletProvider } = await import('../wallets/wallet-controls.service.js');
           const walletProvider = getWalletProvider(await resolveActiveWalletProvider());
           const { env } = await import('../config/env.js');
-          const vaultAddr =
-            chainLower === 'solana'
-              ? env.SIVAN_FEE_WALLET_SOLANA
-              : env.SIVAN_FEE_WALLET_EVM || env.SIVAN_ETH_FEE_WALLET_ADDRESS;
+
+          let vaultAddr: string | undefined;
+          if (chainLower === 'solana') {
+            vaultAddr = env.SIVAN_FEE_WALLET_SOLANA;
+          } else if (chainLower === 'stellar') {
+            const { generateStellarAddress } = await import('../wallets/stellar/stellar-keypair.js');
+            vaultAddr =
+              env.SIVAN_FEE_WALLET_STELLAR ||
+              process.env.MONEYGRAM_STELLAR_PUBLIC_KEY ||
+              generateStellarAddress('sivan_stellar_vault');
+          } else {
+            vaultAddr = env.SIVAN_FEE_WALLET_EVM || env.SIVAN_ETH_FEE_WALLET_ADDRESS;
+          }
+
           if (!vaultAddr) {
             throw new Error(`Transit vault address is not configured for ${chainLower.toUpperCase()}`);
           }
