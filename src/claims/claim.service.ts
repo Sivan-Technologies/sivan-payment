@@ -166,6 +166,7 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
 
     await fetch(waNotifyUrl, {
       method: 'POST',
+      signal: AbortSignal.timeout(5000),
       headers: {
         'Content-Type': 'application/json',
         'x-notify-secret': secret,
