@@ -5,6 +5,7 @@ import { db } from '../database/json-database.js';
 import { badRequest } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { signUserJwt } from './jwt.js';
+import { activeLinkForTelegram } from '../identity/identity.service.js';
 
 export interface TelegramMiniAppUser {
   id: number;
@@ -147,17 +148,21 @@ export async function authenticateTelegramMiniApp(input: TelegramMiniAppAuthInpu
     ''
   ).trim();
 
-  // 1. Resolve existing user by telegramUserId
-  let user: any = await db.findUserByTelegramUserId(cleanTelegramId);
-
-  // 2. Fallback: check if existing user exists by verified phone
-  if (!user && normalizedPhone) {
-    user = await db.findUserByWhatsappNumber(normalizedPhone);
+  // 1. Resolve existing user via customer_identity_links (authoritative bot pairing record)
+  let user: any = null;
+  const link = await activeLinkForTelegram(cleanTelegramId).catch(() => null);
+  if (link?.paymentUserId) {
+    user = await db.findUserById(link.paymentUserId);
   }
 
-  // 3. Fallback: check customer_identity_links
-  if (!user && (db as any).findUserByTelegramId) {
-    user = await (db as any).findUserByTelegramId(cleanTelegramId);
+  // 2. Resolve existing user by telegramUserId column
+  if (!user) {
+    user = await db.findUserByTelegramUserId(cleanTelegramId);
+  }
+
+  // 3. Fallback: check if existing user exists by verified phone
+  if (!user && normalizedPhone) {
+    user = await db.findUserByWhatsappNumber(normalizedPhone);
   }
 
   // 4. Fallback: check placeholder email
@@ -195,8 +200,9 @@ export async function authenticateTelegramMiniApp(input: TelegramMiniAppAuthInpu
       updates.telegramUsername = tgUser.username;
       needsUpdate = true;
     }
-    if (normalizedPhone && user.whatsappNumber !== normalizedPhone) {
-      updates.whatsappNumber = normalizedPhone;
+    const resolvedPhone = normalizedPhone || user.whatsappNumber || link?.whatsappNumber;
+    if (resolvedPhone && user.whatsappNumber !== resolvedPhone) {
+      updates.whatsappNumber = resolvedPhone;
       needsUpdate = true;
     }
     if (suppliedName && (!user.fullName || user.fullName === 'Sivan User' || user.fullName !== suppliedName)) {
@@ -210,8 +216,10 @@ export async function authenticateTelegramMiniApp(input: TelegramMiniAppAuthInpu
     }
   }
 
-  // Check if onboarding is required (needs phone or legal full name confirmed)
-  const requiresOnboarding = !user.whatsappNumber || !user.fullName || user.fullName === 'Sivan User';
+  // Check if onboarding is required (needs phone and legal full name confirmed)
+  const hasPhone = Boolean(user.whatsappNumber || link?.whatsappNumber || normalizedPhone);
+  const hasName = Boolean(user.fullName && user.fullName !== 'Sivan User' && user.fullName.length >= 2);
+  const requiresOnboarding = !hasPhone || !hasName;
 
   // 6. Issue authenticated user JWT
   const token = signUserJwt({
