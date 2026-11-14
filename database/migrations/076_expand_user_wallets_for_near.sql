@@ -6,3 +6,4 @@ alter table payments_user_wallets
 alter table payments_user_wallets
   add constraint payments_user_wallets_chain_check
   check (chain in ('solana', 'base', 'ethereum', 'celo', 'bsc', 'bnb', 'stellar', 'arbitrum', 'arc', 'starknet', 'near'));
+
