@@ -138,6 +138,10 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
     const appUrl = (process.env.CUSTOMER_APP_URL || (isLive ? 'https://app.sivantech.online' : 'https://staging.sivantech.online')).replace(/\/$/, '');
     const claimUrl = `${appUrl}/claim?token=${encodeURIComponent(record.token)}`;
 
+    const botNumber = isLive ? '+1 555-759-0137' : '+1 555-174-1453';
+    const botDigits = isLive ? '15557590137' : '15551741453';
+    const botLink = `https://wa.me/${botDigits}`;
+
     const textLines = [
       `🎁 Transfer in Transit . Sivan Ai`,
       ``,
@@ -148,7 +152,8 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
     if (claimCode) {
       textLines.push(`Your 6-digit Claim Code: *${claimCode}*`, ``);
       textLines.push(`• To claim directly here in WhatsApp:`);
-      textLines.push(`Reply: *CLAIM ${claimCode}*`, ``);
+      textLines.push(`Reply: *CLAIM ${claimCode}*`);
+      textLines.push(`Or chat with Sivan Ai (${botNumber}): ${botLink}?text=CLAIM%20${claimCode}`, ``);
       textLines.push(`• Or claim on the Web:`);
       textLines.push(claimUrl);
     } else {
