@@ -163,11 +163,13 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
 
     const text = textLines.join('\n');
     const claimCodeStr = claimCode || '';
-    const inviteId = claimCodeStr ? `CLAIM-${claimCodeStr}` : `CLAIM-${record.id.slice(-6).toUpperCase()}`;
     const amountFormatted = `${Number(record.amount).toFixed(2)} ${record.asset.toUpperCase()}`;
-    const purposeText = claimCodeStr
-      ? `Sent by ${senderName}. Reply: CLAIM ${claimCodeStr} to credit your Sivan balance, or claim at ${claimUrl}`
-      : `Sent by ${senderName}. Claim your funds at ${claimUrl}`;
+    const expiryDate = new Date(record.expiresAt || (Date.now() + 7 * 86400000)).toLocaleDateString('en-US', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+    const tokenQuery = `?token=${encodeURIComponent(record.token)}`;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
@@ -184,9 +186,9 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
             message: text,
             reason: 'claim_invite',
             template: {
-              name: 'sivan_seller_invite',
+              name: 'sivan_claim_invite',
               language: 'en_US',
-              params: [inviteId, amountFormatted, purposeText],
+              params: [senderName, amountFormatted, expiryDate, tokenQuery],
             },
           }),
         });
