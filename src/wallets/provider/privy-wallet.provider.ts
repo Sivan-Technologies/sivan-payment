@@ -1271,13 +1271,24 @@ export class PrivyWalletProvider implements WalletProvider {
     }
 
     if (input.chain === 'near') {
+      const isProd = isProduction(input.networkMode);
+      if (String(input.asset).toLowerCase() !== 'near') {
+        const { ensureNearAccountAndStorage } = await import('../near/near-activation.js');
+        const destWallet = await db.findWalletByAddress(input.toAddress).catch(() => undefined);
+        await ensureNearAccountAndStorage(
+          destWallet?.userId || input.toAddress,
+          input.toAddress,
+          { production: isProd }
+        ).catch(() => null);
+      }
+
       const { executeNearOnchainTransfer } = await import('../near/near-transfer.js');
       const nearRes = await executeNearOnchainTransfer({
         senderUserId: input.userId || '',
         recipientAddress: input.toAddress,
         amount: input.amount,
         asset: (String(input.asset).toLowerCase() === 'near' ? 'near' : 'usdc'),
-        production: isProduction(input.networkMode),
+        production: isProd,
       });
 
       return {

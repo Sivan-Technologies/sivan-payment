@@ -55,7 +55,7 @@ interface NearRpcResponse<T = any> {
 /**
  * Queries an access key nonce for a public key on an account.
  */
-async function fetchAccessKeyNonce(
+export async function fetchAccessKeyNonce(
   rpcUrl: string,
   accountId: string,
   publicKeyStr: string
@@ -99,7 +99,7 @@ async function fetchAccessKeyNonce(
 /**
  * Fetches the latest final block hash from NEAR RPC.
  */
-async function fetchRecentBlockHash(rpcUrl: string): Promise<string | null> {
+export async function fetchRecentBlockHash(rpcUrl: string): Promise<string | null> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 6000);
 
@@ -131,7 +131,7 @@ async function fetchRecentBlockHash(rpcUrl: string): Promise<string | null> {
 /**
  * Broadcasts a signed NEAR transaction via broadcast_tx_commit.
  */
-async function broadcastSignedTransaction(
+export async function broadcastSignedTransaction(
   rpcUrl: string,
   signedTx: SignedTransaction
 ): Promise<{ success: boolean; txHash: string; blockHash?: string; raw?: any; error?: string }> {

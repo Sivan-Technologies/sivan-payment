@@ -92,7 +92,7 @@ export function getNearVaultConfig(production?: boolean): NearVaultConfig {
     finalPublicKey = kp.publicKey;
     finalPrivateKey = kp.secretKey;
     if (!finalAccountId) {
-      finalAccountId = isMainnetMode ? 'sivan-vault.near' : 'sivan-vault.testnet';
+      finalAccountId = kp.accountId;
     }
   }
 

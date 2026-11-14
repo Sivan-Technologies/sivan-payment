@@ -204,6 +204,10 @@ export async function ensureUserWallet(userId: string, chain: WalletChain = DEFA
       updatedAt: now,
     };
     const saved = await db.insertUserWallet(record);
+    const { ensureNearAccountAndStorage } = await import('./near/near-activation.js');
+    ensureNearAccountAndStorage('sivan_near_' + userId, address).catch((err) => {
+      console.warn('[user-wallet.near_activation_bg_error]', err);
+    });
     return saved;
   }
 
@@ -371,6 +375,11 @@ export async function getUserWalletWithBalances(userId: string, chain: WalletCha
   if (wallet.chain === 'stellar') {
     const { ensureStellarAccountAndTrustline } = await import('./stellar/trustline.js');
     ensureStellarAccountAndTrustline('sivan_stellar_' + userId, wallet.address).catch(() => null);
+  }
+
+  if (wallet.chain === 'near') {
+    const { ensureNearAccountAndStorage } = await import('./near/near-activation.js');
+    ensureNearAccountAndStorage('sivan_near_' + userId, wallet.address).catch(() => null);
   }
 
   const activeProviderName = await resolveActiveWalletProvider();

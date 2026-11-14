@@ -173,6 +173,45 @@ export async function fetchNearTokenBalance(
 }
 
 /**
+ * Checks whether an account has registered storage on a NEP-141 token contract (NEP-145 standard).
+ * Returns true if storage is active and non-zero, false otherwise.
+ */
+export async function isNearStorageRegistered(
+  accountId: string,
+  contractId: string,
+  production?: boolean
+): Promise<boolean> {
+  try {
+    const argsBase64 = Buffer.from(JSON.stringify({ account_id: accountId })).toString('base64');
+    const result = await queryNearRpc<{ result: number[] }>(
+      'query',
+      {
+        request_type: 'call_function',
+        finality: 'final',
+        account_id: contractId,
+        method_name: 'storage_balance_of',
+        args_base64: argsBase64,
+      },
+      production
+    );
+
+    if (!result || !Array.isArray(result.result)) {
+      return false;
+    }
+
+    const rawStr = Buffer.from(result.result).toString('utf8').trim();
+    if (!rawStr || rawStr === 'null') {
+      return false;
+    }
+
+    const parsed = JSON.parse(rawStr);
+    return Boolean(parsed && parsed.total && BigInt(parsed.total) > 0n);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Reads both native NEAR and NEP-141 USDC balances for an account.
  * Supports both native Circle USDC and bridged USDC.e on NEAR mainnet,
  * and resiliently inspects mainnet if testnet returns zero.
