@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { parseBody } from '../shared/validation.js';
 import { startEmailAuth, startEmailAuthSchema, verifyEmailAuth, verifyEmailAuthSchema } from './auth.service.js';
+import { authenticateTelegramMiniApp, telegramMiniAppAuthSchema } from './telegram-miniapp-auth.service.js';
 import { disableTwoFactor, enableTwoFactor, getRecoveryQuestionCatalog, getTwoFactorRecoveryChallengeQuestions, getTwoFactorStatus, listUserRecoveryQuestions, setRecoveryQuestionsSchema, setUserRecoveryQuestions, startTwoFactorSetup, twoFactorLoginVerifySchema, twoFactorRecoveryQuestionsChallengeSchema, twoFactorVerifySchema, verifyRecoveryQuestionsSchema, verifyTwoFactorLogin, verifyTwoFactorRecoveryQuestions } from './two-factor.service.js';
 import { signUserJwt, verifyUserJwt, getAuthUserId } from './jwt.js';
 import { getUser } from '../users/users.service.js';
@@ -15,6 +16,11 @@ export async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/email/verify', async (request) => {
     const body = parseBody(verifyEmailAuthSchema, request.body);
     return { data: await verifyEmailAuth(body) };
+  });
+
+  app.post('/api/auth/telegram-miniapp', async (request) => {
+    const body = parseBody(telegramMiniAppAuthSchema, request.body);
+    return { data: await authenticateTelegramMiniApp(body.initData) };
   });
 
 
