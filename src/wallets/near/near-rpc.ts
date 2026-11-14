@@ -22,13 +22,16 @@ export function getNearRpcUrl(production?: boolean): string {
   return getNearRpcUrls(production)[0];
 }
 
+export const NEAR_CIRCLE_USDC_TESTNET = '3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af';
+export const NEAR_FAKES_USDC_TESTNET = 'usdc.fakes.testnet';
+
 export function getNearUsdcContract(production?: boolean): string {
   if (production) {
     // Official native Circle USDC contract on NEAR Mainnet
     return process.env.NEAR_USDC_CONTRACT || '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
   }
-  // Standard testnet NEP-141 USDC contract
-  return process.env.NEAR_TESTNET_USDC_CONTRACT || 'usdc.fakes.testnet';
+  // Official Circle native USDC contract on NEAR Testnet
+  return process.env.NEAR_TESTNET_USDC_CONTRACT || NEAR_CIRCLE_USDC_TESTNET;
 }
 
 export const NEAR_BRIDGED_USDC_MAINNET = 'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near';
@@ -191,15 +194,18 @@ export async function readNearBalances(
     return { near, usdc: totalUsdc };
   }
 
-  // On staging / testnet mode: query testnet first
-  const [near, usdc] = await Promise.all([
+  // On staging / testnet mode: query testnet Circle USDC and Fakes USDC in parallel
+  const [near, circleUsdc, fakesUsdc] = await Promise.all([
     fetchNearNativeBalance(accountId, false),
-    fetchNearTokenBalance(accountId, usdcContract, 6, false),
+    fetchNearTokenBalance(accountId, NEAR_CIRCLE_USDC_TESTNET, 6, false),
+    fetchNearTokenBalance(accountId, NEAR_FAKES_USDC_TESTNET, 6, false),
   ]);
+
+  const testnetTotalUsdc = (Number(circleUsdc) + Number(fakesUsdc)).toFixed(6);
 
   // If user deposited real USDC on Mainnet while testing in staging,
   // check Mainnet FastNear so real deposited funds are never ignored or marked unavailable
-  if (Number(usdc) === 0 && Number(near) === 0) {
+  if (Number(testnetTotalUsdc) === 0 && Number(near) === 0) {
     try {
       const [mainNear, mainNativeUsdc, mainBridgedUsdc] = await Promise.all([
         fetchNearNativeBalance(accountId, true),
@@ -215,5 +221,5 @@ export async function readNearBalances(
     }
   }
 
-  return { near, usdc };
+  return { near, usdc: testnetTotalUsdc };
 }
