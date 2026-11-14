@@ -232,10 +232,15 @@ export function validateAddressForChain(address: string, chain: AddressChain): A
         reason: 'That looks like an EVM address, but you selected NEAR Protocol. Paste a NEAR account (.near / .testnet) or a 64-character implicit account ID.',
       };
     }
+    if (value.startsWith('+') || value.startsWith('@')) {
+      return {
+        valid: false,
+        reason: 'Phone numbers and Sivan Tags cannot be sent as on-chain NEAR transfers. Please select Instant Sivan P2P to send to a phone number or tag.',
+      };
+    }
     const isNamed = /^[a-z0-9._-]+\.(near|testnet)$/i.test(value);
     const isImplicit = /^[a-f0-9]{64}$/i.test(value);
-    const isPhoneOrTag = value.startsWith('+') || value.startsWith('@');
-    if (isNamed || isImplicit || isPhoneOrTag) {
+    if (isNamed || isImplicit) {
       return { valid: true };
     }
     return {

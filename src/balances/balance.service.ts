@@ -1293,6 +1293,11 @@ export async function executeBalanceTransfer(userId: string, transfer: TransferM
     reference: transfer.transferId,
   });
 
+  if (!result || result.status === 'failed' || !result.txHash) {
+    const failureMsg = (result as any)?.error || (result as any)?.status || 'On-chain broadcast returned no transaction hash';
+    throw new Error(`On-chain transfer failed on ${transfer.network}: ${failureMsg}`);
+  }
+
   /**
    * The hold becomes a debit. Not a hold_release - the money left, it was not
    * returned. Getting this backwards would credit the user for funds they no
