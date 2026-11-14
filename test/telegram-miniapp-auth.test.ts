@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 import { validateTelegramInitData } from '../src/auth/telegram-miniapp-auth.service.js';
 
-test('validateTelegramInitData verifies authentic HMAC and rejects tampered or expired data', () => {
+test('validateTelegramInitData verifies authentic HMAC and rejects tampered or expired data', async () => {
   const mockBotToken = '123456789:ABCdefGHIjklMNOpqrsTUVwxyz';
   const user = {
     id: 99887766,
@@ -28,14 +28,14 @@ test('validateTelegramInitData verifies authentic HMAC and rejects tampered or e
   const authenticInitData = `auth_date=${authDate}&query_id=AAHdF6IQAAAAAN0XohDhrOrc&user=${encodeURIComponent(userStr)}&hash=${validHash}`;
 
   // 1. Authentic signature succeeds
-  const validResult = validateTelegramInitData(authenticInitData, [mockBotToken]);
+  const validResult = await validateTelegramInitData(authenticInitData, [mockBotToken]);
   assert.strictEqual(validResult.valid, true);
   assert.strictEqual(validResult.user?.id, 99887766);
   assert.strictEqual(validResult.user?.username, 'alex_tma');
 
   // 2. Tampered hash fails
   const tamperedInitData = `${authenticInitData}bad`;
-  const invalidResult = validateTelegramInitData(tamperedInitData, [mockBotToken]);
+  const invalidResult = await validateTelegramInitData(tamperedInitData, [mockBotToken]);
   assert.strictEqual(invalidResult.valid, false);
 
   // 3. Expired auth_date (older than 24 hours) fails
@@ -47,7 +47,7 @@ test('validateTelegramInitData verifies authentic HMAC and rejects tampered or e
   oldData.sort((a, b) => a.localeCompare(b));
   const oldHash = crypto.createHmac('sha256', secretKey).update(oldData.join('\n')).digest('hex');
   const expiredInitData = `auth_date=${oldDate}&user=${encodeURIComponent(userStr)}&hash=${oldHash}`;
-  const expiredResult = validateTelegramInitData(expiredInitData, [mockBotToken]);
+  const expiredResult = await validateTelegramInitData(expiredInitData, [mockBotToken]);
   assert.strictEqual(expiredResult.valid, false);
   assert.match(expiredResult.error || '', /expired/i);
 });
