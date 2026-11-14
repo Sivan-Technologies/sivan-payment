@@ -34,6 +34,7 @@ export interface NearTransferResult {
   asset: 'usdc' | 'near';
   network: 'near';
   blockHash?: string;
+  error?: string;
   rawResult?: any;
 }
 
@@ -217,6 +218,29 @@ export async function executeNearOnchainTransfer(
   let accessKey = await fetchAccessKeyNonce(rpcUrl, senderAccountId, senderPublicKeyStr);
   let recentBlockHashStr: string | null = accessKey?.blockHash ?? null;
 
+  // Ensure sender account is activated with native gas and recipient has NEP-141 storage registered
+  if (asset === 'usdc') {
+    const { ensureNearAccountAndStorage } = await import('./near-activation.js');
+    const { isNearStorageRegistered } = await import('./near-rpc.js');
+    const usdcContract = getNearUsdcContract(production);
+
+    if (!accessKey && !input.useVault) {
+      await ensureNearAccountAndStorage(input.senderUserId, senderAccountId, { production }).catch(() => {});
+      accessKey = await fetchAccessKeyNonce(rpcUrl, senderAccountId, senderPublicKeyStr);
+      recentBlockHashStr = accessKey?.blockHash ?? null;
+    }
+
+    const recipientRegistered = await isNearStorageRegistered(input.recipientAddress, usdcContract, production).catch(() => true);
+    if (!recipientRegistered) {
+      await ensureNearAccountAndStorage(input.recipientAddress, input.recipientAddress, { production }).catch(() => {});
+      if (input.useVault) {
+        // Re-fetch nonce in case vault just signed a storage_deposit tx
+        accessKey = await fetchAccessKeyNonce(rpcUrl, senderAccountId, senderPublicKeyStr);
+        recentBlockHashStr = accessKey?.blockHash ?? null;
+      }
+    }
+  }
+
   if (!recentBlockHashStr) {
     recentBlockHashStr = await fetchRecentBlockHash(rpcUrl);
   }
@@ -295,6 +319,7 @@ export async function executeNearOnchainTransfer(
     asset,
     network: 'near',
     blockHash: broadcastRes.blockHash || (broadcastRes.success ? safeBlockHashStr : undefined),
+    error: broadcastRes.error,
     rawResult: broadcastRes.raw,
   };
 }

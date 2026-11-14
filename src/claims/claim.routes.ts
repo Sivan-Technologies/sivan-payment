@@ -134,9 +134,18 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
           data: result,
         });
       } catch (err: any) {
-        return reply.status(400).send({
-          code: 'CLAIM_CREATION_FAILED',
-          message: err.message || 'Failed to create claim',
+        const statusCode = err?.statusCode && typeof err.statusCode === 'number' ? err.statusCode : 400;
+        const code = err?.code || 'CLAIM_CREATION_FAILED';
+        const message = err?.message || 'Failed to create claim';
+        return reply.status(statusCode).send({
+          code,
+          message,
+          details: err?.details,
+          error: {
+            code,
+            message,
+            details: err?.details,
+          },
         });
       }
     }

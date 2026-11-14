@@ -1184,7 +1184,29 @@ export async function identityRoutes(app: FastifyInstance) {
       const match = userWallets.find((w) => w.chain?.toLowerCase() === requestedChain);
       if (match?.address) {
         targetAddress = match.address;
-      } else if (provision === 'true' || ensureWallet === 'true') {
+      } else if (requestedChain === 'near') {
+        const { generateNearAddress } = await import('../wallets/near/near-keypair.js');
+        targetAddress = generateNearAddress(`sivan_near_${user.id}`);
+        import('../wallets/user-wallet.service.js')
+          .then(({ ensureUserWallet }) => ensureUserWallet(user.id, 'near'))
+          .catch(() => {});
+      } else if (requestedChain === 'stellar') {
+        const { generateStellarAddress } = await import('../wallets/stellar/stellar-keypair.js');
+        targetAddress = generateStellarAddress(`sivan_stellar_${user.id}`);
+        import('../wallets/user-wallet.service.js')
+          .then(({ ensureUserWallet }) => ensureUserWallet(user.id, 'stellar'))
+          .catch(() => {});
+      } else if (['base', 'celo', 'bsc', 'bnb', 'ethereum', 'arbitrum', 'arc'].includes(requestedChain)) {
+        const evmMatch = userWallets.find((w) => w.address && String(w.address).startsWith('0x') && String(w.address).length === 42);
+        if (evmMatch?.address) {
+          targetAddress = evmMatch.address;
+          import('../wallets/user-wallet.service.js')
+            .then(({ ensureUserWallet }) => ensureUserWallet(user.id, requestedChain as any))
+            .catch(() => {});
+        }
+      }
+
+      if (!targetAddress && (provision === 'true' || ensureWallet === 'true')) {
         const canProvision = isIdentityServiceAuthorized(request);
         if (canProvision) {
           try {

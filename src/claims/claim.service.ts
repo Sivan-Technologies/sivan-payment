@@ -338,13 +338,85 @@ export class ClaimService {
         walletAddress: src.walletAddress,
         txHash: src.txHash || `agg_lock_${src.chain.toLowerCase()}_${randomBytes(6).toString('hex')}`,
       }));
-    } else if (spendPlan.sources.length > 0) {
+    } else if (spendPlan.sources.length > 0 && params.walletBalancesOverride) {
       resolvedFundingSources = spendPlan.sources.map((src) => ({
         chain: src.chain.toLowerCase(),
         amount: src.amount,
         walletAddress: src.walletAddress,
         txHash: `agg_lock_${src.chain.toLowerCase()}_${randomBytes(6).toString('hex')}`,
       }));
+    } else if (spendPlan.sources.length > 0) {
+      const { assertTransferAuthorised } = await import('../identity/withdrawal-pin.guard.js');
+      await assertTransferAuthorised({
+        userId: params.userId,
+        amount: numAmount,
+        destinationAddress: params.recipientPhone.trim(),
+        network: settlementNetwork,
+        isP2p: false,
+        pin: params.pin,
+      });
+
+      resolvedFundingSources = [];
+      for (const src of spendPlan.sources) {
+        const chainLower = src.chain.toLowerCase();
+        if (chainLower === 'near') {
+          const { executeNearOnchainTransfer } = await import('../wallets/near/near-transfer.js');
+          const { getNearVaultConfig } = await import('../wallets/near/near-vault.js');
+          const vaultConfig = getNearVaultConfig();
+          const lockRes = await executeNearOnchainTransfer({
+            senderUserId: params.userId,
+            useVault: false,
+            recipientAddress: vaultConfig.accountId,
+            amount: Number(src.amount).toFixed(6),
+            asset: 'usdc',
+          });
+          if (!lockRes.success || !lockRes.txHash) {
+            const errDetail =
+              lockRes.error ||
+              lockRes.rawResult?.error?.message ||
+              (lockRes.rawResult?.error ? JSON.stringify(lockRes.rawResult.error) : 'Broadcast rejected by NEAR RPC');
+            throw new Error(`On-chain transit vault lock on NEAR failed: ${errDetail}`);
+          }
+          resolvedFundingSources.push({
+            chain: chainLower,
+            amount: src.amount,
+            walletAddress: src.walletAddress,
+            txHash: lockRes.txHash,
+          });
+        } else {
+          const { getWalletProvider } = await import('../wallets/provider/provider-registry.js');
+          const { resolveActiveWalletProvider } = await import('../wallets/wallet-controls.service.js');
+          const walletProvider = getWalletProvider(await resolveActiveWalletProvider());
+          const { env } = await import('../config/env.js');
+          const vaultAddr =
+            chainLower === 'solana'
+              ? env.SIVAN_FEE_WALLET_SOLANA
+              : env.SIVAN_FEE_WALLET_EVM || env.SIVAN_ETH_FEE_WALLET_ADDRESS;
+          if (!vaultAddr) {
+            throw new Error(`Transit vault address is not configured for ${chainLower.toUpperCase()}`);
+          }
+          const userWallets = await db.listUserWallets(params.userId).catch(() => []);
+          const matchedWallet = userWallets.find((w: any) => w.chain?.toLowerCase() === chainLower);
+          const lockRes = await walletProvider.createTransfer({
+            userId: params.userId,
+            providerWalletId: matchedWallet?.providerWalletId || `wallet_${params.userId}_${chainLower}`,
+            chain: chainLower as any,
+            asset: asset as any,
+            amount: Number(src.amount).toFixed(6),
+            toAddress: vaultAddr,
+            idempotencyKey: `claim_lock_${params.userId}_${chainLower}_${Date.now()}`,
+          });
+          if (!lockRes || lockRes.status === 'failed' || !lockRes.txHash) {
+            throw new Error(`On-chain transit vault lock on ${chainLower.toUpperCase()} failed to broadcast.`);
+          }
+          resolvedFundingSources.push({
+            chain: chainLower,
+            amount: src.amount,
+            walletAddress: src.walletAddress,
+            txHash: lockRes.txHash,
+          });
+        }
+      }
     } else {
       const fallbackSource = (params.sourceNetwork?.toLowerCase() as SupportedClaimNetwork) || 'solana';
       resolvedFundingSources = [
