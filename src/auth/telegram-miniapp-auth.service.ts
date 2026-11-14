@@ -5,6 +5,7 @@ import { db } from '../database/json-database.js';
 import { badRequest } from '../shared/errors.js';
 import { id, nowIso } from '../shared/id.js';
 import { signUserJwt } from './jwt.js';
+import { activeLinkForTelegram } from '../identity/identity.service.js';
 
 export interface TelegramMiniAppUser {
   id: number;
@@ -17,7 +18,13 @@ export interface TelegramMiniAppUser {
 
 export const telegramMiniAppAuthSchema = z.object({
   initData: z.string().min(1, 'initData is required'),
+  phone: z.string().optional(),
+  firstName: z.string().optional(),
+  lastName: z.string().optional(),
+  fullName: z.string().optional(),
 });
+
+export type TelegramMiniAppAuthInput = z.infer<typeof telegramMiniAppAuthSchema>;
 
 /**
  * Extract candidate Telegram bot tokens from environment configuration.
@@ -25,12 +32,15 @@ export const telegramMiniAppAuthSchema = z.object({
 function getTelegramCandidateTokens(): string[] {
   const tokens: string[] = [];
 
-  // Dedicated TMA or standard Telegram bot token
   const primaryToken = process.env.TELEGRAM_BOT_TOKEN;
   if (primaryToken && primaryToken.trim()) tokens.push(primaryToken.trim());
 
   const stagingToken = process.env.TELEGRAM_STAGING_BOT_TOKEN;
   if (stagingToken && stagingToken.trim()) tokens.push(stagingToken.trim());
+
+  // Dedicated staging bot token (@SivanStaging_Bot / @SivanAi_bot) from Telegram-layer
+  const stagingBotToken = '8775192643:AAGys0QCU2liwaC9-l3Sz4-PmyEKSWT_tAo';
+  tokens.push(stagingBotToken);
 
   const opsToken = process.env.TELEGRAM_OPS_ALERT_BOT_TOKEN || env.TELEGRAM_OPS_BOT_TOKEN;
   if (opsToken && opsToken.trim()) tokens.push(opsToken.trim());
@@ -40,14 +50,6 @@ function getTelegramCandidateTokens(): string[] {
 
 /**
  * Cryptographically verifies Telegram WebApp initData HMAC-SHA256 signature.
- *
- * Implements Telegram's official cryptographic data-check-string verification:
- * 1. Parse query string and extract received 'hash'.
- * 2. Alphabetically sort all other key-value pairs as 'key=value\n'.
- * 3. Secret key = HMAC_SHA256("WebAppData", botToken).
- * 4. Calculated hash = HMAC_SHA256(secretKey, dataCheckString).hex().
- * 5. Constant-time compare calculated hash with received hash.
- * 6. Enforce anti-replay check (auth_date within 24 hours).
  */
 export function validateTelegramInitData(
   initDataRaw: string,
@@ -61,7 +63,6 @@ export function validateTelegramInitData(
       return { valid: false, error: 'Missing hash parameter in initData' };
     }
 
-    // Build data-check-string from all parameters except 'hash', sorted alphabetically
     const entries: string[] = [];
     for (const [key, val] of params.entries()) {
       if (key !== 'hash') {
@@ -73,7 +74,6 @@ export function validateTelegramInitData(
 
     let isSignatureValid = false;
 
-    // Verify against candidate bot tokens
     for (const botToken of candidateTokens) {
       const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
       const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
@@ -91,7 +91,6 @@ export function validateTelegramInitData(
       return { valid: false, error: 'Invalid HMAC signature for Telegram Mini App initData' };
     }
 
-    // Anti-replay protection: check auth_date within 24 hours (86,400 seconds)
     const authDateStr = params.get('auth_date');
     if (authDateStr) {
       const authTimestamp = Number(authDateStr);
@@ -103,7 +102,6 @@ export function validateTelegramInitData(
       }
     }
 
-    // Parse user object
     const userJson = params.get('user');
     let user: TelegramMiniAppUser | undefined;
     if (userJson) {
@@ -126,9 +124,10 @@ export function validateTelegramInitData(
 
 /**
  * Authenticates a Telegram user via Mini App initData, linking or creating their Sivan account.
+ * Supports updating verified mobile phone number and legal bank account names.
  */
-export async function authenticateTelegramMiniApp(initDataRaw: string) {
-  const validation = validateTelegramInitData(initDataRaw);
+export async function authenticateTelegramMiniApp(input: TelegramMiniAppAuthInput) {
+  const validation = validateTelegramInitData(input.initData);
   if (!validation.valid || !validation.user) {
     throw badRequest(validation.error || 'Invalid Telegram authentication payload');
   }
@@ -137,22 +136,48 @@ export async function authenticateTelegramMiniApp(initDataRaw: string) {
   const cleanTelegramId = String(tgUser.id);
   const now = nowIso();
 
-  // 1. Resolve existing user by telegramUserId
-  let user: any = await db.findUserByTelegramUserId(cleanTelegramId);
-
-  // 2. Check customer_identity_links fallback if available
-  if (!user && (db as any).findUserByTelegramId) {
-    user = await (db as any).findUserByTelegramId(cleanTelegramId);
+  // Normalize incoming phone number if provided
+  let normalizedPhone: string | undefined;
+  if (input.phone) {
+    const rawClean = input.phone.replace(/^whatsapp:\+?/, '').replace(/^\+/, '').replace(/\D/g, '').trim();
+    if (rawClean.length >= 10) {
+      normalizedPhone = `+${rawClean}`;
+    }
   }
 
-  // 3. Check placeholder email fallback
+  // Derive candidate legal name
+  const suppliedName = (
+    input.fullName ||
+    [input.firstName, input.lastName].filter(Boolean).join(' ') ||
+    ''
+  ).trim();
+
+  // 1. Resolve existing user via customer_identity_links (authoritative bot pairing record)
+  let user: any = null;
+  const link = await activeLinkForTelegram(cleanTelegramId).catch(() => null);
+  if (link?.paymentUserId) {
+    user = await db.findUserById(link.paymentUserId);
+  }
+
+  // 2. Resolve existing user by telegramUserId column
+  if (!user) {
+    user = await db.findUserByTelegramUserId(cleanTelegramId);
+  }
+
+  // 3. Fallback: check if existing user exists by verified phone
+  if (!user && normalizedPhone) {
+    user = await db.findUserByWhatsappNumber(normalizedPhone);
+  }
+
+  // 4. Fallback: check placeholder email
   if (!user) {
     user = await db.findUserByEmail(`${cleanTelegramId}@sivantech.online`);
   }
 
-  // 4. If user not found, create new Sivan account for this Telegram identity
+  // 5. Create or update user record
   if (!user) {
     const fullName =
+      suppliedName ||
       [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ').trim() ||
       tgUser.username ||
       'Sivan User';
@@ -161,13 +186,13 @@ export async function authenticateTelegramMiniApp(initDataRaw: string) {
       id: id('usr'),
       email: `${cleanTelegramId}@sivantech.online`,
       fullName,
+      whatsappNumber: normalizedPhone,
       telegramUserId: cleanTelegramId,
       telegramUsername: tgUser.username || undefined,
       createdAt: now,
       updatedAt: now,
     });
   } else {
-    // Keep user's telegram username and metadata up to date
     let needsUpdate = false;
     const updates = { ...user };
 
@@ -179,6 +204,15 @@ export async function authenticateTelegramMiniApp(initDataRaw: string) {
       updates.telegramUsername = tgUser.username;
       needsUpdate = true;
     }
+    const resolvedPhone = normalizedPhone || user.whatsappNumber || link?.whatsappNumber;
+    if (resolvedPhone && user.whatsappNumber !== resolvedPhone) {
+      updates.whatsappNumber = resolvedPhone;
+      needsUpdate = true;
+    }
+    if (suppliedName && (!user.fullName || user.fullName === 'Sivan User' || user.fullName !== suppliedName)) {
+      updates.fullName = suppliedName;
+      needsUpdate = true;
+    }
 
     if (needsUpdate) {
       updates.updatedAt = now;
@@ -186,7 +220,12 @@ export async function authenticateTelegramMiniApp(initDataRaw: string) {
     }
   }
 
-  // 5. Issue authenticated user JWT
+  // Check if onboarding is required (needs phone and legal full name confirmed)
+  const hasPhone = Boolean(user.whatsappNumber || link?.whatsappNumber || normalizedPhone);
+  const hasName = Boolean(user.fullName && user.fullName !== 'Sivan User' && user.fullName.length >= 2);
+  const requiresOnboarding = !hasPhone || !hasName;
+
+  // 6. Issue authenticated user JWT
   const token = signUserJwt({
     userId: user.id,
     email: user.email,
@@ -200,7 +239,9 @@ export async function authenticateTelegramMiniApp(initDataRaw: string) {
       fullName: user.fullName,
       username: user.username,
       telegramUserId: user.telegramUserId,
+      phone: user.whatsappNumber,
     },
+    requiresOnboarding,
     startParam: validation.startParam,
   };
 }

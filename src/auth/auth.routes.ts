@@ -20,7 +20,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post('/api/auth/telegram-miniapp', async (request) => {
     const body = parseBody(telegramMiniAppAuthSchema, request.body);
-    return { data: await authenticateTelegramMiniApp(body.initData) };
+    return { data: await authenticateTelegramMiniApp(body) };
   });
 
 
