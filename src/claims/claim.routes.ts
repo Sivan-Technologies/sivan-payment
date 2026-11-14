@@ -430,10 +430,10 @@ export async function claimRoutes(fastify: FastifyInstance): Promise<void> {
     ) => {
       try {
         const { recipientPhone, userId, code, claimId, payoutDestination, targetAddress, bankDetails } = request.body || {};
-        if (!recipientPhone || !userId || !code) {
+        if (!recipientPhone || !code) {
           return reply.status(400).send({
             code: 'INVALID_REQUEST',
-            message: 'recipientPhone, userId, and code are required',
+            message: 'recipientPhone and code are required',
           });
         }
         const redeemed = await ClaimService.redeemByPhone({
