@@ -12,6 +12,7 @@ export function getNearRpcUrls(production?: boolean): string[] {
   }
   const testList = [
     process.env.NEAR_TESTNET_RPC_URL,
+    'https://test.rpc.fastnear.com',
     'https://rpc.testnet.near.org',
   ].filter(Boolean) as string[];
   return testList;
@@ -54,7 +55,7 @@ async function queryNearRpc<T>(method: string, params: Record<string, any>, prod
 
   for (const url of candidateUrls) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1800);
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
 
     try {
       const res = await fetch(url, {
@@ -170,7 +171,8 @@ export async function fetchNearTokenBalance(
 
 /**
  * Reads both native NEAR and NEP-141 USDC balances for an account.
- * Supports both native Circle USDC and bridged USDC.e on NEAR mainnet.
+ * Supports both native Circle USDC and bridged USDC.e on NEAR mainnet,
+ * and resiliently inspects mainnet if testnet returns zero.
  */
 export async function readNearBalances(
   accountId: string,
@@ -180,19 +182,38 @@ export async function readNearBalances(
 
   if (production) {
     const [near, nativeUsdc, bridgedUsdc] = await Promise.all([
-      fetchNearNativeBalance(accountId, production),
-      fetchNearTokenBalance(accountId, usdcContract, 6, production),
-      fetchNearTokenBalance(accountId, NEAR_BRIDGED_USDC_MAINNET, 6, production),
+      fetchNearNativeBalance(accountId, true),
+      fetchNearTokenBalance(accountId, usdcContract, 6, true),
+      fetchNearTokenBalance(accountId, NEAR_BRIDGED_USDC_MAINNET, 6, true),
     ]);
 
     const totalUsdc = (Number(nativeUsdc) + Number(bridgedUsdc)).toFixed(6);
     return { near, usdc: totalUsdc };
   }
 
+  // On staging / testnet mode: query testnet first
   const [near, usdc] = await Promise.all([
-    fetchNearNativeBalance(accountId, production),
-    fetchNearTokenBalance(accountId, usdcContract, 6, production),
+    fetchNearNativeBalance(accountId, false),
+    fetchNearTokenBalance(accountId, usdcContract, 6, false),
   ]);
+
+  // If user deposited real USDC on Mainnet while testing in staging,
+  // check Mainnet FastNear so real deposited funds are never ignored or marked unavailable
+  if (Number(usdc) === 0 && Number(near) === 0) {
+    try {
+      const [mainNear, mainNativeUsdc, mainBridgedUsdc] = await Promise.all([
+        fetchNearNativeBalance(accountId, true),
+        fetchNearTokenBalance(accountId, getNearUsdcContract(true), 6, true),
+        fetchNearTokenBalance(accountId, NEAR_BRIDGED_USDC_MAINNET, 6, true),
+      ]);
+      const mainTotalUsdc = (Number(mainNativeUsdc) + Number(mainBridgedUsdc)).toFixed(6);
+      if (Number(mainTotalUsdc) > 0 || Number(mainNear) > 0) {
+        return { near: mainNear, usdc: mainTotalUsdc };
+      }
+    } catch {
+      // Return testnet zeros safely on fallback error
+    }
+  }
 
   return { near, usdc };
 }
