@@ -92,6 +92,10 @@ services:
     envVars:
       - key: NODE_OPTIONS
         value: "--max-old-space-size=384"
+      - key: DEPOSIT_POLL_SECONDS
+        value: "120"
+      - key: TRANSFER_CONFIRM_POLL_SECONDS
+        value: "120"
       - key: APP_ENV
         value: staging
       # WHICH CHAIN THIS DEPLOYMENT SIGNS AGAINST. Read by resolveNetworkMode()
