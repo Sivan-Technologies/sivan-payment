@@ -121,9 +121,8 @@ if (env.NGN_SETTLEMENT_POLL_SECONDS > 0) {
   };
   // unref() so the timer never holds the process open during a shutdown.
   setInterval(tick, intervalMs).unref();
-  // Run once at boot: a deploy is exactly when a webhook is most likely to
-  // have been missed.
-  void tick();
+  // Stagger the initial run after boot so workers do not stampede memory simultaneously.
+  setTimeout(tick, 5_000).unref();
 }
 
 /**
@@ -166,7 +165,7 @@ if (env.TRANSFER_CONFIRM_POLL_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 10_000).unref();
 }
 
 /**
@@ -195,7 +194,7 @@ if (env.UTILITY_RECONCILE_POLL_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 15_000).unref();
 }
 
 /**
@@ -244,7 +243,7 @@ if (env.DEPOSIT_POLL_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 20_000).unref();
 }
 
 /**
@@ -296,7 +295,7 @@ if (env.DEPOSIT_CONFIRM_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 25_000).unref();
 }
 
 if (env.DEPOSIT_NOTIFY_SECONDS > 0) {
@@ -319,7 +318,7 @@ if (env.DEPOSIT_NOTIFY_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 30_000).unref();
 }
 
 /**
@@ -358,7 +357,7 @@ if (env.DEADLINE_SWEEP_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 35_000).unref();
 }
 
 /**
@@ -385,7 +384,7 @@ if (env.AUDIT_LOG_ARCHIVE_POLL_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 40_000).unref();
 }
 
 /**
@@ -412,7 +411,7 @@ if (env.FLOAT_MONITOR_POLL_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 45_000).unref();
 }
 
 /**
@@ -438,5 +437,5 @@ if (env.RECONCILIATION_SWEEP_POLL_SECONDS > 0) {
     }
   };
   setInterval(tick, intervalMs).unref();
-  void tick();
+  setTimeout(tick, 50_000).unref();
 }

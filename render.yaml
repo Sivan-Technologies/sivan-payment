@@ -86,12 +86,14 @@ services:
     plan: free
     rootDir: .
     buildCommand: npm install && npm run build && npm run db:migrate
-    startCommand: npm start
+    startCommand: node --max-old-space-size=280 dist/src/server.js
     healthCheckPath: /health
     autoDeploy: true
     envVars:
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=384"
+        value: "--max-old-space-size=280"
+      - key: POSTGRES_MAX_CONNECTIONS
+        value: "5"
       - key: DEPOSIT_POLL_SECONDS
         value: "120"
       - key: TRANSFER_CONFIRM_POLL_SECONDS
@@ -449,12 +451,14 @@ services:
     plan: free
     rootDir: .
     buildCommand: npm install && npm run build && npm run db:migrate
-    startCommand: npm start
+    startCommand: node --max-old-space-size=280 dist/src/server.js
     healthCheckPath: /health
     autoDeploy: false
     envVars:
       - key: NODE_OPTIONS
-        value: "--max-old-space-size=384"
+        value: "--max-old-space-size=280"
+      - key: POSTGRES_MAX_CONNECTIONS
+        value: "5"
       - key: APP_ENV
         value: production
       # Real chains, real money. Also the default when unset, so an accidental

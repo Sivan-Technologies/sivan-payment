@@ -13,7 +13,7 @@
     "test": "tsx scripts/run-all-tests.ts",
     "dev": "tsx watch src/server.ts",
     "dev:staging": "DOTENV_CONFIG_PATH=.env.staging tsx watch src/server.ts",
-    "start": "node --max-old-space-size=384 dist/src/server.js",
+    "start": "node --max-old-space-size=280 dist/src/server.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
     "test:build-isolation": "tsx scripts/test-build-isolation.ts",
