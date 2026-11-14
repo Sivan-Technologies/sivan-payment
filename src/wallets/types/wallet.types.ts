@@ -203,4 +203,5 @@ export interface WalletTransfer {
   /** True when a paymaster covered gas rather than the wallet. */
   sponsored?: boolean;
   rawProviderPayload?: unknown;
+  error?: string;
 }

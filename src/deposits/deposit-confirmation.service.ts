@@ -251,6 +251,17 @@ async function balanceStillPresent(
       return held + EPSILON >= expected ? 'confirmed' : 'unknown';
     }
 
+    if (deposit.chain === 'near') {
+      const { fetchNearTokenBalance, fetchNearNativeBalance, getNearUsdcContract } = await import('../wallets/near/near-rpc.js');
+      const isNearNative = deposit.asset.toLowerCase() === 'near';
+      const contract = getNearUsdcContract(production);
+      const heldStr = isNearNative
+        ? await fetchNearNativeBalance(deposit.address, production).catch(() => '0.000000')
+        : await fetchNearTokenBalance(deposit.address, contract, 6, production).catch(() => '0.000000');
+      const held = Number(heldStr);
+      return held + EPSILON >= expected ? 'confirmed' : 'unknown';
+    }
+
     /**
      * EVM: read at a block behind the head, not at 'latest'.
      *
@@ -373,6 +384,34 @@ async function txOutcome(
       } catch {
         return 'unknown';
       }
+    }
+
+    if (deposit.chain === 'near') {
+      const { getNearRpcUrls } = await import('../wallets/near/near-rpc.js');
+      const rpcUrls = getNearRpcUrls(production);
+      for (const rpcUrl of rpcUrls) {
+        try {
+          const res = await fetch(rpcUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: `tx_${Date.now()}`,
+              method: 'tx',
+              params: [hash, deposit.address],
+            }),
+          });
+          if (!res.ok) continue;
+          const body: any = await res.json();
+          if (body.error) continue;
+          const status = body.result?.status;
+          if (status?.Failure) return 'failed';
+          if (status?.SuccessValue !== undefined) return 'confirmed';
+        } catch {
+          continue;
+        }
+      }
+      return 'unknown';
     }
 
     const receipt = await evmRpc<any>(

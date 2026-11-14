@@ -31,7 +31,10 @@ export function getNearUsdcContract(production?: boolean): string {
     return process.env.NEAR_USDC_CONTRACT || '17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
   }
   // Official Circle native USDC contract on NEAR Testnet
-  return process.env.NEAR_TESTNET_USDC_CONTRACT || NEAR_CIRCLE_USDC_TESTNET;
+  if (process.env.NEAR_TESTNET_USDC_CONTRACT && process.env.NEAR_TESTNET_USDC_CONTRACT !== NEAR_FAKES_USDC_TESTNET) {
+    return process.env.NEAR_TESTNET_USDC_CONTRACT;
+  }
+  return NEAR_CIRCLE_USDC_TESTNET;
 }
 
 export const NEAR_BRIDGED_USDC_MAINNET = 'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.factory.bridge.near';
@@ -58,7 +61,7 @@ async function queryNearRpc<T>(method: string, params: Record<string, any>, prod
 
   for (const url of candidateUrls) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
     try {
       const res = await fetch(url, {

@@ -130,8 +130,8 @@ async function executeNativeActivationTransfer(
     const safeBlockHashStr = recentBlockHashStr || 'HqvnUa4uvRVSio8tpSMsiZToAsMjdQaG5NM8hsqfsXdw';
     const recentBlockHashBytes = baseDecode(safeBlockHashStr);
 
-    // 0.02 NEAR in yoctoNEAR
-    const activationYocto = 20_000_000_000_000_000_000_000n;
+    // 0.08 NEAR in yoctoNEAR (covers prepaid gas for 30 TGas NEP-141 transfers)
+    const activationYocto = 80_000_000_000_000_000_000_000n;
     const action = actions.transfer(activationYocto);
 
     const tx = createTransaction(
@@ -205,7 +205,7 @@ export async function ensureNearAccountAndStorage(
       ...targetContracts.map((c) => isNearStorageRegistered(targetAddress, c, isProd)),
     ]);
 
-    const hasNativeBalance = parseFloat(nativeBalanceStr) > 0.005;
+    const hasNativeBalance = parseFloat(nativeBalanceStr) >= 0.05;
     const allRegistered = storageStatuses.every(Boolean);
 
     if (allRegistered && hasNativeBalance) {
@@ -231,8 +231,8 @@ export async function ensureNearAccountAndStorage(
     let usdcStorageRegistered = allRegistered;
 
     if (vaultHasFunds) {
-      // Step A: Activate native implicit account if needed
-      if (!hasNativeBalance && parseFloat(vaultBalanceStr) >= 0.025) {
+      // Step A: Activate native implicit account or top up gas if needed (at least 0.05 NEAR)
+      if (!hasNativeBalance && parseFloat(vaultBalanceStr) >= 0.08) {
         const actRes = await executeNativeActivationTransfer(
           vaultConfig.accountId,
           vaultKp,

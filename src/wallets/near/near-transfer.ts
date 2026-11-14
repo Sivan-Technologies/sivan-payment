@@ -221,13 +221,29 @@ export async function executeNearOnchainTransfer(
   // Ensure sender account is activated with native gas and recipient has NEP-141 storage registered
   if (asset === 'usdc') {
     const { ensureNearAccountAndStorage } = await import('./near-activation.js');
-    const { isNearStorageRegistered } = await import('./near-rpc.js');
-    const usdcContract = getNearUsdcContract(production);
+    const { isNearStorageRegistered, fetchNearNativeBalance, fetchNearTokenBalance, NEAR_CIRCLE_USDC_TESTNET, NEAR_FAKES_USDC_TESTNET } = await import('./near-rpc.js');
 
-    if (!accessKey && !input.useVault) {
-      await ensureNearAccountAndStorage(input.senderUserId, senderAccountId, { production }).catch(() => {});
-      accessKey = await fetchAccessKeyNonce(rpcUrl, senderAccountId, senderPublicKeyStr);
-      recentBlockHashStr = accessKey?.blockHash ?? null;
+    // Ensure sender has sufficient native gas for prepaid 30 TGas reservation
+    if (!input.useVault) {
+      const senderNativeBal = await fetchNearNativeBalance(senderAccountId, production).catch(() => '0.000000');
+      if (!accessKey || parseFloat(senderNativeBal) < 0.04) {
+        await ensureNearAccountAndStorage(input.senderUserId, senderAccountId, { production }).catch(() => {});
+        accessKey = await fetchAccessKeyNonce(rpcUrl, senderAccountId, senderPublicKeyStr);
+        recentBlockHashStr = accessKey?.blockHash ?? null;
+      }
+    }
+
+    let usdcContract = getNearUsdcContract(production);
+    if (!production) {
+      const [circleBal, fakesBal] = await Promise.all([
+        fetchNearTokenBalance(senderAccountId, NEAR_CIRCLE_USDC_TESTNET, 6, false).catch(() => '0.000000'),
+        fetchNearTokenBalance(senderAccountId, NEAR_FAKES_USDC_TESTNET, 6, false).catch(() => '0.000000'),
+      ]);
+      if (parseFloat(circleBal) >= parseFloat(input.amount)) {
+        usdcContract = NEAR_CIRCLE_USDC_TESTNET;
+      } else if (parseFloat(fakesBal) >= parseFloat(input.amount)) {
+        usdcContract = NEAR_FAKES_USDC_TESTNET;
+      }
     }
 
     const recipientRegistered = await isNearStorageRegistered(input.recipientAddress, usdcContract, production).catch(() => true);
@@ -265,7 +281,20 @@ export async function executeNearOnchainTransfer(
     action = actions.transfer(BigInt(yoctoStr));
   } else {
     // NEP-141 USDC: function call to ft_transfer on USDC contract
-    receiverId = getNearUsdcContract(production);
+    let contractToUse = getNearUsdcContract(production);
+    if (!production) {
+      const { fetchNearTokenBalance, NEAR_CIRCLE_USDC_TESTNET, NEAR_FAKES_USDC_TESTNET } = await import('./near-rpc.js');
+      const [circleBal, fakesBal] = await Promise.all([
+        fetchNearTokenBalance(senderAccountId, NEAR_CIRCLE_USDC_TESTNET, 6, false).catch(() => '0.000000'),
+        fetchNearTokenBalance(senderAccountId, NEAR_FAKES_USDC_TESTNET, 6, false).catch(() => '0.000000'),
+      ]);
+      if (parseFloat(circleBal) >= parseFloat(input.amount)) {
+        contractToUse = NEAR_CIRCLE_USDC_TESTNET;
+      } else if (parseFloat(fakesBal) >= parseFloat(input.amount)) {
+        contractToUse = NEAR_FAKES_USDC_TESTNET;
+      }
+    }
+    receiverId = contractToUse;
     // 6 decimals
     const usdcAtomic = BigInt(Math.round(parseFloat(input.amount) * 1_000_000)).toString();
     action = actions.functionCall(

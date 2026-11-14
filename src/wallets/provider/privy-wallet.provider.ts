@@ -1296,6 +1296,7 @@ export class PrivyWalletProvider implements WalletProvider {
         providerTransferId: nearRes.txHash,
         status: nearRes.success ? 'confirmed' : 'failed',
         txHash: nearRes.txHash,
+        error: nearRes.error,
       };
     }
 
