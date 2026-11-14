@@ -77,7 +77,7 @@ export async function ensureStellarAccountAndTrustline(
       keypair = Keypair.fromSecret(kp.secretKey);
     }
 
-    const pubkey = address || keypair.publicKey();
+    const pubkey = keypair.publicKey();
     const isProd = typeof options?.production === 'boolean' ? options.production : resolveNetworkMode() === 'mainnet';
     const networkPassphrase = isProd ? Networks.PUBLIC : Networks.TESTNET;
 

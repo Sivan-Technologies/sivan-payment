@@ -43,9 +43,9 @@ import {
   StrKey as StellarStrKey,
   Memo as StellarMemo,
 } from '@stellar/stellar-sdk';
-import { generateStellarKeypair } from '../stellar/stellar-keypair.js';
+import { generateStellarKeypair, generateStellarAddress } from '../stellar/stellar-keypair.js';
 import { fetchStellarAccount, horizonEndpoints } from '../stellar/stellar-rpc.js';
-import { getStellarUsdcIssuer, getStellarUsdtIssuer, ensureStellarAccountAndTrustline } from '../stellar/trustline.js';
+import { getStellarUsdcIssuer, getStellarUsdtIssuer, ensureStellarAccountAndTrustline, hasUsdcTrustline } from '../stellar/trustline.js';
 
 import type {
   CreateWalletInput,
@@ -2651,10 +2651,14 @@ export class PrivyWalletProvider implements WalletProvider {
       throw forbidden(`Sending Stellar wallet (${senderAddress}) is not activated on the network.`);
     }
 
-    // Auto-setup destination if it is an internal Sivan user
+    // Auto-setup destination if it is an internal Sivan user or transit vault
     const destWallet = await db.findWalletByAddress(input.toAddress).catch(() => undefined);
+    const stellarTransitVault = generateStellarAddress('sivan_stellar_vault');
+
     if (destWallet?.userId) {
       await ensureStellarAccountAndTrustline(`sivan_stellar_${destWallet.userId}`, input.toAddress, { production }).catch(() => null);
+    } else if (input.toAddress === stellarTransitVault) {
+      await ensureStellarAccountAndTrustline('sivan_stellar_vault', stellarTransitVault, { production }).catch(() => null);
     } else if (!production) {
       const destAccount = await fetchStellarAccount(input.toAddress, { production });
       if (!destAccount) {
@@ -2691,13 +2695,21 @@ export class PrivyWalletProvider implements WalletProvider {
 
     const feeWallet = env.SIVAN_FEE_WALLET_STELLAR?.trim() || process.env.SIVAN_FEE_WALLET_STELLAR?.trim();
     if (feeWallet && Number(input.feeAmount ?? 0) > 0 && StellarStrKey.isValidEd25519PublicKey(feeWallet)) {
-      builder.addOperation(
-        StellarOperation.payment({
-          destination: feeWallet,
-          asset: stellarAsset,
-          amount: String(input.feeAmount),
-        })
-      );
+      const feeHasTrustline = normalizedAsset === 'xlm' || normalizedAsset === 'native'
+        ? true
+        : await hasUsdcTrustline(feeWallet, { production }).catch(() => false);
+
+      if (feeHasTrustline) {
+        builder.addOperation(
+          StellarOperation.payment({
+            destination: feeWallet,
+            asset: stellarAsset,
+            amount: String(input.feeAmount),
+          })
+        );
+      } else {
+        console.warn(`[PrivyWalletProvider] Fee wallet ${feeWallet} lacks trustline for ${normalizedAsset}; skipping fee operation on testnet.`);
+      }
     }
 
     if (input.reference) {
