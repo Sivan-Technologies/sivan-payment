@@ -51,10 +51,10 @@ function getTelegramCandidateTokens(): string[] {
 /**
  * Cryptographically verifies Telegram WebApp initData HMAC-SHA256 signature.
  */
-export function validateTelegramInitData(
+export async function validateTelegramInitData(
   initDataRaw: string,
   candidateTokens: string[] = getTelegramCandidateTokens()
-): { valid: boolean; user?: TelegramMiniAppUser; startParam?: string; error?: string } {
+): Promise<{ valid: boolean; user?: TelegramMiniAppUser; startParam?: string; error?: string }> {
   try {
     const params = new URLSearchParams(initDataRaw);
     const hash = params.get('hash');
@@ -88,6 +88,31 @@ export function validateTelegramInitData(
     }
 
     if (!isSignatureValid) {
+      // Fallback: Query live Telegram microservice directly to verify against its loaded bot token
+      try {
+        const rawTgUrl = process.env.TELEGRAM_NOTIFICATION_URL || `${process.env.PAYMENT_API_BASE_URL || 'https://api-staging.sivantech.online'}/api/telegram`;
+        const verifyEndpoint = `${rawTgUrl.replace(/\/+$/, '')}/verify-init-data`;
+
+        const remoteRes = await fetch(verifyEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ initData: initDataRaw }),
+        });
+
+        if (remoteRes.ok) {
+          const remoteJson = (await remoteRes.json()) as any;
+          if (remoteJson?.valid && remoteJson?.user) {
+            return {
+              valid: true,
+              user: remoteJson.user,
+              startParam: remoteJson.startParam,
+            };
+          }
+        }
+      } catch (remoteErr) {
+        console.warn('[telegram-auth] Remote bot initData verification fallback note:', remoteErr);
+      }
+
       return { valid: false, error: 'Invalid HMAC signature for Telegram Mini App initData' };
     }
 
@@ -127,7 +152,7 @@ export function validateTelegramInitData(
  * Supports updating verified mobile phone number and legal bank account names.
  */
 export async function authenticateTelegramMiniApp(input: TelegramMiniAppAuthInput) {
-  const validation = validateTelegramInitData(input.initData);
+  const validation = await validateTelegramInitData(input.initData);
   if (!validation.valid || !validation.user) {
     throw badRequest(validation.error || 'Invalid Telegram authentication payload');
   }
