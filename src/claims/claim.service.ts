@@ -128,14 +128,14 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
       process.env.API_GATEWAY_URL ||
       (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
     ).replace(/\/$/, '');
-    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET || 'sivan_notify_test_secret';
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET || 'vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU';
 
     const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || `${gatewayUrl}/api/whatsapp`;
     const waNotifyUrl = rawWaUrl.endsWith('/api/notify') ? rawWaUrl : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
 
     const cleanPhone = record.recipientPhone.replace(/\D/g, '');
     const formattedPhone = `whatsapp:+${cleanPhone}`;
-    const appUrl = (process.env.CUSTOMER_APP_URL || 'https://app.sivantech.online').replace(/\/$/, '');
+    const appUrl = (process.env.CUSTOMER_APP_URL || (isLive ? 'https://app.sivantech.online' : 'https://staging.sivantech.online')).replace(/\/$/, '');
     const claimUrl = `${appUrl}/claim?token=${encodeURIComponent(record.token)}`;
 
     const textLines = [
@@ -157,6 +157,12 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
     }
 
     const text = textLines.join('\n');
+    const claimCodeStr = claimCode || '';
+    const inviteId = claimCodeStr ? `CLAIM-${claimCodeStr}` : `CLAIM-${record.id.slice(-6).toUpperCase()}`;
+    const amountFormatted = `${Number(record.amount).toFixed(2)} ${record.asset.toUpperCase()}`;
+    const purposeText = claimCodeStr
+      ? `Sent by ${senderName}. Reply: CLAIM ${claimCodeStr} to credit your Sivan balance, or claim at ${claimUrl}`
+      : `Sent by ${senderName}. Claim your funds at ${claimUrl}`;
 
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
@@ -171,14 +177,19 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
           body: JSON.stringify({
             to: formattedPhone,
             message: text,
+            reason: 'claim_invite',
             template: {
-              name: 'claim_invite',
-              language: 'en',
-              params: [senderName, `${Number(record.amount).toFixed(2)} ${record.asset.toUpperCase()}`, claimUrl],
+              name: 'sivan_seller_invite',
+              language: 'en_US',
+              params: [inviteId, amountFormatted, purposeText],
             },
           }),
         });
-        if (res.ok) break;
+        if (res.ok) {
+          console.info(`[ClaimService] WhatsApp claim invite dispatched successfully to ${formattedPhone}`);
+          break;
+        }
+        console.warn(`[ClaimService] WhatsApp dispatch response status: ${res.status}`);
         if (attempt === 1 && (res.status === 429 || res.status === 502 || res.status === 503)) {
           await new Promise((r) => setTimeout(r, 2000));
         }
