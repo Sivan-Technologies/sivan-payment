@@ -394,10 +394,16 @@ export class ClaimService {
             vaultAddr = env.SIVAN_FEE_WALLET_SOLANA;
           } else if (chainLower === 'stellar') {
             const { generateStellarAddress } = await import('../wallets/stellar/stellar-keypair.js');
+            const { ensureStellarAccountAndTrustline } = await import('../wallets/stellar/trustline.js');
             vaultAddr =
               env.SIVAN_FEE_WALLET_STELLAR ||
               process.env.MONEYGRAM_STELLAR_PUBLIC_KEY ||
               generateStellarAddress('sivan_stellar_vault');
+
+            // Proactively ensure the Stellar transit vault has active USDC trustline
+            await ensureStellarAccountAndTrustline('sivan_stellar_vault', vaultAddr).catch((err) => {
+              console.warn('[ClaimService] Stellar vault trustline check warning:', err?.message || err);
+            });
           } else {
             vaultAddr = env.SIVAN_FEE_WALLET_EVM || env.SIVAN_ETH_FEE_WALLET_ADDRESS;
           }
