@@ -107,13 +107,36 @@ function matchTransfer(
   // The deposit address is the durable link. Lowercased on both sides because
   // Breet returns checksummed EVM addresses and our stored copy may not be.
   const address = String(settlement.depositAddress ?? '').toLowerCase();
-  if (!address) return undefined;
+  let candidates: NgnTransferRecord[] = [];
 
-  const candidates = transfers.filter(
-    (item) =>
-      String(item.depositAddress ?? '').toLowerCase() === address ||
-      String(meta(item).transferMetadata?.depositAddress ?? '').toLowerCase() === address
-  );
+  if (address) {
+    candidates = transfers.filter(
+      (item) =>
+        String(item.depositAddress ?? '').toLowerCase() === address ||
+        String(meta(item).transferMetadata?.depositAddress ?? '').toLowerCase() === address
+    );
+  }
+
+  // FALLBACK: When depositAddress is not available (e.g. Breet trade lookup returns 404
+  // so trade.address is undefined), match using destination bank details from withdrawal meta.
+  if (candidates.length === 0) {
+    const rawWithdrawal = (settlement.raw as any)?.withdrawal;
+    const withdrawalAccount = String(rawWithdrawal?.meta?.accountNumber ?? '').trim();
+    const withdrawalBank = String(rawWithdrawal?.meta?.bankId ?? '').trim();
+
+    if (withdrawalAccount) {
+      candidates = transfers.filter((item) => {
+        if (item.direction !== 'offramp') return false;
+        const m = meta(item);
+        const acc = String(m.transferMetadata?.accountNumber ?? m.quoteMetadata?.accountNumber ?? '').trim();
+        const bank = String(m.transferMetadata?.bankId ?? m.quoteMetadata?.bankId ?? '').trim();
+        if (acc !== withdrawalAccount) return false;
+        if (withdrawalBank && bank && bank !== withdrawalBank) return false;
+        return true;
+      });
+    }
+  }
+
   if (candidates.length === 0) return undefined;
 
   /**
