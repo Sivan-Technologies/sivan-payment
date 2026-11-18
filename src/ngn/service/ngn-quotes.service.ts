@@ -169,7 +169,19 @@ function validateCurrencyPair(input: NgnQuoteInput) {
   if (!Number.isFinite(amount) || amount <= 0) throw badRequest('Invalid source amount.');
 }
 
+async function resolveUserId(rawUserId: string): Promise<string> {
+  if (rawUserId.startsWith('usr_')) return rawUserId;
+  const rawClean = rawUserId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  const user = (await db.findUserByWhatsappNumber(`+${rawClean}`))
+    || (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`))
+    || (await db.findUserByWhatsappNumber(rawClean))
+    || (await db.findUserByTelegramUserId(rawClean));
+  return user ? user.id : rawUserId;
+}
+
 export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>) {
+  const resolvedUserId = await resolveUserId(input.userId);
+  input = { ...input, userId: resolvedUserId };
   validateCurrencyPair(input);
   const controls = await getNgnControls();
   let revenueMode = input.direction === 'offramp'
@@ -587,11 +599,33 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
 
     if (input.accountNumber && (input.bankCode || input.bankId)) {
       const targetBankQuery = input.bankCode || input.bankId || '';
-      const resolvedBankId = input.bankId || input.bankCode || (await resolveBankId(targetBankQuery).catch(() => targetBankQuery));
+      const resolvedBankId = await resolveBankId(targetBankQuery).catch(() => targetBankQuery);
 
-      const isKnownVerified = verified.some(
+      let isKnownVerified = verified.some(
         (a) => a.accountNumber === input.accountNumber && (a.bankId === resolvedBankId || a.bankId === targetBankQuery)
       );
+
+      // If not yet saved in database as verified, check if the account name matches the user's name
+      if (!isKnownVerified) {
+        const user = await db.findUserById(input.userId);
+        const declaredName = String(user?.fullName ?? '').trim();
+        const candidateName = String(input.accountName ?? '').trim();
+        if (declaredName && candidateName) {
+          const { matchAccountName } = await import('../../kyc/service/name-match.js');
+          const match = matchAccountName(declaredName, candidateName);
+          if (match.verdict === 'match') {
+            const { saveNgnPayoutAccount } = await import('./ngn-payout-accounts.service.js');
+            const saved = await saveNgnPayoutAccount({
+              userId: input.userId,
+              bankId: resolvedBankId,
+              accountNumber: input.accountNumber,
+            }).catch(() => null);
+            if (saved && saved.status === 'verified') {
+              isKnownVerified = true;
+            }
+          }
+        }
+      }
 
       if (!isKnownVerified && !controls.thirdPartyPayoutsEnabled) {
         throw forbidden(
