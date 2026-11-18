@@ -164,11 +164,11 @@ export async function getAdminUserDetails(userId: string) {
     customer,
     ngnLedger: ngnStatement
       ? {
-          activeRail: ngnStatement.activeRail,
-          summary: ngnStatement.summary,
-          virtualAccount: ngnStatement.virtualAccount,
-          recentEntries: ngnStatement.entries.slice(0, 15),
-        }
+        activeRail: ngnStatement.activeRail,
+        summary: ngnStatement.summary,
+        virtualAccount: ngnStatement.virtualAccount,
+        recentEntries: ngnStatement.entries.slice(0, 15),
+      }
       : null,
     legalAcceptances,
     externalAccounts,
@@ -642,7 +642,7 @@ export async function getFinanceDashboard() {
   const completedNgnBankOutflows = completedNgnOfframps.filter((item) => String(item.sourceCurrency).toLowerCase() === 'ngn');
   const pendingNgnOfframps = ngnTransfers.filter((item) => item.direction === 'offramp' && isNgnPendingStatus(item.status));
   const failedNgnOfframps = ngnTransfers.filter((item) => item.direction === 'offramp' && isNgnFailedStatus(item.status));
-  
+
   const vaTransactions: any[] = (data as any).virtualAccountTransactions ?? [];
   const completedVaInflows = vaTransactions.filter((item) => ['completed', 'settled', 'success'].includes(item.status));
   const completedOnrampOrders = (data.onrampOrders ?? []).filter((item) => item.status === 'completed');
