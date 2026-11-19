@@ -48,7 +48,7 @@ const LIVE_SIVAN_AI = "https://ai.sivantech.online";
 // Prefer a Cloudflare Worker secret named PROXY_SECRET. This literal is a
 // deployment convenience only and SHOULD BE REMOVED once the secret is set;
 // anyone reading the worker source can otherwise impersonate the gateway.
-const PROXY_SECRET_FALLBACK = "vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU";
+const PROXY_SECRET_FALLBACK = '';
 
 // Only these origins may make credentialed cross-origin calls. This list is
 // the only thing standing between a hostile page and an authenticated request
