@@ -35,7 +35,7 @@ async function main() {
   // Test creating a Service Agreement on Core Escrow Agent
   console.log('\n=== Step 2: Create Test Service Agreement (1 USDC) ===');
   const CORE_URL = process.env.CORE_API_URL || 'https://test-sivan.sivantech.online';
-  const CORE_SECRET = process.env.CORE_API_SECRET || 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
+  const CORE_SECRET = process.env.CORE_API_SECRET || '';
 
   const sellerPhone = '+2348000000002'; // test seller
   const payload = {
