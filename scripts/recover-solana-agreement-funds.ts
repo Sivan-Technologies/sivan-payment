@@ -18,7 +18,7 @@ config({ path: path.join(process.cwd(), '.env-sandbox') });
 
 // Force DB to live Neon connection
 process.env.DATABASE_URL =
-  'postgresql://neondb_owner:npg_3fnl7mFqijWz@ep-empty-snow-aye297lt.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require';
+  (process.env.DATABASE_URL || '');
 
 // Force devnet
 process.env.NODE_ENV = 'sandbox';
