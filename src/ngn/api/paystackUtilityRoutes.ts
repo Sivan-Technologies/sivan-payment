@@ -454,7 +454,17 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
     reply: FastifyReply
   ) => {
     const { network } = request.query;
-    const plans = await getUtilityDataPlans({ activeOnly: true, network });
+    let plans = await getUtilityDataPlans({ activeOnly: true, network });
+    if (plans.length === 0) {
+      const { DEFAULT_DATA_PLANS: verifiedPlans } = await import('../service/default-data-plans.js');
+      plans = (verifiedPlans || []).filter((p) => {
+        if (!p.isActive) return false;
+        if (network && network.toLowerCase() !== 'all') {
+          return p.network.toLowerCase() === network.toLowerCase() || p.network.toLowerCase() === 'all';
+        }
+        return true;
+      });
+    }
     const providerInfo = await getActiveUtilityProviderInfo();
     return reply.code(200).send({
       status: 'success',

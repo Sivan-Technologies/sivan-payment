@@ -23,6 +23,7 @@ import {
   listUtilityProviders,
   getUtilityProvider,
 } from '../provider/utility-registry.js';
+import { DEFAULT_DATA_PLANS as DEFAULT_VERIFIED_DATA_PLANS } from './default-data-plans.js';
 
 export interface UtilityDataPlanRecord {
   id: string;
@@ -67,6 +68,7 @@ export interface UtilityDataPlanRecord {
  * until an admin syncs real costs from a provider and sets a retail price.
  */
 export const DEFAULT_DATA_PLANS: UtilityDataPlanRecord[] = [];
+export { DEFAULT_VERIFIED_DATA_PLANS };
 
 // In-memory caching for sub-millisecond public API and bot queries
 let cachedPlans: UtilityDataPlanRecord[] | null = null;
@@ -172,9 +174,20 @@ export async function getUtilityDataPlanBySize(
   validity?: string
 ): Promise<UtilityDataPlanRecord | null> {
   const plans = await getUtilityDataPlans({ activeOnly: true });
+  const cleanTarget = String(bundleSize || '').trim().toLowerCase();
   const cleanSize = bundleSize.toUpperCase().replace(/\s+/g, '');
   const targetNet = (network || 'all').toLowerCase();
   const cleanVal = validity ? validity.toLowerCase().replace(/[\s_-]+/g, '') : undefined;
+
+  // 0. Exact id match first (for callers passing a specific plan ID)
+  if (cleanTarget.startsWith('plan_')) {
+    const exactById = plans.find(
+      (p) =>
+        p.id.toLowerCase() === cleanTarget &&
+        (targetNet === 'all' || p.network.toLowerCase() === targetNet || p.network.toLowerCase() === 'all')
+    );
+    if (exactById) return exactById;
+  }
 
   // 1. Exact network AND validity match first
   if (cleanVal) {
@@ -193,8 +206,8 @@ export async function getUtilityDataPlanBySize(
   );
   if (matches.length > 0) {
     const best =
-      matches.find((m) => Object.keys(m.providerPlanCodes || {}).length > 0) ||
       matches.find((m) => /30\s*day|month/i.test(m.validity || '')) ||
+      matches.find((m) => Object.keys(m.providerPlanCodes || {}).length > 0) ||
       matches[0];
     return best;
   }
