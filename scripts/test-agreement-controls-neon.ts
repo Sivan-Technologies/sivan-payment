@@ -28,11 +28,11 @@ import {
 
 const NEON_DB_URL =
   process.env.DATABASE_URL ||
-  'postgresql://neondb_owner:npg_3fnl7mFqijWz@ep-empty-snow-aye297lt-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+  '';
 
 const TEST_ADMIN_KEY =
   process.env.ADMIN_API_KEY ||
-  'sivan_admin_d61210c796ba80973a03ba60d6d3ea599b045c84d7efa624ad8feebd581ed2bb';
+  '';
 
 async function runNeonPsaVerification() {
   console.log('\n======================================================');
