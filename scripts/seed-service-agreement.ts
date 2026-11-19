@@ -1,7 +1,7 @@
 import { db } from '../src/database/json-database.js';
 import { PostgresDatabase } from '../src/database/postgres-database.js';
 
-const DB_URL = 'postgresql://neondb_owner:npg_Z9UrtjCkvO4X@ep-fragrant-lab-a5o3ka97-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+const DB_URL = (process.env.DATABASE_URL || '');
 
 async function main() {
   const pgDb = new PostgresDatabase(DB_URL);
