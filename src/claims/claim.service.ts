@@ -128,7 +128,7 @@ async function dispatchClaimInviteWhatsApp(record: OnchainClaimRecord, senderNam
       process.env.API_GATEWAY_URL ||
       (isLive ? 'https://api.sivantech.online' : 'https://api-staging.sivantech.online')
     ).replace(/\/$/, '');
-    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET || 'vDhsV0u8QLu-DhMP8muxUxp4XLk5I8TtaqXa9oO-ErU';
+    const secret = process.env.NOTIFY_SECRET || process.env.NOTIFICATION_SECRET || process.env.CORE_API_SECRET || '';
 
     const rawWaUrl = process.env.WHATSAPP_NOTIFICATION_URL || `${gatewayUrl}/api/whatsapp`;
     const waNotifyUrl = rawWaUrl.endsWith('/api/notify') ? rawWaUrl : `${rawWaUrl.replace(/\/$/, '')}/api/notify`;
