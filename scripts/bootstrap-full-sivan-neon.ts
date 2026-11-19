@@ -3,7 +3,7 @@ import pg from 'pg';
 const { Client } = pg;
 
 const DATABASE_URL = process.env.DATABASE_URL ||
-  'postgresql://neondb_owner:npg_aViZGnuH0DA3@ep-tiny-smoke-b55lgm04-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+  '';
 
 async function step(name: string, fn: () => Promise<void>) {
   process.stdout.write(`• ${name} ... `);
