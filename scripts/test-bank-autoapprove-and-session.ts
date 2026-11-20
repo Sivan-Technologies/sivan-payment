@@ -293,7 +293,7 @@ async function main() {
        */
       check('the boot guard refuses on a LIVE provider',
         /ngnRailIsLive/.test(appSource) &&
-          /BREET_ENV === 'production' \|\| env\.PAJ_RAMP_ENV === 'production'/.test(appSource),
+          /BREET_ENV === 'production'/.test(appSource),
         'no live-provider condition');
       check('AND on a production deployment',
         /ngnRailIsLive \|\| env\.APP_ENV === 'production'/.test(appSource),

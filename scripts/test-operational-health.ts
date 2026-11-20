@@ -305,7 +305,7 @@ async function main() {
     // The deployed case is asserted against the real API below.
     check('mock is tolerated outside a deployed environment',
       s.severity === 'ok', `${s.severity} (${env.NGN_PROVIDER}/${env.APP_ENV})`);
-    check('and it names the provider in use', /mock|breet|paj/i.test(s.detail), s.detail);
+    check('and it names the provider in use', /mock|breet|nomba/i.test(s.detail), s.detail);
 
     // NAMING THE PROVIDER IS NOT ENOUGH. Test had NGN_PROVIDER=breet with no
     // credentials, so this signal read ok while every bank call 403'd and the

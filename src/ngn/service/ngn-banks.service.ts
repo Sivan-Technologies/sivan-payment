@@ -2,7 +2,6 @@ import { env } from '../../config/env.js';
 import { badRequest, serviceUnavailable } from '../../shared/errors.js';
 import { bankResolutionMessage } from '../../shared/user-message.js';
 import { BreetNgnProvider } from '../provider/breet.provider.js';
-import { PajNgnProvider } from '../provider/paj.provider.js';
 import { listPaystackBanks, resolvePaystackBankAccount as resolvePaystackAccount } from './paystack-outbound-transfer.service.js';
 import type { NgnProviderName } from '../types/ngn.types.js';
 
@@ -125,16 +124,6 @@ export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<Ngn
     }));
   }
 
-  if (provider === 'paj') {
-    const banks = await new PajNgnProvider().getBanks();
-    return (banks as any[] ?? []).map((bank: any) => ({
-      id: String(bank.id ?? bank.code ?? bank.bankId),
-      name: bank.name ?? bank.bankName,
-      slug: bank.slug,
-      type: bank.type,
-    }));
-  }
-
   if (provider === 'paystack') {
     const banks = await listPaystackBanks(currency.toUpperCase());
     return banks.map((bank) => ({
@@ -150,7 +139,7 @@ export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<Ngn
   // Refused rather than returning [], which a UI would render as "no banks
   // found" - a lie that sends the user looking for a problem on their end.
   throw badRequest(
-    `The active NGN provider (${provider}) has no bank directory. Set NGN_PROVIDER to breet or paj.`
+    `The active NGN provider (${provider}) has no bank directory. Set NGN_PROVIDER to breet or paystack.`
   );
 }
 
@@ -302,39 +291,6 @@ export async function resolveNgnBankAccount(
     };
   }
 
-  if (provider === 'paj') {
-    // PROVIDER FAILURES MUST NOT BECOME A BARE 500.
-    //
-    // PajRamp's resolver needs a per-user session token, and the staging key
-    // has never been provisioned - /pub/initiate answers "Can't find
-    // business". The raw throw surfaced to the browser as
-    // "Internal Server Error", which tells a user their bank details are
-    // broken when the truth is that a provider is misconfigured.
-    //
-    // Caught on the deployed test API: the bank picker listed 687 PajRamp
-    // banks and every resolve returned 500.
-    let result: any;
-    try {
-      result = await new PajNgnProvider().resolveBankAccount(bankId, accountNumber);
-    } catch (error: any) {
-      // Same rule as the Breet branch above: the upstream's words, and its
-      // name, stay in the log.
-      console.warn('[ngn-banks] resolution failed', { bankId, reason: String(error?.message ?? error) });
-      throw badRequest(bankResolutionMessage(error));
-    }
-    const accountName = result?.accountName ?? result?.account_name ?? result?.name;
-    if (!accountName) {
-      throw badRequest('We could not confirm that account. Check the account number and that you picked the right bank, then try again.');
-    }
-    return {
-      accountName,
-      accountNumber,
-      bankId,
-      bankName: result?.bankName ?? result?.bank_name,
-      trustworthy: (env.PAJ_RAMP_ENV ?? 'staging') === 'production' || trustSandbox,
-    };
-  }
-
   if (provider === 'paystack') {
     const resolved = await resolvePaystackAccount(bankId, accountNumber);
     return {
@@ -376,6 +332,6 @@ export async function resolveNgnBankAccount(
   }
 
   throw badRequest(
-    `The active NGN provider (${provider}) cannot verify bank accounts. Set NGN_PROVIDER to breet or paj.`
+    `The active NGN provider (${provider}) cannot verify bank accounts. Set NGN_PROVIDER to breet or paystack.`
   );
 }

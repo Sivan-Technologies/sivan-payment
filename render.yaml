@@ -277,36 +277,6 @@ services:
         sync: false
       - key: NGN_LIVE_PROVIDER_ENABLED
         value: "true"
-      - key: PAJ_RAMP_ENV
-        value: staging
-      - key: PAJ_RAMP_BASE_URL
-        value: https://api-staging.paj.cash
-      - key: PAJ_RAMP_API_KEY
-        sync: false
-      - key: PAJ_RAMP_WEBHOOK_URL
-        value: https://api-staging.sivantech.online/api/payment/api/webhooks/paj
-      - key: PAJ_RAMP_DEFAULT_CURRENCY
-        value: NGN
-      - key: PAJ_RAMP_DEFAULT_CHAIN
-        value: SOLANA
-      - key: PAJ_RAMP_USDC_MINT
-        sync: false
-      - key: PAJ_RAMP_USDT_MINT
-        sync: false
-      - key: PAJ_RAMP_BUSINESS_USDC_FEE
-        value: "0"
-      - key: PAJ_RAMP_REQUIRE_SIVAN_KYC
-        value: "true"
-      - key: PAJ_RAMP_SESSION_MODE
-        value: merchant
-      - key: PAJ_RAMP_MERCHANT_TOKEN
-        sync: false
-      - key: PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS
-        sync: false
-      - key: PAJ_RAMP_DEFAULT_BANK_ID
-        sync: false
-      - key: PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER
-        sync: false
       # ---- Breet, the NGN rail ----
       # Credentials are sync:false so the sandbox keys stay out of git and are
       # pasted into the Render dashboard, matching how PAJ_RAMP_API_KEY is held.
@@ -623,36 +593,6 @@ services:
         sync: false
       - key: NGN_LIVE_PROVIDER_ENABLED
         value: "true"
-      - key: PAJ_RAMP_ENV
-        value: production
-      - key: PAJ_RAMP_BASE_URL
-        value: https://api.paj.cash
-      - key: PAJ_RAMP_API_KEY
-        sync: false
-      - key: PAJ_RAMP_WEBHOOK_URL
-        value: https://api.sivantech.online/api/payment/api/webhooks/paj
-      - key: PAJ_RAMP_DEFAULT_CURRENCY
-        value: NGN
-      - key: PAJ_RAMP_DEFAULT_CHAIN
-        value: SOLANA
-      - key: PAJ_RAMP_USDC_MINT
-        sync: false
-      - key: PAJ_RAMP_USDT_MINT
-        sync: false
-      - key: PAJ_RAMP_BUSINESS_USDC_FEE
-        value: "0"
-      - key: PAJ_RAMP_REQUIRE_SIVAN_KYC
-        value: "true"
-      - key: PAJ_RAMP_SESSION_MODE
-        value: merchant
-      - key: PAJ_RAMP_MERCHANT_TOKEN
-        sync: false
-      - key: PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS
-        sync: false
-      - key: PAJ_RAMP_DEFAULT_BANK_ID
-        sync: false
-      - key: PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER
-        sync: false
       # ---- Breet, the NGN rail ----
       # All credentials sync:false. Nothing about Breet is a literal here: the
       # production app id, secret and webhook secret are entered in the Render

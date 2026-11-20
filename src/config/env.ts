@@ -300,9 +300,8 @@ const envSchema = z.object({
   // `if (name === 'breet')` branch. The registry could never be reached:
   // NGN_PROVIDER=breet failed this enum and the whole service refused to boot,
   // so the Breet integration was unreachable by configuration.
-  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'paj', 'breet']).default('mock'),
+  NGN_PROVIDER: z.enum(['mock', 'linkio', 'eversend', 'nomba', 'breet']).default('mock'),
   NGN_LIVE_PROVIDER_ENABLED: booleanFromEnv.default(false),
-  PAJ_RAMP_ENV: z.enum(['staging', 'production']).default('staging'),
   // Breet - primary NGN provider. https://docs.breet.io
   // Sivan's own margin on the NGN rail, separate from the Bridge percentages.
   // 0 means "not set" and the NGN flows fall back to the Bridge fees.
@@ -493,20 +492,6 @@ const envSchema = z.object({
   // the map and every on-ramp would be refused.
   BREET_DEFAULT_NETWORK: z.string().optional().default('solana'),
   BREET_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
-  PAJ_RAMP_BASE_URL: z.string().url().optional().default('https://api-staging.paj.cash'),
-  PAJ_RAMP_API_KEY: z.string().optional().default(''),
-  PAJ_RAMP_WEBHOOK_URL: z.string().url().optional(),
-  PAJ_RAMP_DEFAULT_CURRENCY: z.string().default('NGN'),
-  PAJ_RAMP_DEFAULT_CHAIN: z.enum(['SOLANA', 'MONAD']).default('SOLANA'),
-  PAJ_RAMP_USDC_MINT: z.string().optional().default(''),
-  PAJ_RAMP_USDT_MINT: z.string().optional().default(''),
-  PAJ_RAMP_BUSINESS_USDC_FEE: z.string().default('0'),
-  PAJ_RAMP_REQUIRE_SIVAN_KYC: booleanFromEnv.default(true),
-  PAJ_RAMP_SESSION_MODE: z.enum(['merchant', 'user_otp']).default('merchant'),
-  PAJ_RAMP_MERCHANT_TOKEN: z.string().optional().default(''),
-  PAJ_RAMP_DEFAULT_RECIPIENT_ADDRESS: z.string().optional().default(''),
-  PAJ_RAMP_DEFAULT_BANK_ID: z.string().optional().default(''),
-  PAJ_RAMP_DEFAULT_ACCOUNT_NUMBER: z.string().optional().default(''),
   KYC_LEVEL_PROVIDER: z.enum(['mock', 'monnify', 'flutterwave', 'identifyorg', 'paystack']).default('mock'),
   MONNIFY_BASE_URL: z.string().url().optional().default('https://api.monnify.com'),
   MONNIFY_API_KEY: z.string().optional().default(''),

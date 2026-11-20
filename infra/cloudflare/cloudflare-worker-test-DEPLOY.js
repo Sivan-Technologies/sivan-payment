@@ -218,14 +218,13 @@ function resolveRoute(request, url) {
     upstreamPath = url.pathname;
     serviceName = "whatsapp-bot";
   } else if (
-    url.pathname === "/api/webhooks/breet" ||
-    url.pathname === "/api/webhooks/paj"
+    url.pathname === "/api/webhooks/breet"
   ) {
     // NGN provider webhooks go STRAIGHT to the payments API, path unchanged.
     //
     // Must be evaluated before the /api/payment rules, and must NOT be
-    // rewritten: Breet and PajRamp are configured with a literal URL in their
-    // dashboards and will POST exactly that. Any prefix stripping here would
+    // rewritten: Breet is configured with a literal URL in its
+    // dashboard and will POST exactly that. Any prefix stripping here would
     // deliver to a path the API does not serve.
     //
     // Without this rule the request falls through to the escrow backend and

@@ -369,8 +369,7 @@ export async function resolveRoute(request, url) {
   // 9. Payment Provider Direct Webhooks
   else if (
     url.pathname === "/api/webhooks/bridge" ||
-    url.pathname === "/api/webhooks/breet" ||
-    url.pathname === "/api/webhooks/paj"
+    url.pathname === "/api/webhooks/breet"
   ) {
     host = LIVE_PAYMENTS;
     upstreamPath = url.pathname;

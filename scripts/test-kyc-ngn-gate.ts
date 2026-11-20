@@ -184,7 +184,7 @@ async function main() {
         quoteId: 'q1',
         userId: 'usr_bank',
         direction: 'onramp',
-        provider: 'paj',
+        provider: 'breet',
         sourceCurrency: 'ngn',
         destinationCurrency: 'usdc',
         sourceAmount: '4999000',

@@ -183,7 +183,7 @@ export async function buildApp() {
     activeWalletProvider: await resolveActiveWalletProvider().catch(() => undefined),
   });
 
-  const ngnRailIsLive = env.BREET_ENV === 'production' || env.PAJ_RAMP_ENV === 'production';
+  const ngnRailIsLive = env.BREET_ENV === 'production';
   if ((ngnRailIsLive || env.APP_ENV === 'production') && env.NGN_TRUST_SANDBOX_BANK_RESOLUTION) {
     throw new Error(
       'NGN_TRUST_SANDBOX_BANK_RESOLUTION must not be enabled against a live NGN provider or in production. ' +

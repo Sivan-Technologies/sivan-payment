@@ -205,7 +205,6 @@ export async function getSettlementReconciliation() {
     },
     providerBalances: [
       { provider: 'breet', currency: 'NGN / USDC', status: 'connected', availableBalance: 'Active Auto-Settlement', ledgerBalance: 'Live Rail', note: 'Breet NGN auto-settlement and bank payout rail connected.' },
-      { provider: 'paj', currency: 'NGN', status: 'connected', availableBalance: 'Backup Provider', ledgerBalance: 'Standby Rail', note: 'PAJ NGN banking rail.' },
       { provider: 'solana', currency: 'USDC / USDT', status: 'connected', availableBalance: 'On-Chain Vault', ledgerBalance: 'Live Ledger', note: 'Solana non-custodial balance and settlement rail.' },
       { provider: 'bridge', currency: 'USD', status: 'standby', availableBalance: null, ledgerBalance: null, note: 'Bridge USD virtual accounts.' }
     ],

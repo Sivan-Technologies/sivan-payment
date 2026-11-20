@@ -94,7 +94,6 @@ const paymentSteps: Step[] = [
   { name: 'Remote Sivan AI support integration E2E', cwd: paymentRoot, command: 'npm run test:sivan-ai-remote-support' },
   { name: 'NGN pipeline E2E', cwd: paymentRoot, command: 'npm run test:ngn-pipeline' },
   { name: 'NGN KYC levels provider E2E', cwd: paymentRoot, command: 'npm run test:ngn-kyc-levels' },
-  { name: 'PAJ NGN provider adapter E2E', cwd: paymentRoot, command: 'npm run test:paj-ngn-provider' },
   { name: 'Bridge customer import E2E', cwd: paymentRoot, command: 'npm run test:bridge-customer-import' },
   { name: 'Bridge KYC no-mock-fallback regression', cwd: paymentRoot, command: 'npm run test:bridge-kyc-no-mock-fallback' },
   { name: 'Internal balance transfer ledger E2E', cwd: paymentRoot, command: 'npm run test:balance-transfer' },
@@ -311,7 +310,7 @@ async function main() {
       'One-time on-ramp order creation/sync/admin reconciliation',
       'Internal balance ledger transfer controls',
       'Supplier/cross-border payout risk controls and provider release path',
-      'NGN pipeline, NGN KYC levels, PAJ provider adapter, and Bridge KYC no-mock-fallback regression'
+      'NGN pipeline, NGN KYC levels, and Bridge KYC no-mock-fallback regression'
     ],
     results
   };

@@ -62,7 +62,6 @@ import {
   listUsersConsumingLimit,
 } from '../../kyc/service/user-limits.service.js';
 import { getNgnProvider } from '../provider/ngn-provider-registry.js';
-import { PajNgnProvider } from '../provider/paj.provider.js';
 import { getNgnReconciliationSummary } from '../service/ngn-reconciliation.service.js';
 import { listNgnSettlementQueue } from '../service/ngn-settlement.service.js';
 import { listNgnWebhooks, recordNgnWebhook } from '../service/ngn-webhooks.service.js';
@@ -514,29 +513,7 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await reviewNgnPayoutAccount(accountId, { ...body, reviewedBy }) };
   });
 
-  // Legacy aliases. Same registry-backed implementation, not PajRamp.
-  app.get('/api/ngn/paj/banks', async (request) => {
-    const query = request.query as { userId?: string };
-    if (query.userId) ensureOwnUser(request, query.userId);
-    return { data: await listNgnBanks('ngn') };
-  });
-
-  app.get('/api/ngn/paj/bank-account/resolve', async (request) => {
-    const query = request.query as { userId?: string; bankId?: string; accountNumber?: string };
-    if (query.userId) ensureOwnUser(request, query.userId);
-    if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
-    return { data: await resolveNgnBankAccount(query.bankId, query.accountNumber, 'ngn') };
-  });
-
-  app.get('/api/admin/ngn/paj/banks', async () => ({ data: await new PajNgnProvider().getBanks() }));
-  app.get('/api/admin/ngn/paj/bank-account/resolve', async (request) => {
-    const query = request.query as { bankId?: string; accountNumber?: string };
-    if (!query.bankId || !query.accountNumber) throw badRequest('bankId and accountNumber are required');
-    return { data: await new PajNgnProvider().resolveBankAccount(query.bankId, query.accountNumber) };
-  });
-
-  app.post('/api/webhooks/paj', async (request) => ({ data: await recordNgnWebhook('paj', request.body, request.headers) }));
-  // Breet delivers to its own path so the two providers' secrets and payload
+  // Breet delivers to its own path so provider secrets and payload
   // shapes never reach the wrong verifier. Breet's verifyWebhook checks the
   // x-webhook-secret header and then re-fetches the transaction from Breet, so
   // a forged amount in the body cannot be credited.
@@ -1189,7 +1166,7 @@ export async function ngnRoutes(app: FastifyInstance) {
     return { data: await retryNgnTransfer(id, (request as any).adminActor?.email || 'admin_api_key') };
   });
   app.post('/api/admin/ngn/webhooks/:provider', async (request) => {
-    const { provider } = request.params as { provider: 'mock' | 'linkio' | 'eversend' | 'nomba' | 'paj' };
+    const { provider } = request.params as { provider: 'mock' | 'linkio' | 'eversend' | 'nomba' | 'breet' };
     return { data: await recordNgnWebhook(provider, request.body, request.headers) };
   });
 }

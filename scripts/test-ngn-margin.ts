@@ -162,7 +162,7 @@ async function main() {
     // If Breet has an outage, switching to Paj must be a controls change rather
     // than a deploy.
     check('the registry resolves breet', getNgnProvider('breet' as any).name === 'breet');
-    check('the registry resolves paj', getNgnProvider('paj' as any).name === 'paj');
+    check('the registry resolves nomba', getNgnProvider('nomba' as any).name === 'nomba');
     check('and mock', getNgnProvider('mock' as any).name === 'mock');
 
     await seed('breet');
@@ -171,10 +171,10 @@ async function main() {
       controls.activeProvider === 'breet', controls.activeProvider);
 
     // Flip it, exactly as PUT /api/admin/ngn/controls does.
-    await db.mutate((data: any) => { data.ngnControls[0].activeProvider = 'paj'; });
+    await db.mutate((data: any) => { data.ngnControls[0].activeProvider = 'nomba'; });
     const after = (await db.read() as any).ngnControls[0];
     check('an admin flip changes the active provider with no code change',
-      after.activeProvider === 'paj', after.activeProvider);
+      after.activeProvider === 'nomba', after.activeProvider);
 
     // And the quote path reads that field rather than an env var or a literal.
     const source = await import('node:fs').then((fs) =>

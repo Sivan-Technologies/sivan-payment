@@ -510,9 +510,6 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
   // 8. THE ACTIVE NGN PROVIDER. A provider whose resolver cannot authenticate
   //    breaks the bank picker completely - and it fails as a 500 on a user
   //    action, which is invisible from any liveness check.
-  //
-  //    This is not hypothetical: test ran with NGN_PROVIDER=paj, whose staging
-  //    key was never provisioned, and every bank resolution returned 500.
   {
     // Read process.env FIRST. config/env.ts parses once at import, so a value
     // changed afterwards - by an operator restarting with new config, or by a
@@ -566,8 +563,7 @@ export async function getOperationalHealth(): Promise<OperationalHealth> {
     const credentialsRejected = breetReachable === false && /401|unauthor|invalid|wrong app/i.test(breetMessage);
     const usable = provider === 'breet' && breetConfigured && breetReachable !== false;
     // 'mock' is correct in a test run and in local development, so it is only
-    // a problem on a DEPLOYED environment. 'paj' is a problem anywhere it
-    // serves users, because its resolver cannot authenticate at all.
+    // a problem on a DEPLOYED environment.
     const deployed = env.APP_ENV === 'production' || env.APP_ENV === 'staging';
     signals.push({
       name: 'ngn_provider',
