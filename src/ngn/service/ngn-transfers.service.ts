@@ -121,7 +121,19 @@ async function assertQuoteStillWithinLimit(quote: { userId: string; direction: s
   }
 }
 
+async function resolveUserId(rawUserId: string): Promise<string> {
+  if (rawUserId.startsWith('usr_')) return rawUserId;
+  const rawClean = rawUserId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  const user = (await db.findUserByWhatsappNumber(`+${rawClean}`))
+    || (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`))
+    || (await db.findUserByWhatsappNumber(rawClean))
+    || (await db.findUserByTelegramUserId(rawClean));
+  return user ? user.id : rawUserId;
+}
+
 export async function acceptNgnQuote(input: z.infer<typeof acceptNgnQuoteSchema>) {
+  const resolvedUserId = await resolveUserId(input.userId);
+  input = { ...input, userId: resolvedUserId };
   const quote = await getNgnQuote(input.quoteId);
   if (quote.userId !== input.userId) throw notFound('NGN quote');
   if (quote.status !== 'quote_created') throw badRequest('NGN quote is not available to accept.');

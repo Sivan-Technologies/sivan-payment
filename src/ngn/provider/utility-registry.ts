@@ -127,10 +127,17 @@ export async function getProviderFloatBalances(): Promise<
       }
       try {
         const balanceNgn = await probe.call(provider);
-        // An admin opening the dashboard warms the same cache routing reads,
-        // so looking at the float also makes the next purchase better informed.
-        recordFloatProbe(name, balanceNgn);
-        return { provider: name, supportsFloat: true, balanceNgn, checkedAt, error: null };
+        const validBalance = Number.isFinite(balanceNgn) ? balanceNgn : null;
+        if (validBalance !== null) {
+          recordFloatProbe(name, validBalance);
+        }
+        return {
+          provider: name,
+          supportsFloat: true,
+          balanceNgn: validBalance,
+          checkedAt,
+          error: validBalance === null ? 'Provider returned invalid numeric balance' : null,
+        };
       } catch (err: any) {
         return {
           provider: name,

@@ -12,7 +12,7 @@
     "test:community-revshare": "DATABASE_PROVIDER=json DATABASE_FILE=.data/test-community.json tsx scripts/test-community-revshare.ts",
     "test": "tsx scripts/run-all-tests.ts",
     "dev": "tsx watch src/server.ts",
-    "start": "node dist/src/server.js",
+    "start": "node --max-old-space-size=384 dist/src/server.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json",
     "test:build-isolation": "tsx scripts/test-build-isolation.ts",

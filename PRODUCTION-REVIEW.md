@@ -103,7 +103,7 @@ Verified live against each provider rather than assumed.
 
 | # | Credential | Why | Verified |
 |---|---|---|---|
-| 1 | **Telegram prod bot `8775192643:AAGys0…`** (`@SivanAi_bot`) | **Committed to git in `telegram-layer/.env.example`** across at least 3 commits, and the token still answers `getMe`. Anyone with repo history can hijack the production bot. | live |
+| 1 | **Telegram prod bot `[REDACTED]`** (`@SivanAi_bot`) | **Committed to git in `telegram-layer/.env.example`** across at least 3 commits, and the token still answers `getMe`. Anyone with repo history can hijack the production bot. | live |
 | 2 | **Privy app secret** `privy_app_secret_2Zz…` | Pasted into this chat session; `GET /v1/wallets` → 200. Controls 258 wallets. | live |
 | 3 | **Neon `DATABASE_URL`** (`neondb_owner:npg_…`) | Pasted in chat; Neon is internet-reachable, so the password is the only control. | reachable |
 | 4 | **GitHub PAT** `github_pat_11AGOC3TI0z…` (Samswitchy) | Pasted in chat; `/user` → 200. | live |

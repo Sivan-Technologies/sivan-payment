@@ -1095,12 +1095,18 @@ export class BreetNgnProvider implements NgnProviderAdapter {
       }
     }
 
-    // A 404 means Breet has no such transaction, so the event is fabricated.
-    // Refuse it. Any other failure is Breet being unreachable, which must NOT
-    // be treated as a forgery - the event is passed through unconfirmed and
-    // flagged so nothing downstream silently credits on an unverified body.
-    if (confirmationError && /not found|404/i.test(confirmationError)) {
-      throw forbidden('Breet webhook references a transaction that does not exist.');
+    // In production against Breet's live API, trade lookups (/trades/sell/:id and
+    // /transactions/:id) return 404 for valid trade webhook IDs because Breet does
+    // not expose trade lookups via those paths. The shared secret (x-webhook-secret)
+    // was already verified above via timingSafeEqual. Throwing 403 Forbidden here
+    // caused Breet's delivery attempts to fail, retrying and triggering merchant alerts.
+    // Instead, log the confirmation lookup result and return the verified payload.
+    if (confirmationError) {
+      console.warn('[breet.webhook.confirmation_warning]', {
+        eventName,
+        resourceId,
+        confirmationError,
+      });
     }
 
     return {

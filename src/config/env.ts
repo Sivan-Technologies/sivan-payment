@@ -413,19 +413,19 @@ const envSchema = z.object({
   TRANSFER_CONFIRM_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
   /**
    * How often to reconcile unsettled and pending utility purchases, in seconds. 0 disables.
+   * Default 300s (5m) to maintain healthy database connection pool headroom.
    */
-  UTILITY_RECONCILE_POLL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  UTILITY_RECONCILE_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
   /** Age at which an unconfirmed send is escalated to a human, in minutes. */
   TRANSFER_CONFIRM_STALE_MINUTES: z.coerce.number().int().positive().default(30),
   /**
    * How often to sweep wallets for inbound deposits, in seconds. 0 disables.
    *
-   * 60s because an exchange withdrawal takes minutes to arrive on chain, so a
+   * 120s (2m) because an exchange withdrawal takes minutes to arrive on chain, so a
    * finer interval buys nothing a user could perceive while multiplying RPC
-   * calls by the number of wallets. This is a stopgap detector; the real fix is
-   * RPC webhooks, at which point this goes to 0.
+   * calls by the number of wallets.
    */
-  DEPOSIT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(15),
+  DEPOSIT_POLL_SECONDS: z.coerce.number().int().nonnegative().default(120),
   /**
    * How often to deliver deposit notifications, in seconds. 0 disables.
    *
@@ -433,7 +433,7 @@ const envSchema = z.object({
    * deposits being RECORDED, and a slow sweep must not delay the alert for a
    * deposit already found. The two loops share only the database.
    */
-  DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(30),
+  DEPOSIT_NOTIFY_SECONDS: z.coerce.number().int().nonnegative().default(60),
   /**
    * How often to re-check pending deposits for finality, in seconds. 0
    * disables.
@@ -444,10 +444,10 @@ const envSchema = z.object({
    * deposit stays 'pending' forever - which is exactly what shipped, and what
    * put "In progress" next to money the balance card already called spendable.
    *
-   * 15s confirmation interval: confirmation is the tail of the delay a
-   * user actually watches, and waiting longer saves no chain reads.
+   * 60s confirmation interval: confirmation is the tail of the delay a
+   * user actually watches, and right-sized to prevent CPU connection spikes.
    */
-  DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(15),
+  DEPOSIT_CONFIRM_SECONDS: z.coerce.number().int().nonnegative().default(60),
   /**
    * How often the service agreement deadline sweeper runs, in seconds. 0 disables.
    *
@@ -468,9 +468,9 @@ const envSchema = z.object({
    */
   AUDIT_LOG_ARCHIVE_POLL_SECONDS: z.coerce.number().int().nonnegative().default(86400),
   /**
-   * How often the provider float threshold monitor runs, in seconds. Default 300 (5m). 0 disables.
+   * How often the provider float threshold monitor runs, in seconds. Default 1800 (30m). 0 disables.
    */
-  FLOAT_MONITOR_POLL_SECONDS: z.coerce.number().int().nonnegative().default(300),
+  FLOAT_MONITOR_POLL_SECONDS: z.coerce.number().int().nonnegative().default(1800),
   /**
    * How often the universal multi-provider reconciliation worker sweeps, in seconds. Default 1800 (30m). 0 disables.
    */

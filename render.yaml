@@ -90,6 +90,8 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=384"
       - key: APP_ENV
         value: staging
       # WHICH CHAIN THIS DEPLOYMENT SIGNS AGAINST. Read by resolveNetworkMode()
@@ -184,7 +186,7 @@ services:
       - key: WHATSAPP_NOTIFICATION_URL
         value: https://api-staging.sivantech.online/api/whatsapp
       - key: TELEGRAM_OPS_BOT_TOKEN
-        value: 8858372924:AAEUSgLNRZcHOYsCXv4rxMAVs2xuqHIgf1A
+        sync: false
       - key: TELEGRAM_OPS_CHAT_ID
         value: "-1004465897328"
       - key: NOTIFY_SECRET
@@ -447,6 +449,8 @@ services:
     healthCheckPath: /health
     autoDeploy: false
     envVars:
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=384"
       - key: APP_ENV
         value: production
       # Real chains, real money. Also the default when unset, so an accidental
@@ -502,7 +506,7 @@ services:
       - key: WHATSAPP_NOTIFICATION_URL
         value: https://api.sivantech.online/api/whatsapp
       - key: TELEGRAM_OPS_BOT_TOKEN
-        value: 8858372924:AAEUSgLNRZcHOYsCXv4rxMAVs2xuqHIgf1A
+        sync: false
       - key: TELEGRAM_OPS_CHAT_ID
         value: "-1004465897328"
       - key: NOTIFY_SECRET
