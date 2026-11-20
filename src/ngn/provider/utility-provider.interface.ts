@@ -80,10 +80,33 @@ export interface AirtimeCashConfirmResult {
   rawPayload?: unknown;
 }
 
-/** The three fulfilment rails a provider can serve. Routing is per service. */
-export type UtilityServiceType = 'airtime' | 'data' | 'electricity';
+export interface CableTvPlanOption {
+  subScriptionType: string;
+  amount: number;
+}
 
-export const UTILITY_SERVICE_TYPES: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity'];
+export interface CableTvInquiryResponse {
+  customerId: string;
+  cableTvType: string;
+  customerName: string;
+  providerName?: string;
+}
+
+export interface ProviderCableTvResult {
+  reference: string;
+  amountNgn: number;
+  customerId: string;
+  cableTvType: string;
+  customerName?: string;
+  status: 'success' | 'failed';
+  message: string;
+  rawPayload: unknown;
+}
+
+/** The fulfilment rails a provider can serve. Routing is per service. */
+export type UtilityServiceType = 'airtime' | 'data' | 'electricity' | 'cable_tv';
+
+export const UTILITY_SERVICE_TYPES: readonly UtilityServiceType[] = ['airtime', 'data', 'electricity', 'cable_tv'];
 
 export interface IUtilityProvider {
   readonly name: UtilityProviderName;
@@ -151,6 +174,21 @@ export interface IUtilityProvider {
     customerName: string | undefined,
     idempotencyKey: string
   ): Promise<ProviderElectricityResult>;
+
+  listCableTvPlans?(cableTvType: string): Promise<CableTvPlanOption[]>;
+
+  inquireCableTv?(
+    cableTvType: string,
+    customerId: string
+  ): Promise<CableTvInquiryResponse>;
+
+  payCableTv?(
+    cableTvType: string,
+    customerId: string,
+    amountNgn: number,
+    payerName: string | undefined,
+    idempotencyKey: string
+  ): Promise<ProviderCableTvResult>;
 
   getAirtimeCashRate?(operator: TelcoOperator): Promise<AirtimeCashRate>;
   initiateAirtimeToCash?(input: AirtimeCashInitiateInput): Promise<AirtimeCashInitiateResult>;

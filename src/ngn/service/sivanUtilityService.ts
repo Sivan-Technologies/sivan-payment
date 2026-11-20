@@ -25,6 +25,7 @@ import {
   type ElectricityInquiryRequest,
   type ElectricityInquiryResponse,
   type ElectricityPaymentRequest,
+  type CableTvPaymentRequest,
   type UtilityReceipt,
   type DataPlanOption,
   detectTelcoOperator,
@@ -41,7 +42,12 @@ import {
   executeForService,
   getProviderChainForService,
 } from '../provider/utility-registry.js';
-import type { IUtilityProvider } from '../provider/utility-provider.interface.js';
+import type {
+  IUtilityProvider,
+  CableTvPlanOption,
+  CableTvInquiryResponse,
+  ProviderCableTvResult,
+} from '../provider/utility-provider.interface.js';
 import { ensureUtilityRoutingLoaded } from './utility-routing.service.js';
 
 /**
@@ -1667,5 +1673,185 @@ export async function reconcileUnsettledUtilityPurchases(): Promise<{
   }
 
   return { settled, failed, pendingReconciliation };
+}
+
+/**
+ * Fetches available Cable TV plans/bouquets for a provider (e.g. dstv, gotv, startimes).
+ */
+export async function fetchCableTvPlans(
+  cableTvType: string,
+  _providerName?: string
+): Promise<CableTvPlanOption[]> {
+  await ensureUtilityRoutingLoaded();
+  const { result } = await executeForService(
+    'cable_tv',
+    'listCableTvPlans',
+    async (provider) => {
+      if (typeof provider.listCableTvPlans !== 'function') {
+        throw new Error(`Provider ${provider.name} does not support listCableTvPlans`);
+      }
+      return provider.listCableTvPlans(cableTvType);
+    }
+  );
+  return result;
+}
+
+/**
+ * Pre-flight Cable TV customer inquiry (resolves smartcard/IUC subscriber name).
+ */
+export async function executeCableTvInquiry(req: {
+  cableTvType: string;
+  customerId: string;
+}): Promise<CableTvInquiryResponse> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+
+  if (!req.customerId || req.customerId.trim().length < 5) {
+    throw badRequest('Please provide a valid smartcard or IUC number.');
+  }
+
+  await ensureUtilityRoutingLoaded();
+  const { result, providerName } = await executeForService(
+    'cable_tv',
+    'inquireCableTv',
+    async (provider) => {
+      if (typeof provider.inquireCableTv !== 'function') {
+        throw new Error(`Provider ${provider.name} does not support inquireCableTv`);
+      }
+      return provider.inquireCableTv(req.cableTvType, req.customerId.trim());
+    }
+  );
+
+  return {
+    ...result,
+    providerName,
+  };
+}
+
+/**
+ * Executes Cable TV bouquet subscription renewal.
+ */
+export async function executeCableTvPayment(
+  req: CableTvPaymentRequest
+): Promise<UtilityReceipt> {
+  const controls = await getUtilitiesControls();
+  if (!controls.enabled || controls.maintenanceMode) {
+    throw badRequest(controls.maintenanceReason || 'Bill payment services are currently undergoing scheduled maintenance.');
+  }
+
+  if (req.amountNgn < 1000 || req.amountNgn > 250_000) {
+    throw badRequest('Cable TV subscription amount must be between 1,000 NGN and 250,000 NGN.');
+  }
+
+  const resolvedUserId = await resolvePaymentUserId(req.userId).catch(() => req.userId);
+
+  const { cachedReceipt, fingerprint } = await validateAndResolveIdempotency({
+    idempotencyKey: req.idempotencyKey,
+    userId: resolvedUserId,
+    serviceType: 'cable_tv',
+    recipient: req.customerId.trim(),
+    amountNgn: req.amountNgn,
+    operatorOrDisco: req.cableTvType,
+  });
+  if (cachedReceipt) return cachedReceipt;
+
+  const reservationId = req.idempotencyKey
+    ? `res_${req.idempotencyKey}`
+    : `res_cable_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  return withBalanceReservation(
+    resolvedUserId,
+    req.amountNgn,
+    reservationId,
+    'cable_tv',
+    fingerprint,
+    req.idempotencyKey,
+    {
+      recipient: req.customerId.trim(),
+      operatorOrDisco: req.cableTvType,
+    },
+    async (balance: number) => {
+      await ensureUtilityRoutingLoaded();
+      const cableKey = req.idempotencyKey
+        ? `sivan_cable_${req.idempotencyKey}`
+        : newIdempotencyKey('cable_tv', resolvedUserId);
+
+      const { result, providerName } = await executeForService(
+        'cable_tv',
+        'payCableTv',
+        async (provider) => {
+          if (typeof provider.payCableTv !== 'function') {
+            throw new Error(`Provider ${provider.name} does not support payCableTv`);
+          }
+          return provider.payCableTv(
+            req.cableTvType,
+            req.customerId.trim(),
+            req.amountNgn,
+            req.payerName,
+            cableKey
+          );
+        }
+      );
+
+      const now = new Date().toISOString();
+      const remaining = balance - req.amountNgn;
+
+      const lines = [
+        'Sivan Payment Ai . Cable TV Receipt',
+        '----------------------------------------',
+        `Provider: ${req.cableTvType.toUpperCase()}`,
+        `Smartcard / IUC: ${req.customerId}`,
+        `Subscriber Name: ${result.customerName || req.payerName || 'Subscriber'}`,
+        `Amount Paid: ${req.amountNgn.toLocaleString()} NGN`,
+        'Platform Fee: 0 NGN (Free)',
+        `Total Debited: ${req.amountNgn.toLocaleString()} NGN`,
+        `Remaining Balance: ${remaining.toLocaleString()} NGN`,
+        `Fulfillment Rail: ${providerName.toUpperCase()}`,
+        'Status: Subscription Confirmed',
+        `Reference: ${result.reference}`,
+        `Date: ${formatTimestamp(now)}`,
+        '----------------------------------------'
+      ];
+
+      const receipt: UtilityReceipt = {
+        success: true,
+        serviceType: 'cable_tv',
+        providerName,
+        operatorOrDisco: req.cableTvType.toUpperCase(),
+        recipientOrMeter: req.customerId,
+        customerName: result.customerName || req.payerName,
+        amountNgn: req.amountNgn,
+        feeNgn: 0,
+        totalDebitedNgn: req.amountNgn,
+        reference: result.reference,
+        timestamp: now,
+        formattedText: lines.join('\n'),
+      };
+      cacheReceipt(req.idempotencyKey, receipt, resolvedUserId, fingerprint);
+
+      try {
+        await recordUtilityDebit({
+          userId: resolvedUserId,
+          providerName,
+          serviceType: 'cable_tv',
+          reference: result.reference,
+          amountNgn: req.amountNgn,
+          reservationId,
+          idempotencyKey: req.idempotencyKey,
+          rawPayload: {
+            ...(typeof result.rawPayload === 'object' && result.rawPayload !== null ? result.rawPayload : {}),
+            idempotencyKey: req.idempotencyKey,
+            fingerprint,
+          },
+        });
+      } catch (err: any) {
+        console.error('[CableTv] recordUtilityDebit error:', err);
+      }
+
+      return receipt;
+    }
+  );
 }
 

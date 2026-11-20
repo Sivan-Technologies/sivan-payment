@@ -19,6 +19,9 @@ import {
   executeDataPurchase,
   executeElectricityInquiry,
   executeElectricityPayment,
+  fetchCableTvPlans,
+  executeCableTvInquiry,
+  executeCableTvPayment,
   getUserNgnBalance,
   fetchDataPlans,
   reconcileUnsettledUtilityPurchases,
@@ -120,6 +123,22 @@ const electricityPaymentSchema = z.object({
   meterType: z.enum(['prepaid', 'postpaid']).default('prepaid'),
   amountNgn: z.number().int().min(1000, 'Minimum electricity recharge is 1,000 NGN'),
   customerName: z.string().optional(),
+  pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
+  channel: z.enum(['minipay', 'telegram', 'whatsapp', 'webapp']).optional().default('webapp'),
+});
+
+const cableTvInquirySchema = z.object({
+  cableTvType: z.string().min(1, 'cableTvType is required (e.g. dstv, gotv, startimes)'),
+  customerId: z.string().min(4, 'Valid smartcard or IUC number is required'),
+});
+
+const cableTvPaymentSchema = z.object({
+  userId: z.string().min(1, 'userId is required'),
+  cableTvType: z.string().min(1, 'cableTvType is required'),
+  customerId: z.string().min(4, 'Valid smartcard or IUC number is required'),
+  amountNgn: z.number().int().min(1000, 'Minimum subscription amount is 1,000 NGN'),
+  payerName: z.string().optional(),
   pin: z.string().min(4, 'Invalid PIN').max(12, 'Invalid PIN').optional(),
   idempotencyKey: z.string().min(1).max(128).optional(),
   channel: z.enum(['minipay', 'telegram', 'whatsapp', 'webapp']).optional().default('webapp'),
@@ -346,6 +365,77 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
       amountNgn: body.amountNgn,
       customerName: body.customerName,
       idempotencyKey,
+    });
+
+    return reply.code(200).send({
+      status: 'success',
+      data: receipt,
+    });
+  });
+
+  /**
+   * GET /api/ngn/utility/cable-tv/plans
+   * Fetches available bouquets for a Cable TV provider (dstv, gotv, startimes).
+   */
+  app.get(
+    '/api/ngn/utility/cable-tv/plans',
+    async (
+      request: FastifyRequest<{ Querystring: { cableTvType?: string; providerName?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const cableTvType = (request.query.cableTvType || 'dstv').toLowerCase().trim();
+      const plans = await fetchCableTvPlans(cableTvType, request.query.providerName);
+      return reply.code(200).send({
+        status: 'success',
+        data: {
+          cableTvType,
+          plans,
+        },
+      });
+    }
+  );
+
+  /**
+   * GET /api/ngn/utility/cable-tv/lookup
+   * Pre-flight lookup to verify subscriber name for smartcard/IUC before purchase.
+   */
+  app.get(
+    '/api/ngn/utility/cable-tv/lookup',
+    async (
+      request: FastifyRequest<{ Querystring: { cableTvType: string; customerId: string } }>,
+      reply: FastifyReply
+    ) => {
+      const query = parseBody(cableTvInquirySchema, request.query);
+      const inquiry = await executeCableTvInquiry({
+        cableTvType: query.cableTvType,
+        customerId: query.customerId,
+      });
+      return reply.code(200).send({
+        status: 'success',
+        data: inquiry,
+      });
+    }
+  );
+
+  /**
+   * POST /api/ngn/utility/cable-tv/pay
+   * Renews Cable TV subscription (DSTV, GOtv, StarTimes) via Nomba.
+   */
+  app.post('/api/ngn/utility/cable-tv/pay', async (request: FastifyRequest, reply: FastifyReply) => {
+    const body = parseBody(cableTvPaymentSchema, request.body);
+    await requireSpendAuthorization(request, body.userId, body.pin);
+    const idempotencyKey =
+      body.idempotencyKey ||
+      (request.headers['x-idempotency-key'] as string | undefined) ||
+      (request.headers['idempotency-key'] as string | undefined);
+    const receipt = await executeCableTvPayment({
+      userId: body.userId,
+      cableTvType: body.cableTvType,
+      customerId: body.customerId,
+      amountNgn: body.amountNgn,
+      payerName: body.payerName,
+      idempotencyKey,
+      channel: body.channel,
     });
 
     return reply.code(200).send({

@@ -74,6 +74,17 @@ export interface ElectricityPaymentRequest {
   channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | string;
 }
 
+export interface CableTvPaymentRequest {
+  userId: string;
+  cableTvType: string;
+  customerId: string;
+  amountNgn: number;
+  payerName?: string;
+  providerName?: string;
+  idempotencyKey?: string;
+  channel?: 'minipay' | 'telegram' | 'whatsapp' | 'webapp' | string;
+}
+
 export interface DataPlanOption {
   planId: string;
   name: string;
@@ -116,7 +127,7 @@ export interface AirtimeCashSession {
 
 export interface UtilityReceipt {
   success: boolean;
-  serviceType: 'airtime' | 'data' | 'electricity' | 'airtime_cash';
+  serviceType: 'airtime' | 'data' | 'electricity' | 'airtime_cash' | 'cable_tv';
   providerName: string;
   operatorOrDisco: string;
   recipientOrMeter: string;

@@ -34,6 +34,7 @@ export const updateUtilityRoutingSchema = z.object({
       airtime: serviceChainSchema.optional(),
       data: serviceChainSchema.optional(),
       electricity: serviceChainSchema.optional(),
+      cable_tv: serviceChainSchema.optional(),
     })
     .optional(),
   failover: z
@@ -41,6 +42,7 @@ export const updateUtilityRoutingSchema = z.object({
       airtime: z.boolean().optional(),
       data: z.boolean().optional(),
       electricity: z.boolean().optional(),
+      cable_tv: z.boolean().optional(),
     })
     .optional(),
   updatedBy: z.string().optional(),
@@ -121,11 +123,13 @@ export async function setUtilityRoutingConfig(
       airtime: input.routes?.airtime ?? current.routes.airtime,
       data: input.routes?.data ?? current.routes.data,
       electricity: input.routes?.electricity ?? current.routes.electricity,
+      cable_tv: input.routes?.cable_tv ?? current.routes.cable_tv,
     },
     failover: {
       airtime: input.failover?.airtime ?? current.failover.airtime,
       data: input.failover?.data ?? current.failover.data,
       electricity: input.failover?.electricity ?? current.failover.electricity,
+      cable_tv: input.failover?.cable_tv ?? current.failover.cable_tv,
     },
   };
 

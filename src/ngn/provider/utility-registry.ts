@@ -38,6 +38,7 @@ import type {
 } from './utility-provider.interface.js';
 import { UTILITY_SERVICE_TYPES } from './utility-provider.interface.js';
 import { PaystackUtilityProvider } from './paystack-utility.provider.js';
+import { NombaUtilityProvider } from './nomba-utility.provider.js';
 import { VtuAggregatorProvider } from './vtu-aggregator.provider.js';
 import { SmeApiUtilityProvider } from './smeapi-utility.provider.js';
 import { MockUtilityProvider } from './mock-utility.provider.js';
@@ -57,6 +58,7 @@ import {
 
 const registry = new Map<string, IUtilityProvider>();
 
+registry.set('nomba', new NombaUtilityProvider());
 registry.set('paystack', new PaystackUtilityProvider());
 registry.set('smeapi', new SmeApiUtilityProvider());
 
@@ -168,9 +170,10 @@ export const DEFAULT_UTILITY_ROUTING: UtilityRoutingConfig = {
     // previously led with vtu_ng, which has no API key anywhere in the repo
     // or in render.yaml and whose base URL does not resolve, so any service
     // falling back to defaults would have routed first to a certain failure.
-    airtime: ['smeapi', 'paystack'],
-    data: ['smeapi', 'paystack'],
-    electricity: ['paystack'],
+    airtime: ['smeapi', 'nomba', 'paystack'],
+    data: ['smeapi', 'nomba'],
+    electricity: ['nomba', 'paystack'],
+    cable_tv: ['nomba'],
   },
   failover: {
     airtime: true,
@@ -178,6 +181,7 @@ export const DEFAULT_UTILITY_ROUTING: UtilityRoutingConfig = {
     // Electricity issues a meter token. A blind second attempt at another
     // provider is how a customer ends up paying twice for one token.
     electricity: false,
+    cable_tv: false,
   },
 };
 
@@ -238,6 +242,7 @@ const METHOD_FOR_SERVICE: Record<UtilityServiceType, Array<keyof IUtilityProvide
   airtime: ['purchaseAirtime'],
   data: ['purchaseDataBundle'],
   electricity: ['inquireElectricityMeter', 'payElectricityBill'],
+  cable_tv: ['inquireCableTv', 'payCableTv'],
 };
 
 /** True when a provider both declares a service and implements its methods. */

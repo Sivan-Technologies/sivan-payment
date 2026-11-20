@@ -442,9 +442,15 @@ export function resolveProviderPlanCode(
   plan: UtilityDataPlanRecord | null | undefined,
   providerName: string
 ): string | null {
-  if (!plan?.providerPlanCodes) return null;
-  const code = plan.providerPlanCodes[providerName];
-  return code && String(code).trim().length > 0 ? String(code) : null;
+  if (plan?.providerPlanCodes) {
+    const code = plan.providerPlanCodes[providerName];
+    if (code && String(code).trim().length > 0) return String(code);
+  }
+  // For Nomba, fall back to bundle size or catalog code so NombaUtilityProvider can dynamically resolve it
+  if (providerName === 'nomba' && plan) {
+    return plan.bundleSize || plan.planCode || null;
+  }
+  return null;
 }
 
 /**
