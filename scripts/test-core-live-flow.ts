@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 
 async function testCoreLiveFlow() {
   const CORE_URL = 'https://test-sivan.sivantech.online';
-  const CORE_SECRET = 'Yu3w1j5s-I7SgaxBNOAVcaUrW0SpkrlKoo7zppgnMrI';
+  const CORE_SECRET = (process.env.CORE_SECRET || '');
 
   console.log('=== Step 1: Check Core Gateway Health ===');
   const healthRes = await fetch(`${CORE_URL}/health`);

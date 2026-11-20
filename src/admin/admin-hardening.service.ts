@@ -497,20 +497,36 @@ export async function getBusinessKpis() {
   for (const item of data.supportTickets ?? []) if (inMonth(item.createdAt) || inMonth(item.updatedAt)) monthlyUserIds.add(item.userId);
 
   const completedNgnOfframps = ngnTransfers.filter((item) => item.direction === 'offramp' && item.status === 'completed');
+  const completedCryptoOfframps = completedNgnOfframps.filter((item) => String(item.sourceCurrency).toLowerCase() !== 'ngn');
+  const completedNgnBankOutflows = completedNgnOfframps.filter((item) => String(item.sourceCurrency).toLowerCase() === 'ngn');
   const completedWithdrawals = [...data.withdrawals, ...((data as any).ngnWithdrawals ?? []), ...((data as any).balanceTransfers ?? [])].filter((item) => ['completed', 'settled', 'success'].includes(item.status));
-  const completedOnramps = [...(data.onrampOrders ?? []), ...((data as any).virtualAccountTransactions ?? [])].filter((item) => ['completed', 'settled', 'success'].includes(item.status));
+  
+  const vaTransactions: any[] = (data as any).virtualAccountTransactions ?? [];
+  const completedVaInflows = vaTransactions.filter((item) => ['completed', 'settled', 'success'].includes(item.status));
+  const completedOnramps = [...(data.onrampOrders ?? []), ...completedVaInflows];
+
   const monthlyCompletedWithdrawals = completedWithdrawals.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
-  const monthlyCompletedNgnOfframps = completedNgnOfframps.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
-  const monthlyCompletedOnramps = completedOnramps.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+  const monthlyCompletedCryptoOfframps = completedCryptoOfframps.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+  const monthlyCompletedVaInflows = completedVaInflows.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+  const monthlyCompletedNgnBankOutflows = completedNgnBankOutflows.filter((item) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
+
   const monthlyWithdrawalVolume = monthlyCompletedWithdrawals.reduce((sum, item) => sum + Number(item.destinationAmount ?? item.sourceAmount ?? item.amount ?? 0) + Number(item.feeAmount ?? 0), 0);
-  const monthlyNgnOfframpVolume = monthlyCompletedNgnOfframps.reduce((sum, item) => sum + ngnTransferSourceUsd(item), 0);
-  const monthlyOnrampVolume = monthlyCompletedOnramps.reduce((sum, item) => sum + Number(item.amount ?? item.grossAmount ?? 0), 0);
+  const monthlyCryptoVolumeUsd = monthlyCompletedCryptoOfframps.reduce((sum, item) => sum + Number(item.sourceAmount ?? 0), 0);
+  const monthlyCryptoDestinationNgn = monthlyCompletedCryptoOfframps.reduce((sum, item) => sum + Number(item.destinationAmount ?? 0), 0);
+  const monthlyVaInflowNgn = monthlyCompletedVaInflows.reduce((sum, item) => sum + Number(item.sourceAmount ?? item.amount ?? 0), 0);
+  const monthlyVaOutflowNgn = monthlyCompletedNgnBankOutflows.reduce((sum, item) => sum + Number(item.sourceAmount ?? 0), 0);
+
+  const totalCryptoVolumeUsd = completedCryptoOfframps.reduce((sum, item) => sum + Number(item.sourceAmount ?? 0), 0);
+  const totalCryptoDestinationNgn = completedCryptoOfframps.reduce((sum, item) => sum + Number(item.destinationAmount ?? 0), 0);
+  const totalVaInflowNgn = completedVaInflows.reduce((sum, item) => sum + Number(item.sourceAmount ?? item.amount ?? 0), 0);
+  const totalVaOutflowNgn = completedNgnBankOutflows.reduce((sum, item) => sum + Number(item.sourceAmount ?? 0), 0);
+
   const x402Transactions = allTransactions.filter(hasX402Signal);
   const completedX402Transactions = x402Transactions.filter((item: any) => ['completed', 'settled', 'success'].includes(String(item.status ?? '').toLowerCase()));
   const monthlyCompletedX402Transactions = completedX402Transactions.filter((item: any) => inMonth(item.completedAt ?? item.updatedAt ?? item.createdAt));
   const x402AuditSignals = (data.auditLogs ?? []).filter(hasX402Signal);
   const monthlyX402Volume = monthlyCompletedX402Transactions.reduce((sum, item: any) => sum + transactionUsdAmount(item), 0);
-  const payoutDurations = [...completedWithdrawals, ...completedNgnOfframps]
+  const payoutDurations = [...completedWithdrawals, ...completedCryptoOfframps]
     .map((item) => item.completedAt ? new Date(item.completedAt).getTime() - new Date(item.createdAt).getTime() : 0)
     .filter((value) => Number.isFinite(value) && value > 0);
   const avgPayoutMinutes = payoutDurations.length ? Math.round(payoutDurations.reduce((sum, value) => sum + value, 0) / payoutDurations.length / 60000) : 0;
@@ -527,7 +543,18 @@ export async function getBusinessKpis() {
     generatedAt: nowIso(),
     currentUsers: data.users.length,
     monthlyActiveUsers: monthlyUserIds.size,
-    monthlyTransactionVolumeUsd: money(monthlyWithdrawalVolume + monthlyNgnOfframpVolume + monthlyOnrampVolume),
+    monthlyTransactionVolumeUsd: money(monthlyCryptoVolumeUsd + monthlyWithdrawalVolume),
+    monthlyTransactionVolumeDisplay: `$${money(monthlyCryptoVolumeUsd)} · ₦${money(monthlyVaInflowNgn)}`,
+    cryptoOfframpVolumeUsd: money(totalCryptoVolumeUsd),
+    cryptoOfframpDestinationNgn: money(totalCryptoDestinationNgn),
+    virtualAccountInflowNgn: money(totalVaInflowNgn),
+    virtualAccountOutflowNgn: money(totalVaOutflowNgn),
+    volumeSummary: {
+      cryptoUsd: money(totalCryptoVolumeUsd),
+      cryptoDestinationNgn: money(totalCryptoDestinationNgn),
+      vaInflowNgn: money(totalVaInflowNgn),
+      vaOutflowNgn: money(totalVaOutflowNgn)
+    },
     averagePayoutTimeMinutes: avgPayoutMinutes,
     successfulTransactionPercent: percent(allTransactions.length ? (successfulTransactions / allTransactions.length) * 100 : 100),
     repeatCustomerRatePercent: percent(transactingUsers.size ? (repeatUsers / transactingUsers.size) * 100 : 0),
@@ -535,8 +562,12 @@ export async function getBusinessKpis() {
     revenueUsd: money(revenue),
     details: {
       monthlyWithdrawalVolumeUsd: money(monthlyWithdrawalVolume),
-      monthlyNgnOfframpVolumeUsd: money(monthlyNgnOfframpVolume),
-      monthlyOnrampVolumeUsd: money(monthlyOnrampVolume),
+      monthlyNgnOfframpVolumeUsd: money(monthlyCryptoVolumeUsd),
+      monthlyCryptoVolumeUsd: money(monthlyCryptoVolumeUsd),
+      monthlyCryptoDestinationNgn: money(monthlyCryptoDestinationNgn),
+      monthlyOnrampVolumeUsd: money(monthlyVaInflowNgn > 0 ? monthlyVaInflowNgn / 1450 : 0),
+      monthlyVaInflowNgn: money(monthlyVaInflowNgn),
+      monthlyVaOutflowNgn: money(monthlyVaOutflowNgn),
       transactionCount: allTransactions.length,
       monthlyTransactionCount: monthlyTransactions.length,
       repeatCustomerCount: repeatUsers,
@@ -584,7 +615,16 @@ function transactionUsdAmount(item: any) {
 function latestIso(values: Array<string | undefined>) {
   return values.filter(Boolean).sort().at(-1);
 }
-function ngnTransferSourceUsd(item: NgnTransferRecord) { return Number(item.sourceAmount ?? 0); }
+function ngnTransferSourceUsd(item: NgnTransferRecord) {
+  const currency = String(item.sourceCurrency ?? '').toLowerCase();
+  const amt = Number(item.sourceAmount ?? 0);
+  if (!Number.isFinite(amt) || amt <= 0) return 0;
+  if (currency === 'ngn') {
+    const rate = Number(item.rate ?? 0);
+    return rate > 0 ? amt / rate : amt / 1450;
+  }
+  return amt;
+}
 function ngnTransferFeeUsd(item: NgnTransferRecord) {
   const fee = Number(item.feeAmount ?? 0);
   if (!Number.isFinite(fee) || fee <= 0) return 0;

@@ -204,6 +204,59 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
   );
 
   /**
+   * GET /api/ngn/utility/available-services
+   * Live availability of utility categories for WhatsApp Meta Flow and client apps.
+   */
+  app.get('/api/ngn/utility/available-services', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const { getPublicFeatureStatus } = await import('../../admin/feature-controls.service.js');
+    const status = await getPublicFeatureStatus();
+    const u = status.utilities;
+
+    const services = [
+      {
+        id: 'DATA',
+        title: 'Buy Mobile Data',
+        description: 'Instant bundles for MTN, Airtel, Glo, and 9mobile',
+        enabled: Boolean(u.dataEnabled),
+      },
+      {
+        id: 'AIRTIME',
+        title: 'Recharge Airtime',
+        description: 'Instant top-up for yourself or any Nigerian line',
+        enabled: Boolean(u.airtimeEnabled),
+      },
+      {
+        id: 'ELECTRICITY',
+        title: 'Electricity Bill',
+        description: 'Prepaid tokens and postpaid settlement for all 10 DisCos',
+        enabled: Boolean(u.electricityEnabled),
+      },
+      {
+        id: 'CABLE',
+        title: 'Cable TV Subscription',
+        description: 'Renew DStv, GOtv, and StarTimes with zero fees',
+        enabled: Boolean(u.cableTvEnabled),
+      },
+      {
+        id: 'RECEIPTS',
+        title: 'Utility Receipts',
+        description: 'View recent utility tokens and payment records',
+        enabled: true,
+      },
+    ];
+
+    return reply.code(200).send({
+      status: 'success',
+      data: {
+        maintenanceMode: Boolean(u.maintenanceMode),
+        maintenanceNotice: u.maintenanceReason || '',
+        discountPercent: Number(u.discountPercent) || 0,
+        services,
+      },
+    });
+  });
+
+  /**
    * POST /api/ngn/utility/airtime
    * Purchases telco airtime and atomically debits user balance.
    */
@@ -401,7 +454,17 @@ export async function paystackUtilityRoutes(app: FastifyInstance) {
     reply: FastifyReply
   ) => {
     const { network } = request.query;
-    const plans = await getUtilityDataPlans({ activeOnly: true, network });
+    let plans = await getUtilityDataPlans({ activeOnly: true, network });
+    if (plans.length === 0) {
+      const { DEFAULT_DATA_PLANS: verifiedPlans } = await import('../service/default-data-plans.js');
+      plans = (verifiedPlans || []).filter((p) => {
+        if (!p.isActive) return false;
+        if (network && network.toLowerCase() !== 'all') {
+          return p.network.toLowerCase() === network.toLowerCase() || p.network.toLowerCase() === 'all';
+        }
+        return true;
+      });
+    }
     const providerInfo = await getActiveUtilityProviderInfo();
     return reply.code(200).send({
       status: 'success',

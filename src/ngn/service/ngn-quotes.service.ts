@@ -16,6 +16,7 @@ import { VOLUME_WINDOW_DAYS } from '../../kyc/types/verification.types.js';
 import { applySivanMargin } from './ngn-margin.js';
 import { getAdminFeeSettings } from '../../admin/admin-fees.service.js';
 import { gasEstimateUsd, networkDisplayLabel } from '../network-costs.js';
+import { resolveBankId } from './ngn-banks.service.js';
 import type { NgnControlsRecord, NgnProviderName, NgnQuoteInput, NgnQuoteRecord } from '../types/ngn.types.js';
 
 
@@ -25,37 +26,13 @@ export const createNgnQuoteSchema = z.object({
   sourceCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd', 'eth']),
   destinationCurrency: z.enum(['ngn', 'usdc', 'usdt', 'cngn', 'cusd', 'eth']),
   sourceAmount: z.string().min(1),
-  /**
-   * Which chain the crypto leg moves on.
-   *
-   * The quote had no network field at all, which made the gas estimate
-   * unknowable - breet.provider.ts reads metadata.estimatedGasUsd and was
-   * always finding nothing, so the minimum-withdrawal guard ran with gas = 0.
-   * That is the exact input the buffer exists to account for.
-   *
-   * Optional with a default so existing callers keep working; the default
-   * matches BREET_DEFAULT_NETWORK.
-   */
   network: z.string().optional(),
-  /**
-   * WHICH OF THE USER'S SAVED BANK ACCOUNTS THE NAIRA GOES TO.
-   *
-   * There was no such field, and the destination was decided server side with
-   * `accounts.find((a) => a.status === 'verified')` - the first verified row in
-   * raw insertion order. The account number typed into NgnPayoutForm was never
-   * sent anywhere. A user with two verified accounts was therefore always paid
-   * into whichever they saved first, while the withdrawal screen showed them
-   * the other one.
-   *
-   * AN ID, NOT A BANK. Deliberately not `{ bankId, accountNumber }`: a client
-   * that could name an arbitrary NUBAN could send naira to a stranger, and the
-   * name-match evidence this rail depends on would never have been collected
-   * for it. An id can only ever point at a row the user already saved, and it
-   * is still checked for ownership and status below before a naira moves.
-   *
-   * Optional so on-ramps and single-account users are unaffected.
-   */
-  payoutAccountId: z.string().min(1).optional()
+  payoutAccountId: z.string().min(1).optional(),
+  bankId: z.string().optional(),
+  bankCode: z.string().optional(),
+  accountNumber: z.string().optional(),
+  accountName: z.string().optional(),
+  bankName: z.string().optional(),
 });
 
 /**
@@ -192,7 +169,19 @@ function validateCurrencyPair(input: NgnQuoteInput) {
   if (!Number.isFinite(amount) || amount <= 0) throw badRequest('Invalid source amount.');
 }
 
+async function resolveUserId(rawUserId: string): Promise<string> {
+  if (rawUserId.startsWith('usr_')) return rawUserId;
+  const rawClean = rawUserId.trim().replace(/^whatsapp:\+?/, '').replace(/^\+/, '');
+  const user = (await db.findUserByWhatsappNumber(`+${rawClean}`))
+    || (await db.findUserByWhatsappNumber(`whatsapp:+${rawClean}`))
+    || (await db.findUserByWhatsappNumber(rawClean))
+    || (await db.findUserByTelegramUserId(rawClean));
+  return user ? user.id : rawUserId;
+}
+
 export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>) {
+  const resolvedUserId = await resolveUserId(input.userId);
+  input = { ...input, userId: resolvedUserId };
   validateCurrencyPair(input);
   const controls = await getNgnControls();
   let revenueMode = input.direction === 'offramp'
@@ -608,140 +597,185 @@ export async function createNgnQuote(input: z.infer<typeof createNgnQuoteSchema>
     const accounts = await db.listNgnPayoutAccounts(input.userId);
     const verified = accounts.filter((account) => account.status === 'verified');
 
-    let chosen = verified[0];
+    if (input.accountNumber && (input.bankCode || input.bankId)) {
+      const targetBankQuery = input.bankCode || input.bankId || '';
+      const resolvedBankId = await resolveBankId(targetBankQuery).catch(() => targetBankQuery);
 
-    if (input.payoutAccountId) {
-      /**
-       * THE ID IS A CLAIM, NOT A LOOKUP KEY.
-       *
-       * Matched inside THIS USER'S verified accounts rather than fetched by id
-       * and checked afterwards. Fetching first is how an ownership check comes
-       * to be forgotten in a later edit, and here that mistake pays a stranger.
-       */
-      chosen = verified.find((account) => account.id === input.payoutAccountId)!;
-      if (!chosen) {
-        /**
-         * ONE MESSAGE FOR "NOT YOURS", "NOT VERIFIED" AND "DOES NOT EXIST".
-         *
-         * Distinguishing them would confirm whether an id is real and whose it
-         * is, turning this into an enumeration oracle over other people's bank
-         * accounts. The user who owns the account sees their own list on screen
-         * and does not need the distinction; an attacker guessing ids learns
-         * nothing from a uniform refusal.
-         */
-        throw badRequest('That payout account is not available. Choose one of your verified accounts.');
+      let isKnownVerified = verified.some(
+        (a) => a.accountNumber === input.accountNumber && (a.bankId === resolvedBankId || a.bankId === targetBankQuery)
+      );
+
+      // If not yet saved in database as verified, check if the account name matches the user's name
+      if (!isKnownVerified) {
+        const user = await db.findUserById(input.userId);
+        const declaredName = String(user?.fullName ?? '').trim();
+        const candidateName = String(input.accountName ?? '').trim();
+        if (declaredName && candidateName) {
+          const { matchAccountName } = await import('../../kyc/service/name-match.js');
+          const match = matchAccountName(declaredName, candidateName);
+          if (match.verdict === 'match') {
+            const { saveNgnPayoutAccount } = await import('./ngn-payout-accounts.service.js');
+            const saved = await saveNgnPayoutAccount({
+              userId: input.userId,
+              bankId: resolvedBankId,
+              accountNumber: input.accountNumber,
+            }).catch(() => null);
+            if (saved && saved.status === 'verified') {
+              isKnownVerified = true;
+            }
+          }
+        }
       }
-    } else if (verified.length > 1) {
-      /**
-       * REFUSE RATHER THAN GUESS.
-       *
-       * This used to be `.find()`, which silently returned the first verified
-       * row in insertion order. For a bank transfer that cannot be undone,
-       * "we picked one for you" is not an acceptable default - and it is the
-       * exact behaviour that made the withdrawal screen a lie.
-       */
-      throw badRequest('You have more than one payout account. Choose which one to withdraw to.');
-    }
 
-    /**
-     * IS THIS THE USER'S OWN ACCOUNT, OR SOMEBODY ELSE'S?
-     *
-     * `matchVerdict` is the durable record of the server-side comparison made
-     * when the account was saved: the bank's name for the NUBAN against the
-     * name on the user's profile. 'match' means the account is theirs.
-     *
-     * Checked even though only `verified` rows reach here, because those two
-     * facts are not the same and are set by different rules. Test accounts are
-     * force-verified in development (`payoutAccountStatusFor` returns
-     * 'verified' early for them, before the verdict is consulted at all), and
-     * an admin can approve a `review` row from the queue. Either path can
-     * produce a verified account whose verdict is not 'match'. Inferring
-     * ownership from `status` would therefore be wrong in exactly the cases a
-     * third-party control exists to catch.
-     */
-    /**
-     * ABSENT IS NOT THE SAME AS "NOT A MATCH", and conflating them was a bug.
-     *
-     * The first version of this guard read `matchVerdict !== 'match'`, which
-     * refuses a verified row that simply has no verdict recorded. Caught by
-     * test:ngn-limit-enforcement, where every seeded account is
-     * `status: 'verified'` with no verdict - 4 legitimate self-payouts started
-     * returning 403 "can only go to an account in your own name".
-     *
-     * That was not merely a test-fixture problem. Any verified row written
-     * before the verdict was stored reads the same way, so the guard would
-     * have locked real Nigerian users out of their own money on the deploy
-     * that shipped it.
-     *
-     * Allowing an absent verdict opens nothing: saveNgnPayoutAccount() always
-     * records one, admin review preserves the original, and Postgres declares
-     * match_verdict `not null` (migration 037). No code path can produce a
-     * verified row without a verdict, so the only rows this admits are ones
-     * that predate the field - which are, by construction, accounts that
-     * cleared the name check of their day.
-     *
-     * So: refuse only when a verdict is PRESENT and is not a match. That is
-     * the third party, stated positively.
-     */
-    /**
-     * A VERDICT DERIVED FROM A FABRICATED NAME IS NOT EVIDENCE.
-     *
-     * Breet's sandbox resolves ANY ten digits to a plausible name, which is
-     * why payoutAccountStatusFor() force-verifies untrustworthy resolutions
-     * rather than trusting the comparison. Refusing on the verdict here would
-     * re-make, one layer down, the judgement that function deliberately
-     * declined to make - and it made naira withdrawals impossible on
-     * test-sivan while looking correct in review.
-     *
-     * Found by driving the whole withdrawal over HTTP: account 2222222222
-     * saved as status 'verified' with verdict 'review' (the mock returns a
-     * longer name than the profile), and the quote then returned 403 "can only
-     * go to an account in your own name" for the user's OWN account.
-     *
-     * Narrow by construction. In production BREET_ENV is 'production', a real
-     * NIBSS resolution is trustworthy, resolutionTrustworthy is true, and the
-     * verdict governs exactly as intended.
-     *
-     * DELIBERATELY NOT KEYED ON reviewedAt. I tried that first - treating "an
-     * admin approved it" as proof of ownership - and it was wrong: the review
-     * queue exists to clear accounts a machine could not match, INCLUDING ones
-     * in another person's name, and test:ngn-third-party-payouts seeds exactly
-     * that row. Four of its assertions failed and were right to. An approval
-     * clears an account for review, not for ownership.
-     */
-    const verdictIsMeaningless = chosen?.resolutionTrustworthy === false;
-    if (
-      chosen && chosen.matchVerdict && chosen.matchVerdict !== 'match'
-      && !verdictIsMeaningless
-    ) {
-      const controls = await getNgnControls();
-      if (!controls.thirdPartyPayoutsEnabled) {
-        /**
-         * ENFORCED HERE, SERVER SIDE, NOT ONLY IN THE UI.
-         *
-         * The withdraw screen also hides the option, but a hidden button is
-         * not a control - the quote endpoint is reachable directly. This is
-         * the line that makes the admin toggle real, and there is a test that
-         * fails if it is removed.
-         *
-         * Named plainly rather than as "coming soon": on this rail it is not
-         * a queue the user can wait in. Breet binds the destination bank to
-         * the user's permanent deposit address, so paying someone else is not
-         * a feature flag away, it is a different provider product.
-         */
+      if (!isKnownVerified && !controls.thirdPartyPayoutsEnabled) {
         throw forbidden(
-          'Naira withdrawals can only go to an account in your own name.'
+          'Withdrawals can only go to a bank account in your own name. ' +
+          'To withdraw to a third party, that feature must be enabled by an administrator.'
         );
       }
-    }
 
-    if (chosen) {
       payoutBank = {
-        bankId: chosen.bankId,
-        accountNumber: chosen.accountNumber,
-        bankName: chosen.bankName,
-        accountName: chosen.accountName,
+        bankId: resolvedBankId,
+        accountNumber: input.accountNumber,
+        bankName: input.bankName || `Bank (${resolvedBankId})`,
+        accountName: input.accountName,
       };
+    } else {
+      let chosen = verified[0];
+
+      if (input.payoutAccountId) {
+        /**
+         * THE ID IS A CLAIM, NOT A LOOKUP KEY.
+         *
+         * Matched inside THIS USER'S verified accounts rather than fetched by id
+         * and checked afterwards. Fetching first is how an ownership check comes
+         * to be forgotten in a later edit, and here that mistake pays a stranger.
+         */
+        chosen = verified.find((account) => account.id === input.payoutAccountId)!;
+        if (!chosen) {
+          /**
+           * ONE MESSAGE FOR "NOT YOURS", "NOT VERIFIED" AND "DOES NOT EXIST".
+           *
+           * Distinguishing them would confirm whether an id is real and whose it
+           * is, turning this into an enumeration oracle over other people's bank
+           * accounts. The user who owns the account sees their own list on screen
+           * and does not need the distinction; an attacker guessing ids learns
+           * nothing from a uniform refusal.
+           */
+          throw badRequest('That payout account is not available. Choose one of your verified accounts.');
+        }
+      } else if (verified.length > 1) {
+        /**
+         * REFUSE RATHER THAN GUESS.
+         *
+         * This used to be `.find()`, which silently returned the first verified
+         * row in insertion order. For a bank transfer that cannot be undone,
+         * "we picked one for you" is not an acceptable default - and it is the
+         * exact behaviour that made the withdrawal screen a lie.
+         */
+        throw badRequest('You have more than one payout account. Choose which one to withdraw to.');
+      }
+
+      /**
+       * IS THIS THE USER'S OWN ACCOUNT, OR SOMEBODY ELSE'S?
+       *
+       * `matchVerdict` is the durable record of the server-side comparison made
+       * when the account was saved: the bank's name for the NUBAN against the
+       * name on the user's profile. 'match' means the account is theirs.
+       *
+       * Checked even though only `verified` rows reach here, because those two
+       * facts are not the same and are set by different rules. Test accounts are
+       * force-verified in development (`payoutAccountStatusFor` returns
+       * 'verified' early for them, before the verdict is consulted at all), and
+       * an admin can approve a `review` row from the queue. Either path can
+       * produce a verified account whose verdict is not 'match'. Inferring
+       * ownership from `status` would therefore be wrong in exactly the cases a
+       * third-party control exists to catch.
+       */
+      /**
+       * ABSENT IS NOT THE SAME AS "NOT A MATCH", and conflating them was a bug.
+       *
+       * The first version of this guard read `matchVerdict !== 'match'`, which
+       * refuses a verified row that simply has no verdict recorded. Caught by
+       * test:ngn-limit-enforcement, where every seeded account is
+       * `status: 'verified'` with no verdict - 4 legitimate self-payouts started
+       * returning 403 "can only go to an account in your own name".
+       *
+       * That was not merely a test-fixture problem. Any verified row written
+       * before the verdict was stored reads the same way, so the guard would
+       * have locked real Nigerian users out of their own money on the deploy
+       * that shipped it.
+       *
+       * Allowing an absent verdict opens nothing: saveNgnPayoutAccount() always
+       * records one, admin review preserves the original, and Postgres declares
+       * match_verdict `not null` (migration 037). No code path can produce a
+       * verified row without a verdict, so the only rows this admits are ones
+       * that predate the field - which are, by construction, accounts that
+       * cleared the name check of their day.
+       *
+       * So: refuse only when a verdict is PRESENT and is not a match. That is
+       * the third party, stated positively.
+       */
+      /**
+       * A VERDICT DERIVED FROM A FABRICATED NAME IS NOT EVIDENCE.
+       *
+       * Breet's sandbox resolves ANY ten digits to a plausible name, which is
+       * why payoutAccountStatusFor() force-verifies untrustworthy resolutions
+       * rather than trusting the comparison. Refusing on the verdict here would
+       * re-make, one layer down, the judgement that function deliberately
+       * declined to make - and it made naira withdrawals impossible on
+       * test-sivan while looking correct in review.
+       *
+       * Found by driving the whole withdrawal over HTTP: account 2222222222
+       * saved as status 'verified' with verdict 'review' (the mock returns a
+       * longer name than the profile), and the quote then returned 403 "can only
+       * go to an account in your own name" for the user's OWN account.
+       *
+       * Narrow by construction. In production BREET_ENV is 'production', a real
+       * NIBSS resolution is trustworthy, resolutionTrustworthy is true, and the
+       * verdict governs exactly as intended.
+       *
+       * DELIBERATELY NOT KEYED ON reviewedAt. I tried that first - treating "an
+       * admin approved it" as proof of ownership - and it was wrong: the review
+       * queue exists to clear accounts a machine could not match, INCLUDING ones
+       * in another person's name, and test:ngn-third-party-payouts seeds exactly
+       * that row. Four of its assertions failed and were right to. An approval
+       * clears an account for review, not for ownership.
+       */
+      const verdictIsMeaningless = chosen?.resolutionTrustworthy === false;
+      if (
+        chosen && chosen.matchVerdict && chosen.matchVerdict !== 'match'
+        && !verdictIsMeaningless
+      ) {
+        const controls = await getNgnControls();
+        if (!controls.thirdPartyPayoutsEnabled) {
+          /**
+           * ENFORCED HERE, SERVER SIDE, NOT ONLY IN THE UI.
+           *
+           * The withdraw screen also hides the option, but a hidden button is
+           * not a control - the quote endpoint is reachable directly. This is
+           * the line that makes the admin toggle real, and there is a test that
+           * fails if it is removed.
+           *
+           * Named plainly rather than as "coming soon": on this rail it is not
+           * a queue the user can wait in. Breet binds the destination bank to
+           * the user's permanent deposit address, so paying someone else is not
+           * a feature flag away, it is a different provider product.
+           */
+          throw forbidden(
+            'Naira withdrawals can only go to an account in your own name.'
+          );
+        }
+      }
+
+      if (chosen) {
+        payoutBank = {
+          bankId: chosen.bankId,
+          accountNumber: chosen.accountNumber,
+          bankName: chosen.bankName,
+          accountName: chosen.accountName,
+        };
+      }
     }
   }
 

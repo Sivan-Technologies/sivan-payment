@@ -1,7 +1,7 @@
 import pg from 'pg';
 
 async function main() {
-  const connectionString = "postgresql://neondb_owner:npg_Z9UrtjCkvO4X@ep-fragrant-lab-a5o3ka97-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
+  const connectionString = (process.env.DATABASE_URL || '');
   const pool = new pg.Pool({ connectionString });
   
   const usersRes = await pool.query('SELECT * FROM users ORDER BY created_at ASC');

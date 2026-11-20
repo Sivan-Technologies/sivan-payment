@@ -1118,52 +1118,55 @@ export class PrivyWalletProvider implements WalletProvider {
    */
   private async solanaBalances(address: string, production: boolean): Promise<WalletBalance[]> {
     const balances: WalletBalance[] = [];
+    const assets = ['usdc', 'usdt'] as const;
 
-    for (const asset of ['usdc', 'usdt'] as const) {
-      const mint = solanaMintFor(asset, production);
-      if (!mint) continue;
+    await Promise.all(
+      assets.map(async (asset) => {
+        const mint = solanaMintFor(asset, production);
+        if (!mint) return;
 
-      try {
-        const { result } = await solanaRpc<any>(
-          'getTokenAccountsByOwner',
-          [address, { mint }, { encoding: 'jsonParsed' }],
-          { production }
-        );
+        try {
+          const { result } = await solanaRpc<any>(
+            'getTokenAccountsByOwner',
+            [address, { mint }, { encoding: 'jsonParsed' }],
+            { production }
+          );
 
-        const accounts: any[] = result?.value ?? [];
+          const accounts: any[] = result?.value ?? [];
 
-        // Summed, not first-only. One owner can hold several accounts for the
-        // same mint, and showing only one under-reports the holding.
-        const total = accounts.reduce((sum, account) => {
-          const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
-          return sum + (raw ? BigInt(raw) : 0n);
-        }, 0n);
+          // Summed, not first-only. One owner can hold several accounts for the
+          // same mint, and showing only one under-reports the holding.
+          const total = accounts.reduce((sum, account) => {
+            const raw = account?.account?.data?.parsed?.info?.tokenAmount?.amount;
+            return sum + (raw ? BigInt(raw) : 0n);
+          }, 0n);
 
-        balances.push({
-          asset,
-          chain: 'solana',
-          amount: fromBaseUnits(total, 6),
-          contractAddress: mint,
-        });
-      } catch (err: any) {
-        /**
-         * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
-         *
-         * A genuine "no token account for this mint" returns { value: [] }
-         * from the RPC without throwing - that path above correctly sums to 0
-         * and pushes '0.000000'. A throw here is a real RPC error (cluster-mint
-         * mismatch, node timeout, rate-limit, etc.), NOT a confirmed zero.
-         *
-         * The old code pushed '0.000000' on error, poisoning lastSeen in the
-         * deposit detector. The next successful read reported the entire Solana
-         * balance as a new deposit.
-         *
-         * Omitting the asset leaves lastSeen unchanged for this tick. The next
-         * successful read diffs against the last figure we actually believed.
-         */
-        console.warn(`[solanaBalances] getTokenAccountsByOwner failed for ${asset}, omitting from result to protect deposit baseline:`, err?.message || err);
-      }
-    }
+          balances.push({
+            asset,
+            chain: 'solana',
+            amount: fromBaseUnits(total, 6),
+            contractAddress: mint,
+          });
+        } catch (err: any) {
+          /**
+           * AN UNREADABLE BALANCE IS NOT A ZERO BALANCE.
+           *
+           * A genuine "no token account for this mint" returns { value: [] }
+           * from the RPC without throwing - that path above correctly sums to 0
+           * and pushes '0.000000'. A throw here is a real RPC error (cluster-mint
+           * mismatch, node timeout, rate-limit, etc.), NOT a confirmed zero.
+           *
+           * The old code pushed '0.000000' on error, poisoning lastSeen in the
+           * deposit detector. The next successful read reported the entire Solana
+           * balance as a new deposit.
+           *
+           * Omitting the asset leaves lastSeen unchanged for this tick. The next
+           * successful read diffs against the last figure we actually believed.
+           */
+          console.warn(`[solanaBalances] getTokenAccountsByOwner failed for ${asset}, omitting from result to protect deposit baseline:`, err?.message || err);
+        }
+      })
+    );
 
     return balances;
   }

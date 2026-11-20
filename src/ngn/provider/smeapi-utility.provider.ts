@@ -314,8 +314,11 @@ export class SmeApiUtilityProvider implements IUtilityProvider {
       'wallet balance lookup'
     );
     this.assertOk(body, 'wallet balance lookup');
-    // Confirmed live: the response is flat, { name, balance: "0.00", status }.
+    // Confirmed live: the response is flat, e.g. { name: "...", balance: "11,220.50", status: "success" }.
+    // Must strip commas before Number() parsing so formatted numbers do not result in NaN.
     const raw = body?.balance ?? body?.data?.balance ?? body?.wallet_balance;
-    return Number(raw ?? 0);
+    const cleaned = typeof raw === 'string' ? raw.replace(/,/g, '').trim() : raw;
+    const parsed = Number(cleaned ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 }

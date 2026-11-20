@@ -540,7 +540,9 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
         escrowUserId: link.escrowUserId || user.id,
         email: user.email,
         fullName: user.fullName,
+        username: user.username || user.telegramUsername,
         whatsappNumber,
+        phone: whatsappNumber,
         canTransact: true,
       };
     }
@@ -561,7 +563,9 @@ export async function lookupTelegramIdentity(telegramUserId: string) {
       escrowUserId: user.id,
       email: user.email,
       fullName: user.fullName,
+      username: user.username || user.telegramUsername,
       whatsappNumber,
+      phone: whatsappNumber,
       canTransact: true,
     };
   }

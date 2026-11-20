@@ -1111,7 +1111,17 @@ export async function executeDataPurchase(
   // The catalogue is authoritative for price. Previously an unknown planCode
   // fell through to the client-supplied amountNgn, so a caller could pay 500
   // for a 430 bundle, or name a plan that does not exist and set its own price.
-  const bundlePlan = await getUtilityDataPlanBySize(req.planCode, operator);
+  let bundlePlan = await getUtilityDataPlanBySize(req.planCode, operator);
+  if (!bundlePlan) {
+    const { DEFAULT_DATA_PLANS: verifiedPlans } = await import('./default-data-plans.js');
+    const cleanTarget = String(req.planCode || '').trim().toLowerCase();
+    const cleanSize = cleanTarget.toUpperCase().replace(/\s+/g, '');
+    bundlePlan = verifiedPlans.find(
+      (p) =>
+        (p.id.toLowerCase() === cleanTarget || (p.planCode && p.planCode.toLowerCase() === cleanTarget) || p.bundleSize.toUpperCase().replace(/\s+/g, '') === cleanSize) &&
+        (p.network.toLowerCase() === operator.toLowerCase() || p.network.toLowerCase() === 'all')
+    ) || null;
+  }
   if (!bundlePlan) {
     throw badRequest(
       `No data plan "${req.planCode}" is configured for ${operator.toUpperCase()}. ` +
