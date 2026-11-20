@@ -5,7 +5,7 @@ import { startEmailAuth } from '../src/auth/auth.service.js';
 import { PostgresDatabase } from '../src/database/postgres-database.js';
 
 const STAGING_URL = 'https://staging.sivantech.online';
-const DB_URL = 'postgresql://neondb_owner:npg_Z9UrtjCkvO4X@ep-fragrant-lab-a5o3ka97-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+const DB_URL = (process.env.DATABASE_URL || '');
 const SCREENSHOT_DIR = '/Users/user/.gemini/antigravity-ide/brain/28760e7b-3915-4927-9a12-a61c7551e415';
 
 function cdpRequest(reqPath: string, method = 'GET', data: any = null): Promise<any> {

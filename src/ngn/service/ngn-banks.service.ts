@@ -154,30 +154,70 @@ export async function listNgnBanks(currency: 'ngn' | 'ghs' = 'ngn'): Promise<Ngn
   );
 }
 
+const PAYSTACK_TO_BREET_MAP: Record<string, string> = {
+  "999991": "26", // PalmPay
+  "999992": "25", // OPay
+  "50211": "23",  // Kuda Bank
+  "50515": "24",  // Moniepoint MFB
+  "058": "15",    // GTBank
+  "044": "1",     // Access Bank
+  "057": "43",    // Zenith Bank
+  "033": "39",    // UBA
+  "011": "12",    // First Bank
+  "035": "42",    // Wema Bank
+  "070": "11",    // Fidelity Bank
+  "214": "13",    // FCMB
+  "221": "33",    // Stanbic IBTC
+  "232": "35",    // Sterling Bank
+  "032": "38",    // Union Bank
+};
+
 /**
- * Resolve a bank name (e.g. "opay", "gtbank", "kuda") to its official bankId.
+ * Resolve a bank name (e.g. "opay", "gtbank", "kuda") or Paystack code to its official bankId.
  */
 export async function resolveBankId(bankNameQuery: string): Promise<string> {
   const query = bankNameQuery.trim().toLowerCase();
+  const provider = activeProviderName();
+
+  if (provider === 'breet' && PAYSTACK_TO_BREET_MAP[query]) {
+    return PAYSTACK_TO_BREET_MAP[query];
+  }
+
   const banks = await listNgnBanks('ngn').catch(() => MOCK_BANKS);
   
   const match = banks.find((b) => 
     b.id.toLowerCase() === query ||
+    b.name.toLowerCase() === query ||
+    (b.slug && b.slug.toLowerCase() === query) ||
     b.name.toLowerCase().includes(query) ||
     (b.slug && b.slug.toLowerCase().includes(query))
   );
 
   if (match) return match.id;
-  
-  if (/opay/i.test(query)) return '999992';
-  if (/palmpay/i.test(query)) return '999991';
-  if (/kuda/i.test(query)) return '50211';
-  if (/gtb|guaranty/i.test(query)) return '058';
-  if (/access/i.test(query)) return '044';
-  if (/zenith/i.test(query)) return '057';
-  if (/uba|united bank/i.test(query)) return '033';
-  if (/moniepoint/i.test(query)) return '50515';
-  if (/firstbank|first bank/i.test(query)) return '011';
+
+  if (provider === 'breet') {
+    if (/opay/i.test(query)) return '25';
+    if (/palmpay/i.test(query)) return '26';
+    if (/kuda/i.test(query)) return '23';
+    if (/moniepoint/i.test(query)) return '24';
+    if (/gtb|guaranty/i.test(query)) return '15';
+    if (/access/i.test(query)) return '1';
+    if (/zenith/i.test(query)) return '43';
+    if (/uba|united bank/i.test(query)) return '39';
+    if (/firstbank|first bank/i.test(query)) return '12';
+    if (/wema/i.test(query)) return '42';
+  } else {
+    if (/opay/i.test(query)) return '999992';
+    if (/palmpay/i.test(query)) return '999991';
+    if (/kuda/i.test(query)) return '50211';
+    if (/gtb|guaranty/i.test(query)) return '058';
+    if (/access/i.test(query)) return '044';
+    if (/zenith/i.test(query)) return '057';
+    if (/uba|united bank/i.test(query)) return '033';
+    if (/moniepoint/i.test(query)) return '50515';
+    if (/firstbank|first bank/i.test(query)) return '011';
+    if (/wema/i.test(query)) return '035';
+  }
 
   return banks[0]?.id || '1';
 }

@@ -109,6 +109,9 @@ interface CachedUnifiedBalance {
 const unifiedBalanceCache = new Map<string, CachedUnifiedBalance>();
 const BALANCE_CACHE_TTL_MS = 6_000; // 6-second short TTL to serve immediate reloads instantly
 
+const lastKnownWalletBalances = new Map<string, { timestamp: number; balances: any[] }>();
+const LAST_KNOWN_BALANCE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache to gracefully tolerate transient RPC latency spikes
+
 export function invalidateUnifiedBalanceCache(userId?: string) {
   if (userId) {
     unifiedBalanceCache.delete(userId);
@@ -181,6 +184,7 @@ async function readChainBalances(userId: string) {
 
   return Promise.all(
     reads.map(async ({ wallet, chain }) => {
+      const cacheKey = `${userId}:${chain.toLowerCase()}:${wallet.address.toLowerCase()}`;
       try {
         const provider = providerFor(wallet);
         const balances = await withTimeout(
@@ -190,11 +194,25 @@ async function readChainBalances(userId: string) {
             wallet.address,
             chain as WalletChain
           ),
-          2500,
-          `RPC timeout for ${chain} after 2500ms`
+          6000,
+          `RPC timeout for ${chain} after 6000ms`
         );
+        if (Array.isArray(balances)) {
+          lastKnownWalletBalances.set(cacheKey, { timestamp: Date.now(), balances });
+        }
         return { chain, address: wallet.address, balances, balancesUnavailable: false };
       } catch (error) {
+        const lastKnown = lastKnownWalletBalances.get(cacheKey);
+        if (lastKnown && Date.now() - lastKnown.timestamp < LAST_KNOWN_BALANCE_TTL_MS) {
+          console.warn('[unified_balance.chain_fallback_cached]', {
+            userId,
+            chain,
+            reason: error instanceof Error ? error.message : String(error),
+            cachedAgeMs: Date.now() - lastKnown.timestamp,
+          });
+          return { chain, address: wallet.address, balances: lastKnown.balances, balancesUnavailable: false };
+        }
+
         // An RPC outage must not blank the dashboard or, worse, read as zero.
         console.warn('[unified_balance.chain_unavailable]', {
           userId,

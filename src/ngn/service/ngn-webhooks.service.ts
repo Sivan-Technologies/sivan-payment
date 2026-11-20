@@ -108,6 +108,8 @@ async function applyWebhookToTransfer(event: {
    */
   if (!transfer && String(event.eventType ?? '').toLowerCase().startsWith('withdrawal')) {
     transfer = await resolveWithdrawalViaTrade(transfers, payload);
+    // Destination bank account is exact evidence when trade lookup is unqueryable
+    if (!transfer) transfer = matchWithdrawalByDestination(transfers, payload);
     // Amount is the join key of last resort, and only when the exact one missed.
     if (!transfer) transfer = matchWithdrawalByAmount(transfers, payload);
   }
@@ -346,7 +348,47 @@ function findTransferForEvent(
  *
  * Returns undefined on any failure. The caller logs the miss.
  */
-  function matchWithdrawalByAmount(
+function matchWithdrawalByDestination(
+  transfers: NgnTransferRecord[],
+  payload: any
+): NgnTransferRecord | undefined {
+  const meta = (t: NgnTransferRecord) =>
+    (typeof t.metadata === 'object' && t.metadata ? t.metadata : {}) as any;
+
+  const withdrawalAccount = String(
+    payload?.meta?.accountNumber ?? payload?.accountNumber ?? ''
+  ).trim();
+  const withdrawalBank = String(
+    payload?.meta?.bankId ?? payload?.bankId ?? ''
+  ).trim();
+
+  if (!withdrawalAccount) return undefined;
+
+  const openOfframps = transfers.filter(
+    (item) =>
+      item.direction === 'offramp' &&
+      item.status !== 'completed' &&
+      item.status !== 'failed' &&
+      String(meta(item).transferMetadata?.accountNumber ?? meta(item).quoteMetadata?.accountNumber ?? '').trim() === withdrawalAccount &&
+      (!withdrawalBank || !meta(item).transferMetadata?.bankId || String(meta(item).transferMetadata?.bankId).trim() === withdrawalBank)
+  );
+
+  if (openOfframps.length === 1) return openOfframps[0];
+  if (openOfframps.length > 1) {
+    const paid = Number(payload?.payoutAmount ?? payload?.amount);
+    if (Number.isFinite(paid) && paid > 0) {
+      const byAmount = openOfframps.filter((c) => {
+        const dest = Number(c.destinationAmount);
+        return Number.isFinite(dest) && Math.abs(dest - paid) <= Math.max(250, dest * 0.03);
+      });
+      if (byAmount.length === 1) return byAmount[0];
+    }
+    return openOfframps.sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  }
+  return undefined;
+}
+
+function matchWithdrawalByAmount(
   transfers: NgnTransferRecord[],
   payload: any
 ): NgnTransferRecord | undefined {
