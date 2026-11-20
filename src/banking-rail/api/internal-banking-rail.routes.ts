@@ -173,5 +173,71 @@ export async function internalBankingRailRoutes(app: FastifyInstance) {
       });
     }
   });
+
+  /**
+   * Generates a hosted checkout order link (restricted to Transfer and USSD only).
+   * Service Agreement engine calls this to generate web checkout links without holding API keys.
+   */
+  app.post(
+    '/api/payment/internal/checkout',
+    async (
+      req: FastifyRequest<{
+        Body: {
+          agreementId?: string;
+          orderReference?: string;
+          amountKobo: number;
+          customerEmail: string;
+          callbackUrl?: string;
+          allowedPaymentMethods?: ('Transfer' | 'USSD')[];
+        };
+      }>,
+      reply: FastifyReply
+    ) => {
+      if (!verifyCoreApiAuth(req, reply)) return;
+
+      const body = req.body || {};
+      const orderReference = body.orderReference || (body.agreementId ? `sivan_agr_${body.agreementId}_${Date.now()}` : `sivan_order_${Date.now()}`);
+
+      if (!body.amountKobo || !body.customerEmail) {
+        return reply.code(400).send({
+          error: 'Missing required checkout fields: amountKobo, customerEmail',
+        });
+      }
+
+      try {
+        const adapter = getBankingRailAdapter();
+        if (!adapter.createCheckoutOrder) {
+          return reply.code(501).send({
+            error: `Active banking rail (${adapter.name}) does not support hosted checkout`,
+          });
+        }
+
+        const result = await adapter.createCheckoutOrder({
+          orderReference,
+          amountKobo: Math.round(Number(body.amountKobo)),
+          customerEmail: body.customerEmail,
+          callbackUrl: body.callbackUrl,
+          allowedPaymentMethods: body.allowedPaymentMethods || ['Transfer', 'USSD'],
+        });
+
+        return reply.code(200).send({
+          success: true,
+          data: {
+            provider: adapter.name,
+            checkoutLink: result.checkoutLink,
+            orderReference: result.orderReference,
+            allowedPaymentMethods: result.allowedPaymentMethods,
+            agreementId: body.agreementId || null,
+          },
+        });
+      } catch (err: any) {
+        console.error('[internal-banking-rail] createCheckoutOrder failed:', err.message);
+        return reply.code(500).send({
+          success: false,
+          error: `Checkout order generation failed: ${err.message}`,
+        });
+      }
+    }
+  );
 }
 

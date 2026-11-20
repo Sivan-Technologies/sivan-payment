@@ -43,3 +43,4 @@ main().catch((err) => {
   console.error('Fatal error during active rail verification:', err);
   process.exit(1);
 });
+

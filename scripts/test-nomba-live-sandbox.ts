@@ -167,6 +167,29 @@ async function testNombaLive() {
     console.warn('Transfer test note:', err.message);
   }
 
+  console.log(`\n--- Step 6: Testing Checkout Order on ${activeBase}/checkout/order ---`);
+  try {
+    const res = await fetch(`${activeBase}/checkout/order`, {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        order: {
+          orderReference: `sivan_order_${Date.now()}`,
+          amount: 5000,
+          currency: 'NGN',
+          customerEmail: 'buyer@sivantech.online',
+          callbackUrl: 'https://staging.sivantech.online/agreements/callback',
+          allowedPaymentMethods: ['Transfer', 'USSD'],
+        },
+      }),
+    });
+    console.log(`HTTP Status: ${res.status}`);
+    const data = await res.json().catch(() => null);
+    console.log('Checkout Order Response:', JSON.stringify(data, null, 2));
+  } catch (err: any) {
+    console.warn('Checkout test note:', err.message);
+  }
+
   console.log('\n========================================');
   console.log('NOMBA SANDBOX LIVE PROOF COMPLETED!');
   console.log('========================================');

@@ -151,10 +151,30 @@ export type BankingRailEvent =
       originalType: string;
     };
 
+export interface CreateCheckoutInput {
+  orderReference: string;
+  amountKobo: number;
+  customerEmail: string;
+  callbackUrl?: string;
+  allowedPaymentMethods?: ('Transfer' | 'USSD')[];
+}
+
+export interface CheckoutOrderRecord {
+  checkoutLink: string;
+  orderReference: string;
+  allowedPaymentMethods: string[];
+}
+
 // ─── The adapter contract ─────────────────────────────────────────────────────
 
 export interface IBankingRailAdapter {
   readonly name: BankingRailName;
+
+  /**
+   * Generates a hosted checkout order link (e.g. restricted to Transfer + USSD, no cards).
+   * Optional for adapters that support hosted web checkout.
+   */
+  createCheckoutOrder?(input: CreateCheckoutInput): Promise<CheckoutOrderRecord>;
 
   // ── Inbound: onboard user and issue virtual account ──────────────────────
 

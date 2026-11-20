@@ -25,6 +25,8 @@ import type {
   CreateTransferInput,
   TransferRecord,
   TransferStatus,
+  CreateCheckoutInput,
+  CheckoutOrderRecord,
 } from '../banking-rail.adapter.js';
 
 interface NombaTokenCache {
@@ -454,6 +456,48 @@ export class NombaBankingRailAdapter implements IBankingRailAdapter {
       amountKobo: Math.round(Number(data.amount || 0) * 100),
       confirmedAt: status === 'success' ? new Date().toISOString() : undefined,
       raw: json,
+    };
+  }
+
+  // ── Hosted Checkout Orders (Transfer & USSD Only) ─────────────────────────
+
+  async createCheckoutOrder(input: CreateCheckoutInput): Promise<CheckoutOrderRecord> {
+    const headers = await this.authHeaders();
+    const amountNaira = Math.round((input.amountKobo / 100) * 100) / 100;
+    const methods = input.allowedPaymentMethods && input.allowedPaymentMethods.length > 0
+      ? input.allowedPaymentMethods
+      : ['Transfer', 'USSD'];
+
+    const payload = {
+      order: {
+        orderReference: input.orderReference,
+        amount: amountNaira,
+        currency: 'NGN',
+        customerEmail: input.customerEmail,
+        callbackUrl: input.callbackUrl,
+        allowedPaymentMethods: methods,
+      },
+    };
+
+    const res = await fetch(`${this.baseUrl()}/checkout/order`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`[NombaBankingRailAdapter] createCheckoutOrder failed (${res.status}): ${errText}`);
+    }
+
+    const json = (await res.json()) as any;
+    const data = json?.data || json;
+
+    return {
+      checkoutLink: String(data.checkoutLink || ''),
+      orderReference: String(data.orderReference || input.orderReference),
+      allowedPaymentMethods: methods,
     };
   }
 
