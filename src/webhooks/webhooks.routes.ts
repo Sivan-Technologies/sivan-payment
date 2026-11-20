@@ -3,7 +3,7 @@ import { processBridgeWebhook } from './webhooks.service.js';
 import { processPaystackWebhook, PaystackWebhookError } from './paystackWebhookHandler.js';
 import { processMoneyGramWebhook, MoneyGramWebhookError } from './moneygramWebhookHandler.js';
 import { getBankingRailAdapter } from '../banking-rail/banking-rail-registry.js';
-import { nombaCheckoutService } from '../ngn/service/nomba-checkout.service.js';
+import { sivanCheckoutService } from '../ngn/service/sivan-checkout.service.js';
 
 export async function webhooksRoutes(app: FastifyInstance) {
   app.post('/api/webhooks/bridge', async (request, reply) => {
@@ -96,9 +96,12 @@ export async function webhooksRoutes(app: FastifyInstance) {
         const orderRef = event.reference || '';
         // If reference indicates a Sivan checkout order (deposit or agreement funding)
         if (orderRef.startsWith('sivan_') || orderRef.startsWith('agr_') || String(event.providerCustomerId || '').startsWith('sivan_')) {
-          await nombaCheckoutService.processCheckoutSuccess(orderRef, event.userId).catch((err) => {
-            console.warn('[nomba-webhook] Checkout success auto-processing notice:', err.message);
-          });
+          const verification = await sivanCheckoutService.verifyCheckoutTransaction(orderRef, 'nomba').catch(() => null);
+          if (verification && verification.verified) {
+            await sivanCheckoutService.processCheckoutSuccess(verification).catch((err) => {
+              console.warn('[nomba-webhook] Checkout success auto-processing notice:', err.message);
+            });
+          }
         }
 
         // If reference or userId matches an agreement, notify agreement sync

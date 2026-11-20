@@ -1,17 +1,21 @@
 /**
- * SIVAN NOMBA CHECKOUT ROUTES
+ * SIVAN UNIFIED CHECKOUT ROUTES
  *
  * Fastify endpoints for:
  * - Hosted Checkout session initialization (POST /api/ngn/checkout/initialize)
  * - Server-side transaction verification (GET /api/ngn/checkout/verify/:orderReference)
  * - Immediate client-side settlement claim (POST /api/ngn/checkout/claim)
+ * - List available checkout providers and active status (GET /api/ngn/checkout/providers)
+ *
+ * Pluggable architecture supports Nomba, 9PSB, and Paystack dynamically.
  */
 
 import { z } from 'zod';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { parseBody } from '../../shared/validation.js';
 import { badRequest } from '../../shared/errors.js';
-import { nombaCheckoutService } from '../service/nomba-checkout.service.js';
+import { sivanCheckoutService } from '../service/sivan-checkout.service.js';
+import { listAvailableCheckoutProviders } from '../provider/checkout-registry.js';
 
 const initializeCheckoutSchema = z.object({
   userId: z.string().min(1, 'userId is required'),
@@ -20,7 +24,8 @@ const initializeCheckoutSchema = z.object({
   purpose: z.enum(['deposit', 'fund_agreement']).default('deposit'),
   agreementId: z.string().optional(),
   callbackUrl: z.string().url().optional(),
-  allowedPaymentMethods: z.array(z.enum(['Card', 'Transfer', 'USSD', 'Apple Pay'])).optional(),
+  allowedPaymentMethods: z.array(z.string()).optional(),
+  provider: z.string().optional(),
 });
 
 const claimCheckoutSchema = z.object({
@@ -28,12 +33,24 @@ const claimCheckoutSchema = z.object({
   userId: z.string().min(1, 'userId is required'),
   purpose: z.enum(['deposit', 'fund_agreement']).optional(),
   agreementId: z.string().optional(),
+  provider: z.string().optional(),
 });
 
 export async function nombaCheckoutRoutes(app: FastifyInstance) {
   /**
+   * GET /api/ngn/checkout/providers
+   * Returns available checkout providers (Nomba, 9PSB, Paystack) and active default.
+   */
+  app.get('/api/ngn/checkout/providers', async (_req, reply) => {
+    return reply.code(200).send({
+      success: true,
+      data: listAvailableCheckoutProviders(),
+    });
+  });
+
+  /**
    * POST /api/ngn/checkout/initialize
-   * Generates a hosted Nomba Checkout order link for balance deposit or Service Agreement funding.
+   * Generates a hosted checkout order link via active or requested provider.
    */
   app.post(
     '/api/ngn/checkout/initialize',
@@ -41,15 +58,18 @@ export async function nombaCheckoutRoutes(app: FastifyInstance) {
       const input = parseBody(initializeCheckoutSchema, request.body);
 
       try {
-        const order = await nombaCheckoutService.createCheckoutOrder({
-          userId: input.userId,
-          amountNgn: input.amountNgn,
-          customerEmail: input.customerEmail,
-          purpose: input.purpose,
-          agreementId: input.agreementId,
-          callbackUrl: input.callbackUrl,
-          allowedPaymentMethods: input.allowedPaymentMethods,
-        });
+        const order = await sivanCheckoutService.createCheckoutOrder(
+          {
+            userId: input.userId,
+            amountNgn: input.amountNgn,
+            customerEmail: input.customerEmail,
+            purpose: input.purpose,
+            agreementId: input.agreementId,
+            callbackUrl: input.callbackUrl,
+            allowedPaymentMethods: input.allowedPaymentMethods,
+          },
+          input.provider
+        );
 
         return reply.code(200).send({
           success: true,
@@ -68,18 +88,29 @@ export async function nombaCheckoutRoutes(app: FastifyInstance) {
 
   /**
    * GET /api/ngn/checkout/verify/:orderReference
-   * Queries Nomba to authoritatively verify payment status.
+   * Queries provider upstream to authoritatively verify payment status.
    */
   app.get(
     '/api/ngn/checkout/verify/:orderReference',
-    async (request: FastifyRequest<{ Params: { orderReference: string } }>, reply: FastifyReply) => {
+    async (
+      request: FastifyRequest<{
+        Params: { orderReference: string };
+        Querystring: { provider?: string };
+      }>,
+      reply: FastifyReply
+    ) => {
       const { orderReference } = request.params;
+      const { provider } = request.query;
+
       if (!orderReference) {
         throw badRequest('orderReference parameter is required');
       }
 
       try {
-        const verification = await nombaCheckoutService.verifyCheckoutTransaction(orderReference);
+        const verification = await sivanCheckoutService.verifyCheckoutTransaction(
+          orderReference,
+          provider
+        );
         return reply.code(200).send({
           success: true,
           data: verification,
@@ -105,16 +136,26 @@ export async function nombaCheckoutRoutes(app: FastifyInstance) {
       const input = parseBody(claimCheckoutSchema, request.body);
 
       try {
-        const result = await nombaCheckoutService.processCheckoutSuccess(
+        const verification = await sivanCheckoutService.verifyCheckoutTransaction(
           input.orderReference,
-          input.userId,
-          input.purpose,
-          input.agreementId
+          input.provider
         );
+
+        if (!verification.verified || verification.status !== 'SUCCESS') {
+          return reply.code(400).send({
+            success: false,
+            error: {
+              message: `Payment is not confirmed. Status: ${verification.status}`,
+              status: verification.status,
+            },
+          });
+        }
+
+        const processing = await sivanCheckoutService.processCheckoutSuccess(verification);
 
         return reply.code(200).send({
           success: true,
-          data: result,
+          data: processing,
         });
       } catch (err: any) {
         return reply.code(err.statusCode || 400).send({
