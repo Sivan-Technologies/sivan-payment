@@ -227,6 +227,7 @@ export class SivanCheckoutService {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-core-api-key': process.env.CORE_API_SECRET || '',
           'x-internal-secret': process.env.INTERNAL_SERVICE_SECRET || '',
         },
         body: JSON.stringify({
